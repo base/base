@@ -49,6 +49,16 @@ pub enum PricingError {
     #[error("decimals value {0} is too large")]
     DecimalsTooLarge(u8),
 
+    /// A slot-read bit-field is malformed: zero width, wider than 256 bits, or
+    /// extending past the end of the word.
+    #[error("invalid slot field: bit_offset {bit_offset}, bit_len {bit_len}")]
+    InvalidSlotField {
+        /// Configured bit offset from the least-significant bit.
+        bit_offset: u16,
+        /// Configured field width in bits.
+        bit_len: u16,
+    },
+
     /// A `U256` arithmetic operation overflowed while computing the rate or the
     /// payment amount.
     #[error("arithmetic overflow while computing token payment amount")]

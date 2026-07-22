@@ -19,14 +19,25 @@ calls, holds no keys, and serves no RPC — those live in the layers above:
 
 ## Model
 
-Each accepted token in [`PayerConfig`] carries a [`PriceSource`] that is either
-a **flat rate** or an external **feed**. A feed names the oracle contract, the
-method [`selector`](FeedConfig::selector) that supplies the price, the
-[`AnswerShape`] describing how to decode the return (e.g. Chainlink
-`latestRoundData` vs. a bare single word), the answer [`FeedDirection`], and a
-staleness bound. New oracle providers are onboarded by adding a decode shape
-here and pointing the on-chain config at the new selector/shape — no contract
-migration.
+Each accepted token in [`PayerConfig`] carries a [`PriceSource`], one of:
+
+- **Flat** — a fixed [`Rate`], no external read.
+- **Slot** ([`SlotFeed`]) — the price is `SLOAD`ed straight from a known storage
+  slot on the aggregator and a [`SlotField`] bit-field extracts the answer
+  (with an optional [`SlotTimestamp`] slot for staleness). This is the **fast,
+  deterministic builder path**: one cold `SLOAD` per token against the pending
+  build state, cacheable per block, with no EVM execution — pricing stays
+  consensus-consistent with the block being built, and a sender's balance can be
+  checked the same way (a single `SLOAD` of the token's balance slot).
+- **Feed** ([`FeedConfig`]) — the price is ABI-decoded from an oracle
+  `STATICCALL` return, using the method [`selector`](FeedConfig::selector) and an
+  [`AnswerShape`] (e.g. Chainlink `latestRoundData` vs. a bare word).
+
+All feed/slot sources share a [`FeedDirection`] and a staleness bound. New
+oracle providers are onboarded by adding a decode shape / slot layout here and
+pointing the on-chain config at it — no contract migration. If the payer's
+phase-0 token transfer reverts at inclusion (insufficient payment), the builder
+simply discards the transaction.
 
 ## `storage` feature
 

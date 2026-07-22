@@ -13,35 +13,49 @@ use crate::{
     error::PricingError,
     feed::{FeedConfig, FeedReading},
     rate::Rate,
+    slot::SlotFeed,
 };
 
 /// How the price of one accepted token is sourced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PriceSource {
-    /// A fixed token-atomic-units-per-native-wei rate, needing no external call.
+    /// A fixed token-atomic-units-per-native-wei rate, needing no external read.
     Flat(Rate),
-    /// A price read from an external oracle contract.
+    /// A price obtained by ABI-decoding an oracle `STATICCALL` return.
     Feed(FeedConfig),
+    /// A price obtained by `SLOAD`-ing a known storage slot (the fast,
+    /// deterministic builder path).
+    Slot(SlotFeed),
 }
 
 impl PriceSource {
-    /// The feed configuration backing this source, or `None` for a flat rate.
-    /// The reader layer uses this to decide whether an oracle `STATICCALL` is
-    /// needed before pricing.
+    /// The `STATICCALL` feed configuration backing this source, or `None`. The
+    /// reader uses this to decide whether an oracle call is needed.
     pub const fn feed(&self) -> Option<&FeedConfig> {
         match self {
-            Self::Flat(_) => None,
             Self::Feed(feed) => Some(feed),
+            Self::Flat(_) | Self::Slot(_) => None,
+        }
+    }
+
+    /// The slot-read configuration backing this source, or `None`. The reader
+    /// uses this to decide which storage slots to `SLOAD` before pricing.
+    pub const fn slot(&self) -> Option<&SlotFeed> {
+        match self {
+            Self::Slot(slot) => Some(slot),
+            Self::Flat(_) | Self::Feed(_) => None,
         }
     }
 
     /// Resolves this source to an exact [`Rate`]. A [`PriceSource::Flat`]
-    /// ignores `reading`; a [`PriceSource::Feed`] requires one (supplied by the
-    /// reader layer) and enforces its staleness bound against `now`.
+    /// ignores `reading`; [`PriceSource::Feed`] and [`PriceSource::Slot`] each
+    /// require one (supplied by the reader layer) and enforce their staleness
+    /// bound against `now`.
     pub fn rate(&self, reading: Option<FeedReading>, now: u64) -> Result<Rate, PricingError> {
         match self {
             Self::Flat(rate) => Ok(*rate),
             Self::Feed(feed) => feed.rate(reading.ok_or(PricingError::MissingReading)?, now),
+            Self::Slot(slot) => slot.rate(reading.ok_or(PricingError::MissingReading)?, now),
         }
     }
 }

@@ -22,6 +22,7 @@ use crate::{
     config::{PayerConfig, PriceSource, TokenConfig},
     feed::{AnswerShape, FeedConfig, FeedDirection},
     rate::Rate,
+    slot::{SlotField, SlotFeed, SlotTimestamp},
 };
 
 /// Read/write view over the on-chain payer-config system contract, mirroring
@@ -35,7 +36,10 @@ use crate::{
 /// mapping(address => uint256) terms;           // packed TokenTerms word
 /// mapping(address => uint256) flatNumerator;   // flat kind only
 /// mapping(address => uint256) flatDenominator; // flat kind only
-/// mapping(address => address) feedOracle;      // feed kind only
+/// mapping(address => address) oracle;          // feed / slot kinds
+/// mapping(address => uint256) slotAnswerSlot;  // slot kind only
+/// mapping(address => uint256) slotTimestampSlot; // slot kind, staleness only
+/// mapping(address => uint256) slotFields;      // slot kind: packed bit-fields
 /// ```
 #[contract(addr = Self::ADDRESS)]
 #[namespace("base.payer_config")]
@@ -54,8 +58,17 @@ pub struct PayerConfigStorage {
     pub flat_numerator: Mapping<Address, U256>,
     /// Per-token flat-rate denominator (populated for [`PriceSource::Flat`] only).
     pub flat_denominator: Mapping<Address, U256>,
-    /// Per-token oracle contract (populated for [`PriceSource::Feed`] only).
-    pub feed_oracle: Mapping<Address, Address>,
+    /// Per-token oracle contract (populated for [`PriceSource::Feed`] and
+    /// [`PriceSource::Slot`]).
+    pub oracle: Mapping<Address, Address>,
+    /// Per-token answer storage slot (populated for [`PriceSource::Slot`] only).
+    pub slot_answer_slot: Mapping<Address, U256>,
+    /// Per-token `updatedAt` storage slot (populated for [`PriceSource::Slot`]
+    /// with a staleness bound).
+    pub slot_timestamp_slot: Mapping<Address, U256>,
+    /// Per-token packed [`PackedSlotFields`] word (populated for
+    /// [`PriceSource::Slot`] only).
+    pub slot_fields: Mapping<Address, U256>,
 }
 
 impl PayerConfigStorage<'_> {
@@ -84,22 +97,44 @@ impl PayerConfigStorage<'_> {
     pub fn read_token(&self, token: Address) -> Result<TokenConfig> {
         let fee_recipient = self.fee_recipient.at(&token).read()?;
         let terms = TokenTerms::from_word(self.terms.at(&token).read()?)?;
+        let direction = || {
+            FeedDirection::from_u8(terms.direction)
+                .ok_or_else(BasePrecompileError::enum_conversion_error)
+        };
         let price_source = match terms.kind {
             TokenTerms::KIND_FLAT => PriceSource::Flat(Rate::new(
                 self.flat_numerator.at(&token).read()?,
                 self.flat_denominator.at(&token).read()?,
             )),
             TokenTerms::KIND_FEED => PriceSource::Feed(FeedConfig {
-                oracle: self.feed_oracle.at(&token).read()?,
+                oracle: self.oracle.at(&token).read()?,
                 selector: terms.selector,
                 answer_shape: AnswerShape::from_u8(terms.shape)
                     .ok_or_else(BasePrecompileError::enum_conversion_error)?,
-                direction: FeedDirection::from_u8(terms.direction)
-                    .ok_or_else(BasePrecompileError::enum_conversion_error)?,
+                direction: direction()?,
                 answer_decimals: terms.answer_decimals,
                 token_decimals: terms.token_decimals,
                 staleness_bound: terms.staleness_bound,
             }),
+            TokenTerms::KIND_SLOT => {
+                let fields = PackedSlotFields::from_word(self.slot_fields.at(&token).read()?);
+                let updated_at = fields.has_updated_at.then(|| {
+                    Ok::<_, BasePrecompileError>(SlotTimestamp {
+                        slot: self.slot_timestamp_slot.at(&token).read()?,
+                        field: fields.timestamp_field,
+                    })
+                });
+                PriceSource::Slot(SlotFeed {
+                    oracle: self.oracle.at(&token).read()?,
+                    answer_slot: self.slot_answer_slot.at(&token).read()?,
+                    answer_field: fields.answer_field,
+                    updated_at: updated_at.transpose()?,
+                    direction: direction()?,
+                    answer_decimals: terms.answer_decimals,
+                    token_decimals: terms.token_decimals,
+                    staleness_bound: terms.staleness_bound,
+                })
+            }
             _ => return Err(BasePrecompileError::enum_conversion_error()),
         };
         Ok(TokenConfig { token, fee_recipient, price_source, margin_bps: terms.margin_bps })
@@ -128,8 +163,17 @@ impl PayerConfigStorage<'_> {
                 TokenTerms::flat(config.margin_bps)
             }
             PriceSource::Feed(feed) => {
-                self.feed_oracle.at_mut(&token).write(feed.oracle)?;
+                self.oracle.at_mut(&token).write(feed.oracle)?;
                 TokenTerms::feed(config.margin_bps, feed)
+            }
+            PriceSource::Slot(slot) => {
+                self.oracle.at_mut(&token).write(slot.oracle)?;
+                self.slot_answer_slot.at_mut(&token).write(slot.answer_slot)?;
+                self.slot_fields.at_mut(&token).write(PackedSlotFields::of(slot).to_word())?;
+                if let Some(ts) = slot.updated_at {
+                    self.slot_timestamp_slot.at_mut(&token).write(ts.slot)?;
+                }
+                TokenTerms::slot(config.margin_bps, slot)
             }
         };
         self.terms.at_mut(&token).write(terms.to_word())
@@ -143,7 +187,10 @@ impl PayerConfigStorage<'_> {
             self.terms.at_mut(&token).write(U256::ZERO)?;
             self.flat_numerator.at_mut(&token).write(U256::ZERO)?;
             self.flat_denominator.at_mut(&token).write(U256::ZERO)?;
-            self.feed_oracle.at_mut(&token).write(Address::ZERO)?;
+            self.oracle.at_mut(&token).write(Address::ZERO)?;
+            self.slot_answer_slot.at_mut(&token).write(U256::ZERO)?;
+            self.slot_timestamp_slot.at_mut(&token).write(U256::ZERO)?;
+            self.slot_fields.at_mut(&token).write(U256::ZERO)?;
         }
         Ok(removed)
     }
@@ -178,6 +225,7 @@ struct TokenTerms {
 impl TokenTerms {
     const KIND_FLAT: u8 = 0;
     const KIND_FEED: u8 = 1;
+    const KIND_SLOT: u8 = 2;
 
     /// Terms for a flat-rate token (feed fields left zero).
     const fn flat(margin_bps: u16) -> Self {
@@ -193,7 +241,7 @@ impl TokenTerms {
         }
     }
 
-    /// Terms for a feed-backed token, projecting the feed's parameters.
+    /// Terms for a `STATICCALL` feed-backed token, projecting its parameters.
     const fn feed(margin_bps: u16, feed: &FeedConfig) -> Self {
         Self {
             kind: Self::KIND_FEED,
@@ -204,6 +252,21 @@ impl TokenTerms {
             shape: feed.answer_shape.to_u8(),
             selector: feed.selector,
             staleness_bound: feed.staleness_bound,
+        }
+    }
+
+    /// Terms for a slot-read token, projecting its scalar parameters. The
+    /// bit-field layout lives in the companion [`PackedSlotFields`] word.
+    const fn slot(margin_bps: u16, slot: &SlotFeed) -> Self {
+        Self {
+            kind: Self::KIND_SLOT,
+            margin_bps,
+            answer_decimals: slot.answer_decimals,
+            token_decimals: slot.token_decimals,
+            direction: slot.direction.to_u8(),
+            shape: 0,
+            selector: [0; 4],
+            staleness_bound: slot.staleness_bound,
         }
     }
 
@@ -226,7 +289,7 @@ impl TokenTerms {
     fn from_word(word: U256) -> Result<Self> {
         let b = word.to_be_bytes::<32>();
         let kind = b[31];
-        if kind != Self::KIND_FLAT && kind != Self::KIND_FEED {
+        if kind != Self::KIND_FLAT && kind != Self::KIND_FEED && kind != Self::KIND_SLOT {
             return Err(BasePrecompileError::enum_conversion_error());
         }
         Ok(Self {
@@ -241,6 +304,75 @@ impl TokenTerms {
                 b[13..21].try_into().expect("8-byte slice is a valid u64"),
             ),
         })
+    }
+}
+
+/// Decoded per-token `slot_fields` storage word: the [`SlotField`] bit-field
+/// layouts for a [`PriceSource::Slot`] source's answer and (optional)
+/// timestamp, packed into one word alongside the has-timestamp flag.
+///
+/// ```text
+/// byte 31    has_updated_at (0 / 1)
+/// byte 30    answer field signed
+/// bytes28-30 answer field bit_offset (uint16)
+/// bytes26-28 answer field bit_len    (uint16)
+/// byte 25    timestamp field signed
+/// bytes23-25 timestamp field bit_offset (uint16)
+/// bytes21-23 timestamp field bit_len    (uint16)
+/// ```
+struct PackedSlotFields {
+    answer_field: SlotField,
+    has_updated_at: bool,
+    timestamp_field: SlotField,
+}
+
+impl PackedSlotFields {
+    /// Projects the bit-field layout of a [`SlotFeed`].
+    const fn of(feed: &SlotFeed) -> Self {
+        match feed.updated_at {
+            Some(ts) => Self {
+                answer_field: feed.answer_field,
+                has_updated_at: true,
+                timestamp_field: ts.field,
+            },
+            None => Self {
+                answer_field: feed.answer_field,
+                has_updated_at: false,
+                timestamp_field: SlotField { bit_offset: 0, bit_len: 0, signed: false },
+            },
+        }
+    }
+
+    /// Packs the layout into its storage word — the exact inverse of
+    /// [`Self::from_word`].
+    fn to_word(&self) -> U256 {
+        let mut b = [0u8; 32];
+        b[31] = u8::from(self.has_updated_at);
+        b[30] = u8::from(self.answer_field.signed);
+        b[28..30].copy_from_slice(&self.answer_field.bit_offset.to_be_bytes());
+        b[26..28].copy_from_slice(&self.answer_field.bit_len.to_be_bytes());
+        b[25] = u8::from(self.timestamp_field.signed);
+        b[23..25].copy_from_slice(&self.timestamp_field.bit_offset.to_be_bytes());
+        b[21..23].copy_from_slice(&self.timestamp_field.bit_len.to_be_bytes());
+        U256::from_be_bytes(b)
+    }
+
+    /// Unpacks a raw `slot_fields` storage word.
+    const fn from_word(word: U256) -> Self {
+        let b = word.to_be_bytes::<32>();
+        Self {
+            answer_field: SlotField {
+                bit_offset: u16::from_be_bytes([b[28], b[29]]),
+                bit_len: u16::from_be_bytes([b[26], b[27]]),
+                signed: b[30] != 0,
+            },
+            has_updated_at: b[31] != 0,
+            timestamp_field: SlotField {
+                bit_offset: u16::from_be_bytes([b[23], b[24]]),
+                bit_len: u16::from_be_bytes([b[21], b[22]]),
+                signed: b[25] != 0,
+            },
+        }
     }
 }
 
@@ -298,6 +430,28 @@ mod tests {
         });
     }
 
+    fn slot_token(token: Address, staleness_bound: u64) -> TokenConfig {
+        let updated_at = (staleness_bound > 0).then_some(SlotTimestamp {
+            slot: U256::from(3u64),
+            field: SlotField { bit_offset: 192, bit_len: 64, signed: false },
+        });
+        TokenConfig {
+            token,
+            fee_recipient: address!("0x00000000000000000000000000000000000000fc"),
+            price_source: PriceSource::Slot(SlotFeed {
+                oracle: address!("0x0000000000000000000000000000000000000abc"),
+                answer_slot: U256::from(3u64),
+                answer_field: SlotField { bit_offset: 0, bit_len: 192, signed: true },
+                updated_at,
+                direction: FeedDirection::NativePerToken,
+                answer_decimals: 18,
+                token_decimals: 6,
+                staleness_bound,
+            }),
+            margin_bps: 50,
+        }
+    }
+
     #[test]
     fn feed_token_round_trips() {
         let mut storage = HashMapStorageProvider::new(1);
@@ -306,6 +460,21 @@ mod tests {
             let mut s = PayerConfigStorage::new(ctx);
             s.upsert_token(&cfg).unwrap();
             assert_eq!(s.read_token(TOKEN_A).unwrap(), cfg);
+        });
+    }
+
+    #[test]
+    fn slot_token_round_trips() {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut s = PayerConfigStorage::new(ctx);
+            // With and without a staleness timestamp location.
+            let with_ts = slot_token(TOKEN_A, 3600);
+            let without_ts = slot_token(TOKEN_B, 0);
+            s.upsert_token(&with_ts).unwrap();
+            s.upsert_token(&without_ts).unwrap();
+            assert_eq!(s.read_token(TOKEN_A).unwrap(), with_ts);
+            assert_eq!(s.read_token(TOKEN_B).unwrap(), without_ts);
         });
     }
 

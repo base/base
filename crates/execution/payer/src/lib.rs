@@ -9,6 +9,9 @@ pub use rate::Rate;
 mod feed;
 pub use feed::{AnswerShape, FeedConfig, FeedDirection, FeedReading};
 
+mod slot;
+pub use slot::{SlotField, SlotFeed, SlotTimestamp};
+
 mod config;
 pub use config::{PayerConfig, PriceSource, TokenConfig};
 

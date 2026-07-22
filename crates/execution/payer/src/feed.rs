@@ -42,6 +42,51 @@ impl FeedDirection {
             _ => None,
         }
     }
+
+    /// Converts a strictly-positive feed `answer` (scaled by
+    /// `10^answer_decimals`) into an exact [`Rate`] of token atomic units per
+    /// native wei, given the payment token's `token_decimals`. Native is taken
+    /// to have 18 decimals.
+    ///
+    /// Shared by every price source that resolves through a feed answer
+    /// ([`FeedConfig`], slot reads); the positivity and staleness gates are the
+    /// caller's responsibility (see [`FeedReading::positive_answer`] /
+    /// [`FeedReading::ensure_fresh`]).
+    pub fn rate(
+        self,
+        answer: U256,
+        answer_decimals: u8,
+        token_decimals: u8,
+    ) -> Result<Rate, PricingError> {
+        let p = answer;
+        let ten_dt = Self::pow10(token_decimals)?;
+        let ten_da = Self::pow10(answer_decimals)?;
+        let ten_18 = Self::pow10(18)?;
+
+        // Derivations (native has 18 decimals):
+        //   NativePerToken: 1 token = P/10^da native → atomic-per-wei =
+        //     10^(dt+da) / (P × 10^18).
+        //   TokenPerNative: 1 native = Q/10^da tokens → atomic-per-wei =
+        //     (Q × 10^dt) / 10^(da+18).
+        let rate = match self {
+            Self::NativePerToken => Rate::new(
+                ten_dt.checked_mul(ten_da).ok_or(PricingError::Overflow)?,
+                p.checked_mul(ten_18).ok_or(PricingError::Overflow)?,
+            ),
+            Self::TokenPerNative => Rate::new(
+                p.checked_mul(ten_dt).ok_or(PricingError::Overflow)?,
+                ten_da.checked_mul(ten_18).ok_or(PricingError::Overflow)?,
+            ),
+        };
+        Ok(rate)
+    }
+
+    /// `10^exp` as a `U256`, or [`PricingError::DecimalsTooLarge`] on overflow.
+    fn pow10(exp: u8) -> Result<U256, PricingError> {
+        U256::from(10u8)
+            .checked_pow(U256::from(exp))
+            .ok_or(PricingError::DecimalsTooLarge(exp))
+    }
 }
 
 /// Layout of an external price feed's ABI-encoded return, so the node knows
@@ -125,6 +170,34 @@ pub struct FeedReading {
     pub updated_at: Option<u64>,
 }
 
+impl FeedReading {
+    /// The answer as a strictly-positive value, rejecting zero and a negative
+    /// `int256` (top bit set). Extracted bit-fields narrower than 256 bits are
+    /// already non-negative, so this is the single positivity gate for every
+    /// price source.
+    pub fn positive_answer(&self) -> Result<U256, PricingError> {
+        if self.answer.is_zero() || self.answer.bit(255) {
+            return Err(PricingError::NonPositiveAnswer);
+        }
+        Ok(self.answer)
+    }
+
+    /// Enforces `staleness_bound` (in seconds; `0` disables the check) against
+    /// `now`. A non-zero bound on a reading that carries no `updated_at` is
+    /// [`PricingError::StalenessUnsupported`].
+    pub fn ensure_fresh(&self, staleness_bound: u64, now: u64) -> Result<(), PricingError> {
+        if staleness_bound == 0 {
+            return Ok(());
+        }
+        let updated_at = self.updated_at.ok_or(PricingError::StalenessUnsupported)?;
+        let age = now.saturating_sub(updated_at);
+        if age > staleness_bound {
+            return Err(PricingError::StaleAnswer { age, bound: staleness_bound });
+        }
+        Ok(())
+    }
+}
+
 /// On-chain configuration for a feed-backed token price.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FeedConfig {
@@ -149,51 +222,9 @@ impl FeedConfig {
     /// Resolves a [`FeedReading`] to an exact [`Rate`] (token atomic units per
     /// native wei), enforcing positivity and the configured staleness bound.
     pub fn rate(&self, reading: FeedReading, now: u64) -> Result<Rate, PricingError> {
-        // Positivity: reject zero and negative int256 (top bit set).
-        if reading.answer.is_zero() || reading.answer.bit(255) {
-            return Err(PricingError::NonPositiveAnswer);
-        }
-
-        if self.staleness_bound > 0 {
-            match reading.updated_at {
-                None => return Err(PricingError::StalenessUnsupported),
-                Some(updated_at) => {
-                    let age = now.saturating_sub(updated_at);
-                    if age > self.staleness_bound {
-                        return Err(PricingError::StaleAnswer { age, bound: self.staleness_bound });
-                    }
-                }
-            }
-        }
-
-        let p = reading.answer;
-        let ten_dt = Self::pow10(self.token_decimals)?;
-        let ten_da = Self::pow10(self.answer_decimals)?;
-        let ten_18 = Self::pow10(18)?;
-
-        // Derivations (native has 18 decimals):
-        //   NativePerToken: 1 token = P/10^da native → atomic-per-wei =
-        //     10^(dt+da) / (P × 10^18).
-        //   TokenPerNative: 1 native = Q/10^da tokens → atomic-per-wei =
-        //     (Q × 10^dt) / 10^(da+18).
-        let rate = match self.direction {
-            FeedDirection::NativePerToken => Rate::new(
-                ten_dt.checked_mul(ten_da).ok_or(PricingError::Overflow)?,
-                p.checked_mul(ten_18).ok_or(PricingError::Overflow)?,
-            ),
-            FeedDirection::TokenPerNative => Rate::new(
-                p.checked_mul(ten_dt).ok_or(PricingError::Overflow)?,
-                ten_da.checked_mul(ten_18).ok_or(PricingError::Overflow)?,
-            ),
-        };
-        Ok(rate)
-    }
-
-    /// `10^exp` as a `U256`, or [`PricingError::DecimalsTooLarge`] on overflow.
-    fn pow10(exp: u8) -> Result<U256, PricingError> {
-        U256::from(10u8)
-            .checked_pow(U256::from(exp))
-            .ok_or(PricingError::DecimalsTooLarge(exp))
+        let answer = reading.positive_answer()?;
+        reading.ensure_fresh(self.staleness_bound, now)?;
+        self.direction.rate(answer, self.answer_decimals, self.token_decimals)
     }
 }
 
