@@ -6053,7 +6053,6 @@ name = "base-prover-nitro-host"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "alloy-provider 2.0.5",
  "base-cli-utils",
  "base-common-chains",
  "base-common-genesis",
@@ -6065,6 +6064,8 @@ dependencies = [
  "clap",
  "eyre",
  "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tracing",
