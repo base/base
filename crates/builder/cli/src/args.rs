@@ -7,6 +7,8 @@ use base_builder_core::{
     BuilderConfig, ExecutionMeteringMode, RejectionCache, SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
+use base_execution_payer::LocalPayerSigner;
+use base_execution_payer_rpc_node::PayerRpcConfig;
 use base_node_core::args::RollupArgs;
 use base_observability_events::{
     DEFAULT_QUEUE_CAPACITY, TransactionEventProducer, TransactionEventWriterConfig,
@@ -116,6 +118,22 @@ impl TransactionEventsArgs {
             network: self.network.clone(),
         }
     }
+}
+
+/// Parameters for the ERC-8168 builder-operated payer service.
+#[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
+#[command(next_help_heading = "Payer")]
+pub struct PayerArgs {
+    /// Enable the ERC-8168 payer service (`payer_*` RPC). Requires a payer key
+    /// to co-sign sponsored transactions.
+    #[arg(long = "builder.payer-enabled", env = "BUILDER_PAYER_ENABLED", default_value = "false")]
+    pub enabled: bool,
+
+    /// Hex-encoded secp256k1 private key for the builder's payer account (with
+    /// or without a `0x` prefix). Sourced from the environment so it is never
+    /// written to a config file.
+    #[arg(long = "builder.payer-private-key", env = "BUILDER_PAYER_PRIVATE_KEY")]
+    pub private_key: Option<String>,
 }
 
 /// Parameters for rollup configuration
@@ -229,9 +247,33 @@ pub struct Args {
     /// Transaction event journal configuration
     #[command(flatten)]
     pub transaction_events: TransactionEventsArgs,
+
+    /// ERC-8168 payer service configuration
+    #[command(flatten)]
+    pub payer: PayerArgs,
 }
 
 impl Args {
+    /// Builds the ERC-8168 payer RPC configuration from the CLI arguments,
+    /// decoding the payer key when the service is enabled.
+    pub fn build_payer_rpc_config(&self) -> eyre::Result<PayerRpcConfig> {
+        if !self.payer.enabled {
+            return Ok(PayerRpcConfig::disabled());
+        }
+        let signer = self
+            .payer
+            .private_key
+            .as_deref()
+            .map(|hex| {
+                let bytes: [u8; 32] = alloy_primitives::hex::decode_to_array(hex.trim_start_matches("0x"))
+                    .map_err(|error| eyre::eyre!("invalid payer private key: {error}"))?;
+                LocalPayerSigner::from_bytes(&bytes)
+                    .map_err(|error| eyre::eyre!("invalid payer private key: {error}"))
+            })
+            .transpose()?;
+        Ok(PayerRpcConfig { enabled: true, signer })
+    }
+
     /// Creates a [`MeteringStore`] from the CLI arguments.
     pub fn build_metering_store(&self) -> MeteringStore {
         MeteringStore::new(
@@ -269,6 +311,7 @@ impl Default for Args {
             manifest_precheck_enabled: true,
             flashblocks: FlashblocksArgs::default(),
             transaction_events: TransactionEventsArgs::default(),
+            payer: PayerArgs::default(),
         }
     }
 }

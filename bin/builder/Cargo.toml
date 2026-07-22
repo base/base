@@ -24,6 +24,7 @@ base-builder-cli.workspace = true
 base-builder-core.workspace = true
 base-builder-metering.workspace = true
 base-observability-events.workspace = true
+base-execution-payer-rpc-node.workspace = true
 
 # reth
 base-reth-cli.workspace = true

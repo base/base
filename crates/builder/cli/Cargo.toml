@@ -17,9 +17,14 @@ base-node-core.workspace = true
 base-builder-core.workspace = true
 base-builder-metering.workspace = true
 base-observability-events.workspace = true
+base-execution-payer = { workspace = true, features = ["signer"] }
+base-execution-payer-rpc-node.workspace = true
 
 # cli
 clap = { workspace = true, features = ["derive", "env"] }
+
+# alloy
+alloy-primitives.workspace = true
 
 # misc
 eyre.workspace = true
