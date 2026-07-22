@@ -513,8 +513,8 @@ where
             );
             return Ok(BatchBlock::Cached {
                 block_with_parent: cached.block_with_parent,
-                sorted_trie_updates: Arc::clone(&sorted.trie_updates),
-                sorted_post_state: Arc::clone(&sorted.hashed_state),
+                sorted_trie_updates: Arc::clone(&sorted.sorted.trie_updates),
+                sorted_post_state: Arc::clone(&sorted.sorted.hashed_state),
             });
         }
 
@@ -715,7 +715,9 @@ mod tests {
     use reth_ethereum_primitives::{Block, Receipt};
     use reth_execution_types::{Chain, ExecutionOutcome};
     use reth_primitives_traits::RecoveredBlock;
-    use reth_trie::{HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted};
+    use reth_trie::{
+        ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,
+    };
 
     use super::*;
 
@@ -760,10 +762,10 @@ mod tests {
             }
             blocks.push(b);
 
-            let data = LazyTrieData::ready(
+            let data = LazyTrieData::ready(ComputedTrieData::new(
                 Arc::new(HashedPostStateSorted::default()),
                 Arc::new(TrieUpdatesSorted::default()),
-            );
+            ));
             trie_data.insert(n, data);
         }
 
