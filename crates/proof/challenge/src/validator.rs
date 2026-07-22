@@ -277,11 +277,7 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
             None => (true, claimed_root),
         };
 
-        Ok(ValidationResult {
-            is_valid,
-            expected_root,
-            invalid_intermediate_index: None,
-        })
+        Ok(ValidationResult { is_valid, expected_root, invalid_intermediate_index: None })
     }
 
     /// Validates the intermediate output roots of a candidate dispute game.
