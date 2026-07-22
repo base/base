@@ -363,17 +363,20 @@ impl PayloadWitnessPrefetcher {
             }
         };
 
-        let execute_payload_response = match self
-            .inner
-            .providers
-            .l2
-            .client()
-            .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
-                "debug_executePayload",
-                (parent_block_hash, payload_attributes),
-            )
-            .await
-        {
+        let execute_payload_response = match base_metrics::time!(
+            Metrics::l2_proof_node_rpc_latency_seconds(),
+            {
+                self.inner
+                    .providers
+                    .l2
+                    .client()
+                    .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
+                        "debug_executePayload",
+                        (parent_block_hash, payload_attributes),
+                    )
+                    .await
+            }
+        ) {
             Ok(response) => response,
             Err(err) => {
                 error!(
@@ -1273,15 +1276,19 @@ async fn handle_hint_inner(
             let payload_attributes: BasePayloadAttributes =
                 serde_json::from_slice(encoded_payload_attributes)?;
 
-            let execute_payload_response = match providers
-                .l2
-                .client()
-                .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
-                    "debug_executePayload",
-                    (parent_block_hash, payload_attributes),
-                )
-                .await
-            {
+            let execute_payload_response = match base_metrics::time!(
+                Metrics::l2_proof_node_rpc_latency_seconds(),
+                {
+                    providers
+                        .l2
+                        .client()
+                        .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
+                            "debug_executePayload",
+                            (parent_block_hash, payload_attributes),
+                        )
+                        .await
+                }
+            ) {
                 Ok(response) => response,
                 Err(e) => {
                     error!(error = %e, "debug_executePayload failed");
