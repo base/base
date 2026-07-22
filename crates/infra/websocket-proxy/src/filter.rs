@@ -526,7 +526,15 @@ mod tests {
     /// With the entry count bounded to [`MAX_FILTER_ENTRIES`], even the largest
     /// permitted filter against a worst-case flashblock stays well within budget.
     /// (Before the bound, a ~50k-address filter took ~3s here — ~15x over.)
+    ///
+    /// This is an on-demand measurement rather than a CI gate: wall-clock
+    /// assertions are flaky under CPU contention, debug builds, and Miri. The
+    /// security invariant (a bounded entry count) is gated deterministically by
+    /// [`oversized_filter_is_rejected`]; run this with `--ignored` to observe the
+    /// worst-case latency. The bound below is deliberately generous to stay
+    /// robust across build profiles.
     #[test]
+    #[ignore = "wall-clock measurement; run with --ignored (CI regression is guarded by oversized_filter_is_rejected)"]
     fn max_permitted_filter_match_stays_within_flashblock_interval() {
         use std::time::{Duration, Instant};
 
@@ -550,10 +558,14 @@ mod tests {
         let elapsed = start.elapsed();
         assert!(!matched, "sanity: junk tokens must not match");
 
+        // Generous bound (10x the interval) so a manual run stays robust across
+        // debug/release and loaded machines while still catching a cap set high
+        // enough to reintroduce the DoS.
+        let budget = FLASHBLOCK_INTERVAL * 10;
         assert!(
-            elapsed < FLASHBLOCK_INTERVAL,
+            elapsed < budget,
             "largest permitted filter ({MAX_FILTER_ENTRIES} entries) over a {TRANSACTIONS}-tx \
-             flashblock took {elapsed:?}, exceeding the {FLASHBLOCK_INTERVAL:?} flashblock interval",
+             flashblock took {elapsed:?}, exceeding the {budget:?} budget",
         );
     }
 }

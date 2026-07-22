@@ -219,12 +219,8 @@ fn create_filter_from_query(query: FilterQuery) -> Result<FilterType, FilterErro
         }
     };
 
-    let filter =
-        FilterType::new_combined_with_mode(addresses.clone(), topics.clone(), match_mode)?;
-    debug!(
-        "Created filter: {:?} from addresses: {:?}, topics: {:?}, match_mode: {:?}",
-        filter, addresses, topics, match_mode
-    );
+    let filter = FilterType::new_combined_with_mode(addresses, topics, match_mode)?;
+    debug!(filter = ?filter, match_mode = ?match_mode, "Created filter");
     Ok(filter)
 }
 
