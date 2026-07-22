@@ -1130,12 +1130,25 @@ where
             });
         }
 
-        let (sender_locked_now, sender_unlocks_at) =
-            self.account_lock(&*state, local_chain_id, now, sender, classification_generation);
+        let (sender_locked_now, sender_unlocks_at) = self.account_lock(
+            &*state,
+            local_chain_id,
+            now,
+            sender,
+            classification_generation,
+            Self::prefetched_account_state(&config_reads, sender),
+        );
         let (payer_locked_now, payer_unlocks_at) = if payer == sender {
             (sender_locked_now, sender_unlocks_at)
         } else {
-            self.account_lock(&*state, local_chain_id, now, payer, classification_generation)
+            self.account_lock(
+                &*state,
+                local_chain_id,
+                now,
+                payer,
+                classification_generation,
+                Self::prefetched_account_state(&config_reads, payer),
+            )
         };
         let lock_horizon = now.saturating_add(2 * InvalidationKey::EXPIRY_BUCKET_SECS);
         let sender_locked = sender_locked_now
@@ -1156,8 +1169,13 @@ where
                 }
             }
         }
-        let payer_trusted =
-            payer_locked && self.is_high_rate_account(&*state, payer, classification_generation);
+        let payer_trusted = payer_locked
+            && self.is_high_rate_account(
+                &*state,
+                payer,
+                payer_account.bytecode_hash,
+                classification_generation,
+            );
         if payer_trusted {
             watch_set.push(InvalidationKey::CodeHash(payer));
         }
@@ -1221,6 +1239,23 @@ where
         AccountConfigurationStorage::account_state_slot(account)
     }
 
+    /// Recovers `account`'s account-state word from the authorization read-set
+    /// when it was already loaded during `authorize_and_apply` (the k1 default-EOA
+    /// path reads it to gate the inline self key). Lets the lock classification
+    /// reuse that read instead of issuing a second SLOAD for the same slot. Absent
+    /// for accounts authorized via a bound actor, whose authorization reads the
+    /// actor-config slot rather than the account-state word.
+    fn prefetched_account_state(
+        config_reads: &[ConfigSlot],
+        account: Address,
+    ) -> Option<AccountState> {
+        let slot = U256::from_be_bytes(Self::account_state_slot(account).0);
+        config_reads
+            .iter()
+            .find(|read| read.address == AccountConfigurationStorage::ADDRESS && read.slot == slot)
+            .map(|read| AccountState::from_word(read.expected))
+    }
+
     fn account_lock(
         &self,
         state: &dyn StateProvider,
@@ -1228,13 +1263,26 @@ where
         now: u64,
         account: Address,
         generation: u64,
+        prefetched: Option<AccountState>,
     ) -> (bool, Option<u64>) {
         // Invalidation may advance the generation immediately after this read.
         // Pool admission rejects the captured classification if that happens.
         let cached = self.limit_class_cache.write().account_state(account);
         let account_state = if let Some(value) = cached {
+            ValidatorMetrics::classification_state_reads("cache").increment(1);
+            value
+        } else if let Some(value) = prefetched {
+            // Authorization already read this slot for this snapshot; reuse the
+            // recorded value and seed the cache (generation-gated exactly like a
+            // fresh read) rather than issuing a second SLOAD.
+            ValidatorMetrics::classification_state_reads("prefetch").increment(1);
+            let mut cache = self.limit_class_cache.write();
+            if generation == self.limit_class_cache_generation() {
+                cache.insert_account_state(account, value);
+            }
             value
         } else {
+            ValidatorMetrics::classification_state_reads("sload").increment(1);
             let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
             let value = match StorageCtx::enter(&mut storage, |ctx| {
                 AccountConfigurationStorage::new(ctx).get_account_state(account)
@@ -1269,6 +1317,7 @@ where
         &self,
         state: &dyn StateProvider,
         account: Address,
+        bytecode_hash: Option<B256>,
         generation: u64,
     ) -> bool {
         // Invalidation may advance the generation immediately after this read.
@@ -1277,7 +1326,7 @@ where
         if let Some(value) = cached {
             return value;
         }
-        let trusted = match Self::delegation_target(state, account) {
+        let trusted = match Self::delegation_target(state, bytecode_hash) {
             Ok(target) => {
                 target.is_some_and(|target| self.trusted_delegation_targets.contains(&target))
             }
@@ -1297,12 +1346,16 @@ where
         trusted
     }
 
+    /// Resolves the EIP-7702 delegation target from an account's already-known
+    /// code hash. Takes the `bytecode_hash` the caller has in hand (the fee check
+    /// already reads the payer account) so trust classification does not re-read
+    /// the account info; only the code body itself is fetched, and only when the
+    /// account actually carries code.
     fn delegation_target(
         state: &dyn StateProvider,
-        account: Address,
+        bytecode_hash: Option<B256>,
     ) -> Result<Option<Address>, reth_storage_api::errors::ProviderError> {
-        let Some(hash) = state.basic_account(&account)?.and_then(|account| account.bytecode_hash)
-        else {
+        let Some(hash) = bytecode_hash else {
             return Ok(None);
         };
         let Some(code) = state.bytecode_by_hash(&hash)? else {

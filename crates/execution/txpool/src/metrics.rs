@@ -87,4 +87,7 @@ base_metrics::define_metrics! {
     #[describe("EIP-8130 authorization wall time by sender authenticator type")]
     #[label(name = "sig_type", default = ["k1", "p256", "passkey", "delegate", "delegate-k1", "delegate-p256", "delegate-passkey", "other"])]
     auth_seconds: histogram,
+    #[describe("EIP-8130 lock-classification account-state resolutions by read source")]
+    #[label(name = "source", default = ["cache", "prefetch", "sload"])]
+    classification_state_reads: counter,
 }
