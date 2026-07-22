@@ -961,6 +961,8 @@ mod runtime_tests {
     #[test]
     fn known_chains_resolve_activation_boundaries() {
         let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
+        RuntimeUpgradeRegistry::clear_chain(8453);
+        RuntimeUpgradeRegistry::clear_chain(84532);
         for (chain_id, config) in
             [(8453, UpgradeConfig::BASE_MAINNET), (84532, UpgradeConfig::BASE_SEPOLIA)]
         {
@@ -993,9 +995,9 @@ mod runtime_tests {
     #[test]
     fn activation_boundaries_respect_overrides() {
         let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
+        RuntimeUpgradeRegistry::clear_chain(8453);
+        RuntimeUpgradeRegistry::clear_chain(84532);
         const CHAIN_ID: u64 = 8453;
-
-        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
 
         let beryl = UpgradeConfig::BASE_MAINNET.base.beryl.unwrap();
         let cobalt = beryl + 100;
@@ -1032,6 +1034,8 @@ mod runtime_tests {
     #[test]
     fn far_future_resolves_latest_scheduled_upgrade() {
         let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
+        RuntimeUpgradeRegistry::clear_chain(8453);
+        RuntimeUpgradeRegistry::clear_chain(84532);
         for chain_id in [8453, 84532] {
             assert_eq!(
                 BaseUpgrade::from_chain_and_timestamp(chain_id, u64::MAX),
