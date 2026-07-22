@@ -20,6 +20,9 @@ pub struct HostProviders {
     pub blobs: L1BlobProvider,
     /// The L2 EL provider.
     pub l2: RootProvider<Base>,
+    /// The alt-DA client, present only when a da-server URL is configured. Used to
+    /// resolve `DERIVATION_VERSION_1` generic commitments into off-chain batch bytes.
+    pub alt_da: Option<base_alt_da::Client>,
 }
 
 /// Supplies raw L1 data needed to populate preimage storage.
@@ -61,6 +64,10 @@ pub struct ProverConfig {
     pub l2_eth_url: String,
     /// L1 beacon API URL, or `None` when the L1 parent has no beacon/blob DA endpoint.
     pub l1_beacon_url: Option<String>,
+    /// Alt-DA (da-server) URL, or `None` when the chain uses inline calldata/blob DA.
+    /// When set, the host resolves `DERIVATION_VERSION_1` generic commitments against
+    /// this server and the client derives from off-chain DA.
+    pub da_server_url: Option<String>,
     /// L2 chain ID.
     pub l2_chain_id: u64,
     /// Rollup configuration.

@@ -138,6 +138,12 @@ struct ProverRuntimeArgs {
     #[arg(long, env = "L1_CALLDATA_ONLY")]
     l1_calldata_only: bool,
 
+    /// Alt-DA (da-server) URL, e.g. `http://base-da-server:2583`. When set, the prover
+    /// resolves `DERIVATION_VERSION_1` generic commitments posted to L1 calldata against
+    /// this server (off-chain DA). Additive to calldata-only mode.
+    #[arg(long, env = "DA_SERVER_URL")]
+    da_server_url: Option<String>,
+
     /// L2 chain ID.
     #[arg(long, env = "L2_CHAIN_ID")]
     l2_chain_id: u64,
@@ -195,6 +201,16 @@ impl ProverRuntimeArgs {
     async fn prover_config(self) -> eyre::Result<ProverConfig> {
         let l1_beacon_url = self.l1_beacon_url()?;
 
+        let da_server_url =
+            self.da_server_url.as_deref().map(str::trim).filter(|url| !url.is_empty());
+        if da_server_url.is_some() && l1_beacon_url.is_some() {
+            return Err(eyre!(
+                "conflicting DA modes: --da-server-url (alt-DA) requires calldata-based L1 \
+                 derivation and cannot be combined with --l1-beacon-url"
+            ));
+        }
+        let da_server_url = da_server_url.map(str::to_string);
+
         let rollup_config = if self.fetch_rollup_config {
             let cl_url = self
                 .l2_cl_url
@@ -241,6 +257,7 @@ impl ProverRuntimeArgs {
             l1_eth_url: self.l1_eth_url,
             l2_eth_url: self.l2_eth_url,
             l1_beacon_url,
+            da_server_url,
             l2_chain_id: self.l2_chain_id,
             rollup_config,
             l1_config,
