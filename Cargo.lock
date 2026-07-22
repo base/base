@@ -6304,6 +6304,7 @@ dependencies = [
  "base-execution-txpool",
  "base-flashblocks",
  "base-flashblocks-node",
+ "base-load-tests",
  "base-node-core",
  "base-node-runner",
  "base-optimism-rpc",
