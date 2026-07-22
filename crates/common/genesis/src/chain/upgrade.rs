@@ -905,6 +905,9 @@ mod tests {
 #[cfg(test)]
 mod runtime_tests {
     use super::*;
+    use spin::Mutex;
+
+    static RUNTIME_REGISTRY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn runtime_registry_tracks_timestamp_and_never_overrides() {
@@ -957,6 +960,7 @@ mod runtime_tests {
 
     #[test]
     fn known_chains_resolve_activation_boundaries() {
+        let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
         for (chain_id, config) in
             [(8453, UpgradeConfig::BASE_MAINNET), (84532, UpgradeConfig::BASE_SEPOLIA)]
         {
@@ -988,6 +992,7 @@ mod runtime_tests {
 
     #[test]
     fn activation_boundaries_respect_overrides() {
+        let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
         const CHAIN_ID: u64 = 8453;
 
         RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
@@ -1026,6 +1031,7 @@ mod runtime_tests {
 
     #[test]
     fn far_future_resolves_latest_scheduled_upgrade() {
+        let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
         for chain_id in [8453, 84532] {
             assert_eq!(
                 BaseUpgrade::from_chain_and_timestamp(chain_id, u64::MAX),
