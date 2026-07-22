@@ -7,7 +7,10 @@ use base_protocol::L2BlockInfo;
 use crate::UnsealedPayloadHandle;
 
 /// Build/seal pipeline bookkeeping carried between iterations of the sequencer main loop.
-#[derive(Debug)]
+///
+/// [`Default`] gives the empty state the actor starts with: no pre-built payload, no queued
+/// parent, and no prior seal/completion timing.
+#[derive(Debug, Default)]
 pub struct BuildPipelineState {
     /// Pre-built payload awaiting sealing.
     pub next_payload_to_seal: Option<UnsealedPayloadHandle>,
@@ -20,23 +23,7 @@ pub struct BuildPipelineState {
     pub last_block_complete_at: Option<Instant>,
 }
 
-impl Default for BuildPipelineState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl BuildPipelineState {
-    /// Creates an empty pipeline state, as at actor startup.
-    pub const fn new() -> Self {
-        Self {
-            next_payload_to_seal: None,
-            pending_build_parent: None,
-            last_seal_duration: Duration::from_secs(0),
-            last_block_complete_at: None,
-        }
-    }
-
     /// Records that a block has just completed, returning the elapsed time since the previous
     /// completion. Returns `None` on the first block after construction or after a stop/start
     /// cycle cleared the previous timestamp, so that idle time is never recorded as block time.
@@ -64,13 +51,13 @@ mod tests {
 
     #[test]
     fn record_block_complete_returns_none_first_time() {
-        let mut state = BuildPipelineState::new();
+        let mut state = BuildPipelineState::default();
         assert!(state.record_block_complete().is_none());
     }
 
     #[test]
     fn record_block_complete_returns_elapsed_on_subsequent_calls() {
-        let mut state = BuildPipelineState::new();
+        let mut state = BuildPipelineState::default();
         state.record_block_complete();
         std::thread::sleep(Duration::from_millis(5));
         assert!(state.record_block_complete().is_some());
@@ -78,7 +65,7 @@ mod tests {
 
     #[test]
     fn clear_for_active_transition_resets_fields() {
-        let mut state = BuildPipelineState::new();
+        let mut state = BuildPipelineState::default();
         state.record_block_complete();
         state.clear_for_active_transition();
         assert!(state.last_block_complete_at.is_none());

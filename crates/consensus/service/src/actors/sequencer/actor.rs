@@ -591,7 +591,7 @@ where
 
         self.update_metrics();
 
-        let mut pipeline = BuildPipelineState::new();
+        let mut pipeline = BuildPipelineState::default();
 
         // Reset the engine state prior to beginning block building.
         // Admin API queries are serviced during this phase (see schedule_initial_reset).
