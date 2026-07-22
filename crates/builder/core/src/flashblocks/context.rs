@@ -718,13 +718,6 @@ impl BasePayloadBuilderCtx {
                         continue;
                     }
                     // this is an error that we should treat as fatal for this attempt
-                    debug!(
-                        target: "payload_builder",
-                        message = "Considering transaction",
-                        tx_hash = ?tx_hash,
-                        tx_da_size = ?tx_da_size,
-                        result = %TxnExecutionError::EvmError,
-                    );
                     return Err(PayloadBuilderError::evm(err));
                 }
             };
