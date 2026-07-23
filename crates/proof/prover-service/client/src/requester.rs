@@ -42,12 +42,8 @@ pub trait ProofRequesterProvider: Send + Sync {
     /// Delete completed TEE proof requests produced by one signer.
     async fn delete_proofs_by_tee_signer(
         &self,
-        _request: DeleteProofsByTeeSignerRequest,
-    ) -> Result<u64, ProverServiceClientError> {
-        Err(ProverServiceClientError::UnexpectedResultPayload(
-            "TEE signer deletion is unavailable for this provider".to_owned(),
-        ))
-    }
+        request: DeleteProofsByTeeSignerRequest,
+    ) -> Result<u64, ProverServiceClientError>;
 
     /// List submitted proof requests.
     async fn list_proofs(

@@ -2,7 +2,6 @@
 
 use std::{fmt, sync::Arc};
 
-use alloy_primitives::Address;
 use base_proof_host::{ProverConfig, ProverError, ProverService};
 use base_proof_primitives::{ProofRequest, ProofResult};
 use thiserror::Error;
@@ -104,19 +103,14 @@ impl NitroEnclavePool {
     }
 
     /// Proves one request using the busy-enclave policy.
-    pub async fn prove(
-        &self,
-        request: ProofRequest,
-    ) -> Result<(ProofResult, Address), NitroEnclavePoolError> {
+    ///
+    /// The returned [`ProofResult::Tee`] carries the enclave signer that
+    /// produced it, stamped inside the enclave at signing time.
+    pub async fn prove(&self, request: ProofRequest) -> Result<ProofResult, NitroEnclavePoolError> {
         let l2_block = request.claimed_l2_block_number;
         let (enclave, _permit) = self.acquire_enclave(l2_block).await?;
 
-        // Read the signer before proving so a signer-read failure fails cheaply
-        // instead of discarding a completed proof.
-        let tee_signer = enclave.transport.signer_address().await?;
-        let proof =
-            enclave.service.prove_block(request).await.map_err(NitroEnclavePoolError::Prover)?;
-        Ok((proof, tee_signer))
+        enclave.service.prove_block(request).await.map_err(NitroEnclavePoolError::Prover)
     }
 
     async fn acquire_enclave(
@@ -199,9 +193,6 @@ pub enum NitroEnclavePoolError {
     /// Every valid enclave is already proving.
     #[error("enclave busy: another proof request is already in flight")]
     Busy,
-    /// The selected enclave signer could not be read.
-    #[error(transparent)]
-    Signer(#[from] crate::NitroHostError),
     /// Witness generation or enclave proving failed.
     #[error(transparent)]
     Prover(#[from] ProverError<NitroBackend>),

@@ -1,6 +1,5 @@
 //! Async proof submission task for prover-service worker delivery.
 
-use alloy_primitives::Address;
 use base_proof_primitives::ProofResult as NitroProofResult;
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{
@@ -37,9 +36,8 @@ impl ProofSubmitterRequest {
         lock_id: String,
         worker_id: String,
         proof: NitroProofResult,
-        tee_signer: Address,
     ) -> Result<WorkerSubmitProofRequest, ProofSubmitterError> {
-        let NitroProofResult::Tee { aggregate_proposal, proposals } = proof else {
+        let NitroProofResult::Tee { aggregate_proposal, proposals, tee_signer } = proof else {
             return Err(ProofSubmitterError::UnsupportedProofResult);
         };
 
@@ -151,7 +149,7 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_primitives::{B256, Bytes};
+    use alloy_primitives::{Address, B256, Bytes};
     use async_trait::async_trait;
     use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
     use base_prover_service_protocol::{
@@ -275,6 +273,7 @@ mod tests {
         NitroProofResult::Tee {
             aggregate_proposal: proposal(10),
             proposals: vec![proposal(8), proposal(9), proposal(10)],
+            tee_signer: Address::repeat_byte(0x11),
         }
     }
 
@@ -284,7 +283,6 @@ mod tests {
             "lock-1".to_string(),
             "worker-1".to_string(),
             nitro_tee_proof(),
-            Address::repeat_byte(0x11),
         )
         .expect("tee proof should build a submission request")
     }
@@ -346,7 +344,6 @@ mod tests {
             "lock-1".to_string(),
             "worker-1".to_string(),
             NitroProofResult::Zk { proof_bytes: vec![1, 2, 3] },
-            Address::repeat_byte(0x11),
         );
 
         assert!(matches!(result, Err(ProofSubmitterError::UnsupportedProofResult)));
