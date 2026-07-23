@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
+
 use alloy_primitives::{Address, B256, U256};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{VisitControl, VisitSummary};
+use crate::{MAX_ACCOUNTS, MAX_POOLS, MAX_STORAGE_SLOTS, VisitControl, VisitSummary};
 
 /// One registry-audited state key that victim execution may change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -60,6 +62,84 @@ impl AuditedWriteKey {
     }
 }
 
+/// Immutable conflict-free write authority and quote-slot ownership for one pool universe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrameAuditPlan {
+    audited_writes: Vec<AuditedWriteKey>,
+    quote_slot_owner: BTreeMap<(Address, U256), Address>,
+    pools: Vec<Address>,
+}
+
+impl FrameAuditPlan {
+    /// Constructs one canonical conflict-free audit plan.
+    pub fn new(
+        mut audited_writes: Vec<AuditedWriteKey>,
+        quote_slot_owner: BTreeMap<(Address, U256), Address>,
+    ) -> Result<Self, RegistryError> {
+        audited_writes.sort_unstable();
+        let mut logical = BTreeMap::<(u8, Address, U256), AuditedWriteKey>::new();
+        for key in audited_writes {
+            if key.evidence_digest().is_zero() {
+                return Err(RegistryError::NonCanonical);
+            }
+            let identity = match key {
+                AuditedWriteKey::AccountBalance { address, .. } => (0, address, U256::ZERO),
+                AuditedWriteKey::AccountNonce { address, .. } => (1, address, U256::ZERO),
+                AuditedWriteKey::Storage { address, slot, .. } => (2, address, slot),
+            };
+            if let Some(existing) = logical.insert(identity, key)
+                && existing != key
+            {
+                return Err(RegistryError::AuditConflict);
+            }
+        }
+        let account_count = logical.keys().filter(|(kind, _, _)| *kind != 2).count();
+        let storage_count = logical.len().saturating_sub(account_count);
+        if account_count > MAX_ACCOUNTS || storage_count > MAX_STORAGE_SLOTS {
+            return Err(RegistryError::LimitExceeded);
+        }
+        for ((address, slot), owner) in &quote_slot_owner {
+            if address != owner || !logical.contains_key(&(2, *address, *slot)) {
+                return Err(RegistryError::MissingReadSlot);
+            }
+        }
+        let mut pools = quote_slot_owner.values().copied().collect::<Vec<_>>();
+        pools.sort_unstable();
+        pools.dedup();
+        Ok(Self { audited_writes: logical.into_values().collect(), quote_slot_owner, pools })
+    }
+
+    /// Returns the canonical audited-write union.
+    pub fn audited_writes(&self) -> &[AuditedWriteKey] {
+        &self.audited_writes
+    }
+
+    /// Returns the canonical pool-owned quote-slot map.
+    pub const fn quote_slot_owners(&self) -> &BTreeMap<(Address, U256), Address> {
+        &self.quote_slot_owner
+    }
+
+    /// Returns the independent canonical descriptor-pool universe.
+    pub fn pools(&self) -> &[Address] {
+        &self.pools
+    }
+
+    /// Returns the pool activated by an exact changed storage slot.
+    pub fn quote_slot_owner(&self, address: Address, slot: U256) -> Option<Address> {
+        self.quote_slot_owner.get(&(address, slot)).copied()
+    }
+
+    /// Returns the pool activated by an exact changed storage slot.
+    pub fn owner_for_storage(&self, address: Address, slot: U256) -> Option<Address> {
+        self.quote_slot_owner(address, slot)
+    }
+
+    /// Returns whether the audit plan contains quote-state authority for a pool.
+    pub fn contains_pool(&self, pool: Address) -> bool {
+        self.pools.binary_search(&pool).is_ok()
+    }
+}
+
 /// Errors produced by deterministic registry validation and traversal.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum RegistryError {
@@ -78,6 +158,15 @@ pub enum RegistryError {
     /// The descriptor protocol or storage shape is unsupported.
     #[error("registry descriptor unsupported")]
     Unsupported,
+    /// The enabled registry contains no descriptors.
+    #[error("registry is empty")]
+    Empty,
+    /// Two entries authorize the same logical key with conflicting evidence.
+    #[error("registry audit evidence conflicts")]
+    AuditConflict,
+    /// A descriptor read slot is absent from its audited-write authority.
+    #[error("registry read slot is not audited")]
+    MissingReadSlot,
 }
 
 /// Exactly supported pool protocols.
@@ -151,6 +240,33 @@ pub struct InitializedTickRead {
     pub liquidity_net: FieldRead,
 }
 
+/// Complete constructor input for one V3 storage read plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct V3ReadPlan {
+    /// Square-root-price field.
+    pub sqrt_price_x96: FieldRead,
+    /// Active-liquidity field.
+    pub liquidity: FieldRead,
+    /// Current-tick field.
+    pub current_tick: FieldRead,
+    /// Positive attested tick spacing.
+    pub tick_spacing: i32,
+    /// Inclusive lower prepared bitmap word.
+    pub lower_word: i16,
+    /// Inclusive upper prepared bitmap word.
+    pub upper_word: i16,
+    /// Contiguous prepared bitmap reads.
+    pub words: Vec<BitmapWordRead>,
+    /// Checked `lower_word - 1` zero sentinel.
+    pub lower_sentinel: BitmapWordRead,
+    /// Checked `upper_word + 1` zero sentinel.
+    pub upper_sentinel: BitmapWordRead,
+    /// Canonically ordered initialized ticks.
+    pub initialized_ticks: Vec<InitializedTickRead>,
+    /// Digest covering words, sentinels, and initialized ticks.
+    pub coverage_digest: B256,
+}
+
 /// Exact storage plan for one supported pool.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageReadPlan {
@@ -197,6 +313,74 @@ pub enum StorageReadPlan {
     },
 }
 
+impl StorageReadPlan {
+    /// Constructs a constant-product read plan without exposing enum fields across crates.
+    pub const fn constant_product(reserve0: FieldRead, reserve1: FieldRead) -> Self {
+        Self::ConstantProduct { reserve0, reserve1 }
+    }
+
+    /// Constructs an Aerodrome stable read plan without exposing enum fields across crates.
+    pub const fn stable(reserve0: FieldRead, reserve1: FieldRead, stable: FieldRead) -> Self {
+        Self::Stable { reserve0, reserve1, stable }
+    }
+
+    /// Constructs a complete V3 read plan without exposing enum fields across crates.
+    pub fn v3(plan: V3ReadPlan) -> Self {
+        Self::V3 {
+            sqrt_price_x96: plan.sqrt_price_x96,
+            liquidity: plan.liquidity,
+            current_tick: plan.current_tick,
+            tick_spacing: plan.tick_spacing,
+            lower_word: plan.lower_word,
+            upper_word: plan.upper_word,
+            words: plan.words,
+            lower_sentinel: plan.lower_sentinel,
+            upper_sentinel: plan.upper_sentinel,
+            initialized_ticks: plan.initialized_ticks,
+            coverage_digest: plan.coverage_digest,
+        }
+    }
+    /// Returns every pool-owned storage slot needed to decode this plan.
+    pub fn storage_slots(&self) -> Vec<U256> {
+        let mut slots = Vec::new();
+        match self {
+            Self::ConstantProduct { reserve0, reserve1 } => {
+                slots.push(reserve0.slot);
+                slots.push(reserve1.slot);
+            }
+            Self::Stable { reserve0, reserve1, stable } => {
+                slots.push(reserve0.slot);
+                slots.push(reserve1.slot);
+                slots.push(stable.slot);
+            }
+            Self::V3 {
+                sqrt_price_x96,
+                liquidity,
+                current_tick,
+                words,
+                lower_sentinel,
+                upper_sentinel,
+                initialized_ticks,
+                ..
+            } => {
+                slots.push(sqrt_price_x96.slot);
+                slots.push(liquidity.slot);
+                slots.push(current_tick.slot);
+                slots.extend(words.iter().map(|word| word.slot));
+                slots.push(lower_sentinel.slot);
+                slots.push(upper_sentinel.slot);
+                for tick in initialized_ticks {
+                    slots.push(tick.liquidity_gross.slot);
+                    slots.push(tick.liquidity_net.slot);
+                }
+            }
+        }
+        slots.sort_unstable();
+        slots.dedup();
+        slots
+    }
+}
+
 /// Descriptor-owned canonical plan digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DescriptorPlanDigest(pub B256);
@@ -220,7 +404,7 @@ pub struct PoolDescriptor {
     pub decimals0: u8,
     /// Token-one decimals.
     pub decimals1: u8,
-    /// Protocol fee in protocol-native fixed units.
+    /// Protocol fee in millionths (pips).
     pub fee: u32,
     /// Attested runtime code hash.
     pub code_hash: B256,
@@ -240,6 +424,8 @@ impl PoolDescriptor {
             || self.token1.is_zero()
             || self.token0 >= self.token1
             || self.code_hash.is_zero()
+            || self.fee > crate::FEE_DENOMINATOR
+            || (self.protocol == ExactProtocol::UniswapV3 && self.fee == crate::FEE_DENOMINATOR)
         {
             return Err(RegistryError::NonCanonical);
         }
@@ -286,6 +472,178 @@ pub trait PoolRegistry: std::fmt::Debug + Send + Sync {
 
     /// Returns the registry-owned canonical digest.
     fn registry_digest(&self) -> RegistryDigest;
+}
+
+/// Visitor that owns every descriptor yielded during one registry traversal.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SnapshotCollector {
+    /// Descriptors copied from the registry in traversal order.
+    pub descriptors: Vec<PoolDescriptor>,
+}
+
+impl PoolDescriptorVisitor for SnapshotCollector {
+    fn visit(&mut self, descriptor: &PoolDescriptor) -> Result<VisitControl, RegistryError> {
+        if self.descriptors.len() >= MAX_POOLS {
+            return Err(RegistryError::LimitExceeded);
+        }
+        self.descriptors.push(descriptor.clone());
+        Ok(VisitControl::Continue)
+    }
+}
+
+/// Immutable validated pool universe used throughout one runtime lifetime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolUniverseSnapshot {
+    descriptors: Vec<PoolDescriptor>,
+    registry_digest: RegistryDigest,
+    audit: FrameAuditPlan,
+}
+
+impl PoolUniverseSnapshot {
+    /// Captures and validates exactly one complete registry traversal.
+    pub fn capture(registry: &dyn PoolRegistry) -> Result<Self, RegistryError> {
+        let mut collector = SnapshotCollector::default();
+        let summary = registry.visit_descriptors(&mut collector)?;
+        let count =
+            u32::try_from(collector.descriptors.len()).map_err(|_| RegistryError::LimitExceeded)?;
+        if !summary.complete || summary.visited != count {
+            return Err(RegistryError::VisitorStopped);
+        }
+        if collector.descriptors.is_empty() {
+            return Err(RegistryError::Empty);
+        }
+        if collector.descriptors.len() > MAX_POOLS {
+            return Err(RegistryError::LimitExceeded);
+        }
+        for descriptor in &collector.descriptors {
+            descriptor.validate()?;
+        }
+        if collector.descriptors.windows(2).any(|pair| pair[0].pool >= pair[1].pool) {
+            return Err(RegistryError::NonCanonical);
+        }
+        let registry_digest = registry.registry_digest();
+        if RegistryHasher::digest(&collector.descriptors)? != registry_digest {
+            return Err(RegistryError::DigestMismatch);
+        }
+        let audit = Self::build_audit(&collector.descriptors)?;
+        Ok(Self { descriptors: collector.descriptors, registry_digest, audit })
+    }
+
+    /// Returns descriptors in strict canonical pool-address order.
+    pub fn descriptors(&self) -> &[PoolDescriptor] {
+        &self.descriptors
+    }
+
+    /// Returns the validated registry content digest.
+    pub const fn registry_digest(&self) -> RegistryDigest {
+        self.registry_digest
+    }
+
+    /// Returns the immutable frame audit plan.
+    pub const fn audit(&self) -> &FrameAuditPlan {
+        &self.audit
+    }
+
+    fn build_audit(descriptors: &[PoolDescriptor]) -> Result<FrameAuditPlan, RegistryError> {
+        let mut logical = BTreeMap::<(u8, Address, U256), AuditedWriteKey>::new();
+        for descriptor in descriptors {
+            for key in &descriptor.audited_writes {
+                let identity = match key {
+                    AuditedWriteKey::AccountBalance { address, .. } => (0, *address, U256::ZERO),
+                    AuditedWriteKey::AccountNonce { address, .. } => (1, *address, U256::ZERO),
+                    AuditedWriteKey::Storage { address, slot, .. } => (2, *address, *slot),
+                };
+                if let Some(existing) = logical.insert(identity, *key)
+                    && existing != *key
+                {
+                    return Err(RegistryError::AuditConflict);
+                }
+            }
+        }
+
+        let account_count = logical.keys().filter(|(kind, _, _)| *kind != 2).count();
+        let storage_count = logical.len().saturating_sub(account_count);
+        if account_count > MAX_ACCOUNTS || storage_count > MAX_STORAGE_SLOTS {
+            return Err(RegistryError::LimitExceeded);
+        }
+
+        let mut quote_slot_owner = BTreeMap::new();
+        for descriptor in descriptors {
+            for slot in descriptor.read_plan.storage_slots() {
+                let identity = (2, descriptor.pool, slot);
+                let descriptor_owns_slot = descriptor.audited_writes.iter().any(|key| {
+                    matches!(
+                        key,
+                        AuditedWriteKey::Storage { address, slot: audited_slot, .. }
+                            if *address == descriptor.pool && *audited_slot == slot
+                    )
+                });
+                if !descriptor_owns_slot || !logical.contains_key(&identity) {
+                    return Err(RegistryError::MissingReadSlot);
+                }
+                if let Some(owner) =
+                    quote_slot_owner.insert((descriptor.pool, slot), descriptor.pool)
+                    && owner != descriptor.pool
+                {
+                    return Err(RegistryError::AuditConflict);
+                }
+            }
+        }
+
+        let mut audited_writes: Vec<_> = logical.into_values().collect();
+        audited_writes.sort_unstable();
+        let pools = descriptors.iter().map(|descriptor| descriptor.pool).collect();
+        Ok(FrameAuditPlan { audited_writes, quote_slot_owner, pools })
+    }
+}
+
+/// Provisioned owned registry validated before it can enter the runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvisionedPoolRegistry {
+    descriptors: Vec<PoolDescriptor>,
+    registry_digest: RegistryDigest,
+}
+
+impl ProvisionedPoolRegistry {
+    /// Validates provisioned descriptors, ordering, digest, and complete audit authority.
+    pub fn new(
+        descriptors: Vec<PoolDescriptor>,
+        registry_digest: RegistryDigest,
+    ) -> Result<Self, RegistryError> {
+        let registry = Self { descriptors, registry_digest };
+        PoolUniverseSnapshot::capture(&registry)?;
+        Ok(registry)
+    }
+
+    /// Returns the number of provisioned descriptors.
+    pub const fn len(&self) -> usize {
+        self.descriptors.len()
+    }
+
+    /// Returns whether no descriptors are provisioned.
+    pub const fn is_empty(&self) -> bool {
+        self.descriptors.is_empty()
+    }
+}
+
+impl PoolRegistry for ProvisionedPoolRegistry {
+    fn visit_descriptors(
+        &self,
+        visitor: &mut dyn PoolDescriptorVisitor,
+    ) -> Result<VisitSummary, RegistryError> {
+        let mut visited = 0u32;
+        for descriptor in &self.descriptors {
+            visited = visited.checked_add(1).ok_or(RegistryError::LimitExceeded)?;
+            if visitor.visit(descriptor)? == VisitControl::Stop {
+                return Ok(VisitSummary { visited, complete: false });
+            }
+        }
+        Ok(VisitSummary { visited, complete: true })
+    }
+
+    fn registry_digest(&self) -> RegistryDigest {
+        self.registry_digest
+    }
 }
 
 /// Deterministic direct-contract fixture registry used by Phase A.
@@ -879,5 +1237,165 @@ mod tests {
             *coverage_digest = B256::with_last_byte(99);
         }
         assert_eq!(CoverageHasher::digest(&plan).expect("self-excluded digest"), expected);
+    }
+    #[test]
+    fn t4a_registry_snapshot_rejects_incomplete_noncanonical_or_digest_mismatch() {
+        #[derive(Debug)]
+        struct IncompleteRegistry {
+            descriptor: PoolDescriptor,
+        }
+
+        impl PoolRegistry for IncompleteRegistry {
+            fn visit_descriptors(
+                &self,
+                visitor: &mut dyn PoolDescriptorVisitor,
+            ) -> Result<VisitSummary, RegistryError> {
+                let _ = visitor.visit(&self.descriptor)?;
+                Ok(VisitSummary { visited: 1, complete: false })
+            }
+
+            fn registry_digest(&self) -> RegistryDigest {
+                RegistryHasher::digest(std::slice::from_ref(&self.descriptor)).expect("digest")
+            }
+        }
+
+        #[derive(Debug)]
+        struct OverCapRegistry {
+            descriptor: PoolDescriptor,
+        }
+
+        impl PoolRegistry for OverCapRegistry {
+            fn visit_descriptors(
+                &self,
+                visitor: &mut dyn PoolDescriptorVisitor,
+            ) -> Result<VisitSummary, RegistryError> {
+                for _ in 0..=MAX_POOLS {
+                    let _ = visitor.visit(&self.descriptor)?;
+                }
+                Ok(VisitSummary { visited: 0, complete: true })
+            }
+
+            fn registry_digest(&self) -> RegistryDigest {
+                RegistryDigest(B256::ZERO)
+            }
+        }
+
+        let first = descriptor(10);
+        assert_eq!(
+            PoolUniverseSnapshot::capture(&IncompleteRegistry { descriptor: first.clone() }),
+            Err(RegistryError::VisitorStopped)
+        );
+        assert_eq!(
+            PoolUniverseSnapshot::capture(&OverCapRegistry { descriptor: first.clone() }),
+            Err(RegistryError::LimitExceeded)
+        );
+
+        let duplicate = vec![first.clone(), first.clone()];
+        let duplicate_registry = FixturePoolRegistry {
+            registry_digest: RegistryHasher::digest(&duplicate).expect("duplicate digest"),
+            descriptors: duplicate,
+        };
+        assert_eq!(
+            PoolUniverseSnapshot::capture(&duplicate_registry),
+            Err(RegistryError::NonCanonical)
+        );
+
+        let mut invalid = first.clone();
+        invalid.code_hash = B256::ZERO;
+        let invalid_registry = FixturePoolRegistry {
+            registry_digest: RegistryHasher::digest(std::slice::from_ref(&invalid))
+                .expect("invalid digest"),
+            descriptors: vec![invalid],
+        };
+        assert_eq!(
+            PoolUniverseSnapshot::capture(&invalid_registry),
+            Err(RegistryError::NonCanonical)
+        );
+
+        let second = descriptor(11);
+        let reverse = vec![second.clone(), first.clone()];
+        let reverse_registry = FixturePoolRegistry {
+            registry_digest: RegistryHasher::digest(&reverse).expect("reverse digest"),
+            descriptors: reverse,
+        };
+        assert_eq!(
+            PoolUniverseSnapshot::capture(&reverse_registry),
+            Err(RegistryError::NonCanonical)
+        );
+
+        let mismatched_registry = FixturePoolRegistry {
+            descriptors: vec![first, second],
+            registry_digest: RegistryDigest(B256::with_last_byte(99)),
+        };
+        assert_eq!(
+            PoolUniverseSnapshot::capture(&mismatched_registry),
+            Err(RegistryError::DigestMismatch)
+        );
+    }
+
+    #[test]
+    fn t4a_audited_union_dedups_identical_and_rejects_logical_conflicts() {
+        let shared = AuditedWriteKey::AccountNonce {
+            address: Address::with_last_byte(90),
+            evidence_digest: B256::with_last_byte(91),
+        };
+        let mut first = descriptor(10);
+        first.audited_writes.push(shared);
+        first.audited_writes.sort_unstable();
+        first.descriptor_digest = DescriptorHasher::digest(&first).expect("first digest");
+        let mut second = descriptor(11);
+        second.audited_writes.push(shared);
+        second.audited_writes.sort_unstable();
+        second.descriptor_digest = DescriptorHasher::digest(&second).expect("second digest");
+
+        let descriptors = vec![first.clone(), second.clone()];
+        let digest = RegistryHasher::digest(&descriptors).expect("registry digest");
+        let registry =
+            FixturePoolRegistry::new(descriptors, digest).expect("conflict-free registry");
+        let snapshot = PoolUniverseSnapshot::capture(&registry).expect("snapshot");
+        assert_eq!(
+            snapshot.audit().audited_writes().iter().filter(|key| **key == shared).count(),
+            1
+        );
+        assert!(snapshot.audit().audited_writes().windows(2).all(|pair| pair[0] < pair[1]));
+
+        let mut omitted = first.clone();
+        let omitted_pool = omitted.pool;
+        omitted.audited_writes.retain(|key| {
+            !matches!(
+                key,
+                AuditedWriteKey::Storage { address, slot, .. }
+                    if *address == omitted_pool && *slot == U256::from(1)
+            )
+        });
+        omitted.descriptor_digest =
+            DescriptorHasher::digest(&omitted).expect("omitted descriptor digest");
+        let mut cross_supplier = second.clone();
+        cross_supplier.audited_writes.push(AuditedWriteKey::Storage {
+            address: omitted_pool,
+            slot: U256::from(1),
+            evidence_digest: B256::with_last_byte(5),
+        });
+        cross_supplier.audited_writes.sort_unstable();
+        cross_supplier.descriptor_digest =
+            DescriptorHasher::digest(&cross_supplier).expect("cross-supplier digest");
+        let cross_supplied = vec![omitted, cross_supplier];
+        let digest =
+            RegistryHasher::digest(&cross_supplied).expect("cross-supplied registry digest");
+        let registry =
+            FixturePoolRegistry::new(cross_supplied, digest).expect("descriptor-valid registry");
+        assert_eq!(PoolUniverseSnapshot::capture(&registry), Err(RegistryError::MissingReadSlot));
+        second.audited_writes.retain(|key| *key != shared);
+        second.audited_writes.push(AuditedWriteKey::AccountNonce {
+            address: shared.address(),
+            evidence_digest: B256::with_last_byte(92),
+        });
+        second.audited_writes.sort_unstable();
+        second.descriptor_digest = DescriptorHasher::digest(&second).expect("conflict digest");
+        let conflicting = vec![first, second];
+        let digest = RegistryHasher::digest(&conflicting).expect("registry digest");
+        let registry =
+            FixturePoolRegistry::new(conflicting, digest).expect("descriptor-valid registry");
+        assert_eq!(PoolUniverseSnapshot::capture(&registry), Err(RegistryError::AuditConflict));
     }
 }

@@ -34,7 +34,7 @@ const NORMAL_DEPENDENCIES: [&str; 24] = [
     "tokio-tungstenite",
     "tracing",
 ];
-const SOURCE_FILES: [&str; 12] = [
+const SOURCE_FILES: [&str; 13] = [
     "blink_ingress.rs",
     "frame.rs",
     "latency.rs",
@@ -43,6 +43,7 @@ const SOURCE_FILES: [&str; 12] = [
     "oracle.rs",
     "pairwise.rs",
     "port.rs",
+    "preparation.rs",
     "registry.rs",
     "runtime.rs",
     "safety.rs",
@@ -466,6 +467,9 @@ fn a2_proof_binding_and_test_support_have_bounded_api_shape() {
     let latency = fs::read_to_string(root.join("src/latency.rs")).expect("latency source");
     let crate_root = fs::read_to_string(root.join("src/lib.rs")).expect("crate root");
     let runtime = fs::read_to_string(root.join("src/runtime.rs")).expect("runtime source");
+    let runtime_production = runtime
+        .split_once("\n#[cfg(test)]\nmod tests {")
+        .map_or(runtime.as_str(), |(source, _)| source);
     let integration =
         fs::read_to_string(root.join("tests/deterministic_e2e.rs")).expect("integration source");
 
@@ -478,11 +482,12 @@ fn a2_proof_binding_and_test_support_have_bounded_api_shape() {
         .expect("final frame tests");
 
     assert!(frame_production.contains(
-        "pub struct ProcessedFrame {\n    materialized_state: MaterializedState,\n    measurement_context: MeasurementContext,\n}"
+        "pub struct ProcessedFrame {\n    materialized_state: MaterializedState,\n    measurement_context: MeasurementContext,\n    dirty_pools: DirtyPoolSet,\n}"
     ));
     assert_eq!(frame_production.matches("impl ProcessedFrame {").count(), 1);
     assert_eq!(frame_production.matches("pub const fn materialized_state").count(), 1);
     assert_eq!(frame_production.matches("pub const fn measurement_context").count(), 1);
+    assert_eq!(frame_production.matches("pub const fn dirty_pools").count(), 2);
     assert_eq!(frame_production.matches("Ok(Some(ProcessedFrame {").count(), 1);
     assert!(!frame_production.contains("impl Default for ProcessedFrame"));
     assert!(!frame_production.contains("&mut MaterializedState"));
@@ -500,6 +505,19 @@ fn a2_proof_binding_and_test_support_have_bounded_api_shape() {
             .count(),
         1
     );
+    assert_eq!(frame_production.matches("commit.commit(evm.db_mut(), output.state)?;").count(), 1);
+    assert_eq!(frame_production.matches("evm.db_mut().commit(").count(), 0);
+    let delta_validation = frame_production
+        .find("DeltaGuard::validate_and_classify(&output.state, audit)")
+        .expect("delta validation");
+    let sole_commit = frame_production
+        .find("commit.commit(evm.db_mut(), output.state)?;")
+        .expect("sole guarded commit");
+    let materialization = frame_production
+        .find("StateMaterializer::materialize(")
+        .expect("post-commit materialization");
+    assert!(delta_validation < sole_commit);
+    assert!(sole_commit < materialization);
 
     const RAW_VICTIM: &str = "f8628080830186a0940000000000000000000000000000000000000000808082422da0840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565a025e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1";
     assert_eq!(frame.matches(RAW_VICTIM).count(), 1);
@@ -549,18 +567,15 @@ fn a2_proof_binding_and_test_support_have_bounded_api_shape() {
     assert!(!pairwise.contains("impl BackrunPlan {"));
 
     assert!(crate_root.contains(
-        "FrameProcessor, MAX_FRAME_AGE_MILLIS, MAX_RAW_FRAME_BYTES, ProcessedFrame, SnapshotCoherence,"
+        "DeltaError, DirtyPoolSet, FrameCommitGuard, FrameProcessor, MAX_FRAME_AGE_MILLIS,"
+    ));
+    assert!(crate_root.contains(
+        "MAX_RAW_FRAME_BYTES, ProcessedFrame, SnapshotCoherence, ValidatedFrameDelta, VictimFrame,"
     ));
     assert!(!crate_root.contains("test_utils"));
-    for forbidden in [
-        "PairwiseEngine",
-        "select_measurement",
-        "MeasurementEncoder",
-        "BackrunPlan",
-        "ProcessedFrame",
-    ] {
-        assert!(!runtime.contains(forbidden), "runtime exposes A2 output surface {forbidden}");
-    }
+    assert_eq!(runtime_production.matches("PairwiseEngine::discover(").count(), 1);
+    assert_eq!(runtime_production.matches("PairwiseEngine::select_measurement(").count(), 1);
+    assert_eq!(runtime_production.matches("PoolStatePreparer::prepare(").count(), 1);
     for forbidden in ["select_measurement", "MeasurementContext", "BackrunPlan", "ProcessedFrame"] {
         assert!(!integration.contains(forbidden), "integration bypass surface {forbidden}");
     }

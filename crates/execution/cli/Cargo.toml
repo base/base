@@ -126,6 +126,12 @@ serde = [
 	"secp256k1/serde",
 ]
 
+t4a-shadow = [
+	"base-mev-trader/t4a-shadow",
+	"dep:libc",
+	"dep:serde",
+	"dep:serde_json",
+]
 b5-dormant-presign = [
   "dep:mev-trader-submit",
   "mev-trader-submit/presign",
