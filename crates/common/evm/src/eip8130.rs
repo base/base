@@ -1572,7 +1572,8 @@ mod tests {
         Context::base()
             .with_db(db)
             .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Cobalt)).with_chain_id(CHAIN_ID),
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                    .with_chain_id(CHAIN_ID),
             )
             .with_block(BlockEnv {
                 number: U256::from(1u64),
@@ -1821,7 +1822,8 @@ mod tests {
         Context::base()
             .with_db(db)
             .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Cobalt)).with_chain_id(CHAIN_ID),
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                    .with_chain_id(CHAIN_ID),
             )
             .with_block(BlockEnv {
                 number: U256::from(1u64),
@@ -2314,7 +2316,8 @@ mod tests {
         let mut evm = Context::base()
             .with_db(db)
             .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Cobalt)).with_chain_id(CHAIN_ID),
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                    .with_chain_id(CHAIN_ID),
             )
             .with_block(BlockEnv {
                 number: U256::from(1u64),
@@ -2820,7 +2823,8 @@ mod tests {
         let mut evm = Context::base()
             .with_db(db)
             .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Cobalt)).with_chain_id(CHAIN_ID),
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                    .with_chain_id(CHAIN_ID),
             )
             .with_block(BlockEnv {
                 number: U256::from(1u64),
