@@ -181,6 +181,8 @@ impl ProofRequesterClient {
         request: DeleteProofsByTeeSignerRequest,
     ) -> Result<u64, ProverServiceClientError> {
         debug!(tee_signer = %request.tee_signer, "deleting proofs by TEE signer");
+        // `request` is `Copy`, so each retry attempt gets its own copy via `async move`
+        // while the outer binding stays available for the `notify` closure below.
         (|| async move { Ok(self.inner.delete_proofs_by_tee_signer(request).await?) })
             .retry(self.retry.to_backoff_builder())
             .when(ProverServiceClientError::is_retryable)
