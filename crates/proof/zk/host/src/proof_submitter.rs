@@ -26,6 +26,7 @@ impl TryFrom<ProofSubmitterRequest> for WorkerSubmitProofRequest {
                 lock_id: request.lock_id,
                 worker_id: request.worker_id,
                 result: request.result,
+                tee_signer: None,
             }),
             ProofResult::Tee(_) => Err(ProofSubmitterError::UnsupportedProofResult),
         }

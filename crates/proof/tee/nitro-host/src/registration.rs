@@ -20,9 +20,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
-use alloy_signer::utils::public_key_to_address;
 use base_proof_contracts::{TEEProverRegistryClient, TEEProverRegistryContractClient};
-use k256::ecdsa::VerifyingKey;
 use thiserror::Error;
 use tokio::sync::OnceCell;
 use tracing::warn;
@@ -131,13 +129,10 @@ impl RegistrationChecker {
     }
 
     async fn signer_address(transport: &NitroTransport) -> Result<Address, RegistrationError> {
-        let public_key = transport
-            .signer_public_key()
+        transport
+            .signer_address()
             .await
-            .map_err(|e| RegistrationError::Setup(format!("signer public key: {e}")))?;
-        let verifying_key = VerifyingKey::from_sec1_bytes(&public_key)
-            .map_err(|e| RegistrationError::Setup(format!("invalid public key: {e}")))?;
-        Ok(public_key_to_address(&verifying_key))
+            .map_err(|e| RegistrationError::Setup(format!("signer public key: {e}")))
     }
 
     async fn is_valid_signer(&self, signer: Address) -> Result<bool, RegistrationError> {
@@ -302,9 +297,7 @@ mod tests {
     }
 
     async fn transport_signer_address(transport: &NitroTransport) -> Address {
-        let pk = transport.signer_public_key().await.unwrap();
-        let vk = VerifyingKey::from_sec1_bytes(&pk).unwrap();
-        public_key_to_address(&vk)
+        transport.signer_address().await.unwrap()
     }
 
     async fn two_transport_signers(checker: &RegistrationChecker) -> (Address, Address) {

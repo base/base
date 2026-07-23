@@ -54,6 +54,7 @@ impl NitroProverServer {
             }
             NitroEnclavePoolError::Busy => Self::rpc_err(-32002, err),
             NitroEnclavePoolError::RegistrationCheckerMismatch { .. }
+            | NitroEnclavePoolError::Signer(_)
             | NitroEnclavePoolError::Prover(_) => Self::rpc_err(-32000, err),
         }
     }
@@ -167,7 +168,7 @@ struct NitroProverRpc {
 #[async_trait]
 impl ProverApiServer for NitroProverRpc {
     async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult> {
-        self.pool.prove(request).await.map_err(NitroProverServer::pool_err)
+        self.pool.prove(request).await.map(|(proof, _)| proof).map_err(NitroProverServer::pool_err)
     }
 }
 

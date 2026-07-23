@@ -29,6 +29,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+base-proof-primitives.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]

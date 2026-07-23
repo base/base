@@ -6163,6 +6163,7 @@ name = "base-prover-service-db"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "base-proof-primitives",
  "base-prover-service-protocol",
  "chrono",
  "futures",

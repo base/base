@@ -211,6 +211,7 @@ impl ProofRequestRepo {
                         stark_receipt = NULL,
                         snark_receipt = NULL,
                         result_payload = NULL,
+                        tee_signer = NULL,
                         submitted_by_worker_id = NULL,
                         submitted_lock_id = NULL,
                         completed_at = NULL,
@@ -284,6 +285,31 @@ impl ProofRequestRepo {
         Ok(DeleteProofRequestOutcome::Deleted)
     }
 
+    /// Delete completed TEE proof requests produced by one reported signer.
+    pub async fn delete_proof_requests_by_tee_signer(&self, tee_signer: &str) -> Result<u64> {
+        let mut tx = self.pool.begin().await?;
+        let ids = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM proof_requests \
+             WHERE tee_signer = $1 AND status = 'SUCCEEDED' FOR UPDATE",
+        )
+        .bind(tee_signer)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        sqlx::query("DELETE FROM proof_request_outbox WHERE proof_request_id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?;
+        let deleted = sqlx::query("DELETE FROM proof_requests WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+
+        tx.commit().await?;
+        Ok(deleted)
+    }
+
     /// Get a proof request by ID
     pub async fn get(&self, id: Uuid) -> Result<Option<ProofRequest>> {
         let row = sqlx::query(
@@ -292,7 +318,7 @@ impl ProofRequestRepo {
                 id, COALESCE(session_id, id::text) AS session_id,
                 request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
-                stark_receipt, snark_receipt, result_payload,
+                stark_receipt, snark_receipt, result_payload, tee_signer,
                 submitted_by_worker_id, submitted_lock_id,
                 status, error_message,
                 prover_address, l1_head, intermediate_root_interval,
@@ -318,7 +344,7 @@ impl ProofRequestRepo {
                 id, COALESCE(session_id, id::text) AS session_id,
                 request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
-                stark_receipt, snark_receipt, result_payload,
+                stark_receipt, snark_receipt, result_payload, tee_signer,
                 submitted_by_worker_id, submitted_lock_id,
                 status, error_message,
                 prover_address, l1_head, intermediate_root_interval,
@@ -717,18 +743,24 @@ impl ProofRequestRepo {
             && existing.lock_id == Some(req.lock_id)
             && existing.worker_id.as_deref() == Some(req.worker_id.as_str())
         {
-            if let Err(reason) = existing.validate_submitted_result(&req.result) {
+            if let Err(reason) =
+                existing.validate_submitted_result(&req.result, req.tee_signer.as_deref())
+            {
                 return Ok(SubmitProofOutcome::ResultMismatch { job: existing, reason });
             }
 
             let result_payload =
                 serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
 
-            return Ok(if existing.result_payload.as_ref() == Some(&result_payload) {
-                SubmitProofOutcome::AlreadyCompleted(existing)
-            } else {
-                SubmitProofOutcome::ResultConflict { job: existing }
-            });
+            return Ok(
+                if existing.result_payload.as_ref() == Some(&result_payload)
+                    && existing.tee_signer == req.tee_signer
+                {
+                    SubmitProofOutcome::AlreadyCompleted(existing)
+                } else {
+                    SubmitProofOutcome::ResultConflict { job: existing }
+                },
+            );
         }
         if matches!(existing.job_status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
             return Ok(SubmitProofOutcome::Terminal(existing));
@@ -745,7 +777,9 @@ impl ProofRequestRepo {
             return Ok(SubmitProofOutcome::Expired(existing));
         }
 
-        if let Err(reason) = existing.validate_submitted_result(&req.result) {
+        if let Err(reason) =
+            existing.validate_submitted_result(&req.result, req.tee_signer.as_deref())
+        {
             return Ok(SubmitProofOutcome::ResultMismatch { job: existing, reason });
         }
 
@@ -765,6 +799,7 @@ impl ProofRequestRepo {
                 submitted_lock_id = $5,
                 stark_receipt = COALESCE($6, stark_receipt),
                 snark_receipt = COALESCE($7, snark_receipt),
+                tee_signer = $8,
                 error_message = NULL,
                 completed_at = NOW()
             WHERE COALESCE(session_id, id::text) = $1
@@ -784,6 +819,7 @@ impl ProofRequestRepo {
             .bind(&submitted_lock_id)
             .bind(&stark_receipt)
             .bind(&snark_receipt)
+            .bind(&req.tee_signer)
             .fetch_optional(&self.pool)
             .await?;
 
@@ -800,15 +836,21 @@ impl ProofRequestRepo {
             && job.lock_id == Some(req.lock_id)
             && job.worker_id.as_deref() == Some(req.worker_id.as_str())
         {
-            if let Err(reason) = job.validate_submitted_result(&req.result) {
+            if let Err(reason) =
+                job.validate_submitted_result(&req.result, req.tee_signer.as_deref())
+            {
                 return Ok(SubmitProofOutcome::ResultMismatch { job, reason });
             }
 
-            return Ok(if job.result_payload.as_ref() == Some(&result_payload) {
-                SubmitProofOutcome::AlreadyCompleted(job)
-            } else {
-                SubmitProofOutcome::ResultConflict { job }
-            });
+            return Ok(
+                if job.result_payload.as_ref() == Some(&result_payload)
+                    && job.tee_signer == req.tee_signer
+                {
+                    SubmitProofOutcome::AlreadyCompleted(job)
+                } else {
+                    SubmitProofOutcome::ResultConflict { job }
+                },
+            );
         }
         if matches!(job.job_status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
             return Ok(SubmitProofOutcome::Terminal(job));
@@ -974,6 +1016,7 @@ impl ProofRequestRepo {
                 stark_receipt = NULL,
                 snark_receipt = NULL,
                 result_payload = NULL,
+                tee_signer = NULL,
                 submitted_by_worker_id = NULL,
                 submitted_lock_id = NULL,
                 completed_at = NULL,
@@ -1390,7 +1433,7 @@ impl ProofRequestRepo {
                    request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                    start_block_number, number_of_blocks_to_prove,
                    sequence_window, proof_type, stark_receipt, snark_receipt,
-                   result_payload, submitted_by_worker_id, submitted_lock_id,
+                   result_payload, tee_signer, submitted_by_worker_id, submitted_lock_id,
                    status, error_message, prover_address, l1_head,
                    intermediate_root_interval,
                    created_at, updated_at, completed_at, retry_count
@@ -1419,7 +1462,7 @@ impl ProofRequestRepo {
                 pr.request_payload, pr.api_proof_type, pr.zk_vm,
                 pr.tee_kind, pr.zk_backend, pr.start_block_number, pr.number_of_blocks_to_prove,
                 pr.sequence_window, pr.proof_type, pr.stark_receipt, pr.snark_receipt,
-                pr.result_payload, pr.submitted_by_worker_id, pr.submitted_lock_id,
+                pr.result_payload, pr.tee_signer, pr.submitted_by_worker_id, pr.submitted_lock_id,
                 pr.status, pr.error_message, pr.prover_address, pr.l1_head,
                 pr.intermediate_root_interval,
                 pr.created_at, pr.updated_at, pr.completed_at, pr.retry_count
@@ -1636,7 +1679,7 @@ impl ProofRequestRepo {
                     id, COALESCE(session_id, id::text) AS session_id,
                     request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                     start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
-                    stark_receipt, snark_receipt, result_payload,
+                    stark_receipt, snark_receipt, result_payload, tee_signer,
                     submitted_by_worker_id, submitted_lock_id,
                     status, error_message,
                     prover_address, l1_head, intermediate_root_interval,
@@ -1658,7 +1701,7 @@ impl ProofRequestRepo {
                     id, COALESCE(session_id, id::text) AS session_id,
                     request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                     start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
-                    stark_receipt, snark_receipt, result_payload,
+                    stark_receipt, snark_receipt, result_payload, tee_signer,
                     submitted_by_worker_id, submitted_lock_id,
                     status, error_message,
                     prover_address, l1_head, intermediate_root_interval,
@@ -2125,6 +2168,7 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         stark_receipt: row.get("stark_receipt"),
         snark_receipt: row.get("snark_receipt"),
         result_payload: row.get("result_payload"),
+        tee_signer: row.get("tee_signer"),
         submitted_by_worker_id: row.get("submitted_by_worker_id"),
         submitted_lock_id: row.get("submitted_lock_id"),
         status,
@@ -2158,7 +2202,7 @@ fn parse_tee_kind(value: &str) -> Result<TeeKind> {
 const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS session_id, \
      request_payload, api_proof_type, zk_vm, tee_kind, zk_backend, \
      start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, \
-     stark_receipt, snark_receipt, result_payload, \
+     stark_receipt, snark_receipt, result_payload, tee_signer, \
      submitted_by_worker_id, submitted_lock_id, status, error_message, \
      prover_address, l1_head, intermediate_root_interval, \
      created_at, updated_at, completed_at, retry_count, \
@@ -2255,6 +2299,7 @@ fn row_to_proof_job(row: &sqlx::postgres::PgRow) -> Result<ProofJob> {
         last_heartbeat_at: row.get("last_heartbeat_at"),
         error_message: base.error_message,
         result_payload: base.result_payload,
+        tee_signer: base.tee_signer,
         created_at: base.created_at,
         updated_at: base.updated_at,
         completed_at: base.completed_at,

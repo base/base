@@ -657,6 +657,7 @@ impl ProofRequesterProvider for MockZkProofProvider {
             status: state.proof_status,
             error_message: state.error_message,
             result,
+            tee_signer: None,
         })
     }
 
@@ -667,6 +668,16 @@ impl ProofRequesterProvider for MockZkProofProvider {
         let mut state = self.state.lock().unwrap();
         state.prove_block_range_log.retain(|entry| entry.proof.session_id != request.session_id);
         Ok(())
+    }
+
+    async fn delete_proofs_by_tee_signer(
+        &self,
+        _request: base_prover_service_protocol::DeleteProofsByTeeSignerRequest,
+    ) -> Result<
+        base_prover_service_protocol::DeleteProofsByTeeSignerResponse,
+        ProverServiceClientError,
+    > {
+        unimplemented!("challenge tests do not delete TEE proofs")
     }
 
     async fn list_proofs(

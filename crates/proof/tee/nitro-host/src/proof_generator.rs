@@ -171,7 +171,7 @@ where
         );
 
         let l2_block = request.proof.claimed_l2_block_number;
-        let proof = match self
+        let (proof, tee_signer) = match self
             .with_heartbeat_while_generating(&request, self.pool.prove(request.proof.clone()))
             .await
         {
@@ -217,6 +217,7 @@ where
             request.lock_id.clone(),
             request.worker_id.clone(),
             proof,
+            tee_signer,
         )
         .map_err(|source| ProofGeneratorError::BuildSubmission {
             session_id: request.session_id.clone(),

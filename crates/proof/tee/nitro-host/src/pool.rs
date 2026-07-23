@@ -2,6 +2,7 @@
 
 use std::{fmt, sync::Arc};
 
+use alloy_primitives::Address;
 use base_proof_host::{ProverConfig, ProverError, ProverService};
 use base_proof_primitives::{ProofRequest, ProofResult};
 use thiserror::Error;
@@ -103,11 +104,17 @@ impl NitroEnclavePool {
     }
 
     /// Proves one request using the busy-enclave policy.
-    pub async fn prove(&self, request: ProofRequest) -> Result<ProofResult, NitroEnclavePoolError> {
+    pub async fn prove(
+        &self,
+        request: ProofRequest,
+    ) -> Result<(ProofResult, Address), NitroEnclavePoolError> {
         let l2_block = request.claimed_l2_block_number;
         let (enclave, _permit) = self.acquire_enclave(l2_block).await?;
+        let tee_signer = enclave.transport.signer_address().await?;
 
-        enclave.service.prove_block(request).await.map_err(NitroEnclavePoolError::Prover)
+        let proof =
+            enclave.service.prove_block(request).await.map_err(NitroEnclavePoolError::Prover)?;
+        Ok((proof, tee_signer))
     }
 
     async fn acquire_enclave(
@@ -190,6 +197,9 @@ pub enum NitroEnclavePoolError {
     /// Every valid enclave is already proving.
     #[error("enclave busy: another proof request is already in flight")]
     Busy,
+    /// The selected enclave signer could not be read.
+    #[error(transparent)]
+    Signer(#[from] crate::NitroHostError),
     /// Witness generation or enclave proving failed.
     #[error(transparent)]
     Prover(#[from] ProverError<NitroBackend>),
@@ -207,10 +217,8 @@ mod tests {
     use std::collections::HashMap;
 
     use alloy_genesis::ChainConfig;
-    use alloy_signer::utils::public_key_to_address;
     use base_common_genesis::RollupConfig;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
-    use k256::ecdsa::VerifyingKey;
 
     use super::*;
     use crate::test_utils::AddressBasedMockRegistry;
@@ -235,9 +243,7 @@ mod tests {
     }
 
     async fn signer_for(transport: &NitroTransport) -> alloy_primitives::Address {
-        let pk = transport.signer_public_key().await.unwrap();
-        let vk = VerifyingKey::from_sec1_bytes(&pk).unwrap();
-        public_key_to_address(&vk)
+        transport.signer_address().await.unwrap()
     }
 
     #[tokio::test]

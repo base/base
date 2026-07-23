@@ -227,6 +227,7 @@ impl ProverServiceServer {
                 lock_id,
                 worker_id: request.worker_id.clone(),
                 result: request.result,
+                tee_signer: request.tee_signer.map(|signer| format!("{signer:#x}")),
             })
             .await
             .map_err(|e| internal(format!("Database error: {e}")))?;
