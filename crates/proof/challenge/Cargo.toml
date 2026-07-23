@@ -68,7 +68,7 @@ rustls = { workspace = true, features = ["ring"] }
 
 # Runtime
 tokio-util.workspace = true
-base-runtime.workspace = true
+base-runtime = { workspace = true, features = ["tokio"] }
 
 # Health
 base-health = { workspace = true, features = ["axum-server"] }
