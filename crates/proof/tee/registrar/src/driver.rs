@@ -197,10 +197,7 @@ where
 
         if instance.health_status == InstanceHealthStatus::Unhealthy {
             debug!(instance = %instance.instance_id, "unhealthy instance, skipping resolution");
-            return Ok(DiscoveryResolution {
-                unresolved_instance_ids: HashSet::from([instance.instance_id.clone()]),
-                ..Default::default()
-            });
+            return Ok(DiscoveryResolution::default());
         }
 
         let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
@@ -662,12 +659,12 @@ mod tests {
         assert_eq!(resolution.registerable.len(), 1);
         assert_eq!(resolution.registerable[0].signer, addr_healthy);
         assert!(!resolution.active_signers.contains(&signer_from_private_key(&HARDHAT_KEY_0)));
-        assert_eq!(resolution.unresolved_instance_ids, HashSet::from([format!("i-{EP1}")]));
+        assert!(resolution.unresolved_instance_ids.is_empty());
         assert_eq!(*requested_public_keys.lock().unwrap(), vec![endpoint_url(EP2)]);
     }
 
     #[tokio::test]
-    async fn discover_and_resolve_preserves_cached_signers_for_unhealthy_instances() {
+    async fn discover_and_resolve_removes_cached_signers_for_unhealthy_instances() {
         let signer = signer_from_private_key(&HARDHAT_KEY_0);
         let instance = prover_instance(EP1, InstanceHealthStatus::Unhealthy);
         let signer_client = MockEnclaveEndpointClient::default();
@@ -678,12 +675,9 @@ mod tests {
 
         let resolution = driver.discover_and_resolve(&mut last_known_active).await.unwrap();
 
-        assert!(resolution.active_signers.contains(&signer));
-        assert_eq!(
-            resolution.unresolved_instance_ids,
-            HashSet::from([instance.instance_id.clone()])
-        );
-        assert_eq!(last_known_active[&instance.instance_id], (vec![signer], 0));
+        assert!(resolution.active_signers.is_empty());
+        assert!(resolution.unresolved_instance_ids.is_empty());
+        assert!(!last_known_active.contains_key(&instance.instance_id));
         assert!(requested_public_keys.lock().unwrap().is_empty());
     }
 
