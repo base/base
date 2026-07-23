@@ -2,7 +2,6 @@
 
 use std::{
     collections::HashMap,
-    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -14,68 +13,31 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use human_bytes::human_bytes as format_bytes;
+use humantime::format_duration;
 use tracing::{info, warn};
 
 /// Interval between periodic progress logs during long-running snapshot operations
 /// (archive compression and artifact upload).
-pub(crate) const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(10);
+pub(crate) const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(3);
 
 const UPLOAD_STALL_WARNING_AFTER: Duration = Duration::from_secs(5 * 60);
 const MAX_STALLED_UPLOADS_IN_LOG: usize = 5;
-const INTERACTIVE_UPLOAD_RENDER_INTERVAL: Duration = Duration::from_millis(250);
-const INTERACTIVE_UPLOAD_ROWS: usize = 10;
-const UPLOAD_PROGRESS_BAR_WIDTH: usize = 24;
 
-fn percent(done: u64, total: u64) -> u64 {
-    done.saturating_mul(100).checked_div(total).unwrap_or(100)
-}
+/// Formats snapshot compression and upload progress for structured logs.
+#[derive(Debug)]
+pub struct ProgressDisplay;
 
-fn human_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-
-    let mut value = bytes as f64;
-    let mut unit = UNITS[0];
-    for next_unit in UNITS.iter().skip(1) {
-        if value < 1024.0 {
-            break;
-        }
-        value /= 1024.0;
-        unit = next_unit;
+impl ProgressDisplay {
+    /// Returns the integer completion percentage for a completed and total count.
+    pub fn percent(done: u64, total: u64) -> u64 {
+        done.saturating_mul(100).checked_div(total).unwrap_or(100)
     }
 
-    if unit == "B" { format!("{bytes} B") } else { format!("{value:.1} {unit}") }
-}
-
-fn progress_bar(done: u64, total: u64) -> String {
-    let filled = if total == 0 {
-        UPLOAD_PROGRESS_BAR_WIDTH
-    } else {
-        (((done.min(total) as u128) * (UPLOAD_PROGRESS_BAR_WIDTH as u128)) / (total as u128))
-            as usize
-    };
-    format!(
-        "{}{}",
-        "#".repeat(filled),
-        "-".repeat(UPLOAD_PROGRESS_BAR_WIDTH.saturating_sub(filled))
-    )
-}
-
-fn truncate_for_display(value: &str, max_chars: usize) -> String {
-    let chars: Vec<char> = value.chars().collect();
-    if chars.len() <= max_chars {
-        return value.to_string();
+    /// Formats completed and total byte counts with human-readable binary units.
+    pub fn human_byte_progress(done: u64, total: u64) -> String {
+        format!("{}/{}", format_bytes(done as f64), format_bytes(total as f64))
     }
-    if max_chars <= 3 {
-        return "...".chars().take(max_chars).collect();
-    }
-
-    let front = (max_chars - 3) / 2;
-    let back = max_chars - 3 - front;
-    format!(
-        "{}...{}",
-        chars[..front].iter().collect::<String>(),
-        chars[chars.len() - back..].iter().collect::<String>()
-    )
 }
 
 /// Cumulative compression progress shared across every file in a single archive,
@@ -102,10 +64,9 @@ impl ArchiveProgress {
         if self.last_log.elapsed() >= PROGRESS_LOG_INTERVAL {
             info!(
                 archive = %self.archive_name,
-                bytes_done = self.bytes_done,
-                total_bytes = self.total_bytes,
-                percent = percent(self.bytes_done, self.total_bytes),
-                elapsed_secs = self.started.elapsed().as_secs(),
+                bytes = %ProgressDisplay::human_byte_progress(self.bytes_done, self.total_bytes),
+                progress = %format!("{}%", ProgressDisplay::percent(self.bytes_done, self.total_bytes)),
+                elapsed = %format_duration(self.started.elapsed()),
                 "compressing archive"
             );
             self.last_log = Instant::now();
@@ -129,12 +90,9 @@ impl ComponentProgressReporter {
         total_bytes: u64,
     ) -> ArchiveProgressReporter {
         let archive_name = archive_name.into();
-        let now = Instant::now();
         if let Ok(mut active_archives) = self.state.active_archives.lock() {
-            active_archives.insert(
-                archive_name.clone(),
-                ActiveArchiveState { total_bytes, bytes_done: 0, started: now },
-            );
+            active_archives
+                .insert(archive_name.clone(), ActiveArchiveState { total_bytes, bytes_done: 0 });
         }
         ArchiveProgressReporter { component: self.clone(), archive_name }
     }
@@ -226,64 +184,23 @@ impl ComponentProgressLogger {
             bytes_done: AtomicU64::new(0),
             archives_done: AtomicU64::new(0),
             active_archives: Mutex::new(HashMap::new()),
-            interactive: io::stdout().is_terminal(),
         });
         let reporter = ComponentProgressReporter { state: Arc::clone(&state) };
         let (stop_tx, stop_rx) = mpsc::channel();
         let join_handle = std::thread::spawn(move || {
-            let mut rendered_lines = 0usize;
-            let tick = if state.interactive {
-                INTERACTIVE_UPLOAD_RENDER_INTERVAL
-            } else {
-                PROGRESS_LOG_INTERVAL
-            };
-            while stop_rx.recv_timeout(tick).is_err() {
+            while stop_rx.recv_timeout(PROGRESS_LOG_INTERVAL).is_err() {
                 let bytes_done = state.bytes_done.load(Ordering::Relaxed);
                 let archives_done = state.archives_done.load(Ordering::Relaxed);
-                let active_archives = state.active_archives.lock().ok().map(|active| {
-                    let now = Instant::now();
-                    let mut items: Vec<ArchiveSnapshot> = active
-                        .iter()
-                        .map(|(archive_name, archive)| ArchiveSnapshot {
-                            archive_name: archive_name.clone(),
-                            total_bytes: archive.total_bytes,
-                            bytes_done: archive.bytes_done,
-                            age_secs: now.duration_since(archive.started).as_secs(),
-                        })
-                        .collect();
-                    items.sort_unstable_by(|a, b| a.archive_name.cmp(&b.archive_name));
-                    items
-                });
-
-                if state.interactive {
-                    rendered_lines = render_interactive_component(
-                        &state.component_name,
-                        &active_archives.unwrap_or_default(),
-                        InteractiveSummary {
-                            done: bytes_done,
-                            total_bytes: state.total_bytes,
-                            completed: archives_done,
-                            total_items: state.total_archives,
-                            elapsed_secs: state.started.elapsed().as_secs(),
-                            previously_rendered_lines: rendered_lines,
-                        },
-                    );
-                } else {
-                    info!(
-                        component = %state.component_name,
-                        bytes_done,
-                        total_bytes = state.total_bytes,
-                        percent = percent(bytes_done, state.total_bytes),
-                        archives_done,
-                        total_archives = state.total_archives,
-                        active_archives = active_archives.as_ref().map_or(0, Vec::len),
-                        elapsed_secs = state.started.elapsed().as_secs(),
-                        "compressing component"
-                    );
-                }
-            }
-            if state.interactive {
-                clear_interactive_uploads(rendered_lines);
+                let active_archives = state.active_archives.lock().map_or(0, |active| active.len());
+                info!(
+                    component = %state.component_name,
+                    archives = %format!("{archives_done}/{}", state.total_archives),
+                    progress = %format!("{}%", ProgressDisplay::percent(bytes_done, state.total_bytes)),
+                    bytes = %ProgressDisplay::human_byte_progress(bytes_done, state.total_bytes),
+                    elapsed = %format_duration(state.started.elapsed()),
+                    active_archives,
+                    "compressing component"
+                );
             }
         });
         Self { stop_tx: Some(stop_tx), join_handle: Some(join_handle), reporter }
@@ -321,10 +238,8 @@ pub struct ComponentProgressState {
     pub bytes_done: AtomicU64,
     /// Number of archives that have fully completed compression.
     pub archives_done: AtomicU64,
-    /// Currently active archive rows for the live component renderer.
+    /// Currently active archives used for completion accounting and progress logs.
     pub active_archives: Mutex<HashMap<String, ActiveArchiveState>>,
-    /// Whether the component logger is rendering interactively to a TTY.
-    pub interactive: bool,
 }
 
 /// Live progress state for one in-flight archive within a component.
@@ -334,25 +249,6 @@ pub struct ActiveArchiveState {
     pub total_bytes: u64,
     /// Uncompressed source bytes processed so far for this archive.
     pub bytes_done: u64,
-    /// Monotonic timestamp when this archive started compression.
-    pub started: Instant,
-}
-
-#[derive(Clone, Debug)]
-struct ArchiveSnapshot {
-    archive_name: String,
-    total_bytes: u64,
-    bytes_done: u64,
-    age_secs: u64,
-}
-
-struct InteractiveSummary {
-    done: u64,
-    total_bytes: u64,
-    completed: u64,
-    total_items: usize,
-    elapsed_secs: u64,
-    previously_rendered_lines: usize,
 }
 
 /// Cumulative upload progress shared across concurrent artifact uploads. A spawned
@@ -364,7 +260,6 @@ pub struct UploadProgress {
     total_bytes: u64,
     total_files: usize,
     active_uploads: Arc<Mutex<HashMap<String, UploadFileState>>>,
-    interactive: bool,
 }
 
 impl UploadProgress {
@@ -395,7 +290,6 @@ impl UploadProgress {
             total_bytes,
             total_files,
             active_uploads: Arc::new(Mutex::new(HashMap::new())),
-            interactive: io::stdout().is_terminal(),
         })
     }
 
@@ -416,20 +310,14 @@ impl UploadProgress {
         }
     }
 
-    /// Registers an in-flight file upload so interactive rendering can show progress.
+    /// Registers an in-flight file upload for progress and stall tracking.
     pub(crate) fn start_file(&self, key: impl Into<String>, total_bytes: u64, stage: UploadStage) {
         let key = key.into();
         if let Ok(mut active_uploads) = self.active_uploads.lock() {
             let now = Instant::now();
             active_uploads.insert(
                 key,
-                UploadFileState {
-                    total_bytes,
-                    uploaded_bytes: 0,
-                    stage,
-                    started: now,
-                    last_update: now,
-                },
+                UploadFileState { total_bytes, uploaded_bytes: 0, stage, last_update: now },
             );
         }
     }
@@ -464,29 +352,21 @@ impl UploadProgress {
         self.files_completed.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Spawns a background logger or interactive renderer, depending on whether
-    /// stdout is a terminal.
+    /// Spawns the background progress logger.
     pub(crate) fn spawn_logger(&self) -> UploadProgressLogger {
         let uploaded = Arc::clone(&self.uploaded);
         let files_completed = Arc::clone(&self.files_completed);
         let total_bytes = self.total_bytes;
         let total_files = self.total_files;
         let active_uploads = Arc::clone(&self.active_uploads);
-        let interactive = self.interactive;
         let (stop_tx, stop_rx) = mpsc::channel();
         let join_handle = std::thread::spawn(move || {
             let started = Instant::now();
             let mut last_done = 0u64;
             let mut stalled_since: Option<Instant> = None;
             let mut last_stall_warning: Option<Instant> = None;
-            let mut rendered_lines = 0usize;
-            let tick = if interactive {
-                INTERACTIVE_UPLOAD_RENDER_INTERVAL
-            } else {
-                PROGRESS_LOG_INTERVAL
-            };
 
-            while stop_rx.recv_timeout(tick).is_err() {
+            while stop_rx.recv_timeout(PROGRESS_LOG_INTERVAL).is_err() {
                 let done = uploaded.load(Ordering::Relaxed);
                 let files_done = files_completed.load(Ordering::Relaxed);
                 let active_snapshot = active_uploads.lock().ok().map(|active| {
@@ -498,7 +378,6 @@ impl UploadProgress {
                             total_bytes: state.total_bytes,
                             uploaded_bytes: state.uploaded_bytes,
                             stage: state.stage,
-                            age_secs: now.duration_since(state.started).as_secs(),
                             idle_secs: now.duration_since(state.last_update).as_secs(),
                         })
                         .collect();
@@ -521,21 +400,21 @@ impl UploadProgress {
                             .take(MAX_STALLED_UPLOADS_IN_LOG)
                             .map(|state| {
                                 format!(
-                                    "{} [{}] {} / {} (idle {}s)",
+                                    "{} [{}] {} (idle {})",
                                     state.key,
                                     state.stage.label(),
-                                    human_bytes(state.uploaded_bytes),
-                                    human_bytes(state.total_bytes),
-                                    state.idle_secs
+                                    ProgressDisplay::human_byte_progress(
+                                        state.uploaded_bytes,
+                                        state.total_bytes
+                                    ),
+                                    format_duration(Duration::from_secs(state.idle_secs))
                                 )
                             })
                             .collect();
                         warn!(
-                            bytes_uploaded = done,
-                            total_bytes,
-                            files_uploaded = files_done,
-                            total_files,
-                            stalled_secs = stalled_at.elapsed().as_secs(),
+                            files = %format!("{files_done}/{total_files}"),
+                            bytes = %ProgressDisplay::human_byte_progress(done, total_bytes),
+                            stalled_for = %format_duration(stalled_at.elapsed()),
                             active_uploads = active_count,
                             stalled_uploads = ?stalled_uploads,
                             "upload progress is stalled"
@@ -547,32 +426,15 @@ impl UploadProgress {
                     last_stall_warning = None;
                 }
 
-                if interactive {
-                    rendered_lines = render_interactive_uploads(
-                        &active_snapshot.unwrap_or_default(),
-                        done,
-                        total_bytes,
-                        files_done,
-                        total_files,
-                        started.elapsed().as_secs(),
-                        rendered_lines,
-                    );
-                } else {
-                    info!(
-                        bytes_uploaded = done,
-                        total_bytes,
-                        percent = percent(done, total_bytes),
-                        files_uploaded = files_done,
-                        total_files,
-                        active_uploads = active_count,
-                        elapsed_secs = started.elapsed().as_secs(),
-                        "uploading snapshot artifacts (progress)"
-                    );
-                }
+                info!(
+                    files = %format!("{files_done}/{total_files}"),
+                    progress = %format!("{}%", ProgressDisplay::percent(done, total_bytes)),
+                    bytes = %ProgressDisplay::human_byte_progress(done, total_bytes),
+                    elapsed = %format_duration(started.elapsed()),
+                    active_uploads = active_count,
+                    "uploading snapshot artifacts (progress)"
+                );
                 last_done = done;
-            }
-            if interactive {
-                clear_interactive_uploads(rendered_lines);
             }
         });
 
@@ -587,7 +449,7 @@ pub(crate) struct UploadProgressLogger {
 }
 
 impl UploadProgressLogger {
-    /// Stops the background upload logger and clears any interactive rendering.
+    /// Stops the background upload logger.
     pub(crate) fn stop(mut self) {
         if let Some(stop_tx) = self.stop_tx.take() {
             let _ = stop_tx.send(());
@@ -631,136 +493,24 @@ struct UploadFileState {
     total_bytes: u64,
     uploaded_bytes: u64,
     stage: UploadStage,
-    started: Instant,
     last_update: Instant,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct UploadFileSnapshot {
     key: String,
     total_bytes: u64,
     uploaded_bytes: u64,
     stage: UploadStage,
-    age_secs: u64,
     idle_secs: u64,
 }
 
-fn render_interactive_uploads(
-    active: &[UploadFileSnapshot],
-    done: u64,
-    total_bytes: u64,
-    files_done: u64,
-    total_files: usize,
-    elapsed_secs: u64,
-    previously_rendered_lines: usize,
-) -> usize {
-    const TOTAL_LINES: usize = INTERACTIVE_UPLOAD_ROWS + 1;
+#[cfg(test)]
+mod tests {
+    use super::ProgressDisplay;
 
-    let mut stdout = io::stdout().lock();
-    let lines_to_move_up = previously_rendered_lines.saturating_sub(1);
-    if lines_to_move_up > 0 {
-        let _ = write!(stdout, "\x1b[{lines_to_move_up}F");
+    #[test]
+    fn formats_byte_progress_with_binary_units() {
+        assert_eq!(ProgressDisplay::human_byte_progress(1536, 2 * 1024 * 1024), "1.5 KiB/2 MiB");
     }
-
-    let hidden_count = active.len().saturating_sub(INTERACTIVE_UPLOAD_ROWS);
-    for row in 0..INTERACTIVE_UPLOAD_ROWS {
-        let _ = write!(stdout, "\x1b[2K");
-        if let Some(file) = active.get(row) {
-            let name = file.key.rsplit('/').next().unwrap_or(&file.key);
-            let line = format!(
-                "{:<36} [{}] [{}] {:>10} / {:<10} {:>4}% {:>5}s",
-                truncate_for_display(name, 36),
-                file.stage.label(),
-                progress_bar(file.uploaded_bytes, file.total_bytes),
-                human_bytes(file.uploaded_bytes),
-                human_bytes(file.total_bytes),
-                percent(file.uploaded_bytes, file.total_bytes),
-                file.age_secs
-            );
-            let _ = write!(stdout, "{line}");
-        }
-        let _ = writeln!(stdout);
-    }
-
-    let status = format!(
-        "files {files_done}/{total_files} | active {}{} | total {} / {} ({}%) | elapsed {}s",
-        active.len(),
-        if hidden_count > 0 { format!(" (+{hidden_count} hidden)") } else { String::new() },
-        human_bytes(done),
-        human_bytes(total_bytes),
-        percent(done, total_bytes),
-        elapsed_secs
-    );
-    let _ = write!(stdout, "\x1b[2K{status}");
-    let _ = stdout.flush();
-
-    TOTAL_LINES
-}
-
-fn clear_interactive_uploads(rendered_lines: usize) {
-    if rendered_lines == 0 {
-        return;
-    }
-
-    let mut stdout = io::stdout().lock();
-    let lines_to_move_up = rendered_lines.saturating_sub(1);
-    if lines_to_move_up > 0 {
-        let _ = write!(stdout, "\x1b[{lines_to_move_up}F");
-    }
-    for line in 0..rendered_lines {
-        let _ = write!(stdout, "\x1b[2K");
-        if line + 1 < rendered_lines {
-            let _ = writeln!(stdout);
-        }
-    }
-    let _ = write!(stdout, "\r");
-    let _ = stdout.flush();
-}
-
-fn render_interactive_component(
-    component_name: &str,
-    active: &[ArchiveSnapshot],
-    summary: InteractiveSummary,
-) -> usize {
-    const TOTAL_LINES: usize = INTERACTIVE_UPLOAD_ROWS + 1;
-
-    let mut stdout = io::stdout().lock();
-    let lines_to_move_up = summary.previously_rendered_lines.saturating_sub(1);
-    if lines_to_move_up > 0 {
-        let _ = write!(stdout, "\x1b[{lines_to_move_up}F");
-    }
-
-    let hidden_count = active.len().saturating_sub(INTERACTIVE_UPLOAD_ROWS);
-    for row in 0..INTERACTIVE_UPLOAD_ROWS {
-        let _ = write!(stdout, "\x1b[2K");
-        if let Some(archive) = active.get(row) {
-            let line = format!(
-                "{:<36} [{}] {:>10} / {:<10} {:>4}% {:>5}s",
-                truncate_for_display(&archive.archive_name, 36),
-                progress_bar(archive.bytes_done, archive.total_bytes),
-                human_bytes(archive.bytes_done),
-                human_bytes(archive.total_bytes),
-                percent(archive.bytes_done, archive.total_bytes),
-                archive.age_secs
-            );
-            let _ = write!(stdout, "{line}");
-        }
-        let _ = writeln!(stdout);
-    }
-
-    let status = format!(
-        "component {component_name} | archives {}/{} | active {}{} | total {} / {} ({}%) | elapsed {}s",
-        summary.completed,
-        summary.total_items,
-        active.len(),
-        if hidden_count > 0 { format!(" (+{hidden_count} hidden)") } else { String::new() },
-        human_bytes(summary.done),
-        human_bytes(summary.total_bytes),
-        percent(summary.done, summary.total_bytes),
-        summary.elapsed_secs
-    );
-    let _ = write!(stdout, "\x1b[2K{status}");
-    let _ = stdout.flush();
-
-    TOTAL_LINES
 }
