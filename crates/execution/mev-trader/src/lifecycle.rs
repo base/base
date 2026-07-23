@@ -5,7 +5,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -22,6 +22,8 @@ pub const HANG_GRACE_MILLIS: u64 = 40;
 pub const MAX_POOLS: usize = 512;
 /// Maximum total initialized ticks.
 pub const MAX_TOTAL_TICKS: usize = 4_096;
+/// Maximum complete legal Uniswap V3 bitmap words for one pool.
+pub const MAX_V3_BITMAP_WORDS: usize = 8_192;
 /// Maximum exact-prefix transactions.
 pub const MAX_PREFIX_TRANSACTIONS: usize = 4_096;
 /// Maximum materialized accounts.
@@ -415,6 +417,195 @@ impl<T> LatestSlot<T> {
     }
 }
 
+/// Non-blocking capacity-one shadow submission result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShadowSubmit {
+    /// The item filled an empty slot.
+    Accepted,
+    /// The item replaced an older unobserved measurement.
+    ReplacedOldUnobserved,
+    /// The slot lock was busy and the new measurement was dropped.
+    DroppedBusy,
+    /// The slot was closed or unavailable.
+    Closed,
+}
+
+/// Atomic accounting for every shadow slot disposition.
+#[derive(Debug, Default)]
+pub struct ShadowSlotCounters {
+    accepted: AtomicU64,
+    replaced: AtomicU64,
+    dropped_busy: AtomicU64,
+    closed: AtomicU64,
+    drained: AtomicU64,
+    shutdown_dropped: AtomicU64,
+    failed: AtomicU64,
+    poison_dropped: AtomicU64,
+}
+
+impl ShadowSlotCounters {
+    /// Returns accepted empty-slot submissions.
+    pub fn accepted(&self) -> u64 {
+        self.accepted.load(Ordering::Relaxed)
+    }
+
+    /// Returns replacements of unobserved measurements.
+    pub fn replaced(&self) -> u64 {
+        self.replaced.load(Ordering::Relaxed)
+    }
+
+    /// Returns producer drops caused by a busy slot lock.
+    pub fn dropped_busy(&self) -> u64 {
+        self.dropped_busy.load(Ordering::Relaxed)
+    }
+
+    /// Returns submissions rejected after close or mutex failure.
+    pub fn closed(&self) -> u64 {
+        self.closed.load(Ordering::Relaxed)
+    }
+
+    /// Returns measurements drained by the existing control task.
+    pub fn drained(&self) -> u64 {
+        self.drained.load(Ordering::Relaxed)
+    }
+
+    /// Returns pending measurements discarded during shutdown.
+    pub fn shutdown_dropped(&self) -> u64 {
+        self.shutdown_dropped.load(Ordering::Relaxed)
+    }
+
+    /// Returns mutex poison failures handled fail-closed.
+    pub fn failed(&self) -> u64 {
+        self.failed.load(Ordering::Relaxed)
+    }
+
+    /// Returns pending items discarded while recovering a poisoned slot.
+    pub fn poison_dropped(&self) -> u64 {
+        self.poison_dropped.load(Ordering::Relaxed)
+    }
+}
+
+/// Shadow-only capacity-one slot whose producer never waits for its mutex.
+#[derive(Debug)]
+pub struct ShadowLatestSlot<T> {
+    value: Mutex<Option<T>>,
+    closed: AtomicBool,
+    counters: ShadowSlotCounters,
+}
+
+impl<T> ShadowLatestSlot<T> {
+    /// Creates an open empty shadow slot.
+    pub const fn new() -> Self {
+        Self {
+            value: Mutex::new(None),
+            closed: AtomicBool::new(false),
+            counters: ShadowSlotCounters {
+                accepted: AtomicU64::new(0),
+                replaced: AtomicU64::new(0),
+                dropped_busy: AtomicU64::new(0),
+                closed: AtomicU64::new(0),
+                drained: AtomicU64::new(0),
+                shutdown_dropped: AtomicU64::new(0),
+                failed: AtomicU64::new(0),
+                poison_dropped: AtomicU64::new(0),
+            },
+        }
+    }
+
+    /// Attempts an O(1) submission without waiting for the slot lock.
+    pub fn try_submit(&self, item: T) -> ShadowSubmit {
+        if self.closed.load(Ordering::Acquire) {
+            self.counters.closed.fetch_add(1, Ordering::Relaxed);
+            return ShadowSubmit::Closed;
+        }
+        match self.value.try_lock() {
+            Ok(mut value) => {
+                if self.closed.load(Ordering::Acquire) {
+                    self.counters.closed.fetch_add(1, Ordering::Relaxed);
+                    return ShadowSubmit::Closed;
+                }
+                if value.replace(item).is_some() {
+                    self.counters.replaced.fetch_add(1, Ordering::Relaxed);
+                    ShadowSubmit::ReplacedOldUnobserved
+                } else {
+                    self.counters.accepted.fetch_add(1, Ordering::Relaxed);
+                    ShadowSubmit::Accepted
+                }
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                self.counters.dropped_busy.fetch_add(1, Ordering::Relaxed);
+                ShadowSubmit::DroppedBusy
+            }
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                self.closed.store(true, Ordering::Release);
+                let mut value = poisoned.into_inner();
+                if value.take().is_some() {
+                    self.counters.poison_dropped.fetch_add(1, Ordering::Relaxed);
+                }
+                self.value.clear_poison();
+                self.counters.failed.fetch_add(1, Ordering::Relaxed);
+                self.counters.closed.fetch_add(1, Ordering::Relaxed);
+                ShadowSubmit::Closed
+            }
+        }
+    }
+
+    /// Attempts to drain one measurement without waiting.
+    pub fn try_take(&self) -> Option<T> {
+        match self.value.try_lock() {
+            Ok(mut value) => {
+                let item = value.take();
+                if item.is_some() {
+                    self.counters.drained.fetch_add(1, Ordering::Relaxed);
+                }
+                item
+            }
+            Err(std::sync::TryLockError::WouldBlock) => None,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                self.closed.store(true, Ordering::Release);
+                let mut value = poisoned.into_inner();
+                if value.take().is_some() {
+                    self.counters.poison_dropped.fetch_add(1, Ordering::Relaxed);
+                }
+                self.value.clear_poison();
+                self.counters.failed.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        }
+    }
+
+    /// Irreversibly closes the slot and discards at most one pending measurement.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        let (mut value, poisoned) = match self.value.lock() {
+            Ok(value) => (value, false),
+            Err(poisoned) => {
+                self.counters.failed.fetch_add(1, Ordering::Relaxed);
+                self.value.clear_poison();
+                (poisoned.into_inner(), true)
+            }
+        };
+        if value.take().is_some() {
+            if poisoned {
+                self.counters.poison_dropped.fetch_add(1, Ordering::Relaxed);
+            } else {
+                self.counters.shutdown_dropped.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Returns the slot's atomic disposition counters.
+    pub const fn counters(&self) -> &ShadowSlotCounters {
+        &self.counters
+    }
+}
+
+impl<T> Default for ShadowLatestSlot<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Errors while establishing the sole worker or dedicated analysis pool.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum LifecycleError {
@@ -578,6 +769,67 @@ mod tests {
         assert_eq!(slot.submit(3), SlotSubmit::Closed);
     }
 
+    #[test]
+    fn t4a_shadow_slot_is_capacity_one_nonblocking_and_accounts_every_drop() {
+        let slot = ShadowLatestSlot::new();
+        assert_eq!(slot.try_submit(1), ShadowSubmit::Accepted);
+        assert_eq!(slot.try_submit(2), ShadowSubmit::ReplacedOldUnobserved);
+        {
+            let _held = slot.value.lock().expect("shadow slot lock");
+            assert_eq!(slot.try_submit(3), ShadowSubmit::DroppedBusy);
+        }
+        assert_eq!(slot.try_take(), Some(2));
+        assert_eq!(slot.counters().accepted(), 1);
+        assert_eq!(slot.counters().replaced(), 1);
+        assert_eq!(slot.counters().dropped_busy(), 1);
+        assert_eq!(slot.counters().drained(), 1);
+
+        assert_eq!(slot.try_submit(4), ShadowSubmit::Accepted);
+        slot.close();
+        assert_eq!(slot.counters().shutdown_dropped(), 1);
+        assert_eq!(slot.try_submit(5), ShadowSubmit::Closed);
+        assert_eq!(slot.counters().closed(), 1);
+        let poisoned = ShadowLatestSlot::new();
+        assert_eq!(poisoned.try_submit(10), ShadowSubmit::Accepted);
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _held = poisoned.value.lock().expect("poison fixture lock");
+            panic!("poison shadow slot");
+        }));
+        assert_eq!(poisoned.try_submit(11), ShadowSubmit::Closed);
+        assert_eq!(poisoned.try_take(), None);
+        poisoned.close();
+        assert_eq!(poisoned.counters().accepted(), 1);
+        assert_eq!(poisoned.counters().closed(), 1);
+        assert_eq!(poisoned.counters().failed(), 1);
+        assert_eq!(poisoned.counters().drained(), 0);
+        assert_eq!(poisoned.counters().shutdown_dropped(), 0);
+        assert_eq!(poisoned.counters().poison_dropped(), 1);
+
+        let poisoned_take = ShadowLatestSlot::new();
+        assert_eq!(poisoned_take.try_submit(20), ShadowSubmit::Accepted);
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _held = poisoned_take.value.lock().expect("take poison fixture lock");
+            panic!("poison shadow take");
+        }));
+        assert_eq!(poisoned_take.try_take(), None);
+        poisoned_take.close();
+        assert_eq!(poisoned_take.counters().failed(), 1);
+        assert_eq!(poisoned_take.counters().drained(), 0);
+        assert_eq!(poisoned_take.counters().shutdown_dropped(), 0);
+        assert_eq!(poisoned_take.counters().poison_dropped(), 1);
+
+        let poisoned_close = ShadowLatestSlot::new();
+        assert_eq!(poisoned_close.try_submit(30), ShadowSubmit::Accepted);
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _held = poisoned_close.value.lock().expect("close poison fixture lock");
+            panic!("poison shadow close");
+        }));
+        poisoned_close.close();
+        assert_eq!(poisoned_close.try_take(), None);
+        assert_eq!(poisoned_close.counters().failed(), 1);
+        assert_eq!(poisoned_close.counters().shutdown_dropped(), 0);
+        assert_eq!(poisoned_close.counters().poison_dropped(), 1);
+    }
     #[test]
     fn worker_claim_has_no_replacement() {
         let worker = SoleWorker::default();

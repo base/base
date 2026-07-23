@@ -39,7 +39,7 @@ pub const ISSUE76_OBSERVED_QUOTE: u64 = 1_216_314;
 pub const ISSUE76_QUOTE_GAP: u64 = 13_422;
 /// Maximum pools retained per activated WETH/token market.
 pub const K16: usize = 16;
-/// Maximum activated tokens justified by the 512-pool/K16 bound.
+/// Maximum fully K16-occupied tokens under the 512-pool bound.
 pub const MAX_ACTIVATED_TOKENS: usize = 32;
 /// Millionths denominator used by the pinned quote authority.
 pub const FEE_DENOMINATOR: u32 = 1_000_000;
@@ -151,6 +151,29 @@ pub enum PreparedPoolQuote {
         /// Complete sorted initialized ticks for the prepared interior.
         ticks: Vec<PairwiseV3Tick>,
     },
+}
+
+impl PreparedPoolQuote {
+    /// Constructs immutable V2-style constant-product quote state.
+    pub const fn constant_product(reserve0: U256, reserve1: U256) -> Self {
+        Self::ConstantProduct { reserve0, reserve1 }
+    }
+
+    /// Constructs immutable Aerodrome stable quote state.
+    pub const fn stable(reserve0: U256, reserve1: U256) -> Self {
+        Self::Stable { reserve0, reserve1 }
+    }
+
+    /// Constructs immutable Uniswap V3 quote state.
+    pub const fn v3(
+        sqrt_price_x96: U256,
+        liquidity: U256,
+        tick: i32,
+        tick_spacing: i32,
+        ticks: Vec<PairwiseV3Tick>,
+    ) -> Self {
+        Self::V3 { sqrt_price_x96, liquidity, tick, tick_spacing, ticks }
+    }
 }
 
 /// Complete immutable pool state consumed by K16 and pairwise quoting.
@@ -1482,9 +1505,6 @@ impl PairwiseEngine {
                 activated.insert(token);
             }
         }
-        if activated.len() > MAX_ACTIVATED_TOKENS {
-            return Err(PairwiseError::LimitExceeded);
-        }
         let mut by_token = BTreeMap::<Address, Vec<&PreparedPoolState>>::new();
         for pool in pools {
             if !cancellation.checkpoint(Instant::now(), true) {
@@ -1588,14 +1608,12 @@ impl PairwiseEngine {
                         let first_out = first.quote_exact_in(WETH, *amount, cancellation)?;
                         second.quote_exact_in(market.token, first_out, cancellation)
                     };
-                    let Ok(size) = PairwiseOptimizer::optimize(
+                    let size = PairwiseOptimizer::optimize(
                         quote_route,
                         &SizeBounds::default(),
                         cancellation,
-                    ) else {
-                        continue;
-                    };
-                    let Ok(amount_out) = quote_route(&size.amount) else { continue };
+                    )?;
+                    let amount_out = quote_route(&size.amount)?;
                     let route = [
                         BackrunHop {
                             pool: first.pool,
@@ -1627,11 +1645,19 @@ impl PairwiseEngine {
                 }
             }
         }
+        if !cancellation.checkpoint(Instant::now(), true) {
+            cancellation.acknowledge_drop();
+            return Err(PairwiseError::Cancelled);
+        }
         candidates.sort_by(|left, right| {
             left.directed_key
                 .cmp(&right.directed_key)
                 .then_with(|| left.amount_in.cmp(&right.amount_in))
         });
+        if !cancellation.checkpoint(Instant::now(), true) {
+            cancellation.acknowledge_drop();
+            return Err(PairwiseError::Cancelled);
+        }
         Ok(candidates)
     }
 
@@ -1662,11 +1688,11 @@ impl PairwiseEngine {
                 .cmp(&left.gross_profit)
                 .then_with(|| left.directed_key.cmp(&right.directed_key))
         });
-        let Some(winner) = ranked.first() else { return Ok(None) };
         if !cancellation.checkpoint(Instant::now(), true) {
             cancellation.acknowledge_drop();
             return Err(PairwiseError::Cancelled);
         }
+        let Some(winner) = ranked.first() else { return Ok(None) };
         let gross_wide = winner.gross_profit.into_raw();
         let gross_profit = U256::checked_from_limbs_slice(gross_wide.as_limbs())
             .ok_or(PairwiseError::Overflow("gross profit"))?;
@@ -1974,6 +2000,20 @@ mod tests {
         assert_eq!(markets[0].pools[0].pool, Address::with_last_byte(1));
         assert_eq!(markets[0].pools[1].pool, Address::with_last_byte(2));
         assert_eq!(PairwiseEngine::pair_count(&markets), Ok(K16 * (K16 - 1)));
+
+        let sparse = (0..=MAX_ACTIVATED_TOKENS)
+            .map(|index| {
+                let mut token_bytes = [0u8; 20];
+                token_bytes[0] = 1;
+                token_bytes[19] = u8::try_from(index + 1).expect("token identity");
+                v2(u8::try_from(index + 100).expect("pool identity"), Address::from(token_bytes), 1)
+            })
+            .collect::<Vec<_>>();
+        let sparse_dirty = sparse.iter().map(|pool| pool.pool).collect::<Vec<_>>();
+        let sparse_markets =
+            PairwiseEngine::rank_k16(&sparse, &sparse_dirty, &probe()).expect("sparse markets");
+        assert_eq!(sparse_markets.len(), MAX_ACTIVATED_TOKENS + 1);
+        assert_eq!(PairwiseEngine::pair_count(&sparse_markets), Ok(0));
     }
 
     #[test]
@@ -2107,6 +2147,22 @@ mod tests {
             assert_eq!(first.fee_pips, fee_of(first.pool), "first hop fee not carried");
             assert_eq!(second.fee_pips, fee_of(second.pool), "second hop fee not carried");
         }
+
+        let failing_token = Address::with_last_byte(0xcc);
+        let failing_first = v2(3, failing_token, 1);
+        let failing_dirty = failing_first.pool;
+        let failing_second = v2(4, failing_token, 1);
+        let mut mixed = pools;
+        mixed.extend([failing_first, failing_second]);
+        assert!(matches!(
+            PairwiseEngine::discover(
+                "fatal-pair-is-frame-fatal",
+                &mixed,
+                &[pool_a_addr, failing_dirty],
+                &probe(),
+            ),
+            Err(PairwiseError::Invalid(_) | PairwiseError::Exhausted(_))
+        ));
     }
 
     #[test]

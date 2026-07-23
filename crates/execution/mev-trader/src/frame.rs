@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{collections::BTreeSet, sync::Arc, time::Instant};
 
 use alloy_consensus::{
     Transaction,
@@ -15,7 +15,7 @@ use reth_revm::{State, database::StateProviderDatabase};
 use revm::{DatabaseCommit, context_interface::result::ExecutionResult};
 
 use crate::{
-    AuditedWriteKey, CancellationProbe, DeltaGuard, MaterializedState, MeasurementContext,
+    CancellationProbe, DeltaGuard, FrameAuditPlan, MaterializedState, MeasurementContext,
     PayloadVisitor, PortError, SnapshotHandle, StateMaterializer, TraderSnapshotPort, VisitControl,
 };
 
@@ -47,11 +47,123 @@ pub struct VictimFrame {
     pub received_at: Instant,
 }
 
+/// Canonical strict-ascending set of pools whose quote state changed in the victim delta.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct DirtyPoolSet(Vec<Address>);
+
+impl DirtyPoolSet {
+    /// Returns the canonical pool-address slice.
+    pub fn as_slice(&self) -> &[Address] {
+        &self.0
+    }
+
+    /// Returns the number of dirty pools.
+    pub const fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns whether no quote-bearing pool changed.
+    pub const fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Typed victim-delta validation failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeltaError {
+    /// The audit plan or actual changed key set failed the existing delta guard.
+    DeltaNotAudited,
+    /// A classified quote slot referred to a pool outside the immutable universe.
+    DirtyPoolOutsideUniverse,
+}
+
+/// Validated classification of the actual victim state delta.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedFrameDelta {
+    dirty_pools: DirtyPoolSet,
+}
+
+impl ValidatedFrameDelta {
+    /// Validates all actual changes and derives only quote-slot-intersecting dirty pools.
+    pub fn validate_and_classify(
+        state: &revm::state::EvmState,
+        audit: &FrameAuditPlan,
+    ) -> Result<Self, DeltaError> {
+        if !DeltaGuard::permits(state, audit.audited_writes()) {
+            return Err(DeltaError::DeltaNotAudited);
+        }
+
+        let mut dirty = BTreeSet::new();
+        for (address, account) in state {
+            for (slot, _) in account.changed_storage_slots() {
+                if let Some(owner) = audit.owner_for_storage(*address, *slot) {
+                    if !audit.contains_pool(owner) {
+                        return Err(DeltaError::DirtyPoolOutsideUniverse);
+                    }
+                    dirty.insert(owner);
+                }
+            }
+        }
+        Ok(Self { dirty_pools: DirtyPoolSet(dirty.into_iter().collect()) })
+    }
+
+    /// Returns the canonical dirty-pool set.
+    pub const fn dirty_pools(&self) -> &DirtyPoolSet {
+        &self.dirty_pools
+    }
+}
+
+impl DeltaGuard {
+    /// Preserves delta authorization parity and classifies actual quote-slot changes.
+    pub fn validate_and_classify(
+        state: &revm::state::EvmState,
+        audit: &FrameAuditPlan,
+    ) -> Result<ValidatedFrameDelta, DeltaError> {
+        ValidatedFrameDelta::validate_and_classify(state, audit)
+    }
+}
+
+/// One-shot guard that makes the sole post-validation database commit explicit.
+#[derive(Debug, Default)]
+pub struct FrameCommitGuard {
+    commits: u8,
+}
+
+impl FrameCommitGuard {
+    /// Commits the validated state only when no prior commit has occurred.
+    pub fn commit<Database>(
+        &mut self,
+        database: &mut Database,
+        state: revm::state::EvmState,
+    ) -> Result<(), PortError>
+    where
+        Database: DatabaseCommit,
+    {
+        if self.commits != 0 {
+            return Err(PortError::Incoherent);
+        }
+        database.commit(state);
+        self.commits = 1;
+        Ok(())
+    }
+
+    /// Returns whether exactly one commit completed.
+    pub const fn completed_exactly_once(&self) -> bool {
+        self.commits == 1
+    }
+
+    /// Rejects a processing path that did not complete exactly one commit.
+    pub const fn finish(self) -> Result<(), PortError> {
+        if self.completed_exactly_once() { Ok(()) } else { Err(PortError::Incoherent) }
+    }
+}
+
 /// Opaque evidence that one frame completed the authoritative processing path.
 #[derive(Debug)]
 pub struct ProcessedFrame {
     materialized_state: MaterializedState,
     measurement_context: MeasurementContext,
+    dirty_pools: DirtyPoolSet,
 }
 
 impl ProcessedFrame {
@@ -63,6 +175,11 @@ impl ProcessedFrame {
     /// Returns immutable frame identity bound to the successful processing result.
     pub const fn measurement_context(&self) -> &MeasurementContext {
         &self.measurement_context
+    }
+
+    /// Returns the canonical pools whose quote slots changed in the actual victim delta.
+    pub const fn dirty_pools(&self) -> &DirtyPoolSet {
+        &self.dirty_pools
     }
 }
 
@@ -158,14 +275,14 @@ impl FrameProcessor {
         Some(transaction)
     }
 
-    /// Executes, guards, commits exactly once, materializes, drops provider state, then rechecks authority.
+    /// Executes, validates and classifies, commits exactly once, materializes, then rechecks authority.
     pub fn process(
         port: &dyn TraderSnapshotPort,
         snapshot: &SnapshotHandle,
         frame: &VictimFrame,
         now: Instant,
         chain_spec: Arc<BaseChainSpec>,
-        audited_writes: &[AuditedWriteKey],
+        audit: &FrameAuditPlan,
         cancellation: &CancellationProbe,
     ) -> Result<Option<ProcessedFrame>, PortError> {
         if !port.is_current_authoritative(snapshot) {
@@ -203,16 +320,19 @@ impl FrameProcessor {
             Ok(output) => output,
             Err(_) => return Ok(None),
         };
-        if !matches!(output.result, ExecutionResult::Success { .. })
-            || !DeltaGuard::permits(&output.state, audited_writes)
-        {
+        if !matches!(output.result, ExecutionResult::Success { .. }) {
             return Ok(None);
         }
+        let Ok(validated_delta) = DeltaGuard::validate_and_classify(&output.state, audit) else {
+            return Ok(None);
+        };
 
-        evm.db_mut().commit(output.state);
+        let mut commit = FrameCommitGuard::default();
+        commit.commit(evm.db_mut(), output.state)?;
         let materialized =
-            StateMaterializer::materialize(evm.db_mut(), audited_writes, cancellation)?;
+            StateMaterializer::materialize(evm.db_mut(), audit.audited_writes(), cancellation)?;
         drop(evm);
+        commit.finish()?;
 
         let current_authority = port.is_current_authoritative(snapshot);
         if !cancellation.checkpoint(Instant::now(), current_authority) {
@@ -229,6 +349,7 @@ impl FrameProcessor {
                 payload_id,
                 victim: frame.transaction_hash,
             },
+            dirty_pools: validated_delta.dirty_pools,
         }))
     }
 }
@@ -237,6 +358,7 @@ impl FrameProcessor {
 #[cfg(test)]
 pub(crate) mod test_utils {
     use std::{
+        collections::BTreeMap,
         str::FromStr,
         sync::{
             Arc, Mutex,
@@ -507,13 +629,15 @@ pub(crate) mod test_utils {
             audited_writes: &[crate::AuditedWriteKey],
             cancellation: &CancellationProbe,
         ) -> Result<Option<ProcessedFrame>, PortError> {
+            let audit = crate::FrameAuditPlan::new(audited_writes.to_vec(), BTreeMap::new())
+                .map_err(|_| PortError::Incoherent)?;
             FrameProcessor::process(
                 &self.port,
                 &self.snapshot,
                 &self.frame,
                 Instant::now(),
                 Arc::clone(&self.chain_spec),
-                audited_writes,
+                &audit,
                 cancellation,
             )
         }
@@ -564,17 +688,130 @@ pub(crate) mod test_utils {
 }
 #[cfg(test)]
 mod tests {
-    use std::{str::FromStr, sync::Arc, time::Duration};
+    use std::{collections::BTreeMap, str::FromStr, sync::Arc, time::Duration};
 
     use alloy_consensus::{Header, Sealed};
+    use alloy_primitives::U256;
+    use revm::state::{Account, EvmState, EvmStorageSlot, TransactionId};
     use revm_bytecode::Bytecode;
-    use revm_database::BundleAccount;
+    use revm_database::{BundleAccount, InMemoryDB};
 
     use super::*;
     use crate::{
         BundleVisitor, CancellationToken, GlobalLifecycle, PendingSnapshotView,
         SnapshotHandleFactory, TaskState, TransactionVisitor, VisitSummary,
     };
+
+    #[test]
+    fn t4a_delta_classifies_canonical_dirty_pool_subset_from_actual_changes() {
+        let first = Address::with_last_byte(1);
+        let second = Address::with_last_byte(2);
+        let third = Address::with_last_byte(3);
+        let slot = U256::from(7);
+        let nonce_address = Address::with_last_byte(9);
+        let mut keys = vec![
+            crate::AuditedWriteKey::Storage {
+                address: second,
+                slot,
+                evidence_digest: B256::with_last_byte(2),
+            },
+            crate::AuditedWriteKey::Storage {
+                address: third,
+                slot,
+                evidence_digest: B256::with_last_byte(4),
+            },
+            crate::AuditedWriteKey::AccountNonce {
+                address: nonce_address,
+                evidence_digest: B256::with_last_byte(3),
+            },
+            crate::AuditedWriteKey::Storage {
+                address: first,
+                slot,
+                evidence_digest: B256::with_last_byte(1),
+            },
+        ];
+        keys.sort();
+        let owners = [((third, slot), third), ((second, slot), second), ((first, slot), first)]
+            .into_iter()
+            .collect();
+        let audit = FrameAuditPlan::new(keys, owners).expect("audit");
+
+        let mut first_account = Account::default();
+        first_account.storage.insert(
+            slot,
+            EvmStorageSlot::new_changed(U256::ZERO, U256::from(1), TransactionId::ZERO),
+        );
+        first_account.mark_touch();
+        let mut third_account = Account::default();
+        third_account.storage.insert(
+            slot,
+            EvmStorageSlot::new_changed(U256::ZERO, U256::from(3), TransactionId::ZERO),
+        );
+        third_account.mark_touch();
+        let mut nonce_account = Account::default();
+        nonce_account.set_current_info_as_original();
+        nonce_account.info.nonce = 1;
+        nonce_account.mark_touch();
+        let state: EvmState =
+            [(third, third_account), (nonce_address, nonce_account), (first, first_account)]
+                .into_iter()
+                .collect();
+
+        let validated = DeltaGuard::validate_and_classify(&state, &audit).expect("allowed delta");
+        assert_eq!(validated.dirty_pools().as_slice(), &[first, third]);
+        let empty = FrameAuditPlan::new(Vec::new(), BTreeMap::new()).expect("empty audit");
+        assert_eq!(
+            DeltaGuard::validate_and_classify(&state, &empty),
+            Err(DeltaError::DeltaNotAudited)
+        );
+    }
+
+    #[test]
+    fn t4a_frame_process_preserves_commit_once_and_delta_rejection_parity() {
+        let accepted = test_utils::TestFrameHarness::capture();
+        let (_, accepted_probe) = cancellation(Instant::now() + Duration::from_secs(5));
+        let processed = accepted
+            .process_result(&accepted.audited_writes(), &accepted_probe)
+            .expect("processing")
+            .expect("accepted");
+        accepted.assert_processed(&processed);
+        assert!(processed.dirty_pools().is_empty());
+        let mut commit = FrameCommitGuard::default();
+        assert!(!commit.completed_exactly_once());
+        commit.commit(&mut InMemoryDB::default(), EvmState::default()).expect("first commit");
+        assert!(commit.completed_exactly_once());
+        assert_eq!(
+            commit.commit(&mut InMemoryDB::default(), EvmState::default()),
+            Err(PortError::Incoherent)
+        );
+        commit.finish().expect("exactly one commit");
+
+        let rejected = test_utils::TestFrameHarness::capture();
+        let (_, probe) = cancellation(Instant::now() + Duration::from_secs(5));
+        assert!(matches!(rejected.process_result(&[], &probe), Ok(None)));
+
+        let address = Address::with_last_byte(44);
+        let allowed = crate::AuditedWriteKey::AccountBalance {
+            address,
+            evidence_digest: B256::with_last_byte(45),
+        };
+        let mut changed = Account::default();
+        changed.set_current_info_as_original();
+        changed.info.balance = U256::from(2);
+        changed.mark_touch();
+        let changed_state: EvmState = [(address, changed)].into_iter().collect();
+        assert!(DeltaGuard::permits(&changed_state, &[allowed]));
+        assert!(!DeltaGuard::permits(&changed_state, &[allowed, allowed]));
+        assert!(!DeltaGuard::permits(&changed_state, &[]));
+
+        let mut code_changed = Account::default();
+        code_changed.set_current_info_as_original();
+        code_changed.info.balance = U256::from(2);
+        code_changed.info.code_hash = B256::with_last_byte(46);
+        code_changed.mark_touch();
+        let code_changed_state: EvmState = [(address, code_changed)].into_iter().collect();
+        assert!(!DeltaGuard::permits(&code_changed_state, &[allowed]));
+    }
 
     const LEGACY_TX: &str = "f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83";
     const ACCESS_LIST_TX: &str = "01f85f808080809401234567890123456789012345678901234567898080c080a0840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565a025e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1";

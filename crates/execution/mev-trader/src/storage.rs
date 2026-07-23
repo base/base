@@ -8,7 +8,8 @@ use revm::{database_interface::Database, state::EvmState};
 
 use crate::{
     AuditedWriteKey, BitmapWordRead, CancellationProbe, FieldKind, InitializedTickRead,
-    MAX_ACCOUNTS, MAX_STORAGE_SLOTS, MAX_TOTAL_TICKS, PortError, RegistryError, StorageReadPlan,
+    MAX_ACCOUNTS, MAX_STORAGE_SLOTS, MAX_TOTAL_TICKS, MAX_V3_BITMAP_WORDS, PortError,
+    RegistryError, StorageReadPlan,
 };
 
 /// Minimum and maximum supported Uniswap V3 ticks.
@@ -177,7 +178,7 @@ impl V3StorageValidator {
         }
         let expected_words =
             usize::try_from(i32::from(distance) + 1).map_err(|_| RegistryError::LimitExceeded)?;
-        if words.len() != expected_words || words.len() > MAX_TOTAL_TICKS {
+        if words.len() != expected_words || words.len() > MAX_V3_BITMAP_WORDS {
             return Err(RegistryError::LimitExceeded);
         }
         for (offset, word) in words.iter().enumerate() {

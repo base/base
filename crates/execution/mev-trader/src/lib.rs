@@ -14,18 +14,22 @@ pub use port::{
 
 mod frame;
 pub use frame::{
-    FrameProcessor, MAX_FRAME_AGE_MILLIS, MAX_RAW_FRAME_BYTES, ProcessedFrame, SnapshotCoherence,
-    VictimFrame,
+    DeltaError, DirtyPoolSet, FrameCommitGuard, FrameProcessor, MAX_FRAME_AGE_MILLIS,
+    MAX_RAW_FRAME_BYTES, ProcessedFrame, SnapshotCoherence, ValidatedFrameDelta, VictimFrame,
 };
 
 mod registry;
 pub use registry::{
     AuditedWriteCodec, AuditedWriteKey, BitmapWordRead, CanonicalDigest, CanonicalEncoder,
     CoverageHasher, DescriptorHasher, DescriptorPlanDigest, ExactProtocol, FieldKind, FieldRead,
-    FixturePoolRegistry, InitializedTickRead, PoolDescriptor, PoolDescriptorVisitor, PoolRegistry,
-    RegistryDigest, RegistryError, RegistryHasher, StoragePlanCodec, StoragePlanValidator,
-    StorageReadPlan,
+    FixturePoolRegistry, FrameAuditPlan, InitializedTickRead, PoolDescriptor,
+    PoolDescriptorVisitor, PoolRegistry, PoolUniverseSnapshot, ProvisionedPoolRegistry,
+    RegistryDigest, RegistryError, RegistryHasher, SnapshotCollector, StoragePlanCodec,
+    StoragePlanValidator, StorageReadPlan, V3ReadPlan,
 };
+
+mod preparation;
+pub use preparation::{PoolStatePreparer, PreparationError};
 
 mod storage;
 pub use storage::{
@@ -46,8 +50,9 @@ pub use lifecycle::{
     DisableReason, GlobalLifecycle, GlobalState, HANG_GRACE_MILLIS, LatestSlot, LifecycleError,
     MAX_ACCOUNTS, MAX_CANDIDATES, MAX_CANONICAL_BYTES, MAX_CODE_BYTES, MAX_CODE_ENTRIES, MAX_PAIRS,
     MAX_PLANS_PER_FRAME, MAX_POOLS, MAX_PREFIX_TRANSACTIONS, MAX_STORAGE_SLOTS, MAX_TOTAL_TICKS,
-    SlotSubmit, SoleWorker, TaskRun, TaskRunner, TaskState, Watchdog, WatchdogStatus, WorkCaps,
-    WorkerClaim, WorkloadSize,
+    MAX_V3_BITMAP_WORDS,
+    ShadowLatestSlot, ShadowSlotCounters, ShadowSubmit, SlotSubmit, SoleWorker, TaskRun,
+    TaskRunner, TaskState, Watchdog, WatchdogStatus, WorkCaps, WorkerClaim, WorkloadSize,
 };
 mod oracle;
 pub use oracle::{
@@ -67,7 +72,10 @@ pub use pairwise::{
     SwapStep, TICK_MULTIPLIERS, V3QuoteResult, WETH,
 };
 mod runtime;
-pub use runtime::{MevTraderRuntime, MevTraderRuntimeConfig, RuntimeInstallError};
+pub use runtime::{
+    MevTraderRuntime, MevTraderRuntimeConfig, PoolCodeHashView, RuntimeInstallError,
+    ShadowFrameMeasurement, ShadowOutcome, ShadowOutcomeCounters,
+};
 
 mod victim_claim;
 pub use victim_claim::{
