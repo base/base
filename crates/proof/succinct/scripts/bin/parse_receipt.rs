@@ -47,7 +47,9 @@ fn main() -> Result<()> {
             parse_aggregation_outputs(&proof_with_pv, &raw_pv, args.export_json.as_deref())?;
         }
         "stark" | "range" => parse_range_outputs(&mut proof_with_pv)?,
-        other => anyhow::bail!("Unknown type '{other}'. Use 'stark' or 'snark'."),
+        other => {
+            anyhow::bail!("Unknown type '{other}'. Use 'stark' or 'snark'.")
+        }
     }
 
     Ok(())
