@@ -353,7 +353,7 @@ mod tests {
         assert!(SpanBatchTransactionData::decode(&mut encode(&sender_eoa).as_slice()).is_err());
 
         // Absent payer must carry an empty authenticator.
-        let mut payer_set = base.clone();
+        let mut payer_set = base;
         payer_set.payer_authenticator = Bytes::from_static(&[0u8; 20]);
         assert!(SpanBatchTransactionData::decode(&mut encode(&payer_set).as_slice()).is_err());
     }
