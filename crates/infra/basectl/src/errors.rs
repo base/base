@@ -144,6 +144,12 @@ pub enum P2pCommandError {
         /// The unsupported action name.
         action: String,
     },
+    /// The EL ban target is a trusted peer, which the node silently refuses to ban.
+    #[error("cannot ban peer {target}: it is in the trusted set")]
+    TrustedElPeerBan {
+        /// The enode target supplied by the caller.
+        target: String,
+    },
 }
 
 /// Error returned by the `proofs` command group.

@@ -167,7 +167,10 @@ Important EL RPC note:
 - If the EL RPC does not expose those admin methods, `basectl p2p` degrades gracefully: EL peer count still appears, but EL endpoint fields or EL peer listings show as unavailable / `null`.
 - EL ban/unban uses `admin_banPeer` and `admin_unbanPeer`, which require an EL
   implementation that exposes those admin methods. Reth trusted peers must be
-  removed from the trusted set before they can be banned.
+  removed from the trusted set before they can be banned; because reth silently
+  ignores a ban on a trusted peer, `basectl p2p ban` first checks `admin_peers`
+  and fails fast when the target is a currently-connected trusted peer (a
+  trusted peer with no live session is not detectable this way).
 - CL data comes from `opp2p_self`, `opp2p_peerStats`, and `opp2p_peers(true)` on the consensus RPC.
 - When exposed by the node, `opp2p_peerStats` also additively reports `maxPeerCount`, the configured CL max peer count.
 - CL ban/unban commands use `opp2p_blockPeer`, `opp2p_unblockPeer`, and `opp2p_listBlockedPeers` underneath.

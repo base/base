@@ -7,9 +7,9 @@ use base_consensus_peers::BootNode;
 use basectl_cli::{
     ElReachabilityOutcome, JsonOutput, KeyValueTable, MonitoringConfig, P2pCommandError,
     P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary, TelemetryClient,
-    add_peer, ban_el_peer, ban_peer, connect_peer, disconnect_peer, fetch_connected_peers,
-    fetch_info, fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_el_peer,
-    unban_peer,
+    add_peer, ban_el_peer, ban_peer, connect_peer, disconnect_peer, el_peer_is_trusted,
+    fetch_connected_peers, fetch_info, fetch_raw_info, fetch_raw_peers, list_banned_peers,
+    remove_peer, unban_el_peer, unban_peer,
 };
 use serde::Serialize;
 use url::Url;
@@ -205,6 +205,9 @@ async fn run_peer_ban_action(
                 PeerLayer::El,
             );
             let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
+            if matches!(action, BanAction::Ban) && el_peer_is_trusted(&el_rpc, &enode).await? {
+                return Err(P2pCommandError::TrustedElPeerBan { target: enode }.into());
+            }
             let prompt = format!("{verb} EL peer {enode} through {el_rpc}? [y/N] ");
             if !confirm(&prompt, yes)? {
                 println!("aborted");

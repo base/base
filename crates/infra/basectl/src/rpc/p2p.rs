@@ -286,6 +286,35 @@ async fn el_admin_peer_bool(rpc: &Url, method: &'static str, enode: &str) -> Res
     }
 }
 
+/// Reports whether the execution-layer peer identified by `enode` is currently
+/// connected as a trusted peer, via `admin_peers`.
+///
+/// reth silently skips trusted peers when banning (returning success without
+/// applying the ban), so callers use this to fail fast with a clear message.
+/// Returns `false` when the peer is not among the connected peers or when the EL
+/// RPC does not expose `admin_peers`: in both cases the trusted status cannot be
+/// confirmed, so the caller should not block the ban. This therefore only
+/// catches trusted peers with a live session, which is the common ban case.
+pub async fn el_peer_is_trusted(rpc: &Url, enode: &str) -> Result<bool> {
+    let Some(node_id) = enode_node_id(enode) else { return Ok(false) };
+    let el_provider = connect_el(rpc).await?;
+    match el_provider.peers().await {
+        Ok(peers) => Ok(peers.iter().any(|peer| {
+            peer.network.trusted
+                && enode_node_id(&peer.enode).is_some_and(|id| id.eq_ignore_ascii_case(&node_id))
+        })),
+        Err(err) if is_method_not_found(&err) => Ok(false),
+        Err(err) => Err(err).with_context(|| format!("fetching admin_peers from {rpc}")),
+    }
+}
+
+/// Extracts the lowercase-comparable node ID (the hex public key between
+/// `enode://` and `@`) from an enode URL, or `None` if it is not an enode.
+fn enode_node_id(enode: &str) -> Option<String> {
+    let node_id = enode.strip_prefix("enode://")?.split('@').next()?;
+    (!node_id.is_empty()).then(|| node_id.to_string())
+}
+
 /// Connects a consensus-layer peer through `opp2p_connectPeer`.
 pub async fn connect_peer(cl_rpc: &Url, multiaddr: &str) -> Result<()> {
     let cl_client = connect_cl(cl_rpc)?;
@@ -748,8 +777,8 @@ mod tests {
     use url::Url;
 
     use super::{
-        ClNodeIdentity, ElNodeIdentity, NodeEndpoint, ban_el_peer, parse_cl_node_endpoint,
-        parse_el_node_endpoint, unban_el_peer,
+        ClNodeIdentity, ElNodeIdentity, NodeEndpoint, ban_el_peer, el_peer_is_trusted,
+        parse_cl_node_endpoint, parse_el_node_endpoint, unban_el_peer,
     };
 
     const TEST_ENODE: &str = "enode://peer@127.0.0.1:30303";
@@ -782,6 +811,35 @@ mod tests {
             "jsonrpc": "2.0",
             "id": request["id"],
             "error": { "code": -32601, "message": "Method not found" },
+        }))
+    }
+
+    fn admin_peer(enode: &str, port: u16, trusted: bool) -> Value {
+        json!({
+            "enode": enode,
+            "id": "id",
+            "name": "reth",
+            "caps": [],
+            "network": {
+                "localAddress": format!("127.0.0.1:{port}"),
+                "remoteAddress": format!("127.0.0.1:{port}"),
+                "inbound": false,
+                "trusted": trusted,
+                "static": false,
+            },
+            "protocols": {},
+        })
+    }
+
+    async fn el_peers_response(Json(request): Json<Value>) -> Json<Value> {
+        assert_eq!(request["method"], "admin_peers");
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request["id"],
+            "result": [
+                admin_peer(TEST_ENODE, 30303, true),
+                admin_peer("enode://basic@127.0.0.1:30304", 30304, false),
+            ],
         }))
     }
 
@@ -891,6 +949,29 @@ mod tests {
         let error = ban_el_peer(&rpc, "enode://peer@127.0.0.1:30303").await.unwrap_err();
 
         assert!(error.to_string().contains("`admin_banPeer` not exposed"));
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn detects_trusted_el_peer_via_admin_peers() {
+        let router = Router::new().route("/", post(el_peers_response));
+        let (rpc, handle) = start_el_rpc(router).await;
+
+        // Connected and trusted -> flagged.
+        assert!(el_peer_is_trusted(&rpc, TEST_ENODE).await.unwrap());
+        // Connected but not trusted -> not flagged.
+        assert!(!el_peer_is_trusted(&rpc, "enode://basic@127.0.0.1:30304").await.unwrap());
+        // Not among connected peers -> not flagged.
+        assert!(!el_peer_is_trusted(&rpc, "enode://absent@127.0.0.1:30305").await.unwrap());
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn treats_missing_admin_peers_as_untrusted() {
+        let router = Router::new().route("/", post(method_not_found));
+        let (rpc, handle) = start_el_rpc(router).await;
+
+        assert!(!el_peer_is_trusted(&rpc, TEST_ENODE).await.unwrap());
         handle.abort();
     }
 }
