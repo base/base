@@ -172,8 +172,8 @@ where
             block.header(),
         )?;
 
-        if !self.chain_spec().is_zombie_active_at_timestamp(timestamp)
-            || !self.chain_spec().is_zombie_active_at_timestamp(parent_header.timestamp())
+        if !self.chain_spec().is_zenith_active_at_timestamp(timestamp)
+            || !self.chain_spec().is_zenith_active_at_timestamp(parent_header.timestamp())
         {
             return Ok(());
         }
@@ -217,7 +217,7 @@ where
         header: &<Self::Block as Block>::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         let timestamp = attributes.timestamp();
-        if !self.chain_spec().is_zombie_active_at_timestamp(timestamp) {
+        if !self.chain_spec().is_zenith_active_at_timestamp(timestamp) {
             return (timestamp > header.timestamp())
                 .then_some(())
                 .ok_or(InvalidPayloadAttributesError::InvalidTimestamp);
@@ -327,16 +327,16 @@ where
             ));
         }
 
-        let zombie_active = self
+        let zenith_active = self
             .chain_spec()
-            .is_zombie_active_at_timestamp(attributes.payload_attributes.timestamp);
+            .is_zenith_active_at_timestamp(attributes.payload_attributes.timestamp);
         match attributes.timestamp_millis_part {
-            Some(_) if !zombie_active => {
+            Some(_) if !zenith_active => {
                 return Err(EngineObjectValidationError::InvalidParams(
                     "TimestampMillisPartNotAllowed".to_string().into(),
                 ));
             }
-            None if zombie_active => {
+            None if zenith_active => {
                 return Err(EngineObjectValidationError::InvalidParams(
                     "MissingTimestampMillisPartInPayloadAttributes".to_string().into(),
                 ));
@@ -419,7 +419,7 @@ mod tests {
     use super::*;
     use crate::engine;
 
-    const ZOMBIE_TIMESTAMP: u64 = 1_800_000_001;
+    const ZENITH_TIMESTAMP: u64 = 1_800_000_001;
 
     fn validator_with_chain_spec(
         chain_spec: BaseChainSpec,
@@ -433,10 +433,10 @@ mod tests {
         validator_with_chain_spec(BaseChainSpec::sepolia())
     }
 
-    fn zombie_validator() -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
+    fn zenith_validator() -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
         validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
-                .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP))
+                .with_fork(BaseUpgrade::Zenith, ForkCondition::Timestamp(ZENITH_TIMESTAMP))
                 .build(),
         )
     }
@@ -482,7 +482,7 @@ mod tests {
         .expect("valid test payload attributes")
     }
 
-    fn zombie_attributes(timestamp: u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
+    fn zenith_attributes(timestamp: u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
         get_attributes(Some(b64!("0000000000000000")), Some(1), timestamp)
     }
 
@@ -642,9 +642,9 @@ mod tests {
     }
 
     #[test]
-    fn test_malformed_attributes_post_zombie_without_timestamp_millis_part() {
-        let validator = zombie_validator();
-        let attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
+    fn test_malformed_attributes_post_zenith_without_timestamp_millis_part() {
+        let validator = zenith_validator();
+        let attributes = zenith_attributes(ZENITH_TIMESTAMP);
 
         let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
@@ -655,9 +655,9 @@ mod tests {
     }
 
     #[test]
-    fn test_malformed_attributes_post_zombie_with_invalid_timestamp_millis_part() {
-        let validator = zombie_validator();
-        let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
+    fn test_malformed_attributes_post_zenith_with_invalid_timestamp_millis_part() {
+        let validator = zenith_validator();
+        let mut attributes = zenith_attributes(ZENITH_TIMESTAMP);
         attributes.timestamp_millis_part = Some(100);
 
         let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
@@ -669,9 +669,9 @@ mod tests {
     }
 
     #[test]
-    fn test_well_formed_attributes_post_zombie_with_valid_timestamp_millis_part() {
-        let validator = zombie_validator();
-        let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
+    fn test_well_formed_attributes_post_zenith_with_valid_timestamp_millis_part() {
+        let validator = zenith_validator();
+        let mut attributes = zenith_attributes(ZENITH_TIMESTAMP);
         attributes.timestamp_millis_part = Some(200);
 
         let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
@@ -688,7 +688,7 @@ mod tests {
         timestamp_millis_part: Option<u16>,
         parent_timestamp: u64,
     ) -> Result<(), InvalidPayloadAttributesError> {
-        let mut attributes = zombie_attributes(timestamp);
+        let mut attributes = zenith_attributes(timestamp);
         attributes.timestamp_millis_part = timestamp_millis_part;
         let header = Header { timestamp: parent_timestamp, ..Default::default() };
 
@@ -697,51 +697,51 @@ mod tests {
     }
 
     #[test]
-    fn test_payload_attributes_post_zombie_accept_same_second() {
-        let validator = zombie_validator();
+    fn test_payload_attributes_post_zenith_accept_same_second() {
+        let validator = zenith_validator();
 
         assert!(
-            validate_against_parent(&validator, ZOMBIE_TIMESTAMP, Some(200), ZOMBIE_TIMESTAMP,)
+            validate_against_parent(&validator, ZENITH_TIMESTAMP, Some(200), ZENITH_TIMESTAMP,)
                 .is_ok()
         );
     }
 
     #[test]
-    fn test_payload_attributes_post_zombie_accept_next_second() {
-        let validator = zombie_validator();
+    fn test_payload_attributes_post_zenith_accept_next_second() {
+        let validator = zenith_validator();
 
         assert!(
-            validate_against_parent(&validator, ZOMBIE_TIMESTAMP + 1, Some(0), ZOMBIE_TIMESTAMP,)
+            validate_against_parent(&validator, ZENITH_TIMESTAMP + 1, Some(0), ZENITH_TIMESTAMP,)
                 .is_ok()
         );
     }
 
     #[test]
-    fn test_payload_attributes_post_zombie_reject_backwards_seconds() {
-        let validator = zombie_validator();
+    fn test_payload_attributes_post_zenith_reject_backwards_seconds() {
+        let validator = zenith_validator();
 
         assert!(matches!(
-            validate_against_parent(&validator, ZOMBIE_TIMESTAMP, Some(800), ZOMBIE_TIMESTAMP + 1,),
+            validate_against_parent(&validator, ZENITH_TIMESTAMP, Some(800), ZENITH_TIMESTAMP + 1,),
             Err(InvalidPayloadAttributesError::InvalidTimestamp)
         ));
     }
 
     #[test]
-    fn test_payload_attributes_post_zombie_require_millis_part() {
-        let validator = zombie_validator();
+    fn test_payload_attributes_post_zenith_require_millis_part() {
+        let validator = zenith_validator();
 
         assert!(matches!(
-            validate_against_parent(&validator, ZOMBIE_TIMESTAMP, None, ZOMBIE_TIMESTAMP),
+            validate_against_parent(&validator, ZENITH_TIMESTAMP, None, ZENITH_TIMESTAMP),
             Err(InvalidPayloadAttributesError::InvalidTimestamp)
         ));
     }
 
     #[test]
-    fn test_payload_attributes_post_zombie_reject_invalid_millis_part() {
-        let validator = zombie_validator();
+    fn test_payload_attributes_post_zenith_reject_invalid_millis_part() {
+        let validator = zenith_validator();
 
         assert!(matches!(
-            validate_against_parent(&validator, ZOMBIE_TIMESTAMP, Some(999), ZOMBIE_TIMESTAMP,),
+            validate_against_parent(&validator, ZENITH_TIMESTAMP, Some(999), ZENITH_TIMESTAMP,),
             Err(InvalidPayloadAttributesError::InvalidTimestamp)
         ));
     }
@@ -749,7 +749,7 @@ mod tests {
     fn post_execution_block(withdrawals_root: B256) -> RecoveredBlock<BaseBlock> {
         let block = BaseBlock {
             header: Header {
-                timestamp: ZOMBIE_TIMESTAMP,
+                timestamp: ZENITH_TIMESTAMP,
                 withdrawals_root: Some(withdrawals_root),
                 ..Default::default()
             },
@@ -804,7 +804,7 @@ mod tests {
     ) -> Result<(), InsertBlockErrorKind> {
         let validator = validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
-                .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP))
+                .with_fork(BaseUpgrade::Zenith, ForkCondition::Timestamp(ZENITH_TIMESTAMP))
                 .build(),
         );
         let block = base_time_block(child_timestamp, child_millis_part, withdrawals_root);
@@ -833,13 +833,13 @@ mod tests {
     fn post_execution_skips_base_time_at_activation_but_checks_isthmus() {
         let block = post_execution_block(EMPTY_ROOT_HASH);
         let parent = SealedHeader::seal_slow(Header {
-            timestamp: ZOMBIE_TIMESTAMP - 1,
+            timestamp: ZENITH_TIMESTAMP - 1,
             ..Default::default()
         });
         let state_updates = HashedPostState::default();
         let error =
             PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
-                &zombie_validator(),
+                &zenith_validator(),
                 || &state_updates,
                 &block,
                 &parent,
@@ -856,26 +856,26 @@ mod tests {
     #[test]
     fn post_execution_validates_exact_200ms_progression() {
         validate_base_time_progression(
-            ZOMBIE_TIMESTAMP,
+            ZENITH_TIMESTAMP,
             200,
-            ZOMBIE_TIMESTAMP,
+            ZENITH_TIMESTAMP,
             400,
             EMPTY_ROOT_HASH,
         )
         .unwrap();
         validate_base_time_progression(
-            ZOMBIE_TIMESTAMP,
+            ZENITH_TIMESTAMP,
             800,
-            ZOMBIE_TIMESTAMP + 1,
+            ZENITH_TIMESTAMP + 1,
             0,
             EMPTY_ROOT_HASH,
         )
         .unwrap();
 
         let error = validate_base_time_progression(
-            ZOMBIE_TIMESTAMP,
+            ZENITH_TIMESTAMP,
             200,
-            ZOMBIE_TIMESTAMP + 1,
+            ZENITH_TIMESTAMP + 1,
             400,
             EMPTY_ROOT_HASH,
         )
@@ -892,9 +892,9 @@ mod tests {
     #[test]
     fn post_execution_validates_isthmus_before_base_time() {
         let error = validate_base_time_progression(
-            ZOMBIE_TIMESTAMP,
+            ZENITH_TIMESTAMP,
             200,
-            ZOMBIE_TIMESTAMP + 1,
+            ZENITH_TIMESTAMP + 1,
             400,
             B256::ZERO,
         )
