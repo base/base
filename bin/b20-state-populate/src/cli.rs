@@ -1,8 +1,9 @@
 //! CLI argument structs for `b20-state-populate`.
 
+use std::path::PathBuf;
+
 use alloy_primitives::{Address, B256, U256};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
 
 /// Populate or verify B20 benchmark state in a Reth MDBX database.
 #[derive(Debug, Parser)]

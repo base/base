@@ -1,8 +1,9 @@
 //! CLI argument structs for `state-populate`.
 
+use std::path::PathBuf;
+
 use alloy_primitives::{Address, B256, U256};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
 
 /// Top-level CLI for the `state-populate` utility.
 #[derive(Debug, Parser)]
@@ -35,7 +36,10 @@ pub struct PopulateArgs {
 
     /// Base slot of the `mapping(address => uint256)` being populated
     /// (the first state variable of a standard ERC-20 is slot 0).
-    #[arg(long, default_value = "0x0000000000000000000000000000000000000000000000000000000000000000")]
+    #[arg(
+        long,
+        default_value = "0x0000000000000000000000000000000000000000000000000000000000000000"
+    )]
     pub balance_slot: B256,
 
     /// Number of synthetic balance slots to write (e.g. 700000000).
@@ -93,7 +97,10 @@ pub struct VerifyArgs {
     pub contract: Address,
 
     /// Base slot of the populated balances mapping.
-    #[arg(long, default_value = "0x0000000000000000000000000000000000000000000000000000000000000000")]
+    #[arg(
+        long,
+        default_value = "0x0000000000000000000000000000000000000000000000000000000000000000"
+    )]
     pub balance_slot: B256,
 
     /// Expected number of balance slots (0 = skip the slot check).

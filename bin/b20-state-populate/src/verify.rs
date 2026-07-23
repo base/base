@@ -1,11 +1,5 @@
 //! Read-back verification for populated B20 state.
 
-use crate::StorageTrieVersion;
-use crate::cli::VerifyArgs;
-use crate::storage::{
-    B20_INITIALIZED_SLOT, B20_TOTAL_SUPPLY_SLOT, EVM_TOKEN_ADDRESS, MOCK_B20_ASSET_BYTECODE,
-    address_for_index, b20_balance_slot, derive_b20_asset_address, derive_sender_addresses,
-};
 use alloy_primitives::{Address, B256, keccak256};
 use eyre::{Result, WrapErr};
 use reth_db::{
@@ -21,6 +15,15 @@ use reth_db_api::{
 use reth_trie::Nibbles;
 use reth_trie_db::{LegacyKeyAdapter, PackedKeyAdapter, TrieTableAdapter};
 use tracing::info;
+
+use crate::{
+    StorageTrieVersion,
+    cli::VerifyArgs,
+    storage::{
+        B20_INITIALIZED_SLOT, B20_TOTAL_SUPPLY_SLOT, EVM_TOKEN_ADDRESS, MOCK_B20_ASSET_BYTECODE,
+        address_for_index, b20_balance_slot, derive_b20_asset_address, derive_sender_addresses,
+    },
+};
 
 /// Verifies previously written B20 state in a Reth MDBX database.
 #[derive(Debug)]

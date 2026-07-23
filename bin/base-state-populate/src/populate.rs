@@ -1,12 +1,10 @@
 //! Database write logic for bulk ERC-20 balance-slot and account population.
 
-use crate::cli::PopulateArgs;
-use crate::storage::{address_for_index, derive_sender_addresses, erc20_balance_slot};
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, keccak256};
 use eyre::{Result, WrapErr};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
-use reth_db::{mdbx::DatabaseArguments, open_db, ClientVersion, Database};
+use reth_db::{ClientVersion, Database, mdbx::DatabaseArguments, open_db};
 use reth_db_api::{
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRW},
     tables,
@@ -15,10 +13,15 @@ use reth_db_api::{
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_trie::{HashedPostState, StateRoot, StorageRoot, StoredNibbles};
 use reth_trie_db::{
-    DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot,
-    DatabaseStorageTrieCursor, DatabaseTrieCursorFactory, LegacyKeyAdapter,
+    DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot, DatabaseStorageTrieCursor,
+    DatabaseTrieCursorFactory, LegacyKeyAdapter,
 };
 use tracing::{info, warn};
+
+use crate::{
+    cli::PopulateArgs,
+    storage::{address_for_index, derive_sender_addresses, erc20_balance_slot},
+};
 
 type LegacyStorageRoot<'a, TX> = StorageRoot<
     DatabaseTrieCursorFactory<&'a TX, LegacyKeyAdapter>,
@@ -46,15 +49,11 @@ impl Populator {
             "starting state population"
         );
 
-        let db = open_db(
-            args.datadir.join("db"),
-            DatabaseArguments::new(ClientVersion::default()),
-        )
-        .wrap_err("open MDBX database")?;
+        let db = open_db(args.datadir.join("db"), DatabaseArguments::new(ClientVersion::default()))
+            .wrap_err("open MDBX database")?;
 
-        let account_count = args
-            .populate_accounts
-            .then(|| args.account_count.unwrap_or(args.count));
+        let account_count =
+            args.populate_accounts.then(|| args.account_count.unwrap_or(args.count));
 
         if let Some(n) = account_count {
             Self::write_plain_accounts(&db, n, args.chunk_size, args.account_balance)
@@ -93,8 +92,7 @@ impl Populator {
             .wrap_err("compute + write storage trie")?;
 
         if account_count.is_none() {
-            Self::update_account_trie(&db, hashed_token, None)
-                .wrap_err("update account trie")?;
+            Self::update_account_trie(&db, hashed_token, None).wrap_err("update account trie")?;
         } else {
             Self::rebuild_hashed_accounts(&db).wrap_err("rebuild HashedAccounts")?;
             Self::recompute_account_trie(&db).wrap_err("recompute full account trie")?;
@@ -121,13 +119,10 @@ impl Populator {
             }
         }
         {
-            let mut hs_cursor = tx
-                .cursor_dup_write::<tables::HashedStorages>()
-                .wrap_err("open HashedStorages")?;
+            let mut hs_cursor =
+                tx.cursor_dup_write::<tables::HashedStorages>().wrap_err("open HashedStorages")?;
             if hs_cursor.seek_exact(hashed_token).wrap_err("seek HashedStorages")?.is_some() {
-                hs_cursor
-                    .delete_current_duplicates()
-                    .wrap_err("delete HashedStorages entries")?;
+                hs_cursor.delete_current_duplicates().wrap_err("delete HashedStorages entries")?;
             }
         }
         tx.commit().wrap_err("commit clear-storage tx")?;
@@ -225,9 +220,8 @@ impl Populator {
         );
         for chunk in hashed_entries.chunks(COMMIT_CHUNK) {
             let tx = db.tx_mut().wrap_err("begin hashed-slots tx")?;
-            let mut cursor = tx
-                .cursor_dup_write::<tables::HashedStorages>()
-                .wrap_err("open HashedStorages")?;
+            let mut cursor =
+                tx.cursor_dup_write::<tables::HashedStorages>().wrap_err("open HashedStorages")?;
             for slot in chunk {
                 cursor
                     .append_dup(hashed_token, StorageEntry { key: *slot, value: balance })
@@ -292,8 +286,7 @@ impl Populator {
         let tx = db.tx_mut().wrap_err("begin account-trie tx")?;
 
         let account = Account { nonce: 0, balance: U256::ZERO, bytecode_hash };
-        let post_state =
-            HashedPostState::default().with_accounts([(hashed_token, Some(account))]);
+        let post_state = HashedPostState::default().with_accounts([(hashed_token, Some(account))]);
         let sorted_post_state = post_state.into_sorted();
 
         let (new_state_root, acct_trie_updates) =
@@ -319,11 +312,7 @@ impl Populator {
                     written += 1;
                 }
                 None => {
-                    if acct_cursor
-                        .seek_exact(nibbles)
-                        .wrap_err("seek AccountsTrie")?
-                        .is_some()
-                    {
+                    if acct_cursor.seek_exact(nibbles).wrap_err("seek AccountsTrie")?.is_some() {
                         acct_cursor.delete_current().wrap_err("delete AccountsTrie node")?;
                         deleted += 1;
                     }
@@ -352,9 +341,8 @@ impl Populator {
         let mut ps_cursor = tx
             .cursor_dup_write::<tables::PlainStorageState>()
             .wrap_err("open PlainStorageState")?;
-        let mut hs_cursor = tx
-            .cursor_dup_write::<tables::HashedStorages>()
-            .wrap_err("open HashedStorages")?;
+        let mut hs_cursor =
+            tx.cursor_dup_write::<tables::HashedStorages>().wrap_err("open HashedStorages")?;
 
         for addr in &sender_addresses {
             let plain_slot = erc20_balance_slot(*addr, mapping_slot);
@@ -492,8 +480,9 @@ impl Populator {
         info!("recomputing full account trie from HashedAccounts (this may take a while)");
         let tx = db.tx_mut().wrap_err("begin account-trie recompute tx")?;
 
-        let (new_state_root, trie_updates) =
-            LegacyStateRoot::from_tx(&tx).root_with_updates().wrap_err("compute full state root")?;
+        let (new_state_root, trie_updates) = LegacyStateRoot::from_tx(&tx)
+            .root_with_updates()
+            .wrap_err("compute full state root")?;
 
         info!(state_root = %new_state_root, "full state root computed");
 
@@ -514,11 +503,7 @@ impl Populator {
                     written += 1;
                 }
                 None => {
-                    if acct_cursor
-                        .seek_exact(nibbles)
-                        .wrap_err("seek AccountsTrie")?
-                        .is_some()
-                    {
+                    if acct_cursor.seek_exact(nibbles).wrap_err("seek AccountsTrie")?.is_some() {
                         acct_cursor.delete_current().wrap_err("delete AccountsTrie node")?;
                         deleted += 1;
                     }

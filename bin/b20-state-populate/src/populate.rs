@@ -1,12 +1,5 @@
 //! Database write logic for B20 token state population.
 
-use crate::StorageTrieVersion;
-use crate::cli::PopulateArgs;
-use crate::storage::{
-    B20_DECIMALS_SLOT, B20_INITIALIZED_SLOT, B20_MULTIPLIER_SLOT, B20_SUPPLY_CAP_SLOT,
-    B20_TOTAL_SUPPLY_SLOT, EVM_TOKEN_ADDRESS, MOCK_B20_ASSET_BYTECODE, address_for_index,
-    b20_balance_slot, derive_b20_asset_address, derive_sender_addresses,
-};
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use eyre::{Result, WrapErr};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -24,6 +17,16 @@ use reth_trie_db::{
     DatabaseTrieCursorFactory, LegacyKeyAdapter, PackedKeyAdapter, TrieTableAdapter,
 };
 use tracing::{info, warn};
+
+use crate::{
+    StorageTrieVersion,
+    cli::PopulateArgs,
+    storage::{
+        B20_DECIMALS_SLOT, B20_INITIALIZED_SLOT, B20_MULTIPLIER_SLOT, B20_SUPPLY_CAP_SLOT,
+        B20_TOTAL_SUPPLY_SLOT, EVM_TOKEN_ADDRESS, MOCK_B20_ASSET_BYTECODE, address_for_index,
+        b20_balance_slot, derive_b20_asset_address, derive_sender_addresses,
+    },
+};
 
 type AdapterStorageRoot<'a, TX, A> =
     StorageRoot<DatabaseTrieCursorFactory<&'a TX, A>, DatabaseHashedCursorFactory<&'a TX>>;

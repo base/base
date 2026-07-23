@@ -1,8 +1,8 @@
 //! Address derivation and ERC-20 storage-slot computation.
 
-use alloy_primitives::{keccak256, Address, B256};
+use alloy_primitives::{Address, B256, keccak256};
 use k256::ecdsa::SigningKey;
-use rand::{rngs::StdRng, RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng, rngs::StdRng};
 
 /// Computes the storage slot of `_balances[who]` for a Solidity `mapping(address => uint256)`.
 ///

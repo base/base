@@ -1,12 +1,11 @@
 //! Read-back verification for populated ERC-20 balance state.
 
-use crate::cli::VerifyArgs;
-use crate::storage::{address_for_index, derive_sender_addresses, erc20_balance_slot};
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, keccak256};
 use eyre::{Result, WrapErr};
 use reth_db::{
+    ClientVersion, Database,
     mdbx::{DatabaseArguments, MaxReadTransactionDuration},
-    open_db, ClientVersion, Database,
+    open_db,
 };
 use reth_db_api::{
     cursor::{DbCursorRO, DbDupCursorRO},
@@ -15,6 +14,11 @@ use reth_db_api::{
 };
 use reth_trie::StoredNibbles;
 use tracing::info;
+
+use crate::{
+    cli::VerifyArgs,
+    storage::{address_for_index, derive_sender_addresses, erc20_balance_slot},
+};
 
 /// Entry point for the `verify` subcommand.
 #[derive(Debug)]
@@ -39,7 +43,8 @@ impl Verifier {
         let tx = db.tx().wrap_err("begin read tx")?;
 
         if args.senders_only {
-            let seed = args.seed.ok_or_else(|| eyre::eyre!("--seed required with --senders-only"))?;
+            let seed =
+                args.seed.ok_or_else(|| eyre::eyre!("--seed required with --senders-only"))?;
             let sender_count = args.sender_count.unwrap_or(0) as usize;
             eyre::ensure!(sender_count > 0, "--sender-count required with --senders-only");
             info!(seed, sender_count, "verifying only pre-seeded sender balances");
@@ -53,8 +58,14 @@ impl Verifier {
             info!(contract = %token_addr, count = args.count, "verifying balance state");
             Self::check_account(&tx, token_addr, hashed_token)
                 .wrap_err("check contract account")?;
-            Self::check_balance_samples(&tx, token_addr, hashed_token, args.balance_slot, args.count)
-                .wrap_err("check balance samples")?;
+            Self::check_balance_samples(
+                &tx,
+                token_addr,
+                hashed_token,
+                args.balance_slot,
+                args.count,
+            )
+            .wrap_err("check balance samples")?;
             Self::count_storage_entries(&tx, token_addr, hashed_token, args.count)
                 .wrap_err("count storage entries")?;
             Self::check_trie_nodes(&tx, hashed_token).wrap_err("check trie nodes")?;
@@ -109,9 +120,8 @@ impl Verifier {
         count: u64,
     ) -> Result<()> {
         let sample_indices = [0u64, 1, count / 4, count / 2, count - 1];
-        let mut cursor = tx
-            .cursor_dup_read::<tables::PlainStorageState>()
-            .wrap_err("open PlainStorageState")?;
+        let mut cursor =
+            tx.cursor_dup_read::<tables::PlainStorageState>().wrap_err("open PlainStorageState")?;
         let mut hcursor =
             tx.cursor_dup_read::<tables::HashedStorages>().wrap_err("open HashedStorages")?;
 
@@ -120,9 +130,8 @@ impl Verifier {
             let plain_slot = erc20_balance_slot(addr, mapping_slot);
             let hashed_slot = keccak256(plain_slot);
 
-            let entry = cursor
-                .seek_by_key_subkey(token_addr, plain_slot)
-                .wrap_err("seek plain slot")?;
+            let entry =
+                cursor.seek_by_key_subkey(token_addr, plain_slot).wrap_err("seek plain slot")?;
             eyre::ensure!(
                 entry.as_ref().map(|e| e.key == plain_slot).unwrap_or(false),
                 "balance slot missing for idx={idx} addr={addr} in PlainStorageState"
@@ -149,9 +158,8 @@ impl Verifier {
         sender_count: usize,
     ) -> Result<()> {
         let senders = derive_sender_addresses(seed, sender_count);
-        let mut cursor = tx
-            .cursor_dup_read::<tables::PlainStorageState>()
-            .wrap_err("open PlainStorageState")?;
+        let mut cursor =
+            tx.cursor_dup_read::<tables::PlainStorageState>().wrap_err("open PlainStorageState")?;
 
         for (i, addr) in senders.iter().enumerate() {
             let plain_slot = erc20_balance_slot(*addr, mapping_slot);
@@ -159,7 +167,10 @@ impl Verifier {
                 .seek_by_key_subkey(token_addr, plain_slot)
                 .wrap_err("seek sender plain slot")?;
             eyre::ensure!(
-                entry.as_ref().map(|e| e.key == plain_slot && e.value > U256::ZERO).unwrap_or(false),
+                entry
+                    .as_ref()
+                    .map(|e| e.key == plain_slot && e.value > U256::ZERO)
+                    .unwrap_or(false),
                 "sender balance slot missing or zero for sender={i} addr={addr}"
             );
         }
@@ -229,7 +240,10 @@ impl Verifier {
             .seek_exact(hashed_token)
             .wrap_err("seek StoragesTrie for contract")?
             .is_some();
-        eyre::ensure!(has_storage_trie, "no StoragesTrie entries for contract (hashed={hashed_token})");
+        eyre::ensure!(
+            has_storage_trie,
+            "no StoragesTrie entries for contract (hashed={hashed_token})"
+        );
 
         let mut node_count = 1u64;
         while storage_cursor.next_dup().wrap_err("next_dup StoragesTrie")?.is_some() {
