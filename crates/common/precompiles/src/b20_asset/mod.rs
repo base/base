@@ -23,7 +23,7 @@ macro_rules! reject_frozen_selector {
 }
 
 mod abi;
-pub use abi::{ERC8056_INTERFACE_IDS, IB20Asset};
+pub use abi::{ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset};
 
 mod accounting;
 pub use accounting::AssetAccounting;

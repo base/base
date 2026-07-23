@@ -6,15 +6,15 @@
 use alloy_primitives::FixedBytes;
 use alloy_sol_types::sol;
 
-/// ERC-165 plus the three ERC-8056 interface IDs advertised by `supportsInterface` from `AssetV2`.
+/// The ERC-165 `supportsInterface` interface id (`IERC165`, `0x01ffc9a7`).
 ///
-/// `IERC165` (`0x01ffc9a7`), `IScaledUIAmount` (`0xa60bf13d`), `IScaledUIAmountNewUIMultiplier`
-/// (`0x4bd27648`), and `IScaledUIAmountBalances` (`0xd890fd71`). The ERC-8056 Conversion extension
-/// (`0x57854fc3`) is deliberately absent — B-20 keeps `toScaledBalance`/`toRawBalance` unaliased.
-/// The `erc8056_interface_ids_match_selectors` test pins these against the derived selectors so a
-/// selector rename cannot silently drift them.
-pub const ERC8056_INTERFACE_IDS: [FixedBytes<4>; 4] = [
-    FixedBytes::new([0x01, 0xff, 0xc9, 0xa7]),
+/// ERC-8056 requires ERC-165, so `AssetV2` advertises this alongside [`ERC8056_INTERFACE_IDS`], but
+/// it is not itself an ERC-8056 id. By construction it equals the `supportsInterface(bytes4)`
+/// selector; pinned by `erc8056_interface_ids_match_selectors`.
+pub const ERC165_INTERFACE_ID: FixedBytes<4> = FixedBytes::new([0x01, 0xff, 0xc9, 0xa7]);
+
+/// The ERC-8056 interface IDs advertised by `supportsInterface` from `AssetV2`.
+pub const ERC8056_INTERFACE_IDS: [FixedBytes<4>; 3] = [
     FixedBytes::new([0xa6, 0x0b, 0xf1, 0x3d]),
     FixedBytes::new([0x4b, 0xd2, 0x76, 0x48]),
     FixedBytes::new([0xd8, 0x90, 0xfd, 0x71]),
@@ -204,7 +204,7 @@ mod tests {
     use alloy_primitives::FixedBytes;
     use alloy_sol_types::{SolCall, SolInterface};
 
-    use crate::{ERC8056_INTERFACE_IDS, IB20, IB20Asset};
+    use crate::{ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20, IB20Asset};
 
     /// XORs the selectors of an interface's members into its ERC-165 interface id.
     fn xor(selectors: &[[u8; 4]]) -> FixedBytes<4> {
@@ -220,17 +220,17 @@ mod tests {
     #[test]
     fn erc8056_interface_ids_match_selectors() {
         // IERC165 = supportsInterface(bytes4); the ERC-165 id equals that selector by construction.
-        assert_eq!(ERC8056_INTERFACE_IDS[0], xor(&[IB20Asset::supportsInterfaceCall::SELECTOR]));
+        assert_eq!(ERC165_INTERFACE_ID, xor(&[IB20Asset::supportsInterfaceCall::SELECTOR]));
         // IScaledUIAmount = uiMultiplier().
-        assert_eq!(ERC8056_INTERFACE_IDS[1], xor(&[IB20Asset::uiMultiplierCall::SELECTOR]));
+        assert_eq!(ERC8056_INTERFACE_IDS[0], xor(&[IB20Asset::uiMultiplierCall::SELECTOR]));
         // IScaledUIAmountNewUIMultiplier = newUIMultiplier() ^ effectiveAt().
         assert_eq!(
-            ERC8056_INTERFACE_IDS[2],
+            ERC8056_INTERFACE_IDS[1],
             xor(&[IB20Asset::newUIMultiplierCall::SELECTOR, IB20Asset::effectiveAtCall::SELECTOR,])
         );
         // IScaledUIAmountBalances = balanceOfUI(address) ^ totalSupplyUI().
         assert_eq!(
-            ERC8056_INTERFACE_IDS[3],
+            ERC8056_INTERFACE_IDS[2],
             xor(&[IB20Asset::balanceOfUICall::SELECTOR, IB20Asset::totalSupplyUICall::SELECTOR,])
         );
     }

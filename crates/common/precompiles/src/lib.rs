@@ -60,7 +60,7 @@ mod b20_asset;
 pub use b20_asset::{
     Asset, AssetAccounting, AssetV1, AssetV2, AssetVersion, AssetVersions,
     B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage, B20AssetToken,
-    ERC8056_INTERFACE_IDS, IB20Asset,
+    ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset,
 };
 
 mod b20_stablecoin;
