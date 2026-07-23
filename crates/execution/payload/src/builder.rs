@@ -525,7 +525,7 @@ impl ExecutionInfo {
     /// - block gas limit: ensures the transaction still fits into the block. `tx_reserved_gas` is
     ///   the gas reserved against the block budget: `gas_limit` for ordinary transactions, and
     ///   `gas_limit + payer_auth` for EIP-8130, since payer authentication is metered on top of the
-    ///   declared gas limit (see `IntrinsicGas::payer_auth_cost`).
+    ///   declared gas limit (see `IntrinsicGas::max_payer_auth_cost`).
     /// - tx DA limit: if configured, ensures the tx does not exceed the maximum allowed DA limit
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
@@ -751,10 +751,11 @@ where
             let tx_da_size = tx.estimated_da_size();
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
-            // be reserved against the block gas budget in addition to `gas_limit`. It is a pure
-            // function of the payer auth blob (`0` for non-8130 / self-pay).
+            // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
+            // conservative upper bound (worst-case payer policy gate) derived from the payer auth
+            // blob (`0` for non-8130 / self-pay); see `IntrinsicGas::max_payer_auth_cost`.
             let tx_payer_auth = match tx.as_eip8130() {
-                Some(signed) => match IntrinsicGas::payer_auth_cost(signed) {
+                Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
                     Ok(payer_auth) => payer_auth,
                     Err(err) => {
                         trace!(
@@ -763,7 +764,11 @@ where
                             tx_hash = ?tx.hash(),
                             "skipping EIP-8130 transaction with unschedulable payer authenticator"
                         );
-                        best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        // Mirror the manifest pre-check above: a nonce-free replay-ID entry is
+                        // independent, so invalidating by sender would suppress unrelated entries.
+                        if tx.eip8130_replay_id().is_none() {
+                            best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        }
                         continue;
                     }
                 },

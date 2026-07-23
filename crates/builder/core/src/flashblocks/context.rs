@@ -853,10 +853,11 @@ impl BasePayloadBuilderCtx {
             let tx_received_at_ms = tx.received_at();
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
-            // be reserved against the block gas budget in addition to `gas_limit`. It is a pure
-            // function of the payer auth blob (`0` for non-8130 / self-pay).
+            // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
+            // conservative upper bound (worst-case payer policy gate) derived from the payer auth
+            // blob (`0` for non-8130 / self-pay); see `IntrinsicGas::max_payer_auth_cost`.
             let tx_payer_auth = match tx.as_eip8130() {
-                Some(signed) => match IntrinsicGas::payer_auth_cost(signed) {
+                Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
                     Ok(payer_auth) => payer_auth,
                     Err(err) => {
                         trace!(
@@ -865,7 +866,11 @@ impl BasePayloadBuilderCtx {
                             tx_hash = ?tx.hash(),
                             "skipping EIP-8130 transaction with unschedulable payer authenticator"
                         );
-                        best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        // Mirror the manifest pre-check above: a nonce-free replay-ID entry is
+                        // independent, so invalidating by sender would suppress unrelated entries.
+                        if tx.eip8130_replay_id().is_none() {
+                            best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        }
                         continue;
                     }
                 },

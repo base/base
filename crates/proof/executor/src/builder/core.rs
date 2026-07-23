@@ -15,7 +15,6 @@ use alloy_evm::{
 use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope};
 use base_common_evm::{
     AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId, BaseTxEnv,
-    BaseTxTr,
 };
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -59,7 +58,7 @@ where
     H: TrieHinter + Debug,
     Evm: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + 'static,
     <Evm as EvmFactory>::Tx:
-        FromTxWithEncoded<BaseTxEnvelope> + FromRecoveredTx<BaseTxEnvelope> + BaseTxEnv + BaseTxTr,
+        FromTxWithEncoded<BaseTxEnvelope> + FromRecoveredTx<BaseTxEnvelope> + BaseTxEnv,
 {
     /// Creates a new stateless L2 block builder instance.
     ///

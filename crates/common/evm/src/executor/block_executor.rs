@@ -26,7 +26,7 @@ use revm::{
 
 use crate::{
     BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTxEnv,
-    BaseTxResult, BaseTxTr, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
+    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
 
 /// Block executor for Base.
@@ -82,10 +82,7 @@ impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
 where
     E: Evm<
             DB: Database + DatabaseCommit + StateDB,
-            Tx: FromRecoveredTx<R::Transaction>
-                    + FromTxWithEncoded<R::Transaction>
-                    + BaseTxEnv
-                    + BaseTxTr,
+            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
         >,
     R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
     Spec: Upgrades,
@@ -98,16 +95,21 @@ where
     /// payer reimburses its own authentication beyond the sender-signed limit),
     /// so that portion must be reserved in the block gas budget too. Reserving
     /// `gas_limit` alone could admit a transaction whose true consumption
-    /// (`gas_limit + payer_auth`) pushes cumulative block gas over the limit. The
-    /// payer authentication gas is derived from the signed envelope exactly as
-    /// execution charges it, keeping block-building and validation consistent.
+    /// (`gas_limit + payer_auth`) pushes cumulative block gas over the limit.
+    ///
+    /// The payer authentication gas is a *conservative upper bound*
+    /// ([`IntrinsicGas::max_payer_auth_cost`]): it pins the payer's policy gate
+    /// worst-case, since the pre-execution check cannot resolve the payer's
+    /// on-chain scope. Reserving a ceiling can only over-reserve (never admit an
+    /// over-limit block), and the same bound is used by block building and
+    /// validation, keeping them consistent.
     #[cfg(feature = "std")]
     fn reserved_block_gas(tx_env: &E::Tx, gas_limit: u64) -> Result<u64, BlockExecutionError> {
-        let Some(parts) = tx_env.eip8130_parts() else {
+        let Some(signed) = tx_env.eip8130_signed() else {
             return Ok(gas_limit);
         };
         let payer_auth =
-            IntrinsicGas::payer_auth_cost(&parts.signed).map_err(BlockExecutionError::other)?;
+            IntrinsicGas::max_payer_auth_cost(signed).map_err(BlockExecutionError::other)?;
         Ok(gas_limit.saturating_add(payer_auth))
     }
 
@@ -115,7 +117,10 @@ where
     /// so no payer authentication gas is metered on top of `gas_limit` and the
     /// reserved block gas is just the declared `gas_limit`.
     #[cfg(not(feature = "std"))]
-    fn reserved_block_gas(_tx_env: &E::Tx, gas_limit: u64) -> Result<u64, BlockExecutionError> {
+    const fn reserved_block_gas(
+        _tx_env: &E::Tx,
+        gas_limit: u64,
+    ) -> Result<u64, BlockExecutionError> {
         Ok(gas_limit)
     }
 
@@ -149,10 +154,7 @@ impl<E, R, Spec> BlockExecutor for BaseBlockExecutor<E, R, Spec>
 where
     E: Evm<
             DB: Database + DatabaseCommit + StateDB,
-            Tx: FromRecoveredTx<R::Transaction>
-                    + FromTxWithEncoded<R::Transaction>
-                    + BaseTxEnv
-                    + BaseTxTr,
+            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
         >,
     R: BaseReceiptBuilder<
             Transaction: Transaction + Encodable2718 + TransactionEnvelope<TxType: Send + 'static>,
@@ -684,7 +686,7 @@ mod tests {
         const JOVIAN_TIMESTAMP: u64 = 1746806402;
 
         let signed = signed_eip8130(GAS_LIMIT, true);
-        let payer_auth = IntrinsicGas::payer_auth_cost(&signed).expect("payer auth cost");
+        let payer_auth = IntrinsicGas::max_payer_auth_cost(&signed).expect("payer auth cost");
         assert!(payer_auth > 0, "payer auth must be metered on top of gas_limit");
 
         // Block admits `gas_limit` alone but not `gas_limit + payer_auth`.
@@ -734,7 +736,7 @@ mod tests {
 
         let signed = signed_eip8130(GAS_LIMIT, false);
         assert_eq!(
-            IntrinsicGas::payer_auth_cost(&signed).expect("payer auth cost"),
+            IntrinsicGas::max_payer_auth_cost(&signed).expect("payer auth cost"),
             0,
             "self-pay meters no payer authentication",
         );
