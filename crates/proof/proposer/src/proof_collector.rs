@@ -366,6 +366,9 @@ where
         let first_block = target_block;
         let mut last_block = target_block;
 
+        if cancel.is_cancelled() {
+            return false;
+        }
         if !self.delete_single_proof_request(session_id, target_block).await {
             return false;
         }
@@ -433,6 +436,9 @@ where
                 ),
             }
 
+            if cancel.is_cancelled() {
+                break;
+            }
             if !self.delete_single_proof_request(&session_id, target_block).await {
                 break;
             }
@@ -782,6 +788,25 @@ mod tests {
             .await;
 
         assert!(!restart);
+        assert!(requester.requests.lock().unwrap().contains_key(&session_id));
+    }
+
+    #[tokio::test]
+    async fn delete_batch_does_not_delete_when_cancelled() {
+        let requester = Arc::new(MockProofRequester::default());
+        let target_block = 200;
+        let claimed_root = B256::repeat_byte(target_block as u8);
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+        dispatch_ready_proof(&requester, target_block, claimed_root).await;
+        let collector = make_collector(
+            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
+            rollup_client(target_block, Some(claimed_root)),
+            Arc::new(MockOutputProposer::default()),
+        );
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        assert!(!collector.delete_proof_batch(&session_id, target_block, &cancel).await);
         assert!(requester.requests.lock().unwrap().contains_key(&session_id));
     }
 
