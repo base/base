@@ -26,5 +26,5 @@ async fn eip8130_transaction_executes_and_derives_at_cobalt() {
 
     // Send both blocks through the batcher and verifier, asserting the verifier
     // re-derives them with matching state.
-    env.derive_blocks([(pre_cobalt, 1), (cobalt_block, 2)], 2, "Cobalt").await;
+    env.derive_blocks([(pre_cobalt, 1), (cobalt_block, 2)], 2).await;
 }

@@ -56,8 +56,10 @@ impl CobaltTestEnv {
         Self { sequencer, harness, batcher_cfg, node, chain, chain_id }
     }
 
+    /// Creates a signed EOA-path EIP-8130 transaction bound to this
+    /// environment's chain, via the shared [`Self::eip8130_user_tx`] builder.
     pub(crate) fn create_eip8130_tx(&self, nonce_sequence: u64) -> BaseTxEnvelope {
-        eip8130_user_tx(self.chain_id, nonce_sequence)
+        Self::eip8130_user_tx(self.chain_id, nonce_sequence)
     }
 
     /// Batches the supplied L2 blocks, derives each one, and asserts the final safe head.
@@ -65,7 +67,6 @@ impl CobaltTestEnv {
         &mut self,
         blocks: [(BaseBlock, u64); N],
         expected_safe_head: u64,
-        boundary: &str,
     ) {
         let mut batcher = Batcher::new(
             ActionL2Source::new(),
@@ -85,7 +86,7 @@ impl CobaltTestEnv {
         assert_eq!(
             self.node.l2_safe_number(),
             expected_safe_head,
-            "all {expected_safe_head} L2 blocks must derive through the {boundary} boundary"
+            "all {expected_safe_head} L2 blocks must derive through the Cobalt boundary"
         );
     }
 
@@ -106,41 +107,45 @@ impl CobaltTestEnv {
             .nth(deposit_count + user_tx_index)
             .unwrap_or_else(|| panic!("user tx receipt {user_tx_index} must exist"))
     }
+
+    /// Builds a signed EOA-path EIP-8130 transaction from Alice with a single
+    /// value-less call to Bob. The sender is recovered from the signature
+    /// (`sender: None`), and Alice self-pays (`payer: None`).
+    ///
+    /// Exposed as an associated function (no `self`) so derivation tests that
+    /// build their own harness can reuse it without constructing a full
+    /// [`CobaltTestEnv`].
+    pub(crate) fn eip8130_user_tx(chain_id: u64, nonce_sequence: u64) -> BaseTxEnvelope {
+        let alice = Account::Alice;
+
+        let tx = TxEip8130 {
+            chain_id,
+            sender: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence,
+            expiry: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000_000_000,
+            gas_limit: 200_000,
+            account_changes: Vec::new(),
+            calls: vec![vec![Call { to: Account::Bob.address(), data: Bytes::new() }]],
+            metadata: Bytes::new(),
+            payer: None,
+        };
+
+        let signature = alice
+            .signer()
+            .sign_hash_sync(&tx.sender_signature_hash())
+            .expect("test transaction signing must succeed");
+
+        let signed = Eip8130Signed::new(tx, signature.as_bytes().to_vec().into(), Bytes::new());
+
+        signed.into()
+    }
 }
 
 impl Default for CobaltTestEnv {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Builds a signed EOA-path EIP-8130 transaction from Alice with a single
-/// value-less call to Bob. The sender is recovered from the signature
-/// (`sender: None`), and Alice self-pays (`payer: None`).
-pub(crate) fn eip8130_user_tx(chain_id: u64, nonce_sequence: u64) -> BaseTxEnvelope {
-    let alice = Account::Alice;
-
-    let tx = TxEip8130 {
-        chain_id,
-        sender: None,
-        nonce_key: U256::ZERO,
-        nonce_sequence,
-        expiry: 0,
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 1_000_000_000,
-        gas_limit: 200_000,
-        account_changes: Vec::new(),
-        calls: vec![vec![Call { to: Account::Bob.address(), data: Bytes::new() }]],
-        metadata: Bytes::new(),
-        payer: None,
-    };
-
-    let signature = alice
-        .signer()
-        .sign_hash_sync(&tx.sender_signature_hash())
-        .expect("test transaction signing must succeed");
-
-    let signed = Eip8130Signed::new(tx, signature.as_bytes().to_vec().into(), Bytes::new());
-
-    signed.into()
 }

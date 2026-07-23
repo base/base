@@ -7,7 +7,7 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 
-use crate::env::eip8130_user_tx;
+use crate::env::CobaltTestEnv;
 
 /// An EIP-8130 transaction batched into a pre-Cobalt L2 block is dropped by the
 /// verifier's derivation pipeline (`BatchValidity::Drop::Eip8130PreCobalt`), and
@@ -51,7 +51,7 @@ async fn eip8130_batch_is_dropped_before_cobalt() {
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for i in 1u64..=3 {
         if i == 3 {
-            let tx = eip8130_user_tx(chain_id, 0);
+            let tx = CobaltTestEnv::eip8130_user_tx(chain_id, 0);
             let block = builder.build_next_block_with_transactions(vec![tx]).await;
             eip8130_block_hash = block.header.hash_slow();
             batcher.push_block(block);
