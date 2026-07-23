@@ -6291,6 +6291,8 @@ dependencies = [
  "bollard",
  "clap",
  "futures",
+ "human_bytes",
+ "humantime",
  "rayon",
  "reth-cli-commands",
  "serde_json",
