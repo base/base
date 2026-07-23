@@ -1107,9 +1107,9 @@ where
         // is a no-op and the reserved gas flows into execution gas instead.
         let sender_auto_delegated = Self::sender_auto_delegated(&signed.tx().account_changes);
         let encoded = self.eip8130_encoded(signed);
-        // Variant B: admission uses the same safe ceiling as `eth_estimateGas`, so
-        // a tx whose `gas_limit` was set from the estimate is never rejected here
-        // and can never be admitted only to OOG at inclusion. The non-monotonic,
+        // Admission uses the same safe ceiling as `eth_estimateGas`, so a tx whose
+        // `gas_limit` was set from the estimate is never rejected here and can
+        // never be admitted only to OOG at inclusion. The non-monotonic,
         // state-dependent costs are pinned to their worst case: both policy gates
         // charged and zero revoke discount. Execution reprices them precisely.
         let intrinsic = IntrinsicGas::compute(
@@ -3245,8 +3245,8 @@ mod tests {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
-        // Headroom above the worst-case intrinsic: admission (Variant B) pins the
-        // sender policy gate on, which the tight 50k fixture limit no longer covers.
+        // Headroom above the worst-case intrinsic: admission pins the sender policy
+        // gate on, which the tight 50k fixture limit no longer covers.
         let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =

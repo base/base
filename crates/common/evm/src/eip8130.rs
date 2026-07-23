@@ -728,8 +728,8 @@ impl Eip8130Executor {
 
             // 5. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
             //    stub signature of the right authenticator type estimates exactly).
-            //    Variant B: the estimate is a safe ceiling that execution can only
-            //    meet or undercharge. The non-monotonic, state-dependent costs are
+            //    The estimate is a safe ceiling that execution can only meet or
+            //    undercharge. The non-monotonic, state-dependent costs are
             //    therefore pinned to their worst case rather than resolved:
             //      - both policy gates charged (their `policy_manager` SLOAD), so a
             //        `gas_limit == estimate` submission never OOGs if a gate flips
@@ -1408,7 +1408,7 @@ impl Eip8130Executor {
                 }
                 AccountChange::ConfigChange(cc) => {
                     // Estimation prices revokes at the worst-case three-reset cost
-                    // (Variant B pins a zero revoke discount), so the resolved
+                    // (a zero revoke discount is pinned), so the resolved
                     // empty-slot count is applied but not needed here.
                     AccountChangeApplier::apply_config_change(
                         &mut acc_mut,
@@ -1809,7 +1809,7 @@ mod tests {
         assert!(sim_result.is_success(), "estimation should report success");
         assert!(sim_gas > 0, "estimated gas should be positive");
         // The estimate is a gas *limit* that must cover the real execution charge
-        // (Variant B: a safe ceiling execution can only meet or undercharge). This
+        // (a safe ceiling execution can only meet or undercharge). This
         // transaction calls a STOP contract (no nested calls, no SSTORE/
         // SELFDESTRUCT), so it loses no gas to EIP-150 forwarding and earns no
         // refund. The only gap is the non-monotonic sender policy gate, which the
