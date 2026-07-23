@@ -669,13 +669,6 @@ impl ProofRequesterProvider for MockZkProofProvider {
         Ok(())
     }
 
-    async fn delete_proofs_by_tee_signer(
-        &self,
-        _request: base_prover_service_protocol::DeleteProofsByTeeSignerRequest,
-    ) -> Result<u64, ProverServiceClientError> {
-        unimplemented!("challenge tests do not delete TEE proofs")
-    }
-
     async fn list_proofs(
         &self,
         _request: base_prover_service_protocol::ListProofsRequest,
