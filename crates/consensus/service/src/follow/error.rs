@@ -22,6 +22,15 @@ pub enum FollowError {
         source: alloy_transport::TransportError,
     },
 
+    /// Fetching a block from the local L2 node by hash failed.
+    #[error("failed to fetch local L2 block {hash}: {source}")]
+    LocalBlockHashFetch {
+        /// Requested local block hash.
+        hash: B256,
+        /// Underlying transport error.
+        source: alloy_transport::TransportError,
+    },
+
     /// Converting a local L2 block into block info failed.
     #[error("failed to build local L2 block info: {0}")]
     LocalBlockInfo(#[from] FromBlockError),
@@ -72,6 +81,27 @@ pub enum FollowError {
         /// Hash returned by the source L2 node.
         remote: B256,
     },
+
+    /// The source and local nodes disagree on a finalized block hash.
+    #[error(
+        "source finalized block hash {remote} does not match local block hash {local} at block {number}"
+    )]
+    FinalizedDivergence {
+        /// Finalized block number compared across the source and local nodes.
+        number: u64,
+        /// Hash returned by the local L2 node.
+        local: B256,
+        /// Hash returned by the source L2 node.
+        remote: B256,
+    },
+
+    /// A transient safe-head recovery failure. The runtime should retry after re-reading labels.
+    #[error("follow recovery failed: {0}")]
+    RecoveryFailed(&'static str),
+
+    /// Follow-mode recovery was cancelled.
+    #[error("follow-mode recovery cancelled")]
+    RecoveryCancelled,
 
     /// The local engine rejected a follow-mode task.
     #[error("engine task failed with {severity} severity: {error}")]

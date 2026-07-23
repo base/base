@@ -21,9 +21,35 @@ struct ProofsSyncStatus {
 pub(super) trait FollowLocalClient: Debug + Send + Sync {
     async fn block_info(&self, tag: BlockNumberOrTag) -> Result<Option<L2BlockInfo>, FollowError>;
 
+    async fn block_info_by_hash(&self, hash: B256) -> Result<Option<L2BlockInfo>, FollowError>;
+
     async fn l1_block_hash(&self, number: u64) -> Result<Option<B256>, FollowError>;
 
     async fn proofs_latest(&self) -> Result<Option<u64>, FollowError>;
+}
+
+/// Verifies that a block's L1 origin is canonical in the local L1 view.
+pub(super) async fn validate_block_l1_origin<Local>(
+    local: &Local,
+    block: &L2BlockInfo,
+) -> Result<(), FollowError>
+where
+    Local: FollowLocalClient + ?Sized,
+{
+    let origin = block.l1_origin;
+    let local_hash = local
+        .l1_block_hash(origin.number)
+        .await?
+        .ok_or(FollowError::LocalL1BlockUnavailable(origin.number))?;
+    if local_hash != origin.hash {
+        return Err(FollowError::L2OriginNotCanonical {
+            l2_number: block.block_info.number,
+            l1_number: origin.number,
+            local_l1: local_hash,
+            l2_origin: origin.hash,
+        });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +78,27 @@ impl FollowLocalClient for LocalL2Client {
             .full()
             .await
             .map_err(|source| FollowError::LocalBlockFetch { tag, source })?;
+        let Some(block) = block else {
+            return Ok(None);
+        };
+        L2BlockInfo::from_block_and_genesis(
+            &block
+                .map_header(|header| header.into_inner())
+                .into_consensus()
+                .map_transactions(|tx| tx.inner.inner.into_inner()),
+            &self.rollup_config.genesis,
+        )
+        .map(Some)
+        .map_err(FollowError::from)
+    }
+
+    async fn block_info_by_hash(&self, hash: B256) -> Result<Option<L2BlockInfo>, FollowError> {
+        let block = self
+            .provider
+            .get_block_by_hash(hash)
+            .full()
+            .await
+            .map_err(|source| FollowError::LocalBlockHashFetch { hash, source })?;
         let Some(block) = block else {
             return Ok(None);
         };

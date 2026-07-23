@@ -7,11 +7,12 @@ use base_consensus_engine::{
     EngineClient, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskExt, InsertTask,
     SynchronizeTask,
 };
-use base_protocol::L2BlockInfo;
+use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::sync::Mutex;
 
 use crate::follow::error::FollowError;
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub(super) trait FollowEngine: Debug + Send + Sync {
     async fn insert_payload(
@@ -24,6 +25,17 @@ pub(super) trait FollowEngine: Debug + Send + Sync {
         safe: Option<L2BlockInfo>,
         finalized: Option<L2BlockInfo>,
     ) -> Result<(), FollowError>;
+
+    /// Sends a forced forkchoice update and reports whether the EL confirmed `head`.
+    ///
+    /// On `Syncing`, the unsafe head is left unconfirmed. Callers must not treat a `false`
+    /// return as progress toward recovery.
+    async fn request_forkchoice(
+        &self,
+        head: BlockInfo,
+        safe: BlockInfo,
+        finalized: BlockInfo,
+    ) -> Result<bool, FollowError>;
 }
 
 #[derive(Debug)]
@@ -78,17 +90,47 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
             return Ok(());
         }
 
+        let mut state = self.state.lock().await;
+        let current_unsafe = state.sync_state.unsafe_head();
+        let unsafe_head = safe.filter(|safe_head| {
+            safe_head.block_info.number == current_unsafe.block_info.number
+                && safe_head.block_info.hash == current_unsafe.block_info.hash
+        });
         let task = SynchronizeTask::new(
             Arc::clone(&self.client),
             Arc::clone(&self.rollup_config),
             EngineSyncStateUpdate {
+                unsafe_head,
                 local_safe_head: safe,
                 safe_head: safe,
                 finalized_head: finalized,
-                ..Default::default()
             },
         );
-        task.execute(&mut *self.state.lock().await).await.map_err(FollowError::engine_task)
+        task.execute(&mut state).await.map_err(FollowError::engine_task)
+    }
+
+    async fn request_forkchoice(
+        &self,
+        head: BlockInfo,
+        safe: BlockInfo,
+        finalized: BlockInfo,
+    ) -> Result<bool, FollowError> {
+        let requested_head = L2BlockInfo { block_info: head, ..Default::default() };
+        let requested_safe = L2BlockInfo { block_info: safe, ..Default::default() };
+        let requested_finalized = L2BlockInfo { block_info: finalized, ..Default::default() };
+        let task = SynchronizeTask::new_forced(
+            Arc::clone(&self.client),
+            Arc::clone(&self.rollup_config),
+            EngineSyncStateUpdate {
+                unsafe_head: Some(requested_head),
+                local_safe_head: Some(requested_safe),
+                safe_head: Some(requested_safe),
+                finalized_head: Some(requested_finalized),
+            },
+        );
+        let mut state = self.state.lock().await;
+        task.execute(&mut state).await.map_err(FollowError::engine_task)?;
+        Ok(state.sync_state.unsafe_head().block_info.hash == head.hash)
     }
 }
 
@@ -116,6 +158,16 @@ mod tests {
 
     fn valid_forkchoice_updated() -> ForkchoiceUpdated {
         ForkchoiceUpdated { payload_status: valid_payload_status(), payload_id: None }
+    }
+
+    fn syncing_forkchoice_updated() -> ForkchoiceUpdated {
+        ForkchoiceUpdated {
+            payload_status: PayloadStatus {
+                status: PayloadStatusEnum::Syncing,
+                latest_valid_hash: None,
+            },
+            payload_id: None,
+        }
     }
 
     fn l1_info_deposit_tx() -> Vec<u8> {
@@ -156,6 +208,58 @@ mod tests {
                 block_hash: B256::with_last_byte(number as u8),
                 transactions: vec![l1_info_deposit_tx().into()],
             }),
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_head_remains_unconfirmed_until_valid_forkchoice() {
+        let rollup_config = Arc::new(RollupConfig::default());
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_config(Arc::clone(&rollup_config))
+                .with_fork_choice_updated_v3_response(syncing_forkchoice_updated())
+                .build(),
+        );
+        let local_tip = l2_block_info(10);
+        let finalized = l2_block_info(3);
+        let engine = EngineApiFollowEngine::new(
+            Arc::clone(&client),
+            rollup_config,
+            local_tip,
+            l2_block_info(8),
+            finalized,
+        );
+        let target = l2_block_info(8).block_info;
+
+        assert!(
+            !engine
+                .request_forkchoice(target, finalized.block_info, finalized.block_info)
+                .await
+                .expect("syncing forkchoice")
+        );
+        // Syncing must not advance the unconfirmed source tip into engine state.
+        assert_eq!(engine.state.lock().await.sync_state.unsafe_head(), local_tip);
+        assert_eq!(engine.state.lock().await.sync_state.safe_head(), l2_block_info(8));
+
+        client.set_fork_choice_updated_v3_response(valid_forkchoice_updated()).await;
+        assert!(
+            engine
+                .request_forkchoice(target, finalized.block_info, finalized.block_info)
+                .await
+                .expect("valid forkchoice")
+        );
+        assert_eq!(engine.state.lock().await.sync_state.unsafe_head().block_info, target);
+        assert_eq!(engine.state.lock().await.sync_state.safe_head(), finalized);
+        assert!(client.last_new_payload_v2().await.is_none());
+
+        let storage = client.storage();
+        let storage = storage.read().await;
+        assert_eq!(storage.fork_choice_updated_v3_requests.len(), 2);
+        for (forkchoice, has_attributes) in &storage.fork_choice_updated_v3_requests {
+            assert_eq!(forkchoice.head_block_hash, target.hash);
+            assert_eq!(forkchoice.safe_block_hash, finalized.block_info.hash);
+            assert_eq!(forkchoice.finalized_block_hash, finalized.block_info.hash);
+            assert!(!has_attributes);
         }
     }
 
