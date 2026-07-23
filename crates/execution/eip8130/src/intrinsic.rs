@@ -237,6 +237,25 @@ impl IntrinsicGas {
         })
     }
 
+    /// Payer-authentication gas billed *on top of* `gas_limit` for a signed
+    /// EIP-8130 transaction (`0` for self-pay).
+    ///
+    /// This is exactly the `payer_auth` component [`Self::compute`] charges,
+    /// derived from the payer auth-blob shape. Block gas reservation uses it to
+    /// budget the payer's authentication in addition to the sender-signed
+    /// `gas_limit`: the payer reimburses its own authentication beyond that limit,
+    /// so a block admitting a transaction on `gas_limit` alone could let true
+    /// consumption (`gas_limit + payer_auth`) push cumulative gas over the block
+    /// limit. Computing it here avoids re-running the full intrinsic breakdown.
+    #[must_use = "discarding the result skips the payer-authentication reservation"]
+    pub fn payer_auth_cost(signed: &Eip8130Signed) -> Result<u64, IntrinsicGasError> {
+        if signed.tx().payer.is_some() {
+            Self::auth_cost(signed.payer_auth().as_ref(), AuthWireForm::Prefixed)
+        } else {
+            Ok(0)
+        }
+    }
+
     /// EIP-2028 data-availability cost over the caller-supplied EIP-2718
     /// serialization (`type_byte || rlp([..fields.., sender_auth, payer_auth])`).
     fn payload_cost(encoded: &[u8]) -> u64 {

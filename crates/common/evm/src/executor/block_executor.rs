@@ -15,6 +15,8 @@ use alloy_evm::{
 };
 use base_common_chains::Upgrades;
 use base_common_consensus::{DepositReceipt, Predeploys};
+#[cfg(feature = "std")]
+use base_execution_eip8130::IntrinsicGas;
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use revm::{
     Database as _, DatabaseCommit,
@@ -24,7 +26,7 @@ use revm::{
 
 use crate::{
     BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTxEnv,
-    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
+    BaseTxResult, BaseTxTr, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
 
 /// Block executor for Base.
@@ -80,11 +82,43 @@ impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
 where
     E: Evm<
             DB: Database + DatabaseCommit + StateDB,
-            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
+            Tx: FromRecoveredTx<R::Transaction>
+                    + FromTxWithEncoded<R::Transaction>
+                    + BaseTxEnv
+                    + BaseTxTr,
         >,
     R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
     Spec: Upgrades,
 {
+    /// Block gas the transaction may consume, reserved against the block gas
+    /// limit before execution.
+    ///
+    /// For every transaction this is the declared `gas_limit`. An EIP-8130
+    /// transaction additionally meters `payer_auth` *on top of* `gas_limit` (the
+    /// payer reimburses its own authentication beyond the sender-signed limit),
+    /// so that portion must be reserved in the block gas budget too. Reserving
+    /// `gas_limit` alone could admit a transaction whose true consumption
+    /// (`gas_limit + payer_auth`) pushes cumulative block gas over the limit. The
+    /// payer authentication gas is derived from the signed envelope exactly as
+    /// execution charges it, keeping block-building and validation consistent.
+    #[cfg(feature = "std")]
+    fn reserved_block_gas(tx_env: &E::Tx, gas_limit: u64) -> Result<u64, BlockExecutionError> {
+        let Some(parts) = tx_env.eip8130_parts() else {
+            return Ok(gas_limit);
+        };
+        let payer_auth =
+            IntrinsicGas::payer_auth_cost(&parts.signed).map_err(BlockExecutionError::other)?;
+        Ok(gas_limit.saturating_add(payer_auth))
+    }
+
+    /// `no_std` builds reject EIP-8130 execution outright (see `Evm::transact_raw`),
+    /// so no payer authentication gas is metered on top of `gas_limit` and the
+    /// reserved block gas is just the declared `gas_limit`.
+    #[cfg(not(feature = "std"))]
+    fn reserved_block_gas(_tx_env: &E::Tx, gas_limit: u64) -> Result<u64, BlockExecutionError> {
+        Ok(gas_limit)
+    }
+
     fn jovian_da_footprint_estimation(
         &mut self,
         tx_env: &E::Tx,
@@ -115,7 +149,10 @@ impl<E, R, Spec> BlockExecutor for BaseBlockExecutor<E, R, Spec>
 where
     E: Evm<
             DB: Database + DatabaseCommit + StateDB,
-            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
+            Tx: FromRecoveredTx<R::Transaction>
+                    + FromTxWithEncoded<R::Transaction>
+                    + BaseTxEnv
+                    + BaseTxTr,
         >,
     R: BaseReceiptBuilder<
             Transaction: Transaction + Encodable2718 + TransactionEnvelope<TxType: Send + 'static>,
@@ -174,12 +211,15 @@ where
         let (tx_env, tx) = tx.into_parts();
         let is_deposit = tx.tx().ty() == DEPOSIT_TRANSACTION_TYPE;
 
-        // The sum of the transaction's gas limit, Tg, and the gas utilized in this block prior,
-        // must be no greater than the block's gasLimit.
+        // The sum of the gas the transaction may consume, Tg, and the gas utilized in this block
+        // prior, must be no greater than the block's gasLimit. For EIP-8130 the reserved amount is
+        // `gas_limit + payer_auth`, since payer authentication is metered on top of the declared
+        // gas_limit (see `reserved_block_gas`); for every other transaction it is `gas_limit`.
+        let reserved_gas = Self::reserved_block_gas(&tx_env, tx.tx().gas_limit())?;
         let block_available_gas = self.evm.block().gas_limit().saturating_sub(self.gas_used);
-        if tx.tx().gas_limit() > block_available_gas && (self.is_regolith || !is_deposit) {
+        if reserved_gas > block_available_gas && (self.is_regolith || !is_deposit) {
             return Err(BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
-                transaction_gas_limit: tx.tx().gas_limit(),
+                transaction_gas_limit: reserved_gas,
                 block_available_gas,
             }
             .into());
@@ -335,9 +375,11 @@ mod tests {
         EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory, precompiles::PrecompilesMap,
     };
     use alloy_hardforks::ForkCondition;
-    use alloy_primitives::{Address, Signature, U256, uint};
+    use alloy_primitives::{Address, Bytes, Signature, U256, uint};
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
-    use base_common_consensus::{BaseTxEnvelope, Predeploys};
+    use base_common_consensus::{
+        BaseTxEnvelope, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
+    };
     use base_common_genesis::BaseUpgrade;
     use revm::{
         Context,
@@ -610,5 +652,115 @@ mod tests {
         assert_eq!(result.blob_gas_used, expected_da_footprint);
         assert_eq!(result.gas_used, gas_used_tx.tx_gas_used());
         assert!(result.blob_gas_used > result.gas_used);
+    }
+
+    /// Builds a signed EIP-8130 transaction with the given `gas_limit`. When
+    /// `with_payer` is set, a distinct payer is named with a resolvable k1 payer
+    /// auth blob (`K1_AUTHENTICATOR || sig`), so `payer_auth` is non-zero.
+    fn signed_eip8130(gas_limit: u64, with_payer: bool) -> Eip8130Signed {
+        let payer_auth = if with_payer {
+            let mut blob = vec![];
+            blob.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
+            blob.extend_from_slice(&[0u8; 65]);
+            Bytes::from(blob)
+        } else {
+            Bytes::new()
+        };
+        let tx = TxEip8130 {
+            gas_limit,
+            payer: with_payer.then(|| Address::with_last_byte(0x11)),
+            ..Default::default()
+        };
+        Eip8130Signed::new(tx, Bytes::new(), payer_auth)
+    }
+
+    /// The block gas reservation for an EIP-8130 transaction must include
+    /// `payer_auth` on top of the declared `gas_limit`: a transaction that fits
+    /// on `gas_limit` alone is still rejected when `gas_limit + payer_auth`
+    /// exceeds the available block gas.
+    #[test]
+    fn eip8130_block_gas_reservation_includes_payer_auth() {
+        const GAS_LIMIT: u64 = 100_000;
+        const JOVIAN_TIMESTAMP: u64 = 1746806402;
+
+        let signed = signed_eip8130(GAS_LIMIT, true);
+        let payer_auth = IntrinsicGas::payer_auth_cost(&signed).expect("payer auth cost");
+        assert!(payer_auth > 0, "payer auth must be metered on top of gas_limit");
+
+        // Block admits `gas_limit` alone but not `gas_limit + payer_auth`.
+        let block_gas_limit = GAS_LIMIT + payer_auth - 1;
+
+        let mut db = prepare_jovian_db(0);
+        let base_chain_upgrades = ChainUpgrades::new(
+            BaseUpgrade::mainnet()
+                .into_iter()
+                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
+        );
+        let receipt_builder = AlloyReceiptBuilder::default();
+        let mut executor = build_executor(
+            &mut db,
+            &receipt_builder,
+            &base_chain_upgrades,
+            block_gas_limit,
+            JOVIAN_TIMESTAMP,
+        );
+
+        let tx =
+            Recovered::new_unchecked(BaseTxEnvelope::Eip8130(signed), Address::with_last_byte(0x22));
+        let err = executor.execute_transaction(&tx).expect_err("reservation must reject");
+        match err {
+            BlockExecutionError::Validation(
+                BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                    transaction_gas_limit,
+                    block_available_gas,
+                },
+            ) => {
+                assert_eq!(transaction_gas_limit, GAS_LIMIT + payer_auth);
+                assert_eq!(block_available_gas, block_gas_limit);
+            }
+            other => panic!("expected TransactionGasLimitMoreThanAvailableBlockGas, got {other:?}"),
+        }
+    }
+
+    /// A self-paying EIP-8130 transaction meters no `payer_auth`, so its
+    /// reservation is exactly `gas_limit`: it must not be rejected by the block
+    /// gas pre-check when the block admits its declared `gas_limit`.
+    #[test]
+    fn self_pay_eip8130_block_gas_reservation_is_gas_limit() {
+        const GAS_LIMIT: u64 = 100_000;
+        const JOVIAN_TIMESTAMP: u64 = 1746806402;
+
+        let signed = signed_eip8130(GAS_LIMIT, false);
+        assert_eq!(
+            IntrinsicGas::payer_auth_cost(&signed).expect("payer auth cost"),
+            0,
+            "self-pay meters no payer authentication",
+        );
+
+        let mut db = prepare_jovian_db(0);
+        let base_chain_upgrades = ChainUpgrades::new(
+            BaseUpgrade::mainnet()
+                .into_iter()
+                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
+        );
+        let receipt_builder = AlloyReceiptBuilder::default();
+        let mut executor = build_executor(
+            &mut db,
+            &receipt_builder,
+            &base_chain_upgrades,
+            GAS_LIMIT,
+            JOVIAN_TIMESTAMP,
+        );
+
+        let tx =
+            Recovered::new_unchecked(BaseTxEnvelope::Eip8130(signed), Address::with_last_byte(0x22));
+        // Execution itself may fail for this synthetic transaction, but the block
+        // gas pre-check must not: reserving exactly `gas_limit` fits the block.
+        if let Err(BlockExecutionError::Validation(
+            BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas { .. },
+        )) = executor.execute_transaction(&tx)
+        {
+            panic!("self-pay transaction must not be rejected by the block gas pre-check");
+        }
     }
 }

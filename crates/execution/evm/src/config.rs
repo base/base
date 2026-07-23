@@ -11,7 +11,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder,
-    BaseSpecId, BaseTransaction, BaseTxEnv,
+    BaseSpecId, BaseTransaction, BaseTxEnv, BaseTxTr,
 };
 #[cfg(not(feature = "std"))]
 use base_common_rpc_types_engine as _;
@@ -153,7 +153,8 @@ where
             Tx: FromRecoveredTx<R::Transaction>
                     + FromTxWithEncoded<R::Transaction>
                     + TransactionEnvMut
-                    + BaseTxEnv,
+                    + BaseTxEnv
+                    + BaseTxTr,
             Precompiles = PrecompilesMap,
             Spec = BaseSpecId,
             BlockEnv = BlockEnv,

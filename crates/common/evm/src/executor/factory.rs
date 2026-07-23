@@ -11,7 +11,7 @@ use revm::Inspector;
 
 use crate::{
     AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmFactory,
-    BaseReceiptBuilder, BaseTxEnv, BaseTxResult,
+    BaseReceiptBuilder, BaseTxEnv, BaseTxResult, BaseTxTr,
 };
 
 /// Ethereum block executor factory.
@@ -60,7 +60,10 @@ where
         > + Clone,
     Spec: Upgrades + Clone,
     EvmF: EvmFactory<
-        Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
+        Tx: FromRecoveredTx<R::Transaction>
+                + FromTxWithEncoded<R::Transaction>
+                + BaseTxEnv
+                + BaseTxTr,
     >,
     Self: 'static,
 {
