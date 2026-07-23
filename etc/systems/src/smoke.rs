@@ -5,6 +5,7 @@ use std::{
     num::NonZeroU64,
     path::PathBuf,
     sync::{Mutex, OnceLock},
+    time::Duration,
 };
 
 use alloy_network::Ethereum;
@@ -13,7 +14,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
-use base_common_genesis::{RollupConfig, RuntimeUpgradeRegistry};
+use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::Base;
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{OptionExt, Result, WrapErr, ensure};
@@ -35,6 +36,12 @@ const DEFAULT_L1_CHAIN_ID: u64 = 1337;
 const DEFAULT_L2_CHAIN_ID: u64 = 84538453;
 const DEFAULT_SLOT_DURATION: u64 = 2;
 const DEFAULT_SHADOW_BLOCKS_PER_CYCLE: NonZeroU64 = NonZeroU64::new(3).unwrap();
+
+/// Longest wait for a live L1 schedule change to be re-applied by a runtime-admin node (the
+/// upgrade signal poll interval is 12s).
+const LIVE_APPLY_TIMEOUT: Duration = Duration::from_secs(90);
+/// Interval between runtime registry checks while awaiting a live schedule apply.
+const LIVE_APPLY_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 static RUNTIME_UPGRADE_SIGNAL_OWNERS: OnceLock<Mutex<BTreeSet<u64>>> = OnceLock::new();
 
@@ -83,6 +90,7 @@ impl Drop for RuntimeUpgradeSignalGuard {
 /// A complete L1+L2 stack for system tests.
 pub struct SystemTestStack {
     _temp_dir: TempDir,
+    l2_chain_id: u64,
     l1_genesis: L1GenesisOutput,
     l2_deployment: L2DeploymentOutput,
     l1_stack: L1Stack,
@@ -189,6 +197,45 @@ impl SystemTestStack {
     /// [`SystemTestStackBuilder::with_upgrade_signal`].
     pub const fn upgrade_signal(&self) -> Option<&MockProtocolVersionsClient> {
         self.upgrade_signal.as_ref()
+    }
+
+    /// Writes an upgrade schedule on L1 and waits until the process-local
+    /// [`RuntimeUpgradeRegistry`] reflects the activation timestamp for this stack's L2 chain.
+    ///
+    /// Requires the stack to have been built with
+    /// [`SystemTestStackBuilder::with_upgrade_signal`] and a node running in a runtime-admin
+    /// mode that re-applies live schedule changes.
+    pub async fn set_schedule_and_await_runtime_apply(
+        &self,
+        upgrade: BaseUpgrade,
+        activation_timestamp: u64,
+    ) -> Result<()> {
+        let contract = self
+            .upgrade_signal
+            .as_ref()
+            .ok_or_eyre("stack was not built with the upgrade signal enabled")?;
+        contract.set_schedule(&[(upgrade, activation_timestamp)]).await.wrap_err_with(|| {
+            format!("Failed to update {} schedule on L1", upgrade.contract_id())
+        })?;
+
+        tokio::time::timeout(LIVE_APPLY_TIMEOUT, async {
+            loop {
+                if RuntimeUpgradeRegistry::activation(self.l2_chain_id, upgrade)
+                    == Some(UpgradeActivation::Timestamp(activation_timestamp))
+                {
+                    return;
+                }
+                tokio::time::sleep(LIVE_APPLY_POLL_INTERVAL).await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            eyre::eyre!(
+                "live L1 {} schedule was not re-applied to the runtime registry within {}s",
+                upgrade.contract_id(),
+                LIVE_APPLY_TIMEOUT.as_secs()
+            )
+        })
     }
 
     /// Returns all RPC URLs for this system test stack.
@@ -500,6 +547,7 @@ impl SystemTestStackBuilder {
 
         Ok(SystemTestStack {
             _temp_dir: temp_dir,
+            l2_chain_id,
             l1_genesis,
             l2_deployment,
             l1_stack,

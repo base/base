@@ -5,24 +5,17 @@
 //! observe the process-local [`RuntimeUpgradeRegistry`] use unique L2 chain IDs because the
 //! registry is shared by every in-process node in this test binary.
 
-use std::time::Duration;
-
-use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
+use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry};
 use base_consensus_rpc::RollupNodeApiClient;
 use base_system_tests::{SystemTestStack, SystemTestStackBuilder, UpgradeSignalStackOptions};
 use base_upgrade_signal::UpgradeSignalMode;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
-use tokio::time::{sleep, timeout};
 
 /// Initial Cobalt activation timestamp seeded into the mock contract (2100-01-01).
 const COBALT_ACTIVATION_TIMESTAMP: u64 = 4_102_444_800;
 /// Rescheduled Cobalt activation timestamp for live updates (2101-01-01).
 const COBALT_RESCHEDULED_TIMESTAMP: u64 = 4_133_980_800;
-/// Longest wait for a live L1 schedule change to be re-applied (poll interval is 12s).
-const LIVE_APPLY_TIMEOUT: Duration = Duration::from_secs(90);
-/// Interval between runtime registry checks.
-const LIVE_APPLY_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Reads the rollup config served by a consensus node's RPC.
 async fn rollup_config_via_rpc(rpc_url: &url::Url) -> Result<RollupConfig> {
@@ -32,39 +25,6 @@ async fn rollup_config_via_rpc(rpc_url: &url::Url) -> Result<RollupConfig> {
     RollupNodeApiClient::rollup_config(&client)
         .await
         .wrap_err("Failed to fetch rollup config via RPC")
-}
-
-/// Writes a Cobalt schedule on L1 and waits until the process-local runtime registry reflects the
-/// activation timestamp.
-async fn set_cobalt_schedule_and_await_runtime_apply(
-    system: &SystemTestStack,
-    l2_chain_id: u64,
-    activation_timestamp: u64,
-) -> Result<()> {
-    let contract =
-        system.upgrade_signal().expect("stack was built with the upgrade signal enabled");
-    contract
-        .set_schedule(&[(BaseUpgrade::Cobalt, activation_timestamp)])
-        .await
-        .wrap_err("Failed to update Cobalt schedule on L1")?;
-
-    timeout(LIVE_APPLY_TIMEOUT, async {
-        loop {
-            if RuntimeUpgradeRegistry::activation(l2_chain_id, BaseUpgrade::Cobalt)
-                == Some(UpgradeActivation::Timestamp(activation_timestamp))
-            {
-                return;
-            }
-            sleep(LIVE_APPLY_POLL_INTERVAL).await;
-        }
-    })
-    .await
-    .map_err(|_| {
-        eyre::eyre!(
-            "live L1 Cobalt schedule was not re-applied to the runtime registry within {}s",
-            LIVE_APPLY_TIMEOUT.as_secs()
-        )
-    })
 }
 
 /// Starts a stack with the upgrade signal enabled for Cobalt at the given mode and chain ID.
@@ -204,7 +164,8 @@ async fn test_upgrade_signal_runtime_admin_applies_new_live_schedule() -> Result
         .build()
         .await?;
 
-    set_cobalt_schedule_and_await_runtime_apply(&system, l2_chain_id, COBALT_ACTIVATION_TIMESTAMP)
+    system
+        .set_schedule_and_await_runtime_apply(BaseUpgrade::Cobalt, COBALT_ACTIVATION_TIMESTAMP)
         .await
 }
 
@@ -224,7 +185,8 @@ async fn test_upgrade_signal_execution_runtime_admin_reapplies_live_schedule_cha
         .build()
         .await?;
 
-    set_cobalt_schedule_and_await_runtime_apply(&system, l2_chain_id, COBALT_RESCHEDULED_TIMESTAMP)
+    system
+        .set_schedule_and_await_runtime_apply(BaseUpgrade::Cobalt, COBALT_RESCHEDULED_TIMESTAMP)
         .await?;
     drop(system);
     assert_eq!(
@@ -250,7 +212,8 @@ async fn test_upgrade_signal_runtime_admin_reapplies_live_schedule_change() -> R
         "runtime-admin mode should apply the L1 schedule at startup"
     );
 
-    set_cobalt_schedule_and_await_runtime_apply(&system, l2_chain_id, COBALT_RESCHEDULED_TIMESTAMP)
+    system
+        .set_schedule_and_await_runtime_apply(BaseUpgrade::Cobalt, COBALT_RESCHEDULED_TIMESTAMP)
         .await?;
     drop(system);
     assert_eq!(
