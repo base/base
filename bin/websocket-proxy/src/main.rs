@@ -84,7 +84,7 @@ struct Args {
         long,
         env,
         value_delimiter = ',',
-        help = "Proxy CIDRs trusted to provide the client IP header"
+        help = "Proxy CIDRs trusted when resolving client IPs; include every forwarding hop"
     )]
     trusted_proxy_cidrs: Vec<IpNet>,
 
