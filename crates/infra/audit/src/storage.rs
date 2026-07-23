@@ -433,7 +433,9 @@ impl EventWriter for S3EventReaderWriter {
         let bundle_key = match &event.event {
             BundleEvent::Received { bundle, .. } => format!("{}", bundle.bundle_hash()),
             // TODO: support other event types using bundle hash
-            _ => anyhow::bail!("archive_event only supports Received events"),
+            _ => {
+                anyhow::bail!("archive_event only supports Received events")
+            }
         };
         let transaction_ids = event.event.transaction_ids();
 
