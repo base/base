@@ -483,7 +483,6 @@ impl IntrinsicGas {
     fn authorize_has_policy(data: &[u8]) -> bool {
         data.len() >= 64 && data[63] & Eip8130Constants::SCOPE_POLICY != 0
     }
-
 }
 
 #[cfg(test)]
@@ -902,7 +901,9 @@ mod tests {
 
     #[test]
     #[cfg(debug_assertions)]
-    #[should_panic(expected = "resolved revoke discount slots exceed the three-slot-per-revoke maximum")]
+    #[should_panic(
+        expected = "resolved revoke discount slots exceed the three-slot-per-revoke maximum"
+    )]
     fn excess_revoke_discount_slots_trips_debug_assertion() {
         let mut bytes = [0u8; 32];
         bytes[..20].copy_from_slice(ACCOUNT.as_slice());
