@@ -43,8 +43,8 @@ impl TrustedProxyConfig {
 
     /// Resolves the client IP, trusting forwarding headers only from configured proxy CIDRs.
     ///
-    /// Uses the last header line, then peels trusted hops right → left until the first
-    /// untrusted IP (`Client → CDN → ALB → service`).
+    /// Joins all forwarding-header lines (proxies may append within a value or add a new
+    /// line), then peels trusted hops right → left until the first untrusted IP.
     pub fn client_ip(&self, connect_addr: IpAddr, headers: &HeaderMap) -> IpAddr {
         // Dual-stack listeners present IPv4 peers as IPv4-mapped IPv6 (`::ffff:x.x.x.x`).
         let connect_addr = Self::canonicalize_ip(connect_addr);
@@ -53,17 +53,20 @@ impl TrustedProxyConfig {
             return connect_addr;
         }
 
-        let Some(header) = headers.get_all(&self.ip_addr_http_header).iter().next_back() else {
-            return connect_addr;
-        };
-
-        let header_value = match header.to_str() {
-            Ok(header_value) => header_value,
-            Err(error) => {
-                warn!(error = %error, "Could not read client IP header");
-                return connect_addr;
+        let mut values = Vec::new();
+        for header in headers.get_all(&self.ip_addr_http_header) {
+            match header.to_str() {
+                Ok(value) => values.push(value),
+                Err(error) => {
+                    warn!(error = %error, "Could not read client IP header");
+                    return connect_addr;
+                }
             }
-        };
+        }
+        if values.is_empty() {
+            return connect_addr;
+        }
+        let header_value = values.join(", ");
 
         for raw in header_value.split(',').rev() {
             let trimmed = raw.trim();
@@ -485,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn last_header_occurrence_wins_over_spoofed_first_line() {
+    fn joins_header_lines_before_peeling_trusted_hops() {
         let config = TrustedProxyConfig::new(
             "x-forwarded-for".to_string(),
             vec!["10.0.0.0/8".parse().unwrap(), "104.16.0.0/13".parse().unwrap()],
@@ -493,9 +496,11 @@ mod tests {
         let alb = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
         let client = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10));
 
+        // Client-spoofed line, CDN-appended client, ALB-added CDN hop as a new line.
         let mut headers = HeaderMap::new();
         headers.append("x-forwarded-for", HeaderValue::from_static("198.51.100.1"));
-        headers.append("x-forwarded-for", HeaderValue::from_static("203.0.113.10, 104.16.1.1"));
+        headers.append("x-forwarded-for", HeaderValue::from_static("203.0.113.10"));
+        headers.append("x-forwarded-for", HeaderValue::from_static("104.16.1.1"));
 
         assert_eq!(config.client_ip(alb, &headers), client);
     }

@@ -39,8 +39,8 @@ Forwarded client IP headers are ignored by default. Configure `--trusted-proxy-c
 trusted proxy in the forwarding chain. The direct peer must be trusted before the header selected
 by `--ip-addr-http-header` (default: `X-Forwarded-For`) is read.
 
-The header is scanned right to left, skipping trusted proxies and using the first untrusted IP.
-Without trusted CIDRs, connection limits use the direct peer IP.
+All forwarding-header lines are joined, then scanned right to left, skipping trusted proxies and
+using the first untrusted IP. Without trusted CIDRs, connection limits use the direct peer IP.
 
 ## For Developers
 
