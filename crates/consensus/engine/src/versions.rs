@@ -123,7 +123,7 @@ mod tests {
                     azul: Some(40),
                     beryl: Some(50),
                     cobalt: Some(60),
-                    zombie: None,
+                    zenith: None,
                 },
                 ..Default::default()
             },
