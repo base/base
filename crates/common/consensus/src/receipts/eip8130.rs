@@ -21,6 +21,16 @@ use alloy_primitives::Log;
 /// when the transaction carried no `calls`. The overall [`Receipt::status`]
 /// reports `true` only when every phase succeeded (or `calls` was empty),
 /// matching the EIP-8130 receipt `status` semantics.
+///
+/// A `status` of `0x01` therefore implies durable state persisted: in
+/// particular call phase 0 committed, so the transaction's `account_changes`
+/// (applied atomically with phase 0) took effect. The converse does **not**
+/// hold — `status == 0x00` does not imply "no state change". Only a **phase-0**
+/// revert rolls the account changes back (and refunds their application-share
+/// gas); a *later*-phase revert still leaves phase 0's committed state — the
+/// applied account changes and any earlier committed phases — persisted, along
+/// with the always-persisted nonce consumption, auto-delegation, and gas
+/// payment. Consult `phase_statuses` for per-phase outcomes.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]

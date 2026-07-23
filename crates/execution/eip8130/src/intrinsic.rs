@@ -198,8 +198,14 @@ pub struct IntrinsicGas {
     pub nonce_key: u64,
     /// `bytecode_cost` — account creation.
     pub bytecode: u64,
-    /// `account_changes_cost` — config-change and delegation entries.
+    /// `account_changes_cost` — config-change and delegation entries. Includes
+    /// both the always-charged validation (auth) share and the refundable
+    /// application (write) share ([`Self::account_changes_application`]).
     pub account_changes: u64,
+    /// The application (storage-write) share of `account_changes_cost`: the
+    /// portion refunded to the payer when call phase 0 reverts and the account
+    /// changes are rolled back. See [`Self::application_share`].
+    pub account_changes_application: u64,
     /// `auto_delegation_cost` — code-less sender auto-delegation.
     pub auto_delegation: u64,
     /// `sender_auth_cost` — sender authenticator execution + its `authorize`
@@ -240,6 +246,22 @@ impl IntrinsicGas {
         gas_limit.checked_sub(self.sender_intrinsic())
     }
 
+    /// The application share of intrinsic gas: the create `bytecode_cost` plus
+    /// the storage-write portion of `account_changes_cost`
+    /// ([`Self::account_changes_application`]).
+    ///
+    /// This is the gas whose state effects are applied immediately before call
+    /// phase 0 and rolled back with it if phase 0 reverts. On such a revert the
+    /// account changes never persist, so this amount is refunded to the payer
+    /// (the validation share, `auto_delegation_cost`, the phase-0 gas consumed,
+    /// and `payer_auth_cost` remain charged). It is a static, always-covered
+    /// subset of `sender_intrinsic`, so subtracting it can never underflow the
+    /// billed gas.
+    #[must_use]
+    pub const fn application_share(&self) -> u64 {
+        self.bytecode.saturating_add(self.account_changes_application)
+    }
+
     /// Computes the intrinsic gas for a signed EIP-8130 transaction.
     ///
     /// `encoded` is the EIP-2718-serialized signed transaction
@@ -269,7 +291,17 @@ impl IntrinsicGas {
         };
 
         let mut bytecode = 0u64;
-        let mut account_changes = 0u64;
+        // `account_changes_cost` splits into two shares. The **application share**
+        // (`account_changes_writes`) is the storage-write cost — account-state
+        // bootstrap, actor/policy slot writes, config-change state bumps, and the
+        // delegation deposit — that is rolled back and refunded to the payer when
+        // call phase 0 reverts (the account changes never persist). The
+        // **validation share** (`account_changes_auth`) is the per-config-change
+        // authentication cost, charged on every inclusion (including a phase-0
+        // revert) because the authorization work is consumed regardless. See
+        // [`Self::application_share`].
+        let mut account_changes_writes = 0u64;
+        let mut account_changes_auth = 0u64;
         let mut revoke_change_count = 0u32;
         // All account changes in a transaction target the same (`sender`) packed
         // account-state slot: a create bootstraps it and every config change bumps
@@ -290,8 +322,8 @@ impl IntrinsicGas {
                     // This is the first (cold) write to the packed slot, so a
                     // later config change on the same account only pays the warm
                     // reset.
-                    account_changes =
-                        account_changes.saturating_add(Eip8130GasSchedule::ACCOUNT_STATE_SET_COST);
+                    account_changes_writes = account_changes_writes
+                        .saturating_add(Eip8130GasSchedule::ACCOUNT_STATE_SET_COST);
                     account_state_touched = true;
                     // Each initial actor writes one fresh `actor_config` slot, plus
                     // the two policy slots (`policy_manager` + `policy_commitment`)
@@ -309,7 +341,7 @@ impl IntrinsicGas {
                         } else {
                             cost = cost.saturating_add(Eip8130GasSchedule::POLICY_SLOTS_NOOP_COST);
                         }
-                        account_changes = account_changes.saturating_add(cost);
+                        account_changes_writes = account_changes_writes.saturating_add(cost);
                     }
                 }
                 AccountChange::ConfigChange(cc) => {
@@ -325,23 +357,24 @@ impl IntrinsicGas {
                         account_state_touched = true;
                         Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
                     };
-                    account_changes = account_changes.saturating_add(state_cost);
+                    account_changes_writes = account_changes_writes.saturating_add(state_cost);
                     // `cfg.auth` is always `authenticator || data` (never a bare
                     // signature); an implicit-EOA owner names itself explicitly as
-                    // `K1_AUTHENTICATOR || sig` here.
+                    // `K1_AUTHENTICATOR || sig` here. The authentication cost is the
+                    // validation share (charged even when phase 0 reverts).
                     let auth = Self::auth_cost(cc.auth.as_ref(), AuthWireForm::Prefixed, false)?;
-                    account_changes = account_changes.saturating_add(auth);
+                    account_changes_auth = account_changes_auth.saturating_add(auth);
                     for actor_change in &cc.actor_changes {
                         if actor_change.change_type == ActorChangeType::Revoke {
                             revoke_change_count = revoke_change_count.saturating_add(1);
                         }
-                        account_changes = account_changes
+                        account_changes_writes = account_changes_writes
                             .saturating_add(Self::actor_change_write_cost(actor_change));
                     }
                 }
                 AccountChange::Delegation(_) => {
-                    account_changes =
-                        account_changes.saturating_add(Eip8130GasSchedule::DELEGATION_DEPOSIT_COST);
+                    account_changes_writes = account_changes_writes
+                        .saturating_add(Eip8130GasSchedule::DELEGATION_DEPOSIT_COST);
                 }
             }
         }
@@ -364,7 +397,13 @@ impl IntrinsicGas {
             Self::bounded_revoke_discount_slots(input.revoke_discount_slots, revoke_change_count);
         let revoke_discount = Eip8130GasSchedule::COLD_SLOT_RESET_DISCOUNT
             .saturating_mul(u64::from(discounted_slots));
-        account_changes = account_changes.saturating_sub(revoke_discount);
+        // The revoke discount reduces slot-reset writes, so it applies to the
+        // application (write) share.
+        account_changes_writes = account_changes_writes.saturating_sub(revoke_discount);
+        // The refundable application share is every write cost; the total
+        // `account_changes_cost` adds the always-charged validation (auth) share.
+        let account_changes_application = account_changes_writes;
+        let account_changes = account_changes_writes.saturating_add(account_changes_auth);
 
         let auto_delegation = if input.sender_auto_delegated {
             Eip8130GasSchedule::DELEGATION_DEPOSIT_COST
@@ -397,6 +436,7 @@ impl IntrinsicGas {
             nonce_key,
             bytecode,
             account_changes,
+            account_changes_application,
             auto_delegation,
             sender_auth,
             payer_auth,

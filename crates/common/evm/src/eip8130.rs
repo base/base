@@ -3,13 +3,24 @@
 //! [`Eip8130Executor`] runs the full EIP-8130 transaction directly against the
 //! block-execution journal. The *pre-call* pipeline runs around (not inside) an
 //! EVM call frame: it authorizes the sender/payer and account-configuration
-//! changes, validates and advances the transaction's 2D nonce, charges the
-//! EIP-8130 intrinsic gas schedule, validates the fee caps, applies the
-//! transaction's account changes (config changes, account creation, and
-//! delegation) — installing the deferred account-*code* effects — and
-//! pre-charges the gas payer. It then publishes the [transaction context]
-//! (sender / payer / actor id) and dispatches the transaction's `calls` as real
-//! EVM call frames, settling the final fee and refunding unused gas afterwards.
+//! changes, validates and advances the transaction's 2D nonce, auto-delegates a
+//! code-less sender, charges the EIP-8130 intrinsic gas schedule, validates the
+//! fee caps, and pre-charges the gas payer. It then publishes the [transaction
+//! context] (sender / payer / actor id) and dispatches the transaction's `calls`
+//! as real EVM call frames, settling the final fee and refunding unused gas
+//! afterwards.
+//!
+//! The transaction's account changes (config changes, account creation, and
+//! delegation, plus their deferred account-*code* effects) are **applied
+//! atomically with call phase 0** (`calls[0]`): they are written to the journal
+//! immediately before phase 0 and inside its checkpoint, so a phase-0 revert
+//! rolls them back and refunds their application-share gas to the payer (see
+//! [`IntrinsicGas::application_share`]). A transaction with no `calls` applies
+//! them unconditionally (nothing can revert them). Authorization still runs in
+//! the pre-call pipeline against the fully composed post-apply state — via a
+//! throwaway probe whose writes are reverted — so only the *persistence* of the
+//! writes moves to phase 0; the nonce consumption, auto-delegation, and gas
+//! payment persist regardless of the phase-0 outcome.
 //!
 //! Pre-call storage access goes through a gas-free [`JournalStorageProvider`], so
 //! the enshrined schedule is the single source of gas accounting for the pre-call
@@ -33,12 +44,15 @@
 //! # Scope
 //!
 //! Protocol-injected account-change logs (`ActorAuthorized`, `ActorRevoked`,
-//! `AccountCreated`, `DelegationApplied`) are written to the journal during the
-//! pre-call apply step and surface in the transaction receipt ahead of any
-//! `calls` logs. Per-phase receipt status (`phaseStatuses`) is reported on the
-//! EIP-8130 receipt; the overall transaction status (all-phases-succeeded vs
-//! reverted) is reported through the returned [`ExecutionResult`] variant
-//! ([`ExecutionResult::Success`] vs [`ExecutionResult::Revert`]).
+//! `AccountCreated`, `DelegationApplied`) are written to the journal as the
+//! account changes are applied (inside call phase 0's checkpoint) and surface in
+//! the transaction receipt ahead of any `calls` logs — and, like the changes
+//! themselves, roll back if phase 0 reverts. The auto-delegation
+//! `DelegationApplied` log is emitted in the pre-call pipeline and persists. Per-
+//! phase receipt status (`phaseStatuses`) is reported on the EIP-8130 receipt;
+//! the overall transaction status (all-phases-succeeded vs reverted) is reported
+//! through the returned [`ExecutionResult`] variant ([`ExecutionResult::Success`]
+//! vs [`ExecutionResult::Revert`]).
 //!
 //! [transaction context]: TxContextStorage
 //! [`BaseEvm::transact_raw`]: crate::BaseEvm
@@ -117,6 +131,12 @@ pub struct Eip8130Outcome {
     pub gas_limit: u64,
     /// Sender-intrinsic gas (intrinsic gas excluding payer authentication).
     pub sender_intrinsic: u64,
+    /// The application (storage-write) share of intrinsic gas — create
+    /// `bytecode_cost` plus the write portion of `account_changes_cost`. Applied
+    /// atomically with call phase 0 and refunded to the payer when phase 0
+    /// reverts (the account changes are rolled back). See
+    /// [`IntrinsicGas::application_share`].
+    pub application_share: u64,
     /// Payer-authentication gas, metered on top of `gas_limit`.
     pub payer_auth: u64,
     /// Gas available to `calls` (`gas_limit - sender_intrinsic`).
@@ -147,6 +167,12 @@ struct CallsResult {
     /// `true` if any phase reverted (or was blocked by the policy gate); later
     /// phases are then skipped.
     reverted: bool,
+    /// `true` if call phase 0 reverted, so the `account_changes` applied
+    /// immediately before it were rolled back with it. Drives the
+    /// application-share gas refund in [`Eip8130Executor::billable_gas`]. `false`
+    /// when phase 0 committed (a later-phase revert leaves the account changes
+    /// persisted) or when the transaction carried no `calls`.
+    account_changes_reverted: bool,
     /// The return data of the call that reverted the transaction (or the
     /// `ActorPolicyViolation` payload for a policy-gate block); empty on success.
     output: Bytes,
@@ -155,6 +181,37 @@ struct CallsResult {
     /// because an earlier phase reverted. Empty when `calls` was empty. This is
     /// the EIP-8130 `phaseStatuses` array surfaced through the receipt.
     phase_statuses: Vec<u8>,
+}
+
+/// The authorization facts resolved by the pre-call probe (see
+/// [`Eip8130Executor::authorize_and_apply`]): everything the persisted pre-call
+/// steps and intrinsic-gas schedule need, extracted before the probe's
+/// account-change writes are reverted. The account changes themselves are
+/// re-applied atomically with call phase 0 in
+/// [`Eip8130Executor::execute_calls`], so they are not carried here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Authorized {
+    /// Resolved sender account (dispatches `calls`).
+    sender: Address,
+    /// Resolved gas payer (the sender, for self-pay).
+    payer: Address,
+    /// Authenticated sender actor id (policy-gate subject, published to context).
+    sender_actor_id: B256,
+    /// Whether the sender actor has `SCOPE_POLICY`.
+    sender_policy_gated: bool,
+    /// Resolved policy-gate target (`policy_manager(sender, actorId)`).
+    policy_target: Address,
+    /// Whether the payer actor (if any) has `SCOPE_POLICY`.
+    payer_policy_gated: bool,
+    /// Whether the sender actor's scope authorizes the transaction's nonce key.
+    can_use_nonce_key: bool,
+    /// Whether the transaction carries an explicit `Delegation` entry.
+    has_explicit_delegation: bool,
+    /// Whether the transaction carries a `Create` entry.
+    has_create: bool,
+    /// Empty zero-to-zero revoke slots resolved during application (threaded into
+    /// the intrinsic-gas revoke discount).
+    revoke_discount_slots: u32,
 }
 
 /// Executes enshrined EIP-8130 transactions against the block-execution journal.
@@ -262,7 +319,8 @@ impl Eip8130Executor {
         Self::warm_pre_call_accounts(evm);
 
         let mut calls =
-            match Self::execute_calls(evm, &signed, &outcome, outcome.execution_gas_available) {
+            match Self::execute_calls(evm, &signed, &outcome, outcome.execution_gas_available, true)
+            {
                 Ok(calls) => calls,
                 Err(err) => {
                     Self::teardown_after_error(evm);
@@ -445,7 +503,8 @@ impl Eip8130Executor {
         // `eth_estimateGas`. Re-run once un-reverted to capture the revert output
         // and any logs the committed phases emitted before the failing phase.
         if ceiling.reverted {
-            let final_calls = match Self::execute_calls(evm, &signed, &outcome, ceiling_pool) {
+            let final_calls = match Self::execute_calls(evm, &signed, &outcome, ceiling_pool, false)
+            {
                 Ok(final_calls) => final_calls,
                 Err(err) => {
                     Self::teardown_after_error(evm);
@@ -482,7 +541,7 @@ impl Eip8130Executor {
 
         // Final canonical run at the chosen pool (un-reverted) to capture the logs
         // and output at the returned gas limit, then discard all simulated state.
-        let final_calls = match Self::execute_calls(evm, &signed, &outcome, feasible_pool) {
+        let final_calls = match Self::execute_calls(evm, &signed, &outcome, feasible_pool, false) {
             Ok(final_calls) => final_calls,
             Err(err) => {
                 Self::teardown_after_error(evm);
@@ -537,7 +596,9 @@ impl Eip8130Executor {
             >,
     {
         let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
-        let calls = Self::execute_calls(evm, signed, outcome, pool)?;
+        // Account changes were already applied once in `simulate_resolve`; probes
+        // re-dispatch only the calls, so they must not be re-applied here.
+        let calls = Self::execute_calls(evm, signed, outcome, pool, false)?;
         evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
         Ok(calls)
     }
@@ -751,7 +812,7 @@ impl Eip8130Executor {
             //    The monotonic, body-derivable nonce first-use cost stays resolved.
             //    Execution reprices all of these precisely against the
             //    authenticated actors and real state.
-            let (sender_intrinsic, payer_auth, execution_gas_available) =
+            let (sender_intrinsic, application_share, payer_auth, execution_gas_available) =
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
@@ -776,6 +837,7 @@ impl Eip8130Executor {
                 policy_target,
                 gas_limit,
                 sender_intrinsic,
+                application_share,
                 payer_auth,
                 execution_gas_available,
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
@@ -819,67 +881,78 @@ impl Eip8130Executor {
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
         StorageCtx::enter(&mut provider, |sctx| {
-            // Ordering note: the apply step (1) and code effects (2) write journal
-            // storage *before* the nonce is validated (3). Any `Err` returned from
-            // this closure propagates out of `authorize_and_apply` and the caller
-            // discards the transaction, so these earlier writes never persist for a
-            // rejected transaction. This mirrors the caller-MUST-discard contract
-            // documented on `TransactionAuthorizer::authorize_and_apply`.
-            let mut acc = AccountConfigurationStorage::new(sctx);
+            // Probe: authorize *and apply* the account changes under a checkpoint
+            // that is let auto-revert on drop, capturing the resolved actors,
+            // revoke discount, and structural facts the persisted pre-call steps
+            // and intrinsic-gas schedule need — *without* persisting the
+            // account-change storage writes here. The changes (and their deferred
+            // account-*code* effects) are re-applied atomically with call phase 0
+            // in `execute_calls` (see `apply_account_changes`), so a phase-0
+            // revert rolls them back. Authorization runs against the post-apply
+            // state exactly as before; only the persistence of the writes moves.
+            let authorized = {
+                let _probe = sctx.checkpoint();
+                let mut acc = AccountConfigurationStorage::new(sctx);
+                let applied_tx =
+                    TransactionAuthorizer::authorize_and_apply(signed, &mut acc, chain_id, now)
+                        .map_err(BaseTransactionError::eip8130)?;
+                let sender_actor = applied_tx.actors.sender.resolved;
+                let sender = applied_tx.actors.sender.account;
+                Authorized {
+                    sender,
+                    payer: applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account),
+                    sender_actor_id: sender_actor.actor_id,
+                    sender_policy_gated: sender_actor.is_policy_gated(),
+                    policy_target: sender_actor.policy_target,
+                    payer_policy_gated: applied_tx
+                        .actors
+                        .payer
+                        .as_ref()
+                        .is_some_and(|actor| actor.resolved.is_policy_gated()),
+                    can_use_nonce_key: sender_actor.can_use_nonce_key(nonce_key),
+                    has_explicit_delegation: applied_tx.applied.delegation.is_some(),
+                    has_create: applied_tx.applied.created.is_some(),
+                    revoke_discount_slots: applied_tx.revoke_discount_slots,
+                }
+                // `_probe` drops here, reverting every account-change storage
+                // write made during authorization.
+            };
 
-            // 1. Authorize and apply the account changes interleaved against the
-            //    evolving state, then authenticate sender/payer against the
-            //    resulting post-apply state. `AccountConfiguration` storage
-            //    transitions are written here; the deferred account-code effects
-            //    are installed in step 2.
-            let applied_tx =
-                TransactionAuthorizer::authorize_and_apply(signed, &mut acc, chain_id, now)
-                    .map_err(BaseTransactionError::eip8130)?;
-            let has_explicit_delegation = applied_tx.applied.delegation.is_some();
-            let sender_actor = applied_tx.actors.sender.resolved;
-            let payer_policy_gated = applied_tx
-                .actors
-                .payer
-                .as_ref()
-                .is_some_and(|actor| actor.resolved.is_policy_gated());
-            let sender = applied_tx.actors.sender.account;
-            let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
             // Defense-in-depth: `authorize_and_apply` -> `verify_sender` already
-            // gates `can_use_nonce_key(nonce_key)` on both the configured and
-            // EOA sender paths, so this is redundant on the current call graph. It
-            // is kept as a local guard so this execution entry point stays sound if
+            // gates `can_use_nonce_key(nonce_key)` on both the configured and EOA
+            // sender paths, so this is redundant on the current call graph. It is
+            // kept as a local guard so this execution entry point stays sound if
             // the sender-resolution path is ever refactored to skip that check.
-            if !sender_actor.can_use_nonce_key(nonce_key) {
+            if !authorized.can_use_nonce_key {
                 return Err(BaseTransactionError::eip8130(
                     "sender actor scope does not authorize sequenced nonces",
                 ));
             }
 
-            // 2. Install the deferred account-*code* effects (created-account
-            //    bytecode, delegation indicator) the apply step surfaced.
-            if let Some(created) = &applied_tx.applied.created {
-                sctx.set_code(created.address, Bytecode::new_raw(created.code.clone()))
-                    .map_err(BaseTransactionError::eip8130)?;
-            }
-            if let Some(delegation) = &applied_tx.applied.delegation {
-                delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
-            }
+            // The remaining pre-call writes PERSIST through a phase-0 revert: the
+            // nonce is consumed and the sender stays auto-delegated even when call
+            // phase 0 and the account changes roll back.
 
-            // 3. Resolve the nonce channel's first-use flag and validate the nonce.
+            // Resolve the nonce channel's first-use flag and validate the nonce.
+            // Account changes never touch nonce storage, so reading it after the
+            // probe revert observes the same values the applied path would.
             let mut nonce_mgr = NonceManagerStorage::new(sctx);
             let protocol_nonce = sctx
-                .with_account_info(sender, |info| Ok(info.nonce))
+                .with_account_info(authorized.sender, |info| Ok(info.nonce))
                 .map_err(BaseTransactionError::eip8130)?;
             let nonce_key_first_use = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
                 false
             } else if nonce_key == U256::ZERO {
                 protocol_nonce == 0
             } else {
-                nonce_mgr.get_nonce(sender, nonce_key).map_err(BaseTransactionError::eip8130)? == 0
+                nonce_mgr
+                    .get_nonce(authorized.sender, nonce_key)
+                    .map_err(BaseTransactionError::eip8130)?
+                    == 0
             };
             NonceValidator::validate(
                 tx,
-                sender,
+                authorized.sender,
                 protocol_nonce,
                 &nonce_mgr,
                 NonceMode::Inclusion,
@@ -887,10 +960,10 @@ impl Eip8130Executor {
             )
             .map_err(BaseTransactionError::eip8130)?;
 
-            // 4. Advance the nonce. The protocol (basic-account) nonce is bumped
-            //    in `prepay`; channel and expiring nonces are journal storage.
+            // Advance the nonce. The protocol (basic-account) nonce is bumped in
+            // `prepay`; channel and expiring nonces are journal storage.
             let bump_protocol_nonce = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-                let replay = NonceValidator::replay_hash(tx, sender);
+                let replay = NonceValidator::replay_hash(tx, authorized.sender);
                 nonce_mgr
                     .check_and_mark_expiring_nonce(replay, expiry)
                     .map_err(BaseTransactionError::eip8130)?;
@@ -899,55 +972,63 @@ impl Eip8130Executor {
                 true
             } else {
                 nonce_mgr
-                    .increment_nonce(sender, nonce_key)
+                    .increment_nonce(authorized.sender, nonce_key)
                     .map_err(BaseTransactionError::eip8130)?;
                 false
             };
 
-            // 5. Auto-delegate a code-less sender only when no explicit
-            //    delegation owner change was supplied. A zero target deliberately
-            //    clears the sender's delegation and must not be overwritten with
-            //    `DEFAULT_ACCOUNT`.
-            let sender_auto_delegated = if has_explicit_delegation {
-                false
-            } else {
-                Self::auto_delegate_codeless_sender(sctx, sender)?
-            };
+            // Auto-delegate a code-less sender unless the transaction installs its
+            // own sender code (a `Create` bootstraps it) or supplies an explicit
+            // delegation (a zero target deliberately leaves the sender
+            // undelegated). Both conditions are body-derivable, matching the spec
+            // gate ("no create entry and no delegation entry"); the create and
+            // explicit-delegation code is installed with the account changes in
+            // phase 0. Auto-delegation itself persists through a phase-0 revert.
+            let sender_auto_delegated =
+                if authorized.has_explicit_delegation || authorized.has_create {
+                    false
+                } else {
+                    Self::auto_delegate_codeless_sender(sctx, authorized.sender)?
+                };
 
-            // 6. Intrinsic gas under the EIP-8130 schedule.
-            let (sender_intrinsic, payer_auth, execution_gas_available) =
+            // Intrinsic gas under the EIP-8130 schedule.
+            let (sender_intrinsic, application_share, payer_auth, execution_gas_available) =
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
                     &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated)
-                        .with_policy_gates(sender_actor.is_policy_gated(), payer_policy_gated)
-                        .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
+                        .with_policy_gates(
+                            authorized.sender_policy_gated,
+                            authorized.payer_policy_gated,
+                        )
+                        .with_revoke_discount_slots(authorized.revoke_discount_slots),
                     gas_limit,
                 )?;
 
-            // 7. Fee caps and payer balance.
+            // Fee caps and payer balance.
             FeeCheck::validate_fees(max_fee, max_priority, base_fee)
                 .map_err(BaseTransactionError::eip8130)?;
             let payer_balance = sctx
-                .with_account_info(payer, |info| Ok(info.balance))
+                .with_account_info(authorized.payer, |info| Ok(info.balance))
                 .map_err(BaseTransactionError::eip8130)?;
             FeeCheck::validate_balance(payer_balance, gas_limit, payer_auth, max_fee)
                 .map_err(BaseTransactionError::eip8130)?;
 
-            // 8. Publish the transaction context (sender / payer / actor id) so it
-            //    is readable by the `TxContext` precompile during `calls`.
+            // Publish the transaction context (sender / payer / actor id) so it is
+            // readable by the `TxContext` precompile during `calls`.
             TxContextStorage::new(sctx)
-                .set_context(sender, payer, sender_actor.actor_id)
+                .set_context(authorized.sender, authorized.payer, authorized.sender_actor_id)
                 .map_err(BaseTransactionError::eip8130)?;
 
             Ok(Eip8130Outcome {
-                sender,
-                payer,
-                sender_actor_id: sender_actor.actor_id,
-                policy_gated: sender_actor.is_policy_gated(),
-                policy_target: sender_actor.policy_target,
+                sender: authorized.sender,
+                payer: authorized.payer,
+                sender_actor_id: authorized.sender_actor_id,
+                policy_gated: authorized.sender_policy_gated,
+                policy_target: authorized.policy_target,
                 gas_limit,
                 sender_intrinsic,
+                application_share,
                 payer_auth,
                 execution_gas_available,
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
@@ -1019,11 +1100,19 @@ impl Eip8130Executor {
     /// estimate probes the same calls at several candidate pools to search for the
     /// minimum gas limit that succeeds, so it is supplied explicitly rather than
     /// read from `outcome`.
+    ///
+    /// `apply_account_changes` is `true` only on the verifying execution path,
+    /// where the transaction's account changes are applied here — immediately
+    /// before call phase 0 and inside its journal checkpoint — so a phase-0 revert
+    /// rolls them back. The read-only estimate applies them once up front in
+    /// [`Self::simulate_resolve`] and re-dispatches these calls at many candidate
+    /// pools, so it passes `false` to avoid re-applying them on every probe.
     fn execute_calls<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
         signed: &base_common_consensus::Eip8130Signed,
         outcome: &Eip8130Outcome,
         pool: u64,
+        apply_account_changes: bool,
     ) -> Result<CallsResult, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
@@ -1045,8 +1134,26 @@ impl Eip8130Executor {
         // with `0x00` below.
         let mut phase_statuses: Vec<u8> = Vec::with_capacity(total_phases);
 
-        for phase in &signed.tx().calls {
+        // The `account_changes` are applied immediately before call phase 0
+        // (`calls[0]`) and are atomic with it: they land inside phase 0's journal
+        // checkpoint, so a phase-0 revert rolls them back along with phase 0's
+        // state and their application-share gas is refunded (see `billable_gas`).
+        // A transaction with no `calls` has no phase 0 to be atomic with, so its
+        // account changes are applied here and commit unconditionally (nothing can
+        // revert them) — matching the empty-phase-0 (`[[], ...]`) case, which
+        // cannot revert either.
+        let mut account_changes_reverted = false;
+        if total_phases == 0 && apply_account_changes {
+            Self::apply_account_changes_execution(evm.ctx_mut(), signed, outcome.sender)?;
+        }
+
+        for (phase_index, phase) in signed.tx().calls.iter().enumerate() {
             let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
+            // Apply the account changes inside phase 0's checkpoint so a phase-0
+            // revert discards them together with phase 0's state.
+            if phase_index == 0 && apply_account_changes {
+                Self::apply_account_changes_execution(evm.ctx_mut(), signed, outcome.sender)?;
+            }
             let mut phase_refund: i64 = 0;
             let mut phase_reverted = false;
             let mut phase_output = Bytes::new();
@@ -1091,6 +1198,10 @@ impl Eip8130Executor {
 
             if phase_reverted {
                 evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
+                // A phase-0 revert also rolled back the account changes applied
+                // inside this checkpoint; their application share is refunded to
+                // the payer in `billable_gas`.
+                account_changes_reverted = phase_index == 0 && apply_account_changes;
                 // This phase reverted; record it and report every remaining
                 // (unexecuted) phase as reverted too, per EIP-8130.
                 phase_statuses.push(0x00);
@@ -1101,6 +1212,7 @@ impl Eip8130Executor {
                     reverted: true,
                     output: phase_output,
                     phase_statuses,
+                    account_changes_reverted,
                 });
             }
 
@@ -1120,6 +1232,7 @@ impl Eip8130Executor {
             reverted: false,
             output: Bytes::new(),
             phase_statuses,
+            account_changes_reverted,
         })
     }
 
@@ -1380,20 +1493,66 @@ impl Eip8130Executor {
     /// credited after execution and are never available to the call pool during
     /// execution, so the gas limit must cover the full gross spend.
     fn billable_gas(outcome: &Eip8130Outcome, calls: &CallsResult) -> u64 {
-        let gross_used = outcome.sender_intrinsic.saturating_add(calls.call_gas_spent);
+        // When call phase 0 reverts, the account changes applied immediately
+        // before it are rolled back, so their application share (create
+        // `bytecode_cost` plus the account-change write costs) never took effect
+        // and is refunded to the payer — the validation share, auto-delegation,
+        // the gas phase 0 consumed, and payer authentication remain charged. The
+        // application share is a static subset of `sender_intrinsic`, so this
+        // subtraction cannot underflow.
+        let sender_intrinsic = if calls.account_changes_reverted {
+            outcome.sender_intrinsic.saturating_sub(outcome.application_share)
+        } else {
+            outcome.sender_intrinsic
+        };
+        let gross_used = sender_intrinsic.saturating_add(calls.call_gas_spent);
         let refund = Self::capped_refund(calls.refund, gross_used);
         let net_used = gross_used.saturating_sub(refund);
         net_used.saturating_add(outcome.payer_auth)
+    }
+
+    /// Materializes the transaction's already-authorized account changes onto the
+    /// block-execution journal during call phase 0, reusing the shared
+    /// unauthenticated apply pass ([`Self::apply_account_changes`]).
+    ///
+    /// Authorization ran in [`Self::authorize_and_apply`] under a probe
+    /// checkpoint whose writes were reverted, so this re-applies the same
+    /// (already-validated) storage transitions and deferred account-*code*
+    /// effects. It runs inside phase 0's journal checkpoint in
+    /// [`Self::execute_calls`], so a phase-0 revert rolls the changes back; when
+    /// the transaction has no `calls` it commits unconditionally.
+    fn apply_account_changes_execution<DB>(
+        ctx: &mut BaseContext<DB>,
+        signed: &base_common_consensus::Eip8130Signed,
+        sender: Address,
+    ) -> Result<(), BaseTransactionError>
+    where
+        DB: AlloyDatabase,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug,
+            >,
+    {
+        let internals = EvmInternals::from_context(ctx);
+        let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
+        StorageCtx::enter(&mut provider, |sctx| {
+            Self::apply_account_changes(signed, sctx, sender).map(|_| ())
+        })
     }
 
     /// Applies the transaction's account-configuration changes and installs the
     /// deferred account-*code* effects (created-account code and delegation),
     /// directly on the journal-backed storage — *without* authenticating the
     /// changes. Used by the read-only estimation pipeline
-    /// ([`Self::simulate_resolve`]) so the post-change code the `calls` run
-    /// against matches inclusion. The verifying pipeline instead routes through
-    /// [`TransactionAuthorizer::authorize_and_apply`], which interleaves the same
-    /// application with authorization against the evolving state.
+    /// ([`Self::simulate_resolve`]) and, post-authorization, by the verifying
+    /// execution path ([`Self::apply_account_changes_execution`]) so the
+    /// post-change code the `calls` run against matches inclusion. The verifying
+    /// pipeline authorizes through [`TransactionAuthorizer::authorize_and_apply`],
+    /// which interleaves the same application with authorization against the
+    /// evolving state, before re-applying here.
     fn apply_account_changes(
         signed: &base_common_consensus::Eip8130Signed,
         sctx: StorageCtx<'_>,
@@ -1484,14 +1643,19 @@ impl Eip8130Executor {
         encoded: &[u8],
         input: &IntrinsicGasInput,
         gas_limit: u64,
-    ) -> Result<(u64, u64, u64), BaseTransactionError> {
+    ) -> Result<(u64, u64, u64, u64), BaseTransactionError> {
         let intrinsic =
             IntrinsicGas::compute(signed, encoded, input).map_err(BaseTransactionError::eip8130)?;
         let execution_gas_available =
             intrinsic.execution_gas_available(gas_limit).ok_or_else(|| {
                 BaseTransactionError::eip8130("EIP-8130 sender-intrinsic gas exceeds the gas limit")
             })?;
-        Ok((intrinsic.sender_intrinsic(), intrinsic.payer_auth, execution_gas_available))
+        Ok((
+            intrinsic.sender_intrinsic(),
+            intrinsic.application_share(),
+            intrinsic.payer_auth,
+            execution_gas_available,
+        ))
     }
 
     /// ABI-encodes the `ActorPolicyViolation(bytes32 actorId, address target)`
@@ -2606,6 +2770,147 @@ mod tests {
         let storer_acc = outcome.state.get(&storer);
         let slot0 = storer_acc.and_then(|a| a.storage.get(&U256::ZERO)).map(|s| s.present_value);
         assert!(slot0.is_none() || slot0 == Some(U256::ZERO), "phase 1 should have been skipped");
+    }
+
+    #[test]
+    fn phase0_revert_rolls_back_account_changes_and_charges_only_validation() {
+        // A transaction whose only account change is an explicit delegation, with
+        // a phase 0 that reverts. The account changes are applied atomically with
+        // phase 0, so the revert must roll the delegation back (the sender stays
+        // code-less) while the nonce is still consumed and the payer still
+        // charged. The rolled-back application share (the delegation deposit) is
+        // refunded, so this run is cheaper than the committing one below.
+        let key = signing_key(0x71);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000dd");
+        let reverter = address!("0x00000000000000000000000000000000000000e1");
+
+        let mut tx = base_tx();
+        tx.account_changes = vec![AccountChange::Delegation(Delegation { target })];
+        tx.calls = vec![vec![Call { to: reverter, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+        // PUSH1 0, PUSH1 0, REVERT.
+        let mut evm = evm_with_accounts(initial, sender, &[(reverter, bytes!("60006000fd"))]);
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
+
+        assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
+        let sender_acc = outcome.state.get(&sender).expect("sender in state");
+        assert!(
+            sender_acc.info.is_empty_code_hash(),
+            "a phase-0 revert must roll back the explicit delegation, leaving the sender code-less",
+        );
+        assert_eq!(sender_acc.info.nonce, 1, "nonce is consumed even when phase 0 reverts");
+        assert!(sender_acc.info.balance < initial, "the payer is still charged on a phase-0 revert");
+    }
+
+    #[test]
+    fn phase0_commit_persists_account_changes() {
+        // The same delegation with a phase 0 that succeeds: the account changes
+        // commit, so the sender ends delegated to the requested target (not the
+        // auto-delegation default, which the explicit delegation suppresses).
+        let key = signing_key(0x72);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000dd");
+        let stopper = address!("0x00000000000000000000000000000000000000e2");
+
+        let mut tx = base_tx();
+        tx.account_changes = vec![AccountChange::Delegation(Delegation { target })];
+        tx.calls = vec![vec![Call { to: stopper, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+        // STOP.
+        let mut evm = evm_with_accounts(initial, sender, &[(stopper, bytes!("00"))]);
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
+
+        assert!(outcome.result.is_success(), "phase 0 succeeded, got {:?}", outcome.result);
+        let sender_acc = outcome.state.get(&sender).expect("sender in state");
+        let expected = keccak256(Bytecode::new_eip7702(target).original_bytes());
+        assert_eq!(
+            sender_acc.info.code_hash, expected,
+            "a committed phase 0 must persist the explicit delegation to the requested target",
+        );
+    }
+
+    #[test]
+    fn later_phase_revert_keeps_committed_account_changes() {
+        // Phase 0 commits the delegation, then phase 1 reverts. The overall
+        // transaction reverts (all-phases status semantics), but the account
+        // changes committed with phase 0 must persist — only a *phase-0* revert
+        // rolls them back.
+        let key = signing_key(0x73);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000dd");
+        let stopper = address!("0x00000000000000000000000000000000000000e2");
+        let reverter = address!("0x00000000000000000000000000000000000000e1");
+
+        let mut tx = base_tx();
+        tx.account_changes = vec![AccountChange::Delegation(Delegation { target })];
+        tx.calls = vec![
+            vec![Call { to: stopper, data: Bytes::new() }],
+            vec![Call { to: reverter, data: Bytes::new() }],
+        ];
+        let signed = eoa_signed(tx, &key);
+
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+        let mut evm = evm_with_accounts(
+            initial,
+            sender,
+            &[(stopper, bytes!("00")), (reverter, bytes!("60006000fd"))],
+        );
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
+
+        assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
+        let sender_acc = outcome.state.get(&sender).expect("sender in state");
+        let expected = keccak256(Bytecode::new_eip7702(target).original_bytes());
+        assert_eq!(
+            sender_acc.info.code_hash, expected,
+            "account changes committed with phase 0 must survive a later-phase revert",
+        );
+    }
+
+    #[test]
+    fn billable_gas_refunds_application_share_on_phase0_revert() {
+        // `billable_gas` subtracts the application share from the billed gas
+        // exactly when call phase 0 reverted (the account changes were rolled
+        // back), and leaves it charged otherwise.
+        let outcome = Eip8130Outcome {
+            sender: Address::ZERO,
+            payer: Address::ZERO,
+            sender_actor_id: B256::ZERO,
+            policy_gated: false,
+            policy_target: Address::ZERO,
+            gas_limit: 1_000_000,
+            sender_intrinsic: 50_000,
+            application_share: 26_700,
+            payer_auth: 0,
+            execution_gas_available: 950_000,
+            effective: 1,
+            base_fee: 0,
+            bump_protocol_nonce: false,
+        };
+        let committed = CallsResult {
+            call_gas_spent: 21_000,
+            refund: 0,
+            reverted: false,
+            output: Bytes::new(),
+            phase_statuses: vec![0x01],
+            account_changes_reverted: false,
+        };
+        let reverted = CallsResult {
+            reverted: true,
+            account_changes_reverted: true,
+            phase_statuses: vec![0x00],
+            ..committed.clone()
+        };
+        assert_eq!(Eip8130Executor::billable_gas(&outcome, &committed), 71_000);
+        assert_eq!(
+            Eip8130Executor::billable_gas(&outcome, &reverted),
+            71_000 - 26_700,
+            "a phase-0 revert refunds the application share",
+        );
     }
 
     /// Canonical Solidity packing of an `ActorConfig` word.
