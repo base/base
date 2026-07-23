@@ -67,8 +67,9 @@ Reachability requests default to 2 per minute per client IP, configurable with
 token buckets. The client IP is taken from the peer socket address unless the
 peer is inside a configured set of trusted proxy CIDRs
 (`--trusted-proxy-cidrs` or `BASE_TELEMETRY_TRUSTED_PROXY_CIDRS`), in which
-case the rightmost entry of the last `X-Forwarded-For` header is extracted. A
-missing or malformed header from a trusted proxy is treated as a proxy
+case the `X-Forwarded-For` chain is scanned right to left, skipping trusted
+proxy hops, and the first untrusted entry is used as the client IP. A missing
+or malformed header from a trusted proxy is treated as a proxy
 misconfiguration. Deployments exposed directly (no fronting proxy) leave the
 CIDRs empty, so forwarding headers are ignored and the socket peer IP is used.
 Limited requests return `429` with a `Retry-After` header and a JSON body of

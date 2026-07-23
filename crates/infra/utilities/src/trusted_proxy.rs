@@ -49,27 +49,40 @@ impl TrustedProxyConfig {
     /// Callers must verify the direct peer with [`Self::is_trusted_proxy`]
     /// first; forwarding headers from untrusted peers are attacker-controlled.
     ///
-    /// Only the **last occurrence** of the header is inspected, and within it
-    /// the **rightmost** comma-separated entry wins. Proxies append the real
-    /// client address after any client-supplied values (as a new list entry
-    /// or a new header line), so the rightmost value of the last line is the
-    /// only one the trusted proxy vouches for.
+    /// All header occurrences are concatenated in order into the forwarding
+    /// chain `client, proxy1, proxy2, ...`, then scanned **right to left**,
+    /// skipping any address in `trusted_proxy_cidrs`. The first untrusted
+    /// address is the real client: trusted proxies vouch for everything they
+    /// appended, but the client may have spoofed values further left, so we
+    /// stop at the first hop we did not add ourselves. If every hop is a
+    /// trusted proxy, the outermost (leftmost) entry is used.
     pub fn forwarded_client_ip(
         &self,
         headers: &HeaderMap,
     ) -> Result<IpAddr, ForwardedClientIpError> {
         let header = &self.ip_addr_http_header;
-        let Some(value) = headers.get_all(header).iter().next_back() else {
-            return Err(ForwardedClientIpError::MissingHeader { header: header.clone() });
-        };
-        let value = value.to_str().map_err(|_| ForwardedClientIpError::InvalidIp {
-            header: header.clone(),
-            value: String::from_utf8_lossy(value.as_bytes()).into_owned(),
-        })?;
-        let entry = value.rsplit_once(',').map_or(value, |(_, entry)| entry).trim();
-        entry.parse::<IpAddr>().map(|ip| ip.to_canonical()).map_err(|_| {
-            ForwardedClientIpError::InvalidIp { header: header.clone(), value: entry.to_string() }
-        })
+        let mut outermost_trusted = None;
+        for value in headers.get_all(header).iter().rev() {
+            let value = value.to_str().map_err(|_| ForwardedClientIpError::InvalidIp {
+                header: header.clone(),
+                value: String::from_utf8_lossy(value.as_bytes()).into_owned(),
+            })?;
+            for entry in value.split(',').rev().map(str::trim).filter(|entry| !entry.is_empty()) {
+                let ip = entry.parse::<IpAddr>().map(|ip| ip.to_canonical()).map_err(|_| {
+                    ForwardedClientIpError::InvalidIp {
+                        header: header.clone(),
+                        value: entry.to_string(),
+                    }
+                })?;
+                if self.is_trusted_proxy(ip) {
+                    outermost_trusted = Some(ip);
+                    continue;
+                }
+                return Ok(ip);
+            }
+        }
+        outermost_trusted
+            .ok_or_else(|| ForwardedClientIpError::MissingHeader { header: header.clone() })
     }
 
     /// Resolves the client IP, trusting forwarding headers only from configured proxy CIDRs.
@@ -77,7 +90,8 @@ impl TrustedProxyConfig {
     /// Untrusted or direct peers resolve to their (canonicalized) socket
     /// address and forwarding headers are ignored. A trusted proxy must
     /// supply a valid forwarding header; a missing or invalid one surfaces
-    /// as an error for the caller to handle.
+    /// as an error for the caller to handle. If every forwarded hop is
+    /// trusted, the direct peer address is used.
     pub fn try_client_ip(
         &self,
         connect_addr: IpAddr,
@@ -88,7 +102,9 @@ impl TrustedProxyConfig {
         // consistent across address forms.
         let connect_addr = connect_addr.to_canonical();
         if self.is_trusted_proxy(connect_addr) {
-            self.forwarded_client_ip(headers)
+            self.forwarded_client_ip(headers).map(|client_ip| {
+                if self.is_trusted_proxy(client_ip) { connect_addr } else { client_ip }
+            })
         } else {
             Ok(connect_addr)
         }
@@ -164,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn rightmost_entry_of_last_line_wins() {
+    fn rightmost_untrusted_entry_across_lines_wins() {
         let config = xff_config(vec!["127.0.0.0/8"]);
         let real_client = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7));
 
@@ -173,6 +189,54 @@ mod tests {
         headers.append("x-forwarded-for", HeaderValue::from_static("203.0.113.3, 198.51.100.7"));
 
         assert_eq!(config.forwarded_client_ip(&headers).unwrap(), real_client);
+    }
+
+    #[test]
+    fn joins_header_lines_before_peeling_trusted_hops() {
+        let config = xff_config(vec!["10.0.0.0/8", "104.16.0.0/13"]);
+        let alb = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let client = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10));
+
+        let mut headers = HeaderMap::new();
+        headers.append("x-forwarded-for", HeaderValue::from_static("invalid"));
+        headers.append("x-forwarded-for", HeaderValue::from_static("203.0.113.10"));
+        headers.append("x-forwarded-for", HeaderValue::from_static("104.16.1.1"));
+
+        assert_eq!(config.client_ip(alb, &headers), client);
+    }
+
+    #[test]
+    fn skips_trusted_proxy_hops_scanning_right_to_left() {
+        // Chain is `client, proxy1, proxy2` (proxies in 10.0.0.0/8). The
+        // rightmost entries are our own trusted hops; the real client is the
+        // first untrusted address scanning from the right.
+        let config = xff_config(vec!["10.0.0.0/8"]);
+        let real_client = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9));
+
+        let mut headers = HeaderMap::new();
+        headers
+            .insert("x-forwarded-for", HeaderValue::from_static("203.0.113.9, 10.0.0.2, 10.0.0.3"));
+        assert_eq!(config.forwarded_client_ip(&headers).unwrap(), real_client);
+
+        // A client-spoofed value to the left of the real client is ignored.
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("10.9.9.9, 203.0.113.9, 10.0.0.2, 10.0.0.3"),
+        );
+        assert_eq!(config.forwarded_client_ip(&headers).unwrap(), real_client);
+    }
+
+    #[test]
+    fn all_trusted_hops_fall_back_to_outermost() {
+        let config = xff_config(vec!["10.0.0.0/8"]);
+        let peer = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4));
+        let outermost = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("10.0.0.1, 10.0.0.2, 10.0.0.3"));
+        assert_eq!(config.forwarded_client_ip(&headers).unwrap(), outermost);
+        assert_eq!(config.try_client_ip(peer, &headers), Ok(peer));
+        assert_eq!(config.client_ip(peer, &headers), peer);
     }
 
     #[test]
