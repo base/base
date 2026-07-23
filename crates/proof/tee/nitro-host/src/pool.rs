@@ -111,9 +111,11 @@ impl NitroEnclavePool {
         let l2_block = request.claimed_l2_block_number;
         let (enclave, _permit) = self.acquire_enclave(l2_block).await?;
 
+        // Read the signer before proving so a signer-read failure fails cheaply
+        // instead of discarding a completed proof.
+        let tee_signer = enclave.transport.signer_address().await?;
         let proof =
             enclave.service.prove_block(request).await.map_err(NitroEnclavePoolError::Prover)?;
-        let tee_signer = enclave.transport.signer_address().await?;
         Ok((proof, tee_signer))
     }
 
