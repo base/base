@@ -132,6 +132,12 @@ t4a-shadow = [
 	"dep:serde",
 	"dep:serde_json",
 ]
+t4b-shadow = [
+	"t4a-shadow",
+	"base-mev-trader/t4b-shadow",
+	"dep:mev-trader-submit",
+	"mev-trader-submit/tx-authority",
+]
 b5-dormant-presign = [
   "dep:mev-trader-submit",
   "mev-trader-submit/presign",

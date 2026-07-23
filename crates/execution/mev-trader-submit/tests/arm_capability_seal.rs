@@ -671,6 +671,7 @@ fn reviewed_attribute(attr: &syn::Attribute) -> bool {
         syn::Meta::List(list) if list.path.is_ident("derive") => matches!(
             list.tokens.to_string().as_str(),
             "Debug"
+                | "Debug , PartialEq , Eq"
                 | "Debug , Clone"
                 | "Debug , Clone , Copy"
                 | "Debug , Clone , PartialEq , Eq"
@@ -765,7 +766,7 @@ fn production_attributes_are_reviewed(items: &[syn::Item]) -> bool {
 }
 /// Item-position macros can emit imports, modules, and other public surface that
 /// `syn` cannot expand. Reject them throughout the traversed production graph,
-/// except for the single reviewed Solidity declaration in root `assembler.rs`.
+/// except for the single reviewed Solidity declaration in root `calldata.rs`.
 fn item_macro_surface_is_reviewed(
     items: &[syn::Item],
     allow_assembler_sol: bool,
@@ -913,7 +914,7 @@ fn collect_arm_reexports(
             }
             syn::Item::Mod(module) if has_cfg_test(&module.attrs) => {}
             syn::Item::Mod(module) => {
-                let allow_assembler_sol = ident_name(&module.ident) == "assembler";
+                let allow_assembler_sol = ident_name(&module.ident) == "calldata";
                 let (child_items, child_dir) =
                     load_local_module(module, current_dir, graph_root, visited)?;
                 seal_local_module_graph(
@@ -2674,19 +2675,31 @@ fn gate_and_custody_seams_are_test_only() {
 
 #[test]
 fn validated_unsigned_atomic_tx_has_no_clone() {
-    let assembler = std::fs::read_to_string(manifest_dir().join("src").join("assembler.rs"))
-        .expect("assembler");
-    // The struct derives EXACTLY `Debug` (no Clone/Copy): duplicating the linear
-    // witness would let one validated tx bind to two candidates.
+    let source = manifest_dir().join("src");
+    let assembler = std::fs::read_to_string(source.join("assembler.rs")).expect("assembler");
+    let authority = std::fs::read_to_string(source.join("tx_authority.rs")).expect("authority");
     assert!(
         assembler.contains(
-            "#[cfg(feature = \"arm\")]\n#[derive(Debug)]\npub struct ValidatedUnsignedAtomicTx"
+            "#[cfg(feature = \"arm\")]\n#[derive(Debug)]\npub struct LegacyValidatedUnsignedAtomicTx"
         ),
-        "ValidatedUnsignedAtomicTx must derive exactly Debug (no Clone/Copy)"
+        "legacy arm witness must derive exactly Debug (no Clone/Copy)"
     );
     assert!(
-        !assembler.contains("impl Clone for ValidatedUnsignedAtomicTx"),
-        "ValidatedUnsignedAtomicTx Clone impl present"
+        assembler.contains(
+            "#[cfg(feature = \"arm\")]\npub type ValidatedUnsignedAtomicTx = LegacyValidatedUnsignedAtomicTx;"
+        ),
+        "arm compatibility alias must name the linear legacy witness"
+    );
+    for body in [&assembler, &authority] {
+        assert!(!body.contains("impl Clone for ValidatedUnsignedAtomicTx"));
+        assert!(!body.contains("impl Copy for ValidatedUnsignedAtomicTx"));
+        assert!(!body.contains("impl Clone for LegacyValidatedUnsignedAtomicTx"));
+        assert!(!body.contains("impl Copy for LegacyValidatedUnsignedAtomicTx"));
+    }
+    assert!(
+        authority.contains("pub struct ValidatedUnsignedAtomicTx {")
+            && authority.contains("impl Debug for ValidatedUnsignedAtomicTx"),
+        "T4b witness must be linear with an explicit redacted Debug implementation"
     );
 }
 
@@ -2774,19 +2787,39 @@ fn workspace_metadata() -> serde_json::Value {
 }
 
 #[test]
-fn no_workspace_crate_links_the_submit_crate() {
+fn only_reviewed_optional_cli_t4b_edge_links_the_submit_crate() {
     let metadata = workspace_metadata();
     let packages = metadata["packages"].as_array().expect("packages");
+    let mut linkers = Vec::new();
     for package in packages {
         let name = package["name"].as_str().expect("name");
         if name == "mev-trader-submit" {
             continue;
         }
         for dependency in package["dependencies"].as_array().expect("dependencies") {
-            assert_ne!(
-                dependency["name"], "mev-trader-submit",
-                "{name} depends on mev-trader-submit — it could reach the node binary"
-            );
+            if dependency["name"] != "mev-trader-submit" {
+                continue;
+            }
+            assert_eq!(name, "base-execution-cli", "unreviewed submit linker");
+            assert_eq!(dependency["optional"], true, "CLI submit edge must remain optional");
+            assert_eq!(dependency["kind"], serde_json::Value::Null);
+            assert_eq!(dependency["features"], serde_json::json!([]));
+            linkers.push(name);
         }
+    }
+    assert_eq!(linkers, ["base-execution-cli"]);
+
+    let cli =
+        std::fs::read_to_string(manifest_dir().join("../cli/Cargo.toml")).expect("CLI manifest");
+    let t4b = cli
+        .split_once("t4b-shadow = [")
+        .expect("T4b feature")
+        .1
+        .split_once(']')
+        .expect("closed T4b feature")
+        .0;
+    assert!(t4b.contains("\"mev-trader-submit/tx-authority\""));
+    for forbidden in ["phase-b", "arm", "arm-live-egress", "reqwest", "signer"] {
+        assert!(!t4b.contains(forbidden), "T4b CLI edge enables {forbidden}");
     }
 }

@@ -8,16 +8,30 @@ use std::{
 
 use alloy_consensus::{Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState, PendingBlocks};
 use base_mev_trader::{
     A1Status, BlinkFeedClient, BlinkIngressConfig, BundleVisitor, MevTraderRuntime,
-    MevTraderRuntimeConfig, PayloadVisitor, PendingSnapshotView, PortError, SnapshotHandle,
-    SnapshotHandleFactory, TraderSnapshotPort, TransactionVisitor, VisitControl, VisitSummary,
+    MevTraderRuntimeConfig, PayloadVisitor, PendingAccountNonce, PendingSnapshotView, PortError,
+    SnapshotHandle, SnapshotHandleFactory, TraderSnapshotPort, TransactionVisitor, VisitControl,
+    VisitSummary,
 };
 use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, NodeHooks};
 use reth_provider::{HeaderProvider, StateProviderBox, StateProviderFactory};
 use tracing::info;
+
+#[cfg(feature = "t4b-shadow")]
+use base_mev_trader::{
+    CandidateAssemblyView, CandidateTxShapeObserver, ShadowLatestSlot, ShadowSubmit, T4bOutcome,
+    T4bOutcomeCounters,
+};
+#[cfg(feature = "t4b-shadow")]
+use mev_trader_submit::{
+    SnapshotFreshnessToken, TxAuthorityAssembler, TxAuthorityError, TxAuthorityNodeError,
+    TxAuthorityNodeView, TxAuthorityStateRead, ValidatedUnsignedAtomicTx,
+};
+#[cfg(feature = "t4b-shadow")]
+use reth_provider::{AccountReader, BlockReaderIdExt, BytecodeReader};
 
 // B5-1a dormant-preparation tier: a private default-off child compiled only under
 // `b5-dormant-presign`, never registered or re-exported at the crate root.
@@ -98,6 +112,19 @@ impl PendingSnapshotView for PendingSnapshotViewAdapter {
             }
         }
         Ok(VisitSummary { visited, complete: transactions.next().is_none() })
+    }
+
+    fn pending_account_nonce(
+        &self,
+        address: Address,
+    ) -> Result<Option<PendingAccountNonce>, PortError> {
+        let bundle = self.pending.get_bundle_state();
+        let Some(account) = bundle.account(&address) else {
+            return Ok(None);
+        };
+        let original_nonce = account.original_info.as_ref().map_or(0, |info| info.nonce);
+        let current_nonce = account.account_info().ok_or(PortError::Incoherent)?.nonce;
+        PendingAccountNonce::checked(original_nonce, current_nonce).map(Some)
     }
 
     fn visit_bundle(&self, visitor: &mut dyn BundleVisitor) -> Result<VisitSummary, PortError> {
@@ -213,6 +240,7 @@ pub struct BaseNodeTraderConfig {
     flashblocks: Arc<FlashblocksState>,
     credential_file: Option<OsString>,
     t4a_shadow: bool,
+    t4b_shadow: bool,
 }
 
 impl BaseNodeTraderConfig {
@@ -232,6 +260,17 @@ impl BaseNodeTraderConfig {
         }
     }
 
+    fn t4b_shadow_enabled() -> bool {
+        #[cfg(feature = "t4b-shadow")]
+        {
+            return Self::enabled(std::env::var_os("MEV_TRADER_T4B_SHADOW").as_deref());
+        }
+        #[cfg(not(feature = "t4b-shadow"))]
+        {
+            false
+        }
+    }
+
     /// Applies exact-1 and flashblocks-present gates before consulting the credential environment.
     pub fn from_inputs(
         flashblocks_config: &Option<FlashblocksConfig>,
@@ -246,13 +285,36 @@ impl BaseNodeTraderConfig {
             flashblocks: Arc::clone(&config.state),
             credential_file,
             t4a_shadow: Self::t4a_shadow_enabled(),
+            t4b_shadow: Self::t4b_shadow_enabled(),
         })
     }
 
     /// Creates the sole snapshot subscription and receive-only A1 runtime.
     pub fn start_idle(self) -> eyre::Result<BaseNodeTraderStart> {
-        let receiver = self.flashblocks.subscribe_to_flashblocks();
+        if self.t4b_shadow {
+            eyre::bail!("T4b shadow authority requires the in-process node provider");
+        }
         let runtime_config = t4a_runtime_config(self.t4a_shadow)?;
+        self.start_with_runtime_config(runtime_config)
+    }
+
+    #[cfg(feature = "t4b-shadow")]
+    fn start_with_t4b_observer(
+        self,
+        observer: Arc<dyn CandidateTxShapeObserver>,
+    ) -> eyre::Result<BaseNodeTraderStart> {
+        if !self.t4a_shadow || !self.t4b_shadow {
+            eyre::bail!("T4b shadow requires exact T4a and T4b opt-in");
+        }
+        let runtime_config = t4a_runtime_config(true)?.with_t4b_observer(observer);
+        self.start_with_runtime_config(runtime_config)
+    }
+
+    fn start_with_runtime_config(
+        self,
+        runtime_config: MevTraderRuntimeConfig,
+    ) -> eyre::Result<BaseNodeTraderStart> {
+        let receiver = self.flashblocks.subscribe_to_flashblocks();
         let runtime = Arc::new(MevTraderRuntime::start(runtime_config)?);
         let client = self.credential_file.and_then(|credential_file| {
             BlinkFeedClient::new(
@@ -263,14 +325,13 @@ impl BaseNodeTraderConfig {
         if client.is_none() {
             runtime.set_a1_status(A1Status::DisabledNoConnect);
         }
-        Ok(BaseNodeTraderStart { flashblocks: self.flashblocks, receiver, runtime, client })
+        Ok(BaseNodeTraderStart { receiver, runtime, client })
     }
 }
 
 /// Provider-independent node-start resources for the receive-only runtime.
 #[derive(Debug)]
 pub struct BaseNodeTraderStart {
-    flashblocks: Arc<FlashblocksState>,
     receiver: tokio::sync::broadcast::Receiver<Arc<PendingBlocks>>,
     runtime: Arc<MevTraderRuntime>,
     client: Option<BlinkFeedClient>,
@@ -332,15 +393,23 @@ impl FromExtensionConfig for BaseNodeTraderExtension {
 impl BaseNodeExtension for BaseNodeTraderExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         hooks.add_node_started_hook(move |node| {
-            let BaseNodeTraderStart {
-                flashblocks,
-                mut receiver,
-                runtime,
-                client,
-            } = self.config.start_idle()?;
-            let port = Arc::new(CliTraderSnapshotPort::new(flashblocks, node.provider().clone()));
-            let consumer_port: Arc<dyn TraderSnapshotPort> = port.clone();
             let chain_spec = node.chain_spec();
+            let port = Arc::new(CliTraderSnapshotPort::new(
+                Arc::clone(&self.config.flashblocks),
+                node.provider().clone(),
+            ));
+            #[cfg(feature = "t4b-shadow")]
+            let start = if self.config.t4b_shadow {
+                let observer =
+                    t4b_shadow::observer(Arc::clone(&port), chain_spec.chain().id())?;
+                self.config.start_with_t4b_observer(observer)?
+            } else {
+                self.config.start_idle()?
+            };
+            #[cfg(not(feature = "t4b-shadow"))]
+            let start = self.config.start_idle()?;
+            let BaseNodeTraderStart { mut receiver, runtime, client } = start;
+            let consumer_port: Arc<dyn TraderSnapshotPort> = port.clone();
             let executor = node.task_executor;
             let startup_status = runtime.a1_status();
             let registry_empty = runtime.registry_is_empty();
@@ -781,6 +850,252 @@ mod t4a_provisioning {
     }
 }
 
+#[cfg(feature = "t4b-shadow")]
+mod t4b_shadow {
+    use std::sync::{Arc, Weak};
+
+    use super::*;
+
+    #[derive(Debug)]
+    struct CliSnapshotFreshness<Provider> {
+        port: Weak<CliTraderSnapshotPort<Provider>>,
+        record: Weak<PendingSnapshotRecord>,
+    }
+
+    impl<Provider> SnapshotFreshnessToken for CliSnapshotFreshness<Provider>
+    where
+        Provider: StateProviderFactory
+            + HeaderProvider<Header = Header>
+            + BlockReaderIdExt
+            + Clone
+            + Debug
+            + Send
+            + Sync
+            + 'static,
+    {
+        fn is_current(&self) -> Result<bool, TxAuthorityNodeError> {
+            let Some(port) = self.port.upgrade() else {
+                return Ok(false);
+            };
+            let Some(expected) = self.record.upgrade() else {
+                return Ok(false);
+            };
+            let Some(current) = port.current_record() else {
+                return Ok(false);
+            };
+            Ok(Arc::ptr_eq(&current, &expected) && port.record_is_current(&current))
+        }
+    }
+
+    #[derive(Debug)]
+    struct T4bNodeView<Provider> {
+        port: Arc<CliTraderSnapshotPort<Provider>>,
+        chain_id: u64,
+    }
+
+    impl<Provider> TxAuthorityNodeView for T4bNodeView<Provider>
+    where
+        Provider: StateProviderFactory
+            + HeaderProvider<Header = Header>
+            + BlockReaderIdExt
+            + Clone
+            + Debug
+            + Send
+            + Sync
+            + 'static,
+    {
+        fn chain_id(&self) -> Result<u64, TxAuthorityNodeError> {
+            Ok(self.chain_id)
+        }
+
+        fn current_parent_hash(&self) -> Result<B256, TxAuthorityNodeError> {
+            if let Some(record) = self.port.current_record()
+                && self.port.record_is_current(&record)
+            {
+                return Ok(record.pending.parent_hash());
+            }
+            self.port
+                .provider
+                .latest_header()
+                .map_err(|_| TxAuthorityNodeError::Unavailable)?
+                .map(|header| header.hash())
+                .ok_or(TxAuthorityNodeError::Unavailable)
+        }
+
+        fn read_state_at_parent(
+            &self,
+            parent_hash: B256,
+            sender: Address,
+            contracts: [Address; 4],
+        ) -> Result<TxAuthorityStateRead, TxAuthorityNodeError> {
+            let state = self
+                .port
+                .provider
+                .state_by_block_hash(parent_hash)
+                .map_err(|_| TxAuthorityNodeError::Unavailable)?;
+            let committed_sender_nonce = state
+                .basic_account(&sender)
+                .map_err(|_| TxAuthorityNodeError::Unavailable)?
+                .map(|account| account.nonce);
+            let mut runtime_codes = Vec::with_capacity(contracts.len());
+            for address in contracts {
+                let code_hash = state
+                    .basic_account(&address)
+                    .map_err(|_| TxAuthorityNodeError::Unavailable)?
+                    .and_then(|account| account.bytecode_hash)
+                    .ok_or(TxAuthorityNodeError::Incoherent)?;
+                let code = state
+                    .bytecode_by_hash(&code_hash)
+                    .map_err(|_| TxAuthorityNodeError::Unavailable)?
+                    .map(|bytecode| bytecode.original_bytes());
+                runtime_codes.push(code);
+            }
+            let runtime_codes =
+                runtime_codes.try_into().map_err(|_| TxAuthorityNodeError::Incoherent)?;
+            Ok(TxAuthorityStateRead::new(parent_hash, committed_sender_nonce, runtime_codes))
+        }
+
+        fn is_current_authoritative(
+            &self,
+            snapshot: &SnapshotHandle,
+        ) -> Result<bool, TxAuthorityNodeError> {
+            Ok(self.port.is_current_authoritative(snapshot))
+        }
+
+        fn capture_snapshot_freshness(
+            &self,
+            snapshot: &SnapshotHandle,
+        ) -> Result<Box<dyn SnapshotFreshnessToken>, TxAuthorityNodeError> {
+            let record = self.port.current_record().ok_or(TxAuthorityNodeError::Unavailable)?;
+            if !self.port.record_is_current(&record)
+                || !snapshot.matches_capture(&record.view, record.received_at)
+            {
+                return Err(TxAuthorityNodeError::Incoherent);
+            }
+            Ok(Box::new(CliSnapshotFreshness {
+                port: Arc::downgrade(&self.port),
+                record: Arc::downgrade(&record),
+            }))
+        }
+    }
+
+    #[derive(Debug)]
+    struct T4bShadowAuthority {
+        assembler: TxAuthorityAssembler,
+        slot: ShadowLatestSlot<ValidatedUnsignedAtomicTx>,
+        counters: T4bOutcomeCounters,
+    }
+
+    impl T4bShadowAuthority {
+        fn outcome(error: TxAuthorityError) -> T4bOutcome {
+            match error {
+                TxAuthorityError::PlanOrFrameRejected | TxAuthorityError::AssemblyRejected => {
+                    T4bOutcome::PlanOrFrameRejected
+                }
+                TxAuthorityError::FeeAuthorityRejected => T4bOutcome::FeeAuthorityRejected,
+                TxAuthorityError::RequoteRejected => T4bOutcome::RequoteRejected,
+                TxAuthorityError::DeploymentIdentityRejected => {
+                    T4bOutcome::DeploymentIdentityRejected
+                }
+                TxAuthorityError::NonceWitnessUnavailable => T4bOutcome::NonceWitnessUnavailable,
+                TxAuthorityError::ObservationBusy => T4bOutcome::ObservationBusy,
+                TxAuthorityError::NonceWitnessStaleBeforePublish => {
+                    T4bOutcome::NonceWitnessStaleBeforePublish
+                }
+                TxAuthorityError::SnapshotStaleAtDrain => T4bOutcome::SnapshotStaleAtDrain,
+                TxAuthorityError::Cancelled => T4bOutcome::Cancelled,
+                TxAuthorityError::DeadlineNoShape => T4bOutcome::DeadlineNoShape,
+            }
+        }
+    }
+
+    impl CandidateTxShapeObserver for T4bShadowAuthority {
+        fn try_observe(&self, view: CandidateAssemblyView<'_>) -> T4bOutcome {
+            let outcome = match self.assembler.assemble_validated(view) {
+                Ok(detail) => match self.slot.try_submit(detail) {
+                    ShadowSubmit::Accepted => T4bOutcome::SelectedUnsignedShape,
+                    ShadowSubmit::DroppedBusy => T4bOutcome::ShadowDroppedBusy,
+                    ShadowSubmit::Closed => T4bOutcome::ShadowClosed,
+                    ShadowSubmit::ReplacedOldUnobserved => {
+                        self.slot.close();
+                        T4bOutcome::ShadowClosed
+                    }
+                },
+                Err(error) => Self::outcome(error),
+            };
+            if outcome != T4bOutcome::SelectedUnsignedShape {
+                self.counters.record(outcome);
+            }
+            outcome
+        }
+
+        fn drain_one(&self) {
+            let Some(detail) = self.slot.try_take() else {
+                return;
+            };
+            let outcome = if detail.validate_at_drain().is_ok() {
+                let observation = detail.observation();
+                tracing::debug!(
+                    block_number = observation.frame().block_number,
+                    predecessor_index = observation.frame().predecessor_index,
+                    victim = %observation.victim(),
+                    plan_digest = %observation.plan_digest(),
+                    sender = %observation.sender(),
+                    nonce = observation.nonce(),
+                    chain_id = observation.chain_id(),
+                    executor = %observation.executor(),
+                    protocols = ?observation.hop_protocols(),
+                    adapters = ?observation.hop_adapters(),
+                    adapter_runtime_hashes = ?observation.hop_runtime_hashes(),
+                    gas_limit = observation.gas_limit(),
+                    max_fee_per_gas = observation.max_fee_per_gas(),
+                    max_priority_fee_per_gas = observation.max_priority_fee_per_gas(),
+                    base_fee = observation.base_fee(),
+                    valid_until_block = observation.valid_until_block(),
+                    unsigned_signing_hash = %observation.unsigned_signing_hash(),
+                    "drained T4b unsigned transaction shape"
+                );
+                T4bOutcome::SelectedUnsignedShape
+            } else {
+                T4bOutcome::SnapshotStaleAtDrain
+            };
+            self.counters.record(outcome);
+        }
+
+        fn close(&self) {
+            let before = self.slot.counters().shutdown_dropped();
+            self.slot.close();
+            let after = self.slot.counters().shutdown_dropped();
+            if after > before {
+                self.counters.record(T4bOutcome::ShadowClosed);
+            }
+        }
+    }
+
+    pub(super) fn observer<Provider>(
+        port: Arc<CliTraderSnapshotPort<Provider>>,
+        chain_id: u64,
+    ) -> Result<Arc<dyn CandidateTxShapeObserver>, TxAuthorityError>
+    where
+        Provider: StateProviderFactory
+            + HeaderProvider<Header = Header>
+            + BlockReaderIdExt
+            + Clone
+            + Debug
+            + Send
+            + Sync
+            + 'static,
+    {
+        let node: Arc<dyn TxAuthorityNodeView> = Arc::new(T4bNodeView { port, chain_id });
+        let assembler = TxAuthorityAssembler::base_mainnet(node)?;
+        Ok(Arc::new(T4bShadowAuthority {
+            assembler,
+            slot: ShadowLatestSlot::new(),
+            counters: T4bOutcomeCounters::default(),
+        }))
+    }
+}
+
 fn t4a_runtime_config(enabled: bool) -> eyre::Result<MevTraderRuntimeConfig> {
     #[cfg(feature = "t4a-shadow")]
     if enabled {
@@ -913,5 +1228,35 @@ mod tests {
 
         flashblocks.set_pending_blocks_for_testing(None);
         assert!(!port.record_is_current(&record));
+    }
+    #[cfg(feature = "t4b-shadow")]
+    #[test]
+    fn t4b_shadow_slot_is_capacity_one_nonblocking_and_releases_every_guard() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        #[derive(Debug)]
+        struct DropProbe(Arc<AtomicU64>);
+
+        impl Drop for DropProbe {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let drops = Arc::new(AtomicU64::new(0));
+        let slot = ShadowLatestSlot::new();
+        assert_eq!(slot.try_submit(DropProbe(Arc::clone(&drops))), ShadowSubmit::Accepted);
+        assert_eq!(
+            slot.try_submit(DropProbe(Arc::clone(&drops))),
+            ShadowSubmit::ReplacedOldUnobserved
+        );
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+        drop(slot.try_take().expect("capacity-one detail"));
+        assert_eq!(drops.load(Ordering::Relaxed), 2);
+        assert_eq!(slot.try_submit(DropProbe(Arc::clone(&drops))), ShadowSubmit::Accepted);
+        slot.close();
+        assert_eq!(drops.load(Ordering::Relaxed), 3);
+        assert_eq!(slot.try_submit(DropProbe(Arc::clone(&drops))), ShadowSubmit::Closed);
+        assert_eq!(drops.load(Ordering::Relaxed), 4);
     }
 }

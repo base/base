@@ -6,6 +6,7 @@
 //! There is no signer, transport, nonce lookup, or submission path here. The
 //! ephemeral real signer is the separate rung-2 [`crate::signer`] path; real
 //! submission is the rung-3 boundary and is unavailable ([`submit_blocked`]).
+#![cfg(feature = "phase-b")]
 
 use alloy_consensus::{SignableTransaction, TxEnvelope};
 use alloy_eips::{
@@ -13,34 +14,12 @@ use alloy_eips::{
     eip2930::AccessList,
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, b256, keccak256};
-use alloy_sol_types::{SolCall, sol};
 use base_mev_trader::{BackrunPlan, MeasurementContext, MeasurementEncoder};
 
-use crate::fee::{FeeParityError, fee_bps_for_executor};
-
-sol! {
-    /// One executor swap hop — mirrors `BlinkAtomicExecutor.SwapHop` exactly.
-    #[allow(missing_docs)]
-    struct SwapHop {
-        address adapter;
-        address pool;
-        address tokenIn;
-        address tokenOut;
-        uint24 feeBps;
-        uint256 minAmountOut;
-        address fundingTarget;
-    }
-
-    /// The two-hop atomic executor entrypoint.
-    #[allow(missing_docs)]
-    function executeBlinkOfaAtomic(
-        SwapHop firstHop,
-        SwapHop secondHop,
-        uint256 amountIn,
-        uint256 minFinalAmount,
-        uint256 validUntilBlock
-    );
-}
+use crate::{
+    calldata::{AtomicCalldataEncoder, LegacyAuthorityHop},
+    fee::{FeeParityError, fee_bps_for_executor},
+};
 
 /// The fixed high-entropy dummy signature `r` — FastLZ-incompressible, NOT
 /// key-derived. Byte-matches the TS `MEASUREMENT_DUMMY_SIGNATURE.r`.
@@ -240,7 +219,7 @@ fn build_swap_hop(
     index: usize,
     params: HopExecutionParams,
     label: &'static str,
-) -> Result<SwapHop, AssembleError> {
+) -> Result<LegacyAuthorityHop, AssembleError> {
     let hop = &plan.route[index];
     let fee_bps = fee_bps_for_executor(hop.protocol, hop.fee_pips)?;
     let adapter = require_non_zero(label, params.adapter)?;
@@ -251,14 +230,14 @@ fn build_swap_hop(
         | base_mev_trader::ExactProtocol::AerodromeStable => pool,
         base_mev_trader::ExactProtocol::UniswapV3 => adapter,
     };
-    Ok(SwapHop {
+    Ok(LegacyAuthorityHop {
         adapter,
         pool,
-        tokenIn: require_non_zero("hop.tokenIn", hop.token_in)?,
-        tokenOut: require_non_zero("hop.tokenOut", hop.token_out)?,
-        feeBps: alloy_primitives::aliases::U24::from(fee_bps),
-        minAmountOut: params.min_amount_out,
-        fundingTarget: funding_target,
+        token_in: require_non_zero("hop.tokenIn", hop.token_in)?,
+        token_out: require_non_zero("hop.tokenOut", hop.token_out)?,
+        fee_bps,
+        min_amount_out: params.min_amount_out,
+        funding_target,
     })
 }
 
@@ -319,14 +298,7 @@ pub fn encode_executor_calldata(input: &AssembleInput<'_>) -> Result<Vec<u8>, As
     }
     let first_hop = build_swap_hop(plan, 0, input.hops[0], "firstHop.adapter")?;
     let second_hop = build_swap_hop(plan, 1, input.hops[1], "secondHop.adapter")?;
-    let call = executeBlinkOfaAtomicCall {
-        firstHop: first_hop,
-        secondHop: second_hop,
-        amountIn: plan.amount_in,
-        minFinalAmount: plan.amount_out,
-        validUntilBlock: U256::from(input.valid_until_block),
-    };
-    Ok(call.abi_encode())
+    Ok(AtomicCalldataEncoder::encode_legacy(plan, [first_hop, second_hop], input.valid_until_block))
 }
 
 /// Assemble the unsigned rung-1 backrun transaction and its dummy serialization.
@@ -407,7 +379,7 @@ pub fn assemble_unsigned_atomic_tx(
 // would let one validated set of tx bytes be paired with two candidates.
 #[cfg(feature = "arm")]
 #[derive(Debug)]
-pub struct ValidatedUnsignedAtomicTx {
+pub struct LegacyValidatedUnsignedAtomicTx {
     unsigned_tx: alloy_consensus::TxEip1559,
     victim: B256,
     plan_digest: B256,
@@ -416,8 +388,12 @@ pub struct ValidatedUnsignedAtomicTx {
     valid_until_block: u64,
 }
 
+/// Backward-compatible arm name for the phase-b-only legacy witness.
 #[cfg(feature = "arm")]
-impl ValidatedUnsignedAtomicTx {
+pub type ValidatedUnsignedAtomicTx = LegacyValidatedUnsignedAtomicTx;
+
+#[cfg(feature = "arm")]
+impl LegacyValidatedUnsignedAtomicTx {
     /// The unsigned EIP-1559 backrun to be signed by the arm custody path.
     pub(crate) const fn unsigned_tx(&self) -> &alloy_consensus::TxEip1559 {
         &self.unsigned_tx
@@ -444,14 +420,14 @@ impl ValidatedUnsignedAtomicTx {
     }
 }
 
-/// The ONLY constructor of [`ValidatedUnsignedAtomicTx`]. Runs the full
+/// The ONLY constructor of [`LegacyValidatedUnsignedAtomicTx`]. Runs the full
 /// fail-closed [`assemble_unsigned_atomic_tx`] (digest + frame + victim binding +
 /// fee parity) and then captures the per-field authoritative values alongside the
 /// tx bytes. A tx whose `to` is not a `Call` (a contract creation) is rejected.
 #[cfg(feature = "arm")]
 pub fn assemble_validated(
     input: &AssembleInput<'_>,
-) -> Result<ValidatedUnsignedAtomicTx, AssembleError> {
+) -> Result<LegacyValidatedUnsignedAtomicTx, AssembleError> {
     // The backrun MUST be on Base (8453): both the policy input AND the assembled
     // signed-tx chain id, so a non-Base tx can never bind to a Base claim/executor.
     const CHAIN_ID_BASE: u64 = 8453;
@@ -466,7 +442,7 @@ pub fn assemble_validated(
         TxKind::Call(address) => address,
         TxKind::Create => return Err(AssembleError::InvalidField("executorKind")),
     };
-    Ok(ValidatedUnsignedAtomicTx {
+    Ok(LegacyValidatedUnsignedAtomicTx {
         victim: assembled.target_tx_hash,
         plan_digest: input.plan.digest.0,
         amount: input.plan.amount_in,
