@@ -57,6 +57,12 @@ pub fn evm_erc20_balance_slot(who: Address) -> B256 {
 }
 
 /// Derives the B20 Asset token address from a creator and a salt.
+///
+/// Matches the on-chain `B20AssetFactory` derivation: the address is
+/// `0xb2` ++ 9 zero bytes ++ the low 9 bytes of `keccak256(pad12(creator) ++ salt)`, giving
+/// every B20 asset a recognizable `0xb2…` prefix at the cost of 72 bits of address entropy
+/// (down from the usual 160 bits), which is an accepted tradeoff for this precompile's small
+/// deployed-asset population.
 pub fn derive_b20_asset_address(creator: Address, salt: B256) -> Address {
     let mut buf = [0u8; 64];
     buf[12..32].copy_from_slice(creator.as_slice());
@@ -89,8 +95,10 @@ pub fn derive_sender_addresses(seed: u64, count: usize) -> Vec<Address> {
 }
 
 /// Returns a deterministic, non-zero Ethereum address for the given sequential index.
+///
+/// `idx` must be less than `u64::MAX`.
 pub fn address_for_index(idx: u64) -> Address {
-    let idx = idx + 1;
+    let idx = idx.checked_add(1).expect("address_for_index overflow: idx must be < u64::MAX");
     let mut addr = [0u8; 20];
     addr[12..20].copy_from_slice(&idx.to_be_bytes());
     Address::from(addr)
@@ -123,5 +131,16 @@ mod tests {
         let addr = derive_b20_asset_address(creator, salt);
         assert_eq!(addr[0], 0xb2);
         assert_eq!(addr[10], 0x00);
+    }
+
+    #[test]
+    fn derive_address_known_vector() {
+        // Regression vector pinning the derivation formula: creator=0xAB repeated 20 times,
+        // salt=0, expected address computed independently from the documented formula
+        // (0xb2 ++ 9 zero bytes ++ low 9 bytes of keccak256(pad12(creator) ++ salt)).
+        let creator = Address::from([0xAB; 20]);
+        let salt = B256::ZERO;
+        let addr = derive_b20_asset_address(creator, salt);
+        assert_eq!(addr, address!("b2000000000000000000001ca46e16b5e4c6a352"));
     }
 }

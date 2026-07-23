@@ -22,6 +22,7 @@ use crate::{
     storage::{
         B20_INITIALIZED_SLOT, B20_TOTAL_SUPPLY_SLOT, EVM_TOKEN_ADDRESS, MOCK_B20_ASSET_BYTECODE,
         address_for_index, b20_balance_slot, derive_b20_asset_address, derive_sender_addresses,
+        evm_erc20_balance_slot,
     },
 };
 
@@ -52,11 +53,18 @@ impl Verifier {
         if args.senders_only {
             let seed =
                 args.seed.ok_or_else(|| eyre::eyre!("--seed required with --senders-only"))?;
-            let sender_count = args.sender_count.unwrap_or(0) as usize;
+            let sender_count = usize::try_from(args.sender_count.unwrap_or(0))
+                .wrap_err("sender_count exceeds platform usize range")?;
             eyre::ensure!(sender_count > 0, "--sender-count required with --senders-only");
             info!(seed, sender_count, "verifying only pre-seeded sender balances");
-            Self::check_sender_balances(&tx, EVM_TOKEN_ADDRESS, seed, sender_count)
-                .wrap_err("check sender balance slots")?;
+            Self::check_sender_balances(
+                &tx,
+                EVM_TOKEN_ADDRESS,
+                seed,
+                sender_count,
+                evm_erc20_balance_slot,
+            )
+            .wrap_err("check sender balance slots")?;
             info!("sender balance verification passed");
             return Ok(());
         }
@@ -67,8 +75,14 @@ impl Verifier {
                 .wrap_err("check precompile token account")?;
             Self::check_total_supply(&tx, token_addr, hashed_token)
                 .wrap_err("check precompile total_supply slot")?;
-            Self::check_balance_samples(&tx, token_addr, hashed_token, args.count)
-                .wrap_err("check precompile balance samples")?;
+            Self::check_balance_samples(
+                &tx,
+                token_addr,
+                hashed_token,
+                args.count,
+                b20_balance_slot,
+            )
+            .wrap_err("check precompile balance samples")?;
             let expected_plain = args.count + 4;
             Self::count_storage_entries(&tx, token_addr, hashed_token, expected_plain)
                 .wrap_err("count precompile storage entries")?;
@@ -92,8 +106,14 @@ impl Verifier {
                 .wrap_err("check EVM initialized slot")?;
             Self::check_total_supply(&tx, EVM_TOKEN_ADDRESS, hashed_evm)
                 .wrap_err("check EVM total_supply slot")?;
-            Self::check_balance_samples(&tx, EVM_TOKEN_ADDRESS, hashed_evm, evm_count)
-                .wrap_err("check EVM balance samples")?;
+            Self::check_balance_samples(
+                &tx,
+                EVM_TOKEN_ADDRESS,
+                hashed_evm,
+                evm_count,
+                evm_erc20_balance_slot,
+            )
+            .wrap_err("check EVM balance samples")?;
             let expected_plain = evm_count + 5;
             Self::count_storage_entries(&tx, EVM_TOKEN_ADDRESS, hashed_evm, expected_plain)
                 .wrap_err("count EVM storage entries")?;
@@ -101,10 +121,17 @@ impl Verifier {
                 .wrap_err("check EVM trie nodes")?;
 
             if let Some(seed) = args.seed {
-                let sender_count = args.sender_count.unwrap_or(0) as usize;
+                let sender_count = usize::try_from(args.sender_count.unwrap_or(0))
+                    .wrap_err("sender_count exceeds platform usize range")?;
                 if sender_count > 0 {
-                    Self::check_sender_balances(&tx, EVM_TOKEN_ADDRESS, seed, sender_count)
-                        .wrap_err("check sender balance slots")?;
+                    Self::check_sender_balances(
+                        &tx,
+                        EVM_TOKEN_ADDRESS,
+                        seed,
+                        sender_count,
+                        evm_erc20_balance_slot,
+                    )
+                    .wrap_err("check sender balance slots")?;
                 }
             }
 
@@ -237,8 +264,10 @@ impl Verifier {
         token_addr: Address,
         hashed_token: B256,
         count: u64,
+        slot_fn: fn(Address) -> B256,
     ) -> Result<()> {
-        let sample_indices = [0u64, 1, count / 4, count / 2, count - 1];
+        let last = count.saturating_sub(1);
+        let sample_indices = [0u64, count / 4, count / 2, last];
         let mut cursor =
             tx.cursor_dup_read::<tables::PlainStorageState>().wrap_err("open PlainStorageState")?;
         let mut hcursor =
@@ -246,7 +275,7 @@ impl Verifier {
 
         for idx in sample_indices {
             let addr = address_for_index(idx);
-            let plain_slot = b20_balance_slot(addr);
+            let plain_slot = slot_fn(addr);
             let hashed_slot = keccak256(plain_slot);
 
             let entry =
@@ -274,13 +303,14 @@ impl Verifier {
         token_addr: Address,
         seed: u64,
         sender_count: usize,
+        slot_fn: fn(Address) -> B256,
     ) -> Result<()> {
         let senders = derive_sender_addresses(seed, sender_count);
         let mut cursor =
             tx.cursor_dup_read::<tables::PlainStorageState>().wrap_err("open PlainStorageState")?;
 
         for (i, addr) in senders.iter().enumerate() {
-            let plain_slot = b20_balance_slot(*addr);
+            let plain_slot = slot_fn(*addr);
             let entry = cursor
                 .seek_by_key_subkey(token_addr, plain_slot)
                 .wrap_err("seek sender plain slot")?;
@@ -395,7 +425,7 @@ impl Verifier {
             .is_some();
 
         info!(storage_trie_nodes = node_count, "StoragesTrie nodes present");
-        info!(account_trie_has_root = has_acct_trie, "AccountsTrie check");
+        eyre::ensure!(has_acct_trie, "AccountsTrie root node missing — trie not written");
         Ok(())
     }
 }

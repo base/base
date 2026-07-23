@@ -45,7 +45,8 @@ impl Verifier {
         if args.senders_only {
             let seed =
                 args.seed.ok_or_else(|| eyre::eyre!("--seed required with --senders-only"))?;
-            let sender_count = args.sender_count.unwrap_or(0) as usize;
+            let sender_count = usize::try_from(args.sender_count.unwrap_or(0))
+                .wrap_err("sender_count exceeds platform usize range")?;
             eyre::ensure!(sender_count > 0, "--sender-count required with --senders-only");
             info!(seed, sender_count, "verifying only pre-seeded sender balances");
             Self::check_sender_balances(&tx, token_addr, args.balance_slot, seed, sender_count)
@@ -71,7 +72,8 @@ impl Verifier {
             Self::check_trie_nodes(&tx, hashed_token).wrap_err("check trie nodes")?;
 
             if let Some(seed) = args.seed {
-                let sender_count = args.sender_count.unwrap_or(0) as usize;
+                let sender_count = usize::try_from(args.sender_count.unwrap_or(0))
+                    .wrap_err("sender_count exceeds platform usize range")?;
                 if sender_count > 0 {
                     Self::check_sender_balances(
                         &tx,

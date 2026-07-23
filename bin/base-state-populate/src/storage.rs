@@ -19,10 +19,12 @@ pub fn erc20_balance_slot(who: Address, mapping_slot: B256) -> B256 {
 /// Returns a deterministic non-zero address for the `idx`-th synthetic holder.
 ///
 /// The address encodes `idx + 1` big-endian in its low 8 bytes, so index 0 maps to
-/// `0x0000…0001` (never the zero address) and every index is unique.
+/// `0x0000…0001` (never the zero address) and every index is unique. `idx` must be
+/// less than `u64::MAX`.
 pub fn address_for_index(idx: u64) -> Address {
+    let encoded = idx.checked_add(1).expect("address_for_index overflow: idx must be < u64::MAX");
     let mut bytes = [0u8; 20];
-    bytes[12..20].copy_from_slice(&(idx + 1).to_be_bytes());
+    bytes[12..20].copy_from_slice(&encoded.to_be_bytes());
     Address::from(bytes)
 }
 
@@ -36,14 +38,15 @@ pub fn address_for_index(idx: u64) -> Address {
 pub fn derive_sender_addresses(seed: u64, count: usize) -> Vec<Address> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut addresses = Vec::with_capacity(count);
-    for _ in 0..count {
+    while addresses.len() < count {
         let mut key_bytes = [0u8; 32];
         rng.fill_bytes(&mut key_bytes);
-        let signing_key = SigningKey::from_slice(&key_bytes).expect("valid secp256k1 key");
-        let verifying_key = signing_key.verifying_key();
-        let uncompressed = verifying_key.to_encoded_point(false);
-        let hash = keccak256(&uncompressed.as_bytes()[1..]);
-        addresses.push(Address::from_slice(&hash[12..]));
+        if let Ok(signing_key) = SigningKey::from_slice(&key_bytes) {
+            let verifying_key = signing_key.verifying_key();
+            let uncompressed = verifying_key.to_encoded_point(false);
+            let hash = keccak256(&uncompressed.as_bytes()[1..]);
+            addresses.push(Address::from_slice(&hash[12..]));
+        }
     }
     addresses
 }

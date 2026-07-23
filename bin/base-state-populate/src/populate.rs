@@ -11,7 +11,9 @@ use reth_db_api::{
     transaction::{DbTx, DbTxMut},
 };
 use reth_primitives_traits::{Account, StorageEntry};
-use reth_trie::{HashedPostState, StateRoot, StorageRoot, StoredNibbles};
+use reth_trie::{
+    BranchNodeCompact, HashedPostState, Nibbles, StateRoot, StorageRoot, StoredNibbles,
+};
 use reth_trie_db::{
     DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot, DatabaseStorageTrieCursor,
     DatabaseTrieCursorFactory, LegacyKeyAdapter,
@@ -75,6 +77,8 @@ impl Populator {
             )
             .wrap_err("write balance slots")?;
             if let (Some(seed), Some(sender_count)) = (args.seed, args.sender_count) {
+                let sender_count = usize::try_from(sender_count)
+                    .wrap_err("sender_count exceeds platform usize range")?;
                 Self::write_sender_balances(
                     &db,
                     token_addr,
@@ -82,7 +86,7 @@ impl Populator {
                     args.balance,
                     args.balance_slot,
                     seed,
-                    sender_count as usize,
+                    sender_count,
                 )
                 .wrap_err("write sender balance slots")?;
             }
@@ -298,10 +302,25 @@ impl Populator {
         let sorted = acct_trie_updates.into_sorted();
         let mut acct_cursor =
             tx.cursor_write::<tables::AccountsTrie>().wrap_err("open AccountsTrie")?;
+        let (written, deleted) =
+            Self::write_account_trie_nodes(&mut acct_cursor, sorted.account_nodes_ref())?;
 
+        info!(written, deleted, "account trie nodes updated");
+        tx.commit().wrap_err("commit account-trie tx")?;
+        Ok(())
+    }
+
+    /// Upserts or deletes `AccountsTrie` nodes from a sorted set of trie-update entries.
+    ///
+    /// A `None` value means the node was removed from the trie and any existing entry at
+    /// that key must be deleted. Returns `(nodes_written, nodes_deleted)`.
+    fn write_account_trie_nodes(
+        acct_cursor: &mut (impl DbCursorRW<tables::AccountsTrie> + DbCursorRO<tables::AccountsTrie>),
+        nodes: &[(Nibbles, Option<BranchNodeCompact>)],
+    ) -> Result<(usize, usize)> {
         let mut written = 0usize;
         let mut deleted = 0usize;
-        for (key, maybe_node) in sorted.account_nodes_ref() {
+        for (key, maybe_node) in nodes {
             if key.is_empty() {
                 continue;
             }
@@ -319,10 +338,7 @@ impl Populator {
                 }
             }
         }
-
-        info!(written, deleted, "account trie nodes updated");
-        tx.commit().wrap_err("commit account-trie tx")?;
-        Ok(())
+        Ok((written, deleted))
     }
 
     fn write_sender_balances(
@@ -413,46 +429,39 @@ impl Populator {
         Ok(())
     }
 
-    /// Phase 2 of account writing: rebuild `HashedAccounts` by scanning `PlainAccountState`
-    /// in 16 passes, one hash-space slice per pass.
+    /// Phase 2 of account writing: rebuild `HashedAccounts` from `PlainAccountState` in a
+    /// single scan, hashing each address once and bucketing it by its hash's first byte.
     ///
-    /// Each pass only touches 1/16 of the existing pages, distributing the total `CoW` I/O
-    /// over 16 passes instead of repeating it once per chunk. Estimated total time is
-    /// minutes rather than the hours a per-chunk `HashedAccounts` write would take.
+    /// Buckets are written in 16 separate MDBX transactions to keep each transaction's
+    /// diverged page set bounded, matching the CoW-I/O profile of the previous 16-pass
+    /// approach, but without re-scanning and re-hashing the whole table on every pass.
     fn rebuild_hashed_accounts(db: &reth_db::DatabaseEnv) -> Result<()> {
-        const NUM_PASSES: u16 = 16;
-        const BUCKETS_PER_PASS: u16 = 256 / NUM_PASSES;
+        const NUM_BUCKETS: usize = 16;
 
-        info!(passes = NUM_PASSES, "rebuilding HashedAccounts from PlainAccountState");
+        info!("rebuilding HashedAccounts from PlainAccountState");
 
-        for pass in 0u16..NUM_PASSES {
-            let hash_lo = pass * BUCKETS_PER_PASS;
-            let hash_hi = (pass + 1) * BUCKETS_PER_PASS;
-
+        let mut buckets: Vec<Vec<(B256, Account)>> = vec![Vec::new(); NUM_BUCKETS];
+        {
             let read_tx = db.tx().wrap_err("begin PlainAccountState scan tx")?;
-            let mut entries: Vec<(B256, Account)> = Vec::new();
-            {
-                let mut cursor = read_tx
-                    .cursor_read::<tables::PlainAccountState>()
-                    .wrap_err("open PlainAccountState cursor")?;
-                let mut walker = cursor.walk(None).wrap_err("walk PlainAccountState")?;
-                while let Some((addr, account)) = walker.next().transpose()? {
-                    let hash = keccak256(addr);
-                    let b = hash[0] as u16;
-                    if b >= hash_lo && b < hash_hi {
-                        entries.push((hash, account));
-                    }
-                }
+            let mut cursor = read_tx
+                .cursor_read::<tables::PlainAccountState>()
+                .wrap_err("open PlainAccountState cursor")?;
+            let mut walker = cursor.walk(None).wrap_err("walk PlainAccountState")?;
+            while let Some((addr, account)) = walker.next().transpose()? {
+                let hash = keccak256(addr);
+                let bucket = hash[0] as usize * NUM_BUCKETS / 256;
+                buckets[bucket].push((hash, account));
             }
-            drop(read_tx);
+        }
 
+        for (bucket_idx, mut entries) in buckets.into_iter().enumerate() {
             entries.par_sort_unstable_by_key(|(h, _)| *h);
 
             info!(
-                pass = pass + 1,
-                total = NUM_PASSES,
+                bucket = bucket_idx + 1,
+                total = NUM_BUCKETS,
                 entries = entries.len(),
-                "inserting HashedAccounts slice"
+                "inserting HashedAccounts bucket"
             );
 
             let write_tx = db.tx_mut().wrap_err("begin HashedAccounts write tx")?;
@@ -462,13 +471,13 @@ impl Populator {
             for (hash, account) in &entries {
                 hashed_cursor.upsert(*hash, account).wrap_err("upsert hashed account")?;
             }
-            write_tx.commit().wrap_err("commit HashedAccounts pass tx")?;
+            write_tx.commit().wrap_err("commit HashedAccounts bucket tx")?;
 
             info!(
-                pass = pass + 1,
-                total = NUM_PASSES,
+                bucket = bucket_idx + 1,
+                total = NUM_BUCKETS,
                 entries = entries.len(),
-                "HashedAccounts pass committed"
+                "HashedAccounts bucket committed"
             );
         }
 
@@ -489,27 +498,8 @@ impl Populator {
         let sorted = trie_updates.into_sorted();
         let mut acct_cursor =
             tx.cursor_write::<tables::AccountsTrie>().wrap_err("open AccountsTrie")?;
-
-        let mut written = 0usize;
-        let mut deleted = 0usize;
-        for (key, maybe_node) in sorted.account_nodes_ref() {
-            if key.is_empty() {
-                continue;
-            }
-            let nibbles = StoredNibbles::from(*key);
-            match maybe_node {
-                Some(node) => {
-                    acct_cursor.upsert(nibbles, node).wrap_err("upsert AccountsTrie node")?;
-                    written += 1;
-                }
-                None => {
-                    if acct_cursor.seek_exact(nibbles).wrap_err("seek AccountsTrie")?.is_some() {
-                        acct_cursor.delete_current().wrap_err("delete AccountsTrie node")?;
-                        deleted += 1;
-                    }
-                }
-            }
-        }
+        let (written, deleted) =
+            Self::write_account_trie_nodes(&mut acct_cursor, sorted.account_nodes_ref())?;
 
         info!(written, deleted, "account trie fully recomputed");
         tx.commit().wrap_err("commit account-trie recompute tx")?;

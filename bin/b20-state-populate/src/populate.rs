@@ -25,6 +25,7 @@ use crate::{
         B20_DECIMALS_SLOT, B20_INITIALIZED_SLOT, B20_MULTIPLIER_SLOT, B20_SUPPLY_CAP_SLOT,
         B20_TOTAL_SUPPLY_SLOT, EVM_TOKEN_ADDRESS, MOCK_B20_ASSET_BYTECODE, address_for_index,
         b20_balance_slot, derive_b20_asset_address, derive_sender_addresses,
+        evm_erc20_balance_slot,
     },
 };
 
@@ -78,8 +79,15 @@ impl Populator {
                     .wrap_err("write precompile token account")?;
                 Self::clear_token_storage(&db, token_addr, hashed_token)
                     .wrap_err("clear existing precompile token storage")?;
-                Self::write_balance_slots(&db, token_addr, hashed_token, args.count, args.balance)
-                    .wrap_err("write balance slots")?;
+                Self::write_balance_slots(
+                    &db,
+                    token_addr,
+                    hashed_token,
+                    args.count,
+                    args.balance,
+                    b20_balance_slot,
+                )
+                .wrap_err("write balance slots")?;
                 Self::write_metadata_slots(&db, token_addr, hashed_token, total_supply, false)
                     .wrap_err("write precompile metadata slots")?;
             }
@@ -96,28 +104,39 @@ impl Populator {
         if let Some(evm_n) = evm_count {
             info!(token = %EVM_TOKEN_ADDRESS, count = evm_n, "populating EVM contract token");
             let hashed_evm = keccak256(EVM_TOKEN_ADDRESS);
-            let total_supply = args.balance.saturating_mul(U256::from(evm_n));
-
             let bytecode_hash = keccak256(MOCK_B20_ASSET_BYTECODE);
+
             if !args.trie_only {
                 Self::write_bytecode(&db).wrap_err("write bytecode")?;
                 Self::write_account(&db, EVM_TOKEN_ADDRESS, hashed_evm, Some(bytecode_hash))
                     .wrap_err("write EVM token account")?;
                 Self::clear_token_storage(&db, EVM_TOKEN_ADDRESS, hashed_evm)
                     .wrap_err("clear existing EVM token storage")?;
-                Self::write_balance_slots(&db, EVM_TOKEN_ADDRESS, hashed_evm, evm_n, args.balance)
-                    .wrap_err("write EVM balance slots")?;
+                Self::write_balance_slots(
+                    &db,
+                    EVM_TOKEN_ADDRESS,
+                    hashed_evm,
+                    evm_n,
+                    args.balance,
+                    evm_erc20_balance_slot,
+                )
+                .wrap_err("write EVM balance slots")?;
+                let sender_n = args.sender_count.unwrap_or(0);
                 if let (Some(seed), Some(sender_count)) = (args.seed, args.sender_count) {
+                    let sender_count = usize::try_from(sender_count)
+                        .wrap_err("sender_count exceeds platform usize range")?;
                     Self::write_sender_balances(
                         &db,
                         EVM_TOKEN_ADDRESS,
                         hashed_evm,
                         args.balance,
                         seed,
-                        sender_count as usize,
+                        sender_count,
+                        evm_erc20_balance_slot,
                     )
-                    .wrap_err("write sender balance slots")?;
+                    .wrap_err("write EVM sender balance slots")?;
                 }
+                let total_supply = args.balance.saturating_mul(U256::from(evm_n + sender_n));
                 Self::write_metadata_slots(&db, EVM_TOKEN_ADDRESS, hashed_evm, total_supply, true)
                     .wrap_err("write EVM metadata slots")?;
             }
@@ -207,7 +226,7 @@ impl Populator {
         let mut hs_cursor =
             tx.cursor_dup_write::<tables::HashedStorages>().wrap_err("open HashedStorages")?;
 
-        let multiplier = U256::from(1u64) * U256::from(10u64).pow(U256::from(18u64));
+        let multiplier = U256::from(10u64).pow(U256::from(18u64));
         let mut meta: Vec<(B256, U256)> = vec![
             (B20_TOTAL_SUPPLY_SLOT, total_supply),
             (B20_SUPPLY_CAP_SLOT, total_supply),
@@ -232,27 +251,19 @@ impl Populator {
         Ok(())
     }
 
-    /// Writes all `count` balance slots using a single-scan globally-sorted append.
-    ///
-    /// Generates all (`plain_slot`, `hashed_slot`) pairs in one rayon parallel pass,
-    /// sorts each list independently, then writes each to the corresponding MDBX table
-    /// in commit-sized chunks. Sequential sorted appends let MDBX extend leaf pages
-    /// linearly without B-tree splits, avoiding exponential ZFS `CoW` (copy-on-write) write amplification.
-    ///
-    /// Memory: ~(count × 32 bytes) per table. For 700M entries, ~22 GB per table (44 GB
-    /// total). Requires sufficient RAM; the machine must have ~50+ GB available.
     fn write_balance_slots(
         db: &reth_db::DatabaseEnv,
         token_addr: Address,
         hashed_token: B256,
         count: u64,
         balance: U256,
+        slot_fn: fn(Address) -> B256,
     ) -> Result<()> {
         const COMMIT_CHUNK: usize = 10_000_000;
 
         info!(count, "generating and sorting plain slots");
         let mut plain_entries: Vec<B256> =
-            (0..count).into_par_iter().map(|i| b20_balance_slot(address_for_index(i))).collect();
+            (0..count).into_par_iter().map(|i| slot_fn(address_for_index(i))).collect();
         plain_entries.par_sort_unstable();
 
         info!(count, "writing PlainStorageState");
@@ -281,10 +292,8 @@ impl Populator {
         drop(plain_entries);
 
         info!(count, "generating and sorting hashed slots");
-        let mut hashed_entries: Vec<B256> = (0..count)
-            .into_par_iter()
-            .map(|i| keccak256(b20_balance_slot(address_for_index(i))))
-            .collect();
+        let mut hashed_entries: Vec<B256> =
+            (0..count).into_par_iter().map(|i| keccak256(slot_fn(address_for_index(i)))).collect();
         hashed_entries.par_sort_unstable();
 
         info!(count, "writing HashedStorages");
@@ -461,6 +470,7 @@ impl Populator {
         balance: U256,
         seed: u64,
         sender_count: usize,
+        slot_fn: fn(Address) -> B256,
     ) -> Result<()> {
         let sender_addresses = derive_sender_addresses(seed, sender_count);
         info!(count = sender_count, "writing sender balance slots");
@@ -473,7 +483,7 @@ impl Populator {
             tx.cursor_dup_write::<tables::HashedStorages>().wrap_err("open HashedStorages")?;
 
         for addr in &sender_addresses {
-            let plain_slot = b20_balance_slot(*addr);
+            let plain_slot = slot_fn(*addr);
             let hashed_slot = keccak256(plain_slot);
             ps_cursor
                 .upsert(token_addr, &StorageEntry { key: plain_slot, value: balance })
