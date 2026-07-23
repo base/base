@@ -70,7 +70,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     pub async fn build(&mut self) -> Result<Option<UnsealedPayloadHandle>, SequencerActorError> {
         let unsafe_head = self.engine_client.get_unsafe_head().await?;
         // The watch-channel unsafe head is an `L2BlockInfo`, which records only whole
-        // seconds, so no sub-second remainder is available here. Zombie timestamp planning
+        // seconds, so no sub-second remainder is available here. Zenith timestamp planning
         // derives both seconds and millis from the deterministic child-block-number formula,
         // so this path safely passes `None`.
         self.build_on(unsafe_head, None).await
@@ -174,7 +174,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
 
     /// Plans the next block's timestamp.
     ///
-    /// After Zombie activation, or when `block_interval` overrides the rollup `block_time`,
+    /// After Zenith activation, or when `block_interval` overrides the rollup `block_time`,
     /// uses `SequencerTimestampPlanner::sub_second` aligned to the configured cadence.
     /// Otherwise advances by the whole-second `block_time` via
     /// `SequencerTimestampPlanner::legacy`.
@@ -189,7 +189,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
             SequencerTimestampPlanner::legacy(parent_timestamp, self.rollup_config.block_time)?;
         let uses_override =
             self.block_interval != Duration::from_secs(self.rollup_config.block_time);
-        if self.rollup_config.is_zombie_active(legacy.timestamp) || uses_override {
+        if self.rollup_config.is_zenith_active(legacy.timestamp) || uses_override {
             let cadence_millis = u64::try_from(self.block_interval.as_millis())
                 .map_err(|_| SequencerTimestampPlannerError::TimestampOverflow)?
                 .max(1);

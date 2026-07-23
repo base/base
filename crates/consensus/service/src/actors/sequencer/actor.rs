@@ -312,7 +312,7 @@ where
 
     /// Wall-clock time at which a block with the given absolute timestamp should be sealed,
     /// compensating for the time already spent sealing the previous block. A present
-    /// `timestamp_millis_part` selects millisecond-accurate (Zombie 200ms) scheduling.
+    /// `timestamp_millis_part` selects millisecond-accurate (Zenith 200ms) scheduling.
     ///
     /// The compensation is capped at half the block interval so a single slow seal cannot
     /// collapse the next block's build window to zero. Uncapped, a seal that overruns the
@@ -419,7 +419,7 @@ where
 
         // Sub-second remainder of the most recently sealed block. `L2BlockInfo` records
         // only whole seconds, so this is threaded into the next `build_on` to keep the
-        // Zombie timestamp planner's monotonicity guard strict.
+        // Zenith timestamp planner's monotonicity guard strict.
         let mut last_sealed_millis_part: Option<u16> = None;
 
         let mut last_block_complete_at: Option<Instant> = None;
@@ -614,7 +614,7 @@ where
                                 last_seal_duration = dur;
                                 last_sealed_millis_part = handle_timestamp_millis_part;
                                 self.sealer = Some(new_sealer);
-                                let next_block_time = if self.rollup_config.is_zombie_active(
+                                let next_block_time = if self.rollup_config.is_zenith_active(
                                     handle_timestamp,
                                 ) {
                                     let cadence_millis = (self.block_interval.as_millis()
