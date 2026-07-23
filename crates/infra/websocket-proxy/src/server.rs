@@ -43,8 +43,9 @@ impl TrustedProxyConfig {
 
     /// Resolves the client IP, trusting forwarding headers only from configured proxy CIDRs.
     ///
-    /// Joins all forwarding-header lines (proxies may append within a value or add a new
-    /// line), then peels trusted hops right → left until the first untrusted IP.
+    /// Walks all forwarding-header lines and comma-separated entries right → left (proxies
+    /// may append within a value or add a new line), peeling trusted hops until the first
+    /// untrusted IP.
     pub fn client_ip(&self, connect_addr: IpAddr, headers: &HeaderMap) -> IpAddr {
         // Dual-stack listeners present IPv4 peers as IPv4-mapped IPv6 (`::ffff:x.x.x.x`).
         let connect_addr = Self::canonicalize_ip(connect_addr);
@@ -53,41 +54,36 @@ impl TrustedProxyConfig {
             return connect_addr;
         }
 
-        let mut values = Vec::new();
-        for header in headers.get_all(&self.ip_addr_http_header) {
-            match header.to_str() {
-                Ok(value) => values.push(value),
+        for header in headers.get_all(&self.ip_addr_http_header).iter().rev() {
+            let header_value = match header.to_str() {
+                Ok(value) => value,
                 Err(error) => {
                     warn!(error = %error, "Could not read client IP header");
                     return connect_addr;
                 }
-            }
-        }
-        if values.is_empty() {
-            return connect_addr;
-        }
-        let header_value = values.join(", ");
+            };
 
-        for raw in header_value.split(',').rev() {
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            match trimmed.parse::<IpAddr>() {
-                Ok(addr) => {
-                    let addr = Self::canonicalize_ip(addr);
-                    if !self.is_trusted(addr) {
-                        return addr;
-                    }
+            for raw in header_value.split(',').rev() {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    continue;
                 }
-                Err(error) => {
-                    warn!(
-                        error = %error,
-                        value = %trimmed,
-                        "Failed to parse forwarded client IP"
-                    );
-                    return connect_addr;
+
+                match trimmed.parse::<IpAddr>() {
+                    Ok(addr) => {
+                        let addr = Self::canonicalize_ip(addr);
+                        if !self.is_trusted(addr) {
+                            return addr;
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            error = %error,
+                            value = %trimmed,
+                            "Failed to parse forwarded client IP"
+                        );
+                        return connect_addr;
+                    }
                 }
             }
         }
