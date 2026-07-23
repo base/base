@@ -33,8 +33,7 @@ use crate::{
 pub const DEFAULT_MAX_CONCURRENCY: usize = 4;
 
 /// Default number of consecutive discovery cycles to protect last-known active
-/// signers for an instance that disappears from otherwise successful discovery
-/// output.
+/// signers for an instance that disappears from discovery or becomes unhealthy.
 ///
 /// Five cycles is roughly 2.5 minutes with the default 30 second poll interval.
 /// A shorter window is more vulnerable to transient discovery flakes; a longer
@@ -52,8 +51,8 @@ pub struct DriverConfig {
     /// Maximum number of instances resolved concurrently per discovery cycle.
     pub max_concurrency: usize,
     /// Number of consecutive discovery cycles to protect last-known active
-    /// signers for an instance missing from otherwise successful discovery
-    /// output. Defaults to [`INSTANCE_CACHE_TTL_CYCLES`].
+    /// signers for an instance missing from discovery or reported unhealthy.
+    /// Defaults to [`INSTANCE_CACHE_TTL_CYCLES`].
     pub instance_cache_ttl_cycles: u32,
 }
 
@@ -312,6 +311,11 @@ where
 
         let discovered_instance_ids: HashSet<String> =
             instances.iter().map(|instance| instance.instance_id.clone()).collect();
+        let unhealthy_instance_ids: HashSet<String> = instances
+            .iter()
+            .filter(|instance| instance.health_status == InstanceHealthStatus::Unhealthy)
+            .map(|instance| instance.instance_id.clone())
+            .collect();
         RegistrarMetrics::discovered_instances_count().set(discovered_instance_ids.len() as f64);
         let mut resolution = DiscoveryResolution::default();
 
@@ -339,7 +343,9 @@ where
                 Ok(outcome) => {
                     let active_signers = outcome.active_signers.iter().copied().collect::<Vec<_>>();
                     if active_signers.is_empty() {
-                        last_known_active.remove(&instance.instance_id);
+                        if instance.health_status != InstanceHealthStatus::Unhealthy {
+                            last_known_active.remove(&instance.instance_id);
+                        }
                     } else {
                         last_known_active.insert(instance.instance_id, (active_signers, 0));
                     }
@@ -361,7 +367,9 @@ where
         }
 
         last_known_active.retain(|instance_id, (addresses, ttl_cycles)| {
-            if discovered_instance_ids.contains(instance_id) {
+            if discovered_instance_ids.contains(instance_id)
+                && !unhealthy_instance_ids.contains(instance_id)
+            {
                 return true;
             }
 
@@ -372,17 +380,19 @@ where
                     cached_signers = addresses.len(),
                     ttl_cycles = *ttl_cycles,
                     max_ttl_cycles = self.config.instance_cache_ttl_cycles,
-                    "instance missing from discovery, preserving last-known active signers"
+                    "instance unavailable, preserving last-known active signers"
                 );
                 resolution.active_signers.extend(addresses.iter().copied());
-                resolution.unresolved_instance_ids.insert(instance_id.clone());
+                if !unhealthy_instance_ids.contains(instance_id) {
+                    resolution.unresolved_instance_ids.insert(instance_id.clone());
+                }
                 true
             } else {
                 warn!(
                     instance = %instance_id,
                     ttl_cycles = *ttl_cycles,
                     max_ttl_cycles = self.config.instance_cache_ttl_cycles,
-                    "last-known active signer cache expired for missing instance"
+                    "last-known active signer cache expired for unavailable instance"
                 );
                 false
             }
@@ -656,14 +666,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discover_and_resolve_removes_cached_signers_for_unhealthy_instances() {
+    async fn discover_and_resolve_preserves_cached_signers_for_unhealthy_instances_until_ttl() {
+        const TEST_TTL_CYCLES: u32 = 2;
+
         let signer = signer_from_private_key(&HARDHAT_KEY_0);
         let instance = prover_instance(EP1, InstanceHealthStatus::Unhealthy);
         let signer_client = MockEnclaveEndpointClient::default();
         let requested_public_keys = Arc::clone(&signer_client.requested_public_keys);
-        let driver = cycle_driver(vec![instance.clone()], signer_client, CancellationToken::new());
+        let driver = cycle_driver_with_instance_cache_ttl(
+            vec![instance.clone()],
+            signer_client,
+            CancellationToken::new(),
+            TEST_TTL_CYCLES,
+        );
         let mut last_known_active =
             HashMap::from([(instance.instance_id.clone(), (vec![signer], 0))]);
+
+        for expected_ttl in 1..=TEST_TTL_CYCLES {
+            let resolution = driver.discover_and_resolve(&mut last_known_active).await.unwrap();
+
+            assert!(resolution.active_signers.contains(&signer));
+            assert!(resolution.unresolved_instance_ids.is_empty());
+            assert_eq!(
+                last_known_active.get(&instance.instance_id).map(|(_, ttl)| *ttl),
+                Some(expected_ttl)
+            );
+        }
 
         let resolution = driver.discover_and_resolve(&mut last_known_active).await.unwrap();
 
