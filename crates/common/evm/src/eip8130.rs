@@ -717,14 +717,24 @@ impl Eip8130Executor {
                 Address::ZERO
             };
 
-            // 4. Auto-delegate a code-less sender only when the transaction did
-            //    not explicitly set its delegation. In particular, an explicit
-            //    zero target is an owner-authorized request to remain undelegated.
-            let sender_auto_delegated = if has_explicit_delegation {
-                false
-            } else {
-                Self::auto_delegate_codeless_sender(sctx, sender)?
-            };
+            // 4. Auto-delegate a code-less sender in the simulation state (so the
+            //    calls run against a delegated sender), but *price* auto-delegation
+            //    from the body-derivable worst case, not the sim-state result.
+            //    Auto-delegation is non-monotonic — the sender's on-chain code can
+            //    flip between estimation and inclusion — so pinning the body
+            //    ceiling keeps the estimate a safe upper bound and, crucially,
+            //    identical to what mempool admission pins. Resolving it from
+            //    current code state here (while admission pins the body ceiling)
+            //    would let admission exceed the estimate and reject a
+            //    `gas_limit == estimate` submission. The state mutation stays gated
+            //    on the absence of an explicit delegation (a zero target is an
+            //    owner-authorized request to remain undelegated), matching the
+            //    classifier's suppression on any `Delegation` entry.
+            if !has_explicit_delegation {
+                Self::auto_delegate_codeless_sender(sctx, sender)?;
+            }
+            let sender_auto_delegated =
+                IntrinsicGasInput::sender_auto_delegated(&tx.account_changes);
 
             // 5. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
             //    stub signature of the right authenticator type estimates exactly).
@@ -737,9 +747,10 @@ impl Eip8130Executor {
             //        is not authenticable here in any case.
             //      - zero revoke discount, so revokes are priced at the full
             //        three-reset worst case regardless of which slots are empty.
-            //    Monotonic-safe, body-derivable costs (nonce first-use,
-            //    auto-delegation) stay resolved above. Execution reprices all of
-            //    these precisely against the authenticated actors and real state.
+            //      - auto-delegation pinned to the body ceiling above.
+            //    The monotonic, body-derivable nonce first-use cost stays resolved.
+            //    Execution reprices all of these precisely against the
+            //    authenticated actors and real state.
             let (sender_intrinsic, payer_auth, execution_gas_available) =
                 Self::resolve_execution_gas(
                     signed,

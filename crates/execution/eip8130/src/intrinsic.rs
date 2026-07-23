@@ -148,6 +148,37 @@ impl IntrinsicGasInput {
             .with_policy_gates(true, has_payer)
             .with_revoke_discount_slots(0)
     }
+
+    /// Body-derivable worst-case for [`Self::sender_auto_delegated`], the single
+    /// classifier shared by estimation (`eth_estimateGas`) and mempool admission.
+    ///
+    /// Execution auto-delegates the sender (charging a `DELEGATION_DEPOSIT_COST`)
+    /// exactly when the transaction carries **no** [`AccountChange::Delegation`]
+    /// entry *and* the sender is code-less at inclusion. The first condition is
+    /// body-derivable; the second is a non-monotonic state fact the sender's
+    /// on-chain code can flip between estimation and inclusion (e.g. a native
+    /// EIP-7702 revocation strips the delegation and re-arms auto-delegation). So
+    /// the safe body-derivable ceiling is "charge unless the transaction contains
+    /// a `Delegation` entry":
+    ///
+    /// - A `Delegation` (zero or non-zero target) sets `has_explicit_delegation`,
+    ///   which suppresses auto-delegation at execution unconditionally — so it
+    ///   suppresses it here too.
+    /// - A `Create` deploys code to a CREATE2-derived address, **not** the
+    ///   sender, so it leaves the sender code-less and does *not* suppress
+    ///   auto-delegation. (A rare self-create that lands on the sender address
+    ///   only makes execution cheaper, so charging here stays a safe ceiling.)
+    /// - A `ConfigChange` or a call-only transaction never installs sender code,
+    ///   so it does not suppress either.
+    ///
+    /// Both estimation and admission must pin this ceiling (execution reprices it
+    /// precisely from state) for the `estimate == admission >= execution`
+    /// guarantee to hold; resolving it from current code state on one path but
+    /// not the other silently breaks that invariant.
+    #[must_use]
+    pub fn sender_auto_delegated(account_changes: &[AccountChange]) -> bool {
+        !account_changes.iter().any(|change| matches!(change, AccountChange::Delegation(_)))
+    }
 }
 
 /// The EIP-8130 intrinsic-gas breakdown, one field per spec component.
@@ -547,6 +578,44 @@ mod tests {
     fn intrinsic(signed: &Eip8130Signed, input: &IntrinsicGasInput) -> IntrinsicGas {
         IntrinsicGas::compute(signed, &encode(signed), input)
             .expect("canonical authenticators are scheduled")
+    }
+
+    fn create_entry() -> CreateEntry {
+        CreateEntry {
+            user_salt: Default::default(),
+            code: Bytes::from(vec![0x60u8; 4]),
+            initial_actors: vec![],
+        }
+    }
+
+    #[test]
+    fn sender_auto_delegated_ceiling_matches_execution_upper_bound() {
+        // No account changes: execution auto-delegates a code-less sender, so the
+        // body ceiling must charge the deposit.
+        assert!(IntrinsicGasInput::sender_auto_delegated(&[]));
+
+        // A call-only / `ConfigChange` transaction never installs sender code, so
+        // execution may still auto-delegate — charge the ceiling.
+        assert!(IntrinsicGasInput::sender_auto_delegated(&[AccountChange::ConfigChange(
+            ConfigChange { chain_id: 1, sequence: 0, actor_changes: vec![], auth: Bytes::new() }
+        )]));
+
+        // A `Create` deploys code to a CREATE2-derived address, not the sender, so
+        // the sender stays code-less and execution auto-delegates. Create must NOT
+        // suppress budgeting (the reverse would under-budget admission vs
+        // execution and admit a tx that OOGs at inclusion).
+        assert!(IntrinsicGasInput::sender_auto_delegated(&[AccountChange::Create(create_entry())]));
+
+        // Any `Delegation` entry — zero or non-zero target — sets
+        // `has_explicit_delegation`, which suppresses auto-delegation at execution
+        // unconditionally. Both must suppress the ceiling too (else admission
+        // over-budgets vs the estimate and rejects a `gas_limit == estimate` tx).
+        assert!(!IntrinsicGasInput::sender_auto_delegated(&[AccountChange::Delegation(
+            Delegation { target: Address::ZERO }
+        )]));
+        assert!(!IntrinsicGasInput::sender_auto_delegated(&[AccountChange::Delegation(
+            Delegation { target: Address::repeat_byte(0x11) }
+        )]));
     }
 
     alloy_sol_types::sol! {

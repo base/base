@@ -717,25 +717,6 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         self.require_l1_data_gas_fee
     }
 
-    /// Whether execution will auto-delegate the code-less sender to
-    /// `DEFAULT_ACCOUNT` (charging a `DELEGATION_DEPOSIT_COST`) given the
-    /// transaction's `account_changes`.
-    ///
-    /// Auto-delegation is suppressed only when the transaction leaves the sender
-    /// with non-empty code: a `Create` or a *non-zero* `Delegation` both install
-    /// code, so `auto_delegate_codeless_sender` is a no-op at execution. A
-    /// zero-target `Delegation` (a delegation clear) instead leaves the sender
-    /// code-less, so execution re-fires auto-delegation and charges a second
-    /// deposit (one for the clear entry itself, one for the auto-delegation); it
-    /// must NOT suppress budgeting here.
-    pub fn sender_auto_delegated(account_changes: &[AccountChange]) -> bool {
-        !account_changes.iter().any(|change| match change {
-            AccountChange::Create(_) => true,
-            AccountChange::Delegation(delegation) => !delegation.target.is_zero(),
-            AccountChange::ConfigChange(_) => false,
-        })
-    }
-
     /// Returns the canonical trusted delegation target set.
     pub fn default_trusted_delegation_targets() -> AddressSet {
         let mut targets = AddressSet::default();
@@ -1096,16 +1077,20 @@ where
 
         let (nonce_key_first_use, sender_nonce) =
             self.eip8130_nonce_state(&*state, local_chain_id, now, signed, sender, protocol_nonce)?;
-        // Conservatively assume auto-delegation fires unless the transaction itself
-        // leaves the sender with non-empty code (see `sender_auto_delegated`). This
-        // intentionally ignores the sender's current on-chain code state: a sender
-        // that is already delegated (has code) at admission time may lose its
-        // delegation before inclusion (e.g. via a native EIP-7702 revocation), so
-        // always budgeting `DELEGATION_DEPOSIT_COST` in `gas_limit` prevents a hard
-        // intrinsic-gas error at block production time. The overestimate is safe:
-        // if execution finds the sender already has code, `auto_delegate_codeless_sender`
-        // is a no-op and the reserved gas flows into execution gas instead.
-        let sender_auto_delegated = Self::sender_auto_delegated(&signed.tx().account_changes);
+        // Pin auto-delegation to the body-derivable worst case
+        // ([`IntrinsicGasInput::sender_auto_delegated`]), the *same* classifier the
+        // `eth_estimateGas` estimate uses. It intentionally ignores the sender's
+        // current on-chain code state: a sender already delegated (has code) at
+        // admission time may lose its delegation before inclusion (e.g. a native
+        // EIP-7702 revocation), so always budgeting `DELEGATION_DEPOSIT_COST` in
+        // `gas_limit` prevents a hard intrinsic-gas error at block production. The
+        // overestimate is safe: if execution finds the sender already has code,
+        // `auto_delegate_codeless_sender` is a no-op and the reserved gas flows into
+        // execution gas instead. Sharing the classifier with estimation keeps
+        // admission from exceeding the estimate (which would reject a
+        // `gas_limit == estimate` submission with `GasTooLow`).
+        let sender_auto_delegated =
+            IntrinsicGasInput::sender_auto_delegated(&signed.tx().account_changes);
         let encoded = self.eip8130_encoded(signed);
         // Admission uses the same safe ceiling as `eth_estimateGas`, so a tx whose
         // `gas_limit` was set from the estimate is never rejected here and can
@@ -3529,30 +3514,5 @@ mod tests {
         assert_eq!(state.payer, sender);
         assert_eq!(state.sender_bytecode_hash, Some(expected_hash));
         assert!(state.watch_set.iter().any(|key| *key == InvalidationKey::CodeHash(sender)));
-    }
-
-    #[test]
-    fn sender_auto_delegated_budgets_clear_delegation() {
-        // No account changes: a code-less sender is auto-delegated at execution,
-        // so the mempool must budget the deposit.
-        assert!(TestValidator::sender_auto_delegated(&[]));
-
-        // A zero-target `Delegation` (a clear) leaves the sender code-less at
-        // execution, so auto-delegation re-fires and charges a *second* deposit.
-        // The mempool must still budget it — matching xenoliss's reported case.
-        assert!(TestValidator::sender_auto_delegated(&[AccountChange::Delegation(Delegation {
-            target: Address::ZERO,
-        })]));
-
-        // A non-zero `Delegation` leaves the sender with code, so execution's
-        // `auto_delegate_codeless_sender` is a no-op — no auto-delegation deposit.
-        assert!(!TestValidator::sender_auto_delegated(&[AccountChange::Delegation(Delegation {
-            target: Address::repeat_byte(0x11),
-        })]));
-
-        // A `Create` installs code, so auto-delegation does not fire.
-        assert!(!TestValidator::sender_auto_delegated(&[AccountChange::Create(
-            make_valid_create_entry(),
-        )]));
     }
 }
