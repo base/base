@@ -82,9 +82,12 @@ impl BaseExecutionPayloadV4 {
 /// `MAX_TRANSACTIONS_PER_PAYLOAD` in the Ethereum consensus specs.
 pub const MAX_TRANSACTIONS_PER_PAYLOAD: usize = 1 << 20;
 
-/// The maximum number of withdrawals in an execution payload, per
-/// `MAX_WITHDRAWALS_PER_PAYLOAD` in the Ethereum consensus specs.
-pub const MAX_WITHDRAWALS_PER_PAYLOAD: usize = 1 << 4;
+/// The maximum number of withdrawals in a Base execution payload.
+///
+/// Base sets the withdrawals root directly and requires the SSZ `withdrawals`
+/// list to be present but empty (see [`BaseExecutionPayloadV4`]), so any
+/// non-empty list is invalid and is rejected during decode.
+pub const MAX_WITHDRAWALS_PER_PAYLOAD: usize = 0;
 
 /// SSZ `transactions` list bounded to [`MAX_TRANSACTIONS_PER_PAYLOAD`].
 ///
