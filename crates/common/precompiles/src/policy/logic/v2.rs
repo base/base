@@ -1,4 +1,4 @@
-//! Version 1 of the `PolicyRegistry` precompile logic, activated at Beryl.
+//! Version 2 of the `PolicyRegistry` precompile logic, activated at Cobalt.
 
 use alloc::vec::Vec;
 
