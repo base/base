@@ -78,14 +78,15 @@ pub struct IntrinsicGasInput {
     /// conservatively as `SSTORE` resets. Each such slot discounts the charge by
     /// the reset-vs-cold-noop delta ([`Eip8130GasSchedule::COLD_SLOT_RESET_DISCOUNT`]).
     ///
-    /// A revoke of the account's inline secp256k1 self key contributes 3 empty
-    /// slots when the inline self was ungated (empty `actor_config` and both policy
-    /// slots) and 1 when it was policy-gated (only `actor_config` is empty; the two
-    /// policy slots are real resets). The intrinsic computation bounds this hint by
-    /// three slots per charged revoke, preventing a mismatched caller from
-    /// discounting uncharged slots. A zero (unresolved) count leaves the
-    /// conservative reset price, so this can only reduce, never under-price, the
-    /// charge.
+    /// A revoke of the account's inline secp256k1 self key contributes one slot
+    /// per actually-empty slot: its `actor_config` is always empty, plus each
+    /// policy slot (`manager`, `commitment`) whose stored value is zero — 3 when
+    /// ungated (both policy slots unwritten) and 1 to 3 when policy-gated, since a
+    /// gated actor may still carry a zero manager and/or commitment. The intrinsic
+    /// computation bounds this hint by three slots per charged revoke, preventing a
+    /// mismatched caller from discounting uncharged slots. A zero (unresolved)
+    /// count leaves the conservative reset price, so this can only reduce, never
+    /// under-price, the charge.
     pub revoke_discount_slots: u32,
 }
 
@@ -121,6 +122,31 @@ impl IntrinsicGasInput {
     pub const fn with_revoke_discount_slots(mut self, revoke_discount_slots: u32) -> Self {
         self.revoke_discount_slots = revoke_discount_slots;
         self
+    }
+
+    /// Safe-ceiling input shared by the estimation (`eth_estimateGas` /
+    /// `eth_call`) and mempool-admission paths.
+    ///
+    /// It pins the non-monotonic, state-dependent costs to their worst case —
+    /// both policy gates charged (an extra `policy_manager` cold SLOAD each) and
+    /// zero revoke discount (every revoke slot priced as a full reset) — so a
+    /// `gas_limit` sized from the estimate can never be rejected at admission nor
+    /// OOG at inclusion. Execution ([`Self::with_policy_gates`] /
+    /// [`Self::with_revoke_discount_slots`] with resolved values) reprices these
+    /// precisely and can only meet or undercharge this ceiling.
+    ///
+    /// Defining the ceiling here keeps estimation and admission from silently
+    /// drifting apart: both must feed [`IntrinsicGas::compute`] the *same* pinned
+    /// input for the `estimate == admission >= execution` guarantee to hold.
+    #[must_use]
+    pub const fn worst_case(
+        nonce_key_first_use: bool,
+        sender_auto_delegated: bool,
+        has_payer: bool,
+    ) -> Self {
+        Self::new(nonce_key_first_use, sender_auto_delegated)
+            .with_policy_gates(true, has_payer)
+            .with_revoke_discount_slots(0)
     }
 }
 

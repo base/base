@@ -744,9 +744,11 @@ impl Eip8130Executor {
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
-                    &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated)
-                        .with_policy_gates(true, tx.payer.is_some())
-                        .with_revoke_discount_slots(0),
+                    &IntrinsicGasInput::worst_case(
+                        nonce_key_first_use,
+                        sender_auto_delegated,
+                        tx.payer.is_some(),
+                    ),
                     gas_limit,
                 )?;
 
