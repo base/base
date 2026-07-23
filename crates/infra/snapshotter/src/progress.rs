@@ -14,7 +14,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use human_bytes::human_bytes as format_bytes;
-use humantime::format_duration;
+use humantime::{FormattedDuration, format_duration};
 use tracing::{info, warn};
 
 /// Interval between periodic progress logs during long-running snapshot operations
@@ -37,6 +37,11 @@ impl ProgressDisplay {
     /// Formats completed and total byte counts with human-readable binary units.
     pub fn human_byte_progress(done: u64, total: u64) -> String {
         format!("{}/{}", format_bytes(done as f64), format_bytes(total as f64))
+    }
+
+    /// Formats a duration at whole-second precision for periodic progress logs.
+    pub fn duration(duration: Duration) -> FormattedDuration {
+        format_duration(Duration::from_secs(duration.as_secs()))
     }
 }
 
@@ -66,7 +71,7 @@ impl ArchiveProgress {
                 archive = %self.archive_name,
                 bytes = %ProgressDisplay::human_byte_progress(self.bytes_done, self.total_bytes),
                 progress = %format!("{}%", ProgressDisplay::percent(self.bytes_done, self.total_bytes)),
-                elapsed = %format_duration(self.started.elapsed()),
+                elapsed = %ProgressDisplay::duration(self.started.elapsed()),
                 "compressing archive"
             );
             self.last_log = Instant::now();
@@ -197,7 +202,7 @@ impl ComponentProgressLogger {
                     archives = %format!("{archives_done}/{}", state.total_archives),
                     progress = %format!("{}%", ProgressDisplay::percent(bytes_done, state.total_bytes)),
                     bytes = %ProgressDisplay::human_byte_progress(bytes_done, state.total_bytes),
-                    elapsed = %format_duration(state.started.elapsed()),
+                    elapsed = %ProgressDisplay::duration(state.started.elapsed()),
                     active_archives,
                     "compressing component"
                 );
@@ -407,14 +412,14 @@ impl UploadProgress {
                                         state.uploaded_bytes,
                                         state.total_bytes
                                     ),
-                                    format_duration(Duration::from_secs(state.idle_secs))
+                                    ProgressDisplay::duration(Duration::from_secs(state.idle_secs))
                                 )
                             })
                             .collect();
                         warn!(
                             files = %format!("{files_done}/{total_files}"),
                             bytes = %ProgressDisplay::human_byte_progress(done, total_bytes),
-                            stalled_for = %format_duration(stalled_at.elapsed()),
+                            stalled_for = %ProgressDisplay::duration(stalled_at.elapsed()),
                             active_uploads = active_count,
                             stalled_uploads = ?stalled_uploads,
                             "upload progress is stalled"
@@ -430,7 +435,7 @@ impl UploadProgress {
                     files = %format!("{files_done}/{total_files}"),
                     progress = %format!("{}%", ProgressDisplay::percent(done, total_bytes)),
                     bytes = %ProgressDisplay::human_byte_progress(done, total_bytes),
-                    elapsed = %format_duration(started.elapsed()),
+                    elapsed = %ProgressDisplay::duration(started.elapsed()),
                     active_uploads = active_count,
                     "uploading snapshot artifacts (progress)"
                 );
@@ -507,10 +512,18 @@ struct UploadFileSnapshot {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::ProgressDisplay;
 
     #[test]
     fn formats_byte_progress_with_binary_units() {
         assert_eq!(ProgressDisplay::human_byte_progress(1536, 2 * 1024 * 1024), "1.5 KiB/2 MiB");
+    }
+
+    #[test]
+    fn formats_durations_at_whole_second_precision() {
+        let duration = Duration::from_secs(5 * 60 + 3) + Duration::from_millis(241);
+        assert_eq!(ProgressDisplay::duration(duration).to_string(), "5m 3s");
     }
 }
