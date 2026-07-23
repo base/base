@@ -44,9 +44,7 @@ impl PolicyVersion {
 pub struct PolicyVersions;
 
 impl PolicyVersions {
-    /// Returns the version active at `upgrade`: [`PolicyVersion::V2`] from Cobalt onward,
-    /// [`PolicyVersion::V1`] from Beryl until Cobalt, or `None` before Beryl, where the
-    /// policy registry precompile is not installed at all.
+    /// Returns the version active at `upgrade`, or `None` before Beryl, where the policy
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
         if upgrade >= BaseUpgrade::Cobalt {
             Some(PolicyVersion::V2)

@@ -173,7 +173,6 @@ fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
 fn resolver_maps_forks_to_versions() {
     assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Azul), None);
     assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Beryl), Some(PolicyVersion::V1));
-    // V1 is active from Beryl until Cobalt, where V2 supersedes it.
     assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(PolicyVersion::V2));
 }
 
