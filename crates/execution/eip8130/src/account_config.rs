@@ -108,10 +108,14 @@ impl AccountConfigurationStorage<'_> {
     /// `(manager, commitment)`.
     ///
     /// Unlike the contract's `getPolicy` — a pure two-slot raw read — this gates
-    /// on the actor's live scope (via [`Self::resolve_actor_config`]). The result
-    /// matches `getPolicy` for every state the contract can produce, since the
-    /// write-time invariant keeps the slots non-zero iff `scope & SCOPE_POLICY`;
-    /// this is a resolver, not a 1:1 mirror, so for the raw reads use
+    /// on the actor's live scope (via [`Self::resolve_actor_config`]): an ungated
+    /// actor never has its policy slots written, so it resolves to `(0, 0)`. A
+    /// gated actor returns the raw slots, which may *themselves* be zero — a gated
+    /// actor may carry a zero `manager` and/or `commitment` (`slice_policy` writes
+    /// policy data verbatim); a zero `manager` simply gates the key to
+    /// `address(0)` (no productive target). So a `(0, 0)` result does not by
+    /// itself distinguish "ungated" from "gated with empty policy data". This is a
+    /// resolver, not a 1:1 mirror; for the raw reads use
     /// [`Self::get_policy_manager`] / [`Self::get_policy_commitment`].
     pub fn get_policy(&self, account: Address, actor_id: B256) -> Result<(Address, B256)> {
         let scope = self.resolve_actor_config(account, actor_id)?.scope;
@@ -135,11 +139,12 @@ impl AccountConfigurationStorage<'_> {
 
     /// Reads only the stored policy *commitment* slot for `(account, actor_id)`,
     /// the single-SLOAD read a policy manager performs to validate a dispatched
-    /// 8130 transaction against the actor's signed commitment. The
-    /// `_authorizeActor`/`_revokeActor` invariant is that this slot is non-zero
-    /// iff the actor has `SCOPE_POLICY` (across both self homes), so a
-    /// zero return unambiguously means "no policy / no actor". Mirrors
-    /// `AccountConfiguration.getPolicyCommitment`.
+    /// 8130 transaction against the actor's signed commitment. This is a raw slot
+    /// read: it is written (verbatim) only while the actor has `SCOPE_POLICY`, but
+    /// a gated actor may legitimately store a zero commitment (`slice_policy`
+    /// treats it as a valid "no parameters" value), so a zero return does **not**
+    /// by itself imply "no policy / no actor" — pair it with the actor's scope for
+    /// that distinction. Mirrors `AccountConfiguration.getPolicyCommitment`.
     pub fn get_policy_commitment(&self, account: Address, actor_id: B256) -> Result<B256> {
         self.policy_commitment.at(&actor_id).at(&account).read()
     }
