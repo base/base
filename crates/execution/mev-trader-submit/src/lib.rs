@@ -1,53 +1,26 @@
-//! Phase-B in-node MEV submit safe-prefix (rung-1 + rung-2, funds-0, dry-run).
-//!
-//! This crate is the Rust in-node port of the `TypeScript` verification prototypes
-//! `scripts/arb-dryrun/blink-unsigned-assembler.ts` (rung-1) and
-//! `scripts/arb-dryrun/rung2-ephemeral-signer.ts` (rung-2). It consumes the
-//! measurement-only [`base_mev_trader::BackrunPlan`] and produces:
-//!
-//! * **rung-1** ([`assembler`]) — the executor calldata for
-//!   `BlinkAtomicExecutor.executeBlinkOfaAtomic`, an unsigned EIP-1559 backrun
-//!   envelope, a structurally-invalid dummy-signature serialization, and the
-//!   two Blink OFA channel structures (inclusion + attribution). Assembly and
-//!   serialization ONLY — nothing is ever transmitted.
-//! * **rung-2** ([`signer`]) — a throwaway, in-memory, unfunded ephemeral k256
-//!   keypair that signs the rung-1 envelope once and is verified entirely
-//!   offline (ecrecover + field integrity). No key is ever loaded, persisted,
-//!   logged, or returned.
-//!
-//! ## Red-line (compile-time enforced)
-//!
-//! The default build compiles an empty lib: no dependency is resolved and no
-//! signer/submit code exists. The separate, default-off `presign` tier may be
-//! linked by the selected dormant node feature, but resolves only
-//! `alloy-primitives` and `sha2`; it exposes no assembler, signer, request,
-//! transport, or egress path. The `phase-b`/`arm` trees remain absent unless
-//! their own features are explicitly selected.
-//!
-//! The default, `phase-b`, and `presign` tiers contain no persistent-key loader
-//! or real submission sink; the phase-b e2e uses only a spawned loopback anvil.
-//! The separately gated `arm` tier owns the real key loader and signer core,
-//! while only `arm-live-egress` compiles the real network sink.
-//!
-//! The B5-1a `presign` feature is a separate, dormant tier: it compiles ONLY
-//! the pure, provider-free [`dormant`] value/digest surface (direct
-//! dependencies exactly `alloy-primitives` + `sha2`) and none of the phase-b/
-//! arm signer, assembler, candidate, or transport surface.
-
-// Crate-wide: no module (arm or otherwise) may forge an `unsafe` block. This is a
-// stronger seal than a per-module attribute — a sibling module cannot re-enable it.
+#![doc = "Feature-gated, fail-closed MEV transaction authority and submission tiers."]
 #![forbid(unsafe_code)]
 
-// Without `phase-b` none of the phase-b submit surface below exists. The gate
-// lives on each item (not on the crate root) so the dormant B5-1a `presign` tier
-// can compile without resolving any phase-b/arm dependency. The no-feature
-// default remains an empty lib with zero signer/submit code.
+// The default build resolves none of the optional submit dependencies. T4b
+// unsigned authority is separate from the phase-b signer and arm tiers.
 #[cfg(feature = "phase-b")]
 pub mod assembler;
-#[cfg(feature = "phase-b")]
+#[cfg(feature = "tx-authority")]
+mod calldata;
+#[cfg(feature = "tx-authority")]
 pub mod fee;
 #[cfg(feature = "phase-b")]
 pub mod signer;
+
+#[cfg(feature = "tx-authority")]
+mod tx_authority;
+#[cfg(feature = "tx-authority")]
+pub use tx_authority::{
+    DeployedContractIdentity, InstalledExecutionIdentity, ProtocolAdapterMapping,
+    SnapshotFreshnessToken, TxAuthorityAssembler, TxAuthorityError, TxAuthorityNodeError,
+    TxAuthorityNodeView, TxAuthorityStateRead, UnsignedTxShapeObservation,
+    ValidatedUnsignedAtomicTx,
+};
 
 // B3-arm tier — the real key loader + signer core + proof witness + transport
 // builders. Entered through this single line and gated behind `arm`; the default

@@ -90,6 +90,33 @@ pub trait BundleVisitor: Debug {
     ) -> Result<VisitControl, PortError>;
 }
 
+/// Checked account nonce values captured from one pending-state overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingAccountNonce {
+    original_nonce: u64,
+    current_nonce: u64,
+}
+
+impl PendingAccountNonce {
+    /// Constructs a coherent overlay nonce whose current value has not regressed.
+    pub fn checked(original_nonce: u64, current_nonce: u64) -> Result<Self, PortError> {
+        if current_nonce < original_nonce {
+            return Err(PortError::Incoherent);
+        }
+        Ok(Self { original_nonce, current_nonce })
+    }
+
+    /// Returns the account nonce before pending-state changes.
+    pub const fn original_nonce(&self) -> u64 {
+        self.original_nonce
+    }
+
+    /// Returns the account nonce after pending-state changes.
+    pub const fn current_nonce(&self) -> u64 {
+        self.current_nonce
+    }
+}
+
 /// Opaque, borrowed view of one immutable pending snapshot.
 pub trait PendingSnapshotView: Debug + Send + Sync {
     /// Returns the canonical parent hash used by pending execution.
@@ -106,6 +133,12 @@ pub trait PendingSnapshotView: Debug + Send + Sync {
 
     /// Returns the latest sealed pending header.
     fn latest_header(&self) -> Sealed<Header>;
+
+    /// Returns checked account nonce values from the pending overlay, when present.
+    fn pending_account_nonce(
+        &self,
+        address: Address,
+    ) -> Result<Option<PendingAccountNonce>, PortError>;
 
     /// Returns the transaction count in the latest pending block.
     fn latest_block_transaction_count(&self) -> usize;
@@ -196,6 +229,14 @@ impl SnapshotHandle {
     /// Returns the captured latest pending header.
     pub fn latest_header(&self) -> Sealed<Header> {
         self.view.latest_header()
+    }
+
+    /// Returns checked account nonce values from the captured pending overlay, when present.
+    pub fn pending_account_nonce(
+        &self,
+        address: Address,
+    ) -> Result<Option<PendingAccountNonce>, PortError> {
+        self.view.pending_account_nonce(address)
     }
 
     /// Returns the captured latest-block transaction count.
@@ -309,6 +350,13 @@ mod tests {
 
         fn latest_header(&self) -> Sealed<Header> {
             Sealed::new_unchecked(Header { number: 1, ..Default::default() }, B256::ZERO)
+        }
+
+        fn pending_account_nonce(
+            &self,
+            _address: Address,
+        ) -> Result<Option<PendingAccountNonce>, PortError> {
+            Ok(None)
         }
 
         fn latest_block_transaction_count(&self) -> usize {

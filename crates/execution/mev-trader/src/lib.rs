@@ -7,9 +7,9 @@ pub use blink_ingress::{
 };
 mod port;
 pub use port::{
-    BundleVisitor, PayloadVisitor, PendingSnapshotView, PortError, SnapshotCaptureCoordinator,
-    SnapshotHandle, SnapshotHandleFactory, TraderSnapshotPort, TransactionVisitor, VisitControl,
-    VisitSummary,
+    BundleVisitor, PayloadVisitor, PendingAccountNonce, PendingSnapshotView, PortError,
+    SnapshotCaptureCoordinator, SnapshotHandle, SnapshotHandleFactory, TraderSnapshotPort,
+    TransactionVisitor, VisitControl, VisitSummary,
 };
 
 mod frame;
@@ -50,9 +50,9 @@ pub use lifecycle::{
     DisableReason, GlobalLifecycle, GlobalState, HANG_GRACE_MILLIS, LatestSlot, LifecycleError,
     MAX_ACCOUNTS, MAX_CANDIDATES, MAX_CANONICAL_BYTES, MAX_CODE_BYTES, MAX_CODE_ENTRIES, MAX_PAIRS,
     MAX_PLANS_PER_FRAME, MAX_POOLS, MAX_PREFIX_TRANSACTIONS, MAX_STORAGE_SLOTS, MAX_TOTAL_TICKS,
-    MAX_V3_BITMAP_WORDS,
-    ShadowLatestSlot, ShadowSlotCounters, ShadowSubmit, SlotSubmit, SoleWorker, TaskRun,
-    TaskRunner, TaskState, Watchdog, WatchdogStatus, WorkCaps, WorkerClaim, WorkloadSize,
+    MAX_V3_BITMAP_WORDS, ShadowLatestSlot, ShadowSlotCounters, ShadowSubmit, SlotSubmit,
+    SoleWorker, TaskRun, TaskRunner, TaskState, Watchdog, WatchdogStatus, WorkCaps, WorkerClaim,
+    WorkloadSize,
 };
 mod oracle;
 pub use oracle::{
@@ -72,6 +72,10 @@ pub use pairwise::{
     SwapStep, TICK_MULTIPLIERS, V3QuoteResult, WETH,
 };
 mod runtime;
+#[cfg(feature = "t4b-shadow")]
+pub use runtime::{
+    CandidateAssemblyView, CandidateTxShapeObserver, T4bOutcome, T4bOutcomeCounters,
+};
 pub use runtime::{
     MevTraderRuntime, MevTraderRuntimeConfig, PoolCodeHashView, RuntimeInstallError,
     ShadowFrameMeasurement, ShadowOutcome, ShadowOutcomeCounters,

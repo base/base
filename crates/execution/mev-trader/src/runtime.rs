@@ -9,6 +9,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "t4b-shadow")]
+use std::{fmt::Debug, sync::atomic::AtomicBool};
+
+#[cfg(feature = "t4b-shadow")]
+use alloy_primitives::Bytes;
+
 use alloy_primitives::{Address, B256};
 use base_execution_chainspec::BaseChainSpec;
 use thiserror::Error;
@@ -24,6 +30,9 @@ use crate::{
     SoleWorker, TaskRun, TaskRunner, TaskState, TraderSnapshotPort, VictimFrame, Watchdog,
     WatchdogStatus, WorkerClaim,
 };
+
+#[cfg(feature = "t4b-shadow")]
+use crate::{PreparedPoolState, ProcessedFrame, SnapshotHandle};
 
 const TERMINAL_UNCLAIMED: u8 = 0;
 const TERMINAL_FRAME_BOUND: u8 = 1;
@@ -88,6 +97,119 @@ impl PoolCodeHashView {
         }
         authoritative()
     }
+}
+
+/// Borrowed same-frame authority inputs for one T4b unsigned-shape observation attempt.
+#[cfg(feature = "t4b-shadow")]
+#[derive(Debug)]
+pub struct CandidateAssemblyView<'a> {
+    snapshot: &'a SnapshotHandle,
+    processed: &'a ProcessedFrame,
+    prepared: &'a [PreparedPoolState],
+    plan: &'a BackrunPlan,
+    victim_raw: &'a Bytes,
+    probe: &'a CancellationProbe,
+}
+
+#[cfg(feature = "t4b-shadow")]
+impl<'a> CandidateAssemblyView<'a> {
+    /// Returns the captured pending snapshot authority.
+    pub const fn snapshot(&self) -> &'a SnapshotHandle {
+        self.snapshot
+    }
+
+    /// Returns the processed same-frame victim state.
+    pub const fn processed(&self) -> &'a ProcessedFrame {
+        self.processed
+    }
+
+    /// Returns the prepared pool states used by T4a selection.
+    pub const fn prepared(&self) -> &'a [PreparedPoolState] {
+        self.prepared
+    }
+
+    /// Returns the selected measurement-only T4a plan.
+    pub const fn plan(&self) -> &'a BackrunPlan {
+        self.plan
+    }
+
+    /// Returns the exact raw victim envelope bytes.
+    pub const fn victim_raw(&self) -> &'a Bytes {
+        self.victim_raw
+    }
+
+    /// Returns the shared T4a cancellation and deadline probe.
+    pub const fn probe(&self) -> &'a CancellationProbe {
+        self.probe
+    }
+}
+
+/// Terminal result of one selected-plan T4b observer attempt.
+#[cfg(feature = "t4b-shadow")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum T4bOutcome {
+    /// No T4a plan was available.
+    NoPlan,
+    /// Plan or frame binding validation failed.
+    PlanOrFrameRejected,
+    /// Same-frame route re-quotation failed.
+    RequoteRejected,
+    /// Deployed executor or adapter identity validation failed.
+    DeploymentIdentityRejected,
+    /// Node-local fee authority validation failed.
+    FeeAuthorityRejected,
+    /// A coherent snapshot-local nonce witness was unavailable.
+    NonceWitnessUnavailable,
+    /// Another unsigned-shape observation already holds the single guard.
+    ObservationBusy,
+    /// The nonce witness changed before shadow publication.
+    NonceWitnessStaleBeforePublish,
+    /// One validated unsigned transaction shape was selected.
+    SelectedUnsignedShape,
+    /// The captured snapshot was no longer authoritative at drain.
+    SnapshotStaleAtDrain,
+    /// The non-blocking shadow slot was busy.
+    ShadowDroppedBusy,
+    /// The shadow observer was closed.
+    ShadowClosed,
+    /// Shared cancellation stopped the attempt.
+    Cancelled,
+    /// The shared CPU deadline expired without a shape.
+    DeadlineNoShape,
+}
+
+/// Exactly-one terminal accounting for selected-plan T4b observer attempts.
+#[cfg(feature = "t4b-shadow")]
+#[derive(Debug, Default)]
+pub struct T4bOutcomeCounters {
+    counts: [AtomicU64; 14],
+}
+
+#[cfg(feature = "t4b-shadow")]
+impl T4bOutcomeCounters {
+    /// Records one terminal outcome for one observer call.
+    pub fn record(&self, outcome: T4bOutcome) {
+        self.counts[outcome as usize].fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Returns the count for one terminal outcome.
+    pub fn count(&self, outcome: T4bOutcome) -> u64 {
+        self.counts[outcome as usize].load(Ordering::Relaxed)
+    }
+}
+
+/// Read-only, non-blocking consumer of borrowed same-frame candidate authority.
+#[cfg(feature = "t4b-shadow")]
+pub trait CandidateTxShapeObserver: Debug + Send + Sync {
+    /// Attempts exactly one observation without retaining the borrowed view.
+    fn try_observe(&self, view: CandidateAssemblyView<'_>) -> T4bOutcome;
+
+    /// Drains at most one observer-owned detail from the existing control task.
+    fn drain_one(&self);
+
+    /// Closes and releases all observer-owned in-memory details.
+    fn close(&self);
 }
 
 /// Typed outcome of one measurement-only T4a frame.
@@ -214,10 +336,13 @@ impl From<LifecycleError> for RuntimeInstallError {
 }
 
 /// Exact empty-registry configuration used by the receive-only runtime.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "t4b-shadow"), derive(PartialEq, Eq))]
 pub struct MevTraderRuntimeConfig {
     registry: FixturePoolRegistry,
     universe: Option<PoolUniverseSnapshot>,
+    #[cfg(feature = "t4b-shadow")]
+    observer: Option<Arc<dyn CandidateTxShapeObserver>>,
 }
 
 impl MevTraderRuntimeConfig {
@@ -226,14 +351,31 @@ impl MevTraderRuntimeConfig {
         let descriptors = Vec::new();
         let digest = RegistryHasher::digest(&descriptors)?;
         let registry = FixturePoolRegistry::new(descriptors, digest)?;
-        Ok(Self { registry, universe: None })
+        Ok(Self {
+            registry,
+            universe: None,
+            #[cfg(feature = "t4b-shadow")]
+            observer: None,
+        })
     }
 
     /// Constructs an enabled measurement-only runtime from one validated immutable snapshot.
     pub fn shadow(snapshot: PoolUniverseSnapshot) -> Result<Self, RuntimeInstallError> {
         let descriptors = snapshot.descriptors().to_vec();
         let registry = FixturePoolRegistry::new(descriptors, snapshot.registry_digest())?;
-        Ok(Self { registry, universe: Some(snapshot) })
+        Ok(Self {
+            registry,
+            universe: Some(snapshot),
+            #[cfg(feature = "t4b-shadow")]
+            observer: None,
+        })
+    }
+
+    /// Installs the sole process-local T4b observer before runtime startup.
+    #[cfg(feature = "t4b-shadow")]
+    pub fn with_t4b_observer(mut self, observer: Arc<dyn CandidateTxShapeObserver>) -> Self {
+        self.observer = Some(observer);
+        self
     }
 
     /// Returns whether the measurement-only pool universe is disabled.
@@ -255,6 +397,10 @@ pub struct MevTraderRuntime {
     watchdog: Watchdog,
     counters: Arc<A1Counters>,
     shadow_outcomes: ShadowOutcomeCounters,
+    #[cfg(feature = "t4b-shadow")]
+    t4b_observer: Option<Arc<dyn CandidateTxShapeObserver>>,
+    #[cfg(feature = "t4b-shadow")]
+    t4b_observer_closed: AtomicBool,
     shutdown: Arc<RuntimeShutdown>,
     status: AtomicU8,
     generation: AtomicU64,
@@ -282,6 +428,10 @@ impl MevTraderRuntime {
             watchdog: Watchdog,
             counters: Arc::new(A1Counters::default()),
             shadow_outcomes: ShadowOutcomeCounters::default(),
+            #[cfg(feature = "t4b-shadow")]
+            t4b_observer: config.observer,
+            #[cfg(feature = "t4b-shadow")]
+            t4b_observer_closed: AtomicBool::new(false),
             shutdown: Arc::new(RuntimeShutdown::default()),
             status: AtomicU8::new(A1Status::Off as u8),
             generation: AtomicU64::new(0),
@@ -596,6 +746,18 @@ impl MevTraderRuntime {
                         return Ok((Some(processed), Some(measurement), None));
                     }
                 };
+                #[cfg(feature = "t4b-shadow")]
+                if let (Some(observer), Some(plan)) = (self.t4b_observer.as_ref(), plan.as_ref()) {
+                    let view = CandidateAssemblyView {
+                        snapshot: &snapshot,
+                        processed: &processed,
+                        prepared: &prepared,
+                        plan,
+                        victim_raw: &frame.raw_tx,
+                        probe,
+                    };
+                    let _ = observer.try_observe(view);
+                }
                 let outcome = if processed.dirty_pools().is_empty() {
                     ShadowOutcome::NoDirtyPools
                 } else if candidates.is_empty() {
@@ -732,6 +894,10 @@ impl MevTraderRuntime {
                 () = time::sleep(CONTROL_INTERVAL) => {},
             }
             self.inspect_watchdog();
+            #[cfg(feature = "t4b-shadow")]
+            if let Some(observer) = self.t4b_observer.as_ref() {
+                observer.drain_one();
+            }
             if let Some(measurement) = self.shadow.try_take() {
                 tracing::debug!(
                     block_number = measurement.context.block_number,
@@ -753,6 +919,15 @@ impl MevTraderRuntime {
     pub fn close(&self) {
         self.lifecycle.close();
         self.shadow.close();
+        #[cfg(feature = "t4b-shadow")]
+        if self
+            .t4b_observer_closed
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+            && let Some(observer) = self.t4b_observer.as_ref()
+        {
+            observer.close();
+        }
         if let Some((_, token)) =
             self.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref()
         {

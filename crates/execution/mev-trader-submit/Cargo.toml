@@ -18,13 +18,19 @@ workspace = true
 # feature is default-off and resolves only alloy-primitives + sha2; it adds no
 # signer, request, transport, or egress path.
 phase-b = [
+    "tx-authority",
+    "alloy-consensus/k256",
+    "dep:k256",
+    "dep:rand_08",
+]
+
+tx-authority = [
     "dep:base-mev-trader",
+    "base-mev-trader/t4b-shadow",
     "dep:alloy-consensus",
     "dep:alloy-eips",
     "dep:alloy-primitives",
     "dep:alloy-sol-types",
-    "dep:k256",
-    "dep:rand_08",
 ]
 
 # B3-arm tier: the real hot-wallet key loader + real signer core + proof witness +
@@ -56,7 +62,7 @@ presign = ["dep:alloy-primitives", "dep:sha2"]
 [dependencies]
 # All optional: each is pulled only by its owning explicit feature.
 base-mev-trader = { workspace = true, optional = true }
-alloy-consensus = { workspace = true, features = ["k256", "std"], optional = true }
+alloy-consensus = { workspace = true, features = ["std"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
 alloy-primitives = { workspace = true, features = ["std"], optional = true }
 alloy-sol-types = { workspace = true, features = ["std"], optional = true }
@@ -85,3 +91,4 @@ alloy-consensus = { workspace = true, features = ["k256", "std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true }
+reth-provider.workspace = true

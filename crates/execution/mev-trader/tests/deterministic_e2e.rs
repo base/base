@@ -63,6 +63,13 @@ impl PendingSnapshotView for FixtureView {
         )
     }
 
+    fn pending_account_nonce(
+        &self,
+        _address: Address,
+    ) -> Result<Option<base_mev_trader::PendingAccountNonce>, PortError> {
+        Ok(None)
+    }
+
     fn latest_block_transaction_count(&self) -> usize {
         1
     }

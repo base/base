@@ -414,6 +414,13 @@ pub(crate) mod test_utils {
             self.latest_header.lock().expect("fixture header lock").clone()
         }
 
+        fn pending_account_nonce(
+            &self,
+            _address: Address,
+        ) -> Result<Option<crate::PendingAccountNonce>, PortError> {
+            Ok(None)
+        }
+
         fn latest_block_transaction_count(&self) -> usize {
             0
         }
@@ -850,6 +857,13 @@ mod tests {
                 },
                 B256::with_last_byte(2),
             )
+        }
+
+        fn pending_account_nonce(
+            &self,
+            _address: Address,
+        ) -> Result<Option<crate::PendingAccountNonce>, PortError> {
+            Ok(None)
         }
 
         fn latest_block_transaction_count(&self) -> usize {

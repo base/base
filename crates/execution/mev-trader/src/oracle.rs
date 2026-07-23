@@ -223,6 +223,13 @@ mod tests {
             Sealed::new_unchecked(Header::default(), B256::ZERO)
         }
 
+        fn pending_account_nonce(
+            &self,
+            _address: Address,
+        ) -> Result<Option<crate::PendingAccountNonce>, PortError> {
+            Ok(None)
+        }
+
         fn latest_block_transaction_count(&self) -> usize {
             self.frozen_count
         }
