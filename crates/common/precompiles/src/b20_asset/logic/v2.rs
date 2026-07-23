@@ -1,9 +1,14 @@
 //! Version 2 scaffolding for the asset B-20 precompile, activated at Cobalt.
 //!
-//! This version initially delegates existing behavior to the frozen [`AssetV1`] via
-//! [`delegate_asset!`]. ERC-8056 behavior is introduced separately by overriding the
-//! interface defaults; those overrides are dropped from the delegation list and written by
-//! hand as the surface diverges from V1.
+//! This version delegates all existing behavior to the frozen [`AssetV1`] via [`delegate_asset!`].
+//! ERC-8056 behavior is introduced by a follow-up PR, which drops the diverging methods from the
+//! delegation list and supplies their real implementations through the macro's override section.
+//!
+//! In particular, `update_multiplier` is delegated to V1 here; a follow-up PR overrides it to
+//! clear any pending schedule and emit the ERC-8056 events (`MultiplierUpdateCancelled` /
+//! `UIMultiplierUpdated`). Delegating to V1 is behavior-correct on this scaffolding because no
+//! pending schedule can exist yet: `set_ui_multiplier` is a frozen default until that PR, so
+//! nothing can populate the pending slot for `update_multiplier` to clear.
 
 use crate::AssetV1;
 

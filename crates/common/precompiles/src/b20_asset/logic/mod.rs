@@ -18,14 +18,16 @@ pub use v1::AssetV1;
 /// Emits a fully-delegating [`Asset`] impl that forwards each listed method to a prior version.
 ///
 /// Every precompile version is a distinct, frozen [`Asset`] implementation. A version that only
-/// *adds* behavior (e.g. [`AssetV2`] at Cobalt) would otherwise restate the entire inherited
-/// surface verbatim just to forward it to the version it extends. This macro generates that
-/// forwarding from a single method-name list, so a version's module contains only the methods
-/// whose behavior actually diverges.
+/// *adds* behavior would otherwise restate the entire inherited surface verbatim just to forward
+/// it to the version it extends. This macro generates that forwarding from a single method-name
+/// list, so a version's module contains only the methods whose behavior actually diverges.
 ///
 /// `delegate_asset!(NewVersion => prior, { method_a, method_b, ... })` forwards each named method
 /// to `prior` (a unit-struct value such as [`AssetV1`]). A method the new version overrides is
-/// simply omitted from the list and written by hand in a separate `impl` block.
+/// omitted from the list and given its real implementation instead. Rust allows only one
+/// `impl Asset for` a given type, so an override cannot live in a second `impl` block; the macro
+/// gains an `overrides { ... }` section (spliced into this generated `impl`) in the follow-up PR
+/// that introduces the first diverging version.
 macro_rules! delegate_asset {
     ($target:ty => $to:expr, { $($method:ident),+ $(,)? }) => {
         impl<S: $crate::AssetAccounting, A: $crate::PolicyAccounting> $crate::Asset<S, A>

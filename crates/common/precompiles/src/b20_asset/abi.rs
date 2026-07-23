@@ -38,7 +38,7 @@ sol! {
         /// `setUIMultiplier` was called with an `effectiveAt` that is not in the future
         error EffectiveAtInPast(uint256 effectiveAt);
 
-        /// `setUIMultiplier` was called with an `effectiveAt` above`effectiveAt` field size
+        /// `setUIMultiplier` was called with an `effectiveAt` above the `effectiveAt` field size
         error EffectiveAtTooFar(uint256 effectiveAt);
 
         /// `setUIMultiplier` was called while a live pending update already exists.
