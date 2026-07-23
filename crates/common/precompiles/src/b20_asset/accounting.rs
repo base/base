@@ -12,6 +12,11 @@ use crate::TokenAccounting;
 /// Extra metadata entries are only exposed through the asset-token surface,
 /// not the base B-20 surface.
 pub trait AssetAccounting: TokenAccounting {
+    /// Returns the current block timestamp from the active storage context.
+    fn timestamp(&self) -> Result<U256> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
+
     /// Returns the current multiplier scaled to WAD (1e18).
     fn multiplier(&self) -> Result<U256>;
     /// Writes a new multiplier.

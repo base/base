@@ -309,6 +309,12 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = input.ident;
     Ok(quote! {
         impl crate::AssetAccounting for #name<'_> {
+            fn timestamp(
+                &self,
+            ) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
+                Ok(self.storage.timestamp())
+            }
+
             fn multiplier(
                 &self,
             ) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {

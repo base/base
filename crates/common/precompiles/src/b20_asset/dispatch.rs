@@ -579,6 +579,20 @@ mod tests {
         })
     }
 
+    fn call_asset_v2_at(
+        token: &mut TestAssetToken,
+        caller: Address,
+        now: U256,
+        calldata: Vec<u8>,
+    ) -> Result<Bytes> {
+        let mut storage = storage_with_caller(caller);
+        storage.set_timestamp(now);
+        token.accounting_mut().timestamp = now;
+        StorageCtx::enter(&mut storage, |ctx| {
+            token.route(ctx, calldata.as_ref(), AssetVersion::V2, false, NoopPrecompileCallObserver)
+        })
+    }
+
     fn batch_mint_calldata(recipients: Vec<Address>, amounts: Vec<U256>) -> Vec<u8> {
         IB20Asset::batchMintCall { recipients, amounts }.abi_encode()
     }
@@ -726,6 +740,70 @@ mod tests {
     }
 
     #[test]
+    fn route_v2_schedules_and_flips_multiplier_lazily() {
+        use alloy_sol_types::SolValue;
+
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        let target = B20AssetStorage::WAD * U256::from(3u64);
+        let effective_at = U256::from(1_000u64);
+
+        call_asset_v2_at(
+            &mut token,
+            ALICE,
+            U256::from(1u64),
+            IB20Asset::setUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
+                .abi_encode(),
+        )
+        .unwrap();
+
+        let before = call_asset_v2_at(
+            &mut token,
+            ALICE,
+            U256::from(999u64),
+            IB20Asset::multiplierCall {}.abi_encode(),
+        )
+        .unwrap();
+        assert_eq!(before, Bytes::from(B20AssetStorage::WAD.abi_encode()));
+
+        let after = call_asset_v2_at(
+            &mut token,
+            ALICE,
+            effective_at,
+            IB20Asset::multiplierCall {}.abi_encode(),
+        )
+        .unwrap();
+        assert_eq!(after, Bytes::from(target.abi_encode()));
+
+        let effective_at_read = call_asset_v2_at(
+            &mut token,
+            ALICE,
+            U256::from(1u64),
+            IB20Asset::effectiveAtCall {}.abi_encode(),
+        )
+        .unwrap();
+        assert_eq!(effective_at_read, Bytes::from(effective_at.abi_encode()));
+    }
+
+    #[test]
+    fn route_v2_supports_interface() {
+        use alloy_sol_types::SolValue;
+
+        let mut token = make_token();
+        let out = call_asset_v2_at(
+            &mut token,
+            ALICE,
+            U256::ZERO,
+            IB20Asset::supportsInterfaceCall {
+                interfaceId: alloy_primitives::FixedBytes::new([0x01, 0xff, 0xc9, 0xa7]),
+            }
+            .abi_encode(),
+        )
+        .unwrap();
+        assert_eq!(out, Bytes::from(true.abi_encode()));
+    }
+
+    #[test]
     fn route_v1_rejects_scheduled_selector_as_unknown() {
         let mut token = make_token();
         let calldata = IB20Asset::setUIMultiplierCall {
@@ -739,27 +817,6 @@ mod tests {
         assert_eq!(
             err,
             base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(selector)
-        );
-    }
-
-    #[test]
-    fn route_v2_reaches_erroring_default() {
-        let mut token = make_token();
-        let calldata = IB20Asset::setUIMultiplierCall {
-            newMultiplier: B20AssetStorage::WAD,
-            effectiveAt: U256::from(2u64),
-        }
-        .abi_encode();
-        let mut storage = storage_with_caller(ALICE);
-
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            token.route(ctx, &calldata, AssetVersion::V2, false, NoopPrecompileCallObserver)
-        })
-        .unwrap_err();
-
-        assert_eq!(
-            err,
-            base_precompile_storage::BasePrecompileError::UnknownFunctionSelector([0u8; 4])
         );
     }
 
