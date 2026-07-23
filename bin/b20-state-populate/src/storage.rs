@@ -43,7 +43,7 @@ pub fn b20_balance_slot(who: Address) -> B256 {
 pub const B20_INITIALIZED_SLOT: B256 =
     b256!("c78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed4843400e");
 
-/// Fixed address where the MockB20Asset EVM contract is deployed for benchmarking.
+/// Fixed address where the `MockB20Asset` EVM contract is deployed for benchmarking.
 pub const EVM_TOKEN_ADDRESS: Address = address!("b200000000000000000000000000000000000ee2");
 
 /// Deployed bytecode of `MockB20Asset` (compiled from `base-std`), embedded at build time.

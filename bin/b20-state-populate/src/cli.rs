@@ -50,7 +50,7 @@ pub struct PopulateArgs {
     #[arg(long, default_value = "1000000")]
     pub chunk_size: u64,
 
-    /// Also deploy the MockB20Asset EVM contract at a fixed address and populate it.
+    /// Also deploy the `MockB20Asset` EVM contract at a fixed address and populate it.
     #[arg(long)]
     pub evm_contract: bool,
 
@@ -73,7 +73,7 @@ pub struct PopulateArgs {
     #[arg(long)]
     pub sender_count: Option<u64>,
 
-    /// Also write synthetic EOA accounts to PlainAccountState + HashedAccounts + AccountsTrie.
+    /// Also write synthetic EOA accounts to `PlainAccountState` + `HashedAccounts` + `AccountsTrie`.
     /// The same `address_for_index(0..account_count)` addresses are used for token balances,
     /// making every account holder also a token holder (worst-case equal-depth trie test).
     #[arg(long)]
@@ -130,7 +130,7 @@ pub struct VerifyArgs {
     pub sender_count: Option<u64>,
 
     /// Only verify the pre-seeded sender balance slots, skipping the slow full
-    /// DupSort count; use this to quickly confirm sender balances are present.
+    /// `DupSort` count; use this to quickly confirm sender balances are present.
     #[arg(long)]
     pub senders_only: bool,
 }

@@ -234,10 +234,10 @@ impl Populator {
 
     /// Writes all `count` balance slots using a single-scan globally-sorted append.
     ///
-    /// Generates all (plain_slot, hashed_slot) pairs in one rayon parallel pass,
+    /// Generates all (`plain_slot`, `hashed_slot`) pairs in one rayon parallel pass,
     /// sorts each list independently, then writes each to the corresponding MDBX table
     /// in commit-sized chunks. Sequential sorted appends let MDBX extend leaf pages
-    /// linearly without B-tree splits, avoiding exponential ZFS CoW write amplification.
+    /// linearly without B-tree splits, avoiding exponential ZFS `CoW` (copy-on-write) write amplification.
     ///
     /// Memory: ~(count × 32 bytes) per table. For 700M entries, ~22 GB per table (44 GB
     /// total). Requires sufficient RAM; the machine must have ~50+ GB available.
@@ -491,7 +491,7 @@ impl Populator {
     /// Phase 1 of account writing: write synthetic EOA accounts to `PlainAccountState` only.
     ///
     /// Writing `HashedAccounts` here would require a sorted scan of all 469K existing leaf
-    /// pages per chunk (60 GB of ZFS CoW I/O, repeated 700 times = ~93 hours). Instead,
+    /// pages per chunk (60 GB of ZFS copy-on-write I/O, repeated 700 times = ~93 hours). Instead,
     /// `rebuild_hashed_accounts` does a single 16-pass scan of `PlainAccountState` to
     /// build `HashedAccounts` in ~9 minutes.
     fn write_plain_accounts(
@@ -544,7 +544,7 @@ impl Populator {
     /// Phase 2 of account writing: rebuild `HashedAccounts` by scanning `PlainAccountState`
     /// in 16 passes, one hash-space slice per pass.
     ///
-    /// Each pass only touches 1/16 of the existing mainnet pages (3.75 GB of CoW I/O), and
+    /// Each pass only touches 1/16 of the existing mainnet pages (3.75 GB of copy-on-write I/O), and
     /// distributes the 60 GB total over 16 passes instead of repeating it 700 times.
     /// Estimated total time: ~9 minutes vs ~93 hours for per-chunk writes.
     fn rebuild_hashed_accounts(db: &reth_db::DatabaseEnv) -> Result<()> {
