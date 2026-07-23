@@ -18,9 +18,9 @@ alloy-eips.workspace = true
 alloy-provider.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
-alloy-rpc-types-eth = { workspace = true, optional = true }
 alloy-trie = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, optional = true }
+alloy-rpc-types-eth = { workspace = true, optional = true }
 
 # Tx Manager
 base-tx-manager.workspace = true
@@ -31,10 +31,10 @@ base-balance-monitor.workspace = true
 # Proof
 base-proof-rpc.workspace = true
 base-proof-contracts.workspace = true
+base-proof-primitives.workspace = true
 base-proof-submission.workspace = true
 base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
-base-proof-primitives.workspace = true
 
 # Protocol
 base-protocol.workspace = true
