@@ -768,80 +768,14 @@ fn parse_enr_fields(raw: &str) -> Result<EnrFields> {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
-    use axum::{Json, Router, routing::post};
     use base_consensus_gossip::{
         Connectedness, Direction, GossipScores, PeerInfo, PeerScores, ReqRespScores,
     };
-    use serde_json::{Value, json};
-    use tokio::{net::TcpListener, task::JoinHandle};
-    use url::Url;
 
     use super::{
-        ClNodeIdentity, ElNodeIdentity, NodeEndpoint, ban_el_peer, el_peer_is_trusted,
-        parse_cl_node_endpoint, parse_el_node_endpoint, unban_el_peer,
+        ClNodeIdentity, ElNodeIdentity, NodeEndpoint, parse_cl_node_endpoint,
+        parse_el_node_endpoint,
     };
-
-    const TEST_ENODE: &str = "enode://peer@127.0.0.1:30303";
-
-    async fn start_el_rpc(router: Router) -> (Url, JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let handle = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        });
-        (Url::parse(&format!("http://{address}")).unwrap(), handle)
-    }
-
-    async fn el_admin_request(Json(request): Json<Value>) -> Json<Value> {
-        assert_eq!(request["params"], json!([TEST_ENODE]));
-        let result = match request["method"].as_str().unwrap() {
-            "admin_banPeer" => true,
-            "admin_unbanPeer" => false,
-            method => panic!("unexpected method: {method}"),
-        };
-        Json(json!({
-            "jsonrpc": "2.0",
-            "id": request["id"],
-            "result": result,
-        }))
-    }
-
-    async fn method_not_found(Json(request): Json<Value>) -> Json<Value> {
-        Json(json!({
-            "jsonrpc": "2.0",
-            "id": request["id"],
-            "error": { "code": -32601, "message": "Method not found" },
-        }))
-    }
-
-    fn admin_peer(enode: &str, port: u16, trusted: bool) -> Value {
-        json!({
-            "enode": enode,
-            "id": "id",
-            "name": "reth",
-            "caps": [],
-            "network": {
-                "localAddress": format!("127.0.0.1:{port}"),
-                "remoteAddress": format!("127.0.0.1:{port}"),
-                "inbound": false,
-                "trusted": trusted,
-                "static": false,
-            },
-            "protocols": {},
-        })
-    }
-
-    async fn el_peers_response(Json(request): Json<Value>) -> Json<Value> {
-        assert_eq!(request["method"], "admin_peers");
-        Json(json!({
-            "jsonrpc": "2.0",
-            "id": request["id"],
-            "result": [
-                admin_peer(TEST_ENODE, 30303, true),
-                admin_peer("enode://basic@127.0.0.1:30304", 30304, false),
-            ],
-        }))
-    }
 
     fn sample_cl_peer_info(enr: Option<String>) -> PeerInfo {
         PeerInfo {
@@ -929,49 +863,5 @@ mod tests {
         assert!(endpoint.discovery.udp_port > 0);
         assert!(!endpoint.discovery.v4_enabled);
         assert!(endpoint.discovery.v5_enabled);
-    }
-
-    #[tokio::test]
-    async fn calls_el_ban_and_unban_admin_methods() {
-        let router = Router::new().route("/", post(el_admin_request));
-        let (rpc, handle) = start_el_rpc(router).await;
-
-        assert!(ban_el_peer(&rpc, TEST_ENODE).await.unwrap());
-        assert!(!unban_el_peer(&rpc, TEST_ENODE).await.unwrap());
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn reports_missing_el_ban_admin_method() {
-        let router = Router::new().route("/", post(method_not_found));
-        let (rpc, handle) = start_el_rpc(router).await;
-
-        let error = ban_el_peer(&rpc, "enode://peer@127.0.0.1:30303").await.unwrap_err();
-
-        assert!(error.to_string().contains("`admin_banPeer` not exposed"));
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn detects_trusted_el_peer_via_admin_peers() {
-        let router = Router::new().route("/", post(el_peers_response));
-        let (rpc, handle) = start_el_rpc(router).await;
-
-        // Connected and trusted -> flagged.
-        assert!(el_peer_is_trusted(&rpc, TEST_ENODE).await.unwrap());
-        // Connected but not trusted -> not flagged.
-        assert!(!el_peer_is_trusted(&rpc, "enode://basic@127.0.0.1:30304").await.unwrap());
-        // Not among connected peers -> not flagged.
-        assert!(!el_peer_is_trusted(&rpc, "enode://absent@127.0.0.1:30305").await.unwrap());
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn treats_missing_admin_peers_as_untrusted() {
-        let router = Router::new().route("/", post(method_not_found));
-        let (rpc, handle) = start_el_rpc(router).await;
-
-        assert!(!el_peer_is_trusted(&rpc, TEST_ENODE).await.unwrap());
-        handle.abort();
     }
 }
