@@ -58,6 +58,8 @@ where
 {
     processor: EngineProcessor<EngineClient_, DerivationClient>,
     shadow_gate: Option<ShadowReconciliationGate>,
+    /// Whether the engine has started private work that depends on the gate's current anchor.
+    shadow_build_active: bool,
 }
 
 impl<EngineClient_, DerivationClient> EngineRequestHandler<EngineClient_, DerivationClient>
@@ -70,7 +72,7 @@ where
         processor: EngineProcessor<EngineClient_, DerivationClient>,
         shadow_gate: Option<ShadowReconciliationGate>,
     ) -> Self {
-        Self { processor, shadow_gate }
+        Self { processor, shadow_gate, shadow_build_active: false }
     }
 }
 
@@ -924,6 +926,9 @@ where
                             .await;
                         match build_result {
                             Ok(payload_id) => {
+                                if self.shadow_gate.is_some() {
+                                    self.shadow_build_active = true;
+                                }
                                 result_tx
                                     .send(Ok(payload_id))
                                     .await
@@ -1034,6 +1039,7 @@ where
                         };
                         if let Ok(Some(head)) = &result {
                             self.shadow_gate.as_mut().expect("gate checked").commit(*head);
+                            self.shadow_build_active = false;
                         }
                         let failure = result.as_ref().err().map(ToString::to_string);
                         if result_tx.send(result).await.is_err() {
@@ -1045,6 +1051,7 @@ where
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
                         let ResetRequest { result_tx, shadow_cycle_coordinated } = *reset_request;
+                        let shadow_build_was_active = self.shadow_build_active;
                         // Do not reset the engine while the EL is still syncing. A Reset sends a
                         // forkchoice_updated to reth pointing at the sync-start block, which will
                         // return Valid and cause reth to set that stale block as canonical,
@@ -1065,6 +1072,7 @@ where
                             if let Some(gate) = self.shadow_gate.as_mut() {
                                 gate.reanchor(anchor);
                             }
+                            self.shadow_build_active = false;
                             if let Some(unsafe_head_tx) = self.processor.unsafe_head_tx.as_ref() {
                                 unsafe_head_tx.send_replace(anchor);
                             }
@@ -1099,10 +1107,7 @@ where
                             // return the error.
                             reset_res?;
                         }
-                        if reset_succeeded
-                            && self.shadow_gate.is_some()
-                            && !shadow_cycle_coordinated
-                        {
+                        if reset_succeeded && shadow_build_was_active && !shadow_cycle_coordinated {
                             return Err(EngineError::ShadowInternalReset);
                         }
                     }
@@ -1120,7 +1125,7 @@ mod tests {
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash, eip2718::Encodable2718};
     use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
     use alloy_rpc_types_engine::{
-        ExecutionPayloadV1, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
+        ExecutionPayloadV1, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
     };
     use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};
     use async_trait::async_trait;
@@ -1695,6 +1700,124 @@ mod tests {
         assert!(
             !matches!(result, Err(super::EngineError::ShadowInternalReset)),
             "shadow node must survive the initial EL-sync reset, got: {result:?}"
+        );
+    }
+
+    /// Regression test for shadow startup reset ordering. A recovery reset before the first
+    /// successful private build must be tolerated, while the same uncoordinated reset after a
+    /// build starts must remain fatal.
+    #[tokio::test]
+    async fn shadow_reset_is_fatal_only_during_private_build() {
+        let (genesis_block, genesis_hash) = make_genesis_block();
+        let cfg = Arc::new(RollupConfig {
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 0, hash: genesis_hash },
+                l1: BlockNumHash { number: 0, hash: B256::ZERO },
+                system_config: Some(SystemConfig::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let genesis_l2_info = L2BlockInfo {
+            block_info: BlockInfo { hash: genesis_hash, ..Default::default() },
+            ..Default::default()
+        };
+        let build_fcu =
+            ForkchoiceUpdated { payload_id: Some(PayloadId::new([1; 8])), ..valid_fcu() };
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_config(Arc::clone(&cfg))
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, genesis_l2_info)
+                .with_l2_block(BlockId::Number(BlockNumberOrTag::Finalized), genesis_block.clone())
+                .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), genesis_block.clone())
+                .with_l1_block(BlockId::from(B256::ZERO), RpcBlock::default())
+                .with_fork_choice_updated_v2_response(build_fcu.clone())
+                .with_fork_choice_updated_v3_response(build_fcu)
+                .with_l1_block(BlockId::from(0u64), RpcBlock::default())
+                .with_l2_block(BlockId::from(genesis_hash), genesis_block)
+                .build(),
+        );
+
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        mock_derivation.expect_send_signal().returning(|_| Ok(()));
+
+        let (state_tx, state_rx) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            cfg,
+            mock_derivation,
+            engine,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Sequencer,
+                unsafe_head_tx: Some(unsafe_head_tx),
+                conductor: None,
+                sequencer_stopped: false,
+            },
+        );
+        let gate = super::ShadowReconciliationGate::new(L2BlockInfo::default());
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle = EngineRequestHandler::new(processor, Some(gate)).start(req_rx);
+
+        state_rx
+            .clone()
+            .wait_for(|state| state.el_sync_finished)
+            .await
+            .expect("state channel closed before bootstrap completed");
+
+        for shadow_cycle_coordinated in [false, true] {
+            let (result_tx, mut result_rx) = mpsc::channel(1);
+            req_tx
+                .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                    result_tx,
+                    shadow_cycle_coordinated,
+                })))
+                .await
+                .expect("failed to send reset request");
+            result_rx
+                .recv()
+                .await
+                .expect("handler exited after pre-build reset")
+                .expect("pre-build reset failed");
+        }
+
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        req_tx
+            .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
+                attributes: TestAttributesBuilder::new().with_parent(genesis_l2_info).build(),
+                result_tx,
+                otel_cx: opentelemetry::Context::new(),
+            })))
+            .await
+            .expect("failed to send private build request");
+        result_rx
+            .recv()
+            .await
+            .expect("handler exited before private build response")
+            .expect("private build failed");
+
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        req_tx
+            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                result_tx,
+                shadow_cycle_coordinated: false,
+            })))
+            .await
+            .expect("failed to send reset during private build");
+        result_rx
+            .recv()
+            .await
+            .expect("handler exited before reset response")
+            .expect("reset during private build failed");
+
+        let result = handle.await.expect("engine task panicked");
+        assert!(
+            matches!(result, Err(super::EngineError::ShadowInternalReset)),
+            "uncoordinated reset during private work must terminate shadow handling, got: {result:?}"
         );
     }
 
