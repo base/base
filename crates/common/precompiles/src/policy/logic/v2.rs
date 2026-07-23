@@ -13,7 +13,7 @@ use crate::{
 
 /// First `PolicyRegistry` implementation. Frozen as of its activation at Beryl.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct PolicyRegistryV1;
+pub struct PolicyRegistryV2;
 
 impl PolicyRegistryV1 {
     /// Built-in policy ID that always authorizes every account.
