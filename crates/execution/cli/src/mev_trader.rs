@@ -25,6 +25,10 @@ use base_mev_trader::{
     CandidateAssemblyView, CandidateTxShapeObserver, ShadowLatestSlot, ShadowSubmit, T4bOutcome,
     T4bOutcomeCounters,
 };
+#[cfg(feature = "t4d-shadow")]
+use mev_trader_submit::{
+    AdapterAwareProofBindings, BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate,
+};
 #[cfg(feature = "t4b-shadow")]
 use mev_trader_submit::{
     SnapshotFreshnessToken, TxAuthorityAssembler, TxAuthorityError, TxAuthorityNodeError,
@@ -241,6 +245,7 @@ pub struct BaseNodeTraderConfig {
     credential_file: Option<OsString>,
     t4a_shadow: bool,
     t4b_shadow: bool,
+    t4d_shadow: bool,
 }
 
 impl BaseNodeTraderConfig {
@@ -252,7 +257,7 @@ impl BaseNodeTraderConfig {
     fn t4a_shadow_enabled() -> bool {
         #[cfg(feature = "t4a-shadow")]
         {
-            return Self::enabled(std::env::var_os("MEV_TRADER_T4A_SHADOW").as_deref());
+            Self::enabled(std::env::var_os("MEV_TRADER_T4A_SHADOW").as_deref())
         }
         #[cfg(not(feature = "t4a-shadow"))]
         {
@@ -263,9 +268,19 @@ impl BaseNodeTraderConfig {
     fn t4b_shadow_enabled() -> bool {
         #[cfg(feature = "t4b-shadow")]
         {
-            return Self::enabled(std::env::var_os("MEV_TRADER_T4B_SHADOW").as_deref());
+            Self::enabled(std::env::var_os("MEV_TRADER_T4B_SHADOW").as_deref())
         }
         #[cfg(not(feature = "t4b-shadow"))]
+        {
+            false
+        }
+    }
+    fn t4d_shadow_enabled() -> bool {
+        #[cfg(feature = "t4d-shadow")]
+        {
+            Self::enabled(std::env::var_os("MEV_TRADER_T4D_SHADOW").as_deref())
+        }
+        #[cfg(not(feature = "t4d-shadow"))]
         {
             false
         }
@@ -286,13 +301,14 @@ impl BaseNodeTraderConfig {
             credential_file,
             t4a_shadow: Self::t4a_shadow_enabled(),
             t4b_shadow: Self::t4b_shadow_enabled(),
+            t4d_shadow: Self::t4d_shadow_enabled(),
         })
     }
 
     /// Creates the sole snapshot subscription and receive-only A1 runtime.
     pub fn start_idle(self) -> eyre::Result<BaseNodeTraderStart> {
-        if self.t4b_shadow {
-            eyre::bail!("T4b shadow authority requires the in-process node provider");
+        if self.t4b_shadow || self.t4d_shadow {
+            eyre::bail!("selected shadow authority requires the in-process node provider");
         }
         let runtime_config = t4a_runtime_config(self.t4a_shadow)?;
         self.start_with_runtime_config(runtime_config)
@@ -305,6 +321,17 @@ impl BaseNodeTraderConfig {
     ) -> eyre::Result<BaseNodeTraderStart> {
         if !self.t4a_shadow || !self.t4b_shadow {
             eyre::bail!("T4b shadow requires exact T4a and T4b opt-in");
+        }
+        let runtime_config = t4a_runtime_config(true)?.with_t4b_observer(observer);
+        self.start_with_runtime_config(runtime_config)
+    }
+    #[cfg(feature = "t4d-shadow")]
+    fn start_with_t4d_observer(
+        self,
+        observer: Arc<dyn CandidateTxShapeObserver>,
+    ) -> eyre::Result<BaseNodeTraderStart> {
+        if !self.t4a_shadow || !self.t4b_shadow || !self.t4d_shadow {
+            eyre::bail!("T4d shadow requires exact T4a, T4b, and T4d opt-in");
         }
         let runtime_config = t4a_runtime_config(true)?.with_t4b_observer(observer);
         self.start_with_runtime_config(runtime_config)
@@ -399,7 +426,21 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                 node.provider().clone(),
             ));
             #[cfg(feature = "t4b-shadow")]
-            let start = if self.config.t4b_shadow {
+            let start = if self.config.t4d_shadow {
+                #[cfg(feature = "t4d-shadow")]
+                {
+                    if !self.config.t4a_shadow || !self.config.t4b_shadow {
+                        eyre::bail!("T4d shadow requires exact T4a, T4b, and T4d opt-in");
+                    }
+                    let observer =
+                        t4d_shadow::observer(Arc::clone(&port), chain_spec.chain().id())?;
+                    self.config.start_with_t4d_observer(observer)?
+                }
+                #[cfg(not(feature = "t4d-shadow"))]
+                {
+                    unreachable!("T4d opt-in is unavailable without the compiled feature")
+                }
+            } else if self.config.t4b_shadow {
                 let observer =
                     t4b_shadow::observer(Arc::clone(&port), chain_spec.chain().id())?;
                 self.config.start_with_t4b_observer(observer)?
@@ -409,7 +450,8 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
             #[cfg(not(feature = "t4b-shadow"))]
             let start = self.config.start_idle()?;
             let BaseNodeTraderStart { mut receiver, runtime, client } = start;
-            let consumer_port: Arc<dyn TraderSnapshotPort> = port.clone();
+            let concrete_consumer_port = Arc::clone(&port);
+            let consumer_port: Arc<dyn TraderSnapshotPort> = concrete_consumer_port;
             let executor = node.task_executor;
             let startup_status = runtime.a1_status();
             let registry_empty = runtime.registry_is_empty();
@@ -854,7 +896,14 @@ mod t4a_provisioning {
 mod t4b_shadow {
     use std::sync::{Arc, Weak};
 
-    use super::*;
+    use super::{
+        AccountReader, Address, B256, BlockReaderIdExt, BytecodeReader, CandidateAssemblyView,
+        CandidateTxShapeObserver, CliTraderSnapshotPort, Debug, Header, HeaderProvider,
+        PendingSnapshotRecord, ShadowLatestSlot, ShadowSubmit, SnapshotFreshnessToken,
+        SnapshotHandle, StateProviderFactory, T4bOutcome, T4bOutcomeCounters, TraderSnapshotPort,
+        TxAuthorityAssembler, TxAuthorityError, TxAuthorityNodeError, TxAuthorityNodeView,
+        TxAuthorityStateRead, ValidatedUnsignedAtomicTx,
+    };
 
     #[derive(Debug)]
     struct CliSnapshotFreshness<Provider> {
@@ -986,26 +1035,22 @@ mod t4b_shadow {
         counters: T4bOutcomeCounters,
     }
 
-    impl T4bShadowAuthority {
-        fn outcome(error: TxAuthorityError) -> T4bOutcome {
-            match error {
-                TxAuthorityError::PlanOrFrameRejected | TxAuthorityError::AssemblyRejected => {
-                    T4bOutcome::PlanOrFrameRejected
-                }
-                TxAuthorityError::FeeAuthorityRejected => T4bOutcome::FeeAuthorityRejected,
-                TxAuthorityError::RequoteRejected => T4bOutcome::RequoteRejected,
-                TxAuthorityError::DeploymentIdentityRejected => {
-                    T4bOutcome::DeploymentIdentityRejected
-                }
-                TxAuthorityError::NonceWitnessUnavailable => T4bOutcome::NonceWitnessUnavailable,
-                TxAuthorityError::ObservationBusy => T4bOutcome::ObservationBusy,
-                TxAuthorityError::NonceWitnessStaleBeforePublish => {
-                    T4bOutcome::NonceWitnessStaleBeforePublish
-                }
-                TxAuthorityError::SnapshotStaleAtDrain => T4bOutcome::SnapshotStaleAtDrain,
-                TxAuthorityError::Cancelled => T4bOutcome::Cancelled,
-                TxAuthorityError::DeadlineNoShape => T4bOutcome::DeadlineNoShape,
+    pub(super) const fn outcome(error: TxAuthorityError) -> T4bOutcome {
+        match error {
+            TxAuthorityError::PlanOrFrameRejected | TxAuthorityError::AssemblyRejected => {
+                T4bOutcome::PlanOrFrameRejected
             }
+            TxAuthorityError::FeeAuthorityRejected => T4bOutcome::FeeAuthorityRejected,
+            TxAuthorityError::RequoteRejected => T4bOutcome::RequoteRejected,
+            TxAuthorityError::DeploymentIdentityRejected => T4bOutcome::DeploymentIdentityRejected,
+            TxAuthorityError::NonceWitnessUnavailable => T4bOutcome::NonceWitnessUnavailable,
+            TxAuthorityError::ObservationBusy => T4bOutcome::ObservationBusy,
+            TxAuthorityError::NonceWitnessStaleBeforePublish => {
+                T4bOutcome::NonceWitnessStaleBeforePublish
+            }
+            TxAuthorityError::SnapshotStaleAtDrain => T4bOutcome::SnapshotStaleAtDrain,
+            TxAuthorityError::Cancelled => T4bOutcome::Cancelled,
+            TxAuthorityError::DeadlineNoShape => T4bOutcome::DeadlineNoShape,
         }
     }
 
@@ -1021,7 +1066,7 @@ mod t4b_shadow {
                         T4bOutcome::ShadowClosed
                     }
                 },
-                Err(error) => Self::outcome(error),
+                Err(error) => outcome(error),
             };
             if outcome != T4bOutcome::SelectedUnsignedShape {
                 self.counters.record(outcome);
@@ -1071,6 +1116,22 @@ mod t4b_shadow {
             }
         }
     }
+    pub(super) fn node_view<Provider>(
+        port: Arc<CliTraderSnapshotPort<Provider>>,
+        chain_id: u64,
+    ) -> Arc<dyn TxAuthorityNodeView>
+    where
+        Provider: StateProviderFactory
+            + HeaderProvider<Header = Header>
+            + BlockReaderIdExt
+            + Clone
+            + Debug
+            + Send
+            + Sync
+            + 'static,
+    {
+        Arc::new(T4bNodeView { port, chain_id })
+    }
 
     pub(super) fn observer<Provider>(
         port: Arc<CliTraderSnapshotPort<Provider>>,
@@ -1086,7 +1147,7 @@ mod t4b_shadow {
             + Sync
             + 'static,
     {
-        let node: Arc<dyn TxAuthorityNodeView> = Arc::new(T4bNodeView { port, chain_id });
+        let node = node_view(port, chain_id);
         let assembler = TxAuthorityAssembler::base_mainnet(node)?;
         Ok(Arc::new(T4bShadowAuthority {
             assembler,
@@ -1096,6 +1157,194 @@ mod t4b_shadow {
     }
 }
 
+#[cfg(feature = "t4d-shadow")]
+mod t4d_shadow {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
+
+    use super::{
+        AdapterAwareProofBindings, BlockReaderIdExt, BridgeError, CandidateAssemblyView,
+        CandidateTxShapeObserver, CliTraderSnapshotPort, Debug, Header, HeaderProvider,
+        InstalledSubmissionBridge, SealedUnsignedCandidate, ShadowLatestSlot, ShadowSubmit,
+        StateProviderFactory, T4bOutcome, T4bOutcomeCounters, TxAuthorityError, t4b_shadow,
+    };
+
+    #[derive(Debug, Clone, Copy)]
+    pub(super) enum T4dTerminal {
+        SealedFresh,
+        AssemblyRejected,
+        BindingRejected,
+        CrossInstallation,
+        SnapshotStale,
+        ExecutionStale,
+        Cancelled,
+        DeadlineNoHandoff,
+        ShadowBusy,
+        ShadowClosed,
+    }
+
+    #[derive(Debug, Default)]
+    struct T4dTerminalCounters {
+        sealed_fresh: AtomicU64,
+        assembly_rejected: AtomicU64,
+        binding_rejected: AtomicU64,
+        cross_installation: AtomicU64,
+        snapshot_stale: AtomicU64,
+        execution_stale: AtomicU64,
+        cancelled: AtomicU64,
+        deadline_no_handoff: AtomicU64,
+        shadow_busy: AtomicU64,
+        shadow_closed: AtomicU64,
+    }
+
+    impl T4dTerminalCounters {
+        fn record(&self, terminal: T4dTerminal) {
+            let counter = match terminal {
+                T4dTerminal::SealedFresh => &self.sealed_fresh,
+                T4dTerminal::AssemblyRejected => &self.assembly_rejected,
+                T4dTerminal::BindingRejected => &self.binding_rejected,
+                T4dTerminal::CrossInstallation => &self.cross_installation,
+                T4dTerminal::SnapshotStale => &self.snapshot_stale,
+                T4dTerminal::ExecutionStale => &self.execution_stale,
+                T4dTerminal::Cancelled => &self.cancelled,
+                T4dTerminal::DeadlineNoHandoff => &self.deadline_no_handoff,
+                T4dTerminal::ShadowBusy => &self.shadow_busy,
+                T4dTerminal::ShadowClosed => &self.shadow_closed,
+            };
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[derive(Debug)]
+    pub(super) struct T4dShadowAuthority {
+        bridge: InstalledSubmissionBridge,
+        slot: ShadowLatestSlot<SealedUnsignedCandidate>,
+        t4b_counters: T4bOutcomeCounters,
+        terminal_counters: T4dTerminalCounters,
+    }
+
+    impl T4dShadowAuthority {
+        pub(super) const fn bridge_error(error: BridgeError) -> (T4bOutcome, T4dTerminal) {
+            match error {
+                BridgeError::Assembly(TxAuthorityError::ObservationBusy) => {
+                    (T4bOutcome::ObservationBusy, T4dTerminal::ShadowBusy)
+                }
+                BridgeError::Assembly(error) => {
+                    (t4b_shadow::outcome(error), T4dTerminal::AssemblyRejected)
+                }
+                BridgeError::BindingRejected => {
+                    (T4bOutcome::DeploymentIdentityRejected, T4dTerminal::BindingRejected)
+                }
+                BridgeError::CrossInstallation => {
+                    (T4bOutcome::DeploymentIdentityRejected, T4dTerminal::CrossInstallation)
+                }
+                BridgeError::SnapshotStale => {
+                    (T4bOutcome::SnapshotStaleAtDrain, T4dTerminal::SnapshotStale)
+                }
+                BridgeError::ExecutionFreshnessUnavailable
+                | BridgeError::ExecutionIdentityChanged => {
+                    (T4bOutcome::DeploymentIdentityRejected, T4dTerminal::ExecutionStale)
+                }
+                BridgeError::Cancelled => (T4bOutcome::Cancelled, T4dTerminal::Cancelled),
+                BridgeError::DeadlineNoHandoff => {
+                    (T4bOutcome::DeadlineNoShape, T4dTerminal::DeadlineNoHandoff)
+                }
+            }
+        }
+
+        fn record(&self, outcome: T4bOutcome, terminal: T4dTerminal) {
+            self.t4b_counters.record(outcome);
+            self.terminal_counters.record(terminal);
+        }
+
+        fn observe_bounded_bindings(bindings: &AdapterAwareProofBindings) {
+            tracing::debug!(
+                bindings = ?bindings,
+                "drained T4d bounded bindings"
+            );
+        }
+    }
+
+    impl CandidateTxShapeObserver for T4dShadowAuthority {
+        fn try_observe(&self, view: CandidateAssemblyView<'_>) -> T4bOutcome {
+            let candidate = match self.bridge.assemble_sealed(view) {
+                Ok(candidate) => candidate,
+                Err(error) => {
+                    let (outcome, terminal) = Self::bridge_error(error);
+                    self.record(outcome, terminal);
+                    return outcome;
+                }
+            };
+            match self.slot.try_submit(candidate) {
+                ShadowSubmit::Accepted => T4bOutcome::SelectedUnsignedShape,
+                ShadowSubmit::ReplacedOldUnobserved => {
+                    self.slot.close();
+                    self.record(T4bOutcome::ShadowClosed, T4dTerminal::ShadowClosed);
+                    T4bOutcome::ShadowClosed
+                }
+                ShadowSubmit::DroppedBusy => {
+                    self.record(T4bOutcome::ShadowDroppedBusy, T4dTerminal::ShadowBusy);
+                    T4bOutcome::ShadowDroppedBusy
+                }
+                ShadowSubmit::Closed => {
+                    self.record(T4bOutcome::ShadowClosed, T4dTerminal::ShadowClosed);
+                    T4bOutcome::ShadowClosed
+                }
+            }
+        }
+
+        fn drain_one(&self) {
+            let Some(candidate) = self.slot.try_take() else {
+                return;
+            };
+            match self.bridge.revalidate_for_handoff(&candidate) {
+                Ok(bindings) => {
+                    Self::observe_bounded_bindings(bindings);
+                    self.record(T4bOutcome::SelectedUnsignedShape, T4dTerminal::SealedFresh);
+                }
+                Err(error) => {
+                    let (outcome, terminal) = Self::bridge_error(error);
+                    self.record(outcome, terminal);
+                }
+            }
+        }
+
+        fn close(&self) {
+            let before = self.slot.counters().shutdown_dropped();
+            self.slot.close();
+            let after = self.slot.counters().shutdown_dropped();
+            if after > before {
+                self.record(T4bOutcome::ShadowClosed, T4dTerminal::ShadowClosed);
+            }
+        }
+    }
+
+    pub(super) fn observer<Provider>(
+        port: Arc<CliTraderSnapshotPort<Provider>>,
+        chain_id: u64,
+    ) -> Result<Arc<dyn CandidateTxShapeObserver>, BridgeError>
+    where
+        Provider: StateProviderFactory
+            + HeaderProvider<Header = Header>
+            + BlockReaderIdExt
+            + Clone
+            + Debug
+            + Send
+            + Sync
+            + 'static,
+    {
+        let node = t4b_shadow::node_view(port, chain_id);
+        let bridge = InstalledSubmissionBridge::base_mainnet(node)?;
+        Ok(Arc::new(T4dShadowAuthority {
+            bridge,
+            slot: ShadowLatestSlot::new(),
+            t4b_counters: T4bOutcomeCounters::default(),
+            terminal_counters: T4dTerminalCounters::default(),
+        }))
+    }
+}
 fn t4a_runtime_config(enabled: bool) -> eyre::Result<MevTraderRuntimeConfig> {
     #[cfg(feature = "t4a-shadow")]
     if enabled {
@@ -1258,5 +1507,71 @@ mod tests {
         assert_eq!(drops.load(Ordering::Relaxed), 3);
         assert_eq!(slot.try_submit(DropProbe(Arc::clone(&drops))), ShadowSubmit::Closed);
         assert_eq!(drops.load(Ordering::Relaxed), 4);
+    }
+    #[cfg(feature = "t4d-shadow")]
+    #[test]
+    fn t4d_shadow_drain_observes_only_bounded_bindings_and_drops_linear_candidate() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        #[derive(Debug)]
+        struct LinearCandidate(Arc<AtomicU64>);
+
+        impl Drop for LinearCandidate {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        const CLI_MANIFEST: &str = include_str!("../Cargo.toml");
+        const NODE_MANIFEST: &str = include_str!("../../../../bin/node/Cargo.toml");
+        const CLI_SOURCE: &str = include_str!("mev_trader.rs");
+
+        let cli_feature = CLI_MANIFEST
+            .split_once("t4d-shadow = [")
+            .and_then(|(_, rest)| rest.split_once(']'))
+            .map(|(feature, _)| feature)
+            .expect("CLI t4d-shadow feature");
+        assert_eq!(
+            cli_feature
+                .split(',')
+                .map(|member| member.trim().trim_matches('"'))
+                .filter(|member| !member.is_empty())
+                .collect::<Vec<_>>(),
+            ["t4b-shadow", "mev-trader-submit/t4d-bridge"]
+        );
+        assert!(NODE_MANIFEST.contains("t4d-shadow = [ \"base-execution-cli/t4d-shadow\" ]"));
+
+        let bounded_observation = CLI_SOURCE
+            .split_once("fn observe_bounded_bindings")
+            .and_then(|(_, rest)| rest.split_once("\n        }\n"))
+            .map(|(source, _)| source)
+            .expect("bounded T4d drain observation");
+        assert!(bounded_observation.contains("bindings = ?bindings"));
+        for forbidden in ["candidate", "unsigned_tx", "calldata", "raw", "input"] {
+            assert!(
+                !bounded_observation.contains(forbidden),
+                "T4d drain observation exposed forbidden detail: {forbidden}"
+            );
+        }
+
+        assert!(matches!(
+            t4d_shadow::T4dShadowAuthority::bridge_error(BridgeError::Assembly(
+                TxAuthorityError::ObservationBusy
+            )),
+            (T4bOutcome::ObservationBusy, t4d_shadow::T4dTerminal::ShadowBusy)
+        ));
+
+        let drops = Arc::new(AtomicU64::new(0));
+        let slot = ShadowLatestSlot::new();
+        assert_eq!(slot.try_submit(LinearCandidate(Arc::clone(&drops))), ShadowSubmit::Accepted);
+        let candidate = slot.try_take().expect("linear sealed candidate");
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+        drop(candidate);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+        assert!(slot.try_take().is_none());
+
+        assert_eq!(slot.try_submit(LinearCandidate(Arc::clone(&drops))), ShadowSubmit::Accepted);
+        slot.close();
+        assert_eq!(drops.load(Ordering::Relaxed), 2);
     }
 }

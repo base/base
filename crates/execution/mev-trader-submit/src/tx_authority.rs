@@ -18,6 +18,12 @@ use base_mev_trader::{
 };
 
 use crate::{calldata::AtomicCalldataEncoder, fee::fee_bps_for_executor};
+#[cfg(feature = "t4d-bridge")]
+mod bridge;
+#[cfg(feature = "t4d-bridge")]
+pub use bridge::{
+    AdapterAwareProofBindings, BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate,
+};
 
 const CHAIN_ID_BASE: u64 = 8_453;
 const T4B_EXECUTOR_GAS_LIMIT: u64 = 3_000_000;
@@ -921,6 +927,8 @@ impl TxAuthorityAssembler {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "t4d-bridge")]
+    use std::collections::BTreeSet;
     use std::{
         sync::{
             Arc,
@@ -1115,8 +1123,9 @@ mod tests {
         reads: AtomicU64,
         stale_on_read: Option<u64>,
         delay_on_read: Option<(u64, Duration)>,
-        state_error: bool,
-        head_flip_after_read: bool,
+        state_error: Arc<AtomicBool>,
+        head_flip_after_read: Arc<AtomicBool>,
+        stale_code_index: Arc<AtomicU64>,
     }
 
     impl TxAuthorityNodeView for TestNode {
@@ -1125,7 +1134,9 @@ mod tests {
         }
 
         fn current_parent_hash(&self) -> Result<B256, TxAuthorityNodeError> {
-            if self.head_flip_after_read && self.reads.load(Ordering::SeqCst) > 0 {
+            if self.head_flip_after_read.load(Ordering::Acquire)
+                && self.reads.load(Ordering::SeqCst) > 0
+            {
                 return Ok(B256::with_last_byte(self.parent_hash.as_slice()[31].wrapping_add(1)));
             }
             Ok(self.parent_hash)
@@ -1137,7 +1148,7 @@ mod tests {
             sender: Address,
             contracts: [Address; 4],
         ) -> Result<TxAuthorityStateRead, TxAuthorityNodeError> {
-            if self.state_error {
+            if self.state_error.load(Ordering::Acquire) {
                 return Err(TxAuthorityNodeError::Unavailable);
             }
             if parent_hash != self.parent_hash
@@ -1154,6 +1165,10 @@ mod tests {
             if self.stale_on_read.is_some_and(|threshold| read >= threshold) {
                 state.committed_sender_nonce =
                     state.committed_sender_nonce.and_then(|nonce| nonce.checked_add(1));
+            }
+            let stale_code_index = self.stale_code_index.load(Ordering::Acquire) as usize;
+            if let Some(code) = state.runtime_codes.get_mut(stale_code_index) {
+                *code = Some(Bytes::from_static(b"wrong-runtime"));
             }
             Ok(state)
         }
@@ -1176,6 +1191,8 @@ mod tests {
     #[derive(Debug)]
     struct AssemblyFixture {
         assembler: TxAuthorityAssembler,
+        #[cfg(feature = "t4d-bridge")]
+        node: Arc<dyn TxAuthorityNodeView>,
         snapshot: SnapshotHandle,
         frame: MeasurementContext,
         prepared: Vec<PreparedPoolState>,
@@ -1183,6 +1200,12 @@ mod tests {
         victim_raw: Bytes,
         probe: CancellationProbe,
         current: Arc<AtomicBool>,
+        #[cfg(feature = "t4d-bridge")]
+        state_error: Arc<AtomicBool>,
+        #[cfg(feature = "t4d-bridge")]
+        head_flip_after_read: Arc<AtomicBool>,
+        #[cfg(feature = "t4d-bridge")]
+        stale_code_index: Arc<AtomicU64>,
     }
 
     impl AssemblyFixture {
@@ -1195,6 +1218,17 @@ mod tests {
                 victim_raw: &self.victim_raw,
                 probe: &self.probe,
             }
+        }
+
+        #[cfg(feature = "t4d-bridge")]
+        fn bridge(&self) -> bridge::InstalledSubmissionBridge {
+            bridge::InstalledSubmissionBridge::install_for_test(
+                Arc::clone(&self.node),
+                self.assembler.executor.clone(),
+                self.assembler.sender,
+                self.assembler.adapters.clone(),
+            )
+            .expect("same-provider bridge install")
         }
     }
 
@@ -1339,7 +1373,10 @@ mod tests {
         };
         let contracts = TxAuthorityAssembler::contract_addresses(&executor, &adapters);
         let state = TxAuthorityStateRead::new(parent_hash, Some(4), codes.map(Some));
-        let node = Arc::new(TestNode {
+        let state_error = Arc::new(AtomicBool::new(false));
+        let head_flip_after_read = Arc::new(AtomicBool::new(false));
+        let stale_code_index = Arc::new(AtomicU64::new(u64::MAX));
+        let node: Arc<dyn TxAuthorityNodeView> = Arc::new(TestNode {
             parent_hash,
             sender,
             contracts,
@@ -1348,13 +1385,32 @@ mod tests {
             reads: AtomicU64::new(0),
             stale_on_read,
             delay_on_read,
-            state_error: false,
-            head_flip_after_read: false,
+            state_error: Arc::clone(&state_error),
+            head_flip_after_read: Arc::clone(&head_flip_after_read),
+            stale_code_index: Arc::clone(&stale_code_index),
         });
-        let assembler = TxAuthorityAssembler::install(node, executor, sender, adapters)
-            .expect("same-parent authority install");
+        let assembler =
+            TxAuthorityAssembler::install(Arc::clone(&node), executor, sender, adapters)
+                .expect("same-parent authority install");
 
-        AssemblyFixture { assembler, snapshot, frame, prepared, plan, victim_raw, probe, current }
+        AssemblyFixture {
+            assembler,
+            #[cfg(feature = "t4d-bridge")]
+            node,
+            snapshot,
+            frame,
+            prepared,
+            plan,
+            victim_raw,
+            probe,
+            current,
+            #[cfg(feature = "t4d-bridge")]
+            state_error,
+            #[cfg(feature = "t4d-bridge")]
+            head_flip_after_read,
+            #[cfg(feature = "t4d-bridge")]
+            stale_code_index,
+        }
     }
 
     fn assembly_fixture(
@@ -1528,7 +1584,7 @@ mod tests {
         let install_parent = installed.frame.parent_hash;
         let install_sender = installed.assembler.sender;
         let install_executor = installed.assembler.executor.clone();
-        let install_adapters = installed.assembler.adapters.clone();
+        let install_adapters = installed.assembler.adapters;
         let install_contracts =
             TxAuthorityAssembler::contract_addresses(&install_executor, &install_adapters);
         let install_state = TxAuthorityStateRead::new(
@@ -1551,8 +1607,9 @@ mod tests {
                 reads: AtomicU64::new(0),
                 stale_on_read: None,
                 delay_on_read: None,
-                state_error,
-                head_flip_after_read,
+                state_error: Arc::new(AtomicBool::new(state_error)),
+                head_flip_after_read: Arc::new(AtomicBool::new(head_flip_after_read)),
+                stale_code_index: Arc::new(AtomicU64::new(u64::MAX)),
             });
             assert!(matches!(
                 TxAuthorityAssembler::install(
@@ -2033,5 +2090,273 @@ mod tests {
         assert!(source.contains("TxEip1559"));
         assert!(source.contains("MeasurementNonceGuard"));
         assert_ne!(keccak256(b"unsigned"), B256::ZERO);
+    }
+    #[cfg(feature = "t4d-bridge")]
+    #[test]
+    fn t4d_bridge_consumes_t4b_unsigned_detail_by_value_without_tx_extraction() {
+        let fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let bridge = fixture.bridge();
+        let candidate =
+            bridge.assemble_sealed_for_test(fixture.view()).expect("opaque sealed candidate");
+        assert_eq!(candidate.bindings().nonce(), 5);
+        let redacted = format!("{candidate:?}");
+        assert!(!redacted.contains("unsigned_tx"));
+        assert!(!redacted.contains("input:"));
+        drop(candidate);
+        assert!(
+            bridge.assemble_sealed_for_test(fixture.view()).is_ok(),
+            "dropping the linear candidate must release the capacity-one guard"
+        );
+    }
+
+    #[cfg(feature = "t4d-bridge")]
+    #[test]
+    fn t4d_bindings_preserve_frame_executor_and_route_adapter_identities() {
+        let fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let bridge = fixture.bridge();
+        let candidate =
+            bridge.assemble_sealed_for_test(fixture.view()).expect("opaque sealed candidate");
+        let bindings = candidate.bindings();
+
+        assert_eq!(bindings.frame(), fixture.frame);
+        assert_eq!(bindings.victim(), fixture.plan.victim);
+        assert_eq!(bindings.plan_digest(), fixture.plan.digest.0);
+        assert_eq!(bindings.sender(), fixture.assembler.sender);
+        assert_eq!(bindings.nonce(), 5);
+        assert_eq!(bindings.valid_until_block(), fixture.frame.block_number);
+        assert_eq!(bindings.validated_parent(), fixture.frame.parent_hash);
+        assert_eq!(bindings.executor(), &fixture.assembler.executor);
+        assert_eq!(
+            bindings.route_protocols(),
+            [fixture.plan.route[0].protocol, fixture.plan.route[1].protocol]
+        );
+        let route_adapters = bindings.route_adapters();
+        assert_eq!(
+            route_adapters[0],
+            fixture.assembler.adapters.resolve(fixture.plan.route[0].protocol)
+        );
+        assert_eq!(
+            route_adapters[1],
+            fixture.assembler.adapters.resolve(fixture.plan.route[1].protocol)
+        );
+        assert_ne!(bindings.unsigned_signing_hash(), B256::ZERO);
+    }
+
+    #[cfg(feature = "t4d-bridge")]
+    #[test]
+    fn t4d_aero_variants_preserve_route_order_while_sharing_deployed_identity() {
+        let mut fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        fixture.prepared[0].protocol = ExactProtocol::AerodromeVolatile;
+        fixture.prepared[0].quote =
+            PreparedPoolQuote::constant_product(U256::from(1_000_000u64), U256::from(4_000_000u64));
+        fixture.prepared[1].protocol = ExactProtocol::AerodromeStable;
+        fixture.prepared[1].quote =
+            PreparedPoolQuote::stable(U256::from(4_000_000u64), U256::from(1_000_000u64));
+        fixture.plan.route[0].protocol = ExactProtocol::AerodromeVolatile;
+        fixture.plan.route[1].protocol = ExactProtocol::AerodromeStable;
+        let first_out = fixture.prepared[0]
+            .quote_exact_in(fixture.plan.route[0].token_in, fixture.plan.amount_in, &fixture.probe)
+            .expect("volatile route quote");
+        fixture.plan.amount_out = fixture.prepared[1]
+            .quote_exact_in(fixture.plan.route[1].token_in, first_out, &fixture.probe)
+            .expect("stable route quote");
+        assert!(fixture.plan.amount_out > fixture.plan.amount_in);
+        fixture.plan.gross_profit = fixture.plan.amount_out - fixture.plan.amount_in;
+        fixture.plan.digest = MeasurementEncoder::digest(&fixture.plan).expect("plan digest");
+
+        let bridge = fixture.bridge();
+        let candidate =
+            bridge.assemble_sealed_for_test(fixture.view()).expect("Aero route candidate");
+        let bindings = candidate.bindings();
+        assert_eq!(
+            bindings.route_protocols(),
+            [ExactProtocol::AerodromeVolatile, ExactProtocol::AerodromeStable]
+        );
+        let route_adapters = bindings.route_adapters();
+        assert_eq!(route_adapters[0], route_adapters[1]);
+        assert_eq!(
+            route_adapters[0],
+            fixture.assembler.adapters.resolve(ExactProtocol::AerodromeVolatile)
+        );
+    }
+
+    #[cfg(feature = "t4d-bridge")]
+    #[test]
+    fn t4d_freshness_revalidates_executor_and_all_adapters_with_owned_provider() {
+        let fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let bridge = fixture.bridge();
+        let candidate =
+            bridge.assemble_sealed_for_test(fixture.view()).expect("opaque sealed candidate");
+        assert!(bridge.revalidate_for_handoff(&candidate).is_ok());
+        assert!(
+            fixture.probe.token().complete(Instant::now(), true, fixture.probe.global()),
+            "runtime completion should win before the control-task drain"
+        );
+        assert!(
+            bridge.revalidate_for_handoff(&candidate).is_ok(),
+            "a successfully completed producer lifecycle remains valid for shadow drain"
+        );
+
+        for identity in 0..4 {
+            fixture.stale_code_index.store(identity, Ordering::Release);
+            assert_eq!(
+                bridge.revalidate_for_handoff(&candidate),
+                Err(bridge::BridgeError::ExecutionIdentityChanged)
+            );
+            fixture.stale_code_index.store(u64::MAX, Ordering::Release);
+        }
+
+        fixture.state_error.store(true, Ordering::Release);
+        assert_eq!(
+            bridge.revalidate_for_handoff(&candidate),
+            Err(bridge::BridgeError::ExecutionFreshnessUnavailable)
+        );
+        fixture.state_error.store(false, Ordering::Release);
+        fixture.head_flip_after_read.store(true, Ordering::Release);
+        assert_eq!(
+            bridge.revalidate_for_handoff(&candidate),
+            Err(bridge::BridgeError::ExecutionIdentityChanged)
+        );
+    }
+
+    #[cfg(feature = "t4d-bridge")]
+    #[test]
+    fn t4d_facade_rejects_cross_installation_candidate_and_provider_reinjection() {
+        let fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let issuing_bridge = fixture.bridge();
+        let other_bridge = fixture.bridge();
+        let candidate = issuing_bridge
+            .assemble_sealed_for_test(fixture.view())
+            .expect("opaque sealed candidate");
+        assert_eq!(
+            other_bridge.revalidate_for_handoff(&candidate),
+            Err(bridge::BridgeError::CrossInstallation)
+        );
+
+        let bridge_ast =
+            syn::parse_file(include_str!("tx_authority/bridge.rs")).expect("bridge source parses");
+        let public_methods = |type_name: &str| {
+            bridge_ast
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    syn::Item::Impl(item)
+                        if item.trait_.is_none()
+                            && matches!(
+                                item.self_ty.as_ref(),
+                                syn::Type::Path(path)
+                                    if path.path.segments.last().is_some_and(
+                                        |segment| segment.ident == type_name
+                                    )
+                            ) =>
+                    {
+                        Some(item)
+                    }
+                    _ => None,
+                })
+                .flat_map(|item| &item.items)
+                .filter_map(|item| match item {
+                    syn::ImplItem::Fn(method)
+                        if matches!(method.vis, syn::Visibility::Public(_))
+                            && !method.attrs.iter().any(|attr| attr.path().is_ident("cfg")) =>
+                    {
+                        Some(method.sig.ident.to_string())
+                    }
+                    _ => None,
+                })
+                .collect::<BTreeSet<_>>()
+        };
+        assert_eq!(
+            public_methods("InstalledSubmissionBridge"),
+            BTreeSet::from([
+                "assemble_sealed".to_owned(),
+                "base_mainnet".to_owned(),
+                "revalidate_for_handoff".to_owned(),
+            ])
+        );
+        assert_eq!(
+            public_methods("SealedUnsignedCandidate"),
+            BTreeSet::from(["bindings".to_owned()])
+        );
+        assert_eq!(
+            public_methods("AdapterAwareProofBindings"),
+            BTreeSet::from([
+                "executor".to_owned(),
+                "frame".to_owned(),
+                "nonce".to_owned(),
+                "plan_digest".to_owned(),
+                "route_adapters".to_owned(),
+                "route_protocols".to_owned(),
+                "sender".to_owned(),
+                "unsigned_signing_hash".to_owned(),
+                "valid_until_block".to_owned(),
+                "validated_parent".to_owned(),
+                "victim".to_owned(),
+            ])
+        );
+    }
+
+    #[cfg(feature = "t4d-bridge")]
+    #[test]
+    fn t4d_stale_cancelled_or_expired_candidate_emits_no_handoff() {
+        let stale = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let stale_bridge = stale.bridge();
+        let stale_candidate =
+            stale_bridge.assemble_sealed_for_test(stale.view()).expect("stale candidate setup");
+        stale.current.store(false, Ordering::Release);
+        assert_eq!(
+            stale_bridge.revalidate_for_handoff(&stale_candidate),
+            Err(bridge::BridgeError::SnapshotStale)
+        );
+
+        let cancelled = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let cancelled_bridge = cancelled.bridge();
+        let cancelled_candidate = cancelled_bridge
+            .assemble_sealed_for_test(cancelled.view())
+            .expect("cancelled candidate setup");
+        cancelled.probe.token().request_cancel();
+        assert_eq!(
+            cancelled_bridge.revalidate_for_handoff(&cancelled_candidate),
+            Err(bridge::BridgeError::Cancelled)
+        );
+
+        let mut expired = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        expired.probe = CancellationProbe::new(
+            Arc::new(CancellationToken::new(Instant::now() + Duration::from_millis(50))),
+            Arc::new(GlobalLifecycle::default()),
+        );
+        let expired_bridge = expired.bridge();
+        let expired_candidate = expired_bridge
+            .assemble_sealed_for_test(expired.view())
+            .expect("expiring candidate setup");
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(
+            expired_bridge.revalidate_for_handoff(&expired_candidate),
+            Err(bridge::BridgeError::DeadlineNoHandoff)
+        );
     }
 }

@@ -45,14 +45,14 @@ fn cargo_tree(root: &PathBuf, features: Option<&str>) -> String {
     command_output(command, root)
 }
 
-fn submit_feature_provenance(root: &PathBuf) -> String {
+fn submit_feature_provenance(root: &PathBuf, selected_feature: &str) -> String {
     let mut command = Command::new(env!("CARGO"));
     command.args([
         "tree",
         "-p",
         "base-reth-node",
         "--features",
-        "t4b-shadow",
+        selected_feature,
         "-i",
         "mev-trader-submit",
         "-e",
@@ -100,17 +100,34 @@ struct AstSeal {
     node_view_impls: usize,
     pending_view_impls: usize,
     base_mainnet_calls: usize,
+    assemble_sealed_calls: usize,
+    encode_validated_calls: usize,
     observe_candidate_calls: usize,
     spawn_calls: usize,
+    thread_calls: usize,
+    item_macros: usize,
+    production_modules: usize,
     subscription_calls: usize,
+    slot_constructions: usize,
     pending_adapter_constructions: usize,
     node_view_constructions: usize,
     authority_constructions: usize,
     observer_factories: usize,
     observer_install_calls: usize,
+    t4d_observer_calls: usize,
+    strict_unsigned_handoff: bool,
+    allow_victim_envelope: bool,
 }
 
 impl AstSeal {
+    fn unsigned_handoff() -> Self {
+        Self { strict_unsigned_handoff: true, ..Self::default() }
+    }
+
+    fn unsigned_authority() -> Self {
+        Self { strict_unsigned_handoff: true, allow_victim_envelope: true, ..Self::default() }
+    }
+
     fn inspect_path(&mut self, path: &Path) {
         let segments =
             path.segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<_>>();
@@ -120,12 +137,33 @@ impl AstSeal {
             "txpool",
             "signer",
             "RawEgress",
+            "RawBackend",
             "ProdBackend",
             "OpenOptions",
             "AuthorizedCandidate",
         ] {
             if segments.iter().any(|segment| segment == forbidden) {
                 self.violations.insert(forbidden.to_owned());
+            }
+        }
+        if self.strict_unsigned_handoff {
+            for forbidden in [
+                "PrimitiveSignature",
+                "Signed",
+                "SigningKey",
+                "TxEnvelope",
+                "AuthorizedSignedSubmission",
+                "HotWalletKey",
+                "sign_unsigned",
+                "raw_signed",
+                "raw_tx",
+            ] {
+                if forbidden == "TxEnvelope" && self.allow_victim_envelope {
+                    continue;
+                }
+                if segments.iter().any(|segment| segment == forbidden) {
+                    self.violations.insert(forbidden.to_owned());
+                }
             }
         }
         if joined.starts_with("std::net") || joined.starts_with("std::fs") {
@@ -136,10 +174,12 @@ impl AstSeal {
     fn count_call(&mut self, name: &str) {
         match name {
             "base_mainnet" => self.base_mainnet_calls += 1,
+            "assemble_sealed" => self.assemble_sealed_calls += 1,
+            "encode_validated" => self.encode_validated_calls += 1,
             "observe_candidate" | "try_observe" => self.observe_candidate_calls += 1,
             "spawn" | "spawn_blocking" => self.spawn_calls += 1,
             "subscribe_to_flashblocks" => self.subscription_calls += 1,
-            "with_t4b_observer" | "start_with_t4b_observer" => {
+            "with_t4b_observer" | "start_with_t4b_observer" | "start_with_t4d_observer" => {
                 self.observer_install_calls += 1;
             }
             _ => {}
@@ -153,12 +193,16 @@ impl<'ast> Visit<'ast> for AstSeal {
         for forbidden in [
             "Signature",
             "RawEgress",
+            "RawBackend",
             "ProdBackend",
             "OpenOptions",
             "AuthorizedCandidate",
             "load_and_sign",
             "send_gated",
             "into_signed",
+            "sign",
+            "send",
+            "backend",
             "txpool",
             "signer",
             "reqwest",
@@ -166,6 +210,23 @@ impl<'ast> Visit<'ast> for AstSeal {
             if name == forbidden {
                 self.violations.insert(forbidden.to_owned());
             }
+        }
+        if self.strict_unsigned_handoff
+            && matches!(
+                name.as_str(),
+                "PrimitiveSignature"
+                    | "Signed"
+                    | "SigningKey"
+                    | "TxEnvelope"
+                    | "AuthorizedSignedSubmission"
+                    | "HotWalletKey"
+                    | "sign_unsigned"
+                    | "raw_signed"
+                    | "raw_tx"
+            )
+            && !(name == "TxEnvelope" && self.allow_victim_envelope)
+        {
+            self.violations.insert(name);
         }
     }
 
@@ -175,12 +236,33 @@ impl<'ast> Visit<'ast> for AstSeal {
     }
 
     fn visit_expr_call(&mut self, call: &'ast ExprCall) {
-        if let syn::Expr::Path(path) = call.func.as_ref()
-            && let Some(segment) = path.path.segments.last()
-        {
-            self.count_call(&segment.ident.to_string());
+        if let syn::Expr::Path(path) = call.func.as_ref() {
+            let segments = path
+                .path
+                .segments
+                .iter()
+                .map(|segment| segment.ident.to_string())
+                .collect::<Vec<_>>();
+            if let Some(name) = segments.last() {
+                self.count_call(name);
+            }
+            if segments.ends_with(&["ShadowLatestSlot".to_owned(), "new".to_owned()]) {
+                self.slot_constructions += 1;
+            }
+            if segments.ends_with(&["t4d_shadow".to_owned(), "observer".to_owned()]) {
+                self.t4d_observer_calls += 1;
+            }
+            if segments.ends_with(&["thread".to_owned(), "spawn".to_owned()]) {
+                self.thread_calls += 1;
+            }
         }
         syn::visit::visit_expr_call(self, call);
+    }
+    fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
+        if !has_cfg_test(&item.attrs) {
+            self.item_macros += 1;
+        }
+        syn::visit::visit_item_macro(self, item);
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
@@ -189,6 +271,9 @@ impl<'ast> Visit<'ast> for AstSeal {
     }
 
     fn visit_item_impl(&mut self, item: &'ast ItemImpl) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
         if let Some((_, path, _)) = &item.trait_ {
             match path.segments.last().map(|segment| segment.ident.to_string()).as_deref() {
                 Some("CandidateTxShapeObserver") => self.observer_impls += 1,
@@ -211,13 +296,32 @@ impl<'ast> Visit<'ast> for AstSeal {
     }
 
     fn visit_item_fn(&mut self, item: &'ast ItemFn) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
         if item.sig.ident == "observer" {
             self.observer_factories += 1;
         }
         syn::visit::visit_item_fn(self, item);
     }
 
+    fn visit_impl_item_fn(&mut self, item: &'ast ImplItemFn) {
+        if !has_cfg_test(&item.attrs) {
+            syn::visit::visit_impl_item_fn(self, item);
+        }
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if !has_cfg_test(&item.attrs) {
+            self.production_modules += 1;
+            syn::visit::visit_item_mod(self, item);
+        }
+    }
+
     fn visit_macro(&mut self, item: &'ast Macro) {
+        if item.path.segments.last().is_some_and(|segment| segment.ident == "include") {
+            self.violations.insert("include macro redirect".to_owned());
+        }
         let tokens = item.tokens.to_string();
         for forbidden in [
             "Signature",
@@ -234,13 +338,102 @@ impl<'ast> Visit<'ast> for AstSeal {
                 self.violations.insert(format!("macro:{forbidden}"));
             }
         }
+        if self.strict_unsigned_handoff {
+            for forbidden in [
+                "PrimitiveSignature",
+                "Signed",
+                "SigningKey",
+                "TxEnvelope",
+                "AuthorizedSignedSubmission",
+                "HotWalletKey",
+                "sign_unsigned",
+                "raw_signed",
+                "raw_tx",
+            ] {
+                if forbidden == "TxEnvelope" && self.allow_victim_envelope {
+                    continue;
+                }
+                if tokens.contains(forbidden) {
+                    self.violations.insert(format!("macro:{forbidden}"));
+                }
+            }
+        }
         syn::visit::visit_macro(self, item);
     }
 }
 
+#[derive(Default)]
+struct VictimEnvelopeSeal {
+    imports: usize,
+    decode_calls: usize,
+    eip1559_patterns: usize,
+    violations: BTreeSet<String>,
+}
+
+impl<'ast> Visit<'ast> for VictimEnvelopeSeal {
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
+        for leaf in use_leaves(item) {
+            if leaf.source.last().map(String::as_str) == Some("TxEnvelope") {
+                self.imports += 1;
+                if leaf.renamed || leaf.glob {
+                    self.violations.insert("aliased victim envelope import".to_owned());
+                }
+            }
+        }
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast ExprCall) {
+        if let Expr::Path(path) = call.func.as_ref() {
+            let segments = path
+                .path
+                .segments
+                .iter()
+                .map(|segment| segment.ident.to_string())
+                .collect::<Vec<_>>();
+            if segments.ends_with(&["TxEnvelope".to_owned(), "decode_2718".to_owned()]) {
+                self.decode_calls += 1;
+            }
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
+    fn visit_pat_tuple_struct(&mut self, pattern: &'ast syn::PatTupleStruct) {
+        let segments = pattern
+            .path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>();
+        if segments.ends_with(&["TxEnvelope".to_owned(), "Eip1559".to_owned()]) {
+            self.eip1559_patterns += 1;
+        }
+        syn::visit::visit_pat_tuple_struct(self, pattern);
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast ItemImpl) {
+        if !has_cfg_test(&item.attrs) {
+            syn::visit::visit_item_impl(self, item);
+        }
+    }
+
+    fn visit_item_fn(&mut self, item: &'ast ItemFn) {
+        if !has_cfg_test(&item.attrs) {
+            syn::visit::visit_item_fn(self, item);
+        }
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if !has_cfg_test(&item.attrs) {
+            syn::visit::visit_item_mod(self, item);
+        }
+    }
+}
+
 fn parse_production(source: &str) -> File {
-    let production = source.split("#[cfg(test)]").next().expect("production source");
-    syn::parse_file(production).expect("production source parses as Rust AST")
+    syn::parse_file(source).expect("complete source parses as Rust AST")
 }
 
 fn tx_authority_modules(source: &str) -> BTreeSet<String> {
@@ -349,23 +542,69 @@ fn nested_meta(list: &syn::MetaList) -> Punctuated<Meta, Token![,]> {
 }
 
 fn meta_has_feature(meta: &Meta, feature: &str) -> bool {
-    match meta {
-        Meta::NameValue(value) if value.path.is_ident("feature") => {
-            matches!(
-                &value.value,
-                Expr::Lit(literal)
-                    if matches!(&literal.lit, Lit::Str(value) if value.value() == feature)
-            )
-        }
-        Meta::List(list) => {
-            nested_meta(list).iter().any(|nested| meta_has_feature(nested, feature))
-        }
-        Meta::Path(_) | Meta::NameValue(_) => false,
-    }
+    matches!(
+        meta,
+        Meta::NameValue(value)
+            if value.path.is_ident("feature")
+                && matches!(
+                    &value.value,
+                    Expr::Lit(literal)
+                        if matches!(&literal.lit, Lit::Str(value) if value.value() == feature)
+                )
+    )
 }
 
 fn has_cfg_feature(attrs: &[Attribute], feature: &str) -> bool {
-    attrs.iter().any(|attr| attr.path().is_ident("cfg") && meta_has_feature(&attr.meta, feature))
+    attrs.iter().any(|attr| {
+        let Meta::List(cfg) = &attr.meta else {
+            return false;
+        };
+        if !cfg.path.is_ident("cfg") {
+            return false;
+        }
+        let nested = nested_meta(cfg);
+        nested.len() == 1 && nested.first().is_some_and(|meta| meta_has_feature(meta, feature))
+    })
+}
+fn meta_mentions_feature(meta: &Meta, feature: &str) -> bool {
+    meta_has_feature(meta, feature)
+        || matches!(
+            meta,
+            Meta::List(list)
+                if nested_meta(list).iter().any(|nested| meta_mentions_feature(nested, feature))
+        )
+}
+
+fn cfg_mentions_feature(attrs: &[Attribute], feature: &str) -> bool {
+    attrs.iter().any(|attr| {
+        matches!(
+            &attr.meta,
+            Meta::List(cfg)
+                if cfg.path.is_ident("cfg")
+                    && nested_meta(cfg).iter().any(|meta| meta_mentions_feature(meta, feature))
+        )
+    })
+}
+
+fn public_item_attrs(item: &Item) -> Option<&[Attribute]> {
+    match item {
+        Item::Const(item) if matches!(item.vis, Visibility::Public(_)) => Some(&item.attrs),
+        Item::Enum(item) if matches!(item.vis, Visibility::Public(_)) => Some(&item.attrs),
+        Item::ExternCrate(item) if matches!(item.vis, Visibility::Public(_)) => Some(&item.attrs),
+        Item::Fn(item) if matches!(item.vis, Visibility::Public(_)) => Some(&item.attrs),
+        Item::Mod(item) if matches!(item.vis, Visibility::Public(_)) => Some(&item.attrs),
+        Item::Macro(item) if item.attrs.iter().any(|attr| attr.path().is_ident("macro_export")) => {
+            Some(&item.attrs)
+        }
+        Item::Static(item) if matches!(item.vis, Visibility::Public(_)) => Some(&item.attrs),
+        Item::Struct(item) if matches!(item.vis, Visibility::Public(_)) => Some(&item.attrs),
+        Item::Trait(item) if matches!(item.vis, Visibility::Public(_)) => Some(&item.attrs),
+        Item::TraitAlias(item) if matches!(item.vis, Visibility::Public(_)) => Some(&item.attrs),
+        Item::Type(item) if matches!(item.vis, Visibility::Public(_)) => Some(&item.attrs),
+        Item::Union(item) if matches!(item.vis, Visibility::Public(_)) => Some(&item.attrs),
+        Item::Use(item) if matches!(item.vis, Visibility::Public(_)) => Some(&item.attrs),
+        _ => None,
+    }
 }
 
 fn has_cfg_test(attrs: &[Attribute]) -> bool {
@@ -409,25 +648,29 @@ impl<'a> AuthoritySurfaceInventory<'a> {
         Self { submit_lib, authority }
     }
 
-    fn root_exports(&self) -> (BTreeSet<String>, BTreeSet<String>) {
+    fn root_exports(&self, feature: &str) -> (BTreeSet<String>, BTreeSet<String>) {
         let mut exports = BTreeSet::new();
         let mut violations = BTreeSet::new();
         for item in &self.submit_lib.items {
-            let Item::Use(item) = item else {
+            let Some(attrs) = public_item_attrs(item) else {
                 continue;
             };
-            if !matches!(item.vis, Visibility::Public(_)) {
+            if feature != "t4d-bridge" && !matches!(item, Item::Use(_)) {
                 continue;
             }
-            let selected = has_cfg_feature(&item.attrs, "tx-authority");
+            if !cfg_mentions_feature(attrs, feature) {
+                continue;
+            }
+            let Item::Use(item) = item else {
+                violations.insert(format!("non-use public root item: {item:?}"));
+                continue;
+            };
+            if !has_cfg_feature(&item.attrs, feature) {
+                violations.insert(format!("non-exact feature gate: {item:?}"));
+                continue;
+            }
             for leaf in use_leaves(item) {
-                let mentions_authority =
-                    leaf.source.iter().any(|segment| segment == "tx_authority");
-                if !selected && !mentions_authority {
-                    continue;
-                }
-                if !selected
-                    || leaf.source.first().map(String::as_str) != Some("tx_authority")
+                if leaf.source.first().map(String::as_str) != Some("tx_authority")
                     || leaf.source.len() != 2
                     || leaf.renamed
                     || leaf.glob
@@ -452,6 +695,7 @@ impl<'a> AuthoritySurfaceInventory<'a> {
             })
             .collect::<Vec<_>>();
         assert_eq!(modules.len(), 1, "expected one tx-authority module `{name}`");
+        assert_eq!(modules[0].attrs.len(), 1, "module `{name}` has ambiguous attributes");
         assert!(
             has_cfg_feature(&modules[0].attrs, "tx-authority"),
             "module `{name}` escaped the tx-authority feature gate"
@@ -459,6 +703,10 @@ impl<'a> AuthoritySurfaceInventory<'a> {
         assert!(
             matches!(modules[0].vis, Visibility::Inherited),
             "tx-authority module `{name}` must remain private"
+        );
+        assert!(
+            modules[0].content.is_none() && modules[0].semi.is_some(),
+            "tx-authority module `{name}` must remain an out-of-line declaration"
         );
     }
 
@@ -729,11 +977,20 @@ fn workspace_submit_linkers(root: &PathBuf) -> Vec<(String, PathBuf)> {
         .expect("packages")
         .iter()
         .filter_map(|package| {
-            let links_submit = package["dependencies"]
-                .as_array()
-                .expect("dependencies")
-                .iter()
-                .any(|dependency| dependency["name"] == "mev-trader-submit");
+            let links_submit =
+                package["dependencies"].as_array().expect("dependencies").iter().any(
+                    |dependency| {
+                        if dependency["name"] != "mev-trader-submit" {
+                            return false;
+                        }
+                        assert!(
+                            dependency["rename"].is_null(),
+                            "{} aliases the submit crate in Cargo metadata",
+                            package["name"]
+                        );
+                        true
+                    },
+                );
             if !links_submit {
                 return None;
             }
@@ -755,6 +1012,14 @@ struct ImportedAuthority {
     violations: BTreeSet<String>,
 }
 
+fn authority_feature_for(name: &str) -> Option<&'static str> {
+    match name {
+        "ValidatedUnsignedAtomicTx" => Some("t4b-shadow"),
+        "InstalledSubmissionBridge" | "SealedUnsignedCandidate" => Some("t4d-shadow"),
+        _ => None,
+    }
+}
+
 struct ImportedAuthorityCollector {
     external: bool,
     inventory: ImportedAuthority,
@@ -768,13 +1033,21 @@ impl ImportedAuthorityCollector {
         for leaf in use_leaves(item) {
             let first = leaf.source.first().map(String::as_str);
             let last = leaf.source.last().map(String::as_str);
-            if self.external && first == Some("mev_trader_submit") && leaf.source.len() == 1 {
+            let direct_crate_alias = leaf.source.len() == 1;
+            let grouped_self_alias = leaf.source.len() == 2 && last == Some("self");
+            if self.external
+                && first == Some("mev_trader_submit")
+                && (direct_crate_alias || grouped_self_alias)
+            {
                 self.inventory.crate_aliases.insert(leaf.public_name.clone());
+                self.inventory
+                    .violations
+                    .insert(format!("non-canonical crate alias {}", leaf.public_name));
                 continue;
             }
-            if last != Some("ValidatedUnsignedAtomicTx") {
+            let Some(required_feature) = last.and_then(authority_feature_for) else {
                 continue;
-            }
+            };
             let from_external = first == Some("mev_trader_submit");
             let from_authority = leaf.source.iter().any(|segment| segment == "tx_authority")
                 || matches!(first, Some("crate" | "self" | "super"))
@@ -791,6 +1064,11 @@ impl ImportedAuthorityCollector {
                         leaf.source, leaf.public_name
                     ));
                 }
+                if self.external && !has_cfg_feature(&item.attrs, required_feature) {
+                    self.inventory
+                        .violations
+                        .insert(format!("external authority import escaped {required_feature}"));
+                }
             }
         }
     }
@@ -801,10 +1079,43 @@ impl<'ast> Visit<'ast> for ImportedAuthorityCollector {
         self.inspect_use(item);
     }
 
-    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
-        if !has_cfg_test(&item.attrs) {
-            syn::visit::visit_item_mod(self, item);
+    fn visit_item_extern_crate(&mut self, item: &'ast syn::ItemExternCrate) {
+        if self.external && item.ident == "mev_trader_submit" {
+            let alias = item
+                .rename
+                .as_ref()
+                .map_or_else(|| item.ident.to_string(), |(_, alias)| alias.to_string());
+            self.inventory.crate_aliases.insert(alias.clone());
+            self.inventory.violations.insert(format!("non-canonical extern crate alias {alias}"));
         }
+    }
+
+    fn visit_macro(&mut self, item: &'ast Macro) {
+        let tokens = item.tokens.to_string();
+        if item.path.segments.last().is_some_and(|segment| segment.ident == "include")
+            || [
+                "ValidatedUnsignedAtomicTx",
+                "InstalledSubmissionBridge",
+                "SealedUnsignedCandidate",
+                "mev_trader_submit",
+            ]
+            .iter()
+            .any(|authority| tokens.contains(authority))
+        {
+            self.inventory.violations.insert("macro authority redirect".to_owned());
+        }
+        syn::visit::visit_macro(self, item);
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
+        if item.attrs.iter().any(|attr| attr.path().is_ident("path")) {
+            self.inventory.violations.insert("path module authority redirect".to_owned());
+            return;
+        }
+        syn::visit::visit_item_mod(self, item);
     }
 }
 
@@ -833,11 +1144,11 @@ impl<'a> AuthorityUseVisitor<'a> {
         let Some(last) = segments.last() else {
             return false;
         };
-        if last != "ValidatedUnsignedAtomicTx" {
-            return false;
-        }
         if segments.len() == 1 && self.aliases.contains(last) {
             return true;
+        }
+        if authority_feature_for(last).is_none() {
+            return false;
         }
         segments
             .first()
@@ -911,7 +1222,7 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
     let authority = parse_production(&read(crate_dir.join("src/tx_authority.rs")));
     let inventory = AuthoritySurfaceInventory::new(&submit_lib, &authority);
 
-    let (exports, export_violations) = inventory.root_exports();
+    let (exports, export_violations) = inventory.root_exports("tx-authority");
     assert!(export_violations.is_empty(), "invalid tx-authority exports: {export_violations:?}");
     assert_eq!(
         exports,
@@ -929,6 +1240,108 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
             "ValidatedUnsignedAtomicTx".to_owned(),
         ])
     );
+    let (bridge_exports, bridge_export_violations) = inventory.root_exports("t4d-bridge");
+    assert!(
+        bridge_export_violations.is_empty(),
+        "invalid t4d-bridge exports: {bridge_export_violations:?}"
+    );
+    assert_eq!(
+        bridge_exports,
+        BTreeSet::from([
+            "AdapterAwareProofBindings".to_owned(),
+            "BridgeError".to_owned(),
+            "InstalledSubmissionBridge".to_owned(),
+            "SealedUnsignedCandidate".to_owned(),
+        ])
+    );
+    let bridge = parse_production(&read(crate_dir.join("src/tx_authority/bridge.rs")));
+    let bridge_inventory = AuthoritySurfaceInventory::new(&submit_lib, &bridge);
+    let bridge_types =
+        ["AdapterAwareProofBindings", "InstalledSubmissionBridge", "SealedUnsignedCandidate"];
+    assert_private_fields(&bridge, &bridge_types);
+    let bridge_methods = BTreeMap::from([
+        (
+            "AdapterAwareProofBindings",
+            method_set(&[
+                "executor",
+                "frame",
+                "nonce",
+                "plan_digest",
+                "route_adapters",
+                "route_protocols",
+                "sender",
+                "unsigned_signing_hash",
+                "valid_until_block",
+                "validated_parent",
+                "victim",
+            ]),
+        ),
+        (
+            "InstalledSubmissionBridge",
+            method_set(&["assemble_sealed", "base_mainnet", "revalidate_for_handoff"]),
+        ),
+        ("SealedUnsignedCandidate", method_set(&["bindings"])),
+    ]);
+    for (type_name, expected) in bridge_methods {
+        assert_eq!(
+            bridge_inventory.public_impl_items(type_name),
+            expected,
+            "{type_name} public bridge surface changed"
+        );
+    }
+    assert_eq!(
+        bridge_inventory.implemented_traits("SealedUnsignedCandidate"),
+        BTreeSet::from(["Debug".to_owned()])
+    );
+    let forbidden_bridge_traits = BTreeSet::from([
+        "Clone".to_owned(),
+        "Copy".to_owned(),
+        "Default".to_owned(),
+        "Deserialize".to_owned(),
+        "From".to_owned(),
+        "Serialize".to_owned(),
+        "TryFrom".to_owned(),
+    ]);
+    for type_name in bridge_types {
+        assert!(
+            bridge_inventory.implemented_traits(type_name).is_disjoint(&forbidden_bridge_traits),
+            "{type_name} implements a forgeable bridge trait"
+        );
+        assert!(
+            bridge_inventory.derived_traits(type_name).is_disjoint(&forbidden_bridge_traits),
+            "{type_name} derives a forgeable bridge trait"
+        );
+    }
+    for escaped in [
+        "#[cfg(feature = \"t4d-bridge\")] pub type Extra = alloy_consensus::TxEip1559;",
+        "#[cfg(feature = \"t4d-bridge\")] pub fn extra() {}",
+        "#[cfg(feature = \"t4d-bridge\")] pub mod extra {}",
+        "#[cfg(any(feature = \"t4d-bridge\", feature = \"arm\"))] pub const EXTRA: u8 = 0;",
+        "#[cfg(feature = \"t4d-bridge\")] #[macro_export] macro_rules! extra { () => {} }",
+    ] {
+        let escaped_root = syn::parse_file(escaped).expect("root escape fixture parses");
+        let escaped_inventory = AuthoritySurfaceInventory::new(&escaped_root, &bridge);
+        let (_, violations) = escaped_inventory.root_exports("t4d-bridge");
+        assert!(!violations.is_empty(), "non-use or widened T4d root escape was accepted");
+    }
+    for item in &submit_lib.items {
+        let Item::Use(item) = item else {
+            continue;
+        };
+        let leaves = use_leaves(item);
+        if !leaves
+            .iter()
+            .any(|leaf| leaf.source.first().map(String::as_str) == Some("tx_authority"))
+        {
+            continue;
+        }
+        assert_eq!(item.attrs.len(), 1, "authority root export has ambiguous attributes");
+        assert!(
+            has_cfg_feature(&item.attrs, "tx-authority")
+                ^ has_cfg_feature(&item.attrs, "t4d-bridge"),
+            "authority root export escaped the exact reviewed feature gates"
+        );
+    }
     inventory.assert_private_module("tx_authority");
     inventory.assert_private_module("calldata");
 
@@ -1070,7 +1483,7 @@ fn t4c_adapter_witness_surface_is_route_exact_and_unforgeable() {
 }
 
 #[test]
-fn t4c_unsigned_authority_has_no_arm_signer_or_egress_consumer() {
+fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let root = crate_dir.join("../../..");
     let linkers = workspace_submit_linkers(&root);
@@ -1107,9 +1520,42 @@ fn t4c_unsigned_authority_has_no_arm_signer_or_egress_consumer() {
     let (package, path, imports, uses, slot_uses) = &consumers[0];
     assert_eq!(package, "base-execution-cli");
     assert!(path.ends_with("crates/execution/cli/src/mev_trader.rs"));
-    assert_eq!((*imports, *uses, *slot_uses), (1, 1, 1));
+    assert_eq!((*imports, *uses, *slot_uses), (3, 3, 2));
 
+    let mut global_topology = [0usize; 11];
+    for path in rust_files(&root.join("crates/execution/cli/src")) {
+        let file = parse_production(&read(path));
+        let mut seal = AstSeal::default();
+        seal.visit_file(&file);
+        let topology_relevant = seal.observer_impls != 0
+            || seal.node_view_impls != 0
+            || seal.slot_constructions != 0
+            || seal.observer_factories != 0
+            || seal.observer_install_calls != 0
+            || seal.base_mainnet_calls != 0
+            || seal.assemble_sealed_calls != 0
+            || seal.t4d_observer_calls != 0;
+        global_topology[0] += seal.observer_impls;
+        global_topology[1] += seal.node_view_impls;
+        global_topology[2] += seal.slot_constructions;
+        global_topology[3] += seal.observer_factories;
+        global_topology[4] += seal.observer_install_calls;
+        global_topology[5] += seal.base_mainnet_calls;
+        global_topology[6] += seal.assemble_sealed_calls;
+        global_topology[7] += seal.t4d_observer_calls;
+        if topology_relevant {
+            global_topology[8] += seal.spawn_calls;
+            global_topology[9] += seal.thread_calls;
+            global_topology[10] += seal.subscription_calls;
+        }
+    }
+    assert_eq!(
+        global_topology,
+        [2, 1, 2, 2, 4, 2, 1, 1, 4, 0, 1],
+        "CLI-wide T4d observer topology changed"
+    );
     let submit_src = crate_dir.join("src");
+    let mut internal_consumers = Vec::new();
     for path in rust_files(&submit_src) {
         if path.ends_with("lib.rs") || path.ends_with("tx_authority.rs") {
             continue;
@@ -1124,13 +1570,35 @@ fn t4c_unsigned_authority_has_no_arm_signer_or_egress_consumer() {
             path.display(),
             imports.violations
         );
-        assert_eq!(
-            (imports.imports, imports.public_reexports, uses, slot_uses),
-            (0, 0, 0, 0),
-            "{} connects T4b authority to another submit tier",
-            path.display()
-        );
+        assert_eq!(imports.public_reexports, 0, "{} re-exports private authority", path.display());
+        if imports.imports != 0 || uses != 0 || slot_uses != 0 {
+            internal_consumers.push((path, imports.imports, uses, slot_uses));
+        }
     }
+    assert_eq!(internal_consumers.len(), 1, "unreviewed submit-private consumer");
+    let (path, imports, uses, slot_uses) = &internal_consumers[0];
+    assert!(path.ends_with("src/tx_authority/bridge.rs"));
+    assert_eq!((*imports, *uses, *slot_uses), (1, 2, 0));
+    let authority_source = read(crate_dir.join("src/tx_authority.rs"));
+    let authority_ast = parse_production(&authority_source);
+    let bridge_modules = authority_ast
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Mod(module) if module.ident == "bridge" => Some(module),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(bridge_modules.len(), 1);
+    assert_eq!(bridge_modules[0].attrs.len(), 1, "bridge module has ambiguous attributes");
+    assert!(has_cfg_feature(&bridge_modules[0].attrs, "t4d-bridge"));
+    assert!(matches!(bridge_modules[0].vis, Visibility::Inherited));
+    assert!(bridge_modules[0].content.is_none());
+    assert!(bridge_modules[0].semi.is_some());
+    assert!(
+        !crate_dir.join("src/tx_authority/bridge/mod.rs").exists(),
+        "bridge module has an ambiguous alternate source"
+    );
 
     let cli_source = read(root.join("crates/execution/cli/src/mev_trader.rs"));
     let cli_ast = parse_production(&cli_source);
@@ -1150,7 +1618,112 @@ fn t4c_unsigned_authority_has_no_arm_signer_or_egress_consumer() {
         selected_ast.violations
     );
 
-    let provenance = submit_feature_provenance(&root);
+    let t4d_module = cli_ast
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::Mod(module) if module.ident == "t4d_shadow" => Some(module),
+            _ => None,
+        })
+        .expect("inline T4d module");
+    assert_eq!(t4d_module.attrs.len(), 1, "T4d module has ambiguous attributes");
+    assert!(has_cfg_feature(&t4d_module.attrs, "t4d-shadow"));
+    assert!(matches!(t4d_module.vis, Visibility::Inherited));
+    assert!(t4d_module.content.is_some(), "T4d module must stay inline and AST-sealed");
+    let module_imports = t4d_module
+        .content
+        .as_ref()
+        .expect("inline T4d module")
+        .1
+        .iter()
+        .filter_map(|item| match item {
+            Item::Use(item) => Some(item),
+            _ => None,
+        })
+        .flat_map(use_leaves)
+        .map(|leaf| leaf.source.join("::"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        module_imports,
+        BTreeSet::from([
+            "std::sync::Arc".to_owned(),
+            "std::sync::atomic::AtomicU64".to_owned(),
+            "std::sync::atomic::Ordering".to_owned(),
+            "super::AdapterAwareProofBindings".to_owned(),
+            "super::BlockReaderIdExt".to_owned(),
+            "super::BridgeError".to_owned(),
+            "super::CandidateAssemblyView".to_owned(),
+            "super::CandidateTxShapeObserver".to_owned(),
+            "super::CliTraderSnapshotPort".to_owned(),
+            "super::Debug".to_owned(),
+            "super::Header".to_owned(),
+            "super::HeaderProvider".to_owned(),
+            "super::InstalledSubmissionBridge".to_owned(),
+            "super::SealedUnsignedCandidate".to_owned(),
+            "super::ShadowLatestSlot".to_owned(),
+            "super::ShadowSubmit".to_owned(),
+            "super::StateProviderFactory".to_owned(),
+            "super::T4bOutcome".to_owned(),
+            "super::T4bOutcomeCounters".to_owned(),
+            "super::TxAuthorityError".to_owned(),
+            "super::t4b_shadow".to_owned(),
+        ])
+    );
+    let t4d_imports = cli_ast
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Use(item) if has_cfg_feature(&item.attrs, "t4d-shadow") => Some(item),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(t4d_imports.len(), 1, "T4d capability imports must be one exact group");
+    assert_eq!(t4d_imports[0].attrs.len(), 1, "T4d imports have ambiguous attributes");
+    let import_leaves = use_leaves(t4d_imports[0]);
+    assert!(
+        import_leaves.iter().all(|leaf| {
+            !leaf.glob
+                && !leaf.renamed
+                && leaf.source.first().map(String::as_str) == Some("mev_trader_submit")
+                && leaf.source.len() == 2
+        }),
+        "T4d capability imports contain a glob, alias, or redirect"
+    );
+    assert_eq!(
+        import_leaves.iter().map(|leaf| leaf.public_name.as_str()).collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "AdapterAwareProofBindings",
+            "BridgeError",
+            "InstalledSubmissionBridge",
+            "SealedUnsignedCandidate",
+        ])
+    );
+    let mut t4d_ast = AstSeal::unsigned_handoff();
+    t4d_ast.visit_item_mod(t4d_module);
+    assert!(
+        t4d_ast.violations.is_empty(),
+        "T4d observer connects to forbidden capability: {:?}",
+        t4d_ast.violations
+    );
+    assert_eq!(t4d_ast.base_mainnet_calls, 1);
+    assert_eq!(t4d_ast.assemble_sealed_calls, 1);
+    assert_eq!(t4d_ast.observer_factories, 1);
+    assert_eq!(t4d_ast.slot_constructions, 1);
+    assert_eq!(t4d_ast.spawn_calls, 0);
+    assert_eq!(t4d_ast.thread_calls, 0);
+    assert_eq!(t4d_ast.subscription_calls, 0);
+    assert_eq!(t4d_ast.item_macros, 0);
+
+    let mut cli_inventory = AstSeal::default();
+    cli_inventory.visit_file(&cli_ast);
+    assert_eq!(cli_inventory.t4d_observer_calls, 1);
+    assert_eq!(cli_inventory.assemble_sealed_calls, 1);
+    assert_eq!(cli_inventory.slot_constructions, 2);
+    assert_eq!(cli_inventory.spawn_calls, 4);
+    assert_eq!(cli_inventory.thread_calls, 0);
+    assert_eq!(cli_inventory.subscription_calls, 1);
+
+    let provenance = submit_feature_provenance(&root, "t4b-shadow");
     let enabled_submit_features = provenance
         .lines()
         .filter_map(|line| {
@@ -1167,7 +1740,7 @@ fn t4c_unsigned_authority_has_no_arm_signer_or_egress_consumer() {
 }
 
 #[test]
-fn t4b_default_and_selected_feature_closures_preserve_zero_broadcast_capability() {
+fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let root = crate_dir.join("../../..");
     let submit_manifest = read(crate_dir.join("Cargo.toml"));
@@ -1176,12 +1749,154 @@ fn t4b_default_and_selected_feature_closures_preserve_zero_broadcast_capability(
     let calldata_source = read(crate_dir.join("src/calldata.rs"));
     let fee_source = read(crate_dir.join("src/fee.rs"));
     let authority_source = read(crate_dir.join("src/tx_authority.rs"));
+    let bridge_source = read(crate_dir.join("src/tx_authority/bridge.rs"));
     let cli_manifest = read(root.join("crates/execution/cli/Cargo.toml"));
     let cli_source = read(root.join("crates/execution/cli/src/mev_trader.rs"));
     let trader_manifest = read(root.join("crates/execution/mev-trader/Cargo.toml"));
     let trader_runtime = read(root.join("crates/execution/mev-trader/src/runtime.rs"));
     let trader_port = read(root.join("crates/execution/mev-trader/src/port.rs"));
     let node_manifest = read(root.join("bin/node/Cargo.toml"));
+
+    let production_after_tests =
+        parse_production("#[cfg(test)] mod tests {}\nstruct ProductionAfterTests;");
+    assert!(
+        production_after_tests
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::Struct(item) if item.ident == "ProductionAfterTests")),
+        "production items after test modules must remain sealed"
+    );
+
+    let test_only_call = parse_production(
+        "struct TestOnly;\n\
+         #[cfg(test)] impl TestOnly {\n\
+             fn call() { AtomicCalldataEncoder::encode_validated(); }\n\
+         }\n\
+         struct ProductionAfterTestImpl;",
+    );
+    let mut test_only_seal = AstSeal::default();
+    test_only_seal.visit_file(&test_only_call);
+    assert_eq!(
+        test_only_seal.encode_validated_calls, 0,
+        "test-only impl calls must not satisfy production exact counts"
+    );
+
+    let exact: Attribute = syn::parse_quote!(#[cfg(feature = "t4d-shadow")]);
+    let negative: Attribute = syn::parse_quote!(#[cfg(not(feature = "t4d-shadow"))]);
+    let widened: Attribute =
+        syn::parse_quote!(#[cfg(any(feature = "t4d-shadow", feature = "arm"))]);
+    assert!(has_cfg_feature(&[exact], "t4d-shadow"));
+    assert!(!has_cfg_feature(&[negative], "t4d-shadow"));
+    assert!(!has_cfg_feature(&[widened], "t4d-shadow"));
+
+    let signing_fixture = syn::parse_file(
+        "type A = PrimitiveSignature;\n\
+         type B = Signed;\n\
+         type C = SigningKey;\n\
+         type D = TxEnvelope;\n\
+         type E = AuthorizedSignedSubmission;\n\
+         type F = HotWalletKey;\n\
+         fn escape() { sign_unsigned(); raw_signed(); raw_tx(); }",
+    )
+    .expect("signing fixture parses");
+    let mut signing_seal = AstSeal::unsigned_handoff();
+    signing_seal.visit_file(&signing_fixture);
+    for forbidden in [
+        "PrimitiveSignature",
+        "Signed",
+        "SigningKey",
+        "TxEnvelope",
+        "AuthorizedSignedSubmission",
+        "HotWalletKey",
+        "sign_unsigned",
+        "raw_signed",
+        "raw_tx",
+    ] {
+        assert!(
+            signing_seal.violations.contains(forbidden),
+            "strict handoff seal missed {forbidden}"
+        );
+    }
+
+    let synthetic_consumer = syn::parse_file(
+        "#[cfg(feature = \"t4d-shadow\")]\n\
+         use mev_trader_submit::InstalledSubmissionBridge;\n\
+         fn consume(value: InstalledSubmissionBridge) { drop(value); }",
+    )
+    .expect("T4d consumer fixture parses");
+    let (imports, uses, slot_uses) = authoritative_uses(&synthetic_consumer, true);
+    assert!(imports.violations.is_empty());
+    assert_eq!((imports.imports, uses, slot_uses), (1, 1, 0));
+
+    let sealed_only_consumer = syn::parse_file(
+        "#[cfg(feature = \"t4d-shadow\")]\n\
+         use mev_trader_submit::SealedUnsignedCandidate;\n\
+         fn consume(value: SealedUnsignedCandidate) { drop(value); }",
+    )
+    .expect("sealed-only T4d consumer fixture parses");
+    let (imports, uses, slot_uses) = authoritative_uses(&sealed_only_consumer, true);
+    assert!(imports.violations.is_empty());
+    assert_eq!((imports.imports, uses, slot_uses), (1, 1, 0));
+
+    let direct_alias_consumer = syn::parse_file(
+        "use mev_trader_submit as submit;\n\
+         fn consume(value: submit::InstalledSubmissionBridge) { drop(value); }",
+    )
+    .expect("direct-alias T4d consumer fixture parses");
+    let (imports, uses, slot_uses) = authoritative_uses(&direct_alias_consumer, true);
+    assert_eq!((imports.imports, uses, slot_uses), (0, 1, 0));
+    assert!(
+        imports.violations.contains("non-canonical crate alias submit"),
+        "direct crate aliases must fail closed"
+    );
+
+    let glob_consumer = syn::parse_file(
+        "use mev_trader_submit::*;\n\
+         fn consume(value: SealedUnsignedCandidate) { drop(value); }",
+    )
+    .expect("glob T4d consumer fixture parses");
+    let (imports, _, _) = authoritative_uses(&glob_consumer, true);
+    assert!(
+        imports.violations.contains("non-canonical crate alias *"),
+        "glob crate imports must fail closed"
+    );
+
+    let aliased_consumer = syn::parse_file(
+        "#[cfg(feature = \"t4d-shadow\")]\n\
+         use mev_trader_submit::{self as submit};\n\
+         fn consume(value: submit::InstalledSubmissionBridge) { drop(value); }",
+    )
+    .expect("aliased T4d consumer fixture parses");
+    let (imports, uses, slot_uses) = authoritative_uses(&aliased_consumer, true);
+    assert_eq!((imports.imports, uses, slot_uses), (0, 1, 0));
+    assert!(
+        imports.violations.contains("non-canonical crate alias submit"),
+        "grouped crate aliases must fail closed"
+    );
+
+    let extern_consumer = syn::parse_file(
+        "extern crate mev_trader_submit as submit;\n\
+         fn consume(value: submit::InstalledSubmissionBridge) { drop(value); }",
+    )
+    .expect("extern-crate T4d consumer fixture parses");
+    let (imports, uses, slot_uses) = authoritative_uses(&extern_consumer, true);
+    assert_eq!((imports.imports, uses, slot_uses), (0, 1, 0));
+    assert!(
+        imports.violations.contains("non-canonical extern crate alias submit"),
+        "extern crate aliases must fail closed"
+    );
+
+    let macro_consumer = syn::parse_file(
+        "macro_rules! escape { () => { let _: mev_trader_submit::InstalledSubmissionBridge; }; }",
+    )
+    .expect("macro consumer fixture parses");
+    let (imports, _, _) = authoritative_uses(&macro_consumer, true);
+    assert!(imports.violations.contains("macro authority redirect"));
+
+    let path_consumer =
+        syn::parse_file("#[path = \"outside.rs\"] mod hidden;").expect("path fixture parses");
+    let (imports, _, _) = authoritative_uses(&path_consumer, true);
+    assert!(imports.violations.contains("path module authority redirect"));
 
     for source in [&submit_lib, &assembler_source, &calldata_source, &fee_source, &authority_source]
     {
@@ -1197,12 +1912,47 @@ fn t4b_default_and_selected_feature_closures_preserve_zero_broadcast_capability(
         &["ValidatedAbiHop", "ValidatedAtomicCall", "ValidatedUnsignedAtomicTx"],
     );
 
+    let mut victim_envelope = VictimEnvelopeSeal::default();
+    victim_envelope.visit_file(&authority_ast);
+    assert!(victim_envelope.violations.is_empty());
+    assert_eq!(
+        (
+            authority_source.matches("TxEnvelope").count(),
+            victim_envelope.imports,
+            victim_envelope.decode_calls,
+            victim_envelope.eip1559_patterns,
+        ),
+        (3, 1, 1, 1),
+        "TxEnvelope must remain receive-only victim decoding"
+    );
+
     assert!(!submit_manifest.lines().any(|line| line.trim_start().starts_with("default =")));
     let submit_tier = feature_body(&submit_manifest, "tx-authority");
     for forbidden in ["phase-b", "arm", "k256", "rand", "reqwest", "zeroize"] {
         assert!(!submit_tier.contains(forbidden), "tx-authority enables {forbidden}");
     }
     assert!(submit_tier.contains("base-mev-trader/t4b-shadow"));
+    let bridge_tier = feature_body(&submit_manifest, "t4d-bridge");
+    assert_eq!(
+        bridge_tier
+            .split(',')
+            .map(|feature| feature.trim().trim_matches('"'))
+            .filter(|feature| !feature.is_empty())
+            .collect::<Vec<_>>(),
+        ["tx-authority"]
+    );
+    for forbidden in [
+        "phase-b",
+        "arm",
+        "arm-live-egress",
+        "arm-provisioning",
+        "k256",
+        "rand",
+        "reqwest",
+        "zeroize",
+    ] {
+        assert!(!bridge_tier.contains(forbidden), "t4d-bridge enables {forbidden}");
+    }
     assert!(assembler_source.starts_with("//!"));
     assert!(assembler_source.contains("#![cfg(feature = \"phase-b\")]"));
     assert!(submit_lib.contains("#[cfg(feature = \"phase-b\")]\npub mod assembler;"));
@@ -1217,35 +1967,122 @@ fn t4b_default_and_selected_feature_closures_preserve_zero_broadcast_capability(
     assert!(trader_manifest.contains("t4b-shadow = [\"t4a-shadow\"]"));
     assert!(node_manifest.contains("t4b-shadow = [ \"base-execution-cli/t4b-shadow\" ]"));
     assert!(cli_manifest.contains("mev-trader-submit = { workspace = true, optional = true }"));
+    let cli_t4d_tier = feature_body(&cli_manifest, "t4d-shadow");
+    assert!(cli_t4d_tier.contains("mev-trader-submit/t4d-bridge"));
+    assert!(cli_t4d_tier.contains("t4b-shadow"));
+    for forbidden in [
+        "phase-b",
+        "arm",
+        "arm-live-egress",
+        "arm-provisioning",
+        "k256",
+        "rand",
+        "reqwest",
+        "signer",
+        "zeroize",
+    ] {
+        assert!(!cli_t4d_tier.contains(forbidden), "CLI T4d enables {forbidden}");
+    }
+    assert!(node_manifest.contains("t4d-shadow = [ \"base-execution-cli/t4d-shadow\" ]"));
+    let bridge_file = syn::parse_file(&bridge_source).expect("T4d bridge parses as Rust AST");
+    let bridge_imports = bridge_file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Use(item) => Some(item),
+            _ => None,
+        })
+        .flat_map(use_leaves)
+        .map(|leaf| leaf.source.join("::"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        bridge_imports,
+        BTreeSet::from([
+            "std::fmt::Debug".to_owned(),
+            "std::fmt::self".to_owned(),
+            "std::sync::Arc".to_owned(),
+            "std::time::Instant".to_owned(),
+            "alloy_primitives::Address".to_owned(),
+            "alloy_primitives::B256".to_owned(),
+            "base_mev_trader::CancellationProbe".to_owned(),
+            "base_mev_trader::CandidateAssemblyView".to_owned(),
+            "base_mev_trader::ExactProtocol".to_owned(),
+            "base_mev_trader::MeasurementContext".to_owned(),
+            "base_mev_trader::GlobalState".to_owned(),
+            "base_mev_trader::TaskState".to_owned(),
+            "super::DeployedContractIdentity".to_owned(),
+            "super::InstalledExecutionIdentity".to_owned(),
+            "super::TxAuthorityAssembler".to_owned(),
+            "super::TxAuthorityError".to_owned(),
+            "super::TxAuthorityNodeView".to_owned(),
+            "super::ValidatedUnsignedAtomicTx".to_owned(),
+        ])
+    );
+    let mut bridge_ast = AstSeal::unsigned_handoff();
+    bridge_ast.visit_file(&bridge_file);
+    assert!(
+        bridge_ast.violations.is_empty(),
+        "T4d bridge contains signer or egress capability: {:?}",
+        bridge_ast.violations
+    );
+    assert_eq!(bridge_ast.spawn_calls, 0);
+    assert_eq!(bridge_ast.thread_calls, 0);
+    assert_eq!(bridge_ast.subscription_calls, 0);
+    assert_eq!(bridge_ast.item_macros, 0);
+    assert_eq!(bridge_ast.production_modules, 0);
+    let nested_bridge_escape = syn::parse_file(
+        "mod leak {
+            impl crate::SealedUnsignedCandidate {
+                pub fn payload(&self) -> &alloy_consensus::TxEip1559 {
+                    &self.detail.unsigned_tx
+                }
+            }
+        }",
+    )
+    .expect("nested bridge escape fixture parses");
+    let mut nested_bridge_seal = AstSeal::unsigned_handoff();
+    nested_bridge_seal.visit_file(&nested_bridge_escape);
+    assert_eq!(nested_bridge_seal.production_modules, 1);
 
-    let mut selected_seal = AstSeal::default();
-    for source in [&calldata_source, &fee_source, &authority_source] {
+    let mut selected_seal = AstSeal::unsigned_handoff();
+    for source in [&calldata_source, &fee_source] {
         selected_seal.visit_file(&parse_production(source));
     }
     assert!(
         selected_seal.violations.is_empty(),
-        "forbidden selected AST: {:?}",
+        "forbidden selected helper AST: {:?}",
         selected_seal.violations
     );
-    assert_eq!(selected_seal.spawn_calls, 0);
-    assert_eq!(selected_seal.subscription_calls, 0);
+    let mut authority_seal = AstSeal::unsigned_authority();
+    authority_seal.visit_file(&authority_ast);
+    assert!(
+        authority_seal.violations.is_empty(),
+        "forbidden selected authority AST: {:?}",
+        authority_seal.violations
+    );
+    assert_eq!(selected_seal.spawn_calls + authority_seal.spawn_calls, 0);
+    assert_eq!(selected_seal.subscription_calls + authority_seal.subscription_calls, 0);
     assert_eq!(calldata_source.matches("executeBlinkOfaAtomicCall").count(), 1);
     assert_eq!(assembler_source.matches("AtomicCalldataEncoder::encode_legacy").count(), 1);
-    assert_eq!(
-        authority_source
-            .split("#[cfg(test)]")
-            .next()
-            .unwrap()
-            .matches("AtomicCalldataEncoder::encode_validated")
-            .count(),
-        1
-    );
+    assert_eq!(authority_seal.encode_validated_calls, 1);
 
     let default_tree = cargo_tree(&root, None);
     assert!(!default_tree.contains("mev-trader-submit v"));
-    let selected_tree = cargo_tree(&root, Some("t4b-shadow"));
+
+    let t4b_tree = cargo_tree(&root, Some("t4b-shadow"));
+    assert!(t4b_tree.contains("mev-trader-submit v"));
+    let t4b_provenance = submit_feature_provenance(&root, "t4b-shadow");
+    let t4b_features = t4b_provenance
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("mev-trader-submit feature \"")?.split_once('"').map(|(name, _)| name)
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(t4b_features, BTreeSet::from(["base-mev-trader", "default", "tx-authority"]));
+
+    let selected_tree = cargo_tree(&root, Some("t4d-shadow"));
     assert!(selected_tree.contains("mev-trader-submit v"));
-    let provenance = submit_feature_provenance(&root);
+    let provenance = submit_feature_provenance(&root, "t4d-shadow");
     let enabled_submit_features = provenance
         .lines()
         .filter_map(|line| {
@@ -1254,13 +2091,27 @@ fn t4b_default_and_selected_feature_closures_preserve_zero_broadcast_capability(
         .collect::<BTreeSet<_>>();
     assert_eq!(
         enabled_submit_features,
-        BTreeSet::from(["base-mev-trader", "default", "tx-authority"])
+        BTreeSet::from(["base-mev-trader", "default", "t4d-bridge", "tx-authority"])
     );
     for forbidden in ["phase-b", "arm", "arm-live-egress", "arm-provisioning"] {
         assert!(!provenance.contains(&format!("mev-trader-submit feature \"{forbidden}\"")));
     }
-    let trader_closure = package_closure(&root, "base-mev-trader", Some("t4b-shadow"));
+    let selected_packages = package_set(&selected_tree);
+    let t4b_packages = package_set(&t4b_tree);
+    assert_eq!(selected_packages, t4b_packages, "T4d selected closure added a package beyond T4b");
+    assert_eq!(
+        feature_set(&selected_tree),
+        feature_set(&t4b_tree),
+        "T4d selected closure enabled a dependency feature beyond T4b"
+    );
+    let bridge_submit_closure = package_closure(&root, "mev-trader-submit", Some("t4d-bridge"));
     let submit_closure = package_closure(&root, "mev-trader-submit", Some("tx-authority"));
+    assert_eq!(
+        package_set(&bridge_submit_closure),
+        package_set(&submit_closure),
+        "T4d bridge added a package beyond the reviewed unsigned-authority baseline"
+    );
+    let trader_closure = package_closure(&root, "base-mev-trader", Some("t4b-shadow"));
     let trader_baseline = package_set(&trader_closure);
     let submit_selected = package_set(&submit_closure);
     let selected_delta: BTreeSet<String> =
@@ -1279,21 +2130,23 @@ fn t4b_default_and_selected_feature_closures_preserve_zero_broadcast_capability(
     );
 
     let cli_ast = parse_production(&cli_source);
-    let mut cli_seal = AstSeal::default();
+    let mut cli_seal = AstSeal::unsigned_handoff();
     cli_seal.visit_file(&cli_ast);
     assert_eq!(cli_seal.violations, BTreeSet::from(["OpenOptions".to_owned()]));
     assert_eq!(cli_seal.node_view_impls, 1);
-    assert_eq!(cli_seal.observer_impls, 1);
+    assert_eq!(cli_seal.observer_impls, 2);
     assert_eq!(cli_seal.pending_view_impls, 1);
-    assert_eq!(cli_seal.base_mainnet_calls, 1);
+    assert_eq!(cli_seal.base_mainnet_calls, 2);
+    assert_eq!(cli_seal.assemble_sealed_calls, 1);
     assert_eq!(cli_seal.observe_candidate_calls, 0);
     assert_eq!(cli_seal.subscription_calls, 1);
     assert_eq!(cli_seal.spawn_calls, 4);
+    assert_eq!(cli_seal.thread_calls, 0);
     assert_eq!(cli_seal.pending_adapter_constructions, 1);
     assert_eq!(cli_seal.node_view_constructions, 1);
     assert_eq!(cli_seal.authority_constructions, 1);
-    assert_eq!(cli_seal.observer_factories, 1);
-    assert_eq!(cli_seal.observer_install_calls, 2);
+    assert_eq!(cli_seal.observer_factories, 2);
+    assert_eq!(cli_seal.observer_install_calls, 4);
 
     let t4b_module = cli_ast
         .items
