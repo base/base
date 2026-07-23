@@ -4,7 +4,7 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, U256};
 use base_precompile_macros::{AssetAccounting, Storable, TokenAccounting, contract};
-use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
+use base_precompile_storage::{Handler, Mapping, Result, StorageCtx, StorageOps, insert_into_word};
 
 use crate::B20CoreStorage;
 
@@ -89,6 +89,23 @@ impl B20AssetStorage<'_> {
         let decimals = self.asset.decimals()?;
         Ok(if decimals == 0 { Self::MIN_DECIMALS } else { decimals })
     }
+
+    /// Writes the ERC-8056 pending schedule (`pending_multiplier` + `pending_effective_at`) in a
+    /// single read-modify-write of the slot they share.
+    ///
+    /// The two `#[mutator]`-generated setters would each pay a full SLOAD/SSTORE on the same packed
+    /// word; coalescing them halves that to one SLOAD + one SSTORE. `insert_into_word` rewrites only
+    /// each field's own bytes, so the slot's unused upper 8 bytes are preserved untouched. 
+    /// The `AssetAccounting` `set_pending`/`clear_pending` implementations delegate here. 
+    fn write_pending(&mut self, multiplier: u128, effective_at: u64) -> Result<()> {
+        // `pending_multiplier` (u128) occupies the low 16 bytes; `pending_effective_at` (u64) the
+        // next 8. Both share one slot, so writing either field's handle addresses the same word.
+        let slot = self.asset.pending_multiplier.slot();
+        let current = StorageOps::load(&self.asset.pending_multiplier, slot)?;
+        let word = insert_into_word(current, &multiplier, 0, size_of::<u128>())?;
+        let word = insert_into_word(word, &effective_at, size_of::<u128>(), size_of::<u64>())?;
+        StorageOps::store(&mut self.asset.pending_multiplier, slot, word)
+    }
 }
 
 #[cfg(test)]
@@ -169,6 +186,51 @@ mod tests {
 
             assert_eq!(token.asset.pending_multiplier.read().unwrap(), multiplier);
             assert_eq!(token.asset.pending_effective_at.read().unwrap(), effective_at);
+        });
+    }
+
+    #[test]
+    fn set_pending_writes_shared_slot_once_and_preserves_reserved_bits() {
+        let (mut storage, _) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20AssetStorage::from_address(TOKEN, ctx);
+            let pending_slot = ASSET_ROOT
+                + U256::from(
+                    __packing_b20_asset_extension_storage::PENDING_MULTIPLIER_LOC.offset_slots,
+                );
+
+            // Seed the reserved upper 8 bytes (bytes 24..32) to prove the combined write leaves
+            // them intact — this is what protects a future append-only field sharing the slot.
+            let reserved = U256::from(0xDEAD_BEEFu64) << 192;
+            ctx.sstore(TOKEN, pending_slot, reserved).unwrap();
+
+            let multiplier: u128 = 3_000_000_000_000_000_000;
+            let effective_at: u64 = 1_800_000_000;
+
+            let before = ctx.counter_sstore();
+            AssetAccounting::set_pending(&mut token, multiplier, effective_at).unwrap();
+            assert_eq!(
+                ctx.counter_sstore() - before,
+                1,
+                "set_pending must write the shared slot exactly once"
+            );
+
+            // Both lanes land in the same word and the reserved bytes survive.
+            let expected = reserved | U256::from(multiplier) | (U256::from(effective_at) << 128);
+            assert_eq!(ctx.sload(TOKEN, pending_slot).unwrap(), expected);
+            assert_eq!(token.asset.pending_multiplier.read().unwrap(), multiplier);
+            assert_eq!(token.asset.pending_effective_at.read().unwrap(), effective_at);
+
+            // clear_pending is likewise a single write that only zeroes the two lanes.
+            let before = ctx.counter_sstore();
+            AssetAccounting::clear_pending(&mut token).unwrap();
+            assert_eq!(
+                ctx.counter_sstore() - before,
+                1,
+                "clear_pending must write the shared slot exactly once"
+            );
+            assert_eq!(ctx.sload(TOKEN, pending_slot).unwrap(), reserved);
         });
     }
 

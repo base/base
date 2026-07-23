@@ -7,8 +7,9 @@
 /// [`AssetAccounting`], so each version inherits these bodies until it explicitly overrides them.
 /// A version introduced *before* a selector existed must reject it exactly as it did at its
 /// activation fork. Returning `UnknownFunctionSelector` rather than an `Ok` or a real value keeps
-/// re-executing a historical block on a newer binary byte-identical to what the chain already committed; 
-/// any other default would retroactively change an older version's state transition, i.e. a silent hardfork.
+/// re-executing a historical block on a newer binary byte-identical to what the chain already
+/// committed; any other default would retroactively change an older version's state transition, i.e.
+/// a silent hardfork.
 ///
 /// The `[0u8; 4]` is a placeholder: the dispatcher rejects these selectors on the raw calldata,
 /// before any version method is reached (see the fork gate in `route`), so a reachable call never

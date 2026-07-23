@@ -336,13 +336,11 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
                 multiplier: u128,
                 effective_at: u64,
             ) -> ::base_precompile_storage::Result<()> {
-                self.asset.set_pending_multiplier(multiplier)?;
-                self.asset.set_pending_effective_at(effective_at)
+                self.write_pending(multiplier, effective_at)
             }
 
             fn clear_pending(&mut self) -> ::base_precompile_storage::Result<()> {
-                self.asset.set_pending_multiplier(0)?;
-                self.asset.set_pending_effective_at(0)
+                self.write_pending(0, 0)
             }
 
             fn extra_metadata(
