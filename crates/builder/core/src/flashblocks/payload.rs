@@ -101,6 +101,22 @@ impl LastEmittedFlashblockId {
     }
 }
 
+/// The outbound channels the flashblocks builder emits to.
+///
+/// Grouped so [`BasePayloadBuilder::new`] takes a single cohesive argument rather than threading
+/// each sink through individually.
+#[derive(Debug, Clone)]
+pub(super) struct BuilderOutputs {
+    /// Sender for sending built payloads to [`PayloadHandler`],
+    /// which broadcasts outgoing payloads via p2p.
+    pub payload_tx: mpsc::Sender<BaseBuiltPayload>,
+    /// WebSocket publisher for broadcasting flashblocks
+    /// to all connected subscribers.
+    pub ws_pub: Arc<WebSocketPublisher>,
+    /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
+    pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
+}
+
 /// Base payload builder
 #[derive(Debug, Clone)]
 pub(super) struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource> {
@@ -110,16 +126,11 @@ pub(super) struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource> {
     pub pool: Pool,
     /// Node client
     pub client: Client,
-    /// Sender for sending built payloads to [`PayloadHandler`],
-    /// which broadcasts outgoing payloads via p2p.
-    pub payload_tx: mpsc::Sender<BaseBuiltPayload>,
-    /// WebSocket publisher for broadcasting flashblocks
-    /// to all connected subscribers.
-    pub ws_pub: Arc<WebSocketPublisher>,
     /// System configuration for the builder
     pub config: BuilderConfig,
-    /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
-    pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
+    /// The outbound channels the builder emits built payloads, flashblocks, and rejected
+    /// transactions to.
+    pub outputs: BuilderOutputs,
     /// Last flashblock emitted by this builder instance.
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
     /// Transforms the candidate transaction stream drained by the build loop.
@@ -128,25 +139,20 @@ pub(super) struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource> {
 
 impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
     /// `BasePayloadBuilder` constructor.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         evm_config: BaseEvmConfig,
         pool: Pool,
         client: Client,
         config: BuilderConfig,
-        payload_tx: mpsc::Sender<BaseBuiltPayload>,
-        ws_pub: Arc<WebSocketPublisher>,
-        rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
+        outputs: BuilderOutputs,
         candidate_source: S,
     ) -> Self {
         Self {
             evm_config,
             pool,
             client,
-            payload_tx,
-            ws_pub,
             config,
-            rejected_tx_sender,
+            outputs,
             last_emitted_flashblock_id: Arc::default(),
             candidate_source,
         }
@@ -248,7 +254,7 @@ where
             cancel,
             extra,
             builder_config: self.config.clone(),
-            rejected_tx_sender: self.rejected_tx_sender.clone(),
+            rejected_tx_sender: self.outputs.rejected_tx_sender.clone(),
         })
     }
 
@@ -318,7 +324,7 @@ where
             skip_flashblocks_building, // need to calculate state root for CL sync or if not building flashblocks
         )?;
 
-        self.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
+        self.outputs.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
 
         info!(
             target: "payload_builder",
@@ -335,6 +341,7 @@ where
         // flashblocks for the same block.
         if !ctx.attributes().no_tx_pool {
             let flashblock_byte_size = self
+                .outputs
                 .ws_pub
                 .publish(&fb_payload, ctx.block_number(), 0)
                 .map_err(PayloadBuilderError::other)?;
@@ -750,6 +757,7 @@ where
                         (true, 0)
                     } else {
                         let size = self
+                            .outputs
                             .ws_pub
                             .publish(&fb_payload, ctx.block_number(), flashblock_index)
                             .wrap_err("failed to publish flashblock via websocket")?;
@@ -795,7 +803,8 @@ where
                 }
 
                 // Send to handler outside mutex.
-                self.payload_tx
+                self.outputs
+                    .payload_tx
                     .send(new_payload.clone())
                     .await
                     .wrap_err("failed to send built payload to handler")?;
@@ -1072,7 +1081,7 @@ impl<Pool, Client, S> PayloadBuilder for BasePayloadBuilder<Pool, Client, S>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    S: CandidateSource<Pool::Transaction> + Clone + Send + Sync + Unpin + 'static,
+    S: CandidateSource<Pool::Transaction> + Clone + Unpin + 'static,
 {
     type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;

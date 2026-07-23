@@ -19,7 +19,11 @@ use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
 use tracing::info;
 
-use super::{PayloadHandler, generator::BlockPayloadJobGenerator, payload::BasePayloadBuilder};
+use super::{
+    PayloadHandler,
+    generator::BlockPayloadJobGenerator,
+    payload::{BasePayloadBuilder, BuilderOutputs},
+};
 use crate::{
     BuilderConfig, CandidateSource, DefaultCandidateSource, RejectedTxForwarder,
     traits::{NodeBounds, PoolBounds},
@@ -49,6 +53,7 @@ impl FlashblocksServiceBuilder {
 
 impl<S> FlashblocksServiceBuilder<S> {
     /// Replace the candidate transaction source used by the flashblocks build loop.
+    #[must_use]
     pub fn with_candidate_source<S2>(self, candidate_source: S2) -> FlashblocksServiceBuilder<S2> {
         FlashblocksServiceBuilder { config: self.config, candidate_source }
     }
@@ -83,9 +88,7 @@ impl<S> FlashblocksServiceBuilder<S> {
             pool,
             ctx.provider().clone(),
             self.config.clone(),
-            built_payload_tx,
-            ws_pub,
-            rejected_tx_sender,
+            BuilderOutputs { payload_tx: built_payload_tx, ws_pub, rejected_tx_sender },
             self.candidate_source.clone(),
         );
         let payload_generator = BlockPayloadJobGenerator::with_builder(
