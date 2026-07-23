@@ -263,6 +263,58 @@ pub async fn remove_peer(rpc: &Url, enode: &str) -> Result<bool> {
     }
 }
 
+/// Bans an execution-layer peer through `admin_banPeer`.
+pub async fn ban_el_peer(rpc: &Url, enode: &str) -> Result<bool> {
+    el_admin_peer_bool(rpc, "admin_banPeer", enode).await
+}
+
+/// Unbans an execution-layer peer through `admin_unbanPeer`.
+pub async fn unban_el_peer(rpc: &Url, enode: &str) -> Result<bool> {
+    el_admin_peer_bool(rpc, "admin_unbanPeer", enode).await
+}
+
+/// Calls a boolean-returning execution-layer admin peer method with the enode
+/// as its sole positional parameter, mapping a missing method to a clear error.
+async fn el_admin_peer_bool(rpc: &Url, method: &'static str, enode: &str) -> Result<bool> {
+    let el_provider = connect_el(rpc).await?;
+    match el_provider.client().request(method, (enode,)).await {
+        Ok(accepted) => Ok(accepted),
+        Err(err) if is_method_not_found(&err) => {
+            Err(err).with_context(|| format!("`{method}` not exposed by {rpc}"))
+        }
+        Err(err) => Err(err).with_context(|| format!("calling {method} on {rpc}")),
+    }
+}
+
+/// Reports whether the execution-layer peer identified by `enode` is currently
+/// connected as a trusted peer, via `admin_peers`.
+///
+/// reth silently skips trusted peers when banning (returning success without
+/// applying the ban), so callers use this to fail fast with a clear message.
+/// Returns `false` when the peer is not among the connected peers or when the EL
+/// RPC does not expose `admin_peers`: in both cases the trusted status cannot be
+/// confirmed, so the caller should not block the ban. This therefore only
+/// catches trusted peers with a live session, which is the common ban case.
+pub async fn el_peer_is_trusted(rpc: &Url, enode: &str) -> Result<bool> {
+    let Some(node_id) = enode_node_id(enode) else { return Ok(false) };
+    let el_provider = connect_el(rpc).await?;
+    match el_provider.peers().await {
+        Ok(peers) => Ok(peers.iter().any(|peer| {
+            peer.network.trusted
+                && enode_node_id(&peer.enode).is_some_and(|id| id.eq_ignore_ascii_case(&node_id))
+        })),
+        Err(err) if is_method_not_found(&err) => Ok(false),
+        Err(err) => Err(err).with_context(|| format!("fetching admin_peers from {rpc}")),
+    }
+}
+
+/// Extracts the lowercase-comparable node ID (the hex public key between
+/// `enode://` and `@`) from an enode URL, or `None` if it is not an enode.
+fn enode_node_id(enode: &str) -> Option<String> {
+    let node_id = enode.strip_prefix("enode://")?.split('@').next()?;
+    (!node_id.is_empty()).then(|| node_id.to_string())
+}
+
 /// Connects a consensus-layer peer through `opp2p_connectPeer`.
 pub async fn connect_peer(cl_rpc: &Url, multiaddr: &str) -> Result<()> {
     let cl_client = connect_cl(cl_rpc)?;
@@ -719,11 +771,10 @@ mod tests {
     use base_consensus_gossip::{
         Connectedness, Direction, GossipScores, PeerInfo, PeerScores, ReqRespScores,
     };
-    use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
     use super::{
-        ClNodeIdentity, ElNodeIdentity, NodeEndpoint, is_jsonrpc_method_not_found,
-        parse_cl_node_endpoint, parse_el_node_endpoint,
+        ClNodeIdentity, ElNodeIdentity, NodeEndpoint, parse_cl_node_endpoint,
+        parse_el_node_endpoint,
     };
 
     fn sample_cl_peer_info(enr: Option<String>) -> PeerInfo {
@@ -812,16 +863,5 @@ mod tests {
         assert!(endpoint.discovery.udp_port > 0);
         assert!(!endpoint.discovery.v4_enabled);
         assert!(endpoint.discovery.v5_enabled);
-    }
-
-    #[test]
-    fn detects_jsonrpc_method_not_found_for_cl_p2p_methods() {
-        let err = JsonRpcClientError::Call(ErrorObjectOwned::owned(
-            -32601,
-            "method not found",
-            None::<()>,
-        ));
-
-        assert!(is_jsonrpc_method_not_found(&err));
     }
 }
