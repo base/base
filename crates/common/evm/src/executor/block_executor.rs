@@ -15,9 +15,9 @@ use alloy_evm::{
 };
 use base_common_chains::Upgrades;
 use base_common_consensus::{DepositReceipt, Predeploys};
+use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 #[cfg(feature = "std")]
 use base_execution_eip8130::IntrinsicGas;
-use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use revm::{
     Database as _, DatabaseCommit,
     context::{Block, result::ResultAndState},
@@ -705,8 +705,10 @@ mod tests {
             JOVIAN_TIMESTAMP,
         );
 
-        let tx =
-            Recovered::new_unchecked(BaseTxEnvelope::Eip8130(signed), Address::with_last_byte(0x22));
+        let tx = Recovered::new_unchecked(
+            BaseTxEnvelope::Eip8130(signed),
+            Address::with_last_byte(0x22),
+        );
         let err = executor.execute_transaction(&tx).expect_err("reservation must reject");
         match err {
             BlockExecutionError::Validation(
@@ -752,8 +754,10 @@ mod tests {
             JOVIAN_TIMESTAMP,
         );
 
-        let tx =
-            Recovered::new_unchecked(BaseTxEnvelope::Eip8130(signed), Address::with_last_byte(0x22));
+        let tx = Recovered::new_unchecked(
+            BaseTxEnvelope::Eip8130(signed),
+            Address::with_last_byte(0x22),
+        );
         // Execution itself may fail for this synthetic transaction, but the block
         // gas pre-check must not: reserving exactly `gas_limit` fits the block.
         if let Err(BlockExecutionError::Validation(

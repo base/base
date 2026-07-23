@@ -58,10 +58,8 @@ where
     P: TrieDBProvider + Debug,
     H: TrieHinter + Debug,
     Evm: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + 'static,
-    <Evm as EvmFactory>::Tx: FromTxWithEncoded<BaseTxEnvelope>
-        + FromRecoveredTx<BaseTxEnvelope>
-        + BaseTxEnv
-        + BaseTxTr,
+    <Evm as EvmFactory>::Tx:
+        FromTxWithEncoded<BaseTxEnvelope> + FromRecoveredTx<BaseTxEnvelope> + BaseTxEnv + BaseTxTr,
 {
     /// Creates a new stateless L2 block builder instance.
     ///

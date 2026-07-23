@@ -16,6 +16,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
 use base_common_evm::{BaseReceiptBuilder, BaseSpecId, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
@@ -850,6 +851,27 @@ impl BasePayloadBuilderCtx {
 
             let tx_da_size = tx.estimated_da_size();
             let tx_received_at_ms = tx.received_at();
+
+            // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
+            // be reserved against the block gas budget in addition to `gas_limit`. It is a pure
+            // function of the payer auth blob (`0` for non-8130 / self-pay).
+            let tx_payer_auth = match tx.as_eip8130() {
+                Some(signed) => match IntrinsicGas::payer_auth_cost(signed) {
+                    Ok(payer_auth) => payer_auth,
+                    Err(err) => {
+                        trace!(
+                            target: "payload_builder",
+                            %err,
+                            tx_hash = ?tx.hash(),
+                            "skipping EIP-8130 transaction with unschedulable payer authenticator"
+                        );
+                        best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        continue;
+                    }
+                },
+                None => 0,
+            };
+
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
@@ -888,6 +910,7 @@ impl BasePayloadBuilderCtx {
                     let tx_resources = TxResources {
                         da_size: tx_da_size,
                         gas_limit: tx.gas_limit(),
+                        payer_auth: tx_payer_auth,
                         execution_time_us: None,
                         uncompressed_size: tx_uncompressed_size,
                     };
@@ -932,6 +955,7 @@ impl BasePayloadBuilderCtx {
             let tx_resources = TxResources {
                 da_size: tx_da_size,
                 gas_limit: tx.gas_limit(),
+                payer_auth: tx_payer_auth,
                 execution_time_us: predicted_execution_time_us,
                 uncompressed_size: tx_uncompressed_size,
             };
