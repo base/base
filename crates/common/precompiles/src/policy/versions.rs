@@ -8,7 +8,7 @@
 
 use base_common_genesis::BaseUpgrade;
 
-use crate::{PolicyAccounting, PolicyRegistryLogic, PolicyRegistryV1};
+use crate::{PolicyAccounting, PolicyRegistryLogic, PolicyRegistryV1, PolicyRegistryV2};
 
 /// An activated version of the `PolicyRegistry` precompile logic.
 ///
@@ -17,6 +17,8 @@ use crate::{PolicyAccounting, PolicyRegistryLogic, PolicyRegistryV1};
 pub enum PolicyVersion {
     /// Introduced at Beryl, the fork where the policy registry precompile is installed.
     V1,
+    /// Introduced at Cobalt, superseding [`Self::V1`].
+    V2,
 }
 
 impl PolicyVersion {
@@ -26,8 +28,10 @@ impl PolicyVersion {
         S: PolicyAccounting + 'l,
     {
         static V1: PolicyRegistryV1 = PolicyRegistryV1;
+        static V2: PolicyRegistryV2 = PolicyRegistryV2;
         match self {
             Self::V1 => &V1,
+            Self::V2 => &V2,
         }
     }
 }
@@ -40,10 +44,17 @@ impl PolicyVersion {
 pub struct PolicyVersions;
 
 impl PolicyVersions {
-    /// Returns the version active at `upgrade`, or `None` before Beryl, where the policy
-    /// registry precompile is not installed at all.
+    /// Returns the version active at `upgrade`: [`PolicyVersion::V2`] from Cobalt onward,
+    /// [`PolicyVersion::V1`] from Beryl until Cobalt, or `None` before Beryl, where the
+    /// policy registry precompile is not installed at all.
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
-        if upgrade >= BaseUpgrade::Beryl { Some(PolicyVersion::V1) } else { None }
+        if upgrade >= BaseUpgrade::Cobalt {
+            Some(PolicyVersion::V2)
+        } else if upgrade >= BaseUpgrade::Beryl {
+            Some(PolicyVersion::V1)
+        } else {
+            None
+        }
     }
 }
 
@@ -64,7 +75,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_v1_at_cobalt() {
-        assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(PolicyVersion::V1));
+    fn resolves_v2_at_cobalt() {
+        assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(PolicyVersion::V2));
     }
 }
