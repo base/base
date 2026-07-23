@@ -338,15 +338,7 @@ where
             match result {
                 Ok(outcome) => {
                     let active_signers = outcome.active_signers.iter().copied().collect::<Vec<_>>();
-                    if active_signers.is_empty()
-                        && outcome.unresolved_instance_ids.contains(&instance.instance_id)
-                    {
-                        if let Some((cached_signers, _)) =
-                            last_known_active.get(&instance.instance_id)
-                        {
-                            resolution.active_signers.extend(cached_signers.iter().copied());
-                        }
-                    } else if active_signers.is_empty() {
+                    if active_signers.is_empty() {
                         last_known_active.remove(&instance.instance_id);
                     } else {
                         last_known_active.insert(instance.instance_id, (active_signers, 0));
