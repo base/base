@@ -26,7 +26,7 @@ use revm::{
 use crate::Eip8130Executor;
 use crate::{
     BaseContext, BaseHaltReason, BasePrecompiles, BaseSpecId, BaseTransaction,
-    BaseTransactionError, BaseTxTr, handler::BaseHandler,
+    BaseTransactionError, BaseTxTr, BaseUpgrade, handler::BaseHandler,
 };
 
 /// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
@@ -424,6 +424,16 @@ where
         if tx.is_eip8130() {
             #[cfg(feature = "std")]
             {
+                // EIP-8130 (account abstraction) is enabled by the Cobalt upgrade.
+                // Reject the transaction type before activation so the enshrined
+                // execution path matches the fork gates already enforced at RPC
+                // ingress, txpool admission, and batch derivation.
+                if !self.ctx().cfg.spec.is_enabled_in(BaseUpgrade::Cobalt) {
+                    return Err(EVMError::Transaction(BaseTransactionError::eip8130(
+                        "EIP-8130 transactions are not enabled before the Cobalt upgrade",
+                    )));
+                }
+
                 // Read-only RPC simulation (`eth_estimateGas` / `eth_call`):
                 // route to the unverified `simulate` path, which reverts all
                 // state internally, so report no committed state changes. This
