@@ -54,12 +54,14 @@ impl AssetVersions {
     ///
     /// V1 is active from Beryl; V2 supersedes it from Cobalt.
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<AssetVersion> {
-        if upgrade >= BaseUpgrade::Cobalt {
-            Some(AssetVersion::V2)
-        } else if upgrade >= BaseUpgrade::Beryl {
-            Some(AssetVersion::V1)
-        } else {
-            None
+        // Ordered thresholds rather than per-variant arms: a fork newer than Cobalt must inherit the
+        // latest version (V2) until one supersedes it, and `BaseUpgrade` is `#[non_exhaustive]`, so
+        // an explicit-variant match would need a wildcard that would wrongly send future forks to
+        // `None`.
+        match upgrade {
+            u if u >= BaseUpgrade::Cobalt => Some(AssetVersion::V2),
+            u if u >= BaseUpgrade::Beryl => Some(AssetVersion::V1),
+            _ => None,
         }
     }
 }
