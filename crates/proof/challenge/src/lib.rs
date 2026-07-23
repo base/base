@@ -47,9 +47,6 @@ pub use validator::{
     IntermediateValidationParams, OutputValidator, ValidationResult, ValidatorError,
 };
 
-mod verify;
-pub use verify::{AccountProofError, AccountProofVerifier};
-
 mod bond;
 pub use bond::{BondManager, BondManagerConfig};
 

@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn latest_base_upgrade_matches_default() {
         assert_eq!(BaseUpgrade::default(), BaseUpgrade::LATEST);
-        assert_eq!(BaseUpgrade::LATEST, BaseUpgrade::Azul);
+        assert_eq!(BaseUpgrade::LATEST, BaseUpgrade::Beryl);
     }
 
     #[test]

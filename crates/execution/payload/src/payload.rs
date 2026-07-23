@@ -100,6 +100,7 @@ impl<T> BasePayloadBuilderAttributes<T> {
                     .then(|| self.payload_attributes.withdrawals.to_vec()),
                 parent_beacon_block_root: self.payload_attributes.parent_beacon_block_root,
                 slot_number: self.payload_attributes.slot_number,
+                target_gas_limit: None,
             },
             transactions: (!self.transactions.is_empty())
                 .then(|| self.transactions.iter().map(|tx| tx.encoded_bytes().clone()).collect()),
@@ -149,6 +150,12 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilde
         attributes: BasePayloadAttributes,
         version: u8,
     ) -> Result<Self, alloy_rlp::Error> {
+        if attributes.payload_attributes.target_gas_limit.is_some() {
+            return Err(alloy_rlp::Error::Custom(
+                "targetGasLimit is not supported by Base payload attributes",
+            ));
+        }
+
         let id = attributes.payload_id(&parent, version);
 
         let transactions = attributes
@@ -559,6 +566,7 @@ mod tests {
                 withdrawals: Some([].into()),
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
@@ -591,6 +599,7 @@ mod tests {
                 withdrawals: Some([].into()),
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
@@ -635,6 +644,29 @@ mod tests {
 
         assert_eq!(builder.timestamp_millis_part, Some(400));
         assert_eq!(builder.as_rpc_payload_attributes().timestamp_millis_part, Some(400));
+    }
+
+    #[test]
+    fn test_payload_builder_rejects_target_gas_limit() {
+        let attributes = BasePayloadAttributes {
+            payload_attributes: PayloadAttributes {
+                target_gas_limit: Some(30_000_000),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let error = BasePayloadBuilderAttributes::<BaseTransactionSigned>::try_new(
+            B256::ZERO,
+            attributes,
+            EngineApiMessageVersion::V3 as u8,
+        )
+        .expect_err("targetGasLimit must be rejected");
+
+        assert_eq!(
+            error,
+            alloy_rlp::Error::Custom("targetGasLimit is not supported by Base payload attributes")
+        );
     }
 
     #[test]

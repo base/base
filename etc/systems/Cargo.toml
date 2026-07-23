@@ -94,6 +94,9 @@ testcontainers = { workspace = true, features = ["blocking", "host-port-exposure
 # cli
 clap = { workspace = true, features = ["derive"] }
 
+# load testing
+base-load-tests.workspace = true
+
 # consensus
 base-consensus-derive.workspace = true
 base-consensus-engine = { workspace = true, features = ["test-utils"] }

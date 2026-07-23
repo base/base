@@ -40,7 +40,13 @@ pub trait EngineRequestReceiver: Send + Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResetOutcome {
     NotReset,
+    /// A genuine engine reset (reorg, Holocene activation, or reset-severity task error). For a
+    /// shadow sequencer this invalidates reconciliation state and is fatal.
     Reset,
+    /// The one-time reset performed when EL sync first completes. Benign for a shadow sequencer
+    /// (no reconciliation state exists yet) and fires at most once, since the path that produces
+    /// it flips `el_sync_complete` to `true` before returning.
+    InitialELSyncReset,
 }
 
 /// Owns the engine processor and routes requests that require shadow reconciliation state.
@@ -353,6 +359,10 @@ where
                 trace!(target: "engine", %error, "Temporary engine task error");
                 Ok(ResetOutcome::NotReset)
             }
+            EngineTaskErrorSeverity::Deferred => {
+                trace!(target: "engine", %error, "Deferred engine task error");
+                Ok(ResetOutcome::NotReset)
+            }
         }
     }
 
@@ -371,7 +381,11 @@ where
 
         if !self.el_sync_complete && self.engine.state().el_sync_finished {
             let sync_outcome = self.mark_el_sync_complete_and_notify_derivation_actor().await?;
-            if sync_outcome == ResetOutcome::Reset {
+            // A genuine reset from the drain above takes precedence and stays fatal; only surface
+            // the benign initial-sync reset when the drain itself did not reset.
+            if reset_outcome != ResetOutcome::Reset
+                && sync_outcome == ResetOutcome::InitialELSyncReset
+            {
                 return Ok(sync_outcome);
             }
         }
@@ -556,7 +570,7 @@ where
                 // If the sync status is finished, we can reset the engine and start derivation.
                 info!(target: "engine", "Performing initial engine reset");
                 self.reset().await?;
-                ResetOutcome::Reset
+                ResetOutcome::InitialELSyncReset
             } else {
                 info!(target: "engine", "finalized head is not default, so not resetting");
                 ResetOutcome::NotReset
@@ -872,6 +886,9 @@ where
                         )
                     }
                 )?;
+                // A genuine drain reset invalidates shadow reconciliation state and is fatal. The
+                // one-time `InitialELSyncReset` (a cold-start bootstrap reset) is deliberately
+                // tolerated: it carries no reconciliation state and cannot recur.
                 if self.shadow_gate.is_some() && drain_outcome == ResetOutcome::Reset {
                     return Err(EngineError::ShadowInternalReset);
                 }
@@ -1005,7 +1022,7 @@ where
                     }
                     EngineActorRequest::ReconcileShadowRequest(request) => {
                         let ReconcileShadowRequest { shadow_head, result_tx } = *request;
-                        let result = match self.shadow_gate.as_ref() {
+                        let result = match self.shadow_gate.as_mut() {
                             Some(gate) => match gate.prepare(shadow_head) {
                                 Ok(Some(inputs)) => {
                                     self.processor.apply_canonical_inputs(inputs).await
@@ -1612,6 +1629,73 @@ mod tests {
 
         drop(req_tx);
         let _ = handle.await;
+    }
+
+    /// Regression test for the shadow-sequencer startup crash: a shadow node (`shadow_gate`
+    /// present) cold-starting against a genesis/unsynced EL must survive the mandatory one-time
+    /// initial engine reset rather than terminating with [`EngineError::ShadowInternalReset`].
+    ///
+    /// The initial reset is performed on the first `drain()` (via
+    /// `mark_el_sync_complete_and_notify_derivation_actor`) whenever the finalized head is still
+    /// default. That path now yields [`ResetOutcome::InitialELSyncReset`] rather than
+    /// [`ResetOutcome::Reset`], so the fatal-reset guard skips it and the node survives until the
+    /// request channel closes. Genuine resets still yield [`ResetOutcome::Reset`] and remain fatal
+    /// even while EL sync is incomplete.
+    #[tokio::test]
+    async fn shadow_gate_survives_initial_el_sync_reset() {
+        let head = test_block_info(100);
+
+        // Follower bootstrap (a stopped shadow sequencer resolves to the follower path): probes
+        // with zeroed safe/finalized and needs a Valid FCU so `el_sync_finished` is set, which
+        // drives the initial reset on the first drain while the finalized head is still default.
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        mock_derivation.expect_send_signal().returning(|_| Ok(()));
+
+        let mut mock_conductor = MockConductor::new();
+        mock_conductor.expect_leader().returning(|| Ok(false));
+
+        let (state_tx, _state_rx) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Sequencer,
+                unsafe_head_tx: Some(unsafe_head_tx),
+                conductor: Some(Arc::new(mock_conductor)),
+                sequencer_stopped: false,
+            },
+        );
+
+        // A present gate marks this node as a shadow sequencer, arming the fatal-reset guard.
+        let gate = super::ShadowReconciliationGate::new(L2BlockInfo::default());
+
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle = EngineRequestHandler::new(processor, Some(gate)).start(req_rx);
+
+        // Close the channel so the loop exits after bootstrap + the initial-reset drain.
+        drop(req_tx);
+        let result = handle.await.expect("engine task panicked");
+
+        assert!(
+            !matches!(result, Err(super::EngineError::ShadowInternalReset)),
+            "shadow node must survive the initial EL-sync reset, got: {result:?}"
+        );
     }
 
     /// Regression test: demonstrates that a validator node (`unsafe_head_tx` = None) was

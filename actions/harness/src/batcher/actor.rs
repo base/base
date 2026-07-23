@@ -280,6 +280,36 @@ impl<S: L2BlockProvider> Batcher<S> {
         self.tx_manager.fail_next_n(n);
     }
 
+    /// Schedule the next `n` frame submissions to be rejected as if the txpool
+    /// nonce slot is held by a stuck transaction.
+    ///
+    /// Each of the next `n` calls the background [`BatchDriver`] makes to
+    /// [`TxManager::send_async`] resolves with [`TxManagerError::AlreadyReserved`].
+    /// The driver classifies this as [`TxOutcome::TxpoolBlocked`]: it requeues
+    /// the frames, stops submitting, and calls [`TxManager::cancel_tx`] on its
+    /// next loop iteration to clear the slot before resubmitting. Use
+    /// [`cancellation_count`] to assert the recovery path ran, and
+    /// [`wait_until_requeued`] to wait for the frames to return to pending.
+    ///
+    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
+    /// [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    /// [`TxManagerError::AlreadyReserved`]: base_tx_manager::TxManagerError::AlreadyReserved
+    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_core::TxOutcome::TxpoolBlocked
+    /// [`cancellation_count`]: Batcher::cancellation_count
+    /// [`wait_until_requeued`]: Batcher::wait_until_requeued
+    pub fn block_next_n_submissions(&self, n: usize) {
+        self.tx_manager.block_next_n(n);
+    }
+
+    /// Returns how many times the driver has called [`TxManager::cancel_tx`] to
+    /// recover from a txpool blockage.
+    ///
+    /// [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    pub fn cancellation_count(&self) -> usize {
+        self.tx_manager.cancellation_count()
+    }
+
     /// Mine all pending frame submissions in one L1 block.
     ///
     /// Stages every pending frame, mines one L1 block, fires all receipt

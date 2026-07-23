@@ -34,9 +34,9 @@ pub enum InsertTaskError {
     /// The forkchoice update call to consolidate the block into the engine state failed.
     #[error(transparent)]
     ForkchoiceUpdateFailed(#[from] SynchronizeTaskError),
-    /// The forkchoice update completed without advancing the unsafe head to the inserted payload.
-    #[error("Forkchoice update did not advance to the inserted payload")]
-    ForkchoiceUpdateDidNotAdvance,
+    /// The forkchoice update completed without applying the inserted payload.
+    #[error("Forkchoice update did not apply the inserted payload")]
+    ForkchoiceUpdateDidNotApply,
 }
 
 impl EngineTaskError for InsertTaskError {
@@ -47,7 +47,7 @@ impl EngineTaskError for InsertTaskError {
             | Self::L2BlockInfoConstruction(_) => EngineTaskErrorSeverity::Critical,
             Self::InsertFailed(_)
             | Self::UnexpectedPayloadStatus(_)
-            | Self::ForkchoiceUpdateDidNotAdvance => EngineTaskErrorSeverity::Temporary,
+            | Self::ForkchoiceUpdateDidNotApply => EngineTaskErrorSeverity::Temporary,
             Self::ForkchoiceUpdateFailed(inner) => inner.severity(),
         }
     }

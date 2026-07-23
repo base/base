@@ -495,22 +495,16 @@ impl View for ConductorView {
             Overlay::HashInput { node: target, input, cursor, prefilled } => {
                 match key.code {
                     KeyCode::Esc => self.close_overlay(),
-                    KeyCode::Backspace => {
-                        if *cursor > 0 {
-                            *cursor -= 1;
-                            input.remove(*cursor);
-                            *prefilled = false;
-                        }
+                    KeyCode::Backspace if *cursor > 0 => {
+                        *cursor -= 1;
+                        input.remove(*cursor);
+                        *prefilled = false;
                     }
-                    KeyCode::Left => {
-                        if *cursor > 0 {
-                            *cursor -= 1;
-                        }
+                    KeyCode::Left if *cursor > 0 => {
+                        *cursor -= 1;
                     }
-                    KeyCode::Right => {
-                        if *cursor < input.len() {
-                            *cursor += 1;
-                        }
+                    KeyCode::Right if *cursor < input.len() => {
+                        *cursor += 1;
                     }
                     KeyCode::Home => *cursor = 0,
                     KeyCode::End => *cursor = input.len(),
@@ -527,12 +521,14 @@ impl View for ConductorView {
                             *prefilled = true;
                         }
                     }
-                    KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        if c.is_ascii_hexdigit() && input.len() < 64 {
-                            input.insert(*cursor, c);
-                            *cursor += 1;
-                            *prefilled = false;
-                        }
+                    KeyCode::Char(c)
+                        if !key.modifiers.contains(KeyModifiers::CONTROL)
+                            && c.is_ascii_hexdigit()
+                            && input.len() < 64 =>
+                    {
+                        input.insert(*cursor, c);
+                        *cursor += 1;
+                        *prefilled = false;
                     }
                     KeyCode::Enter => {
                         if let Some(hash) = parse_hex_hash(input) {

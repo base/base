@@ -9,7 +9,8 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, keccak256};
+use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
 use base_common_consensus::Predeploys;
 use base_proof_rpc::{L2Provider, RpcError};
 use base_protocol::OutputRoot;
@@ -17,7 +18,7 @@ use futures::stream::{self, StreamExt};
 use thiserror::Error;
 use tracing::{info, warn};
 
-use crate::{AccountProofVerifier, ChallengerMetrics};
+use crate::ChallengerMetrics;
 
 /// Errors that can occur during output root validation.
 #[derive(Debug, Error)]
@@ -103,8 +104,6 @@ pub struct ValidationResult {
     /// intermediate validation this is the computed root at the first invalid
     /// checkpoint, or `claimed_root` when all checkpoints are valid.
     pub expected_root: B256,
-    /// The root claim from the onchain game.
-    pub claimed_root: B256,
     /// The index of the first invalid intermediate root, if any.
     pub invalid_intermediate_index: Option<usize>,
 }
@@ -126,20 +125,18 @@ pub struct IntermediateValidationParams<'a> {
     pub intermediate_roots: &'a [B256],
 }
 
-/// A single output root checkpoint to validate.
-struct Checkpoint {
-    /// The L2 block number at this checkpoint.
-    block: u64,
-    /// The onchain-claimed output root at this block.
-    claimed_root: B256,
-}
-
 /// Validates output roots for candidate dispute games.
 ///
 /// Fetches L2 block headers and `L2ToL1MessagePasser` storage proofs to
 /// recompute expected output roots and compare them against onchain claims.
 pub struct OutputValidator<L2: L2Provider + ?Sized> {
     l2_provider: Arc<L2>,
+}
+
+impl<L2: L2Provider + ?Sized> Clone for OutputValidator<L2> {
+    fn clone(&self) -> Self {
+        Self { l2_provider: Arc::clone(&self.l2_provider) }
+    }
 }
 
 impl<L2: L2Provider + ?Sized> std::fmt::Debug for OutputValidator<L2> {
@@ -206,12 +203,35 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
         let account_result =
             self.l2_provider.get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, rpc_hash).await?;
 
-        AccountProofVerifier::verify(
-            &account_result,
+        if account_result.address != Predeploys::L2_TO_L1_MESSAGE_PASSER {
+            return Err(ValidatorError::AccountProofFailed {
+                block_number,
+                reason: format!(
+                    "account proof address mismatch: expected {}, got {}",
+                    Predeploys::L2_TO_L1_MESSAGE_PASSER,
+                    account_result.address
+                ),
+            });
+        }
+
+        let account = TrieAccount {
+            nonce: account_result.nonce,
+            balance: account_result.balance,
+            storage_root: account_result.storage_hash,
+            code_hash: account_result.code_hash,
+        };
+        let key = Nibbles::unpack(keccak256(account_result.address));
+
+        verify_proof(
             consensus_header.state_root,
-            Predeploys::L2_TO_L1_MESSAGE_PASSER,
+            key,
+            Some(alloy_rlp::encode(account)),
+            &account_result.account_proof,
         )
-        .map_err(|e| ValidatorError::AccountProofFailed { block_number, reason: e.to_string() })?;
+        .map_err(|error| ValidatorError::AccountProofFailed {
+            block_number,
+            reason: format!("account proof verification failed: {error}"),
+        })?;
 
         let storage_root = account_result.storage_hash;
         let output_root =
@@ -228,33 +248,35 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
     async fn validate_output_roots(
         &self,
         game_address: Address,
-        checkpoints: &[Checkpoint],
+        checkpoints: impl IntoIterator<Item = (u64, B256)>,
     ) -> Result<Option<(usize, B256)>, ValidatorError> {
         let _latency = base_metrics::timed!(ChallengerMetrics::validation_latency_seconds());
 
-        let mut stream = stream::iter(checkpoints.iter().enumerate())
-            .map(|(idx, cp)| async move { (idx, cp, self.compute_output_root(cp.block).await) })
+        let mut stream = stream::iter(checkpoints.into_iter().enumerate())
+            .map(|(idx, (block, claimed_root))| async move {
+                (idx, block, claimed_root, self.compute_output_root(block).await)
+            })
             .buffered(Self::VALIDATION_CONCURRENCY);
 
-        while let Some((idx, cp, result)) = stream.next().await {
+        while let Some((idx, block, claimed_root, result)) = stream.next().await {
             let expected_root = result.inspect_err(|e| {
                 ChallengerMetrics::validation_errors_total().increment(1);
                 warn!(
                     game = %game_address,
-                    block = cp.block,
+                    block,
                     index = idx,
                     error = %e,
                     "output root computation failed"
                 );
             })?;
 
-            if expected_root != cp.claimed_root {
+            if expected_root != claimed_root {
                 warn!(
                     game = %game_address,
-                    block = cp.block,
+                    block,
                     index = idx,
                     expected = %expected_root,
-                    claimed = %cp.claimed_root,
+                    claimed = %claimed_root,
                     "invalid output root detected"
                 );
                 ChallengerMetrics::games_invalid_total().increment(1);
@@ -278,19 +300,14 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
     ) -> Result<ValidationResult, ValidatorError> {
         info!(game = %game_address, block = l2_block_number, "validating claimed output root");
 
-        let checkpoint = Checkpoint { block: l2_block_number, claimed_root };
-        let mismatch = self.validate_output_roots(game_address, &[checkpoint]).await?;
+        let mismatch =
+            self.validate_output_roots(game_address, [(l2_block_number, claimed_root)]).await?;
         let (is_valid, expected_root) = match mismatch {
             Some((_, expected)) => (false, expected),
             None => (true, claimed_root),
         };
 
-        Ok(ValidationResult {
-            is_valid,
-            expected_root,
-            claimed_root,
-            invalid_intermediate_index: None,
-        })
+        Ok(ValidationResult { is_valid, expected_root, invalid_intermediate_index: None })
     }
 
     /// Validates the intermediate output roots of a candidate dispute game.
@@ -338,7 +355,7 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
 
         // Compute expected checkpoint count so we can verify intermediate_roots
         // covers every required block.
-        let span = l2_block_number.saturating_sub(starting_block_number);
+        let span = l2_block_number - starting_block_number;
         let expected_count = usize::try_from(span / intermediate_block_interval).map_err(|_| {
             ValidatorError::ArithmeticOverflow { block_number: starting_block_number }
         })?;
@@ -354,7 +371,6 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
             return Ok(ValidationResult {
                 is_valid: true,
                 expected_root: claimed_root,
-                claimed_root,
                 invalid_intermediate_index: None,
             });
         }
@@ -368,29 +384,18 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
             "validating intermediate output roots"
         );
 
-        let checkpoints = intermediate_roots
-            .iter()
-            .enumerate()
-            .map(|(i, &root)| {
-                let multiplier = u64::try_from(i + 1).map_err(|_| {
-                    ValidatorError::ArithmeticOverflow { block_number: starting_block_number }
-                })?;
-                let offset = intermediate_block_interval.checked_mul(multiplier).ok_or(
-                    ValidatorError::ArithmeticOverflow { block_number: starting_block_number },
-                )?;
-                let block = starting_block_number.checked_add(offset).ok_or(
-                    ValidatorError::ArithmeticOverflow { block_number: starting_block_number },
-                )?;
-                Ok(Checkpoint { block, claimed_root: root })
-            })
-            .collect::<Result<Vec<_>, ValidatorError>>()?;
+        let mut block = starting_block_number;
+        let checkpoints = intermediate_roots.iter().copied().map(move |claimed_root| {
+            block += intermediate_block_interval;
+            (block, claimed_root)
+        });
 
-        let mismatch = self.validate_output_roots(game_address, &checkpoints).await?;
+        let mismatch = self.validate_output_roots(game_address, checkpoints).await?;
         let is_valid = mismatch.is_none();
         let expected_root = mismatch.as_ref().map_or(claimed_root, |(_, root)| *root);
         let invalid_intermediate_index = mismatch.map(|(idx, _)| idx);
 
-        Ok(ValidationResult { is_valid, expected_root, claimed_root, invalid_intermediate_index })
+        Ok(ValidationResult { is_valid, expected_root, invalid_intermediate_index })
     }
 }
 
@@ -416,7 +421,7 @@ mod tests {
     /// Creates a mock L2 provider with multiple blocks and returns a vec of
     /// expected output roots (one per block).
     fn mock_with_blocks(block_numbers: &[u64]) -> (MockL2Provider, Vec<B256>) {
-        let mut provider = MockL2Provider::new();
+        let mut provider = MockL2Provider::default();
         let mut roots = Vec::new();
 
         for &block_number in block_numbers {
@@ -453,7 +458,6 @@ mod tests {
 
         assert_eq!(result.is_valid, expect_valid);
         assert_eq!(result.expected_root, expected_root);
-        assert_eq!(result.claimed_root, claimed_root);
         assert_eq!(result.invalid_intermediate_index, None);
     }
 
@@ -555,7 +559,7 @@ mod tests {
     /// Missing L2 block: returns `ValidatorError::BlockNotAvailable` instead of panicking.
     #[tokio::test]
     async fn test_missing_l2_block() {
-        let mut provider = MockL2Provider::new();
+        let mut provider = MockL2Provider::default();
         // Mark block 100 as an error block (not yet produced)
         provider.error_blocks.push(100);
 
@@ -575,7 +579,7 @@ mod tests {
     /// Zero intermediate block interval returns `ValidatorError::InvalidInterval`.
     #[tokio::test]
     async fn test_zero_intermediate_interval() {
-        let provider = MockL2Provider::new();
+        let provider = MockL2Provider::default();
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x07);
 
@@ -606,7 +610,7 @@ mod tests {
         #[case] expected: usize,
         #[case] actual: usize,
     ) {
-        let provider = MockL2Provider::new();
+        let provider = MockL2Provider::default();
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x08);
 
@@ -731,7 +735,7 @@ mod tests {
         let (header_100, _) = build_test_header_and_account(100, storage_hash);
         let hash_100 = header_100.hash_slow();
 
-        let mut provider = MockL2Provider::new();
+        let mut provider = MockL2Provider::default();
         provider.insert_block(95, header_95, account_95);
         // Insert header for block 100 but omit the proof so get_proof fails.
         let rpc_header_100 = RpcHeader { hash: hash_100, inner: header_100, ..Default::default() };
@@ -766,7 +770,7 @@ mod tests {
         let (consensus_header, account) = build_test_header_and_account(100, storage_hash);
         let correct_hash = consensus_header.hash_slow();
 
-        let mut provider = MockL2Provider::new();
+        let mut provider = MockL2Provider::default();
         // Insert block normally first, then tamper with the header hash
         provider.insert_block(100, consensus_header.clone(), account);
         // Overwrite the header with a mismatched hash
@@ -808,7 +812,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut provider = MockL2Provider::new();
+        let mut provider = MockL2Provider::default();
         // Insert the wrong-root header but the account proof built for a
         // different state root.
         let block_hash = header_wrong_root.hash_slow();
@@ -841,7 +845,7 @@ mod tests {
         let substituted_root =
             OutputRoot::from_parts(header.state_root, storage_hash, header.hash_slow()).hash();
 
-        let mut provider = MockL2Provider::new();
+        let mut provider = MockL2Provider::default();
         provider.insert_block(100, header, account);
 
         let validator = OutputValidator::new(Arc::new(provider));

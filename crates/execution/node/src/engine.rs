@@ -5,11 +5,12 @@ use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys};
+use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     ExecutionData,
 };
-use base_execution_consensus::isthmus;
+use base_execution_consensus::{BaseConsensusError, isthmus};
 use base_execution_payload_builder::{
     Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
 };
@@ -17,7 +18,8 @@ use base_protocol::BaseTimeUpdateTx;
 use reth_chainspec::EthChainSpec;
 use reth_consensus::ConsensusError;
 use reth_node_api::{
-    BuiltPayload, EngineApiValidator, EngineTypes, NodePrimitives, PayloadValidator,
+    BuiltPayload, EngineApiValidator, EngineTypes, InsertBlockErrorKind, NodePrimitives,
+    PayloadValidator,
     payload::{
         EngineApiMessageVersion, EngineObjectValidationError, MessageValidationKind,
         NewPayloadError, PayloadOrAttributes, PayloadTypes, VersionSpecificValidationError,
@@ -26,8 +28,9 @@ use reth_node_api::{
     validate_version_specific_fields,
 };
 use reth_payload_primitives::{InvalidPayloadAttributesError, PayloadAttributes};
-use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SignedTransaction};
-use reth_provider::{StateProvider, StateProviderFactory};
+use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SealedHeader, SignedTransaction};
+use reth_provider::StateProvider;
+use reth_storage_api::{StateProviderBox, errors::ProviderResult};
 use reth_trie_common::{HashedPostState, KeyHasher};
 
 /// The types used in the Base beacon consensus engine.
@@ -79,42 +82,38 @@ where
 
 /// Validator for Base engine API.
 #[derive(Debug)]
-pub struct BaseEngineValidator<P, Tx, ChainSpec> {
+pub struct BaseEngineValidator<Tx, ChainSpec> {
     inner: BaseExecutionPayloadValidator<ChainSpec>,
-    provider: P,
     hashed_addr_l2tol1_msg_passer: B256,
     phantom: PhantomData<Tx>,
 }
 
-impl<P, Tx, ChainSpec> BaseEngineValidator<P, Tx, ChainSpec> {
+impl<Tx, ChainSpec> BaseEngineValidator<Tx, ChainSpec> {
     /// Instantiates a new validator.
-    pub fn new<KH: KeyHasher>(chain_spec: Arc<ChainSpec>, provider: P) -> Self {
+    pub fn new<KH: KeyHasher>(chain_spec: Arc<ChainSpec>) -> Self {
         let hashed_addr_l2tol1_msg_passer = KH::hash_key(Predeploys::L2_TO_L1_MESSAGE_PASSER);
         Self {
             inner: BaseExecutionPayloadValidator::new(chain_spec),
-            provider,
             hashed_addr_l2tol1_msg_passer,
             phantom: PhantomData,
         }
     }
 }
 
-impl<P, Tx, ChainSpec> Clone for BaseEngineValidator<P, Tx, ChainSpec>
+impl<Tx, ChainSpec> Clone for BaseEngineValidator<Tx, ChainSpec>
 where
-    P: Clone,
     ChainSpec: Upgrades,
 {
     fn clone(&self) -> Self {
         Self {
             inner: BaseExecutionPayloadValidator::new(self.inner.clone()),
-            provider: self.provider.clone(),
             hashed_addr_l2tol1_msg_passer: self.hashed_addr_l2tol1_msg_passer,
             phantom: Default::default(),
         }
     }
 }
 
-impl<P, Tx, ChainSpec> BaseEngineValidator<P, Tx, ChainSpec>
+impl<Tx, ChainSpec> BaseEngineValidator<Tx, ChainSpec>
 where
     ChainSpec: EthChainSpec + Upgrades,
 {
@@ -145,9 +144,8 @@ where
     }
 }
 
-impl<P, Tx, ChainSpec, Types> PayloadValidator<Types> for BaseEngineValidator<P, Tx, ChainSpec>
+impl<Tx, ChainSpec, Types> PayloadValidator<Types> for BaseEngineValidator<Tx, ChainSpec>
 where
-    P: StateProviderFactory + Unpin + 'static,
     Tx: BaseTransaction + SignedTransaction + Unpin + 'static,
     ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
     Types: PayloadTypes<ExecutionData = ExecutionData>,
@@ -155,25 +153,55 @@ where
 {
     type Block = alloy_consensus::Block<Tx>;
 
-    fn validate_block_post_execution_with_hashed_state(
+    fn validate_block_post_execution_with_hashed_state<'a>(
         &self,
-        state_updates: &HashedPostState,
+        state_updates: impl FnOnce() -> &'a HashedPostState,
         block: &RecoveredBlock<Self::Block>,
-    ) -> Result<(), ConsensusError> {
+        parent_header: &SealedHeader<<Self::Block as Block>::Header>,
+        parent_state: impl FnOnce() -> ProviderResult<StateProviderBox>,
+    ) -> Result<(), InsertBlockErrorKind> {
         let timestamp = block.timestamp();
-
         if !self.chain_spec().is_isthmus_active_at_timestamp(timestamp) {
             return Ok(());
         }
 
-        let parent_state =
-            self.provider.state_by_block_hash(block.parent_hash()).map_err(|err| {
-                ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
-                    format!("failed to load parent state for post-execution validation: {err}"),
-                )))
-            })?;
+        let parent_state = parent_state()?;
+        self.validate_isthmus_post_execution(
+            state_updates(),
+            parent_state.as_ref(),
+            block.header(),
+        )?;
 
-        self.validate_isthmus_post_execution(state_updates, &parent_state, block.header())
+        if !self.chain_spec().is_zombie_active_at_timestamp(timestamp)
+            || !self.chain_spec().is_zombie_active_at_timestamp(parent_header.timestamp())
+        {
+            return Ok(());
+        }
+
+        let parent_millis = BaseTime::decode_timestamp_millis_part(
+            parent_state
+                .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())?
+                .unwrap_or_default(),
+        );
+        let child_millis =
+            BaseTimeUpdateTx::extract_from_transactions(&block.body().transactions, block.number())
+                .map_err(ConsensusError::other)?
+                .timestamp_millis_part();
+        let parent_timestamp_ms =
+            u128::from(parent_header.timestamp()) * 1_000 + u128::from(parent_millis);
+        let child_timestamp_ms = u128::from(timestamp) * 1_000 + u128::from(child_millis);
+
+        if child_timestamp_ms
+            != parent_timestamp_ms + u128::from(BaseTimeUpdateTx::BLOCK_INTERVAL_MILLIS)
+        {
+            return Err(ConsensusError::other(BaseConsensusError::BaseTimeProgressionInvalid {
+                parent_timestamp_ms,
+                child_timestamp_ms,
+            })
+            .into());
+        }
+
+        Ok(())
     }
 
     fn convert_payload_to_block(
@@ -210,14 +238,13 @@ where
     }
 }
 
-impl<Types, P, Tx, ChainSpec> EngineApiValidator<Types> for BaseEngineValidator<P, Tx, ChainSpec>
+impl<Types, Tx, ChainSpec> EngineApiValidator<Types> for BaseEngineValidator<Tx, ChainSpec>
 where
     Types: PayloadTypes<
             PayloadAttributes = BasePayloadBuilderAttributes<Tx>,
             ExecutionData = ExecutionData,
             BuiltPayload: BuiltPayload<Primitives: NodePrimitives<SignedTx = Tx>>,
         >,
-    P: StateProviderFactory + Unpin + 'static,
     Tx: SignedTransaction + Unpin + 'static,
     ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
 {
@@ -374,16 +401,19 @@ pub fn validate_withdrawals_presence(
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{EMPTY_ROOT_HASH, Header};
-    use alloy_primitives::{Address, B64, B256, b64};
+    use alloy_consensus::{BlockBody, EMPTY_ROOT_HASH, Header, Sealable};
+    use alloy_primitives::{Address, B64, B256, U256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::{BaseUpgrade, ChainConfig};
-    use base_common_consensus::BaseTxEnvelope;
+    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, TxDeposit};
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_consensus::BaseConsensusError;
     use reth_ethereum_forks::ForkCondition;
-    use reth_provider::noop::NoopProvider;
+    use reth_provider::{
+        noop::NoopProvider,
+        test_utils::{ExtendedAccount, MockEthProvider},
+    };
     use reth_trie_common::KeccakKeyHasher;
 
     use super::*;
@@ -393,18 +423,17 @@ mod tests {
 
     fn validator_with_chain_spec(
         chain_spec: BaseChainSpec,
-    ) -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
-        BaseEngineValidator::<NoopProvider, BaseTxEnvelope, BaseChainSpec>::new::<KeccakKeyHasher>(
-            Arc::new(chain_spec),
-            NoopProvider::default(),
-        )
+    ) -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
+        BaseEngineValidator::<BaseTxEnvelope, BaseChainSpec>::new::<KeccakKeyHasher>(Arc::new(
+            chain_spec,
+        ))
     }
 
-    fn validator() -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
+    fn validator() -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
         validator_with_chain_spec(BaseChainSpec::sepolia())
     }
 
-    fn zombie_validator() -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
+    fn zombie_validator() -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
         validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
                 .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP))
@@ -445,6 +474,7 @@ mod tests {
                     withdrawals: Some(vec![]),
                     parent_beacon_block_root: Some(B256::ZERO),
                     slot_number: None,
+                    target_gas_limit: None,
                 },
             },
             3,
@@ -461,7 +491,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(None, None, 1732633199);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -474,7 +504,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(None, None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -487,7 +517,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000008")), None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -500,7 +530,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000800000000")), None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -513,7 +543,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000800000008")), None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -526,7 +556,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000000")), None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -543,7 +573,7 @@ mod tests {
             ChainConfig::sepolia().jovian_timestamp,
         );
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -557,7 +587,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(None, Some(1), ChainConfig::sepolia().jovian_timestamp);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -571,7 +601,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000000")), Some(1), 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -589,7 +619,7 @@ mod tests {
             ChainConfig::sepolia().jovian_timestamp,
         );
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -603,7 +633,7 @@ mod tests {
         let mut attributes = get_attributes(None, None, 1732633199);
         attributes.timestamp_millis_part = Some(200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -616,7 +646,7 @@ mod tests {
         let validator = zombie_validator();
         let attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -630,7 +660,7 @@ mod tests {
         let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
         attributes.timestamp_millis_part = Some(100);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -644,7 +674,7 @@ mod tests {
         let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
         attributes.timestamp_millis_part = Some(200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -653,7 +683,7 @@ mod tests {
     }
 
     fn validate_against_parent(
-        validator: &BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec>,
+        validator: &BaseEngineValidator<BaseTxEnvelope, BaseChainSpec>,
         timestamp: u64,
         timestamp_millis_part: Option<u16>,
         parent_timestamp: u64,
@@ -662,7 +692,7 @@ mod tests {
         attributes.timestamp_millis_part = timestamp_millis_part;
         let header = Header { timestamp: parent_timestamp, ..Default::default() };
 
-        <engine::BaseEngineValidator<_, _, _> as PayloadValidator<BaseEngineTypes>>::
+        <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
             validate_payload_attributes_against_header(validator, &attributes, &header)
     }
 
@@ -728,23 +758,147 @@ mod tests {
         RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), vec![])
     }
 
-    fn base_consensus_error(error: &ConsensusError) -> Option<&BaseConsensusError> {
-        let ConsensusError::Other(error) = error else {
+    fn base_time_block(
+        timestamp: u64,
+        millis_part: u16,
+        withdrawals_root: B256,
+    ) -> RecoveredBlock<BaseBlock> {
+        let number = 9;
+        let metadata = BaseTimeUpdateTx::new(millis_part).unwrap().into_deposit_tx(number);
+        let block = BaseBlock {
+            header: Header {
+                number,
+                timestamp,
+                withdrawals_root: Some(withdrawals_root),
+                ..Default::default()
+            },
+            body: BlockBody {
+                transactions: vec![TxDeposit::default().seal_slow().into(), metadata.into()],
+                ..Default::default()
+            },
+        };
+        RecoveredBlock::new_sealed(
+            SealedBlock::seal_slow(block),
+            vec![Address::ZERO, Address::ZERO],
+        )
+    }
+
+    fn parent_state(millis_part: u16) -> MockEthProvider<BasePrimitives> {
+        let provider = MockEthProvider::<BasePrimitives>::new();
+        provider.add_account(
+            Predeploys::BASE_TIME,
+            ExtendedAccount::new(0, U256::ZERO).extend_storage([(
+                BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into(),
+                U256::from(millis_part),
+            )]),
+        );
+        provider
+    }
+
+    fn validate_base_time_progression(
+        parent_timestamp: u64,
+        parent_millis_part: u16,
+        child_timestamp: u64,
+        child_millis_part: u16,
+        withdrawals_root: B256,
+    ) -> Result<(), InsertBlockErrorKind> {
+        let validator = validator_with_chain_spec(
+            BaseChainSpecBuilder::base_mainnet()
+                .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP))
+                .build(),
+        );
+        let block = base_time_block(child_timestamp, child_millis_part, withdrawals_root);
+        let parent =
+            SealedHeader::seal_slow(Header { timestamp: parent_timestamp, ..Default::default() });
+        let state_updates = HashedPostState::default();
+        let parent_state = parent_state(parent_millis_part);
+
+        PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
+            &validator,
+            || &state_updates,
+            &block,
+            &parent,
+            || Ok(Box::new(parent_state)),
+        )
+    }
+
+    fn base_consensus_error(error: &InsertBlockErrorKind) -> Option<&BaseConsensusError> {
+        let InsertBlockErrorKind::Consensus(ConsensusError::Other(error)) = error else {
             return None;
         };
         error.downcast_ref()
     }
 
     #[test]
-    fn generic_post_execution_validation_checks_isthmus() {
+    fn post_execution_skips_base_time_at_activation_but_checks_isthmus() {
         let block = post_execution_block(EMPTY_ROOT_HASH);
+        let parent = SealedHeader::seal_slow(Header {
+            timestamp: ZOMBIE_TIMESTAMP - 1,
+            ..Default::default()
+        });
+        let state_updates = HashedPostState::default();
         let error =
             PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
                 &zombie_validator(),
-                &HashedPostState::default(),
+                || &state_updates,
                 &block,
+                &parent,
+                || Ok(Box::new(NoopProvider::default())),
             )
             .unwrap_err();
+
+        assert!(matches!(
+            base_consensus_error(&error),
+            Some(BaseConsensusError::L2WithdrawalsRootMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn post_execution_validates_exact_200ms_progression() {
+        validate_base_time_progression(
+            ZOMBIE_TIMESTAMP,
+            200,
+            ZOMBIE_TIMESTAMP,
+            400,
+            EMPTY_ROOT_HASH,
+        )
+        .unwrap();
+        validate_base_time_progression(
+            ZOMBIE_TIMESTAMP,
+            800,
+            ZOMBIE_TIMESTAMP + 1,
+            0,
+            EMPTY_ROOT_HASH,
+        )
+        .unwrap();
+
+        let error = validate_base_time_progression(
+            ZOMBIE_TIMESTAMP,
+            200,
+            ZOMBIE_TIMESTAMP + 1,
+            400,
+            EMPTY_ROOT_HASH,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            base_consensus_error(&error),
+            Some(BaseConsensusError::BaseTimeProgressionInvalid {
+                parent_timestamp_ms: 1_800_000_001_200,
+                child_timestamp_ms: 1_800_000_002_400,
+            })
+        ));
+    }
+
+    #[test]
+    fn post_execution_validates_isthmus_before_base_time() {
+        let error = validate_base_time_progression(
+            ZOMBIE_TIMESTAMP,
+            200,
+            ZOMBIE_TIMESTAMP + 1,
+            400,
+            B256::ZERO,
+        )
+        .unwrap_err();
 
         assert!(matches!(
             base_consensus_error(&error),
