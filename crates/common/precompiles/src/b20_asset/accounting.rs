@@ -29,11 +29,15 @@ pub trait AssetAccounting: TokenAccounting {
         reject_frozen_selector!()
     }
     /// Writes the pending schedule.
-    fn set_pending(&mut self, _multiplier: u128, _effective_at: u64) -> Result<()> {
+    fn set_pending_and_effective_at(
+        &mut self,
+        _multiplier: u128,
+        _effective_at: u64,
+    ) -> Result<()> {
         reject_frozen_selector!()
     }
     /// Clears the pending schedule, restoring the no-pending state.
-    fn clear_pending(&mut self) -> Result<()> {
+    fn clear_pending_multiplier_and_effective_at(&mut self) -> Result<()> {
         reject_frozen_selector!()
     }
 

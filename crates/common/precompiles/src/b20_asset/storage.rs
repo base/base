@@ -95,8 +95,7 @@ impl B20AssetStorage<'_> {
     ///
     /// The two `#[mutator]`-generated setters would each pay a full SLOAD/SSTORE on the same packed
     /// word; coalescing them halves that to one SLOAD + one SSTORE. `insert_into_word` rewrites only
-    /// each field's own bytes, so the slot's unused upper 8 bytes are preserved untouched. 
-    /// The `AssetAccounting` `set_pending`/`clear_pending` implementations delegate here. 
+    /// each field's own bytes, so the slot's unused upper 8 bytes are preserved untouched.
     fn write_pending(&mut self, multiplier: u128, effective_at: u64) -> Result<()> {
         // `pending_multiplier` (u128) occupies the low 16 bytes; `pending_effective_at` (u64) the
         // next 8. Both share one slot, so writing either field's handle addresses the same word.
@@ -209,11 +208,12 @@ mod tests {
             let effective_at: u64 = 1_800_000_000;
 
             let before = ctx.counter_sstore();
-            AssetAccounting::set_pending(&mut token, multiplier, effective_at).unwrap();
+            AssetAccounting::set_pending_and_effective_at(&mut token, multiplier, effective_at)
+                .unwrap();
             assert_eq!(
                 ctx.counter_sstore() - before,
                 1,
-                "set_pending must write the shared slot exactly once"
+                "set_pending_and_effective_at must write the shared slot exactly once"
             );
 
             // Both lanes land in the same word and the reserved bytes survive.
@@ -222,13 +222,13 @@ mod tests {
             assert_eq!(token.asset.pending_multiplier.read().unwrap(), multiplier);
             assert_eq!(token.asset.pending_effective_at.read().unwrap(), effective_at);
 
-            // clear_pending is likewise a single write that only zeroes the two lanes.
+            // The clear path is likewise a single write that only zeroes the two lanes.
             let before = ctx.counter_sstore();
-            AssetAccounting::clear_pending(&mut token).unwrap();
+            AssetAccounting::clear_pending_multiplier_and_effective_at(&mut token).unwrap();
             assert_eq!(
                 ctx.counter_sstore() - before,
                 1,
-                "clear_pending must write the shared slot exactly once"
+                "clear_pending_multiplier_and_effective_at must write the shared slot exactly once"
             );
             assert_eq!(ctx.sload(TOKEN, pending_slot).unwrap(), reserved);
         });

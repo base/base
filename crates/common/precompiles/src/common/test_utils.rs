@@ -448,13 +448,13 @@ impl AssetAccounting for InMemoryTokenAccounting {
         Ok(self.pending_effective_at)
     }
 
-    fn set_pending(&mut self, multiplier: u128, effective_at: u64) -> Result<()> {
+    fn set_pending_and_effective_at(&mut self, multiplier: u128, effective_at: u64) -> Result<()> {
         self.pending_multiplier = multiplier;
         self.pending_effective_at = effective_at;
         Ok(())
     }
 
-    fn clear_pending(&mut self) -> Result<()> {
+    fn clear_pending_multiplier_and_effective_at(&mut self) -> Result<()> {
         self.pending_multiplier = 0;
         self.pending_effective_at = 0;
         Ok(())
