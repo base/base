@@ -1562,7 +1562,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1573,7 +1573,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -8599,7 +8599,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccc2776f0c61eca1ca32528f85548abd1a4be8fb53d1b21c013e4f18da1e7090"
 dependencies = [
  "data-encoding",
- "syn 2.0.119",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -8935,7 +8935,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9422,7 +9422,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10148,8 +10148,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
+ "windows-link 0.1.3",
+ "windows-result 0.3.4",
 ]
 
 [[package]]
@@ -11054,7 +11054,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-layer",
@@ -11090,7 +11090,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.59.0",
 ]
 
 [[package]]
@@ -13586,7 +13586,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -15680,7 +15680,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.3",
  "rustls 0.23.42",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
@@ -15720,9 +15720,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -16330,7 +16330,7 @@ dependencies = [
  "metrics",
  "reth-chain-state",
  "reth-execution-cache",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-payload-builder",
  "reth-payload-builder-primitives",
  "reth-payload-primitives",
@@ -16364,7 +16364,7 @@ dependencies = [
  "reth-errors",
  "reth-ethereum-primitives",
  "reth-execution-types",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-primitives-traits",
  "reth-storage-api",
  "reth-tasks",
@@ -16644,7 +16644,7 @@ dependencies = [
  "reth-db-api",
  "reth-fs-util",
  "reth-libmdbx",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-nippy-jar",
  "reth-static-file-types",
  "reth-storage-errors",
@@ -16769,7 +16769,7 @@ dependencies = [
  "rand 0.9.5",
  "reth-chainspec",
  "reth-ethereum-forks",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-network-peers",
  "secp256k1 0.30.0",
  "thiserror 2.0.19",
@@ -16820,7 +16820,7 @@ dependencies = [
  "reth-config",
  "reth-consensus",
  "reth-ethereum-primitives",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-network-p2p",
  "reth-network-peers",
  "reth-primitives-traits",
@@ -16999,7 +16999,7 @@ dependencies = [
  "reth-evm",
  "reth-execution-cache",
  "reth-execution-types",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-network-p2p",
  "reth-payload-builder",
  "reth-payload-primitives",
@@ -17140,7 +17140,7 @@ dependencies = [
  "reth-ecies",
  "reth-eth-wire-types",
  "reth-ethereum-forks",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-network-peers",
  "reth-primitives-traits",
  "serde",
@@ -17294,7 +17294,7 @@ dependencies = [
  "rayon",
  "reth-execution-errors",
  "reth-execution-types",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-primitives-traits",
  "reth-storage-api",
  "reth-storage-errors",
@@ -17332,7 +17332,7 @@ dependencies = [
  "metrics",
  "parking_lot",
  "reth-errors",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-primitives-traits",
  "reth-provider",
  "reth-revm",
@@ -17392,7 +17392,7 @@ dependencies = [
  "reth-evm",
  "reth-exex-types",
  "reth-fs-util",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-node-api",
  "reth-node-core",
  "reth-payload-builder",
@@ -17552,6 +17552,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-metrics"
+version = "2.4.0"
+source = "git+https://github.com/meyer9/reth?rev=32aa558bcc5892ed77ee09afc45180eccd524763#32aa558bcc5892ed77ee09afc45180eccd524763"
+dependencies = [
+ "metrics",
+ "metrics-derive",
+]
+
+[[package]]
 name = "reth-net-banlist"
 version = "2.4.0"
 source = "git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c#2382a2b05a0f15ab5469ea1db152c944f3736f6c"
@@ -17608,7 +17617,7 @@ dependencies = [
  "reth-ethereum-primitives",
  "reth-evm-ethereum",
  "reth-fs-util",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-net-banlist",
  "reth-network-api",
  "reth-network-p2p",
@@ -17991,7 +18000,7 @@ dependencies = [
  "procfs",
  "reqwest 0.13.4",
  "reth-fs-util",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-tasks",
  "tempfile",
  "tikv-jemalloc-ctl",
@@ -18026,7 +18035,7 @@ dependencies = [
  "reth-chain-state",
  "reth-ethereum-engine-primitives",
  "reth-execution-cache",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-payload-builder-primitives",
  "reth-payload-primitives",
  "reth-primitives-traits",
@@ -18151,7 +18160,7 @@ dependencies = [
  "reth-ethereum-primitives",
  "reth-execution-types",
  "reth-fs-util",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-nippy-jar",
  "reth-node-types",
  "reth-primitives-traits",
@@ -18185,7 +18194,7 @@ dependencies = [
  "reth-db-api",
  "reth-errors",
  "reth-exex-types",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-primitives-traits",
  "reth-provider",
  "reth-prune-types",
@@ -18277,7 +18286,7 @@ dependencies = [
  "reth-evm",
  "reth-evm-ethereum",
  "reth-execution-types",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-network-api",
  "reth-network-peers",
  "reth-network-types",
@@ -18355,7 +18364,7 @@ dependencies = [
  "reth-engine-primitives",
  "reth-evm",
  "reth-ipc",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-network-api",
  "reth-node-core",
  "reth-payload-primitives",
@@ -18415,7 +18424,7 @@ dependencies = [
  "metrics",
  "reth-chainspec",
  "reth-engine-primitives",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-network-api",
  "reth-payload-builder",
  "reth-payload-builder-primitives",
@@ -18509,7 +18518,7 @@ dependencies = [
  "reth-ethereum-primitives",
  "reth-evm",
  "reth-execution-types",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-primitives-traits",
  "reth-revm",
  "reth-rpc-convert",
@@ -18639,7 +18648,7 @@ dependencies = [
  "reth-codecs",
  "reth-consensus",
  "reth-errors",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-network-p2p",
  "reth-primitives-traits",
  "reth-provider",
@@ -18748,7 +18757,7 @@ dependencies = [
 [[package]]
 name = "reth-tasks"
 version = "2.4.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c#2382a2b05a0f15ab5469ea1db152c944f3736f6c"
+source = "git+https://github.com/meyer9/reth?rev=32aa558bcc5892ed77ee09afc45180eccd524763#32aa558bcc5892ed77ee09afc45180eccd524763"
 dependencies = [
  "crossbeam-utils",
  "dashmap",
@@ -18758,7 +18767,7 @@ dependencies = [
  "parking_lot",
  "pin-project",
  "rayon",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/meyer9/reth?rev=32aa558bcc5892ed77ee09afc45180eccd524763)",
  "thiserror 2.0.19",
  "thread-priority",
  "tokio",
@@ -18858,7 +18867,7 @@ dependencies = [
  "reth-evm-ethereum",
  "reth-execution-types",
  "reth-fs-util",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-primitives-traits",
  "reth-storage-api",
  "reth-tasks",
@@ -18889,7 +18898,7 @@ dependencies = [
  "metrics",
  "parking_lot",
  "reth-execution-errors",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-primitives-traits",
  "reth-stages-types",
  "reth-storage-errors",
@@ -18936,7 +18945,7 @@ dependencies = [
  "parking_lot",
  "reth-db-api",
  "reth-execution-errors",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-primitives-traits",
  "reth-storage-api",
  "reth-storage-errors",
@@ -18957,7 +18966,7 @@ dependencies = [
  "crossbeam-utils",
  "metrics",
  "reth-execution-errors",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-primitives-traits",
  "reth-provider",
  "reth-storage-errors",
@@ -18980,7 +18989,7 @@ dependencies = [
  "metrics",
  "rayon",
  "reth-execution-errors",
- "reth-metrics",
+ "reth-metrics 2.4.0 (git+https://github.com/paradigmxyz/reth?rev=2382a2b05a0f15ab5469ea1db152c944f3736f6c)",
  "reth-primitives-traits",
  "reth-trie-common",
  "serde",
@@ -20021,7 +20030,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -20122,7 +20131,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 1.0.9",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -21445,7 +21454,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -22738,7 +22747,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -22751,7 +22760,7 @@ dependencies = [
  "parking_lot",
  "rustix",
  "signal-hook",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -24848,7 +24857,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

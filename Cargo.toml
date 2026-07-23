@@ -628,3 +628,6 @@ toml = { version = "1.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 unsigned-varint = { version = "0.8", default-features = false }
 ark-bls12-381 = { version = "0.5.0", default-features = false }
+
+[patch."https://github.com/paradigmxyz/reth"]
+reth-tasks = { git = "https://github.com/meyer9/reth", rev = "32aa558bcc5892ed77ee09afc45180eccd524763" }
