@@ -53,7 +53,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
+    BuilderConfig, BuilderMetrics, CandidateSource, DefaultCandidateSource, ExecutionInfo,
+    PayloadBuilder, ResourceLimits,
     flashblocks::{
         FlashblocksExtraCtx, best_txs::BestFlashblocksTxs, context::BasePayloadBuilderCtx,
         generator::BuildArguments,
@@ -101,8 +102,13 @@ impl LastEmittedFlashblockId {
 }
 
 /// Base payload builder
+///
+/// Generic over the [`CandidateSource`] `S` that supplies the priority-ordered candidate
+/// transaction stream drained by the build loop. It defaults to [`DefaultCandidateSource`] — the
+/// pool's best transactions, reproducing the builder's historical behavior — and can be swapped for
+/// an alternative source via [`BasePayloadBuilder::with_candidate_source`].
 #[derive(Debug, Clone)]
-pub(super) struct BasePayloadBuilder<Pool, Client> {
+pub struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource<Pool>> {
     /// The type responsible for creating the evm.
     pub evm_config: BaseEvmConfig,
     /// The transaction pool
@@ -119,13 +125,27 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     pub config: BuilderConfig,
     /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
     pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
+    /// Source of the priority-ordered candidate transaction stream drained by the build loop.
+    ///
+    /// Private so it can only be set through [`BasePayloadBuilder::new`] (default) or swapped via
+    /// [`BasePayloadBuilder::with_candidate_source`], which is the sole type-changing injection
+    /// point. This keeps the `Transaction = Pool::Transaction` invariant from being bypassed by a
+    /// direct field write.
+    candidate_source: S,
     /// Last flashblock emitted by this builder instance.
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
 }
 
-impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
+impl<Pool, Client> BasePayloadBuilder<Pool, Client>
+where
+    Pool: TransactionPool,
+{
     /// `BasePayloadBuilder` constructor.
-    pub(super) fn new(
+    ///
+    /// Uses [`DefaultCandidateSource`] — the pool's priority-ordered best transactions — as the
+    /// candidate source. Call [`BasePayloadBuilder::with_candidate_source`] to substitute an
+    /// alternative source.
+    pub fn new(
         evm_config: BaseEvmConfig,
         pool: Pool,
         client: Client,
@@ -136,6 +156,12 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
     ) -> Self {
         Self {
             evm_config,
+            // The default source captures its own handle to the pool to fetch candidates, while the
+            // `pool` field below is retained for mempool maintenance (invalidation, pruning, account
+            // updates) — operations every source needs regardless of where candidates come from.
+            // `TransactionPool` is `Clone` and `Arc`-backed, so this is a cheap handle copy, not a
+            // second pool.
+            candidate_source: DefaultCandidateSource::new(pool.clone()),
             pool,
             client,
             payload_tx,
@@ -143,6 +169,31 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
             config,
             rejected_tx_sender,
             last_emitted_flashblock_id: Arc::default(),
+        }
+    }
+}
+
+impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
+    /// Substitute the candidate source, consuming `self` and returning a builder that draws its
+    /// candidate stream from `candidate_source` instead of the default pool-backed source.
+    ///
+    /// The substitution lives in the returned builder; a discarded return value is almost certainly
+    /// a bug, hence `#[must_use]`.
+    #[must_use]
+    pub fn with_candidate_source<S2>(
+        self,
+        candidate_source: S2,
+    ) -> BasePayloadBuilder<Pool, Client, S2> {
+        BasePayloadBuilder {
+            evm_config: self.evm_config,
+            pool: self.pool,
+            client: self.client,
+            payload_tx: self.payload_tx,
+            ws_pub: self.ws_pub,
+            config: self.config,
+            rejected_tx_sender: self.rejected_tx_sender,
+            candidate_source,
+            last_emitted_flashblock_id: self.last_emitted_flashblock_id,
         }
     }
 
@@ -155,10 +206,12 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
     }
 }
 
-impl<Pool, Client> reth_basic_payload_builder::PayloadBuilder for BasePayloadBuilder<Pool, Client>
+impl<Pool, Client, S> reth_basic_payload_builder::PayloadBuilder
+    for BasePayloadBuilder<Pool, Client, S>
 where
-    Pool: Clone + Send + Sync,
-    Client: Clone + Send + Sync,
+    Pool: PoolBounds,
+    Client: ClientBounds,
+    S: CandidateSource<Transaction = Pool::Transaction> + Clone,
 {
     type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;
@@ -185,10 +238,11 @@ where
     }
 }
 
-impl<Pool, Client> BasePayloadBuilder<Pool, Client>
+impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
+    S: CandidateSource<Transaction = Pool::Transaction>,
 {
     fn get_base_payload_builder_ctx(
         &self,
@@ -413,7 +467,7 @@ where
         // Create best_transaction iterator
         let mut best_txs = BestFlashblocksTxs::new(
             BestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
+                self.candidate_source.best_transactions(ctx.best_transaction_attributes()),
             ),
             self.config.rejection_cache.clone(),
         );
@@ -616,7 +670,7 @@ where
 
         let best_txs_start_time = Instant::now();
         best_txs.refresh_iterator(BestPayloadTransactions::new(
-            self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
+            self.candidate_source.best_transactions(ctx.best_transaction_attributes()),
         ));
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
         BuilderMetrics::transaction_pool_fetch_duration().record(transaction_pool_fetch_time);
@@ -1053,10 +1107,11 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Pool, Client> PayloadBuilder for BasePayloadBuilder<Pool, Client>
+impl<Pool, Client, S> PayloadBuilder for BasePayloadBuilder<Pool, Client, S>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
+    S: CandidateSource<Transaction = Pool::Transaction> + Clone,
 {
     type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;

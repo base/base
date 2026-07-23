@@ -195,14 +195,6 @@ macro_rules! rollup_fork_methods {
 impl RollupConfig {
     /// Returns this rollup config's runtime-aware activation for a contract upgrade ID.
     pub fn contract_upgrade_activation(&self, upgrade_id: BaseUpgrade) -> UpgradeActivation {
-        // Zombie is a permanently-off production gate: runtime overrides cannot activate it.
-        if matches!(upgrade_id, BaseUpgrade::Zombie) {
-            #[cfg(any(test, feature = "test-utils"))]
-            return RuntimeUpgradeRegistry::activation(self.l2_chain_id.id(), upgrade_id)
-                .unwrap_or(UpgradeActivation::Never);
-            #[cfg(not(any(test, feature = "test-utils")))]
-            return UpgradeActivation::Never;
-        }
         RuntimeUpgradeRegistry::activation(self.l2_chain_id.id(), upgrade_id)
             .unwrap_or_else(|| self.upgrades.activation(upgrade_id))
     }
@@ -530,7 +522,12 @@ mod tests {
                 pectra_blob_schedule_time: Some(80),
                 isthmus_time: Some(90),
                 jovian_time: Some(100),
-                base: BaseUpgradeConfig { azul: Some(110), beryl: Some(120), cobalt: Some(130) },
+                base: BaseUpgradeConfig {
+                    azul: Some(110),
+                    beryl: Some(120),
+                    cobalt: Some(130),
+                    zombie: None,
+                },
             },
             block_time: 2,
             ..Default::default()
@@ -606,7 +603,12 @@ mod tests {
     fn test_first_beryl_block_handles_same_second_boundary() {
         let cfg = RollupConfig {
             upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { azul: Some(110), beryl: Some(120), cobalt: None },
+                base: BaseUpgradeConfig {
+                    azul: Some(110),
+                    beryl: Some(120),
+                    cobalt: None,
+                    zombie: None,
+                },
                 ..Default::default()
             },
             block_time: 2,
@@ -882,7 +884,8 @@ mod tests {
 
         // Osaka↔Azul: azul drives Osaka activation; standalone (not cascaded from Jovian).
         let mut cfg = RollupConfig::default();
-        cfg.upgrades.base = BaseUpgradeConfig { azul: Some(700), beryl: None, cobalt: None };
+        cfg.upgrades.base =
+            BaseUpgradeConfig { azul: Some(700), beryl: None, cobalt: None, zombie: None };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
@@ -890,7 +893,8 @@ mod tests {
 
         // Beryl follows Azul; Osaka still activates at Azul when both are configured.
         let mut cfg = RollupConfig::default();
-        cfg.upgrades.base = BaseUpgradeConfig { azul: Some(700), beryl: Some(800), cobalt: None };
+        cfg.upgrades.base =
+            BaseUpgradeConfig { azul: Some(700), beryl: Some(800), cobalt: None, zombie: None };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
@@ -900,7 +904,8 @@ mod tests {
 
         // Beryl requires Azul, and does not independently activate Osaka.
         let mut cfg = RollupConfig::default();
-        cfg.upgrades.base = BaseUpgradeConfig { azul: None, beryl: Some(800), cobalt: None };
+        cfg.upgrades.base =
+            BaseUpgradeConfig { azul: None, beryl: Some(800), cobalt: None, zombie: None };
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
 
         // Jovian set but Azul unset → Osaka is Never.
@@ -998,6 +1003,21 @@ mod tests {
         );
         assert_eq!(crate::RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Zombie), None);
         crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn zombie_activates_via_genesis_config() {
+        let cfg = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { zombie: Some(100), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(!cfg.is_zombie_active(99));
+        assert!(cfg.is_zombie_active(100));
+        assert!(cfg.is_zombie_active(u64::MAX));
     }
 
     #[test]

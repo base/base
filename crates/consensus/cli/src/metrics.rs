@@ -315,6 +315,7 @@ mod tests {
                     azul: Some(1_000),
                     beryl: Some(2_000),
                     cobalt: Some(3_000),
+                    zombie: None,
                 },
                 ..Default::default()
             },
@@ -368,6 +369,7 @@ mod tests {
                     azul: Some(1_000),
                     beryl: Some(1_000),
                     cobalt: Some(2_000),
+                    zombie: None,
                 },
                 ..Default::default()
             },

@@ -45,6 +45,11 @@ pub struct TxResources {
     pub da_size: u64,
     /// Declared gas limit from the transaction.
     pub gas_limit: u64,
+    /// EIP-8130 payer authentication gas, metered on top of `gas_limit` (`0` for
+    /// non-8130 / self-pay transactions). Reserved against the block gas budget
+    /// in addition to `gas_limit`, since the payer reimburses its own
+    /// authentication beyond the declared limit.
+    pub payer_auth: u64,
     /// Predicted execution time in microseconds (from metering data, if available).
     pub execution_time_us: Option<u128>,
     /// Raw EIP-2718 encoded transaction size in bytes.
@@ -284,11 +289,14 @@ impl ExecutionInfo {
             }
         }
 
-        // Check gas limit
-        if self.cumulative_gas_used + tx.gas_limit > limits.block_gas_limit {
+        // Check gas limit. EIP-8130 meters payer authentication gas on top of the declared
+        // gas_limit, so it is reserved against the block gas budget in addition to gas_limit.
+        if self.cumulative_gas_used.saturating_add(tx.gas_limit).saturating_add(tx.payer_auth)
+            > limits.block_gas_limit
+        {
             return Err(TxnExecutionError::TransactionGasLimitExceeded {
                 cumulative_gas_used: self.cumulative_gas_used,
-                tx_gas_limit: tx.gas_limit,
+                tx_gas_limit: tx.gas_limit.saturating_add(tx.payer_auth),
                 block_gas_limit: limits.block_gas_limit,
             });
         }
@@ -361,6 +369,20 @@ mod tests {
 
         // 29_979_000 + 21_000 = 30_000_000, exactly at limit
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    #[test]
+    fn test_gas_limit_reserves_payer_auth() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.cumulative_gas_used = 29_979_000;
+
+        let limits = default_limits();
+        // gas_limit alone fits exactly (29_979_000 + 21_000 = 30_000_000), but the
+        // EIP-8130 payer authentication is metered on top, pushing it over.
+        let tx = TxResources { gas_limit: 21_000, payer_auth: 2_100, ..Default::default() };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(matches!(result, Err(TxnExecutionError::TransactionGasLimitExceeded { .. })));
     }
 
     // ==================== DA Limit Tests ====================
@@ -466,6 +488,7 @@ mod tests {
         let tx = TxResources {
             da_size: 200,
             gas_limit: 21_000,
+            payer_auth: 0,
             execution_time_us: Some(2_000_000),
             uncompressed_size: 0,
         };
@@ -489,6 +512,7 @@ mod tests {
         let tx = TxResources {
             da_size: 500,
             gas_limit: 100_000,
+            payer_auth: 0,
             execution_time_us: Some(100_000),
             uncompressed_size: 0,
         };
