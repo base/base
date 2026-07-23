@@ -75,7 +75,9 @@ base-health = { workspace = true, features = ["axum-server"] }
 
 # Misc
 url.workspace = true
+sp1-sdk.workspace = true
 humantime.workspace = true
+bincode = { workspace = true, features = ["serde"] }
 
 # Test utilities (optional)
 serde_json = { workspace = true, optional = true }

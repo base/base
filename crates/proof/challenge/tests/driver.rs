@@ -29,6 +29,7 @@ use base_prover_service_protocol::{
 };
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManagerError;
+use sp1_sdk::{SP1Proof, SP1ProofWithPublicValues, SP1PublicValues};
 use tokio_util::sync::CancellationToken;
 
 const STORAGE_HASH: B256 = B256::repeat_byte(0xBB);
@@ -171,12 +172,30 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
     )
 }
 
-fn succeeded_zk_prover(session_id: &str, receipt: Vec<u8>) -> Arc<MockZkProofProvider> {
+/// Bincode SNARK receipt fixture (matches prover-service download payloads).
+fn snark_receipt_bytes() -> Vec<u8> {
+    let mut plonk_vkey_hash = [0u8; 32];
+    plonk_vkey_hash[..4].copy_from_slice(&[0x5a, 0x09, 0x3a, 0x2f]);
+    let mut receipt = SP1ProofWithPublicValues {
+        proof: SP1Proof::Plonk(Default::default()),
+        public_values: SP1PublicValues::new(),
+        sp1_version: "test".to_owned(),
+        tee_proof: None,
+    };
+    let SP1Proof::Plonk(plonk) = &mut receipt.proof else {
+        unreachable!();
+    };
+    plonk.encoded_proof = "dead".to_owned();
+    plonk.plonk_vkey_hash = plonk_vkey_hash;
+    bincode::serde::encode_to_vec(&receipt, bincode::config::standard()).expect("bincode")
+}
+
+fn succeeded_zk_prover(session_id: &str) -> Arc<MockZkProofProvider> {
     Arc::new(MockZkProofProvider {
         session_id: session_id.to_string(),
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Succeeded,
-            proof: receipt,
+            proof: snark_receipt_bytes(),
             ..Default::default()
         }),
     })
@@ -292,7 +311,7 @@ async fn test_step_validation_error_blocks_not_available() {
 async fn test_step_invalid_game_proof_succeeded() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
-    let zk = succeeded_zk_prover("proof-123", vec![0xDE, 0xAD]);
+    let zk = succeeded_zk_prover("proof-123");
 
     let tx_manager = default_tx_manager();
 
@@ -476,7 +495,7 @@ async fn test_step_pending_proof_skips_prove_block() {
 async fn test_step_nullification_failure_preserves_proof() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
-    let zk = succeeded_zk_prover("proof-ok", vec![0xDE, 0xAD]);
+    let zk = succeeded_zk_prover("proof-ok");
 
     // First tx call fails (NonceTooLow), second succeeds.
     let tx_manager = MockTxManager::with_responses(vec![
@@ -687,7 +706,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
     {
         let mut state = zk.state.lock().unwrap();
         state.proof_status = ProofStatus::Succeeded;
-        state.proof = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        state.proof = snark_receipt_bytes();
         state.error_message = None;
     }
     verifier.update_game(
@@ -790,7 +809,7 @@ async fn test_step_invalid_game_no_tee_provider_zk_only() {
 async fn test_step_invalid_game_tee_fails_zk_succeeds() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
-    let zk = succeeded_zk_prover("zk-after-tee-fail", vec![0xDE, 0xAD]);
+    let zk = succeeded_zk_prover("zk-after-tee-fail");
 
     let tx_manager = default_tx_manager();
 
@@ -964,7 +983,7 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
     {
         let mut state = driver.proof_requester.state.lock().unwrap();
         state.result = None;
-        state.proof = vec![0xDE, 0xAD];
+        state.proof = snark_receipt_bytes();
         state.proof_status = ProofStatus::Succeeded;
     }
 
