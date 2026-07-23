@@ -295,6 +295,10 @@ impl ProofRequestRepo {
         .fetch_all(&mut *tx)
         .await?;
 
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
         sqlx::query("DELETE FROM proof_request_outbox WHERE proof_request_id = ANY($1)")
             .bind(&ids)
             .execute(&mut *tx)
