@@ -237,6 +237,35 @@ impl IntrinsicGas {
         })
     }
 
+    /// Conservative upper bound on the payer-authentication gas billed *on top of*
+    /// `gas_limit` for a signed EIP-8130 transaction (`0` for self-pay).
+    ///
+    /// Block gas reservation uses this to budget the payer's authentication in
+    /// addition to the sender-signed `gas_limit`: the payer reimburses its own
+    /// authentication beyond that limit, so a block admitting a transaction on
+    /// `gas_limit` alone could let true consumption push cumulative gas over the
+    /// block limit.
+    ///
+    /// It is a deliberate *ceiling*, not the exact charge: the auth-blob shape
+    /// gives the authenticator execution gas plus its cold `actor_config` SLOAD,
+    /// and on top of that we pin the payer's **policy gate worst-case** — one
+    /// extra cold `policy_manager` SLOAD ([`Eip8130GasSchedule::COLD_SLOAD`]) that
+    /// a policy-gated payer's `authorize` step reads. The pre-execution reservation
+    /// cannot resolve the payer's on-chain scope (the payer blob is not
+    /// authenticable before execution), so pinning the gate keeps the reservation
+    /// a safe upper bound regardless of whether the payer turns out to be gated.
+    /// Over-reserving can only reject a too-tight block, never admit an over-limit
+    /// one, and building and validation share this bound so they stay consistent.
+    #[must_use = "discarding the result skips the payer-authentication reservation"]
+    pub fn max_payer_auth_cost(signed: &Eip8130Signed) -> Result<u64, IntrinsicGasError> {
+        if signed.tx().payer.is_some() {
+            let auth = Self::auth_cost(signed.payer_auth().as_ref(), AuthWireForm::Prefixed)?;
+            Ok(auth.saturating_add(Eip8130GasSchedule::COLD_SLOAD))
+        } else {
+            Ok(0)
+        }
+    }
+
     /// EIP-2028 data-availability cost over the caller-supplied EIP-2718
     /// serialization (`type_byte || rlp([..fields.., sender_auth, payer_auth])`).
     fn payload_cost(encoded: &[u8]) -> u64 {

@@ -574,6 +574,7 @@ mod tests {
                 Some(&TxResources {
                     da_size: 120,
                     gas_limit: 21_000,
+                    payer_auth: 0,
                     execution_time_us: Some(100),
                     uncompressed_size: 110,
                 }),

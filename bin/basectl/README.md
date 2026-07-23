@@ -117,24 +117,21 @@ consensus layers.
 - `basectl p2p remove-peer <TARGET>` disconnects one peer. `enode://...` routes
   to the execution layer; any other non-empty target is treated as a bare
   consensus libp2p peer ID. ENR records and multiaddrs are rejected for removal.
-- `basectl p2p ban <PEER_ID>` bans one consensus-layer peer and then attempts
-  to disconnect it so the ban takes effect immediately.
-- `basectl p2p unban <PEER_ID>` unbans one consensus-layer peer. It does not
+- `basectl p2p ban <TARGET>` bans one peer. `enode://...` routes to the execution
+  layer; a bare libp2p peer ID routes to the consensus layer. ENR records and
+  multiaddrs are rejected. CL bans also attempt to disconnect the peer
+  immediately.
+- `basectl p2p unban <TARGET>` unbans one execution or consensus peer using the
+  same target routing, with the same ENR and multiaddr rejection. It does not
   reconnect the peer.
 - `basectl p2p unban-all` unbans every peer currently banned by the consensus
   layer RPC.
 
-Read-only p2p commands and `add-peer` / `remove-peer` support:
+Read-only p2p commands and single-peer actions support:
 
 | Flag             | Description                                                                                                                                                                            |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field.                                                                                                      |
-| `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
-
-CL-only ban/unban commands support:
-
-| Flag             | Description                                                                                                                                                                            |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
 
 Read-only p2p commands also support:
@@ -168,9 +165,16 @@ Important EL RPC note:
 - EL peer count comes from `net_peerCount`, so it works on many restricted or public-style EL RPCs.
 - EL advertised endpoint data (`admin_nodeInfo`) and EL peer listings (`admin_peers`) require an admin-enabled EL RPC.
 - If the EL RPC does not expose those admin methods, `basectl p2p` degrades gracefully: EL peer count still appears, but EL endpoint fields or EL peer listings show as unavailable / `null`.
+- EL ban/unban uses `admin_banPeer` and `admin_unbanPeer`, which require an EL
+  implementation that exposes those admin methods. Reth trusted peers must be
+  removed from the trusted set before they can be banned; because reth silently
+  ignores a ban on a trusted peer, `basectl p2p ban` first checks `admin_peers`
+  and fails fast when the target is a currently-connected trusted peer (a
+  trusted peer with no live session is not detectable this way).
 - CL data comes from `opp2p_self`, `opp2p_peerStats`, and `opp2p_peers(true)` on the consensus RPC.
 - When exposed by the node, `opp2p_peerStats` also additively reports `maxPeerCount`, the configured CL max peer count.
-- CL ban/unban commands use `opp2p_blockPeer`, `opp2p_unblockPeer`, and `opp2p_listBlockedPeers` underneath, but the basectl command surface uses ban/unban terminology so it can stay consistent when EL ban support is added later.
+- CL ban/unban commands use `opp2p_blockPeer`, `opp2p_unblockPeer`, and `opp2p_listBlockedPeers` underneath.
+- `unban-all` remains CL-only because the EL admin API does not expose a banned-peer listing.
 
 ### `basectl txpool`
 
@@ -465,6 +469,12 @@ basectl -c sepolia p2p add-peer /ip4/203.0.113.10/tcp/9000/p2p/16Uiu2HAm... --cl
 
 # Remove a consensus peer by bare libp2p peer ID
 basectl -c sepolia p2p remove-peer 16Uiu2HAm... --cl-rpc https://your-cl.example/
+
+# Ban an execution peer through an admin-enabled EL RPC
+basectl -c sepolia p2p ban enode://<node-id>@203.0.113.10:30303 --el-rpc https://your-el.example/
+
+# Unban an execution peer non-interactively and emit JSON
+basectl -c sepolia p2p unban enode://<node-id>@203.0.113.10:30303 --el-rpc https://your-el.example/ --yes --json | jq .
 
 # Ban a consensus peer and best-effort disconnect it immediately
 basectl -c sepolia p2p ban 16Uiu2HAm... --cl-rpc https://your-cl.example/

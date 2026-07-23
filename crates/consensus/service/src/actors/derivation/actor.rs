@@ -307,6 +307,12 @@ where
 
                 self.attempt_derivation().await?;
             }
+            #[cfg(test)]
+            DerivationActorRequest::CurrentStateRequest(result_tx) => {
+                if result_tx.send(self.derivation_state_machine.current_state()).is_err() {
+                    warn!(target: "derivation", "failed to return derivation state to test observer");
+                }
+            }
         }
 
         Ok(())
