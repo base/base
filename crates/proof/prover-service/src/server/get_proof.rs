@@ -87,13 +87,6 @@ impl ProverServiceServer {
             .map_err(|e| internal(format!("Database error: {e}")))?
             .ok_or_else(|| not_found(PROOF_REQUEST_NOT_FOUND_MESSAGE))?;
         let proof_request_id = proof_req.id;
-        let tee_signer = proof_req
-            .tee_signer
-            .as_deref()
-            .map(str::parse)
-            .transpose()
-            .map_err(|error| internal(format!("Invalid stored TEE signer: {error}")))?;
-
         info!(
             proof_request_id = %proof_request_id,
             session_id = %proof_req.session_id,
@@ -109,7 +102,7 @@ impl ProverServiceServer {
             DbProofStatus::Failed => (ProofStatus::Failed, None, proof_req.error_message),
         };
 
-        Ok(GetProofResponse { status, error_message, result, tee_signer })
+        Ok(GetProofResponse { status, error_message, result })
     }
 }
 
@@ -153,7 +146,6 @@ mod tests {
             stark_receipt,
             snark_receipt,
             result_payload: None,
-            tee_signer: None,
             submitted_by_worker_id: None,
             submitted_lock_id: None,
             status: DbProofStatus::Succeeded,

@@ -657,7 +657,6 @@ impl ProofRequesterProvider for MockZkProofProvider {
             status: state.proof_status,
             error_message: state.error_message,
             result,
-            tee_signer: None,
         })
     }
 
@@ -673,10 +672,7 @@ impl ProofRequesterProvider for MockZkProofProvider {
     async fn delete_proofs_by_tee_signer(
         &self,
         _request: base_prover_service_protocol::DeleteProofsByTeeSignerRequest,
-    ) -> Result<
-        base_prover_service_protocol::DeleteProofsByTeeSignerResponse,
-        ProverServiceClientError,
-    > {
+    ) -> Result<u64, ProverServiceClientError> {
         unimplemented!("challenge tests do not delete TEE proofs")
     }
 

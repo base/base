@@ -532,8 +532,6 @@ pub struct ProofRequest {
     pub snark_receipt: Option<Vec<u8>>,
     /// Protocol-level proof result payload, if available.
     pub result_payload: Option<serde_json::Value>,
-    /// Signer reported by the prover for a completed TEE proof.
-    pub tee_signer: Option<String>,
     /// Worker id that submitted the result, if completed through the worker API.
     pub submitted_by_worker_id: Option<String>,
     /// Worker lock token that submitted the result, if completed through the worker API.
@@ -623,8 +621,6 @@ pub struct ProofJob {
     pub error_message: Option<String>,
     /// Stored protocol result payload once the job has completed.
     pub result_payload: Option<serde_json::Value>,
-    /// Signer reported by the prover for a completed TEE proof.
-    pub tee_signer: Option<String>,
     /// Timestamp when the job was created.
     pub created_at: DateTime<Utc>,
     /// Timestamp of the last update.
@@ -638,11 +634,7 @@ impl ProofJob {
     /// (`zk_vm`/`tee_kind`) does not match this claimed job, returning the
     /// mismatch reason. Guards against a worker storing the wrong proof type or
     /// omitting the signer for a TEE proof.
-    pub fn validate_submitted_result(
-        &self,
-        result: &ProtocolProofResult,
-        tee_signer: Option<&str>,
-    ) -> Result<(), String> {
+    pub fn validate_submitted_result(&self, result: &ProtocolProofResult) -> Result<(), String> {
         match result {
             ProtocolProofResult::Compressed(zk) => {
                 self.check_api_proof_type(ApiProofType::Compressed)?;
@@ -655,14 +647,12 @@ impl ProofJob {
             ProtocolProofResult::Tee(tee) => {
                 self.check_api_proof_type(ApiProofType::Tee)?;
                 self.check_tee_kind(TeeKind::from(tee.tee_kind))?;
+                if tee.tee_signer.is_none() {
+                    return Err("TEE proof is missing tee_signer".to_owned());
+                }
             }
         }
-
-        match (matches!(result, ProtocolProofResult::Tee(_)), tee_signer.is_some()) {
-            (true, true) | (false, false) => Ok(()),
-            (true, false) => Err("TEE proof is missing tee_signer".to_owned()),
-            (false, true) => Err("submitted tee_signer for a non-TEE proof".to_owned()),
-        }
+        Ok(())
     }
 
     fn check_api_proof_type(&self, expected: ApiProofType) -> Result<(), String> {
@@ -1085,8 +1075,6 @@ pub struct CompleteClaimedProofJob {
     pub worker_id: String,
     /// Protocol result to store in `result_payload`.
     pub result: ProtocolProofResult,
-    /// Signer submitted with a TEE proof result.
-    pub tee_signer: Option<String>,
 }
 
 /// Outcome of attempting to complete a worker proof job.
@@ -1270,7 +1258,6 @@ mod tests {
             last_heartbeat_at: Some(now),
             error_message: None,
             result_payload: None,
-            tee_signer: None,
             created_at: now,
             updated_at: now,
             completed_at: None,
@@ -1338,8 +1325,7 @@ mod tests {
             execution_stats: None,
         });
 
-        assert_eq!(job.validate_submitted_result(&result, None), Ok(()));
-        assert!(job.validate_submitted_result(&result, Some("0x1234")).is_err());
+        assert_eq!(job.validate_submitted_result(&result), Ok(()));
     }
 
     #[test]
@@ -1351,7 +1337,7 @@ mod tests {
             execution_stats: None,
         });
 
-        assert!(job.validate_submitted_result(&result, None).is_err());
+        assert!(job.validate_submitted_result(&result).is_err());
     }
 
     #[test]
@@ -1365,7 +1351,7 @@ mod tests {
             },
         });
 
-        assert!(job.validate_submitted_result(&result, None).is_err());
+        assert!(job.validate_submitted_result(&result).is_err());
     }
 
     #[test]
@@ -1377,13 +1363,13 @@ mod tests {
             execution_stats: None,
         });
 
-        assert!(job.validate_submitted_result(&result, None).is_err());
+        assert!(job.validate_submitted_result(&result).is_err());
     }
 
     #[test]
     fn validate_submitted_result_requires_tee_signer() {
         let job = proof_job_with(ApiProofType::Tee, None, Some(TeeKind::AwsNitro));
-        let result = ProtocolProofResult::Tee(TeeProofResult {
+        let mut result = ProtocolProofResult::Tee(TeeProofResult {
             aggregate_proposal: Proposal {
                 output_root: Default::default(),
                 signature: Default::default(),
@@ -1396,10 +1382,13 @@ mod tests {
             },
             proposals: vec![],
             tee_kind: ProtocolTeeKind::AwsNitro,
+            tee_signer: Some("0x1111111111111111111111111111111111111111".parse().unwrap()),
         });
 
-        assert_eq!(job.validate_submitted_result(&result, Some("0x1234")), Ok(()));
-        assert!(job.validate_submitted_result(&result, None).is_err());
+        assert_eq!(job.validate_submitted_result(&result), Ok(()));
+        let ProtocolProofResult::Tee(tee) = &mut result else { unreachable!() };
+        tee.tee_signer = None;
+        assert!(job.validate_submitted_result(&result).is_err());
     }
 
     #[test]

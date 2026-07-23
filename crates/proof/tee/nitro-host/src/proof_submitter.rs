@@ -51,8 +51,8 @@ impl ProofSubmitterRequest {
                 aggregate_proposal,
                 proposals,
                 tee_kind: TeeKind::AwsNitro,
+                tee_signer: Some(tee_signer),
             }),
-            tee_signer: Some(tee_signer),
         })
     }
 }
@@ -330,10 +330,10 @@ mod tests {
         assert_eq!(request.session_id, "session-1");
         assert_eq!(request.lock_id, "lock-1");
         assert_eq!(request.worker_id, "worker-1");
-        assert_eq!(request.tee_signer, Some(Address::repeat_byte(0x11)));
         let ServiceProofResult::Tee(result) = request.result else {
             panic!("expected tee proof result");
         };
+        assert_eq!(result.tee_signer, Some(Address::repeat_byte(0x11)));
         assert_eq!(result.tee_kind, TeeKind::AwsNitro);
         assert_eq!(result.aggregate_proposal.l2_block_number, 10);
         assert_eq!(result.proposals.len(), 3);

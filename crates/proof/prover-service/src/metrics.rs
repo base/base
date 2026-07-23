@@ -363,7 +363,6 @@ mod tests {
             last_heartbeat_at: None,
             error_message: None,
             result_payload: None,
-            tee_signer: None,
             created_at,
             updated_at: completed_at.unwrap_or(created_at),
             completed_at,

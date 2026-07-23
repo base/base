@@ -1,7 +1,5 @@
 use base_prover_service_db::{DeleteProofRequestOutcome, canonical_session_id};
-use base_prover_service_protocol::{
-    DeleteProofRequest, DeleteProofsByTeeSignerRequest, DeleteProofsByTeeSignerResponse,
-};
+use base_prover_service_protocol::{DeleteProofRequest, DeleteProofsByTeeSignerRequest};
 use jsonrpsee::core::RpcResult;
 use tracing::info;
 
@@ -42,7 +40,7 @@ impl ProverServiceServer {
     pub async fn delete_proofs_by_tee_signer_impl(
         &self,
         request: DeleteProofsByTeeSignerRequest,
-    ) -> RpcResult<DeleteProofsByTeeSignerResponse> {
+    ) -> RpcResult<u64> {
         let start = std::time::Instant::now();
         let result = self.delete_proofs_by_tee_signer_inner(request).await;
         record_rpc_result("DeleteProofsByTeeSigner", start, &result);
@@ -52,7 +50,7 @@ impl ProverServiceServer {
     async fn delete_proofs_by_tee_signer_inner(
         &self,
         request: DeleteProofsByTeeSignerRequest,
-    ) -> RpcResult<DeleteProofsByTeeSignerResponse> {
+    ) -> RpcResult<u64> {
         if request.tee_signer.is_zero() {
             return Err(invalid_argument("tee_signer must not be zero"));
         }
@@ -63,6 +61,6 @@ impl ProverServiceServer {
             .await
             .map_err(|error| internal(format!("Database error: {error}")))?;
         info!(tee_signer = %request.tee_signer, deleted_count, "Deleted TEE proofs by signer");
-        Ok(DeleteProofsByTeeSignerResponse { deleted_count })
+        Ok(deleted_count)
     }
 }

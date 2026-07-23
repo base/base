@@ -431,7 +431,6 @@ mod tests {
                 proof: vec![1, 2, 3].into(),
                 execution_stats: None,
             }),
-            tee_signer: None,
         }
     }
 

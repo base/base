@@ -207,7 +207,6 @@ async fn worker_claim_heartbeat_submit_round_trip() {
                 proof: vec![1, 2, 3].into(),
                 execution_stats: None,
             }),
-            tee_signer: None,
         })
         .await
         .expect("submit_proof with the owning lock should succeed");
@@ -242,7 +241,6 @@ async fn worker_submit_unknown_session_is_not_found() {
                 proof: vec![9].into(),
                 execution_stats: None,
             }),
-            tee_signer: None,
         })
         .await
         .expect_err("submitting against an unknown session should fail");

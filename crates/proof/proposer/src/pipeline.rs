@@ -260,10 +260,7 @@ mod tests {
         async fn delete_proofs_by_tee_signer(
             &self,
             _request: base_prover_service_protocol::DeleteProofsByTeeSignerRequest,
-        ) -> Result<
-            base_prover_service_protocol::DeleteProofsByTeeSignerResponse,
-            ProverServiceClientError,
-        > {
+        ) -> Result<u64, ProverServiceClientError> {
             unimplemented!("pipeline tests do not delete proofs by signer")
         }
 

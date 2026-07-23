@@ -3,9 +3,9 @@
 use async_trait::async_trait;
 use backon::Retryable;
 use base_prover_service_protocol::{
-    DeleteProofRequest, DeleteProofsByTeeSignerRequest, DeleteProofsByTeeSignerResponse,
-    GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiClient,
+    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
+    ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    ProverRequesterApiClient,
 };
 use base_retry::RetryConfig;
 use jsonrpsee::http_client::HttpClient;
@@ -43,7 +43,7 @@ pub trait ProofRequesterProvider: Send + Sync {
     async fn delete_proofs_by_tee_signer(
         &self,
         request: DeleteProofsByTeeSignerRequest,
-    ) -> Result<DeleteProofsByTeeSignerResponse, ProverServiceClientError>;
+    ) -> Result<u64, ProverServiceClientError>;
 
     /// List submitted proof requests.
     async fn list_proofs(
@@ -179,7 +179,7 @@ impl ProofRequesterClient {
     pub async fn delete_proofs_by_tee_signer(
         &self,
         request: DeleteProofsByTeeSignerRequest,
-    ) -> Result<DeleteProofsByTeeSignerResponse, ProverServiceClientError> {
+    ) -> Result<u64, ProverServiceClientError> {
         debug!(tee_signer = %request.tee_signer, "deleting proofs by TEE signer");
         (|| async move { Ok(self.inner.delete_proofs_by_tee_signer(request).await?) })
             .retry(self.retry.to_backoff_builder())
@@ -249,7 +249,7 @@ impl ProofRequesterProvider for ProofRequesterClient {
     async fn delete_proofs_by_tee_signer(
         &self,
         request: DeleteProofsByTeeSignerRequest,
-    ) -> Result<DeleteProofsByTeeSignerResponse, ProverServiceClientError> {
+    ) -> Result<u64, ProverServiceClientError> {
         Self::delete_proofs_by_tee_signer(self, request).await
     }
 
@@ -275,11 +275,10 @@ mod tests {
 
     use async_trait::async_trait;
     use base_prover_service_protocol::{
-        DeleteProofRequest, DeleteProofsByTeeSignerRequest, DeleteProofsByTeeSignerResponse,
-        GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequest,
-        ProofRequestKind, ProofResult, ProofStatus, ProofSummary, ProofType,
-        ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkBackend,
-        ZkProofRequest, ZkProofResult, ZkVm,
+        DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
+        ListProofsRequest, ListProofsResponse, ProofRequest, ProofRequestKind, ProofResult,
+        ProofStatus, ProofSummary, ProofType, ProveBlockRangeRequest, ProveBlockRangeResponse,
+        ProverRequesterApiServer, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
     use base_retry::RetryConfig;
     use chrono::Utc;
@@ -464,7 +463,6 @@ mod tests {
                     proof: vec![0xab, 0xcd].into(),
                     execution_stats: None,
                 })),
-                tee_signer: None,
             })
         }
 
@@ -488,10 +486,10 @@ mod tests {
         async fn delete_proofs_by_tee_signer(
             &self,
             request: DeleteProofsByTeeSignerRequest,
-        ) -> RpcResult<DeleteProofsByTeeSignerResponse> {
+        ) -> RpcResult<u64> {
             self.state.lock().expect("state lock should not be poisoned").batch_delete_request =
                 Some(request);
-            Ok(DeleteProofsByTeeSignerResponse { deleted_count: 2 })
+            Ok(2)
         }
 
         async fn list_proofs(&self, request: ListProofsRequest) -> RpcResult<ListProofsResponse> {
@@ -568,7 +566,7 @@ mod tests {
             .delete_proofs_by_tee_signer(batch_delete_request)
             .await
             .expect("delete_proofs_by_tee_signer should succeed");
-        assert_eq!(batch_delete_response.deleted_count, 2);
+        assert_eq!(batch_delete_response, 2);
 
         let list_request =
             ListProofsRequest { offset: 7, limit: 25, status_filter: Some(ProofStatus::Succeeded) };

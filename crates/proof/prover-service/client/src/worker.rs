@@ -634,7 +634,6 @@ mod tests {
             lock_id: "lock-submit".to_owned(),
             worker_id: "worker-submit".to_owned(),
             result: proof_result(),
-            tee_signer: None,
         }
     }
 
@@ -747,7 +746,6 @@ mod tests {
             lock_id: "lock-submit".to_owned(),
             worker_id: "worker-submit".to_owned(),
             result: proof_result(),
-            tee_signer: None,
         };
         let submit_response = provider
             .submit_proof(submit_request.clone())

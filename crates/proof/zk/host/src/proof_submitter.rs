@@ -26,7 +26,6 @@ impl TryFrom<ProofSubmitterRequest> for WorkerSubmitProofRequest {
                 lock_id: request.lock_id,
                 worker_id: request.worker_id,
                 result: request.result,
-                tee_signer: None,
             }),
             ProofResult::Tee(_) => Err(ProofSubmitterError::UnsupportedProofResult),
         }
@@ -82,6 +81,7 @@ mod tests {
             aggregate_proposal: proposal(),
             proposals: vec![proposal()],
             tee_kind: TeeKind::AwsNitro,
+            tee_signer: None,
         });
 
         let result = WorkerSubmitProofRequest::try_from(ProofSubmitterRequest {

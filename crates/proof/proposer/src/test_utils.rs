@@ -22,11 +22,11 @@ use base_proof_rpc::{
 };
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
-    DeleteProofRequest, DeleteProofsByTeeSignerRequest, DeleteProofsByTeeSignerResponse,
-    GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestIdCollisionMessage,
-    ProofRequestKind as ApiProofRequestKind, ProofResult as ApiProofResult, ProofStatus,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
+    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
+    ListProofsRequest, ListProofsResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE,
+    ProofRequestIdCollisionMessage, ProofRequestKind as ApiProofRequestKind,
+    ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    TeeKind, TeeProofResult,
 };
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
@@ -438,7 +438,6 @@ impl ProofRequesterProvider for MockProofRequester {
                 status: ProofStatus::Failed,
                 error_message: Some(message.clone()),
                 result: None,
-                tee_signer: None,
             });
         }
 
@@ -480,8 +479,8 @@ impl ProofRequesterProvider for MockProofRequester {
                 aggregate_proposal,
                 proposals,
                 tee_kind: TeeKind::AwsNitro,
+                tee_signer: Some(Address::repeat_byte(0x11)),
             })),
-            tee_signer: Some(Address::repeat_byte(0x11)),
         })
     }
 
@@ -501,14 +500,14 @@ impl ProofRequesterProvider for MockProofRequester {
     async fn delete_proofs_by_tee_signer(
         &self,
         request: DeleteProofsByTeeSignerRequest,
-    ) -> Result<DeleteProofsByTeeSignerResponse, ProverServiceClientError> {
+    ) -> Result<u64, ProverServiceClientError> {
         if self.reject_delete {
             return Err(ProverServiceClientError::Timeout("simulated delete failure".into()));
         }
 
         self.deleted_tee_signers.lock().unwrap().push(request.tee_signer);
         let deleted_count = self.requests.lock().unwrap().drain().count() as u64;
-        Ok(DeleteProofsByTeeSignerResponse { deleted_count })
+        Ok(deleted_count)
     }
 
     async fn list_proofs(

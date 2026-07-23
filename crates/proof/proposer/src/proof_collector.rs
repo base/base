@@ -3,12 +3,12 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
-use base_proof_primitives::Proposal;
 use base_proof_rpc::RollupProvider;
 use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{
     DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, ProofStatus,
+    TeeProofResult,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -110,7 +110,7 @@ where
             };
 
             let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
-            let (aggregate_proposal, proposals, tee_signer) = match Self::poll_proof(
+            let proof = match Self::poll_proof(
                 self.proof_requester.as_ref(),
                 target_block,
                 &session_id,
@@ -132,14 +132,7 @@ where
             };
 
             match self
-                .submit_proof(
-                    target_block,
-                    &session_id,
-                    (aggregate_proposal, proposals),
-                    tee_signer,
-                    current.parent_address,
-                    cancel,
-                )
+                .submit_proof(target_block, &session_id, proof, current.parent_address, cancel)
                 .await
             {
                 SubmitOutcome::Advanced(next) => *current = next,
@@ -154,7 +147,7 @@ where
         target_block: u64,
         session_id: &str,
         request_dispatched: bool,
-    ) -> Result<Option<(Proposal, Vec<Proposal>, Option<Address>)>, ProposerError> {
+    ) -> Result<Option<TeeProofResult>, ProposerError> {
         let response = match proof_requester
             .get_proof(GetProofRequest { session_id: session_id.to_owned() })
             .await
@@ -249,7 +242,7 @@ where
                         Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY)
                             .increment(1);
                         Metrics::last_collected_block().set(target_block as f64);
-                        Ok(Some((proof.0, proof.1, response.tee_signer)))
+                        Ok(Some(proof))
                     }
                     Err(error) => {
                         Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
@@ -272,8 +265,7 @@ where
         &self,
         target_block: u64,
         session_id: &str,
-        proof: (Proposal, Vec<Proposal>),
-        tee_signer: Option<Address>,
+        proof: TeeProofResult,
         parent_address: Address,
         cancel: &CancellationToken,
     ) -> SubmitOutcome {
@@ -282,8 +274,12 @@ where
         let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
         let result = match cancel
             .run_until_cancelled(async {
-                let submit =
-                    self.submitter.submit(&proof.0, &proof.1, target_block, parent_address);
+                let submit = self.submitter.submit(
+                    &proof.aggregate_proposal,
+                    &proof.proposals,
+                    target_block,
+                    parent_address,
+                );
                 match self.submit_timeout {
                     Some(timeout) => tokio::time::timeout(timeout, submit).await,
                     None => Ok(submit.await),
@@ -352,7 +348,7 @@ where
                     error,
                     ProposerError::Submission(ProofSubmissionError::InvalidSigner)
                 ) {
-                    match tee_signer {
+                    match proof.tee_signer {
                         Some(tee_signer) => match self
                             .proof_requester
                             .delete_proofs_by_tee_signer(DeleteProofsByTeeSignerRequest {
@@ -360,11 +356,11 @@ where
                             })
                             .await
                         {
-                            Ok(response) => {
+                            Ok(deleted_count) => {
                                 info!(
                                     target_block,
                                     tee_signer = %tee_signer,
-                                    deleted_count = response.deleted_count,
+                                    deleted_count,
                                     "Deleted invalid TEE signer proof requests"
                                 );
                                 true
@@ -428,6 +424,7 @@ mod tests {
     };
     use base_proof_primitives::ProofRequest;
     use base_proof_submission::ProofSubmissionError;
+    use base_prover_service_protocol::TeeKind;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
@@ -750,8 +747,12 @@ mod tests {
             .submit_proof(
                 target_block,
                 &session_id,
-                (aggregate_proposal, vec![]),
-                None,
+                TeeProofResult {
+                    aggregate_proposal,
+                    proposals: vec![],
+                    tee_kind: TeeKind::AwsNitro,
+                    tee_signer: None,
+                },
                 Address::ZERO,
                 &CancellationToken::new(),
             )

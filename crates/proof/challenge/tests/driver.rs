@@ -142,6 +142,7 @@ const fn tee_api_result(aggregate_proposal: Proposal) -> ApiProofResult {
         aggregate_proposal,
         proposals: Vec::new(),
         tee_kind: TeeKind::AwsNitro,
+        tee_signer: None,
     })
 }
 

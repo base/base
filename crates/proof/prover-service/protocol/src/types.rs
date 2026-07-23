@@ -148,13 +148,6 @@ pub struct DeleteProofsByTeeSignerRequest {
     pub tee_signer: Address,
 }
 
-/// Response returned after deleting completed TEE proofs by signer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeleteProofsByTeeSignerResponse {
-    /// Number of proof requests deleted.
-    pub deleted_count: u64,
-}
-
 /// Submitted proof request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProofRequest {
@@ -274,6 +267,9 @@ pub struct TeeProofResult {
     pub proposals: Vec<Proposal>,
     /// Trusted execution environment implementation that produced the proof.
     pub tee_kind: TeeKind,
+    /// Signer used to produce the proof.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tee_signer: Option<Address>,
 }
 
 /// Request to fetch proof status and result data.
@@ -294,9 +290,6 @@ pub struct GetProofResponse {
     /// Proof result, present only after the proof succeeds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<ProofResult>,
-    /// Signer reported by the prover for a completed TEE proof.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tee_signer: Option<Address>,
 }
 
 /// Request to list submitted proofs.
@@ -438,9 +431,6 @@ pub struct WorkerSubmitProofRequest {
     pub worker_id: String,
     /// Proof result.
     pub result: ProofResult,
-    /// Signer used to produce a TEE proof.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tee_signer: Option<Address>,
 }
 
 /// Response returned after a worker proof submission.
@@ -719,6 +709,7 @@ mod tests {
             aggregate_proposal: aggregate_proposal.clone(),
             proposals: vec![proposal.clone()],
             tee_kind: TeeKind::AwsNitro,
+            tee_signer: None,
         });
 
         let value = serde_json::to_value(result).expect("tee result should serialize");
@@ -840,6 +831,7 @@ mod tests {
             aggregate_proposal: aggregate_proposal.clone(),
             proposals: vec![proposal.clone()],
             tee_kind: TeeKind::AwsNitro,
+            tee_signer: None,
         };
 
         let value = serde_json::to_value(result).expect("tee result payload should serialize");
@@ -976,7 +968,6 @@ mod tests {
                 proof: vec![1, 2, 3].into(),
                 execution_stats: None,
             }),
-            tee_signer: None,
         };
 
         let submit_value = serde_json::to_value(submit).expect("submit should serialize");

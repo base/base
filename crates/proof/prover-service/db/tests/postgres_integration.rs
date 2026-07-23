@@ -1829,7 +1829,6 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
             lock_id: Uuid::new_v4(),
             worker_id: "submit-worker".to_owned(),
             result: compressed_result(vec![0xde, 0xad]),
-            tee_signer: None,
         })
         .await
         .unwrap();
@@ -1843,7 +1842,6 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
             lock_id,
             worker_id: "submit-worker".to_owned(),
             result: result.clone(),
-            tee_signer: None,
         })
         .await
         .unwrap();
@@ -1871,7 +1869,6 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
             lock_id,
             worker_id: "submit-worker".to_owned(),
             result: result.clone(),
-            tee_signer: None,
         })
         .await
         .unwrap();
@@ -1891,7 +1888,6 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
             lock_id,
             worker_id: "submit-worker".to_owned(),
             result: compressed_result(vec![0xba, 0xad]),
-            tee_signer: None,
         })
         .await
         .unwrap();
@@ -1908,7 +1904,6 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
             lock_id: Uuid::new_v4(),
             worker_id: "submit-worker".to_owned(),
             result: result.clone(),
-            tee_signer: None,
         })
         .await
         .unwrap();
@@ -1955,8 +1950,8 @@ async fn test_delete_proof_requests_by_tee_signer() {
                     },
                     proposals: vec![],
                     tee_kind: ProtocolTeeKind::AwsNitro,
+                    tee_signer: Some(submitted_signer.parse().unwrap()),
                 }),
-                tee_signer: Some(submitted_signer.to_owned()),
             })
             .await
             .unwrap();
@@ -1967,7 +1962,11 @@ async fn test_delete_proof_requests_by_tee_signer() {
     assert_eq!(repo.delete_proof_requests_by_tee_signer(signer).await.unwrap(), 2);
     assert!(repo.get(ids[0]).await.unwrap().is_none());
     assert!(repo.get(ids[1]).await.unwrap().is_none());
-    assert_eq!(repo.get(ids[2]).await.unwrap().unwrap().tee_signer.as_deref(), Some(other_signer));
+    let result: ProtocolProofResult =
+        serde_json::from_value(repo.get(ids[2]).await.unwrap().unwrap().result_payload.unwrap())
+            .unwrap();
+    let ProtocolProofResult::Tee(result) = result else { panic!("expected TEE proof") };
+    assert_eq!(result.tee_signer, Some(other_signer.parse().unwrap()));
 
     assert_eq!(repo.delete_proof_requests_by_tee_signer(other_signer).await.unwrap(), 1);
 }
@@ -2001,7 +2000,6 @@ async fn test_complete_claimed_proof_job_rejects_mismatched_result() {
                     execution_stats: None,
                 },
             }),
-            tee_signer: None,
         })
         .await
         .unwrap();
@@ -2020,7 +2018,6 @@ async fn test_complete_claimed_proof_job_rejects_mismatched_result() {
                     execution_stats: None,
                 },
             }),
-            tee_signer: None,
         })
         .await
         .unwrap();
