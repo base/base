@@ -89,6 +89,7 @@ anyhow.workspace = true
 mockall.workspace = true
 tempfile.workspace = true
 arbitrary.workspace = true
+alloy-network.workspace = true
 base-common-rpc-types.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 alloy-primitives = { workspace = true, features = ["k256"] }

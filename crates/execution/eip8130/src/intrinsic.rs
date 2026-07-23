@@ -150,36 +150,39 @@ impl IntrinsicGasInput {
     }
 
     /// Body-derivable worst-case for [`Self::sender_auto_delegated`], the single
-    /// classifier shared by estimation (`eth_estimateGas`) and mempool admission.
+    /// classifier shared by estimation (`eth_estimateGas`), mempool admission,
+    /// and the execution auto-delegation state gate.
     ///
     /// Execution auto-delegates the sender (charging a `DELEGATION_DEPOSIT_COST`)
-    /// exactly when the transaction carries **no** [`AccountChange::Delegation`]
-    /// entry *and* the sender is code-less at inclusion. The first condition is
-    /// body-derivable; the second is a non-monotonic state fact the sender's
+    /// exactly when the transaction carries **neither** an
+    /// [`AccountChange::Delegation`] **nor** an [`AccountChange::Create`] entry
+    /// *and* the sender is code-less at inclusion. The entry conditions are
+    /// body-derivable; the code-less fact is non-monotonic — the sender's
     /// on-chain code can flip between estimation and inclusion (e.g. a native
     /// EIP-7702 revocation strips the delegation and re-arms auto-delegation). So
     /// the safe body-derivable ceiling is "charge unless the transaction contains
-    /// a `Delegation` entry":
+    /// a `Delegation` or `Create` entry":
     ///
-    /// - A `Delegation` (zero or non-zero target) sets `has_explicit_delegation`,
-    ///   which suppresses auto-delegation at execution unconditionally — so it
-    ///   suppresses it here too.
-    /// - A `Create` deploys code to a CREATE2-derived address, **not** the
-    ///   sender, so it leaves the sender code-less and does *not* suppress
-    ///   auto-delegation. (A rare self-create that lands on the sender address
-    ///   only makes execution cheaper, so charging here stays a safe ceiling.)
+    /// - A `Delegation` (zero or non-zero target) suppresses auto-delegation at
+    ///   execution unconditionally — a zero target is an owner-authorized request
+    ///   to remain undelegated — so it suppresses it here too.
+    /// - A `Create` always targets the sender account itself (EIP-8130 enforces
+    ///   `created.address == sender`), establishing the sender's EIP-8130 account
+    ///   and installing its code. A created account is not a plain code-less EOA,
+    ///   so execution never auto-delegates it — hence it suppresses here too.
     /// - A `ConfigChange` or a call-only transaction never installs sender code,
     ///   so it does not suppress either.
     ///
-    /// Both estimation and admission must pin this ceiling (execution reprices it
-    /// precisely from state) for the `estimate == admission >= execution`
-    /// guarantee to hold; resolving it from current code state on one path but
-    /// not the other silently breaks that invariant.
+    /// Every path pins this same predicate — estimation and admission pin the gas
+    /// ceiling, and execution gates its (accurately repriced) state mutation on
+    /// it — so the `estimate == admission >= execution` guarantee holds; resolving
+    /// it from current code state on one path but not another silently breaks that
+    /// invariant.
     #[must_use]
     pub fn sender_auto_delegated(account_changes: &[AccountChange]) -> bool {
-        !account_changes.iter().any(|change| {
-            matches!(change, AccountChange::Create(_) | AccountChange::Delegation(_))
-        })
+        !account_changes
+            .iter()
+            .any(|change| matches!(change, AccountChange::Delegation(_) | AccountChange::Create(_)))
     }
 }
 
@@ -407,6 +410,40 @@ impl IntrinsicGas {
         if reported < max { reported } else { max }
     }
 
+    /// Conservative upper bound on the payer-authentication gas billed *on top of*
+    /// `gas_limit` for a signed EIP-8130 transaction (`0` for self-pay).
+    ///
+    /// Block gas reservation uses this to budget the payer's authentication in
+    /// addition to the sender-signed `gas_limit`: the payer reimburses its own
+    /// authentication beyond that limit, so a block admitting a transaction on
+    /// `gas_limit` alone could let true consumption push cumulative gas over the
+    /// block limit.
+    ///
+    /// It is a deliberate *ceiling*, not the exact charge: the auth-blob shape
+    /// gives the authenticator execution gas plus its cold `actor_config` SLOAD,
+    /// and on top of that we pin the payer's **policy gate worst-case** — one
+    /// extra cold `policy_manager` SLOAD ([`Eip8130GasSchedule::COLD_SLOAD`]) that
+    /// a policy-gated payer's `authorize` step reads. The pre-execution reservation
+    /// cannot resolve the payer's on-chain scope (the payer blob is not
+    /// authenticable before execution), so pinning the gate keeps the reservation
+    /// a safe upper bound regardless of whether the payer turns out to be gated.
+    /// Over-reserving can only reject a too-tight block, never admit an over-limit
+    /// one, and building and validation share this bound so they stay consistent.
+    #[must_use = "discarding the result skips the payer-authentication reservation"]
+    pub fn max_payer_auth_cost(signed: &Eip8130Signed) -> Result<u64, IntrinsicGasError> {
+        if signed.tx().payer.is_some() {
+            // Price the blob without the policy gate (`policy_gated = false`), then
+            // pin the payer's policy-gate worst-case explicitly by adding one cold
+            // `policy_manager` SLOAD unconditionally — the reservation cannot
+            // authenticate the payer to resolve whether it is actually gated.
+            let auth =
+                Self::auth_cost(signed.payer_auth().as_ref(), AuthWireForm::Prefixed, false)?;
+            Ok(auth.saturating_add(Eip8130GasSchedule::COLD_SLOAD))
+        } else {
+            Ok(0)
+        }
+    }
+
     /// EIP-2028 data-availability cost over the caller-supplied EIP-2718
     /// serialization (`type_byte || rlp([..fields.., sender_auth, payer_auth])`).
     fn payload_cost(encoded: &[u8]) -> u64 {
@@ -602,11 +639,12 @@ mod tests {
             ConfigChange { chain_id: 1, sequence: 0, actor_changes: vec![], auth: Bytes::new() }
         )]));
 
-        // A `Create` deploys code to a CREATE2-derived address, not the sender, so
-        // the sender stays code-less and execution auto-delegates. Create must NOT
-        // suppress budgeting (the reverse would under-budget admission vs
-        // execution and admit a tx that OOGs at inclusion).
-        assert!(IntrinsicGasInput::sender_auto_delegated(&[AccountChange::Create(create_entry())]));
+        // A `Create` always targets the sender account itself (EIP-8130 enforces
+        // `created.address == sender`), establishing the sender's EIP-8130 account
+        // and installing its code. A created account is not a plain code-less EOA,
+        // so execution never auto-delegates it — the classifier must suppress here
+        // too, on every path, so admission and estimate match execution exactly.
+        assert!(!IntrinsicGasInput::sender_auto_delegated(&[AccountChange::Create(create_entry())]));
 
         // Any `Delegation` entry — zero or non-zero target — sets
         // `has_explicit_delegation`, which suppresses auto-delegation at execution

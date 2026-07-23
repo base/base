@@ -200,12 +200,6 @@ impl GameScanner {
         }
     }
 
-    /// Returns the number of game indices currently retained in the
-    /// in-progress tracking map.
-    pub fn tracked_indices_len(&self) -> usize {
-        self.tracking.len()
-    }
-
     /// Scans for candidate games that need validation.
     ///
     /// Every call evaluates every factory index after the current anchor game.
@@ -925,13 +919,13 @@ mod tests {
         );
 
         scanner.scan().await.unwrap();
-        assert_eq!(scanner.tracked_indices_len(), 5);
+        assert_eq!(scanner.tracking.len(), 5);
 
         anchor_registry.set_anchor_game(addr(2));
         let candidates = scanner.scan().await.unwrap();
 
         assert_eq!(candidates.iter().map(|c| c.index).collect::<Vec<_>>(), vec![3, 4]);
-        assert_eq!(scanner.tracked_indices_len(), 2);
+        assert_eq!(scanner.tracking.len(), 2);
     }
 
     /// Error resilience: a per-game error is logged and skipped, other games still returned.
@@ -961,7 +955,7 @@ mod tests {
         assert_eq!(candidates[0].index, 0);
         assert_eq!(candidates[1].index, 2);
         assert_eq!(
-            scanner.tracked_indices_len(),
+            scanner.tracking.len(),
             2,
             "tail-only errors should not inflate in-progress tracking"
         );
@@ -1019,7 +1013,7 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].index, 1);
         assert_eq!(
-            scanner.tracked_indices_len(),
+            scanner.tracking.len(),
             1,
             "tail-only errors should not inflate in-progress tracking"
         );
@@ -1195,7 +1189,7 @@ mod tests {
         let initial = scanner.scan().await.unwrap();
         assert_eq!(initial.len(), 3, "all three initial games are actionable");
         assert!(initial.iter().any(|c| c.index == 0));
-        assert_eq!(scanner.tracked_indices_len(), 3);
+        assert_eq!(scanner.tracking.len(), 3);
 
         // Simulate a late ZK challenge against game 0 while it remains
         // IN_PROGRESS, then push three new games into the factory.
@@ -1249,7 +1243,7 @@ mod tests {
         // First tick: game 0 is in progress and gets tracked.
         let initial = scanner.scan().await.unwrap();
         assert_eq!(initial.len(), 1);
-        assert_eq!(scanner.tracked_indices_len(), 1);
+        assert_eq!(scanner.tracking.len(), 1);
 
         // Resolve game 0 and add newer games.
         let mut resolved =
@@ -1268,7 +1262,7 @@ mod tests {
 
         // Tracking should hold only the three new IN_PROGRESS games — the
         // resolved game must be dropped.
-        assert_eq!(scanner.tracked_indices_len(), 3);
+        assert_eq!(scanner.tracking.len(), 3);
     }
 
     /// Fully nullified games (both provers zero) are dropped from the
@@ -1294,7 +1288,7 @@ mod tests {
         );
 
         scanner.scan().await.unwrap();
-        assert_eq!(scanner.tracked_indices_len(), 1);
+        assert_eq!(scanner.tracking.len(), 1);
 
         // Fully nullify the game (both provers zero) while keeping it IN_PROGRESS.
         verifier.update_game(
@@ -1312,6 +1306,6 @@ mod tests {
         scanner.scan().await.unwrap();
 
         // Only the three new live games remain tracked.
-        assert_eq!(scanner.tracked_indices_len(), 3);
+        assert_eq!(scanner.tracking.len(), 3);
     }
 }

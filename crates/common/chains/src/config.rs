@@ -325,6 +325,7 @@ impl ChainConfig {
                 azul: self.azul_timestamp,
                 beryl: self.beryl_timestamp,
                 cobalt: self.cobalt_timestamp,
+                zombie: None,
             },
         }
     }
@@ -661,6 +662,30 @@ mod tests {
         // Guard against drift between the hardcoded `FeeConfig::BASE_MAINNET` constant
         // (used as a serde default) and the canonical `ChainConfig::mainnet().fee_config()`.
         assert_eq!(ChainConfig::mainnet().fee_config(), FeeConfig::base_mainnet());
+    }
+
+    #[test]
+    fn activation_schedule_matches_upgrade_config() {
+        // Guard against drift between canonical `ChainConfig` schedules, the duplicated
+        // `UpgradeConfig` constants, and their chain-ID lookup.
+        for (chain, schedule) in [
+            (ChainConfig::mainnet(), UpgradeConfig::BASE_MAINNET),
+            (ChainConfig::sepolia(), UpgradeConfig::BASE_SEPOLIA),
+        ] {
+            assert_eq!(
+                schedule,
+                chain.upgrade_config(),
+                "upgrade schedule drift for chain {}",
+                chain.chain_id
+            );
+
+            assert_eq!(
+                UpgradeConfig::for_chain_id(chain.chain_id),
+                Some(schedule),
+                "upgrade schedule lookup drift for chain {}",
+                chain.chain_id
+            );
+        }
     }
 
     #[test]

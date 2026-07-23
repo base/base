@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn latest_base_upgrade_matches_default() {
         assert_eq!(BaseUpgrade::default(), BaseUpgrade::LATEST);
-        assert_eq!(BaseUpgrade::LATEST, BaseUpgrade::Azul);
+        assert_eq!(BaseUpgrade::LATEST, BaseUpgrade::Beryl);
     }
 
     #[test]
@@ -251,9 +251,9 @@ mod tests {
     }
 
     #[test]
-    fn zombie_is_a_permanently_off_gate() {
-        // Zombie is a gate, not an upgrade: it is not contract-backed, not signalable via the L1
-        // contract, and absent from the contract-backed set, so it can never be activated.
+    fn zombie_is_genesis_only_not_l1_signal_backed() {
+        // Zombie activates via genesis config only: it is not contract-backed, not signalable
+        // via the L1 contract, and absent from both the contract-backed and execution sets.
         assert!(!BaseUpgrade::Zombie.is_contract_backed());
         assert_eq!(BaseUpgrade::from_contract_fork_name("zombie"), None);
         assert!(!BaseUpgrade::CONTRACT_VARIANTS.contains(&BaseUpgrade::Zombie));
