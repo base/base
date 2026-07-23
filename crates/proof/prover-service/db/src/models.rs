@@ -632,8 +632,7 @@ pub struct ProofJob {
 impl ProofJob {
     /// Reject a submitted result whose variant or capability discriminator
     /// (`zk_vm`/`tee_kind`) does not match this claimed job, returning the
-    /// mismatch reason. Guards against a worker storing the wrong proof type or
-    /// omitting the signer for a TEE proof.
+    /// mismatch reason. Guards against a worker storing the wrong proof type.
     pub fn validate_submitted_result(&self, result: &ProtocolProofResult) -> Result<(), String> {
         match result {
             ProtocolProofResult::Compressed(zk) => {
@@ -647,9 +646,6 @@ impl ProofJob {
             ProtocolProofResult::Tee(tee) => {
                 self.check_api_proof_type(ApiProofType::Tee)?;
                 self.check_tee_kind(TeeKind::from(tee.tee_kind))?;
-                if tee.tee_signer.is_none() {
-                    return Err("TEE proof is missing tee_signer".to_owned());
-                }
             }
         }
         Ok(())
@@ -1229,9 +1225,8 @@ pub struct FailExpiredProofJobs<'a> {
 
 #[cfg(test)]
 mod tests {
-    use base_proof_primitives::Proposal;
     use base_prover_service_protocol::{
-        SnarkPlonkProofResult, TeeProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
+        SnarkPlonkProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
 
     use super::*;
@@ -1363,31 +1358,6 @@ mod tests {
             execution_stats: None,
         });
 
-        assert!(job.validate_submitted_result(&result).is_err());
-    }
-
-    #[test]
-    fn validate_submitted_result_requires_tee_signer() {
-        let job = proof_job_with(ApiProofType::Tee, None, Some(TeeKind::AwsNitro));
-        let mut result = ProtocolProofResult::Tee(TeeProofResult {
-            aggregate_proposal: Proposal {
-                output_root: Default::default(),
-                signature: Default::default(),
-                l1_origin_hash: Default::default(),
-                l1_origin_number: 0,
-                l2_block_number: 0,
-                prev_output_root: Default::default(),
-                config_hash: Default::default(),
-                schedule_id: Default::default(),
-            },
-            proposals: vec![],
-            tee_kind: ProtocolTeeKind::AwsNitro,
-            tee_signer: Some("0x1111111111111111111111111111111111111111".parse().unwrap()),
-        });
-
-        assert_eq!(job.validate_submitted_result(&result), Ok(()));
-        let ProtocolProofResult::Tee(tee) = &mut result else { unreachable!() };
-        tee.tee_signer = None;
         assert!(job.validate_submitted_result(&result).is_err());
     }
 

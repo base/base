@@ -341,46 +341,50 @@ where
                     error = %error,
                     "Submission discarded, deleting proof request for re-prove"
                 );
-                if cancel.is_cancelled() {
-                    return SubmitOutcome::Idle;
-                }
-                let deleted = if matches!(
-                    error,
-                    ProposerError::Submission(ProofSubmissionError::InvalidSigner)
-                ) {
-                    match proof.tee_signer {
-                        Some(tee_signer) => match self
-                            .proof_requester
-                            .delete_proofs_by_tee_signer(DeleteProofsByTeeSignerRequest {
-                                tee_signer,
-                            })
-                            .await
-                        {
-                            Ok(deleted_count) => {
-                                info!(
-                                    target_block,
-                                    tee_signer = %tee_signer,
-                                    deleted_count,
-                                    "Deleted invalid TEE signer proof requests"
-                                );
-                                true
+                let deleted = cancel
+                    .run_until_cancelled(async {
+                        if matches!(
+                            error,
+                            ProposerError::Submission(ProofSubmissionError::InvalidSigner)
+                        ) {
+                            match proof.tee_signer {
+                                Some(tee_signer) => match self
+                                    .proof_requester
+                                    .delete_proofs_by_tee_signer(DeleteProofsByTeeSignerRequest {
+                                        tee_signer,
+                                    })
+                                    .await
+                                {
+                                    Ok(deleted_count) => {
+                                        info!(
+                                            target_block,
+                                            tee_signer = %tee_signer,
+                                            deleted_count,
+                                            "Deleted invalid TEE signer proof requests"
+                                        );
+                                        true
+                                    }
+                                    Err(error) => {
+                                        warn!(
+                                            target_block,
+                                            tee_signer = %tee_signer,
+                                            error = %error,
+                                            "Failed to delete proof requests by TEE signer"
+                                        );
+                                        false
+                                    }
+                                },
+                                None => self.delete_proof_request(session_id, target_block).await,
                             }
-                            Err(error) => {
-                                warn!(
-                                    target_block,
-                                    tee_signer = %tee_signer,
-                                    error = %error,
-                                    "Failed to delete proof requests by TEE signer"
-                                );
-                                false
-                            }
-                        },
-                        None => self.delete_proof_request(session_id, target_block).await,
-                    }
-                } else {
-                    self.delete_proof_request(session_id, target_block).await
+                        } else {
+                            self.delete_proof_request(session_id, target_block).await
+                        }
+                    })
+                    .await;
+                return match deleted {
+                    Some(true) => SubmitOutcome::Restart,
+                    Some(false) | None => SubmitOutcome::Idle,
                 };
-                return if deleted { SubmitOutcome::Restart } else { SubmitOutcome::Idle };
             }
         }
 

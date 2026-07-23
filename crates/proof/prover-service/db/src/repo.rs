@@ -274,6 +274,10 @@ impl ProofRequestRepo {
         }
 
         let id: Uuid = row.get("id");
+        sqlx::query("DELETE FROM proof_request_outbox WHERE proof_request_id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM proof_requests WHERE id = $1").bind(id).execute(&mut *tx).await?;
 
         tx.commit().await?;
@@ -282,11 +286,27 @@ impl ProofRequestRepo {
 
     /// Delete completed TEE proof requests produced by one reported signer.
     pub async fn delete_proof_requests_by_tee_signer(&self, tee_signer: &str) -> Result<u64> {
-        Ok(sqlx::query("DELETE FROM proof_requests WHERE tee_signer = $1 AND status = 'SUCCEEDED'")
-            .bind(tee_signer)
-            .execute(&self.pool)
+        let mut tx = self.pool.begin().await?;
+        let ids = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM proof_requests \
+             WHERE tee_signer = $1 AND status = 'SUCCEEDED' FOR UPDATE",
+        )
+        .bind(tee_signer)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        sqlx::query("DELETE FROM proof_request_outbox WHERE proof_request_id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?;
+        let deleted = sqlx::query("DELETE FROM proof_requests WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
             .await?
-            .rows_affected())
+            .rows_affected();
+
+        tx.commit().await?;
+        Ok(deleted)
     }
 
     /// Get a proof request by ID
