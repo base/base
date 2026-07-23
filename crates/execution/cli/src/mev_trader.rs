@@ -20,6 +20,11 @@ use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, N
 use reth_provider::{HeaderProvider, StateProviderBox, StateProviderFactory};
 use tracing::info;
 
+// B5-1a dormant-preparation tier: a private default-off child compiled only under
+// `b5-dormant-presign`, never registered or re-exported at the crate root.
+#[cfg(feature = "b5-dormant-presign")]
+mod b5_dormant;
+
 #[derive(Debug)]
 struct PendingSnapshotViewAdapter {
     pending: Arc<PendingBlocks>,
