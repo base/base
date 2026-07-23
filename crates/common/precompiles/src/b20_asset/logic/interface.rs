@@ -3,7 +3,7 @@
 use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, FixedBytes, U256};
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_precompile_storage::Result;
 
 use crate::{
     AssetAccounting, B20AssetToken, Eip712Domain, IB20, PermitArgs, PolicyAccounting, Token,
@@ -358,32 +358,32 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
 
     /// Returns the effective multiplier.
     fn effective_multiplier(&self, _token: &B20AssetToken<S, A>) -> Result<U256> {
-        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+        reject_frozen_selector!()
     }
 
     /// ERC-8056 `uiMultiplier()`.
     fn ui_multiplier(&self, _token: &B20AssetToken<S, A>) -> Result<U256> {
-        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+        reject_frozen_selector!()
     }
 
     /// ERC-8056 `newUIMultiplier()`.
     fn new_ui_multiplier(&self, _token: &B20AssetToken<S, A>) -> Result<U256> {
-        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+        reject_frozen_selector!()
     }
 
     /// ERC-8056 `effectiveAt()`.
     fn effective_at(&self, _token: &B20AssetToken<S, A>) -> Result<U256> {
-        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+        reject_frozen_selector!()
     }
 
     /// ERC-8056 Balances extension `balanceOfUI()`.
     fn balance_of_ui(&self, _token: &B20AssetToken<S, A>, _account: Address) -> Result<U256> {
-        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+        reject_frozen_selector!()
     }
 
     /// ERC-8056 Balances extension `totalSupplyUI()`.
     fn total_supply_ui(&self, _token: &B20AssetToken<S, A>) -> Result<U256> {
-        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+        reject_frozen_selector!()
     }
 
     /// Schedules a multiplier update.
@@ -395,7 +395,7 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
         _effective_at: U256,
         _privileged: bool,
     ) -> Result<()> {
-        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+        reject_frozen_selector!()
     }
 
     /// Cancels a scheduled multiplier update.
@@ -405,11 +405,11 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
         _caller: Address,
         _privileged: bool,
     ) -> Result<()> {
-        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+        reject_frozen_selector!()
     }
 
     /// ERC-165 interface support query.
     fn supports_interface(&self, _interface_id: FixedBytes<4>) -> Result<bool> {
-        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+        reject_frozen_selector!()
     }
 }

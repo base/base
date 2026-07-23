@@ -743,7 +743,7 @@ mod tests {
 
     /// Pins the gate *ahead* of argument decoding: a pre-Cobalt (V1) call carrying an ERC-8056
     /// selector but non-decodable arguments must still reject as `UnknownFunctionSelector`, exactly
-    /// as it did before the shared ABI enum grew; never `AbiDecodeFailed. Moving the gate per-arm
+    /// as it did before the shared ABI enum grew; never `AbiDecodeFailed`. Moving the gate per-arm
     /// (post-decode) would leak `AbiDecodeFailed` here and fork historical Beryl execution.
     #[test]
     fn route_v1_rejects_scheduled_selector_with_malformed_args_as_unknown() {
