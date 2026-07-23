@@ -13,8 +13,11 @@ use crate::{Asset, AssetAccounting, AssetV1, AssetV2, PolicyAccounting};
 
 /// An activated version of the asset B-20 precompile logic.
 ///
-/// Each variant maps to an immutable implementation via [`Self::implementation`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Each variant maps to an immutable implementation via [`Self::implementation`]. Variants are
+/// declared in activation order, so the derived ordering is chronological: `v < AssetVersion::V2`
+/// means "a version that predates the Cobalt scheduled-multiplier surface", which the dispatcher
+/// uses to gate those selectors out of earlier versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AssetVersion {
     /// Introduced at Beryl, the asset's activation fork.
     V1,
@@ -35,14 +38,6 @@ impl AssetVersion {
             Self::V1 => &V1,
             Self::V2 => &V2,
         }
-    }
-
-    /// Whether this version advertises the ERC-8056 scheduled-multiplier surface
-    ///
-    /// Earlier versions must treat those selectors as unknown,
-    /// so the dispatcher gates them on this predicate.
-    pub const fn supports_scheduled_multiplier(self) -> bool {
-        matches!(self, Self::V2)
     }
 }
 
@@ -88,11 +83,5 @@ mod tests {
     #[test]
     fn resolves_v2_at_cobalt() {
         assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(AssetVersion::V2));
-    }
-
-    #[test]
-    fn only_v2_supports_scheduled_multiplier() {
-        assert!(!AssetVersion::V1.supports_scheduled_multiplier());
-        assert!(AssetVersion::V2.supports_scheduled_multiplier());
     }
 }

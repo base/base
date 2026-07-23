@@ -26,22 +26,6 @@ use crate::{
     macros::decode_precompile_call,
 };
 
-/// Selectors introduced with the ERC-8056 scheduled-multiplier surface at `AssetV2` (Cobalt).
-///
-/// Versions that do not advertise scheduling ([`AssetVersion::supports_scheduled_multiplier`] is
-/// false) must treat these as unknown so they fall through to the same `UnknownFunctionSelector`
-/// path as before the shared ABI enum grew to preserve byte-identical Beryl (V1) behavior.
-const SCHEDULED_MULTIPLIER_SELECTORS: [[u8; 4]; 8] = [
-    IB20Asset::uiMultiplierCall::SELECTOR,
-    IB20Asset::newUIMultiplierCall::SELECTOR,
-    IB20Asset::effectiveAtCall::SELECTOR,
-    IB20Asset::balanceOfUICall::SELECTOR,
-    IB20Asset::totalSupplyUICall::SELECTOR,
-    IB20Asset::setUIMultiplierCall::SELECTOR,
-    IB20Asset::cancelScheduledMultiplierCall::SELECTOR,
-    IB20Asset::supportsInterfaceCall::SELECTOR,
-];
-
 impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     /// ABI-dispatches `calldata` to the appropriate handler for `upgrade`.
     pub fn dispatch(
@@ -119,13 +103,28 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        // Asset-specific and overridden selectors are caught here first. The ERC-8056
-        // scheduled-multiplier selectors are gated to versions that support them
+        // Asset-specific and overridden selectors are caught here first.
         if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Asset::IB20AssetCalls::valid_selector(selector)
-            && (version.supports_scheduled_multiplier()
-                || !SCHEDULED_MULTIPLIER_SELECTORS.contains(&selector))
         {
+            // Fork gate (pre-decode): the ERC-8056 scheduled-multiplier selectors were introduced
+            // at Cobalt with `AssetV2`. A version that predates them must reject them as an unknown
+            // selector *before* argument decoding, so pre-Cobalt calldata keeps returning
+            // `UnknownFunctionSelector` byte-for-byte as it did at that version's activation fork.
+            // Gating on the raw selector here (rather than per-arm in `handle_asset_call`,
+            // which only runs after a successful decode) is what preserves it.
+            if version < AssetVersion::V2
+                && (selector == IB20Asset::uiMultiplierCall::SELECTOR
+                    || selector == IB20Asset::newUIMultiplierCall::SELECTOR
+                    || selector == IB20Asset::effectiveAtCall::SELECTOR
+                    || selector == IB20Asset::balanceOfUICall::SELECTOR
+                    || selector == IB20Asset::totalSupplyUICall::SELECTOR
+                    || selector == IB20Asset::setUIMultiplierCall::SELECTOR
+                    || selector == IB20Asset::cancelScheduledMultiplierCall::SELECTOR
+                    || selector == IB20Asset::supportsInterfaceCall::SELECTOR)
+            {
+                return Err(BasePrecompileError::UnknownFunctionSelector(selector));
+            }
             let call =
                 IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
                     BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
@@ -735,6 +734,24 @@ mod tests {
         .abi_encode();
         let selector: [u8; 4] = calldata[..4].try_into().unwrap();
         // Routed at V1 (Beryl) the ERC-8056 selector is gated out and stays unknown.
+        let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
+        assert_eq!(
+            err,
+            base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(selector)
+        );
+    }
+
+    /// Pins the gate *ahead* of argument decoding: a pre-Cobalt (V1) call carrying an ERC-8056
+    /// selector but non-decodable arguments must still reject as `UnknownFunctionSelector`, exactly
+    /// as it did before the shared ABI enum grew; never `AbiDecodeFailed. Moving the gate per-arm
+    /// (post-decode) would leak `AbiDecodeFailed` here and fork historical Beryl execution.
+    #[test]
+    fn route_v1_rejects_scheduled_selector_with_malformed_args_as_unknown() {
+        let mut token = make_token();
+        // A valid `setUIMultiplier` selector followed by truncated (non-decodable) arguments.
+        let mut calldata = IB20Asset::setUIMultiplierCall::SELECTOR.to_vec();
+        calldata.extend_from_slice(&[0u8; 3]);
+        let selector: [u8; 4] = calldata[..4].try_into().unwrap();
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
         assert_eq!(
             err,
