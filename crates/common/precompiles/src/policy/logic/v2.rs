@@ -11,7 +11,7 @@ use crate::{
     PolicyRegistryLogic,
 };
 
-/// First `PolicyRegistry` implementation. Frozen as of its activation at Beryl.
+/// Second `PolicyRegistry` implementation. Activated at Cobalt, behavior-identical to V1 (scaffold seam for future changes).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PolicyRegistryV2;
 
