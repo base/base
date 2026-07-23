@@ -146,7 +146,7 @@ impl InProcessBuilder {
                 base_node
                     .components()
                     .pool(pool_component(&rollup_args))
-                    .payload(FlashblocksServiceBuilder(builder_config)),
+                    .payload(FlashblocksServiceBuilder::new(builder_config)),
             )
             .with_add_ons(addons)
             .on_component_initialized(move |_ctx| Ok(()))

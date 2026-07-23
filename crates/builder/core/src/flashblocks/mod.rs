@@ -18,7 +18,6 @@ pub use context::{
 };
 
 mod payload;
-pub use payload::BasePayloadBuilder;
 
 mod service;
 pub use service::FlashblocksServiceBuilder;
