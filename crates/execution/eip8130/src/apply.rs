@@ -951,11 +951,8 @@ mod tests {
             // A *policy-gated* inline k1 self with both policy slots written
             // non-zero: only its empty actor_config slot is discounted; the two
             // real policy resets stay at the conservative price.
-            let gated = ActorConfig {
-                authenticator: K1,
-                scope: Eip8130Constants::SCOPE_POLICY,
-                expiry: 0,
-            };
+            let gated =
+                ActorConfig { authenticator: K1, scope: Eip8130Constants::SCOPE_POLICY, expiry: 0 };
             let mut policy = Vec::new();
             policy.extend_from_slice(MANAGER.as_slice());
             policy.extend_from_slice(COMMITMENT.as_slice());
@@ -976,12 +973,10 @@ mod tests {
             // (the EIP permits a zero manager and/or commitment). Those slots are
             // zero-to-zero no-ops, so all three conservatively-reset slots are
             // discounted — the gate bit alone must not force a `1`.
-            let gated = ActorConfig {
-                authenticator: K1,
-                scope: Eip8130Constants::SCOPE_POLICY,
-                expiry: 0,
-            };
-            AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, gated, &[0u8; 52]).unwrap();
+            let gated =
+                ActorConfig { authenticator: K1, scope: Eip8130Constants::SCOPE_POLICY, expiry: 0 };
+            AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, gated, &[0u8; 52])
+                .unwrap();
             let revoke_self = vec![ActorChange {
                 change_type: ActorChangeType::Revoke,
                 actor_id: self_id,
@@ -997,11 +992,8 @@ mod tests {
             // Mixed: a non-zero manager but a zero commitment. Only the empty
             // commitment slot (plus the always-empty actor_config) is discounted;
             // the written manager slot is a real reset.
-            let gated = ActorConfig {
-                authenticator: K1,
-                scope: Eip8130Constants::SCOPE_POLICY,
-                expiry: 0,
-            };
+            let gated =
+                ActorConfig { authenticator: K1, scope: Eip8130Constants::SCOPE_POLICY, expiry: 0 };
             let mut policy = Vec::new();
             policy.extend_from_slice(MANAGER.as_slice());
             policy.extend_from_slice(B256::ZERO.as_slice());
