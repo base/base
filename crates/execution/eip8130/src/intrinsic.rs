@@ -177,7 +177,9 @@ impl IntrinsicGasInput {
     /// not the other silently breaks that invariant.
     #[must_use]
     pub fn sender_auto_delegated(account_changes: &[AccountChange]) -> bool {
-        !account_changes.iter().any(|change| matches!(change, AccountChange::Delegation(_)))
+        !account_changes.iter().any(|change| {
+            matches!(change, AccountChange::Create(_) | AccountChange::Delegation(_))
+        })
     }
 }
 
