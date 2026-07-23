@@ -30,7 +30,8 @@ const BUNDLE_PRE_TARGET_CHECK_OFFSET: u64 = 2;
 #[serde(rename_all = "camelCase")]
 struct BundleRequest {
     txs: Vec<Bytes>,
-    block_number: Option<u64>,
+    min_block_number: Option<u64>,
+    max_block_number: Option<u64>,
     min_timestamp: Option<u64>,
     max_timestamp: Option<u64>,
     reverting_tx_hashes: Option<Vec<B256>>,
@@ -131,7 +132,8 @@ async fn test_send_bundle_accepts_valid_bundle() -> Result<()> {
 
     let request = BundleRequest {
         txs: vec![raw_tx],
-        block_number: Some(target_block),
+        min_block_number: Some(target_block),
+        max_block_number: Some(target_block),
         min_timestamp: None,
         max_timestamp: None,
         reverting_tx_hashes: None,
@@ -166,7 +168,7 @@ async fn test_send_bundle_accepts_valid_bundle() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_send_bundle_included_only_in_target_block() -> Result<()> {
+async fn test_send_bundle_is_not_included_before_min_block() -> Result<()> {
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
@@ -196,7 +198,8 @@ async fn test_send_bundle_included_only_in_target_block() -> Result<()> {
 
     let request = BundleRequest {
         txs: vec![raw_tx],
-        block_number: Some(target_block),
+        min_block_number: Some(target_block),
+        max_block_number: Some(target_block),
         min_timestamp: None,
         max_timestamp: None,
         reverting_tx_hashes: None,
@@ -268,7 +271,8 @@ async fn test_expired_bundle_is_not_included() -> Result<()> {
 
     let request = BundleRequest {
         txs: vec![raw_tx],
-        block_number: Some(target_block),
+        min_block_number: Some(target_block),
+        max_block_number: Some(target_block),
         min_timestamp: None,
         max_timestamp: Some(max_timestamp),
         reverting_tx_hashes: None,

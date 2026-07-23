@@ -77,7 +77,8 @@ where
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
         let pool_tx = BasePooledTransaction::new(recovered, encoded_len).with_bundle_metadata(
-            tx.target_block_number,
+            tx.min_block_number,
+            tx.max_block_number,
             tx.min_timestamp,
             tx.max_timestamp,
         );
@@ -210,7 +211,8 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: Address::repeat_byte(0x01),
             raw: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            target_block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
         };
@@ -238,7 +240,8 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: Address::ZERO,
             raw: Bytes::new(),
-            target_block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
         };
@@ -265,7 +268,8 @@ mod tests {
         let tx = ValidatedTransaction {
             sender,
             raw: truncated,
-            target_block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
         };
@@ -289,7 +293,8 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: Address::repeat_byte(0x01),
             raw: Bytes::from_static(&[0xFF, 0x01, 0x02, 0x03]),
-            target_block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
         };
@@ -308,7 +313,8 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: Address::ZERO,
             raw: Bytes::from_static(&[0x02]), // Just type byte, no payload
-            target_block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
         };
@@ -328,7 +334,8 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: Address::ZERO,
             raw: Bytes::from_static(&[0x00, 0x01, 0x02]),
-            target_block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
         };
@@ -346,7 +353,8 @@ mod tests {
         let tx = ValidatedTransaction {
             sender,
             raw,
-            target_block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
         };

@@ -844,7 +844,8 @@ mod tests {
 
         let bundle = Bundle {
             txs,
-            block_number: 0,
+            min_block_number: None,
+            max_block_number: None,
             flashblock_number_min: None,
             flashblock_number_max: None,
             min_timestamp: None,
