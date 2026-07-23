@@ -343,41 +343,12 @@ where
                 );
                 let deleted = cancel
                     .run_until_cancelled(async {
-                        if matches!(
-                            error,
-                            ProposerError::Submission(ProofSubmissionError::InvalidSigner)
-                        ) {
-                            match proof.tee_signer {
-                                Some(tee_signer) => match self
-                                    .proof_requester
-                                    .delete_proofs_by_tee_signer(DeleteProofsByTeeSignerRequest {
-                                        tee_signer,
-                                    })
-                                    .await
-                                {
-                                    Ok(deleted_count) => {
-                                        info!(
-                                            target_block,
-                                            tee_signer = %tee_signer,
-                                            deleted_count,
-                                            "Deleted invalid TEE signer proof requests"
-                                        );
-                                        true
-                                    }
-                                    Err(error) => {
-                                        warn!(
-                                            target_block,
-                                            tee_signer = %tee_signer,
-                                            error = %error,
-                                            "Failed to delete proof requests by TEE signer"
-                                        );
-                                        false
-                                    }
-                                },
-                                None => self.delete_proof_request(session_id, target_block).await,
-                            }
-                        } else {
-                            self.delete_proof_request(session_id, target_block).await
+                        match (&error, proof.tee_signer) {
+                            (
+                                ProposerError::Submission(ProofSubmissionError::InvalidSigner),
+                                Some(tee_signer),
+                            ) => self.delete_proofs_by_tee_signer(tee_signer, target_block).await,
+                            _ => self.delete_proof_request(session_id, target_block).await,
                         }
                     })
                     .await;
@@ -411,6 +382,33 @@ where
                     session_id = %session_id,
                     error = %error,
                     "Failed to delete proof request"
+                );
+                false
+            }
+        }
+    }
+
+    async fn delete_proofs_by_tee_signer(&self, tee_signer: Address, target_block: u64) -> bool {
+        match self
+            .proof_requester
+            .delete_proofs_by_tee_signer(DeleteProofsByTeeSignerRequest { tee_signer })
+            .await
+        {
+            Ok(deleted_count) => {
+                info!(
+                    target_block,
+                    tee_signer = %tee_signer,
+                    deleted_count,
+                    "Deleted invalid TEE signer proof requests"
+                );
+                true
+            }
+            Err(error) => {
+                warn!(
+                    target_block,
+                    tee_signer = %tee_signer,
+                    error = %error,
+                    "Failed to delete proof requests by TEE signer"
                 );
                 false
             }
