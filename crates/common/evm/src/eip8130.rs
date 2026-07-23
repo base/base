@@ -205,10 +205,6 @@ struct Authorized {
     payer_policy_gated: bool,
     /// Whether the sender actor's scope authorizes the transaction's nonce key.
     can_use_nonce_key: bool,
-    /// Whether the transaction carries an explicit `Delegation` entry.
-    has_explicit_delegation: bool,
-    /// Whether the transaction carries a `Create` entry.
-    has_create: bool,
     /// Empty zero-to-zero revoke slots resolved during application (threaded into
     /// the intrinsic-gas revoke discount).
     revoke_discount_slots: u32,
@@ -741,7 +737,7 @@ impl Eip8130Executor {
             //    calls run against post-change code and create/delegation gas is
             //    priced. Must precede actor/policy resolution so an actor
             //    authorized in this same estimate request is visible.
-            let has_explicit_delegation = Self::apply_account_changes(signed, sctx, sender)?;
+            Self::apply_account_changes(signed, sctx, sender)?;
 
             // 3. Resolve the acting actor's real policy gate. No signature
             //    recovery: the optional RPC hint names the intended actor (e.g. a
@@ -788,14 +784,16 @@ impl Eip8130Executor {
             //    current code state here (while admission pins the body ceiling)
             //    would let admission exceed the estimate and reject a
             //    `gas_limit == estimate` submission. The state mutation stays gated
-            //    on the absence of an explicit delegation (a zero target is an
-            //    owner-authorized request to remain undelegated), matching the
-            //    classifier's suppression on any `Delegation` entry.
-            if !has_explicit_delegation {
-                Self::auto_delegate_codeless_sender(sctx, sender)?;
-            }
+            //    on the body-derived classifier (a `Delegation` — including a
+            //    zero-target request to remain undelegated — or a `Create`, which
+            //    establishes the sender's own account, suppresses auto-delegation
+            //    on every path), so the sender code the `calls` run against matches
+            //    inclusion.
             let sender_auto_delegated =
                 IntrinsicGasInput::sender_auto_delegated(&tx.account_changes);
+            if sender_auto_delegated {
+                Self::auto_delegate_codeless_sender(sctx, sender)?;
+            }
 
             // 5. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
             //    stub signature of the right authenticator type estimates exactly).
@@ -910,8 +908,6 @@ impl Eip8130Executor {
                         .as_ref()
                         .is_some_and(|actor| actor.resolved.is_policy_gated()),
                     can_use_nonce_key: sender_actor.can_use_nonce_key(nonce_key),
-                    has_explicit_delegation: applied_tx.applied.delegation.is_some(),
-                    has_create: applied_tx.applied.created.is_some(),
                     revoke_discount_slots: applied_tx.revoke_discount_slots,
                 }
                 // `_probe` drops here, reverting every account-change storage
@@ -977,18 +973,19 @@ impl Eip8130Executor {
                 false
             };
 
-            // Auto-delegate a code-less sender unless the transaction installs its
-            // own sender code (a `Create` bootstraps it) or supplies an explicit
-            // delegation (a zero target deliberately leaves the sender
-            // undelegated). Both conditions are body-derivable, matching the spec
-            // gate ("no create entry and no delegation entry"); the create and
-            // explicit-delegation code is installed with the account changes in
-            // phase 0. Auto-delegation itself persists through a phase-0 revert.
+            // Auto-delegate a code-less sender unless the transaction supplies an
+            // explicit delegation (a zero target deliberately leaves the sender
+            // undelegated) or a `Create` (which always targets the sender and
+            // establishes its EIP-8130 account, installed with the account changes
+            // in phase 0). Eligibility is the body-derived classifier shared with
+            // estimation and admission; execution then reprices it accurately by
+            // charging only when the sender is actually code-less here. The
+            // auto-delegation itself persists through a phase-0 revert.
             let sender_auto_delegated =
-                if authorized.has_explicit_delegation || authorized.has_create {
-                    false
-                } else {
+                if IntrinsicGasInput::sender_auto_delegated(&tx.account_changes) {
                     Self::auto_delegate_codeless_sender(sctx, authorized.sender)?
+                } else {
+                    false
                 };
 
             // Intrinsic gas under the EIP-8130 schedule.
@@ -1499,7 +1496,13 @@ impl Eip8130Executor {
         // and is refunded to the payer — the validation share, auto-delegation,
         // the gas phase 0 consumed, and payer authentication remain charged. The
         // application share is a static subset of `sender_intrinsic`, so this
-        // subtraction cannot underflow.
+        // subtraction cannot underflow. Assert the invariant so an accounting
+        // change that breaks it surfaces in tests rather than silently
+        // under-charging the payer via the `saturating_sub` below.
+        debug_assert!(
+            outcome.application_share <= outcome.sender_intrinsic,
+            "application_share must never exceed sender_intrinsic",
+        );
         let sender_intrinsic = if calls.account_changes_reverted {
             outcome.sender_intrinsic.saturating_sub(outcome.application_share)
         } else {
@@ -1635,9 +1638,10 @@ impl Eip8130Executor {
     }
 
     /// Computes the EIP-8130 intrinsic gas and the gas left for `calls`, returning
-    /// `(sender_intrinsic, payer_auth, execution_gas_available)`. Shared by both
-    /// pipelines so intrinsic pricing is computed identically for execution and
-    /// estimation. Errors when sender-intrinsic gas exceeds the gas limit.
+    /// `(sender_intrinsic, application_share, payer_auth, execution_gas_available)`.
+    /// Shared by both pipelines so intrinsic pricing is computed identically for
+    /// execution and estimation. Errors when sender-intrinsic gas exceeds the gas
+    /// limit.
     fn resolve_execution_gas(
         signed: &base_common_consensus::Eip8130Signed,
         encoded: &[u8],
