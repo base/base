@@ -123,6 +123,10 @@ pub struct InMemoryTokenAccounting {
     pub policy_ids: HashMap<B256, u64>,
     /// Multiplier scaled to WAD (1e18). Asset tokens only.
     pub multiplier: U256,
+    /// Pending scheduled multiplier target (ERC-8056). Asset tokens only.
+    pub pending_multiplier: u128,
+    /// Timestamp at which `pending_multiplier` becomes effective; `0` means none. Asset tokens only.
+    pub pending_effective_at: u64,
     /// Extra-metadata values keyed by raw metadata `key`. Asset tokens only.
     pub extra_metadata: HashMap<String, String>,
     /// Consumed announcement ids keyed by raw announcement id. Asset tokens only.
@@ -153,6 +157,8 @@ impl InMemoryTokenAccounting {
             role_admins: HashMap::new(),
             policy_ids: HashMap::new(),
             multiplier: U256::ZERO,
+            pending_multiplier: 0,
+            pending_effective_at: 0,
             extra_metadata: HashMap::new(),
             announcement_ids_used: HashSet::new(),
             events: Vec::new(),
@@ -431,6 +437,26 @@ impl AssetAccounting for InMemoryTokenAccounting {
 
     fn set_multiplier(&mut self, ratio: U256) -> Result<()> {
         self.multiplier = ratio;
+        Ok(())
+    }
+
+    fn pending_multiplier(&self) -> Result<u128> {
+        Ok(self.pending_multiplier)
+    }
+
+    fn pending_effective_at(&self) -> Result<u64> {
+        Ok(self.pending_effective_at)
+    }
+
+    fn set_pending(&mut self, multiplier: u128, effective_at: u64) -> Result<()> {
+        self.pending_multiplier = multiplier;
+        self.pending_effective_at = effective_at;
+        Ok(())
+    }
+
+    fn clear_pending(&mut self) -> Result<()> {
+        self.pending_multiplier = 0;
+        self.pending_effective_at = 0;
         Ok(())
     }
 

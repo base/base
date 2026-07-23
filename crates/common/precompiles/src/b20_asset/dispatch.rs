@@ -26,6 +26,22 @@ use crate::{
     macros::decode_precompile_call,
 };
 
+/// Selectors introduced with the ERC-8056 scheduled-multiplier surface at `AssetV2` (Cobalt).
+///
+/// Versions that do not advertise scheduling ([`AssetVersion::supports_scheduled_multiplier`] is
+/// false) must treat these as unknown so they fall through to the same `UnknownFunctionSelector`
+/// path as before the shared ABI enum grew to preserve byte-identical Beryl (V1) behavior.
+const SCHEDULED_MULTIPLIER_SELECTORS: [[u8; 4]; 8] = [
+    IB20Asset::uiMultiplierCall::SELECTOR,
+    IB20Asset::newUIMultiplierCall::SELECTOR,
+    IB20Asset::effectiveAtCall::SELECTOR,
+    IB20Asset::balanceOfUICall::SELECTOR,
+    IB20Asset::totalSupplyUICall::SELECTOR,
+    IB20Asset::setUIMultiplierCall::SELECTOR,
+    IB20Asset::cancelScheduledMultiplierCall::SELECTOR,
+    IB20Asset::supportsInterfaceCall::SELECTOR,
+];
+
 impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     /// ABI-dispatches `calldata` to the appropriate handler for `upgrade`.
     pub fn dispatch(
@@ -103,9 +119,12 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        // Asset-specific and overridden selectors are caught here first.
+        // Asset-specific and overridden selectors are caught here first. The ERC-8056
+        // scheduled-multiplier selectors are gated to versions that support them
         if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Asset::IB20AssetCalls::valid_selector(selector)
+            && (version.supports_scheduled_multiplier()
+                || !SCHEDULED_MULTIPLIER_SELECTORS.contains(&selector))
         {
             let call =
                 IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
@@ -346,11 +365,21 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
 
             // --- Multiplier reads ---
             SC::multiplier(_) => logic.multiplier(self)?.abi_encode().into(),
+            SC::uiMultiplier(_) => logic.ui_multiplier(self)?.abi_encode().into(),
+            SC::newUIMultiplier(_) => logic.new_ui_multiplier(self)?.abi_encode().into(),
+            SC::effectiveAt(_) => logic.effective_at(self)?.abi_encode().into(),
             SC::toScaledBalance(c) => {
                 logic.to_scaled_balance(self, c.rawBalance)?.abi_encode().into()
             }
             SC::toRawBalance(c) => logic.to_raw_balance(self, c.scaledBalance)?.abi_encode().into(),
             SC::scaledBalanceOf(c) => logic.scaled_balance_of(self, c.account)?.abi_encode().into(),
+            SC::balanceOfUI(c) => logic.balance_of_ui(self, c.account)?.abi_encode().into(),
+            SC::totalSupplyUI(_) => logic.total_supply_ui(self)?.abi_encode().into(),
+
+            // --- ERC-165 ---
+            SC::supportsInterface(c) => {
+                logic.supports_interface(c.interfaceId)?.abi_encode().into()
+            }
 
             // --- Announcement reads ---
             SC::isAnnouncementIdUsed(c) => {
@@ -363,6 +392,20 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             // --- Multiplier mutations ---
             SC::updateMultiplier(c) => {
                 logic.update_multiplier(self, caller, c.newMultiplier, privileged)?;
+                Bytes::new()
+            }
+            SC::setUIMultiplier(c) => {
+                logic.set_ui_multiplier(
+                    self,
+                    caller,
+                    c.newMultiplier,
+                    c.effectiveAt,
+                    privileged,
+                )?;
+                Bytes::new()
+            }
+            SC::cancelScheduledMultiplier(_) => {
+                logic.cancel_scheduled_multiplier(self, caller, privileged)?;
                 Bytes::new()
             }
 
@@ -679,6 +722,44 @@ mod tests {
             base_precompile_storage::BasePrecompileError::revert(IB20Asset::InternalCallFailed {
                 call: inner_call
             })
+        );
+    }
+
+    #[test]
+    fn route_v1_rejects_scheduled_selector_as_unknown() {
+        let mut token = make_token();
+        let calldata = IB20Asset::setUIMultiplierCall {
+            newMultiplier: B20AssetStorage::WAD,
+            effectiveAt: U256::from(2u64),
+        }
+        .abi_encode();
+        let selector: [u8; 4] = calldata[..4].try_into().unwrap();
+        // Routed at V1 (Beryl) the ERC-8056 selector is gated out and stays unknown.
+        let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
+        assert_eq!(
+            err,
+            base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(selector)
+        );
+    }
+
+    #[test]
+    fn route_v2_reaches_erroring_default() {
+        let mut token = make_token();
+        let calldata = IB20Asset::setUIMultiplierCall {
+            newMultiplier: B20AssetStorage::WAD,
+            effectiveAt: U256::from(2u64),
+        }
+        .abi_encode();
+        let mut storage = storage_with_caller(ALICE);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            token.route(ctx, &calldata, AssetVersion::V2, false, NoopPrecompileCallObserver)
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            base_precompile_storage::BasePrecompileError::UnknownFunctionSelector([0u8; 4])
         );
     }
 

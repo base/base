@@ -23,6 +23,14 @@ pub struct B20AssetExtensionStorage {
     pub used_announcement_ids: Mapping<String, bool>, // slot 2
     /// Extra metadata values by metadata key.
     pub extra_metadata: Mapping<String, String>, // slot 3
+    /// Pending scheduled multiplier target (ERC-8056). Introduced with `AssetV2`
+    #[accessor]
+    #[mutator]
+    pub pending_multiplier: u128, // slot 4, offset 0
+    /// Timestamp at which [`Self::pending_multiplier`] becomes effective
+    #[accessor]
+    #[mutator]
+    pub pending_effective_at: u64, // slot 4, offset 16
 }
 
 /// EVM-backed storage for an asset B-20 token.
@@ -128,6 +136,40 @@ mod tests {
             2
         );
         assert_eq!(__packing_b20_asset_extension_storage::EXTRA_METADATA_LOC.offset_slots, 3);
+        // Pending (ERC-8056) packs `uint128 multiplier | uint64 effectiveAt` into slot 4
+        assert_eq!(__packing_b20_asset_extension_storage::PENDING_MULTIPLIER_LOC.offset_slots, 4);
+        assert_eq!(__packing_b20_asset_extension_storage::PENDING_MULTIPLIER_LOC.offset_bytes, 0);
+        assert_eq!(__packing_b20_asset_extension_storage::PENDING_EFFECTIVE_AT_LOC.offset_slots, 4);
+        assert_eq!(
+            __packing_b20_asset_extension_storage::PENDING_EFFECTIVE_AT_LOC.offset_bytes,
+            16
+        );
+    }
+
+    #[test]
+    fn pending_multiplier_and_effective_at_pack_into_slot_four() {
+        let (mut storage, _) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20AssetStorage::from_address(TOKEN, ctx);
+            // 3e18 pending multiplier, effective one year out — distinct, non-zero lanes.
+            let multiplier: u128 = 3_000_000_000_000_000_000;
+            let effective_at: u64 = 1_800_000_000;
+            token.asset.pending_multiplier.write(multiplier).unwrap();
+            token.asset.pending_effective_at.write(effective_at).unwrap();
+
+            let pending_slot = ASSET_ROOT
+                + U256::from(
+                    __packing_b20_asset_extension_storage::PENDING_MULTIPLIER_LOC.offset_slots,
+                );
+            // Solidity packs `uint128 multiplier | uint64 effectiveAt`: multiplier in the low 128
+            // bits, effectiveAt in the next 64. Assert the raw word matches that packing exactly.
+            let expected = U256::from(multiplier) | (U256::from(effective_at) << 128);
+            assert_eq!(ctx.sload(TOKEN, pending_slot).unwrap(), expected);
+
+            assert_eq!(token.asset.pending_multiplier.read().unwrap(), multiplier);
+            assert_eq!(token.asset.pending_effective_at.read().unwrap(), effective_at);
+        });
     }
 
     #[test]

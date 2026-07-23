@@ -3,7 +3,7 @@
 use alloc::string::String;
 
 use alloy_primitives::U256;
-use base_precompile_storage::Result;
+use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::TokenAccounting;
 
@@ -16,6 +16,26 @@ pub trait AssetAccounting: TokenAccounting {
     fn multiplier(&self) -> Result<U256>;
     /// Writes a new multiplier.
     fn set_multiplier(&mut self, multiplier: U256) -> Result<()>;
+
+    /// Returns the pending scheduled multiplier target (ERC-8056)
+    ///
+    /// Packs with [`Self::pending_effective_at`] into a single slot. Introduced with the
+    /// scheduled-multiplier feature (`AssetV2`); earlier versions never touch this slot.
+    fn pending_multiplier(&self) -> Result<u128> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
+    /// Returns the timestamp at which the pending multiplier becomes effective; `0` means none.
+    fn pending_effective_at(&self) -> Result<u64> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
+    /// Writes the pending schedule.
+    fn set_pending(&mut self, _multiplier: u128, _effective_at: u64) -> Result<()> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
+    /// Clears the pending schedule, restoring the no-pending state.
+    fn clear_pending(&mut self) -> Result<()> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
 
     /// Returns the extra-metadata value for `key`, or an empty string if unset.
     fn extra_metadata(&self, key: &str) -> Result<String>;

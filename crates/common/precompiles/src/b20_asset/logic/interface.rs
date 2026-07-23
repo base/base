@@ -2,8 +2,8 @@
 
 use alloc::{string::String, vec::Vec};
 
-use alloy_primitives::{Address, B256, U256};
-use base_precompile_storage::Result;
+use alloy_primitives::{Address, B256, FixedBytes, U256};
+use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
     AssetAccounting, B20AssetToken, Eip712Domain, IB20, PermitArgs, PolicyAccounting, Token,
@@ -189,7 +189,8 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
 
     // --- Asset-specific mutations ---
 
-    /// Sets a new multiplier. Requires the operator role unless privileged.
+    /// Instant failsafe: sets the current multiplier immediately. Requires the operator role
+    /// unless privileged.
     fn update_multiplier(
         &self,
         token: &mut B20AssetToken<S, A>,
@@ -344,7 +345,7 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
     /// Converts a raw balance to its scaled view: `rawBalance * multiplier / WAD`.
     fn to_scaled_balance(&self, token: &B20AssetToken<S, A>, balance: U256) -> Result<U256>;
 
-    /// Converts a scaled balance back to its raw representation: `scaledBalance * WAD / multiplier`.
+    /// Converts a scaled balance back to its raw representation: `scaledBalance * WAD / multiplier`
     fn to_raw_balance(&self, token: &B20AssetToken<S, A>, balance: U256) -> Result<U256>;
 
     /// Returns the scaled balance for `account`.
@@ -352,4 +353,63 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
 
     /// Returns the asset operator role identifier (required for `announce` / `updateMultiplier`).
     fn operator_role(&self) -> B256;
+
+    // --- ERC-8056 scheduled multiplier (introduced at `AssetV2`, Cobalt) ---
+
+    /// Returns the effective multiplier.
+    fn effective_multiplier(&self, _token: &B20AssetToken<S, A>) -> Result<U256> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
+
+    /// ERC-8056 `uiMultiplier()`.
+    fn ui_multiplier(&self, _token: &B20AssetToken<S, A>) -> Result<U256> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
+
+    /// ERC-8056 `newUIMultiplier()`.
+    fn new_ui_multiplier(&self, _token: &B20AssetToken<S, A>) -> Result<U256> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
+
+    /// ERC-8056 `effectiveAt()`.
+    fn effective_at(&self, _token: &B20AssetToken<S, A>) -> Result<U256> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
+
+    /// ERC-8056 Balances extension `balanceOfUI()`.
+    fn balance_of_ui(&self, _token: &B20AssetToken<S, A>, _account: Address) -> Result<U256> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
+
+    /// ERC-8056 Balances extension `totalSupplyUI()`.
+    fn total_supply_ui(&self, _token: &B20AssetToken<S, A>) -> Result<U256> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
+
+    /// Schedules a multiplier update.
+    fn set_ui_multiplier(
+        &self,
+        _token: &mut B20AssetToken<S, A>,
+        _caller: Address,
+        _new_multiplier: U256,
+        _effective_at: U256,
+        _privileged: bool,
+    ) -> Result<()> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
+
+    /// Cancels a scheduled multiplier update.
+    fn cancel_scheduled_multiplier(
+        &self,
+        _token: &mut B20AssetToken<S, A>,
+        _caller: Address,
+        _privileged: bool,
+    ) -> Result<()> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
+
+    /// ERC-165 interface support query.
+    fn supports_interface(&self, _interface_id: FixedBytes<4>) -> Result<bool> {
+        Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+    }
 }

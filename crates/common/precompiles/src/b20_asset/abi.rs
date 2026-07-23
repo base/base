@@ -3,7 +3,22 @@
 //! [`IB20Asset`] defines only the asset-specific surface.
 //! All inherited selectors come from [`crate::IB20`] defined in `b20/abi.rs`.
 
+use alloy_primitives::FixedBytes;
 use alloy_sol_types::sol;
+
+/// ERC-165 plus the three ERC-8056 interface IDs advertised by `supportsInterface` from `AssetV2`.
+///
+/// `IERC165` (`0x01ffc9a7`), `IScaledUIAmount` (`0xa60bf13d`), `IScaledUIAmountNewUIMultiplier`
+/// (`0x4bd27648`), and `IScaledUIAmountBalances` (`0xd890fd71`). The ERC-8056 Conversion extension
+/// (`0x57854fc3`) is deliberately absent — B-20 keeps `toScaledBalance`/`toRawBalance` unaliased.
+/// The `erc8056_interface_ids_match_selectors` test pins these against the derived selectors so a
+/// selector rename cannot silently drift them.
+pub const ERC8056_INTERFACE_IDS: [FixedBytes<4>; 4] = [
+    FixedBytes::new([0x01, 0xff, 0xc9, 0xa7]),
+    FixedBytes::new([0xa6, 0x0b, 0xf1, 0x3d]),
+    FixedBytes::new([0x4b, 0xd2, 0x76, 0x48]),
+    FixedBytes::new([0xd8, 0x90, 0xfd, 0x71]),
+];
 
 sol! {
     #[derive(Debug, PartialEq, Eq)]
@@ -16,8 +31,21 @@ sol! {
         /// `updateExtraMetadata` was called with an empty metadata key.
         error InvalidMetadataKey();
 
-        /// `updateMultiplier` was called with a zero multiplier.
+        /// A multiplier setter (`setUIMultiplier` / `updateMultiplier`) was called with a
+        /// multiplier of zero or above the `type(uint128).max` overflow guard.
         error InvalidMultiplier();
+
+        /// `setUIMultiplier` was called with an `effectiveAt` that is not in the future
+        error EffectiveAtInPast(uint256 effectiveAt);
+
+        /// `setUIMultiplier` was called with an `effectiveAt` above`effectiveAt` field size
+        error EffectiveAtTooFar(uint256 effectiveAt);
+
+        /// `setUIMultiplier` was called while a live pending update already exists.
+        error ScheduleOverlap(uint256 pendingEffectiveAt);
+
+        /// `cancelScheduledMultiplier` was called when there is no live pending update.
+        error NoScheduledMultiplier();
 
         /// A batched function was called with parallel arrays of differing lengths.
         error LengthMismatch(uint256 leftLen, uint256 rightLen);
@@ -36,8 +64,16 @@ sol! {
 
         // ── Events ───────────────────────────────────────────────────────────
 
-        /// Emitted by `updateMultiplier`.
+        /// Emitted by `updateMultiplier` (V1, Beryl). Retained for the `AssetV1` version; the
+        /// scheduled-multiplier version `AssetV2` emits `UIMultiplierUpdated` instead.
         event MultiplierUpdated(uint256 multiplier);
+
+        /// ERC-8056. Emitted by both multiplier setters at `AssetV2`: `setUIMultiplier`
+        event UIMultiplierUpdated(uint256 oldMultiplier, uint256 newMultiplier, uint256 effectiveAtTimestamp);
+
+        /// Emitted by `cancelScheduledMultiplier`, and by `updateMultiplier` when it clears a
+        /// live pending update.
+        event MultiplierUpdateCancelled(uint256 cancelledMultiplier, uint256 cancelledEffectiveAt);
 
         /// Emitted by `updateExtraMetadata`. Empty `value` indicates removal.
         event ExtraMetadataUpdated(string key, string value);
@@ -75,6 +111,17 @@ sol! {
         /// The current multiplier, scaled to `WAD_PRECISION`.
         function multiplier() external view returns (uint256);
 
+        /// ERC-8056 alias of `multiplier()` (available from `AssetV2`).
+        function uiMultiplier() external view returns (uint256);
+
+        /// ERC-8056: the multiplier scheduled to take effect, or the current multiplier when no
+        /// scheduled update exists. Available from `AssetV2`.
+        function newUIMultiplier() external view returns (uint256);
+
+        /// ERC-8056: the timestamp at which a scheduled multiplier becomes effective.
+        /// Available from `AssetV2`.
+        function effectiveAt() external view returns (uint256);
+
         /// Converts a raw balance to its scaled view: `rawBalance * multiplier / WAD_PRECISION`.
         function toScaledBalance(uint256 rawBalance) external view returns (uint256);
 
@@ -84,8 +131,27 @@ sol! {
         /// Convenience: `toScaledBalance(balanceOf(account))`.
         function scaledBalanceOf(address account) external view returns (uint256);
 
-        /// Sets a new multiplier. Holder balances are not rewritten; scaled balances derive at read time.
+        /// ERC-8056 Balances extension: alias of `scaledBalanceOf`. Available from `AssetV2`.
+        function balanceOfUI(address account) external view returns (uint256);
+
+        /// ERC-8056 Balances extension: `totalSupply() * multiplier() / WAD_PRECISION`.
+        /// Available from `AssetV2`.
+        function totalSupplyUI() external view returns (uint256);
+
+        /// Schedules a single multiplier update effective at `effectiveAt`.
+        /// The standard corporate-action path. Available from `AssetV2`; `OPERATOR_ROLE`.
+        function setUIMultiplier(uint256 newMultiplier, uint256 effectiveAt) external;
+
+        /// Cancels the single live pending update, restoring the no-pending state.
+        /// Available from `AssetV2`
+        function cancelScheduledMultiplier() external;
+
+        /// Instant failsafe: sets the current multiplier immediately and clears any pending.
+        /// At `AssetV1` emits `MultiplierUpdated` which was replaced in `AssetV2` by `UIMultiplierUpdated`
         function updateMultiplier(uint256 newMultiplier) external;
+
+        /// ERC-165 interface detection (available from `AssetV2`).
+        function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
         // ── Batched issuance and clawback ────────────────────────────────────
 
@@ -114,10 +180,18 @@ impl IB20Asset::IB20AssetCalls {
             Self::announce(_) => "precompile-b20-asset-announce",
             Self::isAnnouncementIdUsed(_) => "precompile-b20-asset-isAnnouncementIdUsed",
             Self::multiplier(_) => "precompile-b20-asset-multiplier",
+            Self::uiMultiplier(_) => "precompile-b20-asset-uiMultiplier",
+            Self::newUIMultiplier(_) => "precompile-b20-asset-newUIMultiplier",
+            Self::effectiveAt(_) => "precompile-b20-asset-effectiveAt",
             Self::toScaledBalance(_) => "precompile-b20-asset-toScaledBalance",
             Self::toRawBalance(_) => "precompile-b20-asset-toRawBalance",
             Self::scaledBalanceOf(_) => "precompile-b20-asset-scaledBalanceOf",
+            Self::balanceOfUI(_) => "precompile-b20-asset-balanceOfUI",
+            Self::totalSupplyUI(_) => "precompile-b20-asset-totalSupplyUI",
+            Self::setUIMultiplier(_) => "precompile-b20-asset-setUIMultiplier",
+            Self::cancelScheduledMultiplier(_) => "precompile-b20-asset-cancelScheduledMultiplier",
             Self::updateMultiplier(_) => "precompile-b20-asset-updateMultiplier",
+            Self::supportsInterface(_) => "precompile-b20-asset-supportsInterface",
             Self::batchMint(_) => "precompile-b20-asset-batchMint",
             Self::extraMetadata(_) => "precompile-b20-asset-extraMetadata",
             Self::updateExtraMetadata(_) => "precompile-b20-asset-updateExtraMetadata",
@@ -127,9 +201,45 @@ impl IB20Asset::IB20AssetCalls {
 
 #[cfg(test)]
 mod tests {
-    use alloy_sol_types::SolInterface;
+    use alloy_primitives::FixedBytes;
+    use alloy_sol_types::{SolCall, SolInterface};
 
-    use crate::{IB20, IB20Asset};
+    use crate::{ERC8056_INTERFACE_IDS, IB20, IB20Asset};
+
+    /// XORs the selectors of an interface's members into its ERC-165 interface id.
+    fn xor(selectors: &[[u8; 4]]) -> FixedBytes<4> {
+        let mut acc = [0u8; 4];
+        for selector in selectors {
+            for (a, s) in acc.iter_mut().zip(selector) {
+                *a ^= *s;
+            }
+        }
+        FixedBytes::new(acc)
+    }
+
+    #[test]
+    fn erc8056_interface_ids_match_selectors() {
+        // IERC165 = supportsInterface(bytes4); the ERC-165 id equals that selector by construction.
+        assert_eq!(ERC8056_INTERFACE_IDS[0], xor(&[IB20Asset::supportsInterfaceCall::SELECTOR]));
+        // IScaledUIAmount = uiMultiplier().
+        assert_eq!(ERC8056_INTERFACE_IDS[1], xor(&[IB20Asset::uiMultiplierCall::SELECTOR]));
+        // IScaledUIAmountNewUIMultiplier = newUIMultiplier() ^ effectiveAt().
+        assert_eq!(
+            ERC8056_INTERFACE_IDS[2],
+            xor(&[IB20Asset::newUIMultiplierCall::SELECTOR, IB20Asset::effectiveAtCall::SELECTOR,])
+        );
+        // IScaledUIAmountBalances = balanceOfUI(address) ^ totalSupplyUI().
+        assert_eq!(
+            ERC8056_INTERFACE_IDS[3],
+            xor(&[IB20Asset::balanceOfUICall::SELECTOR, IB20Asset::totalSupplyUICall::SELECTOR,])
+        );
+    }
+
+    /// The Conversion extension id (`0x57854fc3`) must NOT be advertised.
+    #[test]
+    fn erc8056_conversion_extension_not_claimed() {
+        assert!(!ERC8056_INTERFACE_IDS.contains(&FixedBytes::new([0x57, 0x85, 0x4f, 0xc3])));
+    }
 
     #[test]
     fn asset_call_labels_are_stable() {

@@ -323,6 +323,28 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
                 self.asset.set_multiplier(multiplier)
             }
 
+            fn pending_multiplier(&self) -> ::base_precompile_storage::Result<u128> {
+                self.asset.pending_multiplier()
+            }
+
+            fn pending_effective_at(&self) -> ::base_precompile_storage::Result<u64> {
+                self.asset.pending_effective_at()
+            }
+
+            fn set_pending(
+                &mut self,
+                multiplier: u128,
+                effective_at: u64,
+            ) -> ::base_precompile_storage::Result<()> {
+                self.asset.set_pending_multiplier(multiplier)?;
+                self.asset.set_pending_effective_at(effective_at)
+            }
+
+            fn clear_pending(&mut self) -> ::base_precompile_storage::Result<()> {
+                self.asset.set_pending_multiplier(0)?;
+                self.asset.set_pending_effective_at(0)
+            }
+
             fn extra_metadata(
                 &self,
                 key: &str,
