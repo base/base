@@ -9,6 +9,7 @@ use std::{
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
 };
+
 use syn::ext::IdentExt;
 
 /// The exact production files under `src/arm/`. A NEW arm file must be added here

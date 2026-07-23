@@ -16,15 +16,12 @@ use base_mev_trader::{
     SnapshotHandle, SnapshotHandleFactory, TraderSnapshotPort, TransactionVisitor, VisitControl,
     VisitSummary,
 };
-use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, NodeHooks};
-use reth_provider::{HeaderProvider, StateProviderBox, StateProviderFactory};
-use tracing::info;
-
 #[cfg(feature = "t4b-shadow")]
 use base_mev_trader::{
     CandidateAssemblyView, CandidateTxShapeObserver, ShadowLatestSlot, ShadowSubmit, T4bOutcome,
     T4bOutcomeCounters,
 };
+use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, NodeHooks};
 #[cfg(feature = "t4d-shadow")]
 use mev_trader_submit::{
     AdapterAwareProofBindings, BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate,
@@ -36,6 +33,8 @@ use mev_trader_submit::{
 };
 #[cfg(feature = "t4b-shadow")]
 use reth_provider::{AccountReader, BlockReaderIdExt, BytecodeReader};
+use reth_provider::{HeaderProvider, StateProviderBox, StateProviderFactory};
+use tracing::info;
 
 // B5-1a dormant-preparation tier: a private default-off child compiled only under
 // `b5-dormant-presign`, never registered or re-exported at the crate root.
