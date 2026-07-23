@@ -82,9 +82,9 @@ pub enum P2pTargetError {
         /// The target supplied by the caller.
         target: String,
     },
-    /// Peer removal and ban actions do not accept ENR targets.
+    /// Peer removal, ban, and unban actions do not accept ENR targets.
     #[error(
-        "peer removal and ban actions need a bare libp2p peer ID for CL targets; ENR records are only accepted by add-peer"
+        "peer removal, ban, and unban actions need a bare libp2p peer ID for CL targets; ENR records are only accepted by add-peer"
     )]
     PeerActionEnrTarget {
         /// The target supplied by the caller.
@@ -98,38 +98,9 @@ pub enum P2pTargetError {
     },
     /// A CL peer-action target was URL-like or multiaddr-like instead of a bare peer ID.
     #[error(
-        "peer removal and ban actions need a bare libp2p peer ID for CL targets, not a URL or multiaddr"
+        "peer removal, ban, and unban actions need a bare libp2p peer ID for CL targets, not a URL or multiaddr"
     )]
     PeerActionClTargetNotBarePeerId {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// The CL peer ID was empty after trimming whitespace.
-    #[error("CL peer ID cannot be empty")]
-    EmptyClPeerId,
-    /// A CL peer action was given an enode record.
-    #[error("CL peer actions need a bare libp2p peer ID, not an enode record")]
-    ClPeerIdIsEnode {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// A CL peer action was given an ENR record.
-    #[error(
-        "CL peer actions need a bare libp2p peer ID; ENR records are only accepted by add-peer"
-    )]
-    ClPeerIdIsEnr {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// The CL peer ID contained whitespace.
-    #[error("CL peer ID must not contain whitespace")]
-    ClPeerIdContainsWhitespace {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// The CL peer ID was URL-like or multiaddr-like instead of a bare peer ID.
-    #[error("CL peer actions need a bare libp2p peer ID, not a URL or multiaddr")]
-    ClPeerIdNotBare {
         /// The target supplied by the caller.
         target: String,
     },

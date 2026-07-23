@@ -412,27 +412,6 @@ fn parse_peer_target(raw: &str) -> Result<PeerTarget, P2pTargetError> {
     if target.contains(':') || target.contains('/') {
         return Err(P2pTargetError::PeerActionClTargetNotBarePeerId { target: target.to_string() });
     }
-
-    Ok(PeerTarget::PeerId(parse_cl_peer_id(target)?))
-}
-
-fn parse_cl_peer_id(raw: &str) -> Result<String, P2pTargetError> {
-    let target = raw.trim();
-    if target.is_empty() {
-        return Err(P2pTargetError::EmptyClPeerId);
-    }
-    if target.starts_with("enode://") {
-        return Err(P2pTargetError::ClPeerIdIsEnode { target: target.to_string() });
-    }
-    if target.starts_with("enr:") {
-        return Err(P2pTargetError::ClPeerIdIsEnr { target: target.to_string() });
-    }
-    if target.split_whitespace().count() != 1 {
-        return Err(P2pTargetError::ClPeerIdContainsWhitespace { target: target.to_string() });
-    }
-    if target.contains(':') || target.contains('/') {
-        return Err(P2pTargetError::ClPeerIdNotBare { target: target.to_string() });
-    }
     if target.len() < MIN_LIBP2P_PEER_ID_LEN {
         return Err(P2pTargetError::ClPeerIdTooShort {
             target: target.to_string(),
@@ -440,7 +419,7 @@ fn parse_cl_peer_id(raw: &str) -> Result<String, P2pTargetError> {
         });
     }
 
-    Ok(target.to_string())
+    Ok(PeerTarget::PeerId(target.to_string()))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -726,8 +705,7 @@ mod tests {
 
     use super::{
         AddTarget, PeerAction, PeerActionJson, PeerBulkActionResultJson, PeerTarget,
-        fail_unban_all_if_partial, parse_add_target, parse_cl_peer_id, parse_peer_target,
-        resolve_cl_rpc, run,
+        fail_unban_all_if_partial, parse_add_target, parse_peer_target, resolve_cl_rpc, run,
     };
     use crate::cli::P2pCommands;
 
@@ -904,25 +882,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_cl_peer_id_accepts_peer_id() {
-        let peer_id = "16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12";
-
-        assert_eq!(parse_cl_peer_id(peer_id).unwrap(), peer_id);
-    }
-
-    #[test]
-    fn parse_cl_peer_id_rejects_non_peer_ids() {
-        for target in [
-            "",
-            "hello",
-            VALID_ENODE,
-            VALID_ENR,
-            "/ip4/127.0.0.1/tcp/9000/p2p/16Uiu2HAmExample",
-            "https://example.com",
-            "16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12 extra",
-        ] {
-            assert!(parse_cl_peer_id(target).is_err(), "target should be rejected: {target}");
-        }
+    fn parse_peer_target_rejects_whitespace() {
+        assert!(matches!(
+            parse_peer_target("16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12 extra")
+                .unwrap_err(),
+            P2pTargetError::TargetContainsWhitespace { .. }
+        ));
     }
 
     #[test]

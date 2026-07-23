@@ -118,10 +118,12 @@ consensus layers.
   to the execution layer; any other non-empty target is treated as a bare
   consensus libp2p peer ID. ENR records and multiaddrs are rejected for removal.
 - `basectl p2p ban <TARGET>` bans one peer. `enode://...` routes to the execution
-  layer; a bare libp2p peer ID routes to the consensus layer. CL bans also
-  attempt to disconnect the peer immediately.
+  layer; a bare libp2p peer ID routes to the consensus layer. ENR records and
+  multiaddrs are rejected. CL bans also attempt to disconnect the peer
+  immediately.
 - `basectl p2p unban <TARGET>` unbans one execution or consensus peer using the
-  same target routing. It does not reconnect the peer.
+  same target routing, with the same ENR and multiaddr rejection. It does not
+  reconnect the peer.
 - `basectl p2p unban-all` unbans every peer currently banned by the consensus
   layer RPC.
 

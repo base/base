@@ -265,25 +265,24 @@ pub async fn remove_peer(rpc: &Url, enode: &str) -> Result<bool> {
 
 /// Bans an execution-layer peer through `admin_banPeer`.
 pub async fn ban_el_peer(rpc: &Url, enode: &str) -> Result<bool> {
-    let el_provider = connect_el(rpc).await?;
-    match el_provider.client().request("admin_banPeer", (enode,)).await {
-        Ok(accepted) => Ok(accepted),
-        Err(err) if is_method_not_found(&err) => {
-            Err(err).with_context(|| format!("`admin_banPeer` not exposed by {rpc}"))
-        }
-        Err(err) => Err(err).with_context(|| format!("calling admin_banPeer on {rpc}")),
-    }
+    el_admin_peer_bool(rpc, "admin_banPeer", enode).await
 }
 
 /// Unbans an execution-layer peer through `admin_unbanPeer`.
 pub async fn unban_el_peer(rpc: &Url, enode: &str) -> Result<bool> {
+    el_admin_peer_bool(rpc, "admin_unbanPeer", enode).await
+}
+
+/// Calls a boolean-returning execution-layer admin peer method with the enode
+/// as its sole positional parameter, mapping a missing method to a clear error.
+async fn el_admin_peer_bool(rpc: &Url, method: &'static str, enode: &str) -> Result<bool> {
     let el_provider = connect_el(rpc).await?;
-    match el_provider.client().request("admin_unbanPeer", (enode,)).await {
+    match el_provider.client().request(method, (enode,)).await {
         Ok(accepted) => Ok(accepted),
         Err(err) if is_method_not_found(&err) => {
-            Err(err).with_context(|| format!("`admin_unbanPeer` not exposed by {rpc}"))
+            Err(err).with_context(|| format!("`{method}` not exposed by {rpc}"))
         }
-        Err(err) => Err(err).with_context(|| format!("calling admin_unbanPeer on {rpc}")),
+        Err(err) => Err(err).with_context(|| format!("calling {method} on {rpc}")),
     }
 }
 
@@ -744,14 +743,13 @@ mod tests {
     use base_consensus_gossip::{
         Connectedness, Direction, GossipScores, PeerInfo, PeerScores, ReqRespScores,
     };
-    use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
     use serde_json::{Value, json};
     use tokio::{net::TcpListener, task::JoinHandle};
     use url::Url;
 
     use super::{
-        ClNodeIdentity, ElNodeIdentity, NodeEndpoint, ban_el_peer, is_jsonrpc_method_not_found,
-        parse_cl_node_endpoint, parse_el_node_endpoint, unban_el_peer,
+        ClNodeIdentity, ElNodeIdentity, NodeEndpoint, ban_el_peer, parse_cl_node_endpoint,
+        parse_el_node_endpoint, unban_el_peer,
     };
 
     const TEST_ENODE: &str = "enode://peer@127.0.0.1:30303";
@@ -873,17 +871,6 @@ mod tests {
         assert!(endpoint.discovery.udp_port > 0);
         assert!(!endpoint.discovery.v4_enabled);
         assert!(endpoint.discovery.v5_enabled);
-    }
-
-    #[test]
-    fn detects_jsonrpc_method_not_found_for_cl_p2p_methods() {
-        let err = JsonRpcClientError::Call(ErrorObjectOwned::owned(
-            -32601,
-            "method not found",
-            None::<()>,
-        ));
-
-        assert!(is_jsonrpc_method_not_found(&err));
     }
 
     #[tokio::test]
