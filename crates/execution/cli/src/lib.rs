@@ -44,6 +44,8 @@ use reth_node_core::{
 use reth_node_metrics as _;
 use reth_rpc_server_types::{LenientRpcModuleValidator, RpcModuleValidator};
 pub use standard_node::{RpcStandardNodeArgs, StandardBaseRethNode, StandardNodeArgs};
+#[cfg(feature = "b5-dormant-presign")]
+use {libc as _, serde as _, serde_json as _, sha2 as _};
 
 /// The main base-reth cli interface.
 ///

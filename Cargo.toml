@@ -217,6 +217,7 @@ base-tx-forwarding = { path = "crates/execution/tx-forwarding" }
 base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing" }
+mev-trader-submit = { path = "crates/execution/mev-trader-submit" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
 base-flashblocks-node = { path = "crates/execution/flashblocks-node" }
 

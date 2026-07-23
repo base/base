@@ -1,6 +1,6 @@
 [package]
 name = "mev-trader-submit"
-description = "Phase-B in-node MEV submit safe-prefix: rung-1 unsigned 2-channel assembler + rung-2 ephemeral throwaway signer. Entirely gated behind the `phase-b` feature and absent from the default node build."
+description = "Feature-gated MEV submit surfaces with a pure default-off B5 presign tier and no default runtime capability."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,11 +12,11 @@ repository.workspace = true
 workspace = true
 
 [features]
-# The whole submit surface (ephemeral signer + calldata/bundle assembly) lives
-# behind this feature. With the feature OFF — the default, and the ONLY shape the
-# deployed `base-reth-node` binary is ever built in — every dependency below is
-# unresolved and the crate compiles to an empty lib: zero signer/submit code.
-# HARD GO flips this on for a dev/test build only; it is never a node-binary dep.
+# The ephemeral signer + calldata/bundle assembly surface lives behind this
+# feature. With no features enabled, every optional dependency below is
+# unresolved and the crate compiles to an empty lib. The separate `presign`
+# feature is default-off and resolves only alloy-primitives + sha2; it adds no
+# signer, request, transport, or egress path.
 phase-b = [
     "dep:base-mev-trader",
     "dep:alloy-consensus",
@@ -51,8 +51,10 @@ arm-live-egress = ["arm", "dep:reqwest"]
 # `open_existing` which never auto-creates.
 arm-provisioning = ["arm"]
 
+presign = ["dep:alloy-primitives", "dep:sha2"]
+
 [dependencies]
-# All optional: none are pulled unless `phase-b`/`arm` is explicitly enabled.
+# All optional: each is pulled only by its owning explicit feature.
 base-mev-trader = { workspace = true, optional = true }
 alloy-consensus = { workspace = true, features = ["k256", "std"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
@@ -65,6 +67,7 @@ zeroize = { workspace = true, optional = true }
 redb = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["std"], optional = true }
 reqwest = { workspace = true, features = ["blocking"], optional = true }
+sha2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Test-only (never linked into any node binary). The anvil e2e talks JSON-RPC to a

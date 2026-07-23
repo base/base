@@ -72,6 +72,12 @@ alloy-primitives.workspace = true
 proptest = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["reth"] }
 
+mev-trader-submit = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
+
 [dev-dependencies]
 rstest.workspace = true
 tempfile.workspace = true
@@ -79,6 +85,10 @@ base-common-flashblocks.workspace = true
 
 [build-dependencies]
 base-execution-chainspec = { workspace = true, features = ["std"] }
+
+[[example]]
+name = "b5_cargo_graph_seal"
+required-features = ["b5-dormant-presign"]
 
 [features]
 default = []
@@ -114,4 +124,13 @@ serde = [
 	"base-execution-chainspec/serde",
 	"reth-network/serde",
 	"secp256k1/serde",
+]
+
+b5-dormant-presign = [
+  "dep:mev-trader-submit",
+  "mev-trader-submit/presign",
+  "dep:sha2",
+  "dep:serde",
+  "dep:serde_json",
+  "dep:libc",
 ]
