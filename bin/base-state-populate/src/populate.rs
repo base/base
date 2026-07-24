@@ -11,29 +11,24 @@ use reth_db_api::{
     transaction::{DbTx, DbTxMut},
 };
 use reth_primitives_traits::{Account, StorageEntry};
-use reth_trie::{
-    BranchNodeCompact, HashedPostState, Nibbles, StateRoot, StorageRoot, StoredNibbles,
-};
+use reth_trie::{BranchNodeCompact, Nibbles, StateRoot, StorageRoot};
 use reth_trie_db::{
     DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot, DatabaseStorageTrieCursor,
-    DatabaseTrieCursorFactory, LegacyKeyAdapter,
+    DatabaseTrieCursorFactory, LegacyKeyAdapter, PackedKeyAdapter, TrieTableAdapter,
 };
 use tracing::{info, warn};
 
 use crate::{
+    StorageTrieVersion,
     cli::PopulateArgs,
     storage::{address_for_index, derive_sender_addresses, erc20_balance_slot},
 };
 
-type LegacyStorageRoot<'a, TX> = StorageRoot<
-    DatabaseTrieCursorFactory<&'a TX, LegacyKeyAdapter>,
-    DatabaseHashedCursorFactory<&'a TX>,
->;
+type AdapterStorageRoot<'a, TX, A> =
+    StorageRoot<DatabaseTrieCursorFactory<&'a TX, A>, DatabaseHashedCursorFactory<&'a TX>>;
 
-type LegacyStateRoot<'a, TX> = StateRoot<
-    DatabaseTrieCursorFactory<&'a TX, LegacyKeyAdapter>,
-    DatabaseHashedCursorFactory<&'a TX>,
->;
+type AdapterStateRoot<'a, TX, A> =
+    StateRoot<DatabaseTrieCursorFactory<&'a TX, A>, DatabaseHashedCursorFactory<&'a TX>>;
 
 /// Entry point for the `populate` subcommand.
 #[derive(Debug)]
@@ -53,6 +48,12 @@ impl Populator {
 
         let db = open_db(args.datadir.join("db"), DatabaseArguments::new(ClientVersion::default()))
             .wrap_err("open MDBX database")?;
+
+        let storage_trie_version = {
+            let tx = db.tx().wrap_err("begin storage-settings tx")?;
+            StorageTrieVersion::detect(&tx).wrap_err("detect storage settings")?
+        };
+        info!(version = ?storage_trie_version, "detected storage trie version");
 
         let account_count =
             args.populate_accounts.then(|| args.account_count.unwrap_or(args.count));
@@ -92,14 +93,16 @@ impl Populator {
             }
         }
 
-        Self::compute_and_write_storage_trie(&db, hashed_token)
+        Self::compute_and_write_storage_trie(&db, hashed_token, storage_trie_version)
             .wrap_err("compute + write storage trie")?;
 
         if account_count.is_none() {
-            Self::update_account_trie(&db, hashed_token, None).wrap_err("update account trie")?;
+            Self::update_account_trie(&db, hashed_token, None, storage_trie_version)
+                .wrap_err("update account trie")?;
         } else {
             Self::rebuild_hashed_accounts(&db).wrap_err("rebuild HashedAccounts")?;
-            Self::recompute_account_trie(&db).wrap_err("recompute full account trie")?;
+            Self::recompute_account_trie(&db, storage_trie_version)
+                .wrap_err("recompute full account trie")?;
         }
 
         info!("population complete");
@@ -240,7 +243,25 @@ impl Populator {
         Ok(())
     }
 
-    fn compute_and_write_storage_trie(db: &reth_db::DatabaseEnv, hashed_token: B256) -> Result<()> {
+    fn compute_and_write_storage_trie(
+        db: &reth_db::DatabaseEnv,
+        hashed_token: B256,
+        storage_trie_version: StorageTrieVersion,
+    ) -> Result<()> {
+        match storage_trie_version {
+            StorageTrieVersion::V1 => Self::compute_and_write_storage_trie_with_adapter::<
+                LegacyKeyAdapter,
+            >(db, hashed_token),
+            StorageTrieVersion::V2 => Self::compute_and_write_storage_trie_with_adapter::<
+                PackedKeyAdapter,
+            >(db, hashed_token),
+        }
+    }
+
+    fn compute_and_write_storage_trie_with_adapter<A: TrieTableAdapter>(
+        db: &reth_db::DatabaseEnv,
+        hashed_token: B256,
+    ) -> Result<()> {
         info!("computing storage trie (this may take a while for large state)");
         let tx = db.tx_mut().wrap_err("begin storage-trie tx")?;
 
@@ -249,7 +270,7 @@ impl Populator {
         // returns the old root instead of rebuilding over the current leaves.
         {
             let mut trie_cursor =
-                tx.cursor_dup_write::<tables::StoragesTrie>().wrap_err("open StoragesTrie")?;
+                tx.cursor_dup_write::<A::StorageTrieTable>().wrap_err("open StoragesTrie")?;
             if trie_cursor.seek_exact(hashed_token).wrap_err("seek StoragesTrie")?.is_some() {
                 trie_cursor
                     .delete_current_duplicates()
@@ -258,7 +279,7 @@ impl Populator {
         }
 
         let (storage_root, _node_count, storage_trie_updates) =
-            LegacyStorageRoot::from_tx_hashed(&tx, hashed_token)
+            AdapterStorageRoot::<'_, _, A>::from_tx_hashed(&tx, hashed_token)
                 .root_with_updates()
                 .wrap_err("compute storage root")?;
 
@@ -269,11 +290,10 @@ impl Populator {
         } else {
             let sorted = storage_trie_updates.into_sorted();
             let cursor =
-                tx.cursor_dup_write::<tables::StoragesTrie>().wrap_err("open StoragesTrie")?;
-            let nodes_written =
-                DatabaseStorageTrieCursor::<_, LegacyKeyAdapter>::new(cursor, hashed_token)
-                    .write_storage_trie_updates_sorted(&sorted)
-                    .wrap_err("write StoragesTrie nodes")?;
+                tx.cursor_dup_write::<A::StorageTrieTable>().wrap_err("open StoragesTrie")?;
+            let nodes_written = DatabaseStorageTrieCursor::<_, A>::new(cursor, hashed_token)
+                .write_storage_trie_updates_sorted(&sorted)
+                .wrap_err("write StoragesTrie nodes")?;
             info!(nodes = nodes_written, "storage trie nodes written");
         }
 
@@ -285,7 +305,29 @@ impl Populator {
         db: &reth_db::DatabaseEnv,
         hashed_token: B256,
         bytecode_hash: Option<B256>,
+        storage_trie_version: StorageTrieVersion,
     ) -> Result<()> {
+        match storage_trie_version {
+            StorageTrieVersion::V1 => Self::update_account_trie_with_adapter::<LegacyKeyAdapter>(
+                db,
+                hashed_token,
+                bytecode_hash,
+            ),
+            StorageTrieVersion::V2 => Self::update_account_trie_with_adapter::<PackedKeyAdapter>(
+                db,
+                hashed_token,
+                bytecode_hash,
+            ),
+        }
+    }
+
+    fn update_account_trie_with_adapter<A: TrieTableAdapter>(
+        db: &reth_db::DatabaseEnv,
+        hashed_token: B256,
+        bytecode_hash: Option<B256>,
+    ) -> Result<()> {
+        use reth_trie::HashedPostState;
+
         info!("updating account trie");
         let tx = db.tx_mut().wrap_err("begin account-trie tx")?;
 
@@ -294,16 +336,16 @@ impl Populator {
         let sorted_post_state = post_state.into_sorted();
 
         let (new_state_root, acct_trie_updates) =
-            LegacyStateRoot::overlay_root_with_updates(&tx, &sorted_post_state)
+            AdapterStateRoot::<'_, _, A>::overlay_root_with_updates(&tx, &sorted_post_state)
                 .wrap_err("compute account trie overlay")?;
 
         info!(state_root = %new_state_root, "new state root computed");
 
         let sorted = acct_trie_updates.into_sorted();
         let mut acct_cursor =
-            tx.cursor_write::<tables::AccountsTrie>().wrap_err("open AccountsTrie")?;
+            tx.cursor_write::<A::AccountTrieTable>().wrap_err("open AccountsTrie")?;
         let (written, deleted) =
-            Self::write_account_trie_nodes(&mut acct_cursor, sorted.account_nodes_ref())?;
+            Self::write_account_trie_nodes::<A>(&mut acct_cursor, sorted.account_nodes_ref())?;
 
         info!(written, deleted, "account trie nodes updated");
         tx.commit().wrap_err("commit account-trie tx")?;
@@ -314,8 +356,8 @@ impl Populator {
     ///
     /// A `None` value means the node was removed from the trie and any existing entry at
     /// that key must be deleted. Returns `(nodes_written, nodes_deleted)`.
-    fn write_account_trie_nodes(
-        acct_cursor: &mut (impl DbCursorRW<tables::AccountsTrie> + DbCursorRO<tables::AccountsTrie>),
+    fn write_account_trie_nodes<A: TrieTableAdapter>(
+        acct_cursor: &mut (impl DbCursorRW<A::AccountTrieTable> + DbCursorRO<A::AccountTrieTable>),
         nodes: &[(Nibbles, Option<BranchNodeCompact>)],
     ) -> Result<(usize, usize)> {
         let mut written = 0usize;
@@ -324,14 +366,18 @@ impl Populator {
             if key.is_empty() {
                 continue;
             }
-            let nibbles = StoredNibbles::from(*key);
+            let nibbles = A::AccountKey::from(*key);
             match maybe_node {
                 Some(node) => {
                     acct_cursor.upsert(nibbles, node).wrap_err("upsert AccountsTrie node")?;
                     written += 1;
                 }
                 None => {
-                    if acct_cursor.seek_exact(nibbles).wrap_err("seek AccountsTrie")?.is_some() {
+                    if acct_cursor
+                        .seek_exact(nibbles.clone())
+                        .wrap_err("seek AccountsTrie")?
+                        .is_some()
+                    {
                         acct_cursor.delete_current().wrap_err("delete AccountsTrie node")?;
                         deleted += 1;
                     }
@@ -403,7 +449,7 @@ impl Populator {
 
         for chunk_idx in 0..total_chunks {
             let start = chunk_idx * chunk_size;
-            let end = ((chunk_idx + 1) * chunk_size).min(count);
+            let end = (start + chunk_size).min(count);
 
             let tx = db.tx_mut().wrap_err("begin plain-accounts tx")?;
             let mut plain_cursor = tx
@@ -485,11 +531,50 @@ impl Populator {
         Ok(())
     }
 
-    fn recompute_account_trie(db: &reth_db::DatabaseEnv) -> Result<()> {
+    fn recompute_account_trie(
+        db: &reth_db::DatabaseEnv,
+        storage_trie_version: StorageTrieVersion,
+    ) -> Result<()> {
+        match storage_trie_version {
+            StorageTrieVersion::V1 => {
+                Self::recompute_account_trie_with_adapter::<LegacyKeyAdapter>(db)
+            }
+            StorageTrieVersion::V2 => {
+                Self::recompute_account_trie_with_adapter::<PackedKeyAdapter>(db)
+            }
+        }
+    }
+
+    fn recompute_account_trie_with_adapter<A: TrieTableAdapter>(
+        db: &reth_db::DatabaseEnv,
+    ) -> Result<()> {
         info!("recomputing full account trie from HashedAccounts (this may take a while)");
         let tx = db.tx_mut().wrap_err("begin account-trie recompute tx")?;
 
-        let (new_state_root, trie_updates) = LegacyStateRoot::from_tx(&tx)
+        // Clear all stale AccountsTrie nodes before recomputing. Without this, the trie
+        // walker sees the cached hash flags in existing branch nodes, skips their subtrees,
+        // and returns the old root instead of rebuilding from the current leaf set.
+        let cleared = {
+            let mut acct_cursor =
+                tx.cursor_write::<A::AccountTrieTable>().wrap_err("open AccountsTrie for clear")?;
+            let mut keys_to_delete: Vec<A::AccountKey> = Vec::new();
+            {
+                let mut walker = acct_cursor.walk(None).wrap_err("walk AccountsTrie")?;
+                while let Some((key, _)) = walker.next().transpose()? {
+                    keys_to_delete.push(key);
+                }
+            }
+            let count = keys_to_delete.len();
+            for key in keys_to_delete {
+                if acct_cursor.seek_exact(key).wrap_err("seek AccountsTrie node")?.is_some() {
+                    acct_cursor.delete_current().wrap_err("delete stale AccountsTrie node")?;
+                }
+            }
+            count
+        };
+        info!(cleared, "cleared stale AccountsTrie nodes");
+
+        let (new_state_root, trie_updates) = AdapterStateRoot::<'_, _, A>::from_tx(&tx)
             .root_with_updates()
             .wrap_err("compute full state root")?;
 
@@ -497,9 +582,9 @@ impl Populator {
 
         let sorted = trie_updates.into_sorted();
         let mut acct_cursor =
-            tx.cursor_write::<tables::AccountsTrie>().wrap_err("open AccountsTrie")?;
+            tx.cursor_write::<A::AccountTrieTable>().wrap_err("open AccountsTrie")?;
         let (written, deleted) =
-            Self::write_account_trie_nodes(&mut acct_cursor, sorted.account_nodes_ref())?;
+            Self::write_account_trie_nodes::<A>(&mut acct_cursor, sorted.account_nodes_ref())?;
 
         info!(written, deleted, "account trie fully recomputed");
         tx.commit().wrap_err("commit account-trie recompute tx")?;

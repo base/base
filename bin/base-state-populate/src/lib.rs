@@ -6,6 +6,9 @@ pub use cli::{Args, PopulateArgs, SubCommand, VerifyArgs};
 mod storage;
 pub use storage::{address_for_index, derive_sender_addresses, erc20_balance_slot};
 
+mod trie_version;
+pub use trie_version::StorageTrieVersion;
+
 mod populate;
 pub use populate::Populator;
 

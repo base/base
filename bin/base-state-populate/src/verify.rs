@@ -12,10 +12,12 @@ use reth_db_api::{
     tables,
     transaction::DbTx,
 };
-use reth_trie::StoredNibbles;
+use reth_trie::Nibbles;
+use reth_trie_db::{LegacyKeyAdapter, PackedKeyAdapter, TrieTableAdapter};
 use tracing::info;
 
 use crate::{
+    StorageTrieVersion,
     cli::VerifyArgs,
     storage::{address_for_index, derive_sender_addresses, erc20_balance_slot},
 };
@@ -41,6 +43,9 @@ impl Verifier {
         .wrap_err("open MDBX database")?;
 
         let tx = db.tx().wrap_err("begin read tx")?;
+        let storage_trie_version =
+            StorageTrieVersion::detect(&tx).wrap_err("detect storage settings")?;
+        info!(version = ?storage_trie_version, "detected storage trie version");
 
         if args.senders_only {
             let seed =
@@ -69,7 +74,8 @@ impl Verifier {
             .wrap_err("check balance samples")?;
             Self::count_storage_entries(&tx, token_addr, hashed_token, args.count)
                 .wrap_err("count storage entries")?;
-            Self::check_trie_nodes(&tx, hashed_token).wrap_err("check trie nodes")?;
+            Self::check_trie_nodes(&tx, hashed_token, storage_trie_version)
+                .wrap_err("check trie nodes")?;
 
             if let Some(seed) = args.seed {
                 let sender_count = usize::try_from(args.sender_count.unwrap_or(0))
@@ -121,7 +127,8 @@ impl Verifier {
         mapping_slot: B256,
         count: u64,
     ) -> Result<()> {
-        let sample_indices = [0u64, 1, count / 4, count / 2, count - 1];
+        let last = count.saturating_sub(1);
+        let sample_indices = [0u64, count / 4, count / 2, last];
         let mut cursor =
             tx.cursor_dup_read::<tables::PlainStorageState>().wrap_err("open PlainStorageState")?;
         let mut hcursor =
@@ -235,9 +242,27 @@ impl Verifier {
         Ok(())
     }
 
-    fn check_trie_nodes(tx: &impl DbTx, hashed_token: B256) -> Result<()> {
+    fn check_trie_nodes(
+        tx: &impl DbTx,
+        hashed_token: B256,
+        storage_trie_version: StorageTrieVersion,
+    ) -> Result<()> {
+        match storage_trie_version {
+            StorageTrieVersion::V1 => {
+                Self::check_trie_nodes_with_adapter::<LegacyKeyAdapter>(tx, hashed_token)
+            }
+            StorageTrieVersion::V2 => {
+                Self::check_trie_nodes_with_adapter::<PackedKeyAdapter>(tx, hashed_token)
+            }
+        }
+    }
+
+    fn check_trie_nodes_with_adapter<A: TrieTableAdapter>(
+        tx: &impl DbTx,
+        hashed_token: B256,
+    ) -> Result<()> {
         let mut storage_cursor =
-            tx.cursor_dup_read::<tables::StoragesTrie>().wrap_err("open StoragesTrie")?;
+            tx.cursor_dup_read::<A::StorageTrieTable>().wrap_err("open StoragesTrie")?;
         let has_storage_trie = storage_cursor
             .seek_exact(hashed_token)
             .wrap_err("seek StoragesTrie for contract")?
@@ -254,14 +279,14 @@ impl Verifier {
         eyre::ensure!(node_count > 1, "only 1 StoragesTrie node — trie may be incomplete");
 
         let has_acct_trie = tx
-            .cursor_read::<tables::AccountsTrie>()
+            .cursor_read::<A::AccountTrieTable>()
             .wrap_err("open AccountsTrie")?
-            .seek_exact(StoredNibbles::default())
+            .seek_exact(A::AccountKey::from(Nibbles::default()))
             .wrap_err("seek AccountsTrie root")?
             .is_some();
 
         info!(storage_trie_nodes = node_count, "StoragesTrie nodes present");
-        info!(account_trie_has_root = has_acct_trie, "AccountsTrie check");
+        eyre::ensure!(has_acct_trie, "AccountsTrie root node missing — trie not written");
         Ok(())
     }
 }
