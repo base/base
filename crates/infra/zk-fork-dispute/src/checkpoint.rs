@@ -89,9 +89,11 @@ impl Checkpoint {
         let interval =
             Self::infer_interval(config.game_address, verifier, starting_block, roots.len())
                 .await?;
-        let indices: Vec<u64> = config
-            .invalid_index
-            .map_or_else(|| (0..roots.len() as u64).collect(), |index| vec![index]);
+        // Find-mode: linear RPC scan for the first mismatched intermediate (one-shot tool).
+        let root_count = u64::try_from(roots.len())
+            .map_err(|_| eyre!("intermediate root count does not fit u64"))?;
+        let indices: Vec<u64> =
+            config.invalid_index.map_or_else(|| (0..root_count).collect(), |index| vec![index]);
 
         for index in indices {
             let root_index =
@@ -236,12 +238,14 @@ impl Checkpoint {
         if root_count == 0 {
             bail!("cannot infer interval for a game with no intermediate roots");
         }
-        if !span.is_multiple_of(root_count as u64) {
+        let root_count = u64::try_from(root_count)
+            .map_err(|_| eyre!("intermediate root count does not fit u64"))?;
+        if !span.is_multiple_of(root_count) {
             bail!(
                 "cannot infer intermediate interval: span {span} is not divisible by root count {root_count}"
             );
         }
-        Ok(span / root_count as u64)
+        Ok(span / root_count)
     }
 
     /// Session ID unique per fork-tool run identity (game/index/signer/backend).

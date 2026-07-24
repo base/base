@@ -53,7 +53,7 @@ pub struct Config {
 impl Config {
     /// Builds config from clap CLI args, resolving the game on L1 via the factory.
     pub async fn from_cli(cli: Cli) -> Result<Self> {
-        let Cli { fork: args, logging: _ } = cli;
+        let args = cli.fork;
 
         let explicit_game = args.game_address;
         let explicit_index = args.game_index;
