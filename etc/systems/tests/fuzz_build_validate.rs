@@ -6,15 +6,20 @@
 //! `newPayload` (the validator path); an error there means the builder produced a
 //! block the validator rejects, the class of disagreement that halts the chain.
 //!
-//! Unlike the sync-parity test, this runs fully in-process (no devnet, no Docker),
-//! forces exactly the generated transactions into each block (`no_tx_pool`), and
-//! uses a fixed per-block timestamp, so a run is deterministic and a failing seed
-//! replays exactly. Override the seed with `FUZZ_SEED`.
+//! Beyond build-vs-validate, each block is checked against single-implementation
+//! invariants (gas within limit), and a second test asserts determinism: the same
+//! seed builds byte-identical blocks (matching state roots and hashes) twice.
+//!
+//! Runs fully in-process (no devnet, no Docker), forces exactly the generated
+//! transactions into each block (`no_tx_pool`), and uses a fixed per-block
+//! timestamp, so a run is deterministic and a failing seed replays exactly.
+//! Override the seed with `FUZZ_SEED`.
 
 use alloy_consensus::SignableTransaction;
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_node_runner::test_utils::TestHarness;
@@ -37,10 +42,58 @@ const SENDERS: [Account; 3] = [Account::Alice, Account::Bob, Account::Charlie];
 #[tokio::test]
 async fn fuzz_build_validate() -> Result<()> {
     let seed = seed_from_env();
-    let harness = TestHarness::new().await?;
+    // Building the sequence exercises build-vs-validate (an error is a divergence)
+    // and the per-block invariants; the observations are discarded here.
+    run_sequence(seed).await?;
+    Ok(())
+}
 
+/// Determinism oracle: the same seed must build byte-identical blocks (matching
+/// state roots and hashes) across independent runs. A mismatch means block
+/// production is non-deterministic, which would make any divergence unreplayable.
+#[tokio::test]
+async fn fuzz_build_validate_deterministic() -> Result<()> {
+    let seed = seed_from_env();
+    let first = run_sequence(seed).await?;
+    let second = run_sequence(seed).await?;
+
+    if first.len() != second.len() {
+        return Err(eyre!(
+            "nondeterministic block count (seed={seed:#x}): {} != {}",
+            first.len(),
+            second.len()
+        ));
+    }
+    for (a, b) in first.iter().zip(second.iter()) {
+        if a != b {
+            return Err(eyre!(
+                "nondeterministic build at block {} (seed={seed:#x}): {a:?} != {b:?}",
+                a.number
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Observations recorded for each built block, used for invariants and the
+/// determinism comparison.
+#[derive(Debug, PartialEq, Eq)]
+struct BlockObs {
+    number: u64,
+    hash: B256,
+    state_root: B256,
+    gas_used: u64,
+    gas_limit: u64,
+}
+
+/// Build `NUM_BLOCKS` blocks of fuzzed transactions on a fresh in-process node,
+/// asserting build-vs-validate agreement and per-block invariants, and return the
+/// per-block observations.
+async fn run_sequence(seed: u64) -> Result<Vec<BlockObs>> {
+    let harness = TestHarness::new().await?;
     let mut generator = FuzzTxGenerator::new(seed);
     let mut nonces = [0u64; SENDERS.len()];
+    let mut observations = Vec::with_capacity(NUM_BLOCKS as usize);
 
     for block in 0..NUM_BLOCKS {
         let mut txs = Vec::with_capacity(TXS_PER_BLOCK);
@@ -56,9 +109,34 @@ async fn fuzz_build_validate() -> Result<()> {
         harness.build_block_from_transactions(txs).await.map_err(|e| {
             eyre!("build/validate divergence at block {block} (seed={seed:#x}): {e}")
         })?;
+
+        let header = harness
+            .provider()
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await?
+            .ok_or_else(|| eyre!("no block found after building block {block} (seed={seed:#x})"))?
+            .header;
+
+        // Invariant: a block can never use more gas than its own limit.
+        if header.gas_used > header.gas_limit {
+            return Err(eyre!(
+                "invariant violated at block {block} (seed={seed:#x}): \
+                 gas_used {} > gas_limit {}",
+                header.gas_used,
+                header.gas_limit
+            ));
+        }
+
+        observations.push(BlockObs {
+            number: header.number,
+            hash: header.hash,
+            state_root: header.state_root,
+            gas_used: header.gas_used,
+            gas_limit: header.gas_limit,
+        });
     }
 
-    Ok(())
+    Ok(observations)
 }
 
 fn seed_from_env() -> u64 {
