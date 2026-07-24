@@ -26,7 +26,10 @@ mod payload;
 pub use payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4,
     BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4, BasePayloadError,
+    MAX_TRANSACTIONS_PER_PAYLOAD, MAX_WITHDRAWALS_PER_PAYLOAD,
 };
+#[cfg(feature = "std")]
+pub use payload::{BoundedTransactions, BoundedWithdrawals};
 
 #[cfg(feature = "reth")]
 mod reth;
