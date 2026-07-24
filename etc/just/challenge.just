@@ -91,8 +91,9 @@ zk-fork-dispute intent='' game='' game_index='' invalid_index='':
       exit 1
     fi
 
+    # Private key stays in the environment (BASE_ZK_FORK_PRIVATE_KEY) so it is
+    # not visible on the cargo/process argv for the lifetime of proving.
     args=(
-      --private-key "$BASE_ZK_FORK_PRIVATE_KEY"
       --l1-rpc-url "$BASE_ZK_FORK_L1_RPC_URL"
       --l2-rpc-url "$BASE_ZK_FORK_L2_RPC_URL"
       --prover-service-url "$BASE_ZK_FORK_PROVER_SERVICE_URL"

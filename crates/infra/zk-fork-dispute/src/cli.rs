@@ -53,11 +53,19 @@ pub struct ForkArgs {
     pub dispute_game_factory: Address,
 
     /// Specific already-invalid dispute game proxy (skips Anvil patching).
-    #[arg(long = "game-address", env = cli_env!("GAME_ADDRESS"))]
+    #[arg(
+        long = "game-address",
+        env = cli_env!("GAME_ADDRESS"),
+        conflicts_with = "game_index"
+    )]
     pub game_address: Option<Address>,
 
     /// Factory game index to select and patch (defaults to newest).
-    #[arg(long = "game-index", env = cli_env!("GAME_INDEX"))]
+    #[arg(
+        long = "game-index",
+        env = cli_env!("GAME_INDEX"),
+        conflicts_with = "game_address"
+    )]
     pub game_index: Option<u64>,
 
     /// Hex-encoded secp256k1 private key for dispute transactions.
@@ -65,12 +73,10 @@ pub struct ForkArgs {
     pub private_key: PrivateKeySigner,
 
     /// Dispute intent (`challenge` or `nullify`).
-    #[arg(
-        long = "dispute-intent",
-        env = cli_env!("DISPUTE_INTENT"),
-        default_value = "nullify"
-    )]
-    pub intent: DisputeIntentArg,
+    ///
+    /// When omitted, inferred from game provers: TEE-only → challenge, ZK present → nullify.
+    #[arg(long = "dispute-intent", env = cli_env!("DISPUTE_INTENT"))]
+    pub intent: Option<DisputeIntentArg>,
 
     /// ZK proving backend for the prover-service request.
     #[arg(

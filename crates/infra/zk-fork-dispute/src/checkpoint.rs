@@ -55,22 +55,22 @@ impl Checkpoint {
         let index = config.invalid_index.unwrap_or(0);
         let root_index =
             usize::try_from(index).map_err(|_| eyre!("invalid index does not fit usize"))?;
-        let onchain_root = *roots
-            .get(root_index)
-            .ok_or_else(|| eyre!("invalid index {index} out of range {}", roots.len()))?;
-        let mut patched_root = onchain_root;
-        *patched_root.0.last_mut().expect("B256 is non-empty") ^= 1;
-
-        AnvilPatch::apply(config, verifier, &roots, index, patched_root).await?;
+        if root_index >= roots.len() {
+            bail!("invalid index {index} out of range {}", roots.len());
+        }
 
         let starting_block = verifier.starting_block_number(config.game_address).await?;
         let interval =
             Self::infer_interval(config.game_address, verifier, starting_block, roots.len())
                 .await?;
-        // Dispute claims the canonical L2 root, not the pre-patch on-chain value.
         let mut checkpoint =
-            Self::from_roots(starting_block, interval, index, &roots, onchain_root)?;
-        checkpoint.expected_root = config.output_root_at_block(checkpoint.target_block()).await?;
+            Self::from_roots(starting_block, interval, index, &roots, roots[root_index])?;
+        let canonical = config.output_root_at_block(checkpoint.target_block()).await?;
+        let patched_root = Self::patched_root_from_canonical(canonical)?;
+
+        AnvilPatch::apply(config, verifier, &roots, index, patched_root).await?;
+
+        checkpoint.expected_root = canonical;
         Ok(checkpoint)
     }
 
@@ -195,6 +195,16 @@ impl Checkpoint {
         })?
     }
 
+    /// Derives a patched intermediate root from the verified canonical L2 root.
+    fn patched_root_from_canonical(canonical: B256) -> Result<B256> {
+        let mut patched = canonical;
+        *patched.0.last_mut().expect("B256 is non-empty") ^= 1;
+        if patched == canonical {
+            bail!("failed to derive a patched root distinct from canonical {canonical}");
+        }
+        Ok(patched)
+    }
+
     fn from_roots(
         starting_block: u64,
         interval: u64,
@@ -280,17 +290,37 @@ impl AnvilPatch {
             .get(root_index)
             .ok_or_else(|| eyre!("invalid index {index} out of range {}", original_roots.len()))?;
 
-        let root_claim = verifier.game_info(config.game_address).await?.root_claim;
+        let info = verifier.game_info(config.game_address).await?;
+        let root_claim = info.root_claim;
 
         Self::patch_factory_registration(config, verifier, original_roots, index, patched_root)
             .await?;
-        Self::patch_game_code(config, root_index, original_root, patched_root).await?;
+        Self::patch_game_code(
+            config,
+            info.l2_block_number,
+            info.parent_address,
+            original_roots,
+            root_index,
+            patched_root,
+        )
+        .await?;
 
-        let onchain = verifier.intermediate_output_root(config.game_address, index).await?;
-        if onchain != patched_root {
+        let onchain_roots = verifier.intermediate_output_roots(config.game_address).await?;
+        if onchain_roots.len() != original_roots.len() {
             bail!(
-                "patched game code but intermediate root {index} stayed {onchain}; expected {patched_root}"
+                "root count changed after patch: before {}, after {}",
+                original_roots.len(),
+                onchain_roots.len()
             );
+        }
+        for (i, original) in original_roots.iter().enumerate() {
+            let expected = if i == root_index { patched_root } else { *original };
+            if onchain_roots[i] != expected {
+                bail!(
+                    "intermediate root {i} is {} after patch; expected {expected}",
+                    onchain_roots[i]
+                );
+            }
         }
         let after_claim = verifier.game_info(config.game_address).await?.root_claim;
         if after_claim != root_claim {
@@ -392,40 +422,22 @@ impl AnvilPatch {
 
     async fn patch_game_code(
         config: &Config,
+        l2_block_number: u64,
+        parent_address: Address,
+        original_roots: &[B256],
         root_index: usize,
-        original_root: B256,
         patched_root: B256,
     ) -> Result<()> {
         let provider: RootProvider = RootProvider::new_http(config.l1_rpc_url.clone());
         let code = provider.get_code_at(config.game_address).await?;
-        let original = original_root.as_slice();
-        let mut offsets = Vec::new();
-        let mut offset = 0;
-        while offset + original.len() <= code.len() {
-            if &code[offset..offset + original.len()] == original {
-                offsets.push(offset);
-                offset += original.len();
-            } else {
-                offset += 1;
-            }
-        }
-        if offsets.is_empty() {
-            bail!(
-                "could not find intermediate root {original_root} in game {} bytecode",
-                config.game_address
-            );
-        }
-        let Some(replace_at) = offsets.get(root_index).copied() else {
-            bail!(
-                "root index {root_index} out of range for {} bytecode matches of {original_root}",
-                offsets.len()
-            );
-        };
-
-        // Replace exactly one occurrence so duplicate immutables (e.g. rootClaim) stay intact.
-        let mut patched_code = code.to_vec();
-        patched_code[replace_at..replace_at + original.len()]
-            .copy_from_slice(patched_root.as_slice());
+        let patched_code = patch_cwia_root_in_bytecode(
+            code.as_ref(),
+            l2_block_number,
+            parent_address,
+            original_roots,
+            root_index,
+            patched_root,
+        )?;
 
         provider
             .client()
@@ -489,5 +501,293 @@ impl AnvilPatch {
         encoded[..32].copy_from_slice(key.as_slice());
         encoded[32..].copy_from_slice(&U256::from(mapping_slot).to_be_bytes::<32>());
         keccak256(encoded)
+    }
+}
+
+/// Patches intermediate root `root_index` inside clone CWIA args.
+///
+/// Locates packed [`encode_extra_data`] in the CWIA args region and writes the
+/// indexed 32-byte slot, so a final root equal to `rootClaim` is not confused
+/// with the separate CWIA `rootClaim` field.
+fn patch_cwia_root_in_bytecode(
+    code: &[u8],
+    l2_block_number: u64,
+    parent_address: Address,
+    original_roots: &[B256],
+    root_index: usize,
+    patched_root: B256,
+) -> Result<Vec<u8>> {
+    if original_roots.is_empty() {
+        bail!("cannot patch CWIA roots for a game with no intermediate roots");
+    }
+    if root_index >= original_roots.len() {
+        bail!("root index {root_index} out of range {}", original_roots.len());
+    }
+    if code.len() < 2 {
+        bail!("game bytecode is too short to contain CWIA args");
+    }
+
+    let args_len = usize::from(u16::from_be_bytes([code[code.len() - 2], code[code.len() - 1]]));
+    if code.len() < 2 + args_len {
+        bail!("CWIA args length {args_len} exceeds bytecode size {}", code.len());
+    }
+    let args_start = code.len() - 2 - args_len;
+    let args = &code[args_start..code.len() - 2];
+
+    let extra = encode_extra_data(l2_block_number, parent_address, original_roots);
+    let Some(extra_rel) = find_subslice(args, extra.as_ref()) else {
+        bail!("could not find packed CWIA extraData (intermediate roots region) in game bytecode");
+    };
+    let root_abs = args_start + extra_rel + 52 + root_index * 32;
+    if root_abs + 32 > args_start + args_len {
+        bail!("computed CWIA root offset is outside args region");
+    }
+
+    let mut patched = code.to_vec();
+    patched[root_abs..root_abs + 32].copy_from_slice(patched_root.as_slice());
+    Ok(patched)
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|window| window == needle)
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_node_bindings::Anvil;
+    use alloy_primitives::{Address, B256, Bytes, U256};
+    use alloy_provider::{Provider, RootProvider};
+    use base_proof_contracts::encode_extra_data;
+
+    use super::{AnvilPatch, Checkpoint, find_subslice, patch_cwia_root_in_bytecode};
+
+    fn synthetic_cwia_bytecode(
+        root_claim: B256,
+        l1_head: B256,
+        l2_block_number: u64,
+        parent_address: Address,
+        roots: &[B256],
+    ) -> Vec<u8> {
+        let extra = encode_extra_data(l2_block_number, parent_address, roots);
+        let mut args = Vec::with_capacity(84 + extra.len());
+        args.extend_from_slice(Address::repeat_byte(0x11).as_slice());
+        args.extend_from_slice(root_claim.as_slice());
+        args.extend_from_slice(l1_head.as_slice());
+        args.extend_from_slice(extra.as_ref());
+
+        let mut code = vec![0x60; 32];
+        code.extend_from_slice(&args);
+        let args_len = u16::try_from(args.len()).expect("args fit u16");
+        code.extend_from_slice(&args_len.to_be_bytes());
+        code
+    }
+
+    fn read_cwia_roots(
+        code: &[u8],
+        l2_block_number: u64,
+        parent_address: Address,
+        root_count: usize,
+    ) -> Vec<B256> {
+        let args_len =
+            usize::from(u16::from_be_bytes([code[code.len() - 2], code[code.len() - 1]]));
+        let args_start = code.len() - 2 - args_len;
+        let args = &code[args_start..code.len() - 2];
+        let placeholder = vec![B256::ZERO; root_count];
+        let extra = encode_extra_data(l2_block_number, parent_address, &placeholder);
+        let header = &extra.as_ref()[..52];
+        let extra_rel = find_subslice(args, header).expect("extraData header");
+        (0..root_count)
+            .map(|i| {
+                let start = args_start + extra_rel + 52 + i * 32;
+                B256::from_slice(&code[start..start + 32])
+            })
+            .collect()
+    }
+
+    fn roots() -> [B256; 3] {
+        [
+            B256::repeat_byte(0xaa),
+            B256::repeat_byte(0xbb),
+            B256::repeat_byte(0xcc), // final root also used as rootClaim
+        ]
+    }
+
+    #[test]
+    fn patched_root_from_canonical_stays_distinct() {
+        let canonical = B256::repeat_byte(0x11);
+        let patched = Checkpoint::patched_root_from_canonical(canonical).unwrap();
+        assert_ne!(patched, canonical);
+        assert_eq!(&patched.0[..31], &canonical.0[..31]);
+        assert_eq!(patched.0[31], canonical.0[31] ^ 1);
+    }
+
+    #[test]
+    fn patch_cwia_root_updates_index_zero() {
+        let roots = roots();
+        let parent = Address::repeat_byte(0x22);
+        let code = synthetic_cwia_bytecode(roots[2], B256::repeat_byte(0x33), 1000, parent, &roots);
+        let patched_root = B256::repeat_byte(0x01);
+
+        let patched = patch_cwia_root_in_bytecode(&code, 1000, parent, &roots, 0, patched_root)
+            .expect("patch index 0");
+        let after = read_cwia_roots(&patched, 1000, parent, 3);
+        assert_eq!(after[0], patched_root);
+        assert_eq!(after[1], roots[1]);
+        assert_eq!(after[2], roots[2]);
+        // rootClaim CWIA field (args[20..52]) must stay the final root.
+        let args_len = usize::from(u16::from_be_bytes([
+            patched[patched.len() - 2],
+            patched[patched.len() - 1],
+        ]));
+        let args_start = patched.len() - 2 - args_len;
+        assert_eq!(&patched[args_start + 20..args_start + 52], roots[2].as_slice());
+    }
+
+    #[test]
+    fn patch_cwia_root_updates_nonzero_index() {
+        let roots = roots();
+        let parent = Address::repeat_byte(0x22);
+        let code = synthetic_cwia_bytecode(roots[2], B256::repeat_byte(0x33), 1000, parent, &roots);
+        let patched_root = B256::repeat_byte(0x02);
+
+        let patched = patch_cwia_root_in_bytecode(&code, 1000, parent, &roots, 1, patched_root)
+            .expect("patch index 1");
+        let after = read_cwia_roots(&patched, 1000, parent, 3);
+        assert_eq!(after, [roots[0], patched_root, roots[2]]);
+    }
+
+    #[test]
+    fn patch_cwia_final_root_does_not_hit_root_claim() {
+        let roots = roots();
+        let parent = Address::repeat_byte(0x22);
+        let code = synthetic_cwia_bytecode(roots[2], B256::repeat_byte(0x33), 1000, parent, &roots);
+        let patched_root = B256::repeat_byte(0x03);
+
+        let patched = patch_cwia_root_in_bytecode(&code, 1000, parent, &roots, 2, patched_root)
+            .expect("patch final root");
+        let after = read_cwia_roots(&patched, 1000, parent, 3);
+        assert_eq!(after, [roots[0], roots[1], patched_root]);
+
+        let args_len = usize::from(u16::from_be_bytes([
+            patched[patched.len() - 2],
+            patched[patched.len() - 1],
+        ]));
+        let args_start = patched.len() - 2 - args_len;
+        assert_eq!(
+            &patched[args_start + 20..args_start + 52],
+            roots[2].as_slice(),
+            "rootClaim CWIA field must remain the original final root"
+        );
+    }
+
+    #[test]
+    fn find_subslice_matches_expected_offset() {
+        let haystack = [1, 2, 3, 4, 5, 6];
+        assert_eq!(find_subslice(&haystack, &[3, 4]), Some(2));
+        assert_eq!(find_subslice(&haystack, &[9]), None);
+    }
+
+    #[test]
+    fn mapping_storage_key_is_stable() {
+        let key = B256::repeat_byte(0xab);
+        let slot = AnvilPatch::mapping_storage_key(key, 2);
+        assert_eq!(slot, AnvilPatch::mapping_storage_key(key, 2));
+        assert_ne!(slot, AnvilPatch::mapping_storage_key(key, 3));
+    }
+
+    #[tokio::test]
+    async fn anvil_set_code_patches_each_root_index() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let game = Address::repeat_byte(0x42);
+        let parent = Address::repeat_byte(0x22);
+        let roots = roots();
+        let code = synthetic_cwia_bytecode(roots[2], B256::repeat_byte(0x33), 1000, parent, &roots);
+
+        provider
+            .client()
+            .request::<_, ()>("anvil_setCode", (game, Bytes::from(code)))
+            .await
+            .expect("anvil_setCode");
+
+        for (index, patched_root) in [
+            (0usize, B256::repeat_byte(0x01)),
+            (1, B256::repeat_byte(0x02)),
+            (2, B256::repeat_byte(0x03)),
+        ] {
+            let current = provider.get_code_at(game).await.expect("getCode");
+            let current_roots = read_cwia_roots(current.as_ref(), 1000, parent, 3);
+            let patched = patch_cwia_root_in_bytecode(
+                current.as_ref(),
+                1000,
+                parent,
+                &current_roots,
+                index,
+                patched_root,
+            )
+            .unwrap();
+            provider
+                .client()
+                .request::<_, ()>("anvil_setCode", (game, Bytes::from(patched)))
+                .await
+                .expect("anvil_setCode patch");
+
+            let after = provider.get_code_at(game).await.expect("getCode after");
+            let after_roots = read_cwia_roots(after.as_ref(), 1000, parent, 3);
+            assert_eq!(after_roots[index], patched_root);
+            for (i, root) in current_roots.iter().enumerate() {
+                if i != index {
+                    assert_eq!(after_roots[i], *root);
+                }
+            }
+            let args_len =
+                usize::from(u16::from_be_bytes([after[after.len() - 2], after[after.len() - 1]]));
+            let args_start = after.len() - 2 - args_len;
+            assert_eq!(
+                &after[args_start + 20..args_start + 52],
+                roots[2].as_slice(),
+                "rootClaim must stay fixed across patches"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn anvil_set_storage_discovers_factory_mapping_slot() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let factory = Address::repeat_byte(0xf1);
+        let game = Address::repeat_byte(0x42);
+        let game_type = 7u32;
+        let uuid = B256::repeat_byte(0xab);
+        let mapping_slot = 3u64;
+
+        let mut packed = [0u8; 32];
+        packed[..4].copy_from_slice(&game_type.to_be_bytes());
+        packed[12..].copy_from_slice(game.as_slice());
+        let packed_id = B256::from_slice(&packed);
+        let storage_key = AnvilPatch::mapping_storage_key(uuid, mapping_slot);
+
+        let ok = provider
+            .client()
+            .request::<_, bool>("anvil_setStorageAt", (factory, storage_key, packed_id))
+            .await
+            .expect("anvil_setStorageAt");
+        assert!(ok);
+
+        let (found_slot, found_id) =
+            AnvilPatch::find_mapping_slot(&provider, factory, uuid, game_type, game)
+                .await
+                .expect("discover mapping slot");
+        assert_eq!(found_slot, mapping_slot);
+        assert_eq!(found_id, packed_id);
+
+        let value = provider
+            .get_storage_at(factory, U256::from_be_slice(storage_key.as_slice()))
+            .await
+            .unwrap();
+        assert_eq!(B256::from(value.to_be_bytes::<32>()), packed_id);
     }
 }

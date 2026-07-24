@@ -33,8 +33,11 @@ pub struct Config {
     pub game_type: u32,
     /// Signer used for dispute transactions.
     pub private_key: PrivateKeySigner,
-    /// Dispute intent (`challenge` or `nullify`).
-    pub intent: DisputeIntent,
+    /// Explicit dispute intent, if provided.
+    ///
+    /// When `None`, [`crate::ZkForkDispute`] infers challenge for TEE-only games and
+    /// nullify when a ZK prover is already set.
+    pub intent: Option<DisputeIntent>,
     /// ZK proving backend for the prover-service request.
     pub zk_backend: ZkBackend,
     /// Optional invalid intermediate index override.
@@ -70,7 +73,7 @@ impl Config {
             game_address,
             game_type,
             private_key: args.private_key,
-            intent: args.intent.into(),
+            intent: args.intent.map(Into::into),
             zk_backend: args.zk_backend.into(),
             invalid_index: args.invalid_index,
             // Only an explicit game address opts into find-mode; `--game-index` still patches.

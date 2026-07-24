@@ -21,6 +21,20 @@ impl ZkForkDispute {
     pub async fn run(config: Config) -> Result<()> {
         let verifier = AggregateVerifierContractClient::new(config.l1_rpc_url.clone())?;
 
+        let status = verifier.status(config.game_address).await?;
+        let before_zk = verifier.zk_prover(config.game_address).await?;
+        let before_tee = verifier.tee_prover(config.game_address).await?;
+        let before_countered = verifier.countered_index(config.game_address).await?;
+        let intent = Self::resolve_intent(config.intent, before_zk, before_tee)?;
+        // Validate before mutating the fork so incompatible games are not patched.
+        Self::validate_dispute_preconditions(
+            intent,
+            status,
+            before_zk,
+            before_tee,
+            before_countered,
+        )?;
+
         let checkpoint = if config.patch_invalid_game {
             Checkpoint::patch(&config, &verifier).await?
         } else {
@@ -42,21 +56,7 @@ impl ZkForkDispute {
         );
 
         let challenger = submitter.sender_address();
-        let status = verifier.status(config.game_address).await?;
-        let before_zk = verifier.zk_prover(config.game_address).await?;
-        let before_tee = verifier.tee_prover(config.game_address).await?;
-        let before_countered = verifier.countered_index(config.game_address).await?;
-        // Fail fast before spending hours on proof generation.
-        Self::validate_dispute_preconditions(
-            &config,
-            status,
-            before_zk,
-            before_tee,
-            before_countered,
-        )?;
-
-        let proof_bytes =
-            checkpoint.request_proof(&config, submitter.sender_address(), l1_head).await?;
+        let proof_bytes = checkpoint.request_proof(&config, challenger, l1_head).await?;
 
         let tx_hash = submitter
             .submit_dispute(
@@ -64,7 +64,7 @@ impl ZkForkDispute {
                 proof_bytes,
                 checkpoint.index,
                 checkpoint.expected_root,
-                config.intent,
+                intent,
             )
             .await?;
 
@@ -72,10 +72,11 @@ impl ZkForkDispute {
         if status != GameStatus::InProgress {
             bail!("expected game to remain in progress after dispute tx, got {status}");
         }
-        Self::assert_dispute_effect(&config, &verifier, challenger, checkpoint.index).await?;
+        Self::assert_dispute_effect(intent, &config, &verifier, challenger, checkpoint.index)
+            .await?;
 
         info!(
-            intent = ?config.intent,
+            intent = ?intent,
             game = %config.game_address,
             invalid_index = checkpoint.index,
             tx_hash = %tx_hash,
@@ -84,8 +85,29 @@ impl ZkForkDispute {
         Ok(())
     }
 
+    fn resolve_intent(
+        configured: Option<DisputeIntent>,
+        before_zk: Address,
+        before_tee: Address,
+    ) -> Result<DisputeIntent> {
+        if let Some(intent) = configured {
+            return Ok(intent);
+        }
+        // Normal proposers create TEE-backed games; default ZK flow is challenge.
+        if before_tee != Address::ZERO && before_zk == Address::ZERO {
+            return Ok(DisputeIntent::Challenge);
+        }
+        if before_zk != Address::ZERO {
+            return Ok(DisputeIntent::Nullify);
+        }
+        bail!(
+            "could not infer dispute intent (tee_prover={before_tee}, zk_prover={before_zk}); \
+             pass --dispute-intent challenge|nullify"
+        )
+    }
+
     fn validate_dispute_preconditions(
-        config: &Config,
+        intent: DisputeIntent,
         status: GameStatus,
         before_zk: Address,
         before_tee: Address,
@@ -94,7 +116,13 @@ impl ZkForkDispute {
         if status != GameStatus::InProgress {
             bail!("dispute requires an InProgress game, got {status}");
         }
-        match config.intent {
+        if before_countered != 0 {
+            bail!(
+                "game already challenged (countered_index={before_countered}); \
+                 fraudulent-ZK nullify (countered_index - 1) is not implemented"
+            );
+        }
+        match intent {
             DisputeIntent::Nullify => {
                 if before_zk == Address::ZERO {
                     bail!("nullify requires an existing ZK prover on the game");
@@ -107,21 +135,19 @@ impl ZkForkDispute {
                 if before_zk != Address::ZERO {
                     bail!("challenge requires no existing ZK prover on the game");
                 }
-                if before_countered != 0 {
-                    bail!("challenge requires an unchallenged game");
-                }
             }
         }
         Ok(())
     }
 
     async fn assert_dispute_effect(
+        intent: DisputeIntent,
         config: &Config,
         verifier: &AggregateVerifierContractClient,
         challenger: Address,
         invalid_index: u64,
     ) -> Result<()> {
-        match config.intent {
+        match intent {
             DisputeIntent::Nullify => {
                 let after = verifier.zk_prover(config.game_address).await?;
                 if after != Address::ZERO {
@@ -154,5 +180,45 @@ impl ZkForkDispute {
             confirmation_timeout: Duration::from_secs(120),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::Address;
+    use base_challenger::DisputeIntent;
+    use base_proof_contracts::GameStatus;
+
+    use super::ZkForkDispute;
+
+    #[test]
+    fn resolve_intent_infers_challenge_for_tee_only_games() {
+        let intent =
+            ZkForkDispute::resolve_intent(None, Address::ZERO, Address::repeat_byte(0xee)).unwrap();
+        assert_eq!(intent, DisputeIntent::Challenge);
+    }
+
+    #[test]
+    fn resolve_intent_infers_nullify_when_zk_present() {
+        let intent = ZkForkDispute::resolve_intent(
+            None,
+            Address::repeat_byte(0x11),
+            Address::repeat_byte(0xee),
+        )
+        .unwrap();
+        assert_eq!(intent, DisputeIntent::Nullify);
+    }
+
+    #[test]
+    fn validate_rejects_already_countered_games() {
+        let err = ZkForkDispute::validate_dispute_preconditions(
+            DisputeIntent::Challenge,
+            GameStatus::InProgress,
+            Address::ZERO,
+            Address::repeat_byte(0xee),
+            1,
+        )
+        .expect_err("countered games must be rejected");
+        assert!(err.to_string().contains("already challenged"));
     }
 }
