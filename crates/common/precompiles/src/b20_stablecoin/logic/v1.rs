@@ -931,6 +931,15 @@ mod tests {
             self.initialized = true;
             Ok(())
         }
+
+        // This fake does not exercise composite policies.
+        fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
+            Ok(Vec::new())
+        }
+
+        fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
+            Ok(())
+        }
     }
 
     type Tok = B20StablecoinToken<FakeAccounting, FakePolicyAccounting>;

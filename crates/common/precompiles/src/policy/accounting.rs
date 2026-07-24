@@ -50,12 +50,8 @@ pub trait PolicyAccounting {
     fn mark_initialized(&mut self) -> Result<()>;
 
     /// Reads the composite child-policy IDs stored for `policy_id` (empty if none).
-    fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
-        Ok(Vec::new())
-    }
+    fn read_children(&self, policy_id: u64) -> Result<Vec<u64>>;
 
     /// Replaces the composite child-policy set for `policy_id` in full.
-    fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
-        Ok(())
-    }
+    fn write_children(&mut self, policy_id: u64, child_policy_ids: &[u64]) -> Result<()>;
 }

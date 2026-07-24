@@ -119,7 +119,7 @@ impl PolicyRegistryV2 {
     /// Reverts `ChildPoliciesOutsideOfRange(2, 4)` when the child count is outside `[2, 4]`.
     fn require_child_policy_in_range(child_policy_ids: &[u64]) -> Result<()> {
         let count = child_policy_ids.len();
-        if count < Self::MIN_CHILD_POLICIES || count > Self::MAX_CHILD_POLICIES {
+        if !(Self::MIN_CHILD_POLICIES..=Self::MAX_CHILD_POLICIES).contains(&count) {
             return Err(BasePrecompileError::revert(
                 IPolicyRegistry::ChildPoliciesOutsideOfRange {
                     min: U256::from(Self::MIN_CHILD_POLICIES),

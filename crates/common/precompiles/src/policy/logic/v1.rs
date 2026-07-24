@@ -518,6 +518,15 @@ mod tests {
             self.initialized = true;
             Ok(())
         }
+
+        // V1 has no composite policies; this fake never stores children.
+        fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
+            Ok(Vec::new())
+        }
+
+        fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
+            Ok(())
+        }
     }
 
     type Storage = FakePolicyAccounting;
