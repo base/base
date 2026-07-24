@@ -7,11 +7,11 @@ use alloy_primitives::{B64, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
-use alloy_rpc_types_engine::PayloadAttributes;
+use alloy_rpc_types_engine::{PayloadAttributes, PayloadStatus};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_network::Base;
 use base_common_rpc_types::GenesisInfo;
-use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_common_rpc_types_engine::{BaseExecutionPayloadV4, BasePayloadAttributes};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_test_utils::build_test_genesis;
@@ -40,6 +40,25 @@ pub struct PreparedBlock {
     pub new_block_hash: B256,
     /// Number of the newly-built block.
     pub new_block_number: u64,
+}
+
+/// A block payload built via `getPayload` but not yet validated or promoted.
+///
+/// Holds the raw payload plus the inputs `engine_newPayload` needs, so a caller can
+/// validate it (optionally after tampering, for negative tests) on this or another
+/// node.
+#[derive(Debug, Clone)]
+pub struct BuiltPayload {
+    /// Hash of the parent the payload was built on.
+    pub parent_hash: B256,
+    /// Parent beacon block root the payload was built with.
+    pub parent_beacon_block_root: B256,
+    /// Number of the newly-built block.
+    pub new_block_number: u64,
+    /// The built execution payload.
+    pub execution_payload: BaseExecutionPayloadV4,
+    /// Execution requests accompanying the payload.
+    pub execution_requests: Requests,
 }
 
 /// Builder for configuring and launching a test harness.
@@ -158,6 +177,30 @@ impl TestHarness {
     /// final FCU themselves — useful for benchmarks that want to time only the
     /// canonical FCU step.
     pub async fn prepare_unsafe_block(&self, transactions: Vec<Bytes>) -> Result<PreparedBlock> {
+        let built = self.build_payload(transactions).await?;
+        let payload_status = self.validate_payload(&built).await?;
+
+        if payload_status.status.is_invalid() {
+            return Err(eyre!("Engine rejected payload: {:?}", payload_status));
+        }
+
+        let new_block_hash = payload_status
+            .latest_valid_hash
+            .ok_or_else(|| eyre!("Payload status missing latest_valid_hash"))?;
+
+        Ok(PreparedBlock {
+            parent_hash: built.parent_hash,
+            new_block_hash,
+            new_block_number: built.new_block_number,
+        })
+    }
+
+    /// Build a block's payload via `getPayload`, without validating or promoting it.
+    ///
+    /// Returns the raw payload and the inputs needed to validate it, so callers can
+    /// re-validate it (optionally after tampering, for negative tests) via
+    /// [`validate_payload`](Self::validate_payload).
+    pub async fn build_payload(&self, transactions: Vec<Bytes>) -> Result<BuiltPayload> {
         let latest_block = self
             .provider()
             .get_block_by_number(BlockNumberOrTag::Latest)
@@ -225,20 +268,26 @@ impl TestHarness {
             Requests::new(execution_requests)
         };
 
-        let payload_status = self
-            .engine
-            .new_payload(execution_payload, vec![], parent_beacon_block_root, execution_requests)
-            .await?;
+        Ok(BuiltPayload {
+            parent_hash,
+            parent_beacon_block_root,
+            new_block_number,
+            execution_payload,
+            execution_requests,
+        })
+    }
 
-        if payload_status.status.is_invalid() {
-            return Err(eyre!("Engine rejected payload: {:?}", payload_status));
-        }
-
-        let new_block_hash = payload_status
-            .latest_valid_hash
-            .ok_or_else(|| eyre!("Payload status missing latest_valid_hash"))?;
-
-        Ok(PreparedBlock { parent_hash, new_block_hash, new_block_number })
+    /// Validate a built payload via `engine_newPayload` on this node, returning the
+    /// raw status. Does not check the status or promote the block.
+    pub async fn validate_payload(&self, built: &BuiltPayload) -> Result<PayloadStatus> {
+        self.engine
+            .new_payload(
+                built.execution_payload.clone(),
+                vec![],
+                built.parent_beacon_block_root,
+                built.execution_requests.clone(),
+            )
+            .await
     }
 
     /// Build a block using the provided transactions and push it through the engine.

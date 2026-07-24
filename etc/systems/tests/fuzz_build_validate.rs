@@ -75,6 +75,54 @@ async fn fuzz_build_validate_deterministic() -> Result<()> {
     Ok(())
 }
 
+/// Prove-red: the validator path (`newPayload`) actually rejects a bad block, so a
+/// green build/validate run is meaningful rather than a rubber stamp. Builds a valid
+/// payload, confirms it validates, then validates a tampered version (a wrong
+/// `parent_beacon_block_root`, which makes the recomputed block hash mismatch the
+/// payload's claimed hash) and requires an INVALID result.
+#[tokio::test]
+async fn oracle_rejects_tampered_block() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let mut generator = FuzzTxGenerator::new(seed_from_env());
+    let mut nonces = [0u64; SENDERS.len()];
+
+    let mut txs = Vec::new();
+    for _ in 0..5 {
+        let shape = generator.next_shape();
+        txs.push(sign_tx(&SENDERS[shape.sender], &shape, nonces[shape.sender])?);
+        nonces[shape.sender] += 1;
+    }
+
+    let built = harness.build_payload(txs).await?;
+
+    // Sanity: the untampered payload is accepted.
+    let clean = harness.validate_payload(&built).await?;
+    assert!(!clean.status.is_invalid(), "untampered payload should validate, got {clean:?}");
+
+    // Inject a divergence: a wrong parent_beacon_block_root makes the recomputed block
+    // hash mismatch the payload's claimed hash, so the validator must reject it.
+    let bad_pbbr = if built.parent_beacon_block_root == B256::repeat_byte(0xAB) {
+        B256::ZERO
+    } else {
+        B256::repeat_byte(0xAB)
+    };
+    let tampered = harness
+        .engine()
+        .new_payload(
+            built.execution_payload.clone(),
+            vec![],
+            bad_pbbr,
+            built.execution_requests.clone(),
+        )
+        .await?;
+    assert!(
+        tampered.status.is_invalid(),
+        "validator accepted a tampered block (parent_beacon_block_root mismatch): {tampered:?}"
+    );
+
+    Ok(())
+}
+
 /// Observations recorded for each built block, used for invariants and the
 /// determinism comparison.
 #[derive(Debug, PartialEq, Eq)]
