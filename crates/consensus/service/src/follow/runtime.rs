@@ -8,13 +8,16 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::follow::{
-    engine::FollowEngine,
-    error::FollowError,
-    local::FollowLocalClient,
-    prefetcher::{PREFETCH_WINDOW, PayloadPrefetcher, PrefetchedPayload},
-    proof_gate::ProofGate,
-    source::RemoteClient,
+use crate::{
+    Metrics,
+    follow::{
+        engine::FollowEngine,
+        error::FollowError,
+        local::FollowLocalClient,
+        prefetcher::{PREFETCH_WINDOW, PayloadPrefetcher, PrefetchedPayload},
+        proof_gate::ProofGate,
+        source::RemoteClient,
+    },
 };
 
 const SAFETY_POLL_INTERVAL: Duration = Duration::from_secs(30);
@@ -226,6 +229,7 @@ where
         match Self::validate_l2_origin_against_local_l1(local, block).await {
             Ok(()) => {}
             Err(FollowError::LocalL1BlockUnavailable(l1_number)) => {
+                Metrics::follow_l1_origin_check_failures_total("unavailable").increment(1);
                 info!(
                     target: "follow",
                     l2_block = block.block_info.number,
@@ -234,6 +238,7 @@ where
                 );
             }
             Err(FollowError::LocalL1BlockFetch { number, source }) => {
+                Metrics::follow_l1_origin_check_failures_total("fetch_failed").increment(1);
                 info!(
                     target: "follow",
                     error = %source,
@@ -243,6 +248,7 @@ where
                 );
             }
             Err(error) => {
+                Metrics::follow_l1_origin_check_failures_total("not_canonical").increment(1);
                 warn!(
                     target: "follow",
                     error = %error,
