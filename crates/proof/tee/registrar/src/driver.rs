@@ -33,7 +33,8 @@ use crate::{
 pub const DEFAULT_MAX_CONCURRENCY: usize = 4;
 
 /// Default number of consecutive discovery cycles to protect last-known active
-/// signers for an instance that disappears from discovery or becomes unhealthy.
+/// signers for an instance that disappears from discovery or becomes unhealthy,
+/// and to defer orphan cleanup for newly observed unhealthy instances.
 ///
 /// Five cycles is roughly 2.5 minutes with the default 30 second poll interval.
 /// A shorter window is more vulnerable to transient discovery flakes; a longer
@@ -51,7 +52,8 @@ pub struct DriverConfig {
     /// Maximum number of instances resolved concurrently per discovery cycle.
     pub max_concurrency: usize,
     /// Number of consecutive discovery cycles to protect last-known active
-    /// signers for an instance missing from discovery or reported unhealthy.
+    /// signers for an instance missing from discovery or reported unhealthy,
+    /// and to defer orphan cleanup for newly observed unhealthy instances.
     /// Defaults to [`INSTANCE_CACHE_TTL_CYCLES`].
     pub instance_cache_ttl_cycles: u32,
 }
@@ -133,9 +135,15 @@ where
 
         let mut proof_tasks = ProofTaskSet::default();
         let mut last_known_active = HashMap::new();
+        let mut unhealthy_instance_ids_with_grace = HashSet::new();
 
         loop {
-            let discovery = self.discover_and_resolve(&mut last_known_active).await;
+            let discovery = self
+                .discover_and_resolve(
+                    &mut last_known_active,
+                    &mut unhealthy_instance_ids_with_grace,
+                )
+                .await;
 
             // Keep task state current before reconcile decisions each cycle.
             proof_tasks.reap_finished_tasks();
@@ -305,6 +313,7 @@ where
     async fn discover_and_resolve(
         &self,
         last_known_active: &mut HashMap<String, (Vec<Address>, u32)>,
+        unhealthy_instance_ids_with_grace: &mut HashSet<String>,
     ) -> Result<DiscoveryResolution> {
         let instances = self.discovery.discover_instances().await?;
         RegistrarMetrics::discovery_success_total().increment(1);
@@ -316,6 +325,18 @@ where
             .filter(|instance| instance.health_status == InstanceHealthStatus::Unhealthy)
             .map(|instance| instance.instance_id.clone())
             .collect();
+        unhealthy_instance_ids_with_grace
+            .retain(|instance_id| unhealthy_instance_ids.contains(instance_id));
+        for instance_id in &unhealthy_instance_ids {
+            // A process restart has no signer addresses to cache. Keep an
+            // empty cache entry for one unhealthy period so orphan cleanup is
+            // deferred by the configured grace TTL rather than running now.
+            if unhealthy_instance_ids_with_grace.insert(instance_id.clone())
+                && !last_known_active.contains_key(instance_id)
+            {
+                last_known_active.insert(instance_id.clone(), (Vec::new(), 0));
+            }
+        }
         RegistrarMetrics::discovered_instances_count().set(discovered_instance_ids.len() as f64);
         let mut resolution = DiscoveryResolution::default();
 
@@ -383,7 +404,7 @@ where
                     "instance unavailable, preserving last-known active signers"
                 );
                 resolution.active_signers.extend(addresses.iter().copied());
-                if !unhealthy_instance_ids.contains(instance_id) {
+                if addresses.is_empty() || !unhealthy_instance_ids.contains(instance_id) {
                     resolution.unresolved_instance_ids.insert(instance_id.clone());
                 }
                 true
@@ -552,7 +573,11 @@ mod tests {
 
     async fn discover_once(driver: &TestDriver) -> DiscoveryResolution {
         let mut last_known_active = HashMap::new();
-        driver.discover_and_resolve(&mut last_known_active).await.unwrap()
+        let mut unhealthy_instance_ids_with_grace = HashSet::new();
+        driver
+            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -661,8 +686,61 @@ mod tests {
         assert_eq!(resolution.registerable.len(), 1);
         assert_eq!(resolution.registerable[0].signer, addr_healthy);
         assert!(!resolution.active_signers.contains(&signer_from_private_key(&HARDHAT_KEY_0)));
-        assert!(resolution.unresolved_instance_ids.is_empty());
+        assert_eq!(resolution.unresolved_instance_ids, HashSet::from([format!("i-{EP1}")]));
         assert_eq!(*requested_public_keys.lock().unwrap(), vec![endpoint_url(EP2)]);
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_defers_orphan_dereg_for_initial_unhealthy_instance() {
+        const TEST_TTL_CYCLES: u32 = 2;
+
+        let instance = prover_instance(EP1, InstanceHealthStatus::Unhealthy);
+        let signer_client = MockEnclaveEndpointClient::default();
+        let requested_public_keys = Arc::clone(&signer_client.requested_public_keys);
+        let driver = cycle_driver_with_instance_cache_ttl(
+            vec![instance.clone()],
+            signer_client,
+            CancellationToken::new(),
+            TEST_TTL_CYCLES,
+        );
+        let mut last_known_active = HashMap::new();
+        let mut unhealthy_instance_ids_with_grace = HashSet::new();
+
+        for expected_ttl in 1..=TEST_TTL_CYCLES {
+            let resolution = driver
+                .discover_and_resolve(
+                    &mut last_known_active,
+                    &mut unhealthy_instance_ids_with_grace,
+                )
+                .await
+                .unwrap();
+
+            assert!(resolution.active_signers.is_empty());
+            assert_eq!(
+                resolution.unresolved_instance_ids,
+                HashSet::from([instance.instance_id.clone()])
+            );
+            assert_eq!(
+                last_known_active.get(&instance.instance_id).map(|(_, ttl)| *ttl),
+                Some(expected_ttl)
+            );
+        }
+
+        let resolution = driver
+            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
+            .await
+            .unwrap();
+
+        assert!(resolution.unresolved_instance_ids.is_empty());
+        assert!(!last_known_active.contains_key(&instance.instance_id));
+
+        let resolution = driver
+            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
+            .await
+            .unwrap();
+
+        assert!(resolution.unresolved_instance_ids.is_empty());
+        assert!(requested_public_keys.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -681,9 +759,16 @@ mod tests {
         );
         let mut last_known_active =
             HashMap::from([(instance.instance_id.clone(), (vec![signer], 0))]);
+        let mut unhealthy_instance_ids_with_grace = HashSet::new();
 
         for expected_ttl in 1..=TEST_TTL_CYCLES {
-            let resolution = driver.discover_and_resolve(&mut last_known_active).await.unwrap();
+            let resolution = driver
+                .discover_and_resolve(
+                    &mut last_known_active,
+                    &mut unhealthy_instance_ids_with_grace,
+                )
+                .await
+                .unwrap();
 
             assert!(resolution.active_signers.contains(&signer));
             assert!(resolution.unresolved_instance_ids.is_empty());
@@ -693,7 +778,10 @@ mod tests {
             );
         }
 
-        let resolution = driver.discover_and_resolve(&mut last_known_active).await.unwrap();
+        let resolution = driver
+            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
+            .await
+            .unwrap();
 
         assert!(resolution.active_signers.is_empty());
         assert!(resolution.unresolved_instance_ids.is_empty());
@@ -756,12 +844,21 @@ mod tests {
             TEST_TTL_CYCLES,
         );
         let mut last_known_active = HashMap::new();
+        let mut unhealthy_instance_ids_with_grace = HashSet::new();
 
-        first_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
+        first_cycle
+            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
+            .await
+            .unwrap();
 
         for expected_ttl in 1..=TEST_TTL_CYCLES {
-            let resolution =
-                missing_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
+            let resolution = missing_cycle
+                .discover_and_resolve(
+                    &mut last_known_active,
+                    &mut unhealthy_instance_ids_with_grace,
+                )
+                .await
+                .unwrap();
 
             assert!(resolution.registerable.is_empty());
             assert!(resolution.active_signers.contains(&signer_addr));
@@ -775,8 +872,10 @@ mod tests {
             );
         }
 
-        let expired_resolution =
-            missing_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
+        let expired_resolution = missing_cycle
+            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
+            .await
+            .unwrap();
 
         assert!(expired_resolution.active_signers.is_empty());
         assert!(expired_resolution.unresolved_instance_ids.is_empty());
@@ -792,21 +891,35 @@ mod tests {
             cycle_driver(vec![inst.clone()], signer_client.clone(), CancellationToken::new());
         let missing_cycle = cycle_driver(vec![], signer_client, CancellationToken::new());
         let mut last_known_active = HashMap::new();
+        let mut unhealthy_instance_ids_with_grace = HashSet::new();
 
-        present_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
-        missing_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
+        present_cycle
+            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
+            .await
+            .unwrap();
+        missing_cycle
+            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
+            .await
+            .unwrap();
         assert_eq!(last_known_active.get(&inst.instance_id).map(|(_, ttl)| *ttl), Some(1));
 
-        let refresh_resolution =
-            present_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
+        let refresh_resolution = present_cycle
+            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
+            .await
+            .unwrap();
 
         assert!(refresh_resolution.active_signers.contains(&signer_addr));
         assert!(refresh_resolution.unresolved_instance_ids.is_empty());
         assert_eq!(last_known_active.get(&inst.instance_id).map(|(_, ttl)| *ttl), Some(0));
 
         for expected_ttl in 1..=INSTANCE_CACHE_TTL_CYCLES {
-            let resolution =
-                missing_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
+            let resolution = missing_cycle
+                .discover_and_resolve(
+                    &mut last_known_active,
+                    &mut unhealthy_instance_ids_with_grace,
+                )
+                .await
+                .unwrap();
 
             assert!(resolution.active_signers.contains(&signer_addr));
             assert_eq!(
@@ -815,8 +928,10 @@ mod tests {
             );
         }
 
-        let expired_resolution =
-            missing_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
+        let expired_resolution = missing_cycle
+            .discover_and_resolve(&mut last_known_active, &mut unhealthy_instance_ids_with_grace)
+            .await
+            .unwrap();
 
         assert!(expired_resolution.active_signers.is_empty());
         assert!(expired_resolution.unresolved_instance_ids.is_empty());
