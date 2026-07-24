@@ -6824,6 +6824,7 @@ dependencies = [
  "base-prover-service-client",
  "base-prover-service-protocol",
  "chrono",
+ "clap",
  "crossterm",
  "dirs 6.0.0",
  "futures",

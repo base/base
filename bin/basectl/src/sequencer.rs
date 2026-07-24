@@ -10,22 +10,16 @@ use std::{
 use alloy_primitives::B256;
 use anyhow::Result;
 use basectl_cli::{
-    ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig, ConductorNodeStatus,
-    ConductorSource, JsonOutput, KeyValueTable, MonitoringConfig, SequencerCommandError,
-    StateConvergenceTimeoutError, fetch_sequencer_active, start_sequencer, stop_sequencer,
+    CommandOutcome, ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig,
+    ConductorNodeStatus, ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig,
+    SequencerCommandError, SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs,
+    SequencerStatusArgs, StateConvergenceTimeoutError, fetch_sequencer_active, find_conductor_node,
+    fmt_bool, fmt_u32, fmt_u64, resolve_conductor_source, start_sequencer, stop_sequencer,
 };
 use serde::Serialize;
 use tokio::time::{Instant, sleep, timeout};
 use tracing::{debug, info, warn};
 use url::Url;
-
-use crate::{
-    cli::{SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs, SequencerStatusArgs},
-    confirm::confirm_or_abort,
-    helpers::{
-        CommandOutcome, find_conductor_node, fmt_bool, fmt_u32, fmt_u64, resolve_conductor_source,
-    },
-};
 
 // Allow two full `admin_sequencerActive` polls plus the stabilization sleep,
 // with a little slack for scheduling jitter and connection setup.
@@ -152,7 +146,7 @@ async fn run_start(
     }
     let prompt =
         format!("Start sequencer on {} ({}) at {}? [y/N] ", node.name, node.cl_rpc, unsafe_head);
-    if !confirm_or_abort(&prompt, args.yes)? {
+    if !Confirm::prompt_or_abort(&prompt, args.yes)? {
         debug!(node = %node.name, cl_rpc = %node.cl_rpc, "sequencer start confirmation declined");
         return Ok(());
     }
@@ -215,7 +209,7 @@ async fn run_stop(
         return Err(error.into());
     }
     let prompt = format!("Stop sequencer on {} ({})? [y/N] ", node.name, node.cl_rpc);
-    if !confirm_or_abort(&prompt, args.yes)? {
+    if !Confirm::prompt_or_abort(&prompt, args.yes)? {
         debug!(node = %node.name, cl_rpc = %node.cl_rpc, "sequencer stop confirmation declined");
         return Ok(());
     }
@@ -799,7 +793,7 @@ mod tests {
     use alloy_primitives::B256;
     use basectl_cli::{
         ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus,
-        SEQUENCER_ACTIVE_RPC_TIMEOUT, SequencerCommandError,
+        SEQUENCER_ACTIVE_RPC_TIMEOUT, SequencerCommandError, find_conductor_node,
     };
     use serde_json::json;
     use tokio::time::{Duration, Instant};
@@ -812,7 +806,6 @@ mod tests {
         ensure_stop_allowed, parse_unsafe_head, resolve_start_hash,
         wait_for_expected_state_with_fetch,
     };
-    use crate::helpers::find_conductor_node;
 
     fn node(name: &str) -> ConductorNodeConfig {
         ConductorNodeConfig {

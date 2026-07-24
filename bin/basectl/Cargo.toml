@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 url = { workspace = true }
+clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 alloy-eips = { workspace = true }
@@ -23,7 +24,6 @@ base-consensus-peers = { workspace = true }
 base-prover-service-protocol = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }
 serde_json = { workspace = true, features = ["std"] }
-clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }

@@ -4,11 +4,9 @@ use std::io::{self, Write};
 
 use anyhow::Result;
 use basectl_cli::{
-    Doctor, DoctorArgsError, DoctorCheck, DoctorOptions, DoctorReport, DoctorStatus,
-    DoctorThresholds, JsonOutput, MonitoringConfig,
+    CommandOutcome, Doctor, DoctorArgs, DoctorArgsError, DoctorCheck, DoctorOptions, DoctorReport,
+    DoctorStatus, DoctorThresholds, JsonOutput, MonitoringConfig,
 };
-
-use crate::{cli::DoctorArgs, helpers::CommandOutcome};
 
 const ANSI_RED: &str = "\x1b[31m";
 const ANSI_YELLOW: &str = "\x1b[33m";
@@ -200,12 +198,11 @@ fn is_empty_value(value: &serde_json::Value) -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use basectl_cli::{DoctorArgsError, DoctorCheck, DoctorStatus};
+    use basectl_cli::{DoctorArgs, DoctorArgsError, DoctorCheck, DoctorStatus};
     use serde_json::json;
     use url::Url;
 
     use super::{ANSI_YELLOW, status_sort_key, validate_thresholds, write_check};
-    use crate::cli::DoctorArgs;
 
     #[test]
     fn pretty_check_includes_status_value_threshold_and_hint() {

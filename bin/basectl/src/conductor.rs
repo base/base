@@ -4,24 +4,15 @@ use std::io::{self, Write};
 
 use anyhow::Result;
 use basectl_cli::{
-    ConductorClusterSnapshot, ConductorCommandError, ConductorControl, ConductorFanoutReport,
-    ConductorNodeConfig, ConductorNodeFailure, ConductorNodeStatus, ConductorSource, JsonOutput,
-    KeyValueTable, MonitoringConfig,
+    CommandOutcome, ConductorClusterActionArgs, ConductorClusterSnapshot, ConductorCommandError,
+    ConductorCommands, ConductorControl, ConductorFanoutReport, ConductorLeaderArgs,
+    ConductorNodeActionArgs, ConductorNodeConfig, ConductorNodeFailure, ConductorNodeStatus,
+    ConductorSource, ConductorStatusArgs, Confirm, JsonOutput, KeyValueTable, MonitoringConfig,
+    find_conductor_node, fmt_bool, fmt_u32, fmt_u64, resolve_conductor_source,
 };
 use serde::Serialize;
 use tracing::warn;
 use url::Url;
-
-use crate::{
-    cli::{
-        ConductorClusterActionArgs, ConductorCommands, ConductorLeaderArgs,
-        ConductorNodeActionArgs, ConductorStatusArgs,
-    },
-    confirm::{confirm_or_abort, confirm_typed_or_abort},
-    helpers::{
-        CommandOutcome, find_conductor_node, fmt_bool, fmt_u32, fmt_u64, resolve_conductor_source,
-    },
-};
 
 #[derive(Debug, Clone, Copy)]
 enum NodeActionKind {
@@ -144,7 +135,7 @@ async fn run_transfer_leader(
         },
         |target| format!("Transfer conductor leadership to {target} for {}? [y/N] ", config.name),
     );
-    if !confirm_or_abort(&prompt, args.yes)? {
+    if !Confirm::prompt_or_abort(&prompt, args.yes)? {
         return Ok(CommandOutcome::Success);
     }
 
@@ -176,7 +167,7 @@ async fn run_node_action(
         node.name,
         node.conductor_rpc
     );
-    if !confirm_or_abort(&prompt, args.yes)? {
+    if !Confirm::prompt_or_abort(&prompt, args.yes)? {
         return Ok(CommandOutcome::Success);
     }
 
@@ -208,7 +199,7 @@ async fn run_cluster_action(
         node_scope.description(),
         names
     );
-    if !confirm_typed_or_abort(&prompt, &config.name, args.yes)? {
+    if !Confirm::typed_or_abort(&prompt, &config.name, args.yes)? {
         return Ok(CommandOutcome::Success);
     }
 
@@ -559,7 +550,8 @@ impl ConductorNodeJson {
 mod tests {
     use alloy_primitives::B256;
     use basectl_cli::{
-        ConductorClusterSnapshot, ConductorCommandError, ConductorNodeConfig, ConductorNodeFailure,
+        CommandOutcome, ConductorClusterSnapshot, ConductorCommandError, ConductorNodeConfig,
+        ConductorNodeFailure, find_conductor_node,
     };
     use serde_json::json;
     use url::Url;
@@ -568,7 +560,6 @@ mod tests {
         ConductorAction, ConductorActionJson, ConductorFanoutJson, ConductorNodeJson,
         ConductorStatusJson, fanout_requires_failure_exit,
     };
-    use crate::helpers::{CommandOutcome, find_conductor_node};
 
     fn node(name: &str) -> ConductorNodeConfig {
         ConductorNodeConfig {
