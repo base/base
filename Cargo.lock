@@ -5831,6 +5831,7 @@ dependencies = [
  "eyre",
  "jsonrpsee",
  "k256",
+ "reqwest 0.13.4",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
@@ -6488,6 +6489,16 @@ dependencies = [
  "base-common-rpc-types",
  "eyre",
  "serde_json",
+]
+
+[[package]]
+name = "base-trusted-proxy"
+version = "0.0.0"
+dependencies = [
+ "http 1.4.2",
+ "ipnet",
+ "thiserror 2.0.19",
+ "tracing",
 ]
 
 [[package]]
@@ -24692,10 +24703,10 @@ dependencies = [
  "axum 0.8.9",
  "backoff",
  "base-metrics",
+ "base-trusted-proxy",
  "brotli",
  "futures",
  "http 1.4.2",
- "ipnet",
  "metrics",
  "reqwest 0.13.4",
  "serde",
