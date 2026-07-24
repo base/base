@@ -515,6 +515,7 @@ mod tests {
                             aggregate_proposal: bad_proposal,
                             proposals: Vec::new(),
                             tee_kind: TeeKind::AwsNitro,
+                            tee_signer: None,
                         })),
                         ..Default::default()
                     },
