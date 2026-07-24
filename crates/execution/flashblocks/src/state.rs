@@ -16,6 +16,8 @@ use tokio::sync::{
     mpsc,
 };
 
+#[cfg(feature = "edge-measurement")]
+use crate::{EdgeMeasurementGlobal, PendingMetadataRegistryV2};
 use crate::{
     FlashblocksAPI, FlashblocksReceiver, PendingBlocks, PendingFrameObserver,
     processor::{StateProcessor, StateUpdate},
@@ -86,6 +88,12 @@ impl FlashblocksState {
     pub fn set_pending_frame_observer(&self, observer: Option<Arc<dyn PendingFrameObserver>>) {
         *self.pending_frame_observer.write().unwrap_or_else(|poisoned| poisoned.into_inner()) =
             observer;
+    }
+
+    /// Returns the feature-private pending metadata registry used by the processor and trader CLI.
+    #[cfg(feature = "edge-measurement")]
+    pub fn edge_measurement_registry(&self) -> Arc<PendingMetadataRegistryV2> {
+        EdgeMeasurementGlobal::recorder().registry()
     }
 
     /// Handles a canonical block being received.

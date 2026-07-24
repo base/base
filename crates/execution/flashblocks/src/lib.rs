@@ -21,6 +21,22 @@ pub use error::{
     BuildError, ExecutionError, ProtocolError, ProviderError, Result, StateProcessorError,
 };
 
+#[cfg(feature = "edge-measurement")]
+mod edge_measurement;
+#[cfg(feature = "edge-measurement")]
+pub use edge_measurement::{
+    CliRegistryLookupFailed, CliRegistryLookupFailureReason, DecodedFlashblockKeyV1,
+    EdgeMeasurementGlobal, EdgeMeasurementRecorderStateV1, EdgeMeasurementRecorderV1,
+    PENDING_REGISTRY_CAPACITY_V2, PayloadFirstKeyV1, PayloadFirstObservationV1,
+    PendingCliTerminalV2, PendingMetadataRegistryV2, PendingPublicSubsetHasherV1,
+    PendingRegistrationAttemptV2, PendingRegistrationDispositionV2, PendingRegistrationFailure,
+    PendingRegistryCountersV2, PendingRegistryEntryV2, PendingRegistryError,
+    PendingRegistrySnapshotV2, PendingRegistryStateV2, PendingSendDispositionV2,
+    PendingSnapshotIdentityV2, PendingSnapshotMetadataV2, PendingTerminalRecordV2,
+    ProducerEpochCutoffV1, SourceConnectionRecordV1, SourceConnectionTransitionV1,
+    WireObservationV1,
+};
+
 mod metrics;
 pub use metrics::Metrics;
 

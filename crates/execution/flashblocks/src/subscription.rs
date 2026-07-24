@@ -11,6 +11,8 @@ use tokio::{
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use url::Url;
 
+#[cfg(feature = "edge-measurement")]
+use crate::{EdgeMeasurementGlobal, SourceConnectionTransitionV1};
 use crate::{FlashblocksReceiver, metrics::Metrics};
 
 #[derive(Debug)]
@@ -56,29 +58,77 @@ where
 
         tokio::spawn(async move {
             let mut backoff = Duration::from_secs(1);
+            #[cfg(feature = "edge-measurement")]
+            let mut direct_reconnect = false;
+            #[cfg(feature = "edge-measurement")]
+            let mut backoff_reconnect = false;
+            #[cfg(feature = "edge-measurement")]
+            let recorder = EdgeMeasurementGlobal::recorder();
+            #[cfg(feature = "edge-measurement")]
+            recorder.connection_transition(SourceConnectionTransitionV1::OwnerStart);
+            #[cfg(feature = "edge-measurement")]
+            recorder
+                .connection_transition(SourceConnectionTransitionV1::InitialConnectAttemptStarted);
 
             loop {
+                #[cfg(feature = "edge-measurement")]
+                if direct_reconnect {
+                    recorder.connection_transition(
+                        SourceConnectionTransitionV1::DirectReconnectAttemptStarted,
+                    );
+                } else if backoff_reconnect {
+                    recorder.connection_transition(
+                        SourceConnectionTransitionV1::BackoffReconnectAttemptStarted,
+                    );
+                }
+                #[cfg(feature = "edge-measurement")]
+                {
+                    direct_reconnect = false;
+                    backoff_reconnect = false;
+                }
+
                 match connect_async(ws_url.as_str()).await {
                     Ok((ws_stream, _)) => {
                         backoff = Duration::from_secs(1);
                         info!(message = "WebSocket connection established");
+                        #[cfg(feature = "edge-measurement")]
+                        recorder.connection_transition(SourceConnectionTransitionV1::Established);
 
                         let mut ping_interval =
                             interval_at(Instant::now() + ping_period, ping_period);
                         let mut awaiting_pong_resp = false;
+                        let mut read_open = true;
 
                         let (mut write, mut read) = ws_stream.split();
 
                         'conn: loop {
                             tokio::select! {
-                                Some(msg) = read.next() => {
+                                msg = read.next(), if read_open => {
+                                    let Some(msg) = msg else {
+                                        read_open = false;
+                                        #[cfg(feature = "edge-measurement")]
+                                        recorder.connection_transition(
+                                            SourceConnectionTransitionV1::ReadHalfClosedWaitingForControl,
+                                        );
+                                        continue;
+                                    };
                                     Metrics::upstream_messages().increment(1);
 
                                     match msg {
                                         Ok(msg @ (Message::Binary(_) | Message::Text(_))) => {
+                                            #[cfg(feature = "edge-measurement")]
+                                            recorder.connection_transition(
+                                                SourceConnectionTransitionV1::DataMessageYielded,
+                                            );
                                             let bytes = msg.into_data();
+                                            #[cfg(feature = "edge-measurement")]
+                                            let observation = recorder.observe_wire(&bytes);
                                             match Flashblock::try_decode_message(bytes) {
                                                 Ok(payload) => {
+                                                    #[cfg(feature = "edge-measurement")]
+                                                    if let Some(observation) = observation {
+                                                        _ = recorder.decoded_flashblock(observation, &payload);
+                                                    }
                                                     let _ = sender.send(ActorMessage::BestPayload { payload }).await.map_err(|e| {
                                                         error!(message = "Failed to publish message to channel", error = %e);
                                                     });
@@ -92,37 +142,98 @@ where
                                             }
                                         }
                                         Ok(Message::Close(_)) => {
+                                            #[cfg(feature = "edge-measurement")]
+                                            recorder.connection_transition(
+                                                SourceConnectionTransitionV1::CloseFrameReceived,
+                                            );
                                             info!(message = "WebSocket connection closed by upstream");
+                                            #[cfg(feature = "edge-measurement")]
+                                            recorder.connection_transition(
+                                                SourceConnectionTransitionV1::EstablishedClosedByClose,
+                                            );
+                                            #[cfg(feature = "edge-measurement")]
+                                            {
+                                                direct_reconnect = true;
+                                            }
                                             break;
                                         }
+                                        Ok(Message::Ping(_)) => {
+                                            #[cfg(feature = "edge-measurement")]
+                                            recorder.connection_transition(
+                                                SourceConnectionTransitionV1::ControlPingReceived,
+                                            );
+                                        }
                                         Ok(Message::Pong(data)) => {
+                                            #[cfg(feature = "edge-measurement")]
+                                            recorder.connection_transition(
+                                                SourceConnectionTransitionV1::ControlPongReceived,
+                                            );
                                             trace!(target: "flashblocks_rpc::subscription",
                                                 ?data,
                                                 "Received pong from upstream"
                                             );
-                                            awaiting_pong_resp = false
+                                            awaiting_pong_resp = false;
+                                            #[cfg(feature = "edge-measurement")]
+                                            recorder.connection_transition(
+                                                SourceConnectionTransitionV1::PongObserved,
+                                            );
                                         }
                                         Err(e) => {
+                                            #[cfg(feature = "edge-measurement")]
+                                            recorder.connection_transition(
+                                                SourceConnectionTransitionV1::ReadError,
+                                            );
                                             Metrics::upstream_errors().increment(1);
                                             error!(
                                                 message = "error receiving message",
                                                 error = %e
                                             );
+                                            #[cfg(feature = "edge-measurement")]
+                                            recorder.connection_transition(
+                                                SourceConnectionTransitionV1::EstablishedClosedByReadError,
+                                            );
+                                            #[cfg(feature = "edge-measurement")]
+                                            {
+                                                direct_reconnect = true;
+                                            }
                                             break;
                                         }
                                         _ => {}
                                     }
                                 },
                                 _ = ping_interval.tick() => {
+                                    #[cfg(feature = "edge-measurement")]
+                                    recorder.connection_transition(
+                                        SourceConnectionTransitionV1::OutgoingPingDue,
+                                    );
                                     if awaiting_pong_resp {
+                                        #[cfg(feature = "edge-measurement")]
+                                        recorder.connection_transition(
+                                            SourceConnectionTransitionV1::NoPongTimeout,
+                                        );
                                           warn!(
                                             target: "flashblocks_rpc::subscription",
                                             ?backoff,
                                             timeout = ?ping_period,
                                             "No pong response from upstream, reconnecting",
                                         );
-
+                                        #[cfg(feature = "edge-measurement")]
+                                        recorder.connection_transition(
+                                            SourceConnectionTransitionV1::EstablishedClosedByNoPong,
+                                        );
+                                        #[cfg(feature = "edge-measurement")]
+                                        recorder.connection_transition(
+                                            SourceConnectionTransitionV1::BackoffStarted,
+                                        );
                                         backoff = Self::sleep(backoff).await;
+                                        #[cfg(feature = "edge-measurement")]
+                                        recorder.connection_transition(
+                                            SourceConnectionTransitionV1::BackoffCompleted,
+                                        );
+                                        #[cfg(feature = "edge-measurement")]
+                                        {
+                                            backoff_reconnect = true;
+                                        }
                                         break 'conn;
                                     }
 
@@ -131,15 +242,44 @@ where
                                     );
 
                                     if let Err(error) = write.send(Message::Ping(Default::default())).await {
+                                        #[cfg(feature = "edge-measurement")]
+                                        recorder.connection_transition(
+                                            SourceConnectionTransitionV1::PingWriteFailure,
+                                        );
                                         warn!(
                                             target: "flashblocks_rpc::subscription",
                                             ?backoff,
                                             %error,
                                             "WebSocket connection lost, reconnecting",
                                         );
-
+                                        #[cfg(feature = "edge-measurement")]
+                                        recorder.connection_transition(
+                                            SourceConnectionTransitionV1::EstablishedClosedByPingWriteFailure,
+                                        );
+                                        #[cfg(feature = "edge-measurement")]
+                                        recorder.connection_transition(
+                                            SourceConnectionTransitionV1::BackoffStarted,
+                                        );
                                         backoff = Self::sleep(backoff).await;
+                                        #[cfg(feature = "edge-measurement")]
+                                        recorder.connection_transition(
+                                            SourceConnectionTransitionV1::BackoffCompleted,
+                                        );
+                                        #[cfg(feature = "edge-measurement")]
+                                        {
+                                            backoff_reconnect = true;
+                                        }
                                         break 'conn;
+                                    }
+                                    #[cfg(feature = "edge-measurement")]
+                                    recorder.connection_transition(
+                                        SourceConnectionTransitionV1::OutgoingPingWritten,
+                                    );
+                                    #[cfg(feature = "edge-measurement")]
+                                    if !read_open {
+                                        recorder.connection_transition(
+                                            SourceConnectionTransitionV1::OutgoingPingWrittenWhileReadHalfClosed,
+                                        );
                                     }
                                     awaiting_pong_resp = true
                                 }
@@ -152,8 +292,20 @@ where
                             backoff_duration = ?backoff,
                             error = %e
                         );
-
+                        #[cfg(feature = "edge-measurement")]
+                        recorder
+                            .connection_transition(SourceConnectionTransitionV1::ConnectFailure);
+                        #[cfg(feature = "edge-measurement")]
+                        recorder
+                            .connection_transition(SourceConnectionTransitionV1::BackoffStarted);
                         backoff = Self::sleep(backoff).await;
+                        #[cfg(feature = "edge-measurement")]
+                        recorder
+                            .connection_transition(SourceConnectionTransitionV1::BackoffCompleted);
+                        #[cfg(feature = "edge-measurement")]
+                        {
+                            backoff_reconnect = true;
+                        }
                         continue;
                     }
                 }

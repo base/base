@@ -30,6 +30,7 @@ clap.workspace = true
 [features]
 b5-dormant-presign = [ "base-execution-cli/b5-dormant-presign" ]
 default = [ "jemalloc" ]
+edge-measurement = [ "base-execution-cli/edge-measurement" ]
 jemalloc = [ "base-execution-cli/jemalloc", "reth-cli-util/jemalloc" ]
 t4a-shadow = [ "base-execution-cli/t4a-shadow" ]
 t4b-shadow = [ "base-execution-cli/t4b-shadow" ]

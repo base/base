@@ -39,6 +39,8 @@ use crate::{
         ReorgDetector, SequenceValidationResult,
     },
 };
+#[cfg(feature = "edge-measurement")]
+use crate::{EdgeMeasurementGlobal, PendingRegistrationAttemptV2};
 
 type PendingExecutionDb = State<StateProviderDatabase<StateProviderBox>>;
 
@@ -75,15 +77,27 @@ pub struct StateProcessor<Client> {
 struct ProcessedFlashblock {
     pending_blocks: Option<Arc<PendingBlocks>>,
     advanced: bool,
+    #[cfg(feature = "edge-measurement")]
+    measurement_registration: Option<PendingRegistrationAttemptV2>,
 }
 
 impl ProcessedFlashblock {
-    fn advanced(pending_blocks: Option<Arc<PendingBlocks>>) -> Self {
-        Self { pending_blocks, advanced: true }
+    const fn advanced(pending_blocks: Option<Arc<PendingBlocks>>) -> Self {
+        Self {
+            pending_blocks,
+            advanced: true,
+            #[cfg(feature = "edge-measurement")]
+            measurement_registration: None,
+        }
     }
 
-    fn unchanged(pending_blocks: Option<Arc<PendingBlocks>>) -> Self {
-        Self { pending_blocks, advanced: false }
+    const fn unchanged(pending_blocks: Option<Arc<PendingBlocks>>) -> Self {
+        Self {
+            pending_blocks,
+            advanced: false,
+            #[cfg(feature = "edge-measurement")]
+            measurement_registration: None,
+        }
     }
 }
 
@@ -239,17 +253,50 @@ where
         // thread (multi_thread runtime; borrows stay on-thread, no clone).
         match tokio::task::block_in_place(|| {
             let processed = self.process_flashblock(prev_pending_blocks, &flashblock)?;
+            #[cfg(feature = "edge-measurement")]
+            let mut processed = processed;
             let observer = self
                 .pending_frame_observer
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .clone();
             notify_processed_pending_frame_observer(observer, &processed);
-            Ok(processed.pending_blocks)
+            #[cfg(feature = "edge-measurement")]
+            if processed.advanced
+                && let Some(ref pending) = processed.pending_blocks
+            {
+                let recorder = EdgeMeasurementGlobal::recorder();
+                let source_generation = recorder.take_source_generation(&flashblock);
+                processed.measurement_registration =
+                    Some(recorder.registry().register(pending, source_generation));
+            }
+            Ok(processed)
         }) {
-            Ok(new_pending_blocks) => {
+            Ok(processed) => {
+                let new_pending_blocks = processed.pending_blocks;
                 if let Some(ref pb) = new_pending_blocks {
-                    _ = self.sender.send(Arc::clone(pb));
+                    #[cfg(feature = "edge-measurement")]
+                    {
+                        let send_result = self.sender.send(Arc::clone(pb));
+                        if let Some(registration) = processed.measurement_registration {
+                            let receiver_count = send_result.as_ref().ok().copied();
+                            if EdgeMeasurementGlobal::recorder()
+                                .registry()
+                                .record_send(registration, receiver_count)
+                                .is_err()
+                            {
+                                warn!(
+                                    message =
+                                        "edge measurement send disposition could not be recorded"
+                                );
+                            }
+                        }
+                        _ = send_result;
+                    }
+                    #[cfg(not(feature = "edge-measurement"))]
+                    {
+                        _ = self.sender.send(Arc::clone(pb));
+                    }
                 }
                 self.pending_blocks.swap(new_pending_blocks);
                 Metrics::block_processing_duration().record(start_time.elapsed());
