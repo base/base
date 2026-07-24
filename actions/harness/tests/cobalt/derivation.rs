@@ -87,6 +87,11 @@ async fn eip8130_batch_is_dropped_before_cobalt() {
     chain.push(h.l1.tip().clone());
     node.run_until_idle().await;
 
+    // The pipeline force-includes slot 3 as a deposit-only block and continues
+    // deriving deposit-only blocks for the remaining slots in the available L1
+    // range, so the safe head advances past block 3 (to 5 here). The exact
+    // over-derivation count is incidental; this test's precise assertion is that
+    // block 3 is deposit-only (below). Mirrors `upgrade/operator_fees.rs`.
     assert!(
         node.l2_safe_number() >= 3,
         "safe head must advance past block 3 via a deposit-only block"
