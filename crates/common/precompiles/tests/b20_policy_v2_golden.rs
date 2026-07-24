@@ -1,12 +1,15 @@
-//! Golden tests pinning Policy Registry **V1** behavior of the B-20 precompile.
+//! Golden tests pinning Policy Registry **V2** behavior of the B-20 precompile.
 //!
-//! These are authored and pinned against the shipped **v1.1.1** policy-registry implementation;
-//! the conversion to the versioned precompile structure (BOP-420) is behavior-preserving and
-//! continues to satisfy every pin below unchanged.
+//! V2 is activated at Cobalt as a behavior-preserving copy of V1 (a scaffold seam for future
+//! Cobalt-era changes). Because its logic and storage layout are identical to V1, every op
+//! produces the same registry state, events, gas footprint, and per-case storage hash — so this
+//! suite reuses V1's pinned roots verbatim. It exists so V2's behavior is locked independently:
+//! a future edit that alters V2 must re-bless these roots, and can never silently diverge under
+//! V1's frozen pins.
 //!
 //! Every op (policy creation, admin lifecycle, allow/block membership, and evaluation reads) is
 //! driven through the real `PolicyRegistryStorage` entry (version-resolver-gated `dispatch`,
-//! `BaseUpgrade::Beryl` -> `PolicyVersion::V1`) over `HashMapStorageProvider`.
+//! `BaseUpgrade::Cobalt` -> `PolicyVersion::V2`) over `HashMapStorageProvider`.
 //! Each case asserts:
 //!   1. exact returned ABI bytes (or the typed revert),
 //!   2. resulting registry state,
@@ -21,7 +24,7 @@
 //! ## Blessing storage hashes
 //! State-hash constants below are pinned. To (re)generate them after an intentional change, run:
 //! `BLESS_GOLDEN=1 cargo test -p base-common-precompiles --features test-utils \
-//!    --test b20_policy_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
+//!    --test b20_policy_v2_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
 use IPolicyRegistry::PolicyType;
 use alloy_primitives::{Address, B256, Bytes, LogData, U256, b256, keccak256};
@@ -49,6 +52,9 @@ const BLOCKLIST_ID: u64 = 2;
 const ALLOWLIST_ID: u64 = (1u64 << 56) | 2;
 
 // --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
+//
+// Identical to V1's roots: V2 is a behavior- and layout-preserving copy, and the state hash is
+// scoped to the registry address, so dispatching V2 at Cobalt yields the same snapshot as V1.
 
 const ROOT_CREATE_BLOCKLIST: B256 =
     b256!("5ff0dab60b6daec34cbc6135f09097ddbbe31c6f662d4cdd9c6c4c7b5a589556");
@@ -104,7 +110,7 @@ fn call_policy(
 ) -> (bool, Bytes) {
     storage.set_caller(caller);
     StorageCtx::enter(storage, |ctx| {
-        PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata, BaseUpgrade::Cobalt)
     })
     .map(|out| (out.is_revert(), out.bytes))
     .expect("dispatch must not fatally error")
@@ -713,7 +719,7 @@ fn golden_reverts_nonzero_value() {
     s.set_caller(ALICE);
     s.set_call_value(U256::ONE);
     let (rev, bytes) = StorageCtx::enter(&mut s, |ctx| {
-        PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata, BaseUpgrade::Cobalt)
     })
     .map(|out| (out.is_revert(), out.bytes))
     .expect("dispatch must not fatally error");
@@ -757,7 +763,7 @@ fn gas(
     s.set_caller(caller);
     s.reset_counters();
     StorageCtx::enter(&mut s, |ctx| {
-        PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata, BaseUpgrade::Cobalt)
     })
     .expect("gas-footprint op must succeed");
     (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
@@ -823,7 +829,7 @@ fn golden_gas_footprints() {
 /// Compile-time coverage checklist — never called; its exhaustive `match` (no `_` arm) names the
 /// golden `#[test]` fn(s) pinning each op. Adding an ABI op fails the build until a golden is added.
 #[allow(dead_code)]
-fn v1_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
+fn v2_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
     use IPolicyRegistry::IPolicyRegistryCalls as C;
 
     fn covered(_goldens: &[fn()]) {}

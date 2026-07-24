@@ -7,11 +7,8 @@ base_metrics::define_metrics! {
     #[describe("Challenger is running")]
     up: gauge,
 
-    #[describe("Total number of game indices evaluated during scanning, including tracked games")]
+    #[describe("Total number of factory game indices evaluated during scanning")]
     games_scanned_total: counter,
-
-    #[describe("Number of in-progress game indices retained by the game scanner")]
-    scan_tracked_in_progress: gauge,
 
     #[describe("Latest factory index scanned by the game scanner")]
     scan_head: gauge,

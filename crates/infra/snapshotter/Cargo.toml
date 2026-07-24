@@ -20,8 +20,10 @@ rayon = { workspace = true }
 bollard = { workspace = true }
 futures = { workspace = true }
 tracing = { workspace = true }
+humantime = { workspace = true }
 alloy-eips = { workspace = true }
 async-trait = { workspace = true }
+human_bytes = { workspace = true }
 serde_json = { workspace = true }
 reth-cli-commands = { workspace = true }
 alloy-provider = { workspace = true, features = ["reqwest"] }

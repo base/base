@@ -103,7 +103,7 @@ impl SequencerCommand {
                 .with_da_config(da_config)
                 .with_gas_limit_config(gas_limit_config)
                 .with_manifest_precheck_enabled(manifest_precheck_enabled)
-                .with_service_builder(FlashblocksServiceBuilder(builder_config));
+                .with_service_builder(FlashblocksServiceBuilder::new(builder_config));
             runner.install_ext::<MeteringStoreExtension>(metering_provider);
             runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });
             runner.install_ext::<BuilderApiExtension>(());

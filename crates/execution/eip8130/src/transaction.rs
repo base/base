@@ -30,6 +30,10 @@ pub struct AppliedTransaction {
     /// `AccountConfiguration` *storage* transitions are already written to
     /// `storage` by the time this is returned.
     pub applied: AppliedAccountChanges,
+    /// Number of empty zero-to-zero revoke slots resolved during application
+    /// (see [`crate::IntrinsicGasInput::revoke_discount_slots`]). Threaded into
+    /// intrinsic gas to discount the over-conservative three-reset revoke price.
+    pub revoke_discount_slots: u32,
 }
 
 /// Authorizes and applies a signed EIP-8130 transaction against a mutable
@@ -102,6 +106,7 @@ impl TransactionAuthorizer {
         //       one delegation) are enforced inline.
         let mut applied = AppliedAccountChanges::default();
         let mut config_changes = Vec::new();
+        let mut revoke_discount_slots = 0u32;
         for (index, change) in signed.tx().account_changes.iter().enumerate() {
             match change {
                 AccountChange::Create(entry) => {
@@ -127,24 +132,34 @@ impl TransactionAuthorizer {
                     applied.created = Some(created);
                 }
                 AccountChange::ConfigChange(cc) => {
-                    // Authorize against the current (post prior-apply) state: the
-                    // channel sequence is read live, so same-channel entries in
-                    // one transaction are checked against the value left by the
-                    // preceding applied entry.
-                    let resolved = ConfigChangeAuthorizer::authorize(
+                    // Load the evolving packed state once for this change. The
+                    // same decoded value drives lock/sequence authorization,
+                    // inline-self authentication and mutation, and the final
+                    // sequence/self-state write.
+                    let mut state = storage
+                        .get_account_state(sender_account)
+                        .map_err(AuthorizeError::Storage)?;
+                    let resolved = ConfigChangeAuthorizer::authorize_with_account_state(
                         storage,
                         sender_account,
                         local_chain_id,
                         cc,
                         now,
+                        &state,
                     )?;
                     config_changes.push(resolved);
-                    AccountChangeApplier::apply_config_change(
-                        storage,
-                        sender_account,
-                        &cc.actor_changes,
-                        cc.chain_id,
-                    )?;
+                    revoke_discount_slots = revoke_discount_slots.saturating_add(
+                        AccountChangeApplier::apply_config_change_with_account_state(
+                            storage,
+                            sender_account,
+                            &cc.actor_changes,
+                            cc.chain_id,
+                            &mut state,
+                        )?,
+                    );
+                    storage
+                        .set_account_state(sender_account, state)
+                        .map_err(ApplyError::Storage)?;
                 }
                 AccountChange::Delegation(Delegation { target }) => {
                     if applied.delegation.is_some() {
@@ -167,7 +182,7 @@ impl TransactionAuthorizer {
             Self::authorize_delegation(signed, storage, now, &actors.sender)?;
         }
 
-        Ok(AppliedTransaction { actors, config_changes, applied })
+        Ok(AppliedTransaction { actors, config_changes, applied, revoke_discount_slots })
     }
 
     /// Requires a delegation's final sender to be the unlocked account's native

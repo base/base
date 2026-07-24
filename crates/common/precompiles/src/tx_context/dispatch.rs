@@ -11,28 +11,37 @@ use crate::{
     tx_context::storage::TxContextStorage,
 };
 
-/// Per-word calldata gas charge (`G_SHA3WORD`), matching common Base precompile dispatch.
-const CALLDATA_WORD_GAS: u64 = 6;
+/// EIP-8130 getter output price per 32-byte word: the EVM copy-word cost
+/// (`W_copy`, revm's `gas::COPY`). Unlike the sibling nonce-manager dispatcher —
+/// which prices *input* calldata words at `G_SHA3WORD` (see
+/// [`crate::nonce::dispatch`]) — the transaction-context getters price the
+/// *returned* words per the EIP-8130 output schedule, so the two dispatchers use
+/// deliberately different word costs. `gas_matches_evm_reference` pins this to
+/// revm's canonical constant as a drift tripwire.
+const OUTPUT_WORD_GAS: u64 = 3;
 
 impl TxContextStorage<'_> {
-    /// ABI-dispatches transaction context calldata.
+    /// ABI-dispatches transaction context calldata and prices encoded output.
+    ///
+    /// EIP-8130 charges [`OUTPUT_WORD_GAS`] per 32 bytes returned in addition to
+    /// the precompile call's base cost. The backing transient read is unmetered,
+    /// so no TLOAD opcode charge is exposed to the caller.
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         // Transaction-context getters are nonpayable; reject attached ETH first.
         if !ctx.call_value().is_zero() {
             return BasePrecompileError::revert(ITransactionContext::NonPayable {})
                 .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
         }
-        let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS);
-        if let Err(error) = ctx.deduct_gas(calldata_cost) {
-            return error.into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
-        }
+        let result = self.inner(calldata).and_then(|output| {
+            let words = u64::try_from(output.len().div_ceil(32))
+                .map_err(|_| BasePrecompileError::OutOfGas)?;
+            let output_cost =
+                words.checked_mul(OUTPUT_WORD_GAS).ok_or(BasePrecompileError::OutOfGas)?;
+            ctx.deduct_gas(output_cost)?;
+            Ok(output)
+        });
         // These getters never produce a gas refund, so the refund arg is 0.
-        self.inner(calldata).into_precompile_result(
-            ctx.gas_used(),
-            ctx.state_gas_used(),
-            0,
-            |output| output,
-        )
+        result.into_precompile_result(ctx.gas_used(), ctx.state_gas_used(), 0, |output| output)
     }
 
     fn inner(&self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
@@ -109,6 +118,35 @@ mod tests {
                 .unwrap(),
             SENDER_ACTOR_ID
         );
+    }
+
+    /// Drift tripwire: `OUTPUT_WORD_GAS` is the EVM copy-word cost (`W_copy`). If
+    /// revm reprices `gas::COPY`, this fails so the output-word charge is
+    /// re-decided deliberately rather than tracked silently (mirrors the
+    /// `Eip8130GasSchedule` primitive tripwire).
+    #[test]
+    fn gas_matches_evm_reference() {
+        assert_eq!(super::OUTPUT_WORD_GAS, revm::interpreter::gas::COPY);
+    }
+
+    #[test]
+    fn getters_charge_only_three_gas_for_one_output_word() {
+        let calls = [
+            ITransactionContext::getTransactionSenderCall {}.abi_encode(),
+            ITransactionContext::getTransactionPayerCall {}.abi_encode(),
+            ITransactionContext::getTransactionSenderActorIdCall {}.abi_encode(),
+        ];
+
+        for calldata in calls {
+            let mut storage = HashMapStorageProvider::new(1);
+            let output = StorageCtx::enter(&mut storage, |ctx| {
+                TxContextStorage::new(ctx).dispatch(ctx, &calldata)
+            })
+            .expect("getter should succeed");
+
+            assert_eq!(output.bytes.len(), 32);
+            assert_eq!(storage.gas_deducted(), super::OUTPUT_WORD_GAS);
+        }
     }
 
     #[test]

@@ -8,9 +8,10 @@ their signers on-chain via `TEEProverRegistry`.
 
 ## Discovery Cache TTL
 
-When an instance disappears from otherwise successful AWS/ALB discovery output,
-the registrar preserves its last-known active signers for
-`--instance-cache-ttl-cycles` cycles (`BASE_REGISTRAR_INSTANCE_CACHE_TTL_CYCLES`,
-default `5`). Shorter TTLs can speed up cleanup for genuinely removed instances
-but increase exposure to transient discovery flakes; longer TTLs protect against
-flakes but delay real cleanup.
+When an instance disappears from otherwise successful AWS/ALB discovery output
+or is reported unhealthy, the registrar preserves its last-known active signers
+for `--instance-cache-ttl-cycles` cycles
+(`BASE_REGISTRAR_INSTANCE_CACHE_TTL_CYCLES`, default `5`). Shorter TTLs can
+speed up cleanup for genuinely removed instances but increase exposure to
+transient AWS/ALB flakes; longer TTLs protect against flakes but delay real
+cleanup.

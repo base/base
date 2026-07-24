@@ -228,6 +228,10 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         Ok(self.internals.tload(address, key))
     }
 
+    fn tload_unmetered(&mut self, address: Address, key: U256) -> Result<U256> {
+        Ok(self.internals.tload(address, key))
+    }
+
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         if self.is_static {
             return Err(BasePrecompileError::StaticCallViolation);
@@ -507,6 +511,20 @@ mod tests {
             provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)),
             Err(BasePrecompileError::StaticCallViolation),
         );
+    }
+
+    #[test]
+    fn unmetered_tload_does_not_expose_opcode_gas() {
+        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+        let warm_read_cost = gas_params.warm_storage_read_cost();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider = make_evm_provider(&mut ctx, gas_params, 1_000_000, false);
+
+        assert_eq!(provider.tload_unmetered(Address::ZERO, U256::ZERO).unwrap(), U256::ZERO);
+        assert_eq!(provider.gas_used(), 0);
+
+        assert_eq!(provider.tload(Address::ZERO, U256::ZERO).unwrap(), U256::ZERO);
+        assert_eq!(provider.gas_used(), warm_read_cost);
     }
 
     #[test]

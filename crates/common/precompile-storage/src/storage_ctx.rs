@@ -146,6 +146,13 @@ impl<'a> StorageCtx<'a> {
         self.try_with_storage(|s| s.tload(address, key))
     }
 
+    /// Reads transient storage without exposing a TLOAD opcode charge.
+    ///
+    /// Use this only when the native operation applies its own gas schedule.
+    pub fn tload_unmetered(&self, address: Address, key: U256) -> Result<U256> {
+        self.try_with_storage(|s| s.tload_unmetered(address, key))
+    }
+
     /// Performs an SSTORE (persistent storage write).
     pub fn sstore(&self, address: Address, key: U256, value: U256) -> Result<()> {
         self.try_with_storage(|s| s.sstore(address, key, value))
