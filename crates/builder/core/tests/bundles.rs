@@ -15,7 +15,8 @@ async fn insert_bundle_transaction<P: Protocol>(
     pool: &Arc<dyn ExternalTransactionPool>,
     driver: &ChainDriver<P>,
     signer: &PrivateKeySigner,
-    target_block_number: Option<u64>,
+    min_block_number: Option<u64>,
+    max_block_number: Option<u64>,
     min_timestamp: Option<u64>,
     max_timestamp: Option<u64>,
 ) -> eyre::Result<TxHash> {
@@ -24,9 +25,8 @@ async fn insert_bundle_transaction<P: Protocol>(
         driver,
         signer,
         None,
-        target_block_number,
-        min_timestamp,
-        max_timestamp,
+        (min_block_number, max_block_number),
+        (min_timestamp, max_timestamp),
     )
     .await
 }
@@ -36,9 +36,8 @@ async fn insert_bundle_transaction_with_nonce<P: Protocol>(
     driver: &ChainDriver<P>,
     signer: &PrivateKeySigner,
     nonce: Option<u64>,
-    target_block_number: Option<u64>,
-    min_timestamp: Option<u64>,
-    max_timestamp: Option<u64>,
+    block_numbers: (Option<u64>, Option<u64>),
+    timestamps: (Option<u64>, Option<u64>),
 ) -> eyre::Result<TxHash> {
     let mut builder = driver.create_transaction().with_signer(signer).random_valid_transfer();
     if let Some(n) = nonce {
@@ -48,9 +47,10 @@ async fn insert_bundle_transaction_with_nonce<P: Protocol>(
     let tx_hash = TxHash::from(*recovered.tx_hash());
     let encoded_len = recovered.encode_2718_len();
     let pool_tx = BasePooledTransaction::new(recovered, encoded_len).with_bundle_metadata(
-        target_block_number,
-        min_timestamp,
-        max_timestamp,
+        block_numbers.0,
+        block_numbers.1,
+        timestamps.0,
+        timestamps.1,
     );
 
     pool.add_external_transaction(pool_tx).await?;
@@ -59,7 +59,7 @@ async fn insert_bundle_transaction_with_nonce<P: Protocol>(
 }
 
 #[tokio::test]
-async fn bundle_tx_targeting_current_block_is_included() -> eyre::Result<()> {
+async fn bundle_tx_valid_for_current_block_is_included() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
     let signer = driver.fund_accounts(1, ONE_ETH).await?.remove(0);
@@ -67,8 +67,16 @@ async fn bundle_tx_targeting_current_block_is_included() -> eyre::Result<()> {
     let target_block = latest.header.number + 1;
     let pool = rbuilder.pool_handle();
 
-    let tx_hash =
-        insert_bundle_transaction(&pool, &driver, &signer, Some(target_block), None, None).await?;
+    let tx_hash = insert_bundle_transaction(
+        &pool,
+        &driver,
+        &signer,
+        Some(target_block),
+        Some(target_block),
+        None,
+        None,
+    )
+    .await?;
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
@@ -79,7 +87,7 @@ async fn bundle_tx_targeting_current_block_is_included() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn bundle_tx_targeting_different_block_is_excluded() -> eyre::Result<()> {
+async fn bundle_tx_before_min_block_is_excluded() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
     let signer = driver.fund_accounts(1, ONE_ETH).await?.remove(0);
@@ -87,8 +95,16 @@ async fn bundle_tx_targeting_different_block_is_excluded() -> eyre::Result<()> {
     let target_block = latest.header.number + 2;
     let pool = rbuilder.pool_handle();
 
-    let tx_hash =
-        insert_bundle_transaction(&pool, &driver, &signer, Some(target_block), None, None).await?;
+    let tx_hash = insert_bundle_transaction(
+        &pool,
+        &driver,
+        &signer,
+        Some(target_block),
+        Some(target_block),
+        None,
+        None,
+    )
+    .await?;
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
@@ -106,7 +122,8 @@ async fn expired_bundle_tx_is_excluded() -> eyre::Result<()> {
     let max_timestamp = unix_time_millis().saturating_sub(1_000) as u64;
 
     let tx_hash =
-        insert_bundle_transaction(&pool, &driver, &signer, None, None, Some(max_timestamp)).await?;
+        insert_bundle_transaction(&pool, &driver, &signer, None, None, None, Some(max_timestamp))
+            .await?;
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
@@ -124,7 +141,8 @@ async fn future_bundle_tx_is_deferred_but_not_invalidated() -> eyre::Result<()> 
     let min_timestamp = unix_time_millis().saturating_add(60_000) as u64;
 
     let tx_hash =
-        insert_bundle_transaction(&pool, &driver, &signer, None, Some(min_timestamp), None).await?;
+        insert_bundle_transaction(&pool, &driver, &signer, None, None, Some(min_timestamp), None)
+            .await?;
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
@@ -164,9 +182,8 @@ async fn two_valid_bundles_from_same_sender_are_both_included() -> eyre::Result<
         &driver,
         &signer,
         Some(0),
-        Some(target_block),
-        None,
-        None,
+        (Some(target_block), Some(target_block)),
+        (None, None),
     )
     .await?;
 
@@ -175,9 +192,8 @@ async fn two_valid_bundles_from_same_sender_are_both_included() -> eyre::Result<
         &driver,
         &signer,
         Some(1),
-        Some(target_block),
-        None,
-        None,
+        (Some(target_block), Some(target_block)),
+        (None, None),
     )
     .await?;
 
@@ -206,9 +222,8 @@ async fn expired_bundle_excluded_while_valid_bundle_included_for_same_sender() -
         &driver,
         &signer,
         Some(0),
-        Some(target_block),
-        None,
-        None,
+        (Some(target_block), Some(target_block)),
+        (None, None),
     )
     .await?;
 
@@ -217,9 +232,8 @@ async fn expired_bundle_excluded_while_valid_bundle_included_for_same_sender() -
         &driver,
         &signer,
         Some(1),
-        Some(target_block),
-        None,
-        Some(expired_timestamp),
+        (Some(target_block), Some(target_block)),
+        (None, Some(expired_timestamp)),
     )
     .await?;
 

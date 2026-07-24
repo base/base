@@ -42,46 +42,57 @@ impl TrustedProxyConfig {
     }
 
     /// Resolves the client IP, trusting forwarding headers only from configured proxy CIDRs.
+    ///
+    /// Walks all forwarding-header lines and comma-separated entries right → left (proxies
+    /// may append within a value or add a new line), peeling trusted hops until the first
+    /// untrusted IP.
     pub fn client_ip(&self, connect_addr: IpAddr, headers: &HeaderMap) -> IpAddr {
         // Dual-stack listeners present IPv4 peers as IPv4-mapped IPv6 (`::ffff:x.x.x.x`).
-        // Canonicalize so IPv4 CIDRs still match those peers and rate-limit buckets stay
-        // consistent across address forms.
         let connect_addr = Self::canonicalize_ip(connect_addr);
 
-        if !self.trusted_proxy_cidrs.iter().any(|cidr| cidr.contains(&connect_addr)) {
+        if !self.is_trusted(connect_addr) {
             return connect_addr;
         }
 
-        let Some(header) = headers.get(&self.ip_addr_http_header) else {
-            return connect_addr;
-        };
+        for header in headers.get_all(&self.ip_addr_http_header).iter().rev() {
+            let header_value = match header.to_str() {
+                Ok(value) => value,
+                Err(error) => {
+                    warn!(error = %error, "Could not read client IP header");
+                    return connect_addr;
+                }
+            };
 
-        let header_value = match header.to_str() {
-            Ok(header_value) => header_value,
-            Err(error) => {
-                warn!(error = %error, "Could not read client IP header");
-                return connect_addr;
-            }
-        };
+            for raw in header_value.split(',').rev() {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
 
-        header_value
-            .split(',')
-            .next_back()
-            .and_then(|ip| {
-                let trimmed = ip.trim();
                 match trimmed.parse::<IpAddr>() {
-                    Ok(addr) => Some(Self::canonicalize_ip(addr)),
+                    Ok(addr) => {
+                        let addr = Self::canonicalize_ip(addr);
+                        if !self.is_trusted(addr) {
+                            return addr;
+                        }
+                    }
                     Err(error) => {
                         warn!(
                             error = %error,
                             value = %trimmed,
                             "Failed to parse forwarded client IP"
                         );
-                        None
+                        return connect_addr;
                     }
                 }
-            })
-            .unwrap_or(connect_addr)
+            }
+        }
+
+        connect_addr
+    }
+
+    fn is_trusted(&self, addr: IpAddr) -> bool {
+        self.trusted_proxy_cidrs.iter().any(|cidr| cidr.contains(&addr))
     }
 
     fn canonicalize_ip(addr: IpAddr) -> IpAddr {
@@ -437,6 +448,57 @@ mod tests {
 
         headers.clear();
         assert_eq!(config.client_ip(trusted_proxy, &headers), trusted_proxy);
+    }
+
+    #[test]
+    fn trusted_proxy_config_skips_trusted_hops_in_xff() {
+        let config = TrustedProxyConfig::new(
+            "x-forwarded-for".to_string(),
+            vec!["10.0.0.0/8".parse().unwrap(), "104.16.0.0/13".parse().unwrap()],
+        );
+        let alb = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let client = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10));
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.10, 104.16.1.1"));
+        assert_eq!(config.client_ip(alb, &headers), client);
+
+        let alb_only = TrustedProxyConfig::new(
+            "x-forwarded-for".to_string(),
+            vec!["10.0.0.0/8".parse().unwrap()],
+        );
+        let cdn = IpAddr::V4(Ipv4Addr::new(104, 16, 1, 1));
+        assert_eq!(alb_only.client_ip(alb, &headers), cdn);
+
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("198.51.100.1, 203.0.113.10, 104.16.1.1"),
+        );
+        assert_eq!(config.client_ip(alb, &headers), client);
+
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("198.51.100.1, invalid, 104.16.1.1"),
+        );
+        assert_eq!(config.client_ip(alb, &headers), alb);
+    }
+
+    #[test]
+    fn joins_header_lines_before_peeling_trusted_hops() {
+        let config = TrustedProxyConfig::new(
+            "x-forwarded-for".to_string(),
+            vec!["10.0.0.0/8".parse().unwrap(), "104.16.0.0/13".parse().unwrap()],
+        );
+        let alb = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let client = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10));
+
+        // Client-spoofed line, CDN-appended client, ALB-added CDN hop as a new line.
+        let mut headers = HeaderMap::new();
+        headers.append("x-forwarded-for", HeaderValue::from_static("198.51.100.1"));
+        headers.append("x-forwarded-for", HeaderValue::from_static("203.0.113.10"));
+        headers.append("x-forwarded-for", HeaderValue::from_static("104.16.1.1"));
+
+        assert_eq!(config.client_ip(alb, &headers), client);
     }
 
     #[test]

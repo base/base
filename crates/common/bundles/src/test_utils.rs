@@ -53,7 +53,8 @@ pub fn create_transaction(
 /// Creates a test bundle with the given transactions and parameters.
 pub fn create_test_bundle(
     txns: Vec<BaseTxEnvelope>,
-    block_number: Option<u64>,
+    min_block_number: Option<u64>,
+    max_block_number: Option<u64>,
     min_timestamp: Option<u64>,
     max_timestamp: Option<u64>,
 ) -> AcceptedBundle {
@@ -61,7 +62,8 @@ pub fn create_test_bundle(
 
     let bundle = Bundle {
         txs,
-        block_number: block_number.unwrap_or(0),
+        min_block_number,
+        max_block_number,
         min_timestamp,
         max_timestamp,
         ..Default::default()
@@ -119,10 +121,12 @@ mod tests {
         let tx1 = create_transaction(alice.clone(), 1, bob.address(), U256::from(100));
         let tx2 = create_transaction(alice, 2, bob.address(), U256::from(200));
 
-        let bundle = create_test_bundle(vec![tx1, tx2], Some(100), Some(1000), Some(2000));
+        let bundle =
+            create_test_bundle(vec![tx1, tx2], Some(100), Some(105), Some(1000), Some(2000));
 
         assert_eq!(bundle.txs.len(), 2);
-        assert_eq!(bundle.block_number, 100);
+        assert_eq!(bundle.min_block_number, Some(100));
+        assert_eq!(bundle.max_block_number, Some(105));
         assert_eq!(bundle.min_timestamp, Some(1000));
         assert_eq!(bundle.max_timestamp, Some(2000));
     }
