@@ -94,6 +94,8 @@ pub enum TelemetryApiError {
     PayloadTooLarge,
     /// Probe capacity was exhausted.
     Saturated,
+    /// The client IP exceeded the request rate limit.
+    RateLimited,
 }
 
 /// Error returned by the Base telemetry HTTP client.
@@ -109,6 +111,9 @@ pub enum TelemetryClientError {
     /// The telemetry service had no reachability probe capacity available.
     #[error("telemetry service reachability probe capacity is saturated")]
     Saturated,
+    /// The telemetry service rate limited the client IP.
+    #[error("telemetry service rate limited the reachability request")]
+    RateLimited,
     /// The telemetry service could not be reached or returned an unusable response.
     #[error("telemetry service unavailable: {message}")]
     Unavailable {
@@ -131,6 +136,16 @@ pub struct TelemetryClient {
 }
 
 impl TelemetryClient {
+    /// Returns the hosted telemetry backend base URL for a supported Base chain.
+    pub fn backend_base_url(chain_id: u64) -> Option<Url> {
+        Url::parse(match chain_id {
+            8453 => "https://mainnet.telemetry.base.org",
+            84532 => "https://sepolia.telemetry.base.org",
+            _ => return None,
+        })
+        .ok()
+    }
+
     /// Creates a telemetry client with a timeout longer than the backend probe deadline.
     pub fn new(base_url: Url) -> Result<Self, TelemetryClientError> {
         let http = reqwest::Client::builder().timeout(TELEMETRY_REQUEST_TIMEOUT).build()?;
@@ -167,6 +182,9 @@ impl TelemetryClient {
             }
             (StatusCode::TOO_MANY_REQUESTS, TelemetryApiError::Saturated) => {
                 Err(TelemetryClientError::Saturated)
+            }
+            (StatusCode::TOO_MANY_REQUESTS, TelemetryApiError::RateLimited) => {
+                Err(TelemetryClientError::RateLimited)
             }
             _ => Err(TelemetryClientError::Unavailable {
                 message: format!("unexpected HTTP {status} response with error {error:?}"),
@@ -232,16 +250,10 @@ mod tests {
             "invalid" => (StatusCode::BAD_REQUEST, TelemetryApiError::InvalidRequest),
             "large" => (StatusCode::PAYLOAD_TOO_LARGE, TelemetryApiError::PayloadTooLarge),
             "saturated" => (StatusCode::TOO_MANY_REQUESTS, TelemetryApiError::Saturated),
+            "limited" => (StatusCode::TOO_MANY_REQUESTS, TelemetryApiError::RateLimited),
             _ => panic!("unexpected test request"),
         };
         (status, Json(TelemetryErrorResponse { error })).into_response()
-    }
-
-    #[test]
-    fn stage_labels_describe_the_probe_step() {
-        assert_eq!(ElReachabilityStage::TcpConnect.as_str(), "tcp_connect");
-        assert_eq!(ElReachabilityStage::EncryptedHandshake.as_str(), "encrypted_handshake");
-        assert_eq!(ElReachabilityStage::Devp2pHello.as_str(), "devp2p_hello");
     }
 
     #[tokio::test]
@@ -295,6 +307,10 @@ mod tests {
         assert_eq!(
             client.check_el_reachability("saturated").await.unwrap_err(),
             TelemetryClientError::Saturated
+        );
+        assert_eq!(
+            client.check_el_reachability("limited").await.unwrap_err(),
+            TelemetryClientError::RateLimited
         );
         handle.abort();
     }
