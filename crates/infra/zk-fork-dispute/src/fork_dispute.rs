@@ -2,12 +2,12 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
 use base_challenger::{ChallengeSubmitter, DisputeIntent};
 use base_proof_contracts::{AggregateVerifierClient, AggregateVerifierContractClient, GameStatus};
 use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
-use eyre::{Result, bail, eyre};
+use eyre::{Context, Result, bail, eyre};
 use tracing::info;
 
 use crate::{checkpoint::Checkpoint, config::Config};
@@ -35,6 +35,19 @@ impl ZkForkDispute {
             before_countered,
         )?;
 
+        let provider: RootProvider = RootProvider::new_http(config.l1_rpc_url.clone());
+        let challenger = config.private_key.address();
+        provider
+            .client()
+            .request::<_, ()>(
+                "anvil_setBalance",
+                (challenger, U256::from(1_000_000_000_000_000_000_000u128)),
+            )
+            .await
+            .context(
+                "anvil_setBalance failed; ensure BASE_ZK_FORK_L1_RPC_URL points to an Anvil fork",
+            )?;
+
         let checkpoint = if config.patch_invalid_game {
             Checkpoint::patch(&config, &verifier).await?
         } else {
@@ -42,7 +55,6 @@ impl ZkForkDispute {
         };
 
         let l1_head = verifier.l1_head(config.game_address).await?;
-        let provider: RootProvider = RootProvider::new_http(config.l1_rpc_url.clone());
         let chain_id = provider.get_chain_id().await?;
         let submitter = ChallengeSubmitter::new(
             SimpleTxManager::new(
@@ -55,7 +67,6 @@ impl ZkForkDispute {
             .await?,
         );
 
-        let challenger = submitter.sender_address();
         let proof_bytes = checkpoint.request_proof(&config, challenger, l1_head).await?;
 
         let tx_hash = submitter
@@ -67,6 +78,13 @@ impl ZkForkDispute {
                 intent,
             )
             .await?;
+        info!(
+            intent = ?intent,
+            game = %config.game_address,
+            invalid_index = checkpoint.index,
+            tx_hash = %tx_hash,
+            "submitted dispute transaction"
+        );
 
         let status = verifier.status(config.game_address).await?;
         if status != GameStatus::InProgress {
@@ -75,13 +93,6 @@ impl ZkForkDispute {
         Self::assert_dispute_effect(intent, &config, &verifier, challenger, checkpoint.index)
             .await?;
 
-        info!(
-            intent = ?intent,
-            game = %config.game_address,
-            invalid_index = checkpoint.index,
-            tx_hash = %tx_hash,
-            "submitted dispute transaction"
-        );
         Ok(())
     }
 

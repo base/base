@@ -67,13 +67,6 @@ zk-fork-dispute intent='' game='' game_index='' invalid_index='':
       }
     fi
 
-    if command -v cast >/dev/null; then
-      signer_address="$(cast wallet address --private-key "$BASE_ZK_FORK_PRIVATE_KEY")"
-      curl -fsS -H 'content-type: application/json' \
-        --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"anvil_setBalance\",\"params\":[\"$signer_address\",\"0x3635C9ADC5DEA00000\"]}" \
-        "$BASE_ZK_FORK_L1_RPC_URL" >/dev/null 2>&1 || true
-    fi
-
     prover_endpoint="${BASE_ZK_FORK_PROVER_SERVICE_URL#http://}"
     prover_endpoint="${prover_endpoint#https://}"
     prover_endpoint="${prover_endpoint%%/*}"
