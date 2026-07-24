@@ -6,11 +6,8 @@
 use alloy_primitives::FixedBytes;
 use alloy_sol_types::sol;
 
-/// The ERC-165 `supportsInterface` interface id (`IERC165`, `0x01ffc9a7`).
-///
-/// ERC-8056 requires ERC-165, so `AssetV2` advertises this alongside [`ERC8056_INTERFACE_IDS`], but
-/// it is not itself an ERC-8056 id. By construction it equals the `supportsInterface(bytes4)`
-/// selector; pinned by `erc8056_interface_ids_match_selectors`.
+/// ERC-165 interface id (`IERC165`, `0x01ffc9a7`), the `supportsInterface(bytes4)` selector.
+/// Advertised by `AssetV2` (ERC-8056 requires ERC-165); not itself an ERC-8056 id.
 pub const ERC165_INTERFACE_ID: FixedBytes<4> = FixedBytes::new([0x01, 0xff, 0xc9, 0xa7]);
 
 /// The ERC-8056 interface IDs advertised by `supportsInterface` from `AssetV2`.
@@ -35,16 +32,16 @@ sol! {
         /// multiplier of zero or above the `type(uint128).max` overflow guard.
         error InvalidMultiplier();
 
-        /// `setUIMultiplier` was called with an `effectiveAt` that is not in the future
+        /// [V2] `setUIMultiplier` was called with an `effectiveAt` that is not in the future
         error EffectiveAtInPast(uint256 effectiveAt);
 
-        /// `setUIMultiplier` was called with an `effectiveAt` above the `effectiveAt` field size
+        /// [V2] `setUIMultiplier` was called with an `effectiveAt` beyond the `uint64` field range
         error EffectiveAtTooFar(uint256 effectiveAt);
 
-        /// `setUIMultiplier` was called while a live pending update already exists.
+        /// [V2] `setUIMultiplier` was called while a live pending update already exists.
         error ScheduleOverlap(uint256 pendingEffectiveAt);
 
-        /// `cancelScheduledMultiplier` was called when there is no live pending update.
+        /// [V2] `cancelScheduledMultiplier` was called when there is no live pending update.
         error NoScheduledMultiplier();
 
         /// A batched function was called with parallel arrays of differing lengths.
@@ -68,11 +65,11 @@ sol! {
         /// scheduled-multiplier version `AssetV2` emits `UIMultiplierUpdated` instead.
         event MultiplierUpdated(uint256 multiplier);
 
-        /// ERC-8056. Emitted by both multiplier setters at `AssetV2`: `setUIMultiplier`
+        /// [V2] ERC-8056; emitted by `setUIMultiplier` and `updateMultiplier`.
         event UIMultiplierUpdated(uint256 oldMultiplier, uint256 newMultiplier, uint256 effectiveAtTimestamp);
 
-        /// Emitted by `cancelScheduledMultiplier`, and by `updateMultiplier` when it clears a
-        /// live pending update.
+        /// [V2] Emitted by `cancelScheduledMultiplier`, and by `updateMultiplier` when it clears
+        /// a live pending update.
         event MultiplierUpdateCancelled(uint256 cancelledMultiplier, uint256 cancelledEffectiveAt);
 
         /// Emitted by `updateExtraMetadata`. Empty `value` indicates removal.
@@ -111,15 +108,14 @@ sol! {
         /// The current multiplier, scaled to `WAD_PRECISION`.
         function multiplier() external view returns (uint256);
 
-        /// ERC-8056 alias of `multiplier()` (available from `AssetV2`).
+        /// [V2] ERC-8056 alias of `multiplier()`.
         function uiMultiplier() external view returns (uint256);
 
-        /// ERC-8056: the multiplier scheduled to take effect, or the current multiplier when no
-        /// scheduled update exists. Available from `AssetV2`.
+        /// [V2] ERC-8056: the multiplier scheduled to take effect, or the current multiplier when
+        /// no scheduled update exists.
         function newUIMultiplier() external view returns (uint256);
 
-        /// ERC-8056: the timestamp at which a scheduled multiplier becomes effective.
-        /// Available from `AssetV2`.
+        /// [V2] ERC-8056: the timestamp at which a scheduled multiplier becomes effective.
         function effectiveAt() external view returns (uint256);
 
         /// Converts a raw balance to its scaled view: `rawBalance * multiplier / WAD_PRECISION`.
@@ -131,26 +127,24 @@ sol! {
         /// Convenience: `toScaledBalance(balanceOf(account))`.
         function scaledBalanceOf(address account) external view returns (uint256);
 
-        /// ERC-8056 Balances extension: alias of `scaledBalanceOf`. Available from `AssetV2`.
+        /// [V2] ERC-8056 Balances extension: alias of `scaledBalanceOf`.
         function balanceOfUI(address account) external view returns (uint256);
 
-        /// ERC-8056 Balances extension: `totalSupply() * multiplier() / WAD_PRECISION`.
-        /// Available from `AssetV2`.
+        /// [V2] ERC-8056 Balances extension: `totalSupply() * multiplier() / WAD_PRECISION`.
         function totalSupplyUI() external view returns (uint256);
 
-        /// Schedules a single multiplier update effective at `effectiveAt`.
-        /// The standard corporate-action path. Available from `AssetV2`; `OPERATOR_ROLE`.
+        /// [V2] Schedules a single multiplier update effective at `effectiveAt`.
+        /// The standard corporate-action path; requires `OPERATOR_ROLE`.
         function setUIMultiplier(uint256 newMultiplier, uint256 effectiveAt) external;
 
-        /// Cancels the single live pending update, restoring the no-pending state.
-        /// Available from `AssetV2`
+        /// [V2] Cancels the single live pending update, restoring the no-pending state.
         function cancelScheduledMultiplier() external;
 
         /// Instant failsafe: sets the current multiplier immediately and clears any pending.
         /// At `AssetV1` emits `MultiplierUpdated` which was replaced in `AssetV2` by `UIMultiplierUpdated`
         function updateMultiplier(uint256 newMultiplier) external;
 
-        /// ERC-165 interface detection (available from `AssetV2`).
+        /// [V2] ERC-165 interface detection.
         function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
         // ── Batched issuance and clawback ────────────────────────────────────
