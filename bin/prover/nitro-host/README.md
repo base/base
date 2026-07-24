@@ -5,7 +5,7 @@ TEE prover host worker for AWS Nitro Enclaves.
 ## Subcommands
 
 - **`server`** — Claims Nitro TEE jobs from `PROVER_SERVICE_ENDPOINT` and forwards them to the enclave over vsock. On Linux, it also exposes the registrar-facing signer JSON-RPC API.
-- **`local`** *(feature-gated)* — Claims Nitro TEE jobs using in-process local enclave instances for local development.
+- **`local`** _(feature-gated)_ — Claims Nitro TEE jobs using in-process local enclave instances for local development.
 
 ## Worker Mode
 
@@ -30,6 +30,23 @@ cargo run --package base-prover-nitro-host --features local -- local \
 ```
 
 The `just tee nitro-local-worker` recipe wraps the same command.
+
+## Health checks
+
+The registrar-facing RPC server exposes:
+
+- `GET /readyz` returns 200 once the host HTTP server is accepting requests. It
+  does not require an onchain-registered signer, so registrar target groups
+  should use it to bootstrap new instances.
+- When `TEE_PROVER_REGISTRY_ADDRESS` is configured, `GET /healthz` requires a
+  valid onchain signer.
+
+## Security Model
+
+This unauthenticated RPC listener is an internal control-plane endpoint. Restrict
+it to trusted components with private-network controls; never expose it publicly.
+The wildcard bind supports EC2 and container networking. Production exposes only
+health and signer operations; proof jobs are pulled from prover-service.
 
 ## Inspecting the enclave
 
