@@ -5,7 +5,7 @@ use alloy_provider::{Provider, RootProvider};
 use base_challenger::ChallengerProofAdapter;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
-    DisputeGameFactoryContractClient, encode_extra_data,
+    DisputeGameFactoryContractClient, GameInfo, encode_extra_data,
 };
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_prover_service_protocol::{
@@ -91,8 +91,13 @@ impl Checkpoint {
                 .await?;
         let root_count = u64::try_from(roots.len())
             .map_err(|_| eyre!("intermediate root count does not fit u64"))?;
-        let indices: Vec<u64> =
-            config.invalid_index.map_or_else(|| (0..root_count).collect(), |index| vec![index]);
+        let indices = match config.invalid_index {
+            Some(index) => {
+                let end = index.checked_add(1).ok_or_else(|| eyre!("invalid index overflow"))?;
+                index..end
+            }
+            None => 0..root_count,
+        };
 
         for index in indices {
             let root_index =
@@ -290,7 +295,7 @@ impl AnvilPatch {
         let info = verifier.game_info(config.game_address).await?;
         let root_claim = info.root_claim;
 
-        Self::patch_factory_registration(config, verifier, original_roots, index, patched_root)
+        Self::patch_factory_registration(config, info, original_roots, root_index, patched_root)
             .await?;
         Self::patch_game_code(
             config,
@@ -338,13 +343,11 @@ impl AnvilPatch {
 
     async fn patch_factory_registration(
         config: &Config,
-        verifier: &AggregateVerifierContractClient,
+        info: GameInfo,
         original_roots: &[B256],
-        index: u64,
+        root_index: usize,
         patched_root: B256,
     ) -> Result<()> {
-        let root_index = usize::try_from(index).context("invalid root index does not fit usize")?;
-        let info = verifier.game_info(config.game_address).await?;
         let original_extra =
             encode_extra_data(info.l2_block_number, info.parent_address, original_roots);
         let original_uuid = Self::game_uuid(config.game_type, info.root_claim, &original_extra);
