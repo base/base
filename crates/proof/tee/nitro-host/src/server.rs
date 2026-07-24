@@ -347,10 +347,10 @@ mod tests {
     async fn registrar_rpc_server_readyz_bypasses_registration() {
         let server = Arc::new(EnclaveServer::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(server));
-        let checker = Arc::new(
-            RegistrationChecker::new(vec![Arc::clone(&transport)], MockRegistry::new(false))
-                .unwrap(),
-        );
+        let registry = MockRegistry::new(false);
+        let call_count = Arc::clone(&registry.call_count);
+        let checker =
+            Arc::new(RegistrationChecker::new(vec![Arc::clone(&transport)], registry).unwrap());
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         drop(listener);
@@ -361,7 +361,9 @@ mod tests {
                 .unwrap();
 
         assert_eq!(http_status(addr, "/readyz").await, 200);
+        assert_eq!(call_count.load(Ordering::Relaxed), 0);
         assert_eq!(http_status(addr, "/healthz").await, 500);
+        assert_eq!(call_count.load(Ordering::Relaxed), 1);
         handle.stop().unwrap();
     }
 
