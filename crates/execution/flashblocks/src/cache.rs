@@ -55,7 +55,7 @@ impl FlashblockCache {
         if !self.is_cacheable(block_number) {
             return false;
         }
-        let min_block_number_to_retain = block_number.saturating_sub(MAX_CACHE_AHEAD_BLOCKS);
+        let min_block_number_to_retain = block_number.saturating_sub(MAX_CACHE_AHEAD_BLOCKS + 1);
         self.entries.retain(|&bn, _| bn > min_block_number_to_retain);
         self.entries.entry(block_number).or_default().insert(flashblock.index, flashblock);
         true
@@ -206,4 +206,22 @@ mod tests {
         assert_eq!(drained[1].index, 1);
         assert_eq!(drained[2].index, 2);
     }
+    #[test]
+fn insert_at_cache_limit_does_not_evict_oldest_valid_entry() {
+    // canonical = 10, MAX_CACHE_AHEAD_BLOCKS = 5
+    // is_cacheable accepts up to canonical + 6 = 16
+    let mut cache = FlashblockCache::new(10);
+
+    // Fill cache from canonical+1 to canonical+6 (the acceptance limit)
+    for bn in 11..=16 {
+        assert!(cache.insert(make_flashblock(bn, 0)), "block {bn} should be cacheable");
+    }
+
+    // Block 11 must still be present — the insert of block 16 must not evict it
+    let drained = cache.drain(11);
+    assert!(
+        !drained.is_empty(),
+        "block 11 was validly cached but silently evicted when block 16 was inserted"
+    );
+}
 }
