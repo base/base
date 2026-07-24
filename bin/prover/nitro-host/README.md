@@ -32,6 +32,14 @@ cargo run --package base-prover-nitro-host --features local -- local \
 
 The `just tee nitro-local-worker` recipe wraps the same command.
 
+## Health checks
+
+- `GET /readyz` returns 200 once the host HTTP server is accepting requests. It
+  does not require an onchain-registered signer, so registrar target groups
+  should use it to bootstrap new instances.
+- When `TEE_PROVER_REGISTRY_ADDRESS` is configured, `GET /healthz` requires a
+  valid onchain signer.
+
 ## Security Model
 
 This unauthenticated RPC listener is an internal control-plane endpoint. Restrict
