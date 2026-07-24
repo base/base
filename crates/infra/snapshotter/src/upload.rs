@@ -2,14 +2,13 @@
 //!
 //! Artifacts are split into two areas within the bucket:
 //!
-//! - `{prefix}/static_files/` — static file chunks that are immutable for finalized
-//!   block ranges. Only the tip chunk changes between snapshots. The uploader
-//!   compares the per-file BLAKE3 hashes recorded in the previous run's
-//!   `manifest.json` against the freshly generated manifest, and skips chunks
-//!   whose hashes match.
+//! - `{prefix}/static_files/` — static file chunks for finalized block ranges. The uploader
+//!   compares the per-file BLAKE3 hashes recorded in the previous run's `manifest.json`
+//!   against the freshly generated manifest, and skips chunks whose hashes match.
 //!
-//! - `{prefix}/{date}/` — per-run directory for mdbx state, rocksdb, and the manifest.
-//!   These are always re-uploaded since they change every snapshot.
+//! - `{prefix}/{date}/` — per-run directory for mdbx state, RocksDB, the manifest, and the
+//!   latest static-file chunk for every component. Keeping the mutable chunk beside the
+//!   manifest prevents it from being overwritten while a downloader uses that manifest.
 
 use std::{
     collections::HashMap,
@@ -70,18 +69,29 @@ pub enum UploadStrategy {
     /// Upload to `static_files/`, skipping if the per-file BLAKE3 hashes
     /// recorded in the previous run's manifest match the freshly generated ones.
     DiffByHash,
+    /// Upload the latest static-file chunk to the timestamped run directory.
+    LatestChunk,
 }
 
 impl UploadStrategy {
     /// Classifies a snapshot filename into its upload strategy.
     ///
     /// Static file chunks follow the pattern `{component}-{start}-{end}.tar.zst`
-    /// (e.g. `headers-0-499999.tar.zst`). These are immutable for finalized block
-    /// ranges and only the tip chunk changes between snapshots.
+    /// (e.g. `headers-0-499999.tar.zst`). Finalized chunks are deduplicated in
+    /// `static_files/`; the latest chunk is kept beside the timestamped manifest.
     ///
-    /// Everything else (state, rocksdb, manifest) is always uploaded.
+    /// Everything else (state, RocksDB, manifest) is always uploaded.
     pub fn classify(filename: &str) -> Self {
         if ChunkFilename::parse(filename).is_some() { Self::DiffByHash } else { Self::AlwaysUpload }
+    }
+
+    /// Classifies a snapshot filename using its manifest to identify the latest chunk.
+    pub fn classify_with_manifest(filename: &str, manifest: &SnapshotManifest) -> Self {
+        if manifest.is_latest_chunk_file(filename) {
+            Self::LatestChunk
+        } else {
+            Self::classify(filename)
+        }
     }
 }
 
@@ -255,11 +265,12 @@ impl SnapshotUploader {
 
     /// Uploads snapshot artifacts with diff-based optimization.
     ///
-    /// Static file chunks go to `{prefix}/static_files/` and are skipped when
-    /// their per-file BLAKE3 hashes (recorded in `local_manifest`) match those
-    /// from `remote_manifest`. State, rocksdb, and manifest go to
-    /// `{prefix}/{timestamp}/` and are always re-uploaded. `manifest.json` is
-    /// uploaded last as the "snapshot complete" signal.
+    /// Finalized static file chunks go to `{prefix}/static_files/` and are skipped
+    /// only when their per-file BLAKE3 hashes (recorded in `local_manifest`) match
+    /// `remote_manifest` and the archive exists in shared storage. The latest chunk
+    /// of each component, state, RocksDB,
+    /// and manifest go to `{prefix}/{timestamp}/`. `manifest.json` is uploaded last
+    /// as the "snapshot complete" signal.
     pub async fn upload(
         &self,
         output_dir: &Path,
@@ -281,6 +292,7 @@ impl SnapshotUploader {
         );
 
         let manifest_path = output_dir.join("manifest.json");
+        let remote_static_files = self.list_remote_static_files().await?;
         let mut static_uploads = Vec::new();
         let mut run_uploads = Vec::new();
         let mut skipped = 0u64;
@@ -296,7 +308,7 @@ impl SnapshotUploader {
                 .to_string_lossy()
                 .to_string();
 
-            let strategy = UploadStrategy::classify(&file_name);
+            let strategy = UploadStrategy::classify_with_manifest(&file_name, local_manifest);
 
             match strategy {
                 UploadStrategy::DiffByHash => {
@@ -304,10 +316,15 @@ impl SnapshotUploader {
                     let remote_hashes =
                         remote_manifest.and_then(|m| m.chunk_hashes_for_file(&file_name));
                     match (&local_hashes, &remote_hashes) {
-                        (Some(local), Some(remote)) if local == remote => {
-                            debug!(file = %file_name, "skipping static file (blake3 matches)");
+                        (Some(local), Some(remote))
+                            if local == remote && remote_static_files.contains_key(&file_name) =>
+                        {
+                            debug!(file = %file_name, "skipping finalized static file (blake3 matches shared object)");
                             skipped += 1;
                             continue;
+                        }
+                        (Some(local), Some(remote)) if local == remote => {
+                            debug!(file = %file_name, "uploading finalized static file missing from shared storage");
                         }
                         (Some(_), Some(_)) => {
                             debug!(file = %file_name, "re-uploading static file (blake3 mismatch)");
@@ -318,7 +335,7 @@ impl SnapshotUploader {
                     }
                     static_uploads.push(file.clone());
                 }
-                UploadStrategy::AlwaysUpload => {
+                UploadStrategy::LatestChunk | UploadStrategy::AlwaysUpload => {
                     run_uploads.push(file.clone());
                 }
             }
@@ -1005,11 +1022,13 @@ fn retry_delay_secs(attempt: usize) -> u64 {
     retry_delay(attempt).as_secs()
 }
 
-/// Builds the single published manifest for a run.
+/// Builds the published manifest for a run.
 ///
-/// Chunked archives are served from top-level `static_files/` via `base_url`, while
-/// the always-changing `state` and `rocksdb_indices` archives stay in the timestamped
-/// run directory and are referenced through `../{timestamp}/...` file paths.
+/// Finalized chunked archives are served from top-level `static_files/` via `base_url`.
+/// State, `rocksdb_indices`, and the latest chunk for every component stay in the timestamped
+/// run directory. `latest_static_file_archives` identifies the chunks that the Base downloader
+/// resolves relative to the manifest URL rather than `base_url`. Downloaders must support this
+/// extension before consuming manifests published with this layout.
 fn build_published_manifest(
     local_manifest: &SnapshotManifest,
     public_static_files_base_url: Option<&str>,
@@ -1026,7 +1045,14 @@ fn build_published_manifest(
         }
     }
 
-    Ok(serde_json::to_vec_pretty(&manifest)?)
+    let mut published = serde_json::to_value(manifest)?;
+    let object =
+        published.as_object_mut().context("snapshot manifest must serialize as a JSON object")?;
+    object.insert(
+        "latest_static_file_archives".to_string(),
+        serde_json::to_value(local_manifest.latest_chunk_filenames())?,
+    );
+    Ok(serde_json::to_vec_pretty(&published)?)
 }
 
 #[cfg(test)]
