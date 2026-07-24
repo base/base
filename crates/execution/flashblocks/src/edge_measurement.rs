@@ -2222,6 +2222,10 @@ pub enum EdgeMeasurementPoisonV1 {
     WireLifecycleTerminalMissing,
     /// The cache owner did not drain every pre-cutoff generation before finalization.
     CacheDrainIncomplete,
+    /// A cache-owned generation remained unresolved at the owner drain deadline.
+    CutoffDeadlineCacheGeneration(u64),
+    /// A processor-owned generation remained unresolved at the owner drain deadline.
+    CutoffDeadlineProcessorGeneration(u64),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2263,6 +2267,10 @@ pub struct EdgeMeasurementRecorderStateV1 {
     pub next_anchor_due_mono_ns: u64,
     /// First-write-wins payload bindings.
     pub payload_first: HashMap<PayloadFirstKeyV1, PayloadFirstObservationV1>,
+    /// Number of live decoded generations retaining each payload binding.
+    payload_generation_refs: HashMap<PayloadFirstKeyV1, usize>,
+    /// Payloads with explicit canonical/cutoff close evidence awaiting their final generation.
+    payload_close_pending: BTreeSet<PayloadFirstKeyV1>,
     /// Payloads first seen above index zero.
     pub payload_without_index_zero: BTreeSet<PayloadFirstKeyV1>,
     /// FIFO source generations awaiting processor admission by structural key.
@@ -2272,6 +2280,8 @@ pub struct EdgeMeasurementRecorderStateV1 {
     processor_terminal_count: u64,
     snapshot_products: BTreeMap<u64, ProcessorLifecycleProductV1>,
     payload_first_by_generation: BTreeMap<u64, PayloadFirstObservationV1>,
+    snapshot_wire_ordinals: BTreeMap<u64, (u64, u64)>,
+    snapshot_evidence_captured: BTreeSet<u64>,
     wire_lifecycle: BTreeMap<u64, WireLifecyclePhaseV1>,
     generation_wire_ordinals: BTreeMap<u64, u64>,
     authority_wire_terminals: u64,
@@ -2388,6 +2398,8 @@ impl EdgeMeasurementRecorderV1 {
                 last_anchor_hash: B256::ZERO,
                 next_anchor_due_mono_ns: 0,
                 payload_first: HashMap::new(),
+                payload_generation_refs: HashMap::new(),
+                payload_close_pending: BTreeSet::new(),
                 payload_without_index_zero: BTreeSet::new(),
                 decoded_source_generations: HashMap::new(),
                 source_generation_contexts: HashMap::new(),
@@ -2395,6 +2407,8 @@ impl EdgeMeasurementRecorderV1 {
                 processor_terminal_count: 0,
                 snapshot_products: BTreeMap::new(),
                 payload_first_by_generation: BTreeMap::new(),
+                snapshot_wire_ordinals: BTreeMap::new(),
+                snapshot_evidence_captured: BTreeSet::new(),
                 wire_lifecycle: BTreeMap::new(),
                 generation_wire_ordinals: BTreeMap::new(),
                 authority_wire_terminals: 0,
@@ -2778,8 +2792,29 @@ impl EdgeMeasurementRecorderV1 {
         let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         state.wire_lifecycle.is_empty()
             && state.cache_pending.is_empty()
+            && state.snapshot_products.is_empty()
+            && state.payload_first_by_generation.is_empty()
+            && state.snapshot_wire_ordinals.is_empty()
             && state.event_pending_ack == 0
             && self.registry.verify_final_seal().is_ok()
+    }
+    /// Records exact unresolved ownership when the owner-approved drain deadline expires.
+    pub fn record_cutoff_drain_deadline(&self) -> Vec<(u64, bool)> {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let unresolved: Vec<_> = state
+            .source_generation_contexts
+            .keys()
+            .copied()
+            .map(|generation| (generation, state.cache_pending.contains_key(&generation)))
+            .collect();
+        for (generation, cache_owned) in unresolved.iter().copied() {
+            state.poisons.push(if cache_owned {
+                EdgeMeasurementPoisonV1::CutoffDeadlineCacheGeneration(generation)
+            } else {
+                EdgeMeasurementPoisonV1::CutoffDeadlineProcessorGeneration(generation)
+            });
+        }
+        unresolved
     }
 
     /// Returns the shared pending metadata registry.
@@ -3029,6 +3064,13 @@ impl EdgeMeasurementRecorderV1 {
             block_number: flashblock.metadata.block_number,
             payload_id: flashblock.payload_id.0.into(),
         };
+        if state.source_generation_contexts.contains_key(&generation) {
+            let refs = state.payload_generation_refs.entry(key).or_default();
+            match refs.checked_add(1) {
+                Some(next) => *refs = next,
+                None => state.poisons.push(EdgeMeasurementPoisonV1::ActiveStateCapacityOverflow),
+            }
+        }
         if flashblock.index == 0 {
             if state.payload_without_index_zero.remove(&key) {
                 state.poisons.push(EdgeMeasurementPoisonV1::PayloadIndexZeroLate);
@@ -3283,19 +3325,43 @@ impl EdgeMeasurementRecorderV1 {
         );
     }
 
+    fn release_payload_generation_locked(
+        state: &mut EdgeMeasurementRecorderStateV1,
+        key: PayloadFirstKeyV1,
+    ) {
+        let remaining = match state.payload_generation_refs.get_mut(&key) {
+            Some(refs) if *refs > 0 => {
+                *refs -= 1;
+                Some(*refs)
+            }
+            _ => {
+                state.poisons.push(EdgeMeasurementPoisonV1::MissingSourceIdentity);
+                None
+            }
+        };
+        if remaining == Some(0) {
+            state.payload_generation_refs.remove(&key);
+            if state.payload_close_pending.remove(&key) {
+                state.payload_first.remove(&key);
+            }
+        }
+    }
+
     fn remove_generation_locked(
         &self,
         state: &mut EdgeMeasurementRecorderStateV1,
         source_generation: u64,
     ) {
-        if let Some(context) = state.source_generation_contexts.remove(&source_generation)
-            && let Some(generations) =
+        if let Some(context) = state.source_generation_contexts.remove(&source_generation) {
+            if let Some(generations) =
                 state.decoded_source_generations.get_mut(&context.structural_key)
-        {
-            generations.retain(|generation| *generation != source_generation);
-            if generations.is_empty() {
-                state.decoded_source_generations.remove(&context.structural_key);
+            {
+                generations.retain(|generation| *generation != source_generation);
+                if generations.is_empty() {
+                    state.decoded_source_generations.remove(&context.structural_key);
+                }
             }
+            Self::release_payload_generation_locked(state, context.payload_first_key);
         }
         state.cache_pending.remove(&source_generation);
     }
@@ -3326,6 +3392,38 @@ impl EdgeMeasurementRecorderV1 {
             }
         } else {
             state.poisons.push(EdgeMeasurementPoisonV1::MissingSourceIdentity);
+        }
+    }
+
+    /// Closes payload bindings made obsolete by an observed canonical block.
+    ///
+    /// A binding is removed only after both this close evidence and the final generation terminal.
+    pub(crate) fn close_payloads_through(&self, block_number: u64) {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let keys: Vec<_> = state
+            .payload_first
+            .keys()
+            .copied()
+            .filter(|key| key.block_number <= block_number)
+            .collect();
+        for key in keys {
+            if state.payload_generation_refs.get(&key).copied().unwrap_or_default() == 0 {
+                state.payload_first.remove(&key);
+            } else {
+                state.payload_close_pending.insert(key);
+            }
+        }
+        let missing: Vec<_> = state
+            .payload_without_index_zero
+            .iter()
+            .copied()
+            .filter(|key| key.block_number <= block_number)
+            .collect();
+        if !missing.is_empty() {
+            state.poisons.push(EdgeMeasurementPoisonV1::PayloadIndexZeroMissing);
+        }
+        for key in missing {
+            state.payload_without_index_zero.remove(&key);
         }
     }
 
@@ -3422,15 +3520,23 @@ impl EdgeMeasurementRecorderV1 {
             let payload_first = state.payload_first.get(&context.payload_first_key).copied();
             if state.snapshot_products.len() >= self.config.active_state_capacity
                 || state.payload_first_by_generation.len() >= self.config.active_state_capacity
+                || state.snapshot_wire_ordinals.len() >= self.config.active_state_capacity
                 || payload_first.is_none()
             {
                 state.poisons.push(EdgeMeasurementPoisonV1::ActiveStateCapacityOverflow);
             } else if let Some(payload_first) = payload_first {
                 state.payload_first_by_generation.insert(source_generation, payload_first);
                 state.snapshot_products.insert(sequence, product);
+                if let Some(wire_ordinal) = wire_ordinal {
+                    state
+                        .snapshot_wire_ordinals
+                        .insert(sequence, (source_generation, wire_ordinal));
+                } else {
+                    state.poisons.push(EdgeMeasurementPoisonV1::MissingSourceIdentity);
+                }
             }
         }
-        state.payload_first.remove(&context.payload_first_key);
+        Self::release_payload_generation_locked(&mut state, context.payload_first_key);
         self.enqueue(&mut state, EdgeSourceEventV1::Processor(product));
         if let Some(wire_ordinal) = wire_ordinal {
             self.terminalize_wire_locked(
@@ -3751,6 +3857,14 @@ impl EdgeMeasurementRecorderV1 {
         if !state.cache_pending.is_empty() {
             state.poisons.push(EdgeMeasurementPoisonV1::CacheDrainIncomplete);
         }
+        let payload_keys: Vec<_> = state.payload_first.keys().copied().collect();
+        for key in payload_keys {
+            if state.payload_generation_refs.get(&key).copied().unwrap_or_default() == 0 {
+                state.payload_first.remove(&key);
+            } else {
+                state.payload_close_pending.insert(key);
+            }
+        }
         if state.connection_established_count > state.connection_closed_count {
             self.connection_transition_locked(
                 &mut state,
@@ -3768,19 +3882,64 @@ impl EdgeMeasurementRecorderV1 {
         self.enqueue(&mut state, EdgeSourceEventV1::Cutoff(cutoff));
         cutoff
     }
-    /// Streams the exact CLI terminal into the independent V3 coverage chain.
-    pub fn record_cli_terminal_coverage(&self, terminal: PendingTerminalRecordV2) {
+    /// Returns whether consumer evidence was captured before durable terminal cleanup.
+    pub fn terminal_durable_ready(&self, terminal: PendingTerminalRecordV2) -> bool {
+        terminal.terminal != PendingCliTerminalV2::CliReceivedLookupSucceeded
+            || self
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .snapshot_evidence_captured
+                .contains(&terminal.metadata.identity.pending_snapshot_sequence)
+    }
+
+    /// Records one durably persisted H2 terminal, joins its exact wire, and releases evidence.
+    pub fn record_terminal_durable(
+        &self,
+        terminal: PendingTerminalRecordV2,
+    ) -> Result<(), EdgeMeasurementPoisonV1> {
+        let sequence = terminal.metadata.identity.pending_snapshot_sequence;
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(source_generation) = terminal.metadata.source_generation else {
+            state.poisons.push(EdgeMeasurementPoisonV1::MissingSourceIdentity);
+            return Err(EdgeMeasurementPoisonV1::MissingSourceIdentity);
+        };
+        let Some((joined_generation, wire_ordinal)) =
+            state.snapshot_wire_ordinals.get(&sequence).copied()
+        else {
+            state.poisons.push(EdgeMeasurementPoisonV1::MissingSourceIdentity);
+            return Err(EdgeMeasurementPoisonV1::MissingSourceIdentity);
+        };
+        if joined_generation != source_generation
+            || state
+                .snapshot_products
+                .get(&sequence)
+                .is_none_or(|product| product.source_generation != source_generation)
+            || !state.payload_first_by_generation.contains_key(&source_generation)
+        {
+            state.poisons.push(EdgeMeasurementPoisonV1::MissingSourceIdentity);
+            return Err(EdgeMeasurementPoisonV1::MissingSourceIdentity);
+        }
+        if terminal.terminal == PendingCliTerminalV2::CliReceivedLookupSucceeded
+            && !state.snapshot_evidence_captured.remove(&sequence)
+        {
+            state.poisons.push(EdgeMeasurementPoisonV1::MissingSourceIdentity);
+            return Err(EdgeMeasurementPoisonV1::MissingSourceIdentity);
+        }
         self.coverage_locked(
             &mut state,
-            u64::MAX,
-            terminal.metadata.source_generation,
+            wire_ordinal,
+            Some(source_generation),
             EpochRouteV1::Authority,
             WireLifecycleTransitionV1::CliTerminal {
-                pending_snapshot_sequence: terminal.metadata.identity.pending_snapshot_sequence,
+                pending_snapshot_sequence: sequence,
                 terminal: terminal.terminal,
             },
         );
+        state.snapshot_wire_ordinals.remove(&sequence);
+        state.snapshot_products.remove(&sequence);
+        state.payload_first_by_generation.remove(&source_generation);
+        Ok(())
     }
     /// Records exactly one processor product through the bounded sink.
     pub fn record_processor_product(&self, product: ProcessorLifecycleProductV1) {
@@ -3820,12 +3979,17 @@ impl EdgeMeasurementRecorderV1 {
         }
         if !state.decoded_source_generations.is_empty()
             || !state.payload_without_index_zero.is_empty()
+            || !state.payload_first.is_empty()
+            || !state.payload_generation_refs.is_empty()
+            || !state.payload_close_pending.is_empty()
             || !state.source_generation_contexts.is_empty()
             || !state.generation_wire_ordinals.is_empty()
             || !state.wire_lifecycle.is_empty()
             || !state.cache_pending.is_empty()
             || !state.snapshot_products.is_empty()
             || !state.payload_first_by_generation.is_empty()
+            || !state.snapshot_wire_ordinals.is_empty()
+            || !state.snapshot_evidence_captured.is_empty()
         {
             return Err(EdgeSourceFinalSealErrorV1::ActiveStatePending);
         }
@@ -3887,9 +4051,9 @@ impl EdgeMeasurementRecorderV1 {
     )> {
         let sequence = metadata.identity.pending_snapshot_sequence;
         let source_generation = metadata.source_generation?;
-        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let payload_first = state.payload_first_by_generation.remove(&source_generation)?;
-        let processor = state.snapshot_products.remove(&sequence)?;
+        let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let payload_first = state.payload_first_by_generation.get(&source_generation).copied()?;
+        let processor = state.snapshot_products.get(&sequence).copied()?;
         if processor.source_generation != source_generation {
             return None;
         }
@@ -3899,6 +4063,16 @@ impl EdgeMeasurementRecorderV1 {
             record.metadata.identity.pending_snapshot_sequence == sequence
                 && record.metadata == metadata
         })?;
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state
+            .snapshot_products
+            .get(&sequence)
+            .is_none_or(|product| product.source_generation != source_generation)
+            || !state.payload_first_by_generation.contains_key(&source_generation)
+        {
+            return None;
+        }
+        state.snapshot_evidence_captured.insert(sequence);
         Some((metadata, payload_first, processor, connection, registry_terminal))
     }
     /// Latches a named coordinator failure without changing production behavior.
@@ -5200,5 +5374,177 @@ mod tests {
             WireLifecycleTransitionV1::PostCutoffStateHandedOff,
             WireLifecycleTransitionV1::PostCutoffProcessorExcluded,
         ]));
+    }
+    #[test]
+    fn index_zero_terminal_preserves_binding_for_later_payload_index() {
+        let pending = test_pending_blocks();
+        let index_zero = pending.get_flashblocks().remove(0);
+        let mut index_one = index_zero.clone();
+        index_one.index = 1;
+        index_one.base = None;
+        let recorder = test_recorder(204);
+
+        let first_admission = recorder.observe_wire(b"index-zero").expect("first wire");
+        let first_generation =
+            recorder.decoded_flashblock(first_admission, &index_zero).expect("first generation");
+        recorder.take_source_generation(&index_zero);
+        recorder.record_generation_product(ProcessorTerminalInputV1 {
+            source_generation: first_generation,
+            base_disposition: ProcessorBaseDispositionV1::AdvancedInitialBase,
+            observer_disposition: ProcessorObserverDispositionV1::Absent,
+            publish_disposition: ProcessorPublishDispositionV1::NotApplicable,
+            pending_snapshot_sequence: None,
+            processor_error_reason: None,
+            cache_resolved_final_disposition: None,
+        });
+        let payload_hash = recorder
+            .state
+            .lock()
+            .expect("state")
+            .payload_first
+            .values()
+            .next()
+            .expect("binding survives first terminal")
+            .record_hash;
+
+        let second_admission = recorder.observe_wire(b"index-one").expect("second wire");
+        let second_generation =
+            recorder.decoded_flashblock(second_admission, &index_one).expect("second generation");
+        recorder.take_source_generation(&index_one);
+        recorder.record_generation_product(ProcessorTerminalInputV1 {
+            source_generation: second_generation,
+            base_disposition: ProcessorBaseDispositionV1::AdvancedNextInSequence,
+            observer_disposition: ProcessorObserverDispositionV1::Absent,
+            publish_disposition: ProcessorPublishDispositionV1::NotApplicable,
+            pending_snapshot_sequence: None,
+            processor_error_reason: None,
+            cache_resolved_final_disposition: None,
+        });
+
+        let mut second_product = None;
+        while let EdgeEventDrainStatusV1::Event(event) = recorder.try_recv_event() {
+            if let EdgeSourceEventV1::Processor(product) = *event
+                && product.source_generation == second_generation
+            {
+                second_product = Some(product);
+            }
+        }
+        assert_eq!(
+            second_product.expect("index-one product").payload_first_record_hash,
+            Some(payload_hash)
+        );
+        recorder.close_payloads_through(index_zero.metadata.block_number);
+        let state = recorder.state.lock().expect("state");
+        assert!(state.payload_first.is_empty());
+        assert!(state.payload_generation_refs.is_empty());
+        assert!(state.payload_close_pending.is_empty());
+    }
+    #[test]
+    fn every_durable_h2_terminal_cleans_evidence_and_preserves_wire_join() {
+        let pending = test_pending_blocks();
+        let flashblock = pending.get_flashblocks().remove(0);
+        let recorder = test_recorder(206);
+        let admission = recorder.observe_wire(b"wire-join").expect("wire");
+        let generation = recorder.decoded_flashblock(admission, &flashblock).expect("generation");
+        recorder.take_source_generation(&flashblock);
+        recorder.record_generation_product(ProcessorTerminalInputV1 {
+            source_generation: generation,
+            base_disposition: ProcessorBaseDispositionV1::AdvancedInitialBase,
+            observer_disposition: ProcessorObserverDispositionV1::Absent,
+            publish_disposition: ProcessorPublishDispositionV1::Published(1),
+            pending_snapshot_sequence: Some(0),
+            processor_error_reason: None,
+            cache_resolved_final_disposition: None,
+        });
+        let (payload, mut product) = {
+            let state = recorder.state.lock().expect("state");
+            (state.payload_first_by_generation[&generation], state.snapshot_products[&0])
+        };
+        let terminals = [
+            PendingCliTerminalV2::CliLagged,
+            PendingCliTerminalV2::CliClosed,
+            PendingCliTerminalV2::CliCancelled,
+            PendingCliTerminalV2::NoReceivers,
+            PendingCliTerminalV2::RegistrationFailedNoReceivers,
+        ];
+        for (sequence, terminal) in terminals.into_iter().enumerate() {
+            let sequence = u64::try_from(sequence).expect("sequence");
+            if sequence != 0 {
+                product.pending_snapshot_sequence = Some(sequence);
+                let mut state = recorder.state.lock().expect("state");
+                state.payload_first_by_generation.insert(generation, payload);
+                state.snapshot_products.insert(sequence, product);
+                state.snapshot_wire_ordinals.insert(sequence, (generation, admission.wire_ordinal));
+            }
+            recorder
+                .record_terminal_durable(PendingTerminalRecordV2 {
+                    coverage_sequence: sequence,
+                    metadata: PendingSnapshotMetadataV2 {
+                        identity: PendingSnapshotIdentityV2 {
+                            producer_epoch: 206,
+                            pending_snapshot_sequence: sequence,
+                            arc_pointer_identity: 1,
+                        },
+                        source_generation: Some(generation),
+                        pending_public_subset_digest_v1: B256::ZERO,
+                    },
+                    registration: PendingRegistrationDispositionV2::Succeeded,
+                    send: PendingSendDispositionV2::NoReceivers,
+                    terminal,
+                })
+                .expect("durable cleanup");
+        }
+
+        let state = recorder.state.lock().expect("state");
+        assert!(state.snapshot_products.is_empty());
+        assert!(state.payload_first_by_generation.is_empty());
+        assert!(state.snapshot_wire_ordinals.is_empty());
+        drop(state);
+        let mut processor_wire = None;
+        let mut cli_wires = Vec::new();
+        while let EdgeEventDrainStatusV1::Event(event) = recorder.try_recv_event() {
+            if let EdgeSourceEventV1::Coverage(record) = *event {
+                match record.transition {
+                    WireLifecycleTransitionV1::ProcessorTerminal => {
+                        processor_wire = Some(record.wire_ordinal);
+                    }
+                    WireLifecycleTransitionV1::CliTerminal { .. } => {
+                        cli_wires.push(record.wire_ordinal);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(processor_wire, Some(admission.wire_ordinal));
+        assert_eq!(cli_wires, vec![admission.wire_ordinal; terminals.len()]);
+    }
+    #[test]
+    fn post_cutoff_exclusion_remains_durable_after_authority_final() {
+        let recorder = test_recorder(205);
+        recorder.latch_cutoff(ProducerExternalBoundsV1 {
+            last_admitted_blink_generation: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+        });
+        let admission = recorder.observe_wire(b"after-authority-final").expect("excluded wire");
+        assert_eq!(admission.route, EpochRouteV1::PostCutoffNonAuthority);
+
+        let mut cutoff_seen = false;
+        let mut post_cutoff_after_final = false;
+        while let EdgeEventDrainStatusV1::Event(event) = recorder.try_recv_event() {
+            match *event {
+                EdgeSourceEventV1::Cutoff(_) => cutoff_seen = true,
+                EdgeSourceEventV1::Coverage(record)
+                    if cutoff_seen && record.route == EpochRouteV1::PostCutoffNonAuthority =>
+                {
+                    post_cutoff_after_final = true;
+                }
+                _ => {}
+            }
+            recorder.ack_event_durable().expect("durable event");
+        }
+        assert!(cutoff_seen);
+        assert!(post_cutoff_after_final);
+        assert_eq!(recorder.source_final_counters().6, 0);
     }
 }

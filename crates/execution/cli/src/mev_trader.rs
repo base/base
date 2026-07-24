@@ -75,6 +75,21 @@ fn latch_edge_failure(failure: &'static str) {
     }
 }
 #[cfg(feature = "edge-measurement")]
+const EDGE_CUTOFF_DRAIN_DEADLINE_V1: Duration = Duration::from_secs(30);
+
+#[cfg(feature = "edge-measurement")]
+fn await_edge_cutoff_drain(recorder: &EdgeMeasurementRecorderV1, deadline: Instant) -> bool {
+    loop {
+        if recorder.cutoff_drain_complete() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+#[cfg(feature = "edge-measurement")]
 fn latch_edge_cutoff_once(
     latched: &AtomicBool,
     recorder: &EdgeMeasurementRecorderV1,
@@ -87,8 +102,15 @@ fn latch_edge_cutoff_once(
     match owner.prepare_cutoff() {
         Ok((blink_count, candidate_bounds)) => {
             let last_blink = blink_count.saturating_sub(1);
-            while !recorder.cutoff_drain_complete() {
-                std::thread::sleep(Duration::from_millis(10));
+            let drained =
+                await_edge_cutoff_drain(recorder, Instant::now() + EDGE_CUTOFF_DRAIN_DEADLINE_V1);
+            if !drained {
+                let unresolved = recorder.record_cutoff_drain_deadline();
+                if unresolved.is_empty() {
+                    latch_edge_failure("CutoffDrainDeadlineInsufficientUnresolvedIdentity");
+                } else {
+                    latch_edge_failure("CutoffDrainDeadlineExceeded");
+                }
             }
             let last_candidate = candidate_bounds.last_sequence.unwrap_or(0);
             let registry = recorder.registry().snapshot();
@@ -173,7 +195,10 @@ impl EdgeCanonicalWriterV1 {
                     return Err(error);
                 }
             };
-            if self.recorder.cutoff_sealed() && !progressed {
+            if self.finalized && stop.load(Ordering::Acquire) && !progressed {
+                return Ok(());
+            }
+            if self.recorder.cutoff_sealed() && !progressed && !self.finalized {
                 match self.recorder.verify_source_final() {
                     Ok(_) => match self.owner.finalization_ready() {
                         Ok(false) => {}
@@ -183,7 +208,6 @@ impl EdgeCanonicalWriterV1 {
                                     .latch_coordinator_failure("CanonicalWriterFatalPublication");
                                 return Err(error);
                             }
-                            return Ok(());
                         }
                         Err(_) => {
                             self.recorder
@@ -249,6 +273,9 @@ impl EdgeCanonicalWriterV1 {
         let terminals = registry.terminal_records();
         while self.next_registry_terminal < terminals.len() {
             let terminal = terminals[self.next_registry_terminal];
+            if !self.recorder.terminal_durable_ready(terminal) {
+                break;
+            }
             let pending_sequence = terminal.metadata.identity.pending_snapshot_sequence;
             let coverage_sequence = terminal.coverage_sequence;
 
@@ -277,10 +304,12 @@ impl EdgeCanonicalWriterV1 {
                 return Err(io::Error::other("duplicate registry H2 durable segment"));
             }
 
-            self.recorder.record_cli_terminal_coverage(terminal);
             registry
                 .ack_terminal_durable(coverage_sequence)
                 .map_err(|_| io::Error::other("registry durable ACK mismatch"))?;
+            self.recorder
+                .record_terminal_durable(terminal)
+                .map_err(|_| io::Error::other("terminal durable cleanup mismatch"))?;
             self.next_registry_terminal += 1;
             progressed = true;
         }
@@ -3934,5 +3963,17 @@ mod tests {
         let h2_bytes = EdgeCanonicalWriterV1::canonical_bytes(&h2).expect("H2 canonical bytes");
         assert!(!h2_bytes.windows(10).any(|window| window == b"arcPointer"));
         assert!(!h2_bytes.windows(4).any(|window| window == b"Weak"));
+    }
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn cutoff_drain_deadline_is_deterministic_and_finite() {
+        let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: NonZeroU64::new(77).expect("nonzero epoch"),
+            event_queue_capacity: 8,
+            active_state_capacity: 8,
+            pending_registry_capacity: 8,
+        })
+        .expect("Linux recorder");
+        assert!(!await_edge_cutoff_drain(&recorder, Instant::now()));
     }
 }

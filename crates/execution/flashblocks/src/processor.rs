@@ -397,6 +397,10 @@ where
                             let mut cache = self.cache.lock().await;
                             #[cfg(feature = "edge-measurement")]
                             let evicted_generations = cache.update_canonical_observed(block.number);
+                            #[cfg(feature = "edge-measurement")]
+                            if let Some(recorder) = EdgeMeasurementGlobal::installed() {
+                                recorder.close_payloads_through(block.number);
+                            }
                             #[cfg(not(feature = "edge-measurement"))]
                             cache.update_canonical(block.number);
                             #[cfg(feature = "edge-measurement")]
