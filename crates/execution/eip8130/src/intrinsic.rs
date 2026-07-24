@@ -644,7 +644,9 @@ mod tests {
         // and installing its code. A created account is not a plain code-less EOA,
         // so execution never auto-delegates it — the classifier must suppress here
         // too, on every path, so admission and estimate match execution exactly.
-        assert!(!IntrinsicGasInput::sender_auto_delegated(&[AccountChange::Create(create_entry())]));
+        assert!(!IntrinsicGasInput::sender_auto_delegated(&[
+            AccountChange::Create(create_entry())
+        ]));
 
         // Any `Delegation` entry — zero or non-zero target — sets
         // `has_explicit_delegation`, which suppresses auto-delegation at execution
