@@ -64,7 +64,7 @@ query_rpc: "http://localhost:8545"
 txpool_nodes: []
 flashblocks_ws: "ws://localhost:7111"
 sender_count: 10
-max_target_gps: 2100000
+target_gps: 2100000
 duration: "30s"
 ```
 
@@ -220,7 +220,7 @@ real_token_setup:
 
 #### Running multiple load tests
 
-- You may need to tune `max_target_gps` (or omit it for unbounded adaptive pacing) and sender
+- You may need to tune `target_gps` (or omit it for unbounded adaptive pacing) and sender
   count appropriately.
 
 #### Account Create

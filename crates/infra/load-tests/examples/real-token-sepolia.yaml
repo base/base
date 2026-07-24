@@ -17,7 +17,7 @@ flashblocks_ws: "wss://sepolia.flashblocks.base.org/ws"
 
 chain_id: 84532
 sender_count: 5
-max_target_gps: 20000000
+target_gps: 20000000
 in_flight_per_sender: 64
 duration: "30s"
 seed: 654789

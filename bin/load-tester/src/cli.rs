@@ -223,12 +223,12 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     } else {
         load_config.duration.map_or_else(|| "continuous".to_string(), |d| format!("{d:?}"))
     };
-    let max_target_gps_display = load_config
-        .max_target_gps
+    let target_gps_display = load_config
+        .target_gps
         .map_or_else(|| "unbounded".to_string(), |gps| format!("{gps} gas/s"));
     println!(
         "Target cap: {} | Duration: {} | Accounts: {}",
-        max_target_gps_display, duration_display, load_config.account_count
+        target_gps_display, duration_display, load_config.account_count
     );
     println!();
 
