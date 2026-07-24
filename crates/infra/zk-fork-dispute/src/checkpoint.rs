@@ -89,7 +89,6 @@ impl Checkpoint {
         let interval =
             Self::infer_interval(config.game_address, verifier, starting_block, roots.len())
                 .await?;
-        // Find-mode: linear RPC scan for the first mismatched intermediate (one-shot tool).
         let root_count = u64::try_from(roots.len())
             .map_err(|_| eyre!("intermediate root count does not fit u64"))?;
         let indices: Vec<u64> =
