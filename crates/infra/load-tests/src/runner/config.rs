@@ -216,7 +216,7 @@ pub struct LoadConfig {
     /// Transaction types with weights.
     pub transactions: Vec<TxConfig>,
     /// Optional gas-per-second ceiling applied to adaptive pacing.
-    pub max_target_gps: Option<u64>,
+    pub target_gps: Option<u64>,
     /// Duration of the load test. `None` means run indefinitely until stopped.
     pub duration: Option<Duration>,
     /// Maximum in-flight (unconfirmed) transactions per sender.
@@ -249,7 +249,7 @@ impl LoadConfig {
             mnemonic: None,
             sender_offset: 0,
             transactions: vec![TxConfig { weight: 100, tx_type: TxType::Transfer }],
-            max_target_gps: None,
+            target_gps: None,
             duration: Some(Duration::from_secs(30)),
             max_in_flight_per_sender: 128,
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
@@ -271,8 +271,8 @@ impl LoadConfig {
         if self.account_count == 0 {
             return Err(BaselineError::Config("account_count must be > 0".into()));
         }
-        if self.max_target_gps == Some(0) {
-            return Err(BaselineError::Config("max_target_gps must be > 0 when set".into()));
+        if self.target_gps == Some(0) {
+            return Err(BaselineError::Config("target_gps must be > 0 when set".into()));
         }
         if self.duration == Some(Duration::ZERO) {
             return Err(BaselineError::Config(
@@ -359,8 +359,8 @@ impl LoadConfig {
     }
 
     /// Sets an optional gas-per-second ceiling.
-    pub const fn with_max_target_gps(mut self, gps: Option<u64>) -> Self {
-        self.max_target_gps = gps;
+    pub const fn with_target_gps(mut self, gps: Option<u64>) -> Self {
+        self.target_gps = gps;
         self
     }
 

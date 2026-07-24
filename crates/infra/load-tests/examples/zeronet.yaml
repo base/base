@@ -15,7 +15,7 @@ txpool_nodes: []
 flashblocks_ws: "wss://<zeronet-rollup-boost-proxy-url>/ws"
 
 sender_count: 100
-max_target_gps: 15000000
+target_gps: 15000000
 in_flight_per_sender: 128
 duration: "30s"
 seed: 1
