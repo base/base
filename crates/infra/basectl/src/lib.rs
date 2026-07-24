@@ -2,12 +2,13 @@
 
 mod commands;
 pub use commands::{
-    Cli, Commands, ConductorClusterActionArgs, ConductorCommands, ConductorLeaderArgs,
-    ConductorNodeActionArgs, ConductorStatusArgs, DestructiveClBulkArgs, DestructivePeerArgs,
-    DoctorArgs, MonitorCommands, P2pArgs, P2pCommands, ProofStatusFilter, ProofsCommands,
-    ProofsFinalizeArgs, ProofsListArgs, ProofsStatusArgs, SequencerCommands,
-    SequencerNodeActionArgs, SequencerStartArgs, SequencerStatusArgs, TxpoolClearArgs,
-    TxpoolCommands, TxpoolReadArgs,
+    BlockCommand, BlockSummaryJson, Cli, Commands, ConductorClusterActionArgs, ConductorCommands,
+    ConductorLeaderArgs, ConductorNodeActionArgs, ConductorStatusArgs, DestructiveClBulkArgs,
+    DestructivePeerArgs, DoctorCommand, ElSyncInfoJson, HeadJson, MonitorCommands, P2pArgs,
+    P2pCommands, ProofStatusFilter, ProofsCommands, ProofsFinalizeArgs, ProofsListArgs,
+    ProofsStatusArgs, SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs,
+    SequencerStatusArgs, SyncStatusCommand, SyncStatusJson, TipReferenceJson, TipStatus,
+    TxpoolClearArgs, TxpoolCommands, TxpoolReadArgs,
 };
 
 mod confirm;

@@ -7,69 +7,196 @@ use alloy_primitives::B256;
 use alloy_rpc_types_eth::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
 use anyhow::Result;
 use base_protocol::{BlockInfo, L2BlockInfo};
-use basectl_cli::{
-    JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusCommandError, SyncStatusReport,
-    TimestampJson, fetch_block, fetch_sync_status, format_duration, format_unix_timestamp,
-};
+use clap::Args;
 use serde::Serialize;
 use url::Url;
 
-/// Runs the `basectl sync-status` subcommand.
-pub(crate) async fn run(
-    config: MonitoringConfig,
-    el_rpc_override: Option<Url>,
-    cl_rpc_override: Option<Url>,
-    tip_tolerance: u64,
-    json: bool,
-    raw: bool,
-) -> Result<()> {
-    let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
-    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref())?;
-    // Public tip reference is best-effort — failure marks the row unavailable
-    // rather than failing the whole command. Run in parallel with the local
-    // sync fetch.
-    let (sync_result, tip_result) = tokio::join!(
-        fetch_sync_status(&el_rpc, &cl_rpc),
-        fetch_block(&config.rpc, BlockId::Number(BlockNumberOrTag::Latest)),
-    );
-    let report = sync_result?;
-    let public_tip_block = tip_result.ok().map(|b| b.header.number);
-    let tip_url = config.rpc.as_str();
+use crate::{
+    JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusCommandError, SyncStatusReport,
+    TimestampJson, fetch_block, fetch_sync_status, format_duration, format_unix_timestamp,
+};
 
-    match (json, raw) {
-        (true, true) => JsonOutput::print(&report.cl)?,
-        (true, false) => {
-            let summary = SyncStatusJson::from_report(
-                &config.name,
-                &report,
-                tip_url,
-                public_tip_block,
-                tip_tolerance,
-            );
-            JsonOutput::print(&summary)?;
-        }
-        (false, _) => {
-            print_pretty(&config.name, &report, tip_url, public_tip_block, tip_tolerance)?;
-        }
-    }
-    Ok(())
+/// Arguments for reporting combined consensus- and execution-layer sync status.
+#[derive(Debug, Args)]
+pub struct SyncStatusCommand {
+    /// Override the execution-layer RPC URL.
+    ///
+    /// Defaults to the chain config's `rpc` field, which on the
+    /// `mainnet` and `sepolia` presets resolves to the public proxyd
+    /// fleet — `eth_syncing` against that always reports "not syncing"
+    /// because proxyd routes only-healthy backends. Pass this flag to
+    /// point at a single node.
+    #[arg(long = "el-rpc", value_name = "URL")]
+    pub el_rpc: Option<Url>,
+    /// Override the consensus-node RPC URL.
+    ///
+    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset, so
+    /// non-devnet users must pass this flag (or set the field in their YAML
+    /// config).
+    #[arg(long = "cl-rpc", value_name = "URL")]
+    pub cl_rpc: Option<Url>,
+    /// Block tolerance for the tip-reference `caught_up` classification.
+    ///
+    /// The local node is reported as `caught_up` when within ±this many
+    /// blocks of the public reference. Beyond the window, status flips
+    /// to `behind` or `ahead`. Default 5 ≈ ~10s of network jitter at
+    /// Base's 2s block time. Lower the value for stricter alerting,
+    /// raise it to dampen noise on flaky networks.
+    #[arg(long = "tip-tolerance", value_name = "BLOCKS", default_value_t = 5)]
+    pub tip_tolerance: u64,
+    /// Emit JSON (humanized — decoded numbers, ISO + local timestamps,
+    /// precomputed `safeLag*`) instead of the pretty table.
+    #[arg(long)]
+    pub json: bool,
+    /// With `--json`, emit the JSON-RPC wire format (the alloy-typed
+    /// `optimism_syncStatus` response) instead of the humanized JSON.
+    #[arg(long, requires = "json")]
+    pub raw: bool,
 }
 
-/// Resolves the consensus-node RPC URL with precedence:
-/// `--cl-rpc` flag → `MonitoringConfig.consensus_node_rpc` → clear error.
-///
-/// The mainnet and sepolia presets ship `consensus_node_rpc: None`, so
-/// non-devnet users must supply the URL explicitly.
-fn resolve_cl_rpc(
-    config: &MonitoringConfig,
-    override_url: Option<&Url>,
-) -> Result<Url, SyncStatusCommandError> {
-    if let Some(u) = override_url {
-        return Ok(u.clone());
+impl SyncStatusCommand {
+    /// Fetches sync status and renders the selected output format.
+    pub async fn run(self, config: MonitoringConfig) -> Result<()> {
+        let el_rpc = self.el_rpc.unwrap_or_else(|| config.rpc.clone());
+        let cl_rpc = Self::resolve_cl_rpc(&config, self.cl_rpc.as_ref())?;
+        // Public tip reference is best-effort — failure marks the row unavailable
+        // rather than failing the whole command. Run in parallel with the local
+        // sync fetch.
+        let (sync_result, tip_result) = tokio::join!(
+            fetch_sync_status(&el_rpc, &cl_rpc),
+            fetch_block(&config.rpc, BlockId::Number(BlockNumberOrTag::Latest)),
+        );
+        let report = sync_result?;
+        let public_tip_block = tip_result.ok().map(|b| b.header.number);
+        let tip_url = config.rpc.as_str();
+
+        match (self.json, self.raw) {
+            (true, true) => JsonOutput::print(&report.cl)?,
+            (true, false) => {
+                let summary = SyncStatusJson::from_report(
+                    &config.name,
+                    &report,
+                    tip_url,
+                    public_tip_block,
+                    self.tip_tolerance,
+                );
+                JsonOutput::print(&summary)?;
+            }
+            (false, _) => {
+                Self::print_pretty(
+                    &config.name,
+                    &report,
+                    tip_url,
+                    public_tip_block,
+                    self.tip_tolerance,
+                )?;
+            }
+        }
+        Ok(())
     }
-    config.consensus_node_rpc.clone().ok_or_else(|| SyncStatusCommandError::MissingConsensusRpc {
-        config_name: config.name.clone(),
-    })
+
+    /// Resolves the consensus-node RPC URL from the flag or chain config.
+    pub fn resolve_cl_rpc(
+        config: &MonitoringConfig,
+        override_url: Option<&Url>,
+    ) -> Result<Url, SyncStatusCommandError> {
+        if let Some(u) = override_url {
+            return Ok(u.clone());
+        }
+        config.consensus_node_rpc.clone().ok_or_else(|| {
+            SyncStatusCommandError::MissingConsensusRpc { config_name: config.name.clone() }
+        })
+    }
+
+    /// Renders sync status as the pretty key-value table.
+    pub fn print_pretty(
+        network: &str,
+        report: &SyncStatusReport,
+        tip_url: &str,
+        public_tip_block: Option<u64>,
+        tip_tolerance: u64,
+    ) -> Result<()> {
+        let cl = &report.cl;
+        let mut table = KeyValueTable::new();
+        table.row("network", network);
+
+        match &report.el {
+            EthSyncStatus::None => {
+                table.row("el_syncing", "false");
+            }
+            EthSyncStatus::Info(info) => {
+                let starting = info.starting_block.to::<u64>();
+                let current = info.current_block.to::<u64>();
+                let highest = info.highest_block.to::<u64>();
+                let processed = current.saturating_sub(starting);
+                let remaining = highest.saturating_sub(current);
+                table.row(
+                    "el_syncing",
+                    format!(
+                        "true (catching up: {remaining} blocks remaining, {processed} done; \
+                         current={current} highest={highest})",
+                    ),
+                );
+            }
+        }
+
+        table
+            .row("unsafe_l2", Self::format_block_info(&cl.unsafe_l2.block_info))
+            .row("safe_l2", Self::format_block_info(&cl.safe_l2.block_info))
+            .row("finalized_l2", Self::format_block_info(&cl.finalized_l2.block_info));
+
+        let lag_seconds =
+            cl.unsafe_l2.block_info.timestamp.saturating_sub(cl.safe_l2.block_info.timestamp);
+        let lag_blocks =
+            cl.unsafe_l2.block_info.number.saturating_sub(cl.safe_l2.block_info.number);
+        table.row(
+            "safe_lag",
+            format!(
+                "{} ({} blocks behind unsafe)",
+                format_duration(Duration::from_secs(lag_seconds)),
+                lag_blocks,
+            ),
+        );
+
+        table
+            .row("l1_head", Self::format_block_info(&cl.head_l1))
+            .row("l1_safe", Self::format_block_info(&cl.safe_l1))
+            .row("l1_finalized", Self::format_block_info(&cl.finalized_l1));
+
+        table.row(
+            "tip_reference",
+            Self::format_tip_reference(
+                tip_url,
+                cl.unsafe_l2.block_info.number,
+                public_tip_block,
+                tip_tolerance,
+            ),
+        );
+
+        table.print()?;
+        Ok(())
+    }
+
+    /// Formats the public-tip comparison row.
+    pub fn format_tip_reference(
+        url: &str,
+        local: u64,
+        public: Option<u64>,
+        tolerance: u64,
+    ) -> String {
+        let tip = TipReferenceJson::from_local_and_public(url, local, public, tolerance);
+        match (tip.block_number, tip.delta_blocks) {
+            (Some(block), Some(delta)) => {
+                format!("#{block} (url={url}) delta={delta} ({})", tip.status.as_str())
+            }
+            _ => format!("unavailable (url={url} fetch failed)"),
+        }
+    }
+
+    /// Formats a block number and timestamp for pretty output.
+    pub fn format_block_info(b: &BlockInfo) -> String {
+        format!("#{} ts={} ({})", b.number, b.timestamp, format_unix_timestamp(b.timestamp))
+    }
 }
 
 /// Humanized JSON shape for `basectl sync-status --json`.
@@ -79,23 +206,36 @@ fn resolve_cl_rpc(
 /// consumers don't have to re-derive any of these from raw fields.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SyncStatusJson {
-    network: String,
-    el_actively_syncing: bool,
-    el_sync_info: Option<ElSyncInfoJson>,
-    unsafe_l2: HeadJson,
-    safe_l2: HeadJson,
-    finalized_l2: HeadJson,
-    safe_lag_seconds: u64,
-    safe_lag_blocks: u64,
-    l1_head: HeadJson,
-    l1_safe: HeadJson,
-    l1_finalized: HeadJson,
-    tip_reference: TipReferenceJson,
+pub struct SyncStatusJson {
+    /// Selected network name.
+    pub network: String,
+    /// Whether the execution layer reports active syncing.
+    pub el_actively_syncing: bool,
+    /// Execution-layer sync progress, when actively syncing.
+    pub el_sync_info: Option<ElSyncInfoJson>,
+    /// Unsafe L2 head.
+    pub unsafe_l2: HeadJson,
+    /// Safe L2 head.
+    pub safe_l2: HeadJson,
+    /// Finalized L2 head.
+    pub finalized_l2: HeadJson,
+    /// Timestamp lag between unsafe and safe L2 heads.
+    pub safe_lag_seconds: u64,
+    /// Block-number lag between unsafe and safe L2 heads.
+    pub safe_lag_blocks: u64,
+    /// Current L1 head.
+    pub l1_head: HeadJson,
+    /// Safe L1 head.
+    pub l1_safe: HeadJson,
+    /// Finalized L1 head.
+    pub l1_finalized: HeadJson,
+    /// Comparison with the public RPC tip.
+    pub tip_reference: TipReferenceJson,
 }
 
 impl SyncStatusJson {
-    fn from_report(
+    /// Builds a humanized sync-status summary.
+    pub fn from_report(
         network: &str,
         report: &SyncStatusReport,
         tip_url: &str,
@@ -148,38 +288,49 @@ impl SyncStatusJson {
     }
 }
 
+/// Humanized block-head reference.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct HeadJson {
-    number: u64,
-    hash: B256,
-    timestamp: TimestampJson,
+pub struct HeadJson {
+    /// Block number.
+    pub number: u64,
+    /// Block hash.
+    pub hash: B256,
+    /// Block timestamp.
+    pub timestamp: TimestampJson,
 }
 
 impl HeadJson {
-    fn from_l2(b: &L2BlockInfo) -> Self {
+    /// Builds a head from L2 block information.
+    pub fn from_l2(b: &L2BlockInfo) -> Self {
         Self::from_block_info(&b.block_info)
     }
 
-    fn from_l1(b: &BlockInfo) -> Self {
+    /// Builds a head from L1 block information.
+    pub fn from_l1(b: &BlockInfo) -> Self {
         Self::from_block_info(b)
     }
 
-    fn from_block_info(b: &BlockInfo) -> Self {
+    /// Builds a head from shared block information.
+    pub fn from_block_info(b: &BlockInfo) -> Self {
         Self { number: b.number, hash: b.hash, timestamp: TimestampJson::from_unix(b.timestamp) }
     }
 }
 
+/// Humanized execution-layer sync progress.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ElSyncInfoJson {
-    starting_block: u64,
-    current_block: u64,
-    highest_block: u64,
+pub struct ElSyncInfoJson {
+    /// Block at which synchronization started.
+    pub starting_block: u64,
+    /// Current synchronized block.
+    pub current_block: u64,
+    /// Highest known block.
+    pub highest_block: u64,
     /// Blocks processed since EL sync began (`current - starting`).
-    processed_blocks: u64,
+    pub processed_blocks: u64,
     /// Blocks still to process before EL sync completes (`highest - current`).
-    remaining_blocks: u64,
+    pub remaining_blocks: u64,
 }
 
 /// Comparison of the local node's unsafe L2 head against a public-RPC
@@ -188,22 +339,22 @@ struct ElSyncInfoJson {
 /// `status` is `unavailable`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TipReferenceJson {
+pub struct TipReferenceJson {
     /// The public-RPC URL queried (the preset's `config.rpc`).
-    url: String,
+    pub url: String,
     /// Latest block number reported by the public RPC. `None` if the call failed.
-    block_number: Option<u64>,
+    pub block_number: Option<u64>,
     /// Signed delta `public - local`. Positive means local is behind; negative
     /// means local is ahead. `None` if the public block isn't known.
-    delta_blocks: Option<i64>,
+    pub delta_blocks: Option<i64>,
     /// Coarse classification of `delta_blocks` against the catch-up threshold.
-    status: TipStatus,
+    pub status: TipStatus,
 }
 
 /// Coarse status of the local node relative to the public-RPC reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum TipStatus {
+pub enum TipStatus {
     /// Local within `±tolerance` blocks of the public reference (configurable
     /// via `--tip-tolerance`).
     CaughtUp,
@@ -219,7 +370,7 @@ impl TipStatus {
     /// Display label matching the JSON serialization. Compiler-enforced
     /// exhaustive match keeps this in sync with the `serde(rename_all)`
     /// when new variants are added.
-    const fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::CaughtUp => "caught_up",
             Self::Behind => "behind",
@@ -230,7 +381,13 @@ impl TipStatus {
 }
 
 impl TipReferenceJson {
-    fn from_local_and_public(url: &str, local: u64, public: Option<u64>, tolerance: u64) -> Self {
+    /// Compares a local block number with an optional public reference.
+    pub fn from_local_and_public(
+        url: &str,
+        local: u64,
+        public: Option<u64>,
+        tolerance: u64,
+    ) -> Self {
         let Some(public) = public else {
             return Self {
                 url: url.to_string(),
@@ -257,99 +414,15 @@ impl TipReferenceJson {
     }
 }
 
-fn print_pretty(
-    network: &str,
-    report: &SyncStatusReport,
-    tip_url: &str,
-    public_tip_block: Option<u64>,
-    tip_tolerance: u64,
-) -> Result<()> {
-    let cl = &report.cl;
-    let mut table = KeyValueTable::new();
-    table.row("network", network);
-
-    match &report.el {
-        EthSyncStatus::None => {
-            table.row("el_syncing", "false");
-        }
-        EthSyncStatus::Info(info) => {
-            let starting = info.starting_block.to::<u64>();
-            let current = info.current_block.to::<u64>();
-            let highest = info.highest_block.to::<u64>();
-            let processed = current.saturating_sub(starting);
-            let remaining = highest.saturating_sub(current);
-            table.row(
-                "el_syncing",
-                format!(
-                    "true (catching up: {remaining} blocks remaining, {processed} done; \
-                     current={current} highest={highest})",
-                ),
-            );
-        }
-    }
-
-    table
-        .row("unsafe_l2", format_block_info(&cl.unsafe_l2.block_info))
-        .row("safe_l2", format_block_info(&cl.safe_l2.block_info))
-        .row("finalized_l2", format_block_info(&cl.finalized_l2.block_info));
-
-    let lag_seconds =
-        cl.unsafe_l2.block_info.timestamp.saturating_sub(cl.safe_l2.block_info.timestamp);
-    let lag_blocks = cl.unsafe_l2.block_info.number.saturating_sub(cl.safe_l2.block_info.number);
-    table.row(
-        "safe_lag",
-        format!(
-            "{} ({} blocks behind unsafe)",
-            format_duration(Duration::from_secs(lag_seconds)),
-            lag_blocks,
-        ),
-    );
-
-    table
-        .row("l1_head", format_block_info(&cl.head_l1))
-        .row("l1_safe", format_block_info(&cl.safe_l1))
-        .row("l1_finalized", format_block_info(&cl.finalized_l1));
-
-    table.row(
-        "tip_reference",
-        format_tip_reference(
-            tip_url,
-            cl.unsafe_l2.block_info.number,
-            public_tip_block,
-            tip_tolerance,
-        ),
-    );
-
-    table.print()?;
-    Ok(())
-}
-
-fn format_tip_reference(url: &str, local: u64, public: Option<u64>, tolerance: u64) -> String {
-    // Single source of truth for delta math + classification:
-    // `TipReferenceJson::from_local_and_public`. Build the JSON struct and
-    // read its fields rather than re-deriving the same logic here.
-    let tip = TipReferenceJson::from_local_and_public(url, local, public, tolerance);
-    match (tip.block_number, tip.delta_blocks) {
-        (Some(block), Some(delta)) => {
-            format!("#{block} (url={url}) delta={delta} ({})", tip.status.as_str())
-        }
-        _ => format!("unavailable (url={url} fetch failed)"),
-    }
-}
-
-fn format_block_info(b: &BlockInfo) -> String {
-    format!("#{} ts={} ({})", b.number, b.timestamp, format_unix_timestamp(b.timestamp))
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_eips::BlockNumHash;
-    use alloy_primitives::{Address, B256};
+    use alloy_primitives::{Address, B256, U256};
     use base_protocol::{BlockInfo, L2BlockInfo, SyncStatus};
-    use basectl_cli::{MonitoringConfig, SyncStatusCommandError, SyncStatusReport};
     use url::Url;
 
-    use super::{SyncStatusJson, resolve_cl_rpc};
+    use super::{SyncStatusCommand, SyncStatusJson};
+    use crate::{MonitoringConfig, SyncStatusCommandError, SyncStatusReport};
 
     fn test_config(consensus_node_rpc: Option<Url>) -> MonitoringConfig {
         MonitoringConfig {
@@ -402,7 +475,7 @@ mod tests {
         let config = test_config(None);
 
         assert!(matches!(
-            resolve_cl_rpc(&config, None).unwrap_err(),
+            SyncStatusCommand::resolve_cl_rpc(&config, None).unwrap_err(),
             SyncStatusCommandError::MissingConsensusRpc {
                 config_name,
                 ..
@@ -510,7 +583,6 @@ mod tests {
 
     #[test]
     fn el_sync_info_includes_remaining_and_processed_when_syncing() {
-        use alloy_primitives::U256;
         let info = Box::new(alloy_rpc_types_eth::SyncInfo {
             starting_block: U256::from(1_000u64),
             current_block: U256::from(1_500u64),
@@ -544,7 +616,6 @@ mod tests {
     fn el_sync_info_saturates_when_current_exceeds_highest() {
         // Pathological: current > highest (e.g. RPC reordering during a
         // probe). remaining_blocks must saturate to 0, not underflow.
-        use alloy_primitives::U256;
         let info = Box::new(alloy_rpc_types_eth::SyncInfo {
             starting_block: U256::from(1_000u64),
             current_block: U256::from(2_500u64),
