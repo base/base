@@ -358,7 +358,8 @@ impl RollupConfig {
         }
     }
 
-    /// Returns the first L2 block number whose legacy timestamp reaches Zombie activation.
+    /// Returns the number of L2 blocks after genesis at which Zombie activates, i.e. an offset
+    /// from `self.genesis.l2.number` rather than an absolute L2 block number.
     ///
     /// If Zombie is not configured, returns [`None`].
     pub fn zombie_activation_block_number(&self) -> Option<u64> {
@@ -380,16 +381,24 @@ impl RollupConfig {
     ///
     /// Before Zombie activation, this matches the legacy whole-second schedule exactly.
     /// After Zombie activation, this advances by a fixed 200ms cadence from the activation block.
+    ///
+    /// `block_number` is an absolute L2 block number; it is measured relative to the L2 genesis
+    /// block number (`self.genesis.l2.number`), which is non-zero for chains whose L2 genesis
+    /// was anchored at a later block.
     pub fn l2_block_full_millis(&self, block_number: u64) -> u64 {
-        let legacy_seconds =
-            self.genesis.l2_time.saturating_add(block_number.saturating_mul(self.block_time));
+        let blocks_since_genesis = block_number.saturating_sub(self.genesis.l2.number);
+
+        let legacy_seconds = self
+            .genesis
+            .l2_time
+            .saturating_add(blocks_since_genesis.saturating_mul(self.block_time));
         let legacy_millis = legacy_seconds.saturating_mul(1_000);
 
         let Some(zombie_activation_block) = self.zombie_activation_block_number() else {
             return legacy_millis;
         };
 
-        if block_number < zombie_activation_block {
+        if blocks_since_genesis < zombie_activation_block {
             return legacy_millis;
         }
 
@@ -399,7 +408,7 @@ impl RollupConfig {
             .saturating_add(zombie_activation_block.saturating_mul(self.block_time));
         let zombie_activation_full_millis = zombie_activation_seconds.saturating_mul(1_000);
         zombie_activation_full_millis.saturating_add(
-            block_number
+            blocks_since_genesis
                 .saturating_sub(zombie_activation_block)
                 .saturating_mul(Self::ZOMBIE_BLOCK_INTERVAL_MILLIS),
         )
