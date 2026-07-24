@@ -170,7 +170,7 @@ impl PrunedHistoryStartup {
             Arc::new(NoopCheckpointWriter),
         );
         let (request_tx, request_rx) = mpsc::channel(8);
-        let handler = EngineRequestHandler::new(processor, None);
+        let handler = EngineRequestHandler::new(processor, false);
         let handle = base_consensus_node::EngineRequestReceiver::start(handler, request_rx);
 
         RunningValidatorProcessor {

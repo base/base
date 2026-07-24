@@ -2,11 +2,100 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+use alloy_primitives::B256;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::ConsolidateInput;
 use base_protocol::L2BlockInfo;
+use tracing::debug;
 
 use crate::{EngineClientError, SequencerConfig};
+
+/// Shadow-sequencer engine state before and after canonical catch-up completes.
+#[derive(Debug)]
+pub enum ShadowEngineState {
+    /// Safe derivation remains active while canonical unsafe payloads are retained for catch-up.
+    CatchingUp(ShadowCanonicalCatchup),
+    /// Private block production is active and canonical inputs are buffered for reconciliation.
+    Active(ShadowReconciliationGate),
+}
+
+/// Canonical unsafe payloads retained while safe derivation catches a shadow sequencer up.
+#[derive(Debug, Default)]
+pub struct ShadowCanonicalCatchup {
+    payloads: BTreeMap<u64, BaseExecutionPayloadEnvelope>,
+    highest_observed: Option<(u64, B256)>,
+    faulted: bool,
+}
+
+impl ShadowCanonicalCatchup {
+    /// Maximum canonical unsafe payloads retained during catch-up.
+    pub const MAX_PAYLOADS: usize = SequencerConfig::MAX_SHADOW_BLOCKS_PER_CYCLE as usize;
+
+    /// Retains an authenticated canonical payload without blocking safe derivation.
+    pub fn buffer_payload(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+        let number = envelope.execution_payload.block_number();
+        let hash = envelope.execution_payload.block_hash();
+        if self.faulted {
+            return;
+        }
+        if let Some(existing) = self.payloads.get(&number) {
+            if existing.execution_payload.block_hash() != hash {
+                self.faulted = true;
+            }
+            return;
+        }
+        if self.payloads.len() >= Self::MAX_PAYLOADS {
+            self.faulted = true;
+            return;
+        }
+        if self.highest_observed.is_none_or(|(highest, _)| number > highest) {
+            self.highest_observed = Some((number, hash));
+        }
+        self.payloads.insert(number, envelope);
+    }
+
+    /// Returns the contiguous canonical suffix that can extend `anchor` now.
+    pub fn contiguous_payloads(
+        &mut self,
+        anchor: L2BlockInfo,
+    ) -> Result<Vec<BaseExecutionPayloadEnvelope>, EngineClientError> {
+        if self.faulted {
+            return Err(EngineClientError::ShadowBufferFaulted);
+        }
+        self.payloads.retain(|number, _| *number > anchor.block_info.number);
+
+        let mut number = anchor.block_info.number.saturating_add(1);
+        let mut parent = anchor.block_info.hash;
+        let mut payloads = Vec::new();
+        while let Some(payload) = self.payloads.get(&number) {
+            if payload.execution_payload.parent_hash() != parent {
+                return Err(EngineClientError::InvalidShadowReconciliation(
+                    "canonical catch-up payload parent mismatch".to_string(),
+                ));
+            }
+            parent = payload.execution_payload.block_hash();
+            payloads.push(payload.clone());
+            number = number.saturating_add(1);
+        }
+        Ok(payloads)
+    }
+
+    /// Removes payloads acknowledged by the execution engine.
+    pub fn commit(&mut self, head: L2BlockInfo) {
+        self.payloads.retain(|number, _| *number > head.block_info.number);
+    }
+
+    /// Returns whether the acknowledged engine head covers every observed canonical payload.
+    pub fn is_complete(&self, head: L2BlockInfo) -> bool {
+        if self.faulted || !self.payloads.is_empty() {
+            return false;
+        }
+        self.highest_observed.is_some_and(|(number, hash)| {
+            head.block_info.number > number
+                || (head.block_info.number == number && head.block_info.hash == hash)
+        })
+    }
+}
 
 /// Canonical inputs selected by the shadow gate for one authoritative engine update.
 #[derive(Debug)]
@@ -25,6 +114,7 @@ pub struct CanonicalReconciliationInputs {
 #[derive(Debug)]
 pub struct ShadowReconciliationGate {
     payloads: BTreeMap<u64, BaseExecutionPayloadEnvelope>,
+    local_payloads: BTreeMap<u64, BaseExecutionPayloadEnvelope>,
     faulted: bool,
     anchor: L2BlockInfo,
     safe_signals: VecDeque<ConsolidateInput>,
@@ -42,6 +132,7 @@ impl ShadowReconciliationGate {
     pub const fn new(anchor: L2BlockInfo) -> Self {
         Self {
             payloads: BTreeMap::new(),
+            local_payloads: BTreeMap::new(),
             faulted: false,
             anchor,
             safe_signals: VecDeque::new(),
@@ -66,6 +157,19 @@ impl ShadowReconciliationGate {
             return;
         }
         self.payloads.insert(number, envelope);
+    }
+
+    /// Retains a locally-built payload that may be identical to a suppressed canonical payload.
+    pub fn buffer_local_payload(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+        let number = envelope.execution_payload.block_number();
+        if number <= self.anchor.block_info.number || self.faulted {
+            return;
+        }
+        if self.local_payloads.len() >= Self::MAX_PAYLOADS {
+            self.faulted = true;
+            return;
+        }
+        self.local_payloads.entry(number).or_insert(envelope);
     }
 
     /// Buffers a deferred safe signal.
@@ -112,18 +216,44 @@ impl ShadowReconciliationGate {
         }
         let range = self.anchor.block_info.number + 1..=shadow_head.block_info.number;
         let mut parent = self.anchor.block_info.hash;
+        let mut local_payload_needs_canonical_witness = false;
         for number in range.clone() {
-            let Some(payload) = self.payloads.get(&number) else { return Ok(None) };
+            let payload = self.payloads.get(&number).or_else(|| self.local_payloads.get(&number));
+            let Some(payload) = payload else {
+                debug!(
+                    target: "engine",
+                    missing_payload = number,
+                    anchor = self.anchor.block_info.number,
+                    shadow_head = shadow_head.block_info.number,
+                    buffered_payloads = self.payloads.len(),
+                    "Shadow reconciliation is waiting for canonical payload"
+                );
+                return Ok(None);
+            };
             if payload.execution_payload.parent_hash() != parent {
                 return Err(EngineClientError::InvalidShadowReconciliation(
                     "payload parent continuity mismatch".into(),
                 ));
             }
+            local_payload_needs_canonical_witness = !self.payloads.contains_key(&number);
             parent = payload.execution_payload.block_hash();
+        }
+        if local_payload_needs_canonical_witness
+            && self
+                .payloads
+                .get(&shadow_head.block_info.number.saturating_add(1))
+                .is_none_or(|payload| payload.execution_payload.parent_hash() != parent)
+        {
+            return Ok(None);
         }
         let mut payloads = Vec::with_capacity(length as usize);
         for number in range {
-            payloads.push(self.payloads.remove(&number).expect("presence validated above"));
+            let payload = self
+                .payloads
+                .remove(&number)
+                .or_else(|| self.local_payloads.remove(&number))
+                .expect("presence validated above");
+            payloads.push(payload);
         }
         Ok(Some(CanonicalReconciliationInputs {
             shadow_head,
@@ -136,6 +266,7 @@ impl ShadowReconciliationGate {
     /// Commits a successful reconciliation and advances the anchor.
     pub fn commit(&mut self, head: L2BlockInfo) {
         self.payloads.retain(|number, _| *number > head.block_info.number);
+        self.local_payloads.retain(|number, _| *number > head.block_info.number);
         self.anchor = head;
         self.safe_signals.clear();
         self.latest_finalized = None;
@@ -144,6 +275,7 @@ impl ShadowReconciliationGate {
     /// Clears buffered inputs and faults.
     pub fn clear(&mut self) {
         self.payloads.clear();
+        self.local_payloads.clear();
         self.safe_signals.clear();
         self.latest_finalized = None;
         self.faulted = false;
@@ -164,7 +296,7 @@ mod tests {
     use base_consensus_engine::ConsolidateInput;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
-    use super::ShadowReconciliationGate;
+    use super::{ShadowCanonicalCatchup, ShadowReconciliationGate};
     use crate::EngineClientError;
 
     fn head(number: u64, hash: B256) -> L2BlockInfo {
@@ -197,6 +329,47 @@ mod tests {
     }
 
     #[test]
+    fn catchup_waits_for_safe_parent_then_returns_contiguous_unsafe_suffix() {
+        let safe = head(10, B256::with_last_byte(10));
+        let mut catchup = ShadowCanonicalCatchup::default();
+        catchup.buffer_payload(payload(12, B256::with_last_byte(11), B256::with_last_byte(12)));
+        catchup.buffer_payload(payload(11, safe.block_info.hash, B256::with_last_byte(11)));
+
+        let payloads = catchup.contiguous_payloads(safe).unwrap();
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0].execution_payload.block_number(), 11);
+        assert_eq!(payloads[1].execution_payload.block_number(), 12);
+        assert!(!catchup.is_complete(safe));
+
+        let canonical_head = head(12, B256::with_last_byte(12));
+        catchup.commit(canonical_head);
+        assert!(catchup.is_complete(canonical_head));
+    }
+
+    #[test]
+    fn safe_derivation_can_overtake_buffered_payloads() {
+        let mut catchup = ShadowCanonicalCatchup::default();
+        catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
+        catchup.buffer_payload(payload(12, B256::with_last_byte(11), B256::with_last_byte(12)));
+
+        let safe = head(12, B256::with_last_byte(12));
+        assert!(catchup.contiguous_payloads(safe).unwrap().is_empty());
+        assert!(catchup.is_complete(safe));
+    }
+
+    #[test]
+    fn conflicting_catchup_payload_faults_the_buffer() {
+        let mut catchup = ShadowCanonicalCatchup::default();
+        catchup.buffer_payload(payload(1, B256::ZERO, B256::with_last_byte(1)));
+        catchup.buffer_payload(payload(1, B256::ZERO, B256::with_last_byte(2)));
+
+        assert!(matches!(
+            catchup.contiguous_payloads(L2BlockInfo::default()),
+            Err(EngineClientError::ShadowBufferFaulted)
+        ));
+    }
+
+    #[test]
     fn selects_out_of_order_contiguous_range_and_removes_it_from_the_buffer() {
         let anchor = head(10, B256::with_last_byte(10));
         let mut gate = ShadowReconciliationGate::new(anchor);
@@ -217,6 +390,41 @@ mod tests {
         let prepared = gate.prepare(head(12, B256::with_last_byte(99))).unwrap();
         assert!(prepared.is_none());
         assert_eq!(gate.payloads.len(), 1);
+    }
+
+    #[test]
+    fn canonical_child_proves_suppressed_identical_local_parent() {
+        let anchor = head(10, B256::with_last_byte(10));
+        let mut gate = ShadowReconciliationGate::new(anchor);
+        gate.buffer_local_payload(payload(11, anchor.block_info.hash, B256::with_last_byte(11)));
+        gate.buffer_payload(payload(12, B256::with_last_byte(11), B256::with_last_byte(12)));
+
+        let prepared = gate.prepare(head(12, B256::with_last_byte(99))).unwrap().unwrap();
+        assert_eq!(prepared.payloads.len(), 2);
+        assert_eq!(prepared.payloads[0].execution_payload.block_hash(), B256::with_last_byte(11));
+    }
+
+    #[test]
+    fn unwitnessed_local_tail_cannot_be_used_for_reconciliation() {
+        let anchor = head(10, B256::with_last_byte(10));
+        let mut gate = ShadowReconciliationGate::new(anchor);
+        gate.buffer_local_payload(payload(11, anchor.block_info.hash, B256::with_last_byte(11)));
+
+        assert!(gate.prepare(head(11, B256::with_last_byte(11))).unwrap().is_none());
+        assert_eq!(gate.local_payloads.len(), 1);
+    }
+
+    #[test]
+    fn divergent_local_payload_is_rejected_by_canonical_child() {
+        let anchor = head(10, B256::with_last_byte(10));
+        let mut gate = ShadowReconciliationGate::new(anchor);
+        gate.buffer_local_payload(payload(11, anchor.block_info.hash, B256::with_last_byte(99)));
+        gate.buffer_payload(payload(12, B256::with_last_byte(11), B256::with_last_byte(12)));
+
+        assert!(matches!(
+            gate.prepare(head(12, B256::with_last_byte(12))),
+            Err(EngineClientError::InvalidShadowReconciliation(_))
+        ));
     }
 
     #[test]

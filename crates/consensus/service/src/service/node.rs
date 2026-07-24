@@ -35,7 +35,7 @@ use crate::{
     QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
-    SequencerConfig, ShadowReconciliationGate, UpgradeSignalNodeConfig,
+    SequencerConfig, UpgradeSignalNodeConfig,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -263,8 +263,6 @@ impl RollupNode {
             Arc::new(checkpoint_client.clone());
         let checkpoint_writer: Arc<dyn CheckpointWriter> = Arc::new(checkpoint_client);
         let shadow_sequencer = mode.is_sequencer() && self.sequencer_config.is_shadow_sequencer();
-        let shadow_gate = shadow_sequencer
-            .then(|| ShadowReconciliationGate::new(engine.state().sync_state.unsafe_head()));
         let engine_processor = EngineProcessor::new_with_checkpoint(
             Arc::clone(&engine_client),
             Arc::clone(&self.config),
@@ -287,7 +285,7 @@ impl RollupNode {
             engine_queue_length_rx,
         );
 
-        let engine_handler = EngineRequestHandler::new(engine_processor, shadow_gate);
+        let engine_handler = EngineRequestHandler::new(engine_processor, shadow_sequencer);
         let engine_actor = EngineActor::new(cancellation_token, engine_request_rx, engine_handler);
 
         (engine_actor, engine_rpc_processor, sequencer_engine_state_rx)

@@ -284,6 +284,7 @@ pub struct SystemTestStackBuilder {
     client_consensus_mode: L2ClientConsensusMode,
     shadow_sequencer_count: usize,
     shadow_blocks_per_cycle: Option<NonZeroU64>,
+    shadow_start_block: Option<u64>,
     extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
     extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
     #[cfg(feature = "upgrade-signal")]
@@ -391,6 +392,12 @@ impl SystemTestStackBuilder {
     /// reconciliation cycle. Defaults to [`DEFAULT_SHADOW_BLOCKS_PER_CYCLE`].
     pub const fn with_shadow_blocks_per_cycle(mut self, blocks: NonZeroU64) -> Self {
         self.shadow_blocks_per_cycle = Some(blocks);
+        self
+    }
+
+    /// Delays starting configured shadow sequencers until the active builder reaches `block`.
+    pub const fn with_shadow_start_block(mut self, block: u64) -> Self {
+        self.shadow_start_block = Some(block);
         self
     }
 
@@ -554,6 +561,7 @@ impl SystemTestStackBuilder {
                 blocks_per_cycle: self
                     .shadow_blocks_per_cycle
                     .unwrap_or(DEFAULT_SHADOW_BLOCKS_PER_CYCLE),
+                start_block: self.shadow_start_block,
             }
         });
 

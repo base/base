@@ -48,6 +48,7 @@ async fn shadow_builds_privately_then_reconciles_to_canonical() -> Result<()> {
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
         .with_shadow_sequencers(1)
+        .with_shadow_blocks_per_cycle(NonZeroU64::new(10).expect("nonzero"))
         .build()
         .await?;
 
@@ -66,7 +67,7 @@ async fn shadow_builds_privately_then_reconciles_to_canonical() -> Result<()> {
     wait_for_balance(&client, active_sender.address()).await?;
     let canonical_nonce = client.get_transaction_count(active_sender.address()).await?;
     let canonical_tx =
-        send_transfer(&client, &active_sender, canonical_nonce, dead_address(0x01)).await?;
+        send_transfer(&active_builder, &active_sender, canonical_nonce, dead_address(0x01)).await?;
     wait_for_receipt(&active_builder, canonical_tx, TX_RECEIPT_TIMEOUT)
         .await
         .wrap_err("canonical tx never landed on the active sequencer")?;
@@ -173,6 +174,130 @@ async fn shadow_reconciles_across_multiple_cycles() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn late_shadow_catches_up_then_reconciles_private_blocks() -> Result<()> {
+    let _guard = SHADOW_TEST_LOCK.lock().await;
+    let start_height = 3;
+    let system = SystemTestStackBuilder::new()
+        .with_l1_chain_id(L1_CHAIN_ID)
+        .with_l2_chain_id(L2_CHAIN_ID)
+        .with_shadow_sequencers(1)
+        .with_shadow_blocks_per_cycle(NonZeroU64::new(3).expect("nonzero"))
+        .with_shadow_start_block(start_height)
+        .build()
+        .await?;
+
+    let active_builder = system.l2_builder_provider()?;
+    let shadow_builder = system.l2_shadow_builder_provider(0)?;
+    let active_height = active_builder.get_block_number().await?;
+    assert!(
+        active_height >= start_height,
+        "active must reach the requested height before the late shadow is operational"
+    );
+
+    let pre_shadow_height = start_height - 1;
+    let canonical_pre_shadow_hash =
+        wait_for_block_hash_at(&active_builder, pre_shadow_height, BLOCK_PRODUCTION_TIMEOUT)
+            .await?;
+    wait_for_shadow_convergence(
+        &shadow_builder,
+        &active_builder,
+        pre_shadow_height,
+        SHADOW_CONVERGENCE_TIMEOUT,
+    )
+    .await
+    .wrap_err("late shadow did not catch up a block produced before it started")?;
+    assert_eq!(
+        block_hash_at(&shadow_builder, pre_shadow_height).await?,
+        Some(canonical_pre_shadow_hash),
+        "late shadow must import pre-start canonical history"
+    );
+
+    let safe_height = active_builder
+        .get_block_by_number(BlockNumberOrTag::Safe)
+        .await?
+        .map_or(0, |block| block.header.number);
+    let post_start_height = safe_height + 1;
+    assert!(
+        safe_height < post_start_height,
+        "post-start handoff block must still be unsafe: safe={safe_height}, \
+         handoff={post_start_height}"
+    );
+    let handoff_result = wait_for_shadow_convergence(
+        &shadow_builder,
+        &active_builder,
+        post_start_height,
+        Duration::from_secs(30),
+    )
+    .await;
+    if handoff_result.is_err() {
+        let shadow_height = shadow_builder.get_block_number().await?;
+        let active_height = active_builder.get_block_number().await?;
+        eyre::bail!(
+            "late shadow did not reach canonical unsafe handoff block {post_start_height}: \
+             shadow_height={shadow_height}, active_height={active_height}, safe_height={safe_height}"
+        );
+    }
+
+    let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_2.private_key)
+        .wrap_err("failed to parse late-shadow signer")?;
+    wait_for_balance(&shadow_builder, signer.address()).await?;
+    let nonce = shadow_builder.get_transaction_count(signer.address()).await?;
+    let shadow_tx = send_transfer(&shadow_builder, &signer, nonce, dead_address(0x03)).await?;
+    let receipt = wait_for_receipt(&shadow_builder, shadow_tx, TX_RECEIPT_TIMEOUT).await?;
+    let private_height = receipt
+        .inner
+        .block_number
+        .ok_or_else(|| eyre::eyre!("late-shadow receipt should reference a block number"))?;
+    let private_hash = receipt
+        .inner
+        .block_hash
+        .ok_or_else(|| eyre::eyre!("late-shadow receipt should reference a block hash"))?;
+    let canonical_hash =
+        wait_for_block_hash_at(&active_builder, private_height, BLOCK_PRODUCTION_TIMEOUT).await?;
+    assert_ne!(private_hash, canonical_hash, "late shadow must enter a private build cycle");
+
+    wait_for_shadow_convergence(
+        &shadow_builder,
+        &active_builder,
+        private_height,
+        SHADOW_CONVERGENCE_TIMEOUT,
+    )
+    .await
+    .wrap_err("late shadow did not reconcile its private cycle to canonical")?;
+
+    let second_receipt =
+        wait_for_receipt_after(&shadow_builder, shadow_tx, private_height, TX_RECEIPT_TIMEOUT)
+            .await
+            .wrap_err("shadow-only transaction was not re-included in the next private cycle")?;
+    let second_private_height = second_receipt
+        .inner
+        .block_number
+        .ok_or_else(|| eyre::eyre!("second shadow receipt should reference a block number"))?;
+    let second_private_hash = second_receipt
+        .inner
+        .block_hash
+        .ok_or_else(|| eyre::eyre!("second shadow receipt should reference a block hash"))?;
+    let second_canonical_hash =
+        wait_for_block_hash_at(&active_builder, second_private_height, BLOCK_PRODUCTION_TIMEOUT)
+            .await?;
+    assert_ne!(
+        second_private_hash, second_canonical_hash,
+        "shadow-only transaction must force divergence in the second private cycle"
+    );
+
+    wait_for_shadow_convergence(
+        &shadow_builder,
+        &active_builder,
+        second_private_height,
+        SHADOW_CONVERGENCE_TIMEOUT,
+    )
+    .await
+    .wrap_err("late shadow did not complete its second reconciliation")?;
+
+    Ok(())
+}
+
 const fn dead_address(byte: u8) -> Address {
     Address::repeat_byte(byte)
 }
@@ -244,11 +369,31 @@ async fn wait_for_receipt(
             if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await? {
                 return Ok::<_, eyre::Error>(receipt);
             }
-            sleep(Duration::from_secs(2)).await;
+            sleep(Duration::from_millis(100)).await;
         }
     })
     .await
     .wrap_err("transaction receipt timed out")?
+}
+
+async fn wait_for_receipt_after(
+    provider: &RootProvider<Base>,
+    tx_hash: B256,
+    previous_height: u64,
+    within: Duration,
+) -> Result<BaseTransactionReceipt> {
+    timeout(within, async {
+        loop {
+            if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await?
+                && receipt.inner.block_number.is_some_and(|height| height > previous_height)
+            {
+                return Ok::<_, eyre::Error>(receipt);
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .wrap_err("transaction was not re-included after reconciliation")?
 }
 
 async fn assert_never_included(

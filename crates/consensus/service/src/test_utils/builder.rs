@@ -270,7 +270,7 @@ impl HarnessBuilder {
             // engine-side failures fail tests fast with the real error instead
             // of hanging until the tick budget expires and reporting a
             // misleading `ProgressTimeout`.
-            let engine_handler = EngineRequestHandler::new(engine_processor, None);
+            let engine_handler = EngineRequestHandler::new(engine_processor, false);
             if let Err(error) = engine_handler.start(engine_actor_request_rx).await {
                 panic!("engine actor exited with error: {error:?}");
             }
