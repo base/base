@@ -184,14 +184,16 @@ where
                 let tx_hash = *tx.transaction.hash();
                 let consensus = tx.transaction.clone_into_consensus();
                 let raw = Bytes::from(consensus.inner().encoded_2718());
-                let target_block_number = tx.transaction.target_block_number();
+                let min_block_number = tx.transaction.min_block_number();
+                let max_block_number = tx.transaction.max_block_number();
                 let min_timestamp = tx.transaction.min_timestamp_millis();
                 let max_timestamp = tx.transaction.max_timestamp_millis();
                 self.buffer.push(BufferedTransaction {
                     transaction: ValidatedTransaction {
                         sender,
                         raw,
-                        target_block_number,
+                        min_block_number,
+                        max_block_number,
                         min_timestamp,
                         max_timestamp,
                     },

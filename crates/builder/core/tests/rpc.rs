@@ -65,7 +65,8 @@ async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
     let validated_tx = ValidatedTransaction {
         sender,
         raw,
-        target_block_number: None,
+        min_block_number: None,
+        max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
     };
@@ -94,7 +95,8 @@ async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
     let validated_tx = ValidatedTransaction {
         sender,
         raw,
-        target_block_number: None,
+        min_block_number: None,
+        max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
     };
@@ -116,7 +118,8 @@ async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
     let validated_tx = ValidatedTransaction {
         sender: Address::repeat_byte(0x01),
         raw: Bytes::from(vec![0xFF, 0x01, 0x02, 0x03]),
-        target_block_number: None,
+        min_block_number: None,
+        max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
     };
