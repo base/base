@@ -28,9 +28,6 @@ use crate::progress::{
 /// Default blocks per static file segment.
 const DEFAULT_BLOCKS_PER_FILE: u64 = 500_000;
 
-/// Number of extra chunks beyond the tip to compress as a safety buffer.
-const EXTRA_CHUNKS_BUFFER: u64 = 2;
-
 /// Maximum number of chunks allowed before bailing to prevent OOM.
 /// At 500k blocks per file, 100k chunks covers 50 billion blocks.
 const MAX_CHUNKS: u64 = 100_000;
@@ -54,8 +51,8 @@ pub trait SnapshotManifestExt {
     /// - `filename` does not match the `{component}-{start}-{end}.tar.zst` pattern,
     /// - the component is not present in the manifest or is not a chunked component,
     /// - the chunk index is out of range, or
-    /// - the chunk's hash list is empty (which happens for chunks that were skipped
-    ///   at generation time — see the tip+buffer invariant in `compute_skip_ranges`).
+    /// - the chunk's hash list is empty (which happens when no prior metadata was
+    ///   available for a chunk skipped during generation).
     ///
     /// Callers should treat `None` as "no comparable hash available" and fall
     /// through to re-upload.
@@ -63,6 +60,12 @@ pub trait SnapshotManifestExt {
 
     /// Returns the full per-file metadata for a static-file chunk archive.
     fn chunk_output_files_for_file(&self, filename: &str) -> Option<Vec<OutputFileChecksum>>;
+
+    /// Returns whether `filename` is the latest chunk for its component.
+    fn is_latest_chunk_file(&self, filename: &str) -> bool;
+
+    /// Returns the archive names for the latest chunks of all present components.
+    fn latest_chunk_filenames(&self) -> Vec<String>;
 }
 
 impl SnapshotManifestExt for SnapshotManifest {
@@ -93,6 +96,47 @@ impl SnapshotManifestExt for SnapshotManifest {
         }
         Some(entries.clone())
     }
+
+    fn is_latest_chunk_file(&self, filename: &str) -> bool {
+        let Some((component, start, end)) = ChunkFilename::parse(filename) else {
+            return false;
+        };
+        let Some(ComponentManifest::Chunked(meta)) = self.components.get(&component) else {
+            return false;
+        };
+        let Some((latest_start, latest_end)) = latest_chunk_range(meta) else {
+            return false;
+        };
+
+        start == latest_start && end == latest_end
+    }
+
+    fn latest_chunk_filenames(&self) -> Vec<String> {
+        let mut filenames = self
+            .components
+            .iter()
+            .filter_map(|(component, manifest)| {
+                let ComponentManifest::Chunked(meta) = manifest else {
+                    return None;
+                };
+                let (latest_start, latest_end) = latest_chunk_range(meta)?;
+                Some(ChunkFilename::format(component, latest_start, latest_end))
+            })
+            .collect::<Vec<_>>();
+        filenames.sort_unstable();
+        filenames
+    }
+}
+
+/// Returns the block range for a chunked component's latest archive.
+fn latest_chunk_range(meta: &ChunkedArchive) -> Option<(u64, u64)> {
+    let latest_start = meta
+        .total_blocks
+        .checked_sub(1)?
+        .checked_div(meta.blocks_per_file)?
+        .checked_mul(meta.blocks_per_file)?;
+    let latest_end = latest_start.checked_add(meta.blocks_per_file - 1)?;
+    Some((latest_start, latest_end))
 }
 
 /// Inputs for [`SnapshotGenerator::generate_manifest`].
@@ -415,19 +459,19 @@ impl SnapshotGenerator {
         Ok(files)
     }
 
-    /// Determines which chunk ranges can be skipped based on what already exists
-    /// remotely. Keeps the tip chunk and `EXTRA_CHUNKS_BUFFER` additional chunks.
+    /// Determines which finalized chunk ranges can be skipped based on what already
+    /// exists remotely. Keeps only the latest chunk in the timestamped run directory.
     pub fn compute_skip_ranges(
         remote_filenames: &HashSet<&str>,
         block: u64,
         blocks_per_file: u64,
     ) -> Result<HashSet<(u64, u64)>> {
         let num_chunks = block.div_ceil(blocks_per_file);
-        let keep_from = num_chunks.saturating_sub(1 + EXTRA_CHUNKS_BUFFER);
+        let latest_chunk = num_chunks.saturating_sub(1);
 
         let mut skip = HashSet::new();
         for i in 0..num_chunks {
-            if i >= keep_from {
+            if i >= latest_chunk {
                 continue;
             }
             let start = i * blocks_per_file;
@@ -907,32 +951,29 @@ mod tests {
             remote.insert(ChunkFilename::format(key, 1_500_000, 1_999_999));
         }
 
-        // block=2_000_000, blocks_per_file=500_000 → 4 chunks (indices 0-3)
-        // tip = chunk 3, buffer = 2 → keep chunks 1,2,3 → skip chunk 0
+        // block=2_000_000, blocks_per_file=500_000 → 4 chunks (indices 0-3).
+        // Only chunk 3 remains mutable; chunks 0, 1, and 2 are finalized.
         let refs: HashSet<&str> = remote.iter().map(String::as_str).collect();
         let skip = SnapshotGenerator::compute_skip_ranges(&refs, 2_000_000, 500_000).unwrap();
 
         assert!(skip.contains(&(0, 499_999)), "chunk 0 should be skipped");
-        assert!(!skip.contains(&(500_000, 999_999)), "chunk 1 should NOT be skipped (in buffer)");
-        assert!(
-            !skip.contains(&(1_000_000, 1_499_999)),
-            "chunk 2 should NOT be skipped (in buffer)"
-        );
-        assert!(!skip.contains(&(1_500_000, 1_999_999)), "chunk 3 (tip) should NOT be skipped");
+        assert!(skip.contains(&(500_000, 999_999)), "chunk 1 should be skipped");
+        assert!(skip.contains(&(1_000_000, 1_499_999)), "chunk 2 should be skipped");
+        assert!(!skip.contains(&(1_500_000, 1_999_999)), "chunk 3 (tip) should not be skipped");
     }
 
     #[test]
-    fn compute_skip_ranges_keeps_all_when_few_chunks() {
+    fn compute_skip_ranges_keeps_only_latest_chunk_when_few_chunks() {
         let mut remote = HashSet::new();
         for &(key, _) in CHUNKED_COMPONENTS {
             remote.insert(ChunkFilename::format(key, 0, 499_999));
             remote.insert(ChunkFilename::format(key, 500_000, 999_999));
         }
 
-        // block=1_000_000 → 2 chunks, tip + buffer(2) = 3 → keep all
+        // block=1_000_000 → 2 chunks; only chunk 1 remains mutable.
         let refs: HashSet<&str> = remote.iter().map(String::as_str).collect();
         let skip = SnapshotGenerator::compute_skip_ranges(&refs, 1_000_000, 500_000).unwrap();
-        assert!(skip.is_empty(), "should keep all chunks when count <= tip + buffer");
+        assert_eq!(skip, HashSet::from([(0, 499_999)]), "only the latest chunk should be kept");
     }
 
     #[test]
@@ -954,6 +995,58 @@ mod tests {
         assert!(
             !skip.contains(&(0, 499_999)),
             "should not skip range if not all components are present remotely"
+        );
+    }
+
+    #[test]
+    fn latest_chunk_filenames_are_sorted_and_identify_only_final_chunks() {
+        let mut components = BTreeMap::new();
+        for component in ["headers", "transactions"] {
+            components.insert(
+                component.to_string(),
+                ComponentManifest::Chunked(ChunkedArchive {
+                    blocks_per_file: 500_000,
+                    total_blocks: 1_000_000,
+                    chunk_sizes: vec![1, 1],
+                    chunk_decompressed_sizes: vec![1, 1],
+                    chunk_output_files: vec![vec![], vec![]],
+                    chunk_files: vec![],
+                }),
+            );
+        }
+        let manifest = SnapshotManifest {
+            block: 1_000_000,
+            chain_id: 8453,
+            storage_version: 2,
+            timestamp: 0,
+            base_url: None,
+            reth_version: None,
+            components,
+        };
+
+        assert_eq!(
+            manifest.latest_chunk_filenames(),
+            vec![
+                "headers-500000-999999.tar.zst".to_string(),
+                "transactions-500000-999999.tar.zst".to_string(),
+            ],
+            "manifest should identify one latest archive per chunked component"
+        );
+        assert!(
+            manifest.is_latest_chunk_file("headers-500000-999999.tar.zst"),
+            "latest chunk should be identified"
+        );
+        assert!(
+            !manifest.is_latest_chunk_file("headers-0-499999.tar.zst"),
+            "finalized chunk should not be identified as latest"
+        );
+        assert!(
+            !manifest.is_latest_chunk_file("headers-500000-999998.tar.zst"),
+            "wrong range end should not be identified as latest"
+        );
+        assert!(
+            !manifest.is_latest_chunk_file("state.tar.zst"),
+            "single archive should not be identified as a latest chunk"
         );
     }
 
@@ -1166,7 +1259,11 @@ mod tests {
         );
         assert!(
             filenames.contains(&"headers-500000-999999.tar.zst".to_string()),
-            "buffer range should be compressed"
+            "range without a shared remote archive should be compressed"
+        );
+        assert!(
+            filenames.contains(&"headers-1000000-1499999.tar.zst".to_string()),
+            "range without a shared remote archive should be compressed"
         );
         assert!(
             filenames.contains(&"headers-1500000-1999999.tar.zst".to_string()),
