@@ -1,5 +1,3 @@
-use std::time::SystemTime;
-
 use url::Url;
 
 /// A prover instance discovered from the infrastructure layer.
@@ -11,9 +9,6 @@ pub struct ProverInstance {
     pub endpoint: Url,
     /// Current health status of the instance.
     pub health_status: InstanceHealthStatus,
-    /// EC2 launch time of the instance. Used to determine if recently-launched
-    /// unhealthy instances should still be eligible for registration.
-    pub launch_time: Option<SystemTime>,
 }
 
 /// Health status of a discovered prover instance.

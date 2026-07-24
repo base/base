@@ -1,9 +1,6 @@
 //! AWS ALB target group instance discovery.
 
-use std::{
-    collections::HashMap,
-    time::{Duration, SystemTime},
-};
+use std::collections::HashMap;
 
 use aws_sdk_ec2::{Client as Ec2Client, types::Reservation};
 use aws_sdk_elasticloadbalancingv2::Client as ElbClient;
@@ -52,24 +49,18 @@ impl AwsTargetGroupDiscovery {
             let Some(health_status) = health_map.remove(instance_id) else {
                 continue;
             };
-            let launch_time = instance
-                .launch_time()
-                .and_then(|dt| u64::try_from(dt.secs()).ok())
-                .map(|secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs));
             let endpoint = Url::parse(&format!("http://{private_ip}:{port}"))
                 .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
             debug!(
                 instance_id = %instance_id,
                 endpoint = %endpoint,
                 health = ?health_status,
-                launch_time = ?launch_time,
                 "discovered AWS prover instance"
             );
             instances.push(ProverInstance {
                 instance_id: instance_id.to_string(),
                 endpoint,
                 health_status,
-                launch_time,
             });
         }
         Ok(instances)
@@ -147,10 +138,7 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
 
 #[cfg(test)]
 mod tests {
-    use aws_sdk_ec2::{
-        primitives::DateTime,
-        types::{Instance, Reservation},
-    };
+    use aws_sdk_ec2::types::{Instance, Reservation};
     use url::Url;
 
     use super::*;
@@ -159,23 +147,20 @@ mod tests {
         Reservation::builder().set_instances(Some(instances)).build()
     }
 
-    fn instance(id: &str, private_ip: Option<&str>, launch_time_secs: Option<i64>) -> Instance {
+    fn instance(id: &str, private_ip: Option<&str>) -> Instance {
         Instance::builder()
             .instance_id(id)
             .set_private_ip_address(private_ip.map(str::to_string))
-            .set_launch_time(launch_time_secs.map(DateTime::from_secs))
             .build()
     }
 
     #[test]
     fn assemble_prover_instances_preserves_ec2_and_elb_data() {
-        let launch_secs = 1_700_000_000;
-        let launch_time = SystemTime::UNIX_EPOCH + Duration::from_secs(launch_secs as u64);
         let reservations = vec![reservation(vec![
-            instance("i-001", Some("10.0.0.1"), Some(launch_secs)),
-            instance("i-002", Some("10.0.0.2"), None),
-            instance("i-003", Some("10.0.0.3"), None),
-            instance("i-004", Some("10.0.0.4"), None),
+            instance("i-001", Some("10.0.0.1")),
+            instance("i-002", Some("10.0.0.2")),
+            instance("i-003", Some("10.0.0.3")),
+            instance("i-004", Some("10.0.0.4")),
         ])];
         let mut health_map = HashMap::from([
             ("i-001".to_string(), InstanceHealthStatus::Healthy),
@@ -196,18 +181,16 @@ mod tests {
         assert_eq!(instances[0].instance_id, "i-001");
         assert_eq!(instances[0].endpoint, Url::parse("http://10.0.0.1:9000").unwrap());
         assert_eq!(instances[0].health_status, InstanceHealthStatus::Healthy);
-        assert_eq!(instances[0].launch_time, Some(launch_time));
         assert_eq!(instances[1].instance_id, "i-002");
         assert_eq!(instances[1].endpoint, Url::parse("http://10.0.0.2:9000").unwrap());
         assert_eq!(instances[1].health_status, InstanceHealthStatus::Initial);
-        assert_eq!(instances[1].launch_time, None);
         assert_eq!(instances[2].health_status, InstanceHealthStatus::Unhealthy);
         assert_eq!(instances[3].health_status, InstanceHealthStatus::Draining);
     }
 
     #[test]
     fn assemble_prover_instances_returns_url_parse_error() {
-        let reservations = vec![reservation(vec![instance("i-001", Some("bad host"), None)])];
+        let reservations = vec![reservation(vec![instance("i-001", Some("bad host"))])];
         let mut health_map = HashMap::from([("i-001".to_string(), InstanceHealthStatus::Healthy)]);
 
         let err = AwsTargetGroupDiscovery::assemble_prover_instances(
@@ -226,9 +209,9 @@ mod tests {
     #[test]
     fn assemble_prover_instances_leaves_missing_ec2_data_in_health_map() {
         let reservations = vec![reservation(vec![
-            instance("i-001", Some("10.0.0.1"), None),
-            instance("i-002", None, None),
-            instance("i-999", Some("10.0.0.9"), None),
+            instance("i-001", Some("10.0.0.1")),
+            instance("i-002", None),
+            instance("i-999", Some("10.0.0.9")),
         ])];
         let mut health_map = HashMap::from([
             ("i-001".to_string(), InstanceHealthStatus::Healthy),

@@ -11,11 +11,11 @@ to detect new Nitro enclave instances, fetches their attestation documents via
 
 ## Discovery Cache TTL
 
-When an instance disappears from otherwise successful discovery output, the
-registrar preserves its last-known active signers for `instance_cache_ttl_cycles`
-cycles. Shorter TTLs can speed up cleanup for genuinely removed instances but
-increase exposure to transient AWS/ALB discovery flakes; longer TTLs protect
-against flakes but delay real cleanup.
+When an instance disappears from otherwise successful discovery output or is
+reported unhealthy, the registrar preserves its last-known active signers for
+`instance_cache_ttl_cycles` cycles. Shorter TTLs can speed up cleanup for
+genuinely removed instances but increase exposure to transient AWS/ALB flakes;
+longer TTLs protect against flakes but delay real cleanup.
 
 ## Modules
 

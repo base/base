@@ -59,8 +59,6 @@ pub struct RegistrarConfig {
     pub max_tx_retries: u32,
     /// Initial delay between transaction submission retries.
     pub tx_retry_delay: Duration,
-    /// Grace window for registering recently launched unhealthy instances.
-    pub unhealthy_registration_window: Duration,
     /// Optional Nitro verifier address for CRL checks. Providing this enables CRL checks.
     pub crl_nitro_verifier_address: Option<Address>,
     /// Health server bind address.
@@ -88,7 +86,6 @@ impl fmt::Debug for RegistrarConfig {
             .field("instance_cache_ttl_cycles", &self.instance_cache_ttl_cycles)
             .field("max_tx_retries", &self.max_tx_retries)
             .field("tx_retry_delay", &self.tx_retry_delay)
-            .field("unhealthy_registration_window", &self.unhealthy_registration_window)
             .field("crl_nitro_verifier_address", &self.crl_nitro_verifier_address)
             .field("health_addr", &self.health_addr)
             .field("log_config", &self.log_config)
@@ -247,7 +244,6 @@ impl RegistrarConfig {
                 cancel: cancel.clone(),
                 max_concurrency: self.max_concurrency,
                 instance_cache_ttl_cycles: self.instance_cache_ttl_cycles,
-                unhealthy_registration_window: self.unhealthy_registration_window,
             },
             cert_manager,
             signer_manager,
@@ -334,7 +330,6 @@ mod tests {
             instance_cache_ttl_cycles: crate::INSTANCE_CACHE_TTL_CYCLES,
             max_tx_retries: 1,
             tx_retry_delay: Duration::from_secs(1),
-            unhealthy_registration_window: Duration::from_secs(1),
             crl_nitro_verifier_address: None,
             health_addr: "127.0.0.1:0".parse().unwrap(),
             log_config: base_cli_utils::LogConfig::default(),
