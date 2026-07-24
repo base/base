@@ -33,6 +33,10 @@ impl Eip8130GasSchedule {
     pub const SSTORE_SET: u64 = 20_000;
     /// `SSTORE` of an already non-zero slot to another non-zero value.
     pub const SSTORE_RESET: u64 = 2_900;
+    /// `SSTORE` to a slot already modified earlier in the same transaction (its
+    /// EIP-2200 `original != current` "dirty" case). Repricing a dirty slot only
+    /// adjusts the gas meter, so it costs a warm storage read.
+    pub const SSTORE_DIRTY: u64 = Self::WARM_SLOAD;
 
     // ── EIP-2028 data availability ───────────────────────────────────────────
     /// Cost of a zero byte of serialized transaction data.
@@ -74,20 +78,70 @@ impl Eip8130GasSchedule {
         Self::CODE_DEPOSIT_PER_BYTE * Eip8130Constants::DELEGATION_INDICATOR_SIZE as u64;
 
     // ── Config-change actor slot writes ──────────────────────────────────────
+    //
+    // `ACTOR_SLOT_SET_COST`, `ACCOUNT_STATE_SET_COST`, and
+    // `CONFIG_CHANGE_STATE_COST` all currently equal one fresh-slot write (cold
+    // SLOAD + SSTORE set = 22,100). They are kept as three distinct named
+    // constants — rather than a single shared `FRESH_SLOT_SET_COST` — because
+    // they price semantically different accesses (an actor/policy slot, the
+    // packed-state bootstrap, and a config-change sequence bump) that may be
+    // repriced independently. `CONFIG_CHANGE_STATE_COST` aliasing
+    // `ACCOUNT_STATE_SET_COST` documents that today they share the conservative
+    // zero-to-nonzero bound; a future reset-vs-set split would touch only the
+    // relevant name.
     /// Writing a fresh actor slot (`actor_config`, or a policy slot) — cold SLOAD
     /// + SSTORE set.
     pub const ACTOR_SLOT_SET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_SET;
     /// Overwriting an already-set actor slot (e.g. a revoke) — cold SLOAD +
     /// SSTORE reset.
     pub const ACTOR_SLOT_RESET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_RESET;
-    /// Worst-case extra cost for a config change targeting the account's own
-    /// secp256k1 self-actor. The self key's config lives inline in the
-    /// account-state slot, so authorizing or revoking it mutates that slot *and*
-    /// touches the mutually-exclusive `actor_config(self)` home — a second
-    /// storage home a non-self actor change never writes. Priced at one fresh
-    /// slot write (cold SLOAD + SSTORE set) as a safe upper bound over the
-    /// actual set/reset/clear mix.
-    pub const SELF_ACTOR_DUAL_HOME_COST: u64 = Self::ACTOR_SLOT_SET_COST;
+    /// Touching a cold slot with a zero-to-zero SSTORE: cold access plus the warm
+    /// no-op write cost.
+    pub const COLD_SLOT_NOOP_COST: u64 = Self::COLD_SLOAD + Self::WARM_SLOAD;
+    /// Touching both policy slots with zero-to-zero clears for an ungated actor.
+    pub const POLICY_SLOTS_NOOP_COST: u64 = Self::COLD_SLOT_NOOP_COST * 2;
+    /// Initializing the packed account-state slot. Create entries always perform
+    /// this write, and a config change may be the first state established for an
+    /// otherwise untouched EOA.
+    pub const ACCOUNT_STATE_SET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_SET;
+    /// Conservative cost for the **first** access to the packed account-state
+    /// slot in a transaction (a create bootstrap or the first config change). The
+    /// same access also supplies the lock status and both sequence channels, so
+    /// those checks must not be charged as extra reads.
+    ///
+    /// A previously initialized account would pay the lower reset cost, but the
+    /// transaction body cannot prove the pre-state. Pricing the possible
+    /// zero-to-nonzero transition prevents first-change undercharging.
+    pub const CONFIG_CHANGE_STATE_COST: u64 = Self::ACCOUNT_STATE_SET_COST;
+    /// Cost for a **subsequent** config change to the same account's packed
+    /// account-state slot within one transaction. A create or an earlier config
+    /// change already made this slot warm *and modified it earlier in the same
+    /// transaction*, so the further sequence bump is a warm SLOAD plus a **dirty**
+    /// `SSTORE` (EIP-2200 `original != current`) — not another cold zero-to-nonzero
+    /// write, nor even a reset (which applies only to the first, `original ==
+    /// current`, modification). All config changes in a transaction target the
+    /// same (`sender`) account, so every change after the first is priced here.
+    /// This is body-derivable (the change's position is known), so estimation and
+    /// execution price it identically.
+    pub const CONFIG_CHANGE_STATE_COST_SUBSEQUENT: u64 = Self::WARM_SLOAD + Self::SSTORE_DIRTY;
+    /// Worst-case revoke cost for the actor config and its two policy slots.
+    ///
+    /// Policy slots are cleared on every revoke. Charging all three as resets is
+    /// conservative for ungated actors (whose policy slots are already zero) and
+    /// exact for a policy-bearing actor.
+    pub const ACTOR_REVOKE_COST: u64 = Self::ACTOR_SLOT_RESET_COST * 3;
+    /// Gas over-charged by [`Self::ACTOR_REVOKE_COST`] for a single revoke slot
+    /// that was actually an empty zero-to-zero touch rather than an `SSTORE` reset:
+    /// the reset-vs-cold-noop delta ([`Self::ACTOR_SLOT_RESET_COST`] −
+    /// [`Self::COLD_SLOT_NOOP_COST`]). A revoke of the account's **inline** secp256k1
+    /// self key has an empty `actor_config` slot always, and empty policy slots when
+    /// the self was ungated: 3 empty slots ungated, 1 when policy-gated (its two
+    /// policy slots are real resets). Execution resolves how many of a revoke's
+    /// three slots were empty and the intrinsic layer subtracts this discount per
+    /// such slot; a non-resolved (zero) count leaves the conservative reset price in
+    /// place, so this can only reduce, never under-price, the charge.
+    pub const COLD_SLOT_RESET_DISCOUNT: u64 =
+        Self::ACTOR_SLOT_RESET_COST - Self::COLD_SLOT_NOOP_COST;
 
     // ── Enshrined authenticator execution gas (chain policy) ─────────────────
     /// secp256k1 (`K1_AUTHENTICATOR` sentinel / EOA path) execution gas — the
@@ -157,6 +211,23 @@ mod tests {
         assert_eq!(
             Eip8130GasSchedule::NONCE_KEY_EXISTING_COST,
             gas::COLD_SLOAD_COST + gas::WARM_SSTORE_RESET
+        );
+        assert_eq!(
+            Eip8130GasSchedule::COLD_SLOT_NOOP_COST,
+            gas::COLD_SLOAD_COST + gas::WARM_STORAGE_READ_COST
+        );
+        // A subsequent same-account state bump is a warm SLOAD + a dirty SSTORE
+        // (the slot was already modified earlier in this transaction).
+        assert_eq!(
+            Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST_SUBSEQUENT,
+            gas::WARM_STORAGE_READ_COST + gas::WARM_STORAGE_READ_COST
+        );
+        // An empty revoke slot is priced down from a reset to a cold zero-to-zero
+        // touch; the per-slot discount is the difference.
+        assert_eq!(
+            Eip8130GasSchedule::COLD_SLOT_RESET_DISCOUNT,
+            (gas::COLD_SLOAD_COST + gas::WARM_SSTORE_RESET)
+                - (gas::COLD_SLOAD_COST + gas::WARM_STORAGE_READ_COST)
         );
         // Nonce-free ring-buffer cost: 2 cold SLOADs + 1 warm SLOAD + 3 warm
         // SSTORE resets = 13,000 gas.

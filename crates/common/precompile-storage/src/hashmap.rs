@@ -208,6 +208,15 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(self.transient.get(&(address, key)).copied().unwrap_or(U256::ZERO))
     }
 
+    fn tload_unmetered(
+        &mut self,
+        address: Address,
+        key: U256,
+    ) -> Result<U256, BasePrecompileError> {
+        // Test backend: `tload` never deducts gas, so the raw read is unmetered.
+        Ok(self.transient.get(&(address, key)).copied().unwrap_or(U256::ZERO))
+    }
+
     fn deduct_gas(&mut self, gas: u64) -> Result<(), BasePrecompileError> {
         self.gas_deducted = self.gas_deducted.saturating_add(gas);
         Ok(())

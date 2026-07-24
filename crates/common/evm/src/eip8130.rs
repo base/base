@@ -682,12 +682,20 @@ impl Eip8130Executor {
             //    authorized in this same estimate request is visible.
             let has_explicit_delegation = Self::apply_account_changes(signed, sctx, sender)?;
 
-            // 3. Resolve the acting actor. No signature recovery: the optional
-            //    RPC hint names the intended actor (e.g. a session key); absent
-            //    that, fall back to the account's self-actor. Policy is read from
-            //    the post-apply journal so same-tx authorizations are visible.
-            //    Expiry is not enforced (estimation prices the happy path);
-            //    `get_policy` still treats a revoked default-EOA self as ungated.
+            // 3. Resolve the acting actor's real policy gate. No signature
+            //    recovery: the optional RPC hint names the intended actor (e.g. a
+            //    session key); absent that, fall back to the account's self-actor.
+            //    Policy is read from the post-apply journal so same-tx
+            //    authorizations are visible. Expiry is not enforced (estimation
+            //    prices the happy path); `get_policy` still treats a revoked
+            //    default-EOA self as ungated.
+            //
+            //    This real gate drives only the outcome's call-gating (whether
+            //    `call.to` must equal `policy_target`); it does NOT feed the
+            //    intrinsic-gas estimate, which pins the gate worst-case (step 5)
+            //    so the returned ceiling stays valid even if the gate flips
+            //    between estimation and inclusion (the gate is a non-monotonic
+            //    state-dependent cost).
             let acc = AccountConfigurationStorage::new(sctx);
             let sender_actor_id = acting_actor_hint
                 .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
@@ -709,23 +717,49 @@ impl Eip8130Executor {
                 Address::ZERO
             };
 
-            // 4. Auto-delegate a code-less sender only when the transaction did
-            //    not explicitly set its delegation. In particular, an explicit
-            //    zero target is an owner-authorized request to remain undelegated.
-            let sender_auto_delegated = if has_explicit_delegation {
-                false
-            } else {
-                Self::auto_delegate_codeless_sender(sctx, sender)?
-            };
+            // 4. Auto-delegate a code-less sender in the simulation state (so the
+            //    calls run against a delegated sender), but *price* auto-delegation
+            //    from the body-derivable worst case, not the sim-state result.
+            //    Auto-delegation is non-monotonic — the sender's on-chain code can
+            //    flip between estimation and inclusion — so pinning the body
+            //    ceiling keeps the estimate a safe upper bound and, crucially,
+            //    identical to what mempool admission pins. Resolving it from
+            //    current code state here (while admission pins the body ceiling)
+            //    would let admission exceed the estimate and reject a
+            //    `gas_limit == estimate` submission. The state mutation stays gated
+            //    on the absence of an explicit delegation (a zero target is an
+            //    owner-authorized request to remain undelegated), matching the
+            //    classifier's suppression on any `Delegation` entry.
+            if !has_explicit_delegation {
+                Self::auto_delegate_codeless_sender(sctx, sender)?;
+            }
+            let sender_auto_delegated =
+                IntrinsicGasInput::sender_auto_delegated(&tx.account_changes);
 
             // 5. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
             //    stub signature of the right authenticator type estimates exactly).
+            //    The estimate is a safe ceiling that execution can only meet or
+            //    undercharge. The non-monotonic, state-dependent costs are
+            //    therefore pinned to their worst case rather than resolved:
+            //      - both policy gates charged (their `policy_manager` SLOAD), so a
+            //        `gas_limit == estimate` submission never OOGs if a gate flips
+            //        on before inclusion. The payer's unsigned representative blob
+            //        is not authenticable here in any case.
+            //      - zero revoke discount, so revokes are priced at the full
+            //        three-reset worst case regardless of which slots are empty.
+            //      - auto-delegation pinned to the body ceiling above.
+            //    The monotonic, body-derivable nonce first-use cost stays resolved.
+            //    Execution reprices all of these precisely against the
+            //    authenticated actors and real state.
             let (sender_intrinsic, payer_auth, execution_gas_available) =
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
-                    nonce_key_first_use,
-                    sender_auto_delegated,
+                    &IntrinsicGasInput::worst_case(
+                        nonce_key_first_use,
+                        sender_auto_delegated,
+                        tx.payer.is_some(),
+                    ),
                     gas_limit,
                 )?;
 
@@ -803,6 +837,11 @@ impl Eip8130Executor {
                     .map_err(BaseTransactionError::eip8130)?;
             let has_explicit_delegation = applied_tx.applied.delegation.is_some();
             let sender_actor = applied_tx.actors.sender.resolved;
+            let payer_policy_gated = applied_tx
+                .actors
+                .payer
+                .as_ref()
+                .is_some_and(|actor| actor.resolved.is_policy_gated());
             let sender = applied_tx.actors.sender.account;
             let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
             // Defense-in-depth: `authorize_and_apply` -> `verify_sender` already
@@ -880,8 +919,9 @@ impl Eip8130Executor {
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
-                    nonce_key_first_use,
-                    sender_auto_delegated,
+                    &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated)
+                        .with_policy_gates(sender_actor.is_policy_gated(), payer_policy_gated)
+                        .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
                     gas_limit,
                 )?;
 
@@ -1378,6 +1418,9 @@ impl Eip8130Executor {
                     created_effect = Some((created.address, created.code));
                 }
                 AccountChange::ConfigChange(cc) => {
+                    // Estimation prices revokes at the worst-case three-reset cost
+                    // (a zero revoke discount is pinned), so the resolved
+                    // empty-slot count is applied but not needed here.
                     AccountChangeApplier::apply_config_change(
                         &mut acc_mut,
                         sender,
@@ -1439,16 +1482,11 @@ impl Eip8130Executor {
     fn resolve_execution_gas(
         signed: &base_common_consensus::Eip8130Signed,
         encoded: &[u8],
-        nonce_key_first_use: bool,
-        sender_auto_delegated: bool,
+        input: &IntrinsicGasInput,
         gas_limit: u64,
     ) -> Result<(u64, u64, u64), BaseTransactionError> {
-        let intrinsic = IntrinsicGas::compute(
-            signed,
-            encoded,
-            &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated),
-        )
-        .map_err(BaseTransactionError::eip8130)?;
+        let intrinsic =
+            IntrinsicGas::compute(signed, encoded, input).map_err(BaseTransactionError::eip8130)?;
         let execution_gas_available =
             intrinsic.execution_gas_available(gas_limit).ok_or_else(|| {
                 BaseTransactionError::eip8130("EIP-8130 sender-intrinsic gas exceeds the gas limit")
@@ -1781,12 +1819,19 @@ mod tests {
 
         assert!(sim_result.is_success(), "estimation should report success");
         assert!(sim_gas > 0, "estimated gas should be positive");
-        // The estimate is a gas *limit* that must cover the real execution charge.
-        // This transaction calls a STOP contract (no nested calls, no
-        // SSTORE/SELFDESTRUCT), so it loses no gas to EIP-150 forwarding and earns
-        // no refund: the gas-limit search converges on exactly the gas a real
-        // execution charges, so the estimate equals `exec_gas`.
-        assert_eq!(sim_gas, exec_gas, "no-forwarding estimate should equal the execution charge");
+        // The estimate is a gas *limit* that must cover the real execution charge
+        // (a safe ceiling execution can only meet or undercharge). This
+        // transaction calls a STOP contract (no nested calls, no SSTORE/
+        // SELFDESTRUCT), so it loses no gas to EIP-150 forwarding and earns no
+        // refund. The only gap is the non-monotonic sender policy gate, which the
+        // estimate pins worst-case: this EOA sender is ungated, so the estimate
+        // exceeds the execution charge by exactly one pinned `policy_manager`
+        // COLD_SLOAD and by nothing else.
+        assert_eq!(
+            sim_gas,
+            exec_gas + base_execution_eip8130::Eip8130GasSchedule::COLD_SLOAD,
+            "estimate must be the execution charge plus exactly the pinned policy-gate SLOAD",
+        );
 
         // Estimation never commits: a fresh execution after it still bumps the
         // nonce from zero, proving no nonce was consumed by the simulation.
