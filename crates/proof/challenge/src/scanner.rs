@@ -1060,7 +1060,11 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let mut scanner = GameScanner::new(factory.clone(), verifier.clone(), mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(
+            factory.clone(),
+            verifier.clone(),
+            mock_anchor_registry(Address::ZERO),
+        );
 
         // First tick: all three games are post-anchor and discovered.
         let initial = scanner.scan().await.unwrap();
