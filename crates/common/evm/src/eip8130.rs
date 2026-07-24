@@ -314,15 +314,19 @@ impl Eip8130Executor {
         // chain.
         Self::warm_pre_call_accounts(evm);
 
-        let mut calls =
-            match Self::execute_calls(evm, &signed, &outcome, outcome.execution_gas_available, true)
-            {
-                Ok(calls) => calls,
-                Err(err) => {
-                    Self::teardown_after_error(evm);
-                    return Err(err);
-                }
-            };
+        let mut calls = match Self::execute_calls(
+            evm,
+            &signed,
+            &outcome,
+            outcome.execution_gas_available,
+            true,
+        ) {
+            Ok(calls) => calls,
+            Err(err) => {
+                Self::teardown_after_error(evm);
+                return Err(err);
+            }
+        };
 
         let gas_used = match Self::settle_fees(
             evm.ctx_mut(),
@@ -2806,7 +2810,10 @@ mod tests {
             "a phase-0 revert must roll back the explicit delegation, leaving the sender code-less",
         );
         assert_eq!(sender_acc.info.nonce, 1, "nonce is consumed even when phase 0 reverts");
-        assert!(sender_acc.info.balance < initial, "the payer is still charged on a phase-0 revert");
+        assert!(
+            sender_acc.info.balance < initial,
+            "the payer is still charged on a phase-0 revert"
+        );
     }
 
     #[test]
