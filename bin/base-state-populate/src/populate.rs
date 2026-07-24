@@ -1,4 +1,4 @@
-//! Database write logic for bulk ERC-20 balance-slot and account population.
+//! Database write logic for bulk ERC-20 balance-slot and storage trie population.
 
 use alloy_primitives::{Address, B256, U256, keccak256};
 use eyre::{Result, WrapErr};
@@ -10,10 +10,9 @@ use reth_db_api::{
     tables,
     transaction::{DbTx, DbTxMut},
 };
-use reth_primitives_traits::{Account, StorageEntry};
-use reth_trie::{BranchNodeCompact, Nibbles, StateRoot, StorageRoot};
+use reth_primitives_traits::StorageEntry;
 use reth_trie_db::{
-    DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot, DatabaseStorageTrieCursor,
+    DatabaseHashedCursorFactory, DatabaseStorageRoot, DatabaseStorageTrieCursor,
     DatabaseTrieCursorFactory, LegacyKeyAdapter, PackedKeyAdapter, TrieTableAdapter,
 };
 use tracing::{info, warn};
@@ -24,11 +23,10 @@ use crate::{
     storage::{address_for_index, derive_sender_addresses, erc20_balance_slot},
 };
 
-type AdapterStorageRoot<'a, TX, A> =
-    StorageRoot<DatabaseTrieCursorFactory<&'a TX, A>, DatabaseHashedCursorFactory<&'a TX>>;
-
-type AdapterStateRoot<'a, TX, A> =
-    StateRoot<DatabaseTrieCursorFactory<&'a TX, A>, DatabaseHashedCursorFactory<&'a TX>>;
+type AdapterStorageRoot<'a, TX, A> = reth_trie::StorageRoot<
+    DatabaseTrieCursorFactory<&'a TX, A>,
+    DatabaseHashedCursorFactory<&'a TX>,
+>;
 
 /// Entry point for the `populate` subcommand.
 #[derive(Debug)]
@@ -55,17 +53,7 @@ impl Populator {
         };
         info!(version = ?storage_trie_version, "detected storage trie version");
 
-        let account_count =
-            args.populate_accounts.then(|| args.account_count.unwrap_or(args.count));
-
-        if let Some(n) = account_count {
-            Self::write_plain_accounts(&db, n, args.chunk_size, args.account_balance)
-                .wrap_err("write plain accounts")?;
-        }
-
         if !args.trie_only {
-            Self::write_account(&db, token_addr, hashed_token, None)
-                .wrap_err("write contract account")?;
             Self::clear_token_storage(&db, token_addr, hashed_token)
                 .wrap_err("clear existing contract storage")?;
             Self::write_balance_slots(
@@ -95,15 +83,6 @@ impl Populator {
 
         Self::compute_and_write_storage_trie(&db, hashed_token, storage_trie_version)
             .wrap_err("compute + write storage trie")?;
-
-        if account_count.is_none() {
-            Self::update_account_trie(&db, hashed_token, None, storage_trie_version)
-                .wrap_err("update account trie")?;
-        } else {
-            Self::rebuild_hashed_accounts(&db).wrap_err("rebuild HashedAccounts")?;
-            Self::recompute_account_trie(&db, storage_trie_version)
-                .wrap_err("recompute full account trie")?;
-        }
 
         info!("population complete");
         Ok(())
@@ -137,33 +116,13 @@ impl Populator {
         Ok(())
     }
 
-    fn write_account(
-        db: &reth_db::DatabaseEnv,
-        token_addr: Address,
-        hashed_token: B256,
-        bytecode_hash: Option<B256>,
-    ) -> Result<()> {
-        let account = Account { nonce: 0, balance: U256::ZERO, bytecode_hash };
-        let tx = db.tx_mut().wrap_err("begin account tx")?;
-        tx.cursor_write::<tables::PlainAccountState>()
-            .wrap_err("open PlainAccountState")?
-            .upsert(token_addr, &account)
-            .wrap_err("upsert contract account")?;
-        tx.cursor_write::<tables::HashedAccounts>()
-            .wrap_err("open HashedAccounts")?
-            .upsert(hashed_token, &account)
-            .wrap_err("upsert hashed contract account")?;
-        tx.commit().wrap_err("commit account tx")?;
-        info!(contract = %token_addr, "wrote contract account");
-        Ok(())
-    }
-
     /// Writes all `count` balance slots using a single-scan globally-sorted append.
     ///
     /// Generates all (`plain_slot`, `hashed_slot`) pairs in one rayon parallel pass,
     /// sorts each list independently, then writes each to the corresponding MDBX table
     /// in commit-sized chunks. Sequential sorted appends let MDBX extend leaf pages
-    /// linearly without B-tree splits, avoiding exponential ZFS `CoW` write amplification.
+    /// linearly without B-tree splits, avoiding exponential ZFS copy-on-write write
+    /// amplification.
     ///
     /// Memory: ~(count × 32 bytes) per table. For 700M entries, ~22 GB per table (44 GB
     /// total). Requires sufficient RAM; the machine must have ~50+ GB available.
@@ -301,92 +260,6 @@ impl Populator {
         Ok(())
     }
 
-    fn update_account_trie(
-        db: &reth_db::DatabaseEnv,
-        hashed_token: B256,
-        bytecode_hash: Option<B256>,
-        storage_trie_version: StorageTrieVersion,
-    ) -> Result<()> {
-        match storage_trie_version {
-            StorageTrieVersion::V1 => Self::update_account_trie_with_adapter::<LegacyKeyAdapter>(
-                db,
-                hashed_token,
-                bytecode_hash,
-            ),
-            StorageTrieVersion::V2 => Self::update_account_trie_with_adapter::<PackedKeyAdapter>(
-                db,
-                hashed_token,
-                bytecode_hash,
-            ),
-        }
-    }
-
-    fn update_account_trie_with_adapter<A: TrieTableAdapter>(
-        db: &reth_db::DatabaseEnv,
-        hashed_token: B256,
-        bytecode_hash: Option<B256>,
-    ) -> Result<()> {
-        use reth_trie::HashedPostState;
-
-        info!("updating account trie");
-        let tx = db.tx_mut().wrap_err("begin account-trie tx")?;
-
-        let account = Account { nonce: 0, balance: U256::ZERO, bytecode_hash };
-        let post_state = HashedPostState::default().with_accounts([(hashed_token, Some(account))]);
-        let sorted_post_state = post_state.into_sorted();
-
-        let (new_state_root, acct_trie_updates) =
-            AdapterStateRoot::<'_, _, A>::overlay_root_with_updates(&tx, &sorted_post_state)
-                .wrap_err("compute account trie overlay")?;
-
-        info!(state_root = %new_state_root, "new state root computed");
-
-        let sorted = acct_trie_updates.into_sorted();
-        let mut acct_cursor =
-            tx.cursor_write::<A::AccountTrieTable>().wrap_err("open AccountsTrie")?;
-        let (written, deleted) =
-            Self::write_account_trie_nodes::<A>(&mut acct_cursor, sorted.account_nodes_ref())?;
-
-        info!(written, deleted, "account trie nodes updated");
-        tx.commit().wrap_err("commit account-trie tx")?;
-        Ok(())
-    }
-
-    /// Upserts or deletes `AccountsTrie` nodes from a sorted set of trie-update entries.
-    ///
-    /// A `None` value means the node was removed from the trie and any existing entry at
-    /// that key must be deleted. Returns `(nodes_written, nodes_deleted)`.
-    fn write_account_trie_nodes<A: TrieTableAdapter>(
-        acct_cursor: &mut (impl DbCursorRW<A::AccountTrieTable> + DbCursorRO<A::AccountTrieTable>),
-        nodes: &[(Nibbles, Option<BranchNodeCompact>)],
-    ) -> Result<(usize, usize)> {
-        let mut written = 0usize;
-        let mut deleted = 0usize;
-        for (key, maybe_node) in nodes {
-            if key.is_empty() {
-                continue;
-            }
-            let nibbles = A::AccountKey::from(*key);
-            match maybe_node {
-                Some(node) => {
-                    acct_cursor.upsert(nibbles, node).wrap_err("upsert AccountsTrie node")?;
-                    written += 1;
-                }
-                None => {
-                    if acct_cursor
-                        .seek_exact(nibbles.clone())
-                        .wrap_err("seek AccountsTrie")?
-                        .is_some()
-                    {
-                        acct_cursor.delete_current().wrap_err("delete AccountsTrie node")?;
-                        deleted += 1;
-                    }
-                }
-            }
-        }
-        Ok((written, deleted))
-    }
-
     fn write_sender_balances(
         db: &reth_db::DatabaseEnv,
         token_addr: Address,
@@ -419,175 +292,6 @@ impl Populator {
 
         tx.commit().wrap_err("commit sender-balances tx")?;
         info!(count = sender_count, "sender balance slots written");
-        Ok(())
-    }
-
-    /// Phase 1 of account writing: write synthetic EOA accounts to `PlainAccountState` only.
-    ///
-    /// Writing `HashedAccounts` here would require a sorted scan of all existing leaf pages
-    /// per chunk (tens of GB of ZFS `CoW` I/O, repeated once per chunk). Instead,
-    /// `rebuild_hashed_accounts` does a single 16-pass scan of `PlainAccountState` to
-    /// build `HashedAccounts` in minutes rather than hours.
-    fn write_plain_accounts(
-        db: &reth_db::DatabaseEnv,
-        count: u64,
-        chunk_size: u64,
-        balance: U256,
-    ) -> Result<()> {
-        info!(count, "writing synthetic EOA accounts to PlainAccountState");
-        let total_chunks = count.div_ceil(chunk_size);
-        let pb = ProgressBar::new(count);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template(
-                    "{spinner} [{elapsed_precise}] [{bar:40}] {pos}/{len} accounts ({per_sec})",
-                )?
-                .progress_chars("##-"),
-        );
-
-        let account = Account { nonce: 0, balance, bytecode_hash: None };
-
-        for chunk_idx in 0..total_chunks {
-            let start = chunk_idx * chunk_size;
-            let end = (start + chunk_size).min(count);
-
-            let tx = db.tx_mut().wrap_err("begin plain-accounts tx")?;
-            let mut plain_cursor = tx
-                .cursor_write::<tables::PlainAccountState>()
-                .wrap_err("open PlainAccountState")?;
-            for i in start..end {
-                plain_cursor
-                    .upsert(address_for_index(i), &account)
-                    .wrap_err("upsert plain account")?;
-            }
-            tx.commit().wrap_err("commit plain-accounts tx")?;
-
-            pb.inc(end - start);
-            info!(
-                chunk = chunk_idx + 1,
-                total = total_chunks,
-                accounts_written = end,
-                "plain account chunk committed"
-            );
-        }
-
-        pb.finish_with_message("plain accounts written");
-        Ok(())
-    }
-
-    /// Phase 2 of account writing: rebuild `HashedAccounts` from `PlainAccountState` in a
-    /// single scan, hashing each address once and bucketing it by its hash's first byte.
-    ///
-    /// Buckets are written in 16 separate MDBX transactions to keep each transaction's
-    /// diverged page set bounded, matching the CoW-I/O profile of the previous 16-pass
-    /// approach, but without re-scanning and re-hashing the whole table on every pass.
-    fn rebuild_hashed_accounts(db: &reth_db::DatabaseEnv) -> Result<()> {
-        const NUM_BUCKETS: usize = 16;
-
-        info!("rebuilding HashedAccounts from PlainAccountState");
-
-        let mut buckets: Vec<Vec<(B256, Account)>> = vec![Vec::new(); NUM_BUCKETS];
-        {
-            let read_tx = db.tx().wrap_err("begin PlainAccountState scan tx")?;
-            let mut cursor = read_tx
-                .cursor_read::<tables::PlainAccountState>()
-                .wrap_err("open PlainAccountState cursor")?;
-            let mut walker = cursor.walk(None).wrap_err("walk PlainAccountState")?;
-            while let Some((addr, account)) = walker.next().transpose()? {
-                let hash = keccak256(addr);
-                let bucket = hash[0] as usize * NUM_BUCKETS / 256;
-                buckets[bucket].push((hash, account));
-            }
-        }
-
-        for (bucket_idx, mut entries) in buckets.into_iter().enumerate() {
-            entries.par_sort_unstable_by_key(|(h, _)| *h);
-
-            info!(
-                bucket = bucket_idx + 1,
-                total = NUM_BUCKETS,
-                entries = entries.len(),
-                "inserting HashedAccounts bucket"
-            );
-
-            let write_tx = db.tx_mut().wrap_err("begin HashedAccounts write tx")?;
-            let mut hashed_cursor = write_tx
-                .cursor_write::<tables::HashedAccounts>()
-                .wrap_err("open HashedAccounts cursor")?;
-            for (hash, account) in &entries {
-                hashed_cursor.upsert(*hash, account).wrap_err("upsert hashed account")?;
-            }
-            write_tx.commit().wrap_err("commit HashedAccounts bucket tx")?;
-
-            info!(
-                bucket = bucket_idx + 1,
-                total = NUM_BUCKETS,
-                entries = entries.len(),
-                "HashedAccounts bucket committed"
-            );
-        }
-
-        info!("HashedAccounts rebuild complete");
-        Ok(())
-    }
-
-    fn recompute_account_trie(
-        db: &reth_db::DatabaseEnv,
-        storage_trie_version: StorageTrieVersion,
-    ) -> Result<()> {
-        match storage_trie_version {
-            StorageTrieVersion::V1 => {
-                Self::recompute_account_trie_with_adapter::<LegacyKeyAdapter>(db)
-            }
-            StorageTrieVersion::V2 => {
-                Self::recompute_account_trie_with_adapter::<PackedKeyAdapter>(db)
-            }
-        }
-    }
-
-    fn recompute_account_trie_with_adapter<A: TrieTableAdapter>(
-        db: &reth_db::DatabaseEnv,
-    ) -> Result<()> {
-        info!("recomputing full account trie from HashedAccounts (this may take a while)");
-        let tx = db.tx_mut().wrap_err("begin account-trie recompute tx")?;
-
-        // Clear all stale AccountsTrie nodes before recomputing. Without this, the trie
-        // walker sees the cached hash flags in existing branch nodes, skips their subtrees,
-        // and returns the old root instead of rebuilding from the current leaf set.
-        let cleared = {
-            let mut acct_cursor =
-                tx.cursor_write::<A::AccountTrieTable>().wrap_err("open AccountsTrie for clear")?;
-            let mut keys_to_delete: Vec<A::AccountKey> = Vec::new();
-            {
-                let mut walker = acct_cursor.walk(None).wrap_err("walk AccountsTrie")?;
-                while let Some((key, _)) = walker.next().transpose()? {
-                    keys_to_delete.push(key);
-                }
-            }
-            let count = keys_to_delete.len();
-            for key in keys_to_delete {
-                if acct_cursor.seek_exact(key).wrap_err("seek AccountsTrie node")?.is_some() {
-                    acct_cursor.delete_current().wrap_err("delete stale AccountsTrie node")?;
-                }
-            }
-            count
-        };
-        info!(cleared, "cleared stale AccountsTrie nodes");
-
-        let (new_state_root, trie_updates) = AdapterStateRoot::<'_, _, A>::from_tx(&tx)
-            .root_with_updates()
-            .wrap_err("compute full state root")?;
-
-        info!(state_root = %new_state_root, "full state root computed");
-
-        let sorted = trie_updates.into_sorted();
-        let mut acct_cursor =
-            tx.cursor_write::<A::AccountTrieTable>().wrap_err("open AccountsTrie")?;
-        let (written, deleted) =
-            Self::write_account_trie_nodes::<A>(&mut acct_cursor, sorted.account_nodes_ref())?;
-
-        info!(written, deleted, "account trie fully recomputed");
-        tx.commit().wrap_err("commit account-trie recompute tx")?;
         Ok(())
     }
 }

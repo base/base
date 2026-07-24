@@ -17,7 +17,7 @@ pub struct Args {
 /// The subcommand selecting whether to populate or verify state.
 #[derive(Debug, Subcommand)]
 pub enum SubCommand {
-    /// Write balance slots, accounts, and trie nodes into the database.
+    /// Write balance slots and storage trie nodes into the database.
     Populate(PopulateArgs),
     /// Read back and validate previously written state.
     Verify(VerifyArgs),
@@ -64,22 +64,8 @@ pub struct PopulateArgs {
     #[arg(long)]
     pub sender_count: Option<u64>,
 
-    /// Also write synthetic EOA accounts to `PlainAccountState` + `HashedAccounts` + `AccountsTrie`.
-    /// The same `address_for_index` addresses are used for token balances, making every
-    /// account holder also a token holder (worst-case equal-depth trie test).
-    #[arg(long)]
-    pub populate_accounts: bool,
-
-    /// Number of synthetic EOA accounts to write (default: same as `--count`).
-    #[arg(long)]
-    pub account_count: Option<u64>,
-
-    /// ETH balance (in wei) credited to each synthetic EOA account.
-    #[arg(long, default_value = "1000000000000000000")]
-    pub account_balance: U256,
-
-    /// Rebuild only the storage and account tries from already-written flat state.
-    /// Skips all balance-slot writes; use this to repair a dataset whose tries are
+    /// Rebuild only the storage trie from already-written flat state.
+    /// Skips all balance-slot writes; use this to repair a dataset whose trie is
     /// stale without re-running the multi-hour slot write.
     #[arg(long)]
     pub trie_only: bool,

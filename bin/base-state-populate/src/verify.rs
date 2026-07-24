@@ -12,7 +12,6 @@ use reth_db_api::{
     tables,
     transaction::DbTx,
 };
-use reth_trie::Nibbles;
 use reth_trie_db::{LegacyKeyAdapter, PackedKeyAdapter, TrieTableAdapter};
 use tracing::info;
 
@@ -62,8 +61,6 @@ impl Verifier {
 
         if args.count > 0 {
             info!(contract = %token_addr, count = args.count, "verifying balance state");
-            Self::check_account(&tx, token_addr, hashed_token)
-                .wrap_err("check contract account")?;
             Self::check_balance_samples(
                 &tx,
                 token_addr,
@@ -98,25 +95,6 @@ impl Verifier {
         }
 
         info!("all verification checks passed");
-        Ok(())
-    }
-
-    fn check_account(tx: &impl DbTx, token_addr: Address, hashed_token: B256) -> Result<()> {
-        let entry = tx
-            .cursor_read::<tables::PlainAccountState>()
-            .wrap_err("open PlainAccountState")?
-            .seek_exact(token_addr)
-            .wrap_err("seek contract in PlainAccountState")?;
-        eyre::ensure!(entry.is_some(), "contract account missing from PlainAccountState");
-
-        let hashed = tx
-            .cursor_read::<tables::HashedAccounts>()
-            .wrap_err("open HashedAccounts")?
-            .seek_exact(hashed_token)
-            .wrap_err("seek contract in HashedAccounts")?;
-        eyre::ensure!(hashed.is_some(), "contract account missing from HashedAccounts");
-
-        info!(contract = %token_addr, "account present in PlainAccountState + HashedAccounts");
         Ok(())
     }
 
@@ -278,15 +256,7 @@ impl Verifier {
         }
         eyre::ensure!(node_count > 1, "only 1 StoragesTrie node — trie may be incomplete");
 
-        let has_acct_trie = tx
-            .cursor_read::<A::AccountTrieTable>()
-            .wrap_err("open AccountsTrie")?
-            .seek_exact(A::AccountKey::from(Nibbles::default()))
-            .wrap_err("seek AccountsTrie root")?
-            .is_some();
-
         info!(storage_trie_nodes = node_count, "StoragesTrie nodes present");
-        eyre::ensure!(has_acct_trie, "AccountsTrie root node missing — trie not written");
         Ok(())
     }
 }
