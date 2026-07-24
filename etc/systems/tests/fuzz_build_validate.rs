@@ -288,11 +288,20 @@ impl FuzzTxGenerator {
         SENDERS[self.rng.random_range(0..SENDERS.len())].address()
     }
 
-    /// Encode a call that writes a contract storage slot (`updateValue` -> slot 0),
-    /// so subsequent access-list warming has a real SSTORE to account for.
+    /// Encode a call that writes contract storage, so access-list warming has real
+    /// SSTOREs to account for. Alternates between a fixed slot (`updateValue` ->
+    /// slot 0) and mapping slots (`insertMultiple` -> keccak-derived slots), which
+    /// broadens the warm/cold storage surface.
     fn contract_call(&mut self) -> Bytes {
-        let new_value = U256::from(self.rng.random_range(0..1_000u64));
-        AccessListContract::updateValueCall { newValue: new_value }.abi_encode().into()
+        if self.rng.random_range(0..2) == 0 {
+            let new_value = U256::from(self.rng.random_range(0..1_000u64));
+            AccessListContract::updateValueCall { newValue: new_value }.abi_encode().into()
+        } else {
+            let n = self.rng.random_range(1..=4usize);
+            let keys = (0..n).map(|_| U256::from(self.rng.random_range(0..16u64))).collect();
+            let values = (0..n).map(|_| U256::from(self.rng.random_range(0..1_000u64))).collect();
+            AccessListContract::insertMultipleCall { keys, values }.abi_encode().into()
+        }
     }
 
     /// Generate an EIP-2930 access list that, ~40% of the time, declares the
