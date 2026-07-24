@@ -13,6 +13,12 @@
 //! implementation invariants (gas within limit), and a second test asserts
 //! determinism: the same seed builds byte-identical blocks twice.
 //!
+//! Alongside build-vs-validate, `fuzz_derive_roundtrip` covers the other chain-
+//! halting agreement boundary: batch-encode vs. derive. It runs fuzzed
+//! transactions through Base's own span-batch codec (encode as the batcher does,
+//! read back as the derivation pipeline does) and requires the reconstructed
+//! blocks to match byte-for-byte.
+//!
 //! Runs fully in-process (no devnet, no Docker), forces exactly the generated
 //! transactions into each block (`no_tx_pool`), and uses a fixed per-block
 //! timestamp, so a run is deterministic and a failing seed replays exactly.
@@ -36,6 +42,7 @@ use base_common_consensus::{Call, Eip8130Constants, Eip8130Signed, TxEip8130};
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
+use base_protocol::{RawSpanBatch, SingleBatch, SpanBatch};
 use base_test_utils::{AccessListContract, Account, DEVNET_CHAIN_ID, build_test_genesis_cobalt};
 use eyre::{Result, eyre};
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -68,6 +75,18 @@ const TX_GAS_LIMIT_8130: u64 = 500_000;
 /// A far-future expiry (well past any block timestamp here) used to fuzz the
 /// `expiry` field without ever letting a transaction lapse and get dropped.
 const FAR_FUTURE_EXPIRY: u64 = 4_000_000_000;
+
+/// Blocks per fuzzed span batch in the derive round-trip.
+const DERIVE_BLOCKS: usize = 8;
+/// User transactions per block in the derive round-trip.
+const DERIVE_TXS_PER_BLOCK: usize = 6;
+/// L2 block time used to encode/derive the span batch (must match on both sides).
+const DERIVE_BLOCK_TIME: u64 = 2;
+/// Genesis timestamp the span batch's relative timestamps are computed against.
+const DERIVE_GENESIS_TS: u64 = 0;
+/// A single fixed L1 origin (epoch) for the whole span, so the derived epoch
+/// numbers reconstruct deterministically from the origin bits.
+const DERIVE_EPOCH: u64 = 1;
 
 #[tokio::test]
 async fn fuzz_build_validate() -> Result<()> {
@@ -586,4 +605,121 @@ fn sign_8130(shape: &Eip8130Shape, sequence: u64) -> Result<Bytes> {
     };
 
     Ok(Eip8130Signed::new(tx, sender_auth, payer_auth).encoded_2718().into())
+}
+
+/// Batch-encode ↔ derive round-trip over Base's own span-batch codec
+/// (`base_protocol`), the other chain-halting agreement boundary: the batcher
+/// encodes L2 blocks into a span batch and the derivation pipeline must
+/// reconstruct exactly those blocks. A mismatch splits the chain.
+///
+/// This drives the real codec end to end, in-process (no L1, no devnet): fuzzed
+/// user transactions (a mix of 1559/2930 and Base's EIP-8130) are grouped into
+/// blocks, appended into a [`SpanBatch`] the way the batcher does
+/// (`append_singular_batch`), serialized (`to_raw_span_batch` → `encode`), then
+/// read back the way derivation does (`RawSpanBatch::decode` → `derive`), and
+/// the reconstructed blocks must match the originals — transactions byte-for-
+/// byte, plus epoch and timestamp. Deposits are excluded, as they are never
+/// carried in span batches. Deterministic per seed; override with `FUZZ_SEED`.
+#[test]
+fn fuzz_derive_roundtrip() -> Result<()> {
+    let seed = seed_from_env();
+    let mut mix = StdRng::seed_from_u64(seed);
+    let mut tx_gen = FuzzTxGenerator::new(seed);
+    let mut tx8130_gen = Eip8130Generator::new(seed ^ 0x8130);
+    let mut nonces = [0u64; SENDERS.len()];
+    let mut sequences = [0u64; SENDERS.len()];
+    // Calls target a funded EOA; the codec round-trip is independent of state, so
+    // no contract needs to be deployed here.
+    let recipient = SENDERS[0].address();
+
+    // The per-block user transaction sets (no deposits — those are never span-batched).
+    let mut block_txs: Vec<Vec<Bytes>> = Vec::with_capacity(DERIVE_BLOCKS);
+    for _ in 0..DERIVE_BLOCKS {
+        let mut txs = Vec::with_capacity(DERIVE_TXS_PER_BLOCK);
+        for _ in 0..DERIVE_TXS_PER_BLOCK {
+            // ~1/3 EIP-8130 (Base-specific span-batch tx data), the rest 1559/2930.
+            let raw = if mix.random_range(0..3) == 0 {
+                let shape = tx8130_gen.next_shape();
+                let raw = sign_8130(&shape, sequences[shape.sender])?;
+                sequences[shape.sender] += 1;
+                raw
+            } else {
+                let shape = tx_gen.next_shape(recipient);
+                let raw = sign_tx(&SENDERS[shape.sender], &shape, nonces[shape.sender])?;
+                nonces[shape.sender] += 1;
+                raw
+            };
+            txs.push(raw);
+        }
+        block_txs.push(txs);
+    }
+
+    // Encode side (batcher): append each block as a singular batch on a single
+    // fixed L1 origin, with timestamps on the block-time grid so derive reproduces
+    // them exactly.
+    let parent_hash = B256::repeat_byte(0x11);
+    let epoch_hash = B256::repeat_byte(0x22);
+    let mut span = SpanBatch {
+        chain_id: DEVNET_CHAIN_ID,
+        genesis_timestamp: DERIVE_GENESIS_TS,
+        ..Default::default()
+    };
+    for (i, txs) in block_txs.iter().enumerate() {
+        let single = SingleBatch {
+            parent_hash,
+            epoch_num: DERIVE_EPOCH,
+            epoch_hash,
+            timestamp: DERIVE_GENESIS_TS + DERIVE_BLOCK_TIME * (i as u64 + 1),
+            transactions: txs.clone(),
+        };
+        span.append_singular_batch(single, i as u64)
+            .map_err(|e| eyre!("span batch append failed at block {i} (seed={seed:#x}): {e:?}"))?;
+    }
+
+    // Serialize, then read back exactly as the derivation pipeline does.
+    let raw = span
+        .to_raw_span_batch()
+        .map_err(|e| eyre!("to_raw_span_batch failed (seed={seed:#x}): {e:?}"))?;
+    let mut buf = Vec::new();
+    raw.encode(&mut buf).map_err(|e| eyre!("span batch encode failed (seed={seed:#x}): {e:?}"))?;
+    let mut decoded = RawSpanBatch::decode(&mut buf.as_slice())
+        .map_err(|e| eyre!("span batch decode failed (seed={seed:#x}): {e:?}"))?;
+    let derived = decoded
+        .derive(DERIVE_BLOCK_TIME, DERIVE_GENESIS_TS, DEVNET_CHAIN_ID)
+        .map_err(|e| eyre!("span batch derive failed (seed={seed:#x}): {e:?}"))?;
+
+    // Derivation must reconstruct exactly what the batcher encoded.
+    if derived.batches.len() != block_txs.len() {
+        return Err(eyre!(
+            "derive round-trip block count mismatch (seed={seed:#x}): {} != {}",
+            derived.batches.len(),
+            block_txs.len()
+        ));
+    }
+    for (i, (element, original)) in derived.batches.iter().zip(block_txs.iter()).enumerate() {
+        if element.transactions != *original {
+            return Err(eyre!(
+                "batch-encode/derive divergence at block {i} (seed={seed:#x}): \
+                 encoded {} transactions, derived {} that do not match byte-for-byte",
+                original.len(),
+                element.transactions.len()
+            ));
+        }
+        let expected_ts = DERIVE_GENESIS_TS + DERIVE_BLOCK_TIME * (i as u64 + 1);
+        if element.timestamp != expected_ts {
+            return Err(eyre!(
+                "derive round-trip timestamp mismatch at block {i} (seed={seed:#x}): \
+                 {} != {expected_ts}",
+                element.timestamp
+            ));
+        }
+        if element.epoch_num != DERIVE_EPOCH {
+            return Err(eyre!(
+                "derive round-trip epoch mismatch at block {i} (seed={seed:#x}): {} != {DERIVE_EPOCH}",
+                element.epoch_num
+            ));
+        }
+    }
+
+    Ok(())
 }
