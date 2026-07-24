@@ -10,12 +10,11 @@
 //!
 //! After a signer deregistration or image rotation the health latch stays set
 //! while the proving guard rejects every request.  The prover will continue
-//! receiving traffic from the load balancer (because `/healthz` returns 200)
-//! but respond with `-32001` errors.  This is intentional: the ASG must not
-//! terminate the instance on a transient L1 blip, and proof-request callers
-//! already retry on other nodes.  If `/healthz` is ever the **sole** LB
-//! signal with no retry layer, switch to a bounded latch (e.g. stay healthy
-//! for N minutes after the last successful validation).
+//! returning 200 from `/healthz` but respond with `-32001` errors. Registrar
+//! target groups use `/readyz`, so their eligibility is independent of this
+//! latch. If another deployment uses `/healthz` as its **sole** load-balancer
+//! signal with no retry layer, switch to a bounded latch (e.g. stay healthy for
+//! N minutes after the last successful validation).
 
 use std::{sync::Arc, time::Duration};
 
