@@ -25,16 +25,26 @@ pub use error::{
 mod edge_measurement;
 #[cfg(feature = "edge-measurement")]
 pub use edge_measurement::{
-    CliRegistryLookupFailed, CliRegistryLookupFailureReason, DecodedFlashblockKeyV1,
-    EdgeMeasurementGlobal, EdgeMeasurementRecorderStateV1, EdgeMeasurementRecorderV1,
-    PENDING_REGISTRY_CAPACITY_V2, PayloadFirstKeyV1, PayloadFirstObservationV1,
-    PendingCliTerminalV2, PendingMetadataRegistryV2, PendingPublicSubsetHasherV1,
-    PendingRegistrationAttemptV2, PendingRegistrationDispositionV2, PendingRegistrationFailure,
-    PendingRegistryCountersV2, PendingRegistryEntryV2, PendingRegistryError,
+    AuthorityRecordHasherV1, CliRegistryLookupFailed, CliRegistryLookupFailureReason,
+    ClockAnchorRecordV1, ClockFailureV1, ClockIdV1, ClockStatusV1, DecodedFlashblockKeyV1,
+    EDGE_ACTIVE_STATE_CAPACITY_MAX_V1, EDGE_ANCHOR_CADENCE_NS_V1, EDGE_CLOCK_SOURCE_VERSION_V1,
+    EDGE_EVENT_QUEUE_CAPACITY_MAX_V1, EdgeEventDrainStatusV1, EdgeMeasurementGlobal,
+    EdgeMeasurementInstallConfigV1, EdgeMeasurementInstallErrorV1, EdgeMeasurementPoisonV1,
+    EdgeMeasurementRecorderHandleV1, EdgeMeasurementRecorderStateV1, EdgeMeasurementRecorderV1,
+    EdgeMeasurementRegistryHandleV2, EdgeSourceEventV1, EdgeSourceFinalSealErrorV1,
+    EpochAdmissionTokenV1, EpochRouteV1, PENDING_REGISTRY_CAPACITY_V2, PayloadFirstKeyV1,
+    PayloadFirstObservationV1, PendingAccountingFieldV2, PendingCleanupEventV2,
+    PendingCliTerminalV2, PendingFinalSealErrorV2, PendingMetadataRegistryV2,
+    PendingPublicSubsetHasherV1, PendingRegistrationAttemptV2, PendingRegistrationDispositionV2,
+    PendingRegistrationFailure, PendingRegistryCountersV2, PendingRegistryEntryV2,
+    PendingRegistryError, PendingRegistryPoisonV2, PendingRegistrySequenceSetsV2,
     PendingRegistrySnapshotV2, PendingRegistryStateV2, PendingSendDispositionV2,
-    PendingSnapshotIdentityV2, PendingSnapshotMetadataV2, PendingTerminalRecordV2,
-    ProducerEpochCutoffV1, SourceConnectionRecordV1, SourceConnectionTransitionV1,
-    WireObservationV1,
+    PendingSendJournalEntryV2, PendingSendJournalMarkerV2, PendingSnapshotIdentityV2,
+    PendingSnapshotMetadataV2, PendingTerminalRecordV2, ProcessorBaseDispositionV1,
+    ProcessorLifecycleProductV1, ProcessorObserverDispositionV1, ProcessorPublishDispositionV1,
+    ProducerEpochCutoffV1, ProducerExternalBoundsV1, SourceConnectionErrorClassV1,
+    SourceConnectionRecordV1, SourceConnectionTransitionV1, SourceCoverageRecordV3,
+    WireLifecycleTransitionV1, WireObservationV1,
 };
 
 mod metrics;

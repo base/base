@@ -12,12 +12,20 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use url::Url;
 
 #[cfg(feature = "edge-measurement")]
-use crate::{EdgeMeasurementGlobal, SourceConnectionTransitionV1};
+use crate::{
+    EDGE_ANCHOR_CADENCE_NS_V1, EdgeMeasurementGlobal, EpochAdmissionTokenV1, EpochRouteV1,
+    SourceConnectionTransitionV1,
+};
 use crate::{FlashblocksReceiver, metrics::Metrics};
 
 #[derive(Debug)]
 enum ActorMessage {
-    BestPayload { payload: Flashblock },
+    BestPayload {
+        payload: Flashblock,
+        source_generation: Option<u64>,
+        #[cfg(feature = "edge-measurement")]
+        admission: Option<EpochAdmissionTokenV1>,
+    },
 }
 
 /// Subscribes to flashblocks via WebSocket and forwards them to the receiver.
@@ -56,6 +64,20 @@ where
 
         let (sender, mut mailbox) = mpsc::channel(100);
 
+        #[cfg(feature = "edge-measurement")]
+        tokio::spawn(async move {
+            let recorder = EdgeMeasurementGlobal::recorder();
+            let anchor_period = Duration::from_nanos(EDGE_ANCHOR_CADENCE_NS_V1);
+            let mut anchor_interval = interval_at(Instant::now() + anchor_period, anchor_period);
+            loop {
+                anchor_interval.tick().await;
+                if recorder.cutoff_latched() {
+                    break;
+                }
+                recorder.record_due_anchor();
+            }
+        });
+
         tokio::spawn(async move {
             let mut backoff = Duration::from_secs(1);
             #[cfg(feature = "edge-measurement")]
@@ -87,7 +109,8 @@ where
                     backoff_reconnect = false;
                 }
 
-                match connect_async(ws_url.as_str()).await {
+                let connect_result = connect_async(ws_url.as_str()).await;
+                match connect_result {
                     Ok((ws_stream, _)) => {
                         backoff = Duration::from_secs(1);
                         info!(message = "WebSocket connection established");
@@ -112,28 +135,100 @@ where
                                         );
                                         continue;
                                     };
-                                    Metrics::upstream_messages().increment(1);
-
                                     match msg {
                                         Ok(msg @ (Message::Binary(_) | Message::Text(_))) => {
                                             #[cfg(feature = "edge-measurement")]
                                             recorder.connection_transition(
                                                 SourceConnectionTransitionV1::DataMessageYielded,
                                             );
-                                            let bytes = msg.into_data();
                                             #[cfg(feature = "edge-measurement")]
-                                            let observation = recorder.observe_wire(&bytes);
+                                            let observation = match &msg {
+                                                Message::Binary(bytes) => {
+                                                    recorder.observe_wire(bytes.as_ref())
+                                                }
+                                                Message::Text(text) => {
+                                                    recorder.observe_wire(text.as_bytes())
+                                                }
+                                                _ => unreachable!("matched data message"),
+                                            };
+                                            let bytes = msg.into_data();
+                                            Metrics::upstream_messages().increment(1);
                                             match Flashblock::try_decode_message(bytes) {
                                                 Ok(payload) => {
                                                     #[cfg(feature = "edge-measurement")]
-                                                    if let Some(observation) = observation {
-                                                        _ = recorder.decoded_flashblock(observation, &payload);
+                                                    let source_generation = observation.and_then(
+                                                        |observation| {
+                                                            recorder.decoded_flashblock(
+                                                                observation,
+                                                                &payload,
+                                                            )
+                                                        },
+                                                    );
+                                                    #[cfg(not(feature = "edge-measurement"))]
+                                                    let source_generation = None;
+                                                    #[cfg(feature = "edge-measurement")]
+                                                    let excluded_admission = observation.filter(
+                                                        |admission| {
+                                                            admission.route
+                                                                == EpochRouteV1::PostCutoffNonAuthority
+                                                        },
+                                                    );
+                                                    match sender.reserve().await {
+                                                        Ok(permit) => {
+                                                            #[cfg(feature = "edge-measurement")]
+                                                            if let Some(source_generation) =
+                                                                source_generation
+                                                            {
+                                                                recorder.actor_enqueue(
+                                                                    source_generation,
+                                                                    true,
+                                                                );
+                                                            }
+                                                            #[cfg(feature = "edge-measurement")]
+                                                            if let Some(admission) =
+                                                                excluded_admission
+                                                            {
+                                                                recorder.post_cutoff_actor_enqueue(
+                                                                    admission, true,
+                                                                );
+                                                            }
+                                                            permit.send(ActorMessage::BestPayload {
+                                                                payload,
+                                                                source_generation,
+                                                                #[cfg(feature = "edge-measurement")]
+                                                                admission: excluded_admission,
+                                                            });
+                                                        }
+                                                        Err(e) => {
+                                                            #[cfg(feature = "edge-measurement")]
+                                                            if let Some(source_generation) =
+                                                                source_generation
+                                                            {
+                                                                recorder.actor_enqueue(
+                                                                    source_generation,
+                                                                    false,
+                                                                );
+                                                            }
+                                                            #[cfg(feature = "edge-measurement")]
+                                                            if let Some(admission) =
+                                                                excluded_admission
+                                                            {
+                                                                recorder.post_cutoff_actor_enqueue(
+                                                                    admission, false,
+                                                                );
+                                                            }
+                                                            error!(
+                                                                message = "Failed to publish message to channel",
+                                                                error = %e
+                                                            );
+                                                        }
                                                     }
-                                                    let _ = sender.send(ActorMessage::BestPayload { payload }).await.map_err(|e| {
-                                                        error!(message = "Failed to publish message to channel", error = %e);
-                                                    });
                                                 }
                                                 Err(e) => {
+                                                    #[cfg(feature = "edge-measurement")]
+                                                    if let Some(observation) = observation {
+                                                        recorder.decode_rejected(observation);
+                                                    }
                                                     error!(
                                                         message = "error decoding flashblock message",
                                                         error = %e
@@ -316,7 +411,21 @@ where
         tokio::spawn(async move {
             while let Some(message) = mailbox.recv().await {
                 match message {
-                    ActorMessage::BestPayload { payload } => {
+                    ActorMessage::BestPayload {
+                        payload,
+                        source_generation,
+                        #[cfg(feature = "edge-measurement")]
+                        admission,
+                    } => {
+                        #[cfg(feature = "edge-measurement")]
+                        if let Some(source_generation) = source_generation {
+                            EdgeMeasurementGlobal::recorder().actor_delivered(source_generation);
+                        }
+                        #[cfg(feature = "edge-measurement")]
+                        if let Some(admission) = admission {
+                            EdgeMeasurementGlobal::recorder()
+                                .post_cutoff_actor_delivered(admission);
+                        }
                         flashblocks_state.on_flashblock_received(payload);
                     }
                 }
@@ -329,5 +438,31 @@ where
         Metrics::reconnect_attempts().increment(1);
         tokio::time::sleep(backoff).await;
         std::cmp::min(backoff * 2, Self::MAX_BACKOFF)
+    }
+}
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn reserved_mailbox_permit_orders_accounting_before_consumer_visibility() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        let accounted = Arc::new(AtomicBool::new(false));
+        let consumer_accounted = Arc::clone(&accounted);
+        let consumer = tokio::spawn(async move {
+            receiver.recv().await.expect("mailbox item");
+            consumer_accounted.load(Ordering::SeqCst)
+        });
+
+        let permit = sender.reserve().await.expect("mailbox open");
+        accounted.store(true, Ordering::SeqCst);
+        permit.send(());
+
+        assert!(consumer.await.expect("consumer task"));
     }
 }

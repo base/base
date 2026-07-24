@@ -129,6 +129,7 @@ serde = [
 edge-measurement = [
 	"base-flashblocks/edge-measurement",
 	"base-mev-trader/edge-measurement",
+	"dep:serde_json",
 ]
 t4a-shadow = [
 	"base-mev-trader/t4a-shadow",

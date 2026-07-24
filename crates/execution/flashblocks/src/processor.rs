@@ -29,6 +29,10 @@ use reth_revm::{State, database::StateProviderDatabase};
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
+#[cfg(feature = "edge-measurement")]
+use crate::cache::CacheInsertObservation;
+#[cfg(feature = "edge-measurement")]
+use crate::edge_measurement::{PendingSendJournalMarkerV2, ProcessorTerminalInputV1};
 use crate::{
     AssembledBlock, BlockAssembler, ExecutionError, FlashblockCache, PendingBlocks,
     PendingBlocksBuilder, PendingFrameObserver, PendingStateBuilder, ProviderError, Result,
@@ -40,7 +44,25 @@ use crate::{
     },
 };
 #[cfg(feature = "edge-measurement")]
-use crate::{EdgeMeasurementGlobal, PendingRegistrationAttemptV2};
+use crate::{
+    BuildError, EdgeMeasurementGlobal, PendingRegistrationAttemptV2, ProcessorBaseDispositionV1,
+    ProcessorObserverDispositionV1, ProcessorPublishDispositionV1, ProtocolError,
+};
+
+#[cfg(feature = "edge-measurement")]
+macro_rules! measured {
+    ($result:expr, $disposition:expr) => {
+        $result.map(|processed| processed.with_measurement_disposition($disposition))
+    };
+}
+
+#[cfg(not(feature = "edge-measurement"))]
+macro_rules! measured {
+    ($result:expr, $disposition:expr) => {{
+        let _ = stringify!($disposition);
+        $result
+    }};
+}
 
 type PendingExecutionDb = State<StateProviderDatabase<StateProviderBox>>;
 
@@ -48,6 +70,13 @@ type PendingExecutionDb = State<StateProviderDatabase<StateProviderBox>>;
 struct LivePendingState {
     db: PendingExecutionDb,
     state_overrides: StateOverride,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObserverDelivery {
+    Absent,
+    Delivered,
+    Panicked,
 }
 
 /// Messages consumed by the state processor.
@@ -79,6 +108,12 @@ struct ProcessedFlashblock {
     advanced: bool,
     #[cfg(feature = "edge-measurement")]
     measurement_registration: Option<PendingRegistrationAttemptV2>,
+    #[cfg(feature = "edge-measurement")]
+    measurement_send_marker: Option<PendingSendJournalMarkerV2>,
+    #[cfg(feature = "edge-measurement")]
+    measurement_base_disposition: ProcessorBaseDispositionV1,
+    #[cfg(feature = "edge-measurement")]
+    measurement_observer_disposition: ProcessorObserverDispositionV1,
 }
 
 impl ProcessedFlashblock {
@@ -88,6 +123,12 @@ impl ProcessedFlashblock {
             advanced: true,
             #[cfg(feature = "edge-measurement")]
             measurement_registration: None,
+            #[cfg(feature = "edge-measurement")]
+            measurement_send_marker: None,
+            #[cfg(feature = "edge-measurement")]
+            measurement_base_disposition: ProcessorBaseDispositionV1::UnknownProcessorBranch,
+            #[cfg(feature = "edge-measurement")]
+            measurement_observer_disposition: ProcessorObserverDispositionV1::Absent,
         }
     }
 
@@ -97,17 +138,32 @@ impl ProcessedFlashblock {
             advanced: false,
             #[cfg(feature = "edge-measurement")]
             measurement_registration: None,
+            #[cfg(feature = "edge-measurement")]
+            measurement_send_marker: None,
+            #[cfg(feature = "edge-measurement")]
+            measurement_base_disposition: ProcessorBaseDispositionV1::UnknownProcessorBranch,
+            #[cfg(feature = "edge-measurement")]
+            measurement_observer_disposition: ProcessorObserverDispositionV1::Absent,
         }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    const fn with_measurement_disposition(
+        mut self,
+        disposition: ProcessorBaseDispositionV1,
+    ) -> Self {
+        self.measurement_base_disposition = disposition;
+        self
     }
 }
 
 fn notify_pending_frame_observer(
     observer: Option<Arc<dyn PendingFrameObserver>>,
     pending_blocks: &PendingBlocks,
-) {
+) -> ObserverDelivery {
     let Some(observer) = observer else {
         Metrics::pending_frame_observer_skipped().increment(1);
-        return;
+        return ObserverDelivery::Absent;
     };
 
     let start_time = Instant::now();
@@ -116,16 +172,89 @@ fn notify_pending_frame_observer(
     if result.is_err() {
         Metrics::pending_frame_observer_panics().increment(1);
         warn!(message = "pending-frame observer panicked; continuing flashblock processing");
+        ObserverDelivery::Panicked
+    } else {
+        ObserverDelivery::Delivered
     }
 }
 fn notify_processed_pending_frame_observer(
     observer: Option<Arc<dyn PendingFrameObserver>>,
     processed: &ProcessedFlashblock,
-) {
+) -> ObserverDelivery {
     if processed.advanced
         && let Some(ref pb) = processed.pending_blocks
     {
-        notify_pending_frame_observer(observer, pb);
+        notify_pending_frame_observer(observer, pb)
+    } else {
+        ObserverDelivery::Absent
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+const fn processor_error_product(
+    error: &StateProcessorError,
+) -> (ProcessorBaseDispositionV1, &'static str) {
+    match error {
+        StateProcessorError::Protocol(ProtocolError::InvalidSequence) => {
+            (ProcessorBaseDispositionV1::ProcessErrorProtocol, "InvalidSequence")
+        }
+        StateProcessorError::Protocol(ProtocolError::MissingBase) => {
+            (ProcessorBaseDispositionV1::ProcessErrorProtocol, "MissingBase")
+        }
+        StateProcessorError::Protocol(ProtocolError::EmptyFlashblocks) => {
+            (ProcessorBaseDispositionV1::ProcessErrorProtocol, "EmptyFlashblocks")
+        }
+        StateProcessorError::Provider(ProviderError::MissingCanonicalHeader { .. }) => {
+            (ProcessorBaseDispositionV1::ProcessErrorProvider, "MissingCanonicalHeaderUncacheable")
+        }
+        StateProcessorError::Provider(ProviderError::StateProvider(_)) => {
+            (ProcessorBaseDispositionV1::ProcessErrorProvider, "StateProvider")
+        }
+        StateProcessorError::Execution(ExecutionError::TransactionFailed { .. }) => {
+            (ProcessorBaseDispositionV1::ProcessErrorExecution, "TransactionFailed")
+        }
+        StateProcessorError::Execution(ExecutionError::SenderRecovery(_)) => {
+            (ProcessorBaseDispositionV1::ProcessErrorExecution, "SenderRecovery")
+        }
+        StateProcessorError::Execution(ExecutionError::DepositReceiptMismatch) => {
+            (ProcessorBaseDispositionV1::ProcessErrorExecution, "DepositReceiptMismatch")
+        }
+        StateProcessorError::Execution(ExecutionError::GasOverflow) => {
+            (ProcessorBaseDispositionV1::ProcessErrorExecution, "GasOverflow")
+        }
+        StateProcessorError::Execution(ExecutionError::EvmEnv(_)) => {
+            (ProcessorBaseDispositionV1::ProcessErrorExecution, "EvmEnv")
+        }
+        StateProcessorError::Execution(ExecutionError::L1BlockInfo(_)) => {
+            (ProcessorBaseDispositionV1::ProcessErrorExecution, "L1BlockInfo")
+        }
+        StateProcessorError::Execution(ExecutionError::BlockConversion(_)) => {
+            (ProcessorBaseDispositionV1::ProcessErrorExecution, "BlockConversion")
+        }
+        StateProcessorError::Execution(ExecutionError::DepositAccountLoad) => {
+            (ProcessorBaseDispositionV1::ProcessErrorExecution, "DepositAccountLoad")
+        }
+        StateProcessorError::Execution(ExecutionError::RpcReceiptBuild(_)) => {
+            (ProcessorBaseDispositionV1::ProcessErrorExecution, "RpcReceiptBuild")
+        }
+        StateProcessorError::Execution(ExecutionError::DaFootprintEstimation(_)) => {
+            (ProcessorBaseDispositionV1::ProcessErrorExecution, "DaFootprintEstimation")
+        }
+        StateProcessorError::Build(BuildError::MissingHeaders) => {
+            (ProcessorBaseDispositionV1::ProcessErrorBuild, "MissingHeaders")
+        }
+        StateProcessorError::Build(BuildError::NoFlashblocks) => {
+            (ProcessorBaseDispositionV1::ProcessErrorBuild, "NoFlashblocks")
+        }
+        StateProcessorError::Build(BuildError::MissingReceipt { .. }) => {
+            (ProcessorBaseDispositionV1::ProcessErrorBuild, "MissingReceipt")
+        }
+        StateProcessorError::Build(BuildError::DuplicateTransaction { .. }) => {
+            (ProcessorBaseDispositionV1::ProcessErrorBuild, "DuplicateTransaction")
+        }
+        StateProcessorError::MissingFirstFlashblock => {
+            (ProcessorBaseDispositionV1::MissingFirstUncacheable, "MissingFirstFlashblock")
+        }
     }
 }
 
@@ -190,6 +319,62 @@ where
         }
     }
 
+    #[cfg(feature = "edge-measurement")]
+    fn record_cache_observation(
+        observation: &CacheInsertObservation,
+        source_generation: Option<u64>,
+        wait_disposition: ProcessorBaseDispositionV1,
+    ) {
+        let Some(recorder) = EdgeMeasurementGlobal::installed() else {
+            return;
+        };
+        for generation in observation
+            .evicted_generations
+            .iter()
+            .copied()
+            .filter(|generation| recorder.claim_cache_resolution(*generation))
+        {
+            recorder.record_generation_product(ProcessorTerminalInputV1 {
+                source_generation: generation,
+                base_disposition: ProcessorBaseDispositionV1::CacheEvicted,
+                observer_disposition: ProcessorObserverDispositionV1::Absent,
+                publish_disposition: ProcessorPublishDispositionV1::NotApplicable,
+                pending_snapshot_sequence: None,
+                processor_error_reason: None,
+                cache_resolved_final_disposition: None,
+            });
+        }
+        if let Some(generation) = observation
+            .replaced_generation
+            .filter(|generation| recorder.claim_cache_resolution(*generation))
+        {
+            recorder.record_generation_product(ProcessorTerminalInputV1 {
+                source_generation: generation,
+                base_disposition: ProcessorBaseDispositionV1::CacheReplacedOldGeneration,
+                observer_disposition: ProcessorObserverDispositionV1::Absent,
+                publish_disposition: ProcessorPublishDispositionV1::NotApplicable,
+                pending_snapshot_sequence: None,
+                processor_error_reason: None,
+                cache_resolved_final_disposition: None,
+            });
+        }
+        if let Some(generation) = source_generation {
+            if observation.cached {
+                recorder.observe_cache_wait(generation, wait_disposition);
+            } else {
+                recorder.record_generation_product(ProcessorTerminalInputV1 {
+                    source_generation: generation,
+                    base_disposition: ProcessorBaseDispositionV1::CacheRejectedAhead,
+                    observer_disposition: ProcessorObserverDispositionV1::Absent,
+                    publish_disposition: ProcessorPublishDispositionV1::NotApplicable,
+                    pending_snapshot_sequence: None,
+                    processor_error_reason: None,
+                    cache_resolved_final_disposition: None,
+                });
+            }
+        }
+    }
+
     /// Processes updates from the queue until the channel closes.
     pub async fn start(&self) {
         while let Some(update) = self.rx.lock().await.recv().await {
@@ -210,9 +395,36 @@ where
                             self.pending_blocks.swap(new_pending_blocks);
 
                             let mut cache = self.cache.lock().await;
+                            #[cfg(feature = "edge-measurement")]
+                            let evicted_generations = cache.update_canonical_observed(block.number);
+                            #[cfg(not(feature = "edge-measurement"))]
                             cache.update_canonical(block.number);
+                            #[cfg(feature = "edge-measurement")]
+                            let cached = cache.drain_observed(block.number + 1);
+                            #[cfg(not(feature = "edge-measurement"))]
                             let cached = cache.drain(block.number + 1);
                             drop(cache);
+
+                            #[cfg(feature = "edge-measurement")]
+                            if let Some(recorder) = EdgeMeasurementGlobal::installed() {
+                                for generation in
+                                    evicted_generations.into_iter().filter(|generation| {
+                                        recorder.claim_cache_resolution(*generation)
+                                    })
+                                {
+                                    recorder.record_generation_product(ProcessorTerminalInputV1 {
+                                        source_generation: generation,
+                                        base_disposition: ProcessorBaseDispositionV1::CacheEvicted,
+                                        observer_disposition:
+                                            ProcessorObserverDispositionV1::Absent,
+                                        publish_disposition:
+                                            ProcessorPublishDispositionV1::NotApplicable,
+                                        pending_snapshot_sequence: None,
+                                        processor_error_reason: None,
+                                        cache_resolved_final_disposition: None,
+                                    });
+                                }
+                            }
 
                             if !cached.is_empty() {
                                 debug!(
@@ -220,6 +432,26 @@ where
                                     canonical_block = block.number,
                                     cached_count = cached.len(),
                                 );
+                                #[cfg(feature = "edge-measurement")]
+                                for (flashblock, source_generation) in cached {
+                                    let source_generation =
+                                        source_generation.filter(|generation| {
+                                            EdgeMeasurementGlobal::installed().is_some_and(
+                                                |recorder| {
+                                                    recorder.claim_cache_resolution(*generation)
+                                                },
+                                            )
+                                        });
+                                    let fb_prev = self.pending_blocks.load_full();
+                                    self.apply_flashblock_observed(
+                                        fb_prev,
+                                        flashblock,
+                                        source_generation,
+                                        source_generation.is_some(),
+                                    )
+                                    .await;
+                                }
+                                #[cfg(not(feature = "edge-measurement"))]
                                 for flashblock in cached {
                                     let fb_prev = self.pending_blocks.load_full();
                                     self.apply_flashblock(fb_prev, flashblock).await;
@@ -248,6 +480,29 @@ where
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblock: Flashblock,
     ) {
+        #[cfg(feature = "edge-measurement")]
+        {
+            let source_generation =
+                EdgeMeasurementGlobal::recorder().take_source_generation(&flashblock);
+            self.apply_flashblock_observed(
+                prev_pending_blocks,
+                flashblock,
+                source_generation,
+                false,
+            )
+            .await;
+        }
+        #[cfg(not(feature = "edge-measurement"))]
+        self.apply_flashblock_observed(prev_pending_blocks, flashblock, None, false).await;
+    }
+
+    async fn apply_flashblock_observed(
+        &self,
+        prev_pending_blocks: Option<Arc<PendingBlocks>>,
+        flashblock: Flashblock,
+        source_generation: Option<u64>,
+        cache_resolved: bool,
+    ) {
         let start_time = Instant::now();
         // Move the blocking MDBX read-tx + EVM rebuild off the async worker
         // thread (multi_thread runtime; borrows stay on-thread, no clone).
@@ -260,36 +515,107 @@ where
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .clone();
-            notify_processed_pending_frame_observer(observer, &processed);
+            let observer_delivery = notify_processed_pending_frame_observer(observer, &processed);
             #[cfg(feature = "edge-measurement")]
-            if processed.advanced
-                && let Some(ref pending) = processed.pending_blocks
             {
-                let recorder = EdgeMeasurementGlobal::recorder();
-                let source_generation = recorder.take_source_generation(&flashblock);
-                processed.measurement_registration =
-                    Some(recorder.registry().register(pending, source_generation));
+                processed.measurement_observer_disposition = match observer_delivery {
+                    ObserverDelivery::Absent => ProcessorObserverDispositionV1::Absent,
+                    ObserverDelivery::Delivered => ProcessorObserverDispositionV1::Delivered,
+                    ObserverDelivery::Panicked => ProcessorObserverDispositionV1::Panicked,
+                };
+            }
+            #[cfg(not(feature = "edge-measurement"))]
+            {
+                _ = observer_delivery;
+            }
+            #[cfg(feature = "edge-measurement")]
+            if let Some(ref pending) = processed.pending_blocks
+                && let Some(installed) = EdgeMeasurementGlobal::installed()
+            {
+                (processed.measurement_registration, processed.measurement_send_marker) = installed
+                    .prepare_pending_publication(pending, processed.advanced, source_generation);
             }
             Ok(processed)
         }) {
             Ok(processed) => {
+                #[cfg(feature = "edge-measurement")]
+                let actual_base_disposition =
+                    if processed.advanced && processed.pending_blocks.is_none() {
+                        ProcessorBaseDispositionV1::AdvancedWithoutSnapshot
+                    } else {
+                        processed.measurement_base_disposition
+                    };
+                #[cfg(feature = "edge-measurement")]
+                let pending_snapshot_sequence = processed
+                    .measurement_registration
+                    .and_then(|registration| registration.pending_snapshot_sequence);
+                #[cfg(feature = "edge-measurement")]
+                let mut publish_disposition = ProcessorPublishDispositionV1::NotApplicable;
+                #[cfg(feature = "edge-measurement")]
+                let mut generation_product_recorded = false;
                 let new_pending_blocks = processed.pending_blocks;
                 if let Some(ref pb) = new_pending_blocks {
                     #[cfg(feature = "edge-measurement")]
                     {
                         let send_result = self.sender.send(Arc::clone(pb));
+                        if processed.advanced {
+                            publish_disposition = send_result.as_ref().ok().map_or(
+                                ProcessorPublishDispositionV1::NoReceivers,
+                                |count| {
+                                    ProcessorPublishDispositionV1::Published(
+                                        u64::try_from(*count)
+                                            .expect("broadcast receiver count fits u64"),
+                                    )
+                                },
+                            );
+                        }
+                        if let (Some(recorder), Some(generation)) =
+                            (EdgeMeasurementGlobal::installed(), source_generation)
+                        {
+                            recorder.record_generation_product(ProcessorTerminalInputV1 {
+                                source_generation: generation,
+                                base_disposition: if cache_resolved {
+                                    ProcessorBaseDispositionV1::CacheResolvedToProcessor
+                                } else {
+                                    actual_base_disposition
+                                },
+                                observer_disposition: processed.measurement_observer_disposition,
+                                publish_disposition,
+                                pending_snapshot_sequence,
+                                processor_error_reason: None,
+                                cache_resolved_final_disposition: cache_resolved
+                                    .then_some(actual_base_disposition),
+                            });
+                            generation_product_recorded = true;
+                        }
                         if let Some(registration) = processed.measurement_registration {
                             let receiver_count = send_result.as_ref().ok().copied();
-                            if EdgeMeasurementGlobal::recorder()
-                                .registry()
-                                .record_send(registration, receiver_count)
-                                .is_err()
-                            {
+                            if EdgeMeasurementGlobal::installed().is_some_and(|recorder| {
+                                recorder
+                                    .registry()
+                                    .record_send(registration, receiver_count)
+                                    .is_err()
+                            }) {
                                 warn!(
                                     message =
                                         "edge measurement send disposition could not be recorded"
                                 );
                             }
+                        }
+                        if let Some(marker) = processed.measurement_send_marker
+                            && EdgeMeasurementGlobal::installed().is_some_and(|recorder| {
+                                recorder
+                                    .registry()
+                                    .record_unregistered_send(
+                                        marker,
+                                        send_result.as_ref().ok().copied(),
+                                    )
+                                    .is_err()
+                            })
+                        {
+                            warn!(
+                                message = "edge measurement non-authority send disposition could not be recorded"
+                            );
                         }
                         _ = send_result;
                     }
@@ -298,10 +624,121 @@ where
                         _ = self.sender.send(Arc::clone(pb));
                     }
                 }
+                #[cfg(feature = "edge-measurement")]
+                if !generation_product_recorded
+                    && let (Some(recorder), Some(generation)) =
+                        (EdgeMeasurementGlobal::installed(), source_generation)
+                {
+                    recorder.record_generation_product(ProcessorTerminalInputV1 {
+                        source_generation: generation,
+                        base_disposition: if cache_resolved {
+                            ProcessorBaseDispositionV1::CacheResolvedToProcessor
+                        } else {
+                            actual_base_disposition
+                        },
+                        observer_disposition: processed.measurement_observer_disposition,
+                        publish_disposition,
+                        pending_snapshot_sequence,
+                        processor_error_reason: None,
+                        cache_resolved_final_disposition: cache_resolved
+                            .then_some(actual_base_disposition),
+                    });
+                }
                 self.pending_blocks.swap(new_pending_blocks);
                 Metrics::block_processing_duration().record(start_time.elapsed());
             }
             Err(e) => {
+                #[cfg(feature = "edge-measurement")]
+                {
+                    match &e {
+                        StateProcessorError::Provider(ProviderError::MissingCanonicalHeader {
+                            ..
+                        }) => {
+                            let observation = self
+                                .cache
+                                .lock()
+                                .await
+                                .insert_observed(flashblock, source_generation);
+                            Self::record_cache_observation(
+                                &observation,
+                                source_generation,
+                                ProcessorBaseDispositionV1::CachedAwaitCanonical,
+                            );
+                            if observation.cached {
+                                debug!(
+                                    message = "cached flashblock pending canonical block",
+                                    error = %e
+                                );
+                            }
+                            return;
+                        }
+                        StateProcessorError::MissingFirstFlashblock => {
+                            let mut cache = self.cache.lock().await;
+                            if flashblock.index > 0
+                                && cache.has_flashblock(
+                                    flashblock.metadata.block_number,
+                                    flashblock.index - 1,
+                                )
+                            {
+                                let observation =
+                                    cache.insert_observed(flashblock, source_generation);
+                                drop(cache);
+                                Self::record_cache_observation(
+                                    &observation,
+                                    source_generation,
+                                    ProcessorBaseDispositionV1::CachedAwaitPredecessor,
+                                );
+                                if observation.cached {
+                                    return;
+                                }
+                                return;
+                            }
+                            drop(cache);
+                            if let (Some(recorder), Some(generation)) =
+                                (EdgeMeasurementGlobal::installed(), source_generation)
+                            {
+                                recorder.record_generation_product(ProcessorTerminalInputV1 {
+                                    source_generation: generation,
+                                    base_disposition: if cache_resolved {
+                                        ProcessorBaseDispositionV1::CacheResolvedToProcessor
+                                    } else {
+                                        ProcessorBaseDispositionV1::MissingFirstUncacheable
+                                    },
+                                    observer_disposition: ProcessorObserverDispositionV1::Absent,
+                                    publish_disposition:
+                                        ProcessorPublishDispositionV1::NotApplicable,
+                                    pending_snapshot_sequence: None,
+                                    processor_error_reason: Some("MissingFirstFlashblock"),
+                                    cache_resolved_final_disposition: cache_resolved.then_some(
+                                        ProcessorBaseDispositionV1::MissingFirstUncacheable,
+                                    ),
+                                });
+                            }
+                            return;
+                        }
+                        _ => {}
+                    }
+
+                    if let (Some(recorder), Some(generation)) =
+                        (EdgeMeasurementGlobal::installed(), source_generation)
+                    {
+                        let (disposition, reason) = processor_error_product(&e);
+                        recorder.record_generation_product(ProcessorTerminalInputV1 {
+                            source_generation: generation,
+                            base_disposition: if cache_resolved {
+                                ProcessorBaseDispositionV1::CacheResolvedToProcessor
+                            } else {
+                                disposition
+                            },
+                            observer_disposition: ProcessorObserverDispositionV1::Absent,
+                            publish_disposition: ProcessorPublishDispositionV1::NotApplicable,
+                            pending_snapshot_sequence: None,
+                            processor_error_reason: Some(reason),
+                            cache_resolved_final_disposition: cache_resolved.then_some(disposition),
+                        });
+                    }
+                }
+                #[cfg(not(feature = "edge-measurement"))]
                 match e {
                     StateProcessorError::Provider(ProviderError::MissingCanonicalHeader {
                         ..
@@ -313,7 +750,6 @@ where
                     }
                     StateProcessorError::MissingFirstFlashblock => {
                         let mut cache = self.cache.lock().await;
-                        // this error should only occur for non-zero index flashblocks, but check here for index safety
                         if flashblock.index > 0
                             && cache.has_flashblock(
                                 flashblock.metadata.block_number,
@@ -323,13 +759,11 @@ where
                         {
                             return;
                         }
-                        // we should ignore this error since it doesn't necessarily indicate a problem
                         return;
                     }
                     _ => {}
                 }
 
-                // skip logging expected caching case
                 if !matches!(
                     e,
                     StateProcessorError::Provider(ProviderError::MissingCanonicalHeader { .. })
@@ -453,9 +887,11 @@ where
             Some(pb) => pb,
             None => {
                 if flashblock.index == 0 {
-                    return self
-                        .build_pending_state(None, std::slice::from_ref(flashblock))
-                        .map(ProcessedFlashblock::advanced);
+                    return measured!(
+                        self.build_pending_state(None, std::slice::from_ref(flashblock))
+                            .map(ProcessedFlashblock::advanced),
+                        ProcessorBaseDispositionV1::AdvancedInitialBase
+                    );
                 }
 
                 return Err(StateProcessorError::MissingFirstFlashblock);
@@ -471,12 +907,16 @@ where
         );
 
         match validation_result {
-            SequenceValidationResult::NextInSequence => self
-                .build_pending_state_for_same_block(pending_blocks, flashblock)
-                .map(ProcessedFlashblock::advanced),
-            SequenceValidationResult::FirstOfNextBlock => self
-                .build_pending_state_for_next_block(pending_blocks, flashblock)
-                .map(ProcessedFlashblock::advanced),
+            SequenceValidationResult::NextInSequence => measured!(
+                self.build_pending_state_for_same_block(pending_blocks, flashblock)
+                    .map(ProcessedFlashblock::advanced),
+                ProcessorBaseDispositionV1::AdvancedNextInSequence
+            ),
+            SequenceValidationResult::FirstOfNextBlock => measured!(
+                self.build_pending_state_for_next_block(pending_blocks, flashblock)
+                    .map(ProcessedFlashblock::advanced),
+                ProcessorBaseDispositionV1::AdvancedFirstOfNextBlock
+            ),
             SequenceValidationResult::Duplicate => {
                 // We have received a duplicate flashblock for the current block
                 Metrics::unexpected_block_order().increment(1);
@@ -485,7 +925,10 @@ where
                     curr_block = %pending_blocks.latest_block_number(),
                     flashblock_index = %flashblock.index,
                 );
-                Ok(ProcessedFlashblock::unchanged(prev_pending_blocks))
+                measured!(
+                    Ok(ProcessedFlashblock::unchanged(prev_pending_blocks)),
+                    ProcessorBaseDispositionV1::UnchangedDuplicateExact
+                )
             }
             SequenceValidationResult::InvalidNewBlockIndex { block_number, index: _ } => {
                 // We have received a non-zero flashblock for a new block
@@ -496,7 +939,10 @@ where
                     new_block = %block_number,
                 );
                 self.clear_live_state();
-                Ok(ProcessedFlashblock::unchanged(None))
+                measured!(
+                    Ok(ProcessedFlashblock::unchanged(None)),
+                    ProcessorBaseDispositionV1::UnchangedInvalidNewBlockIndex
+                )
             }
             SequenceValidationResult::NonSequentialGap { expected, actual } => {
                 Metrics::unexpected_block_order().increment(1);
@@ -507,7 +953,10 @@ where
                     "received non-sequential flashblock index for current block"
                 );
                 self.clear_live_state();
-                Ok(ProcessedFlashblock::unchanged(None))
+                measured!(
+                    Ok(ProcessedFlashblock::unchanged(None)),
+                    ProcessorBaseDispositionV1::UnchangedSequenceGap
+                )
             }
             SequenceValidationResult::NonSequentialPredecessor { expected, actual } => {
                 Metrics::unexpected_block_order().increment(1);
@@ -523,7 +972,10 @@ where
                     "received flashblock with non-sequential predecessor link"
                 );
                 self.clear_live_state();
-                Ok(ProcessedFlashblock::unchanged(None))
+                measured!(
+                    Ok(ProcessedFlashblock::unchanged(None)),
+                    ProcessorBaseDispositionV1::UnchangedPredecessorGap
+                )
             }
         }
     }
@@ -986,17 +1438,17 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
-    use super::{
-        ProcessedFlashblock, notify_pending_frame_observer, notify_processed_pending_frame_observer,
-    };
-    use crate::{PendingBlocks, PendingBlocksBuilder, PendingFrameObserver};
-
     use alloy_consensus::{Header, Sealed};
     use alloy_primitives::{Address, B256, Bloom, Bytes, U256};
     use alloy_rpc_types_engine::PayloadId;
     use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
+
+    use super::{
+        ProcessedFlashblock, notify_pending_frame_observer, notify_processed_pending_frame_observer,
+    };
+    use crate::{PendingBlocks, PendingBlocksBuilder, PendingFrameObserver};
 
     #[derive(Debug)]
     struct CountingObserver {
@@ -1110,5 +1562,79 @@ mod tests {
     async fn block_in_place_panics_on_current_thread_runtime() {
         // `#[tokio::test]` defaults to a current_thread runtime.
         tokio::task::block_in_place(|| {});
+    }
+}
+
+#[cfg(all(test, feature = "edge-measurement"))]
+mod measurement_tests {
+    use super::*;
+
+    #[test]
+    fn every_processor_error_family_has_an_exact_named_disposition() {
+        let cases = [
+            (
+                StateProcessorError::Protocol(ProtocolError::InvalidSequence),
+                ProcessorBaseDispositionV1::ProcessErrorProtocol,
+                "InvalidSequence",
+            ),
+            (
+                StateProcessorError::Provider(ProviderError::StateProvider("fault".into())),
+                ProcessorBaseDispositionV1::ProcessErrorProvider,
+                "StateProvider",
+            ),
+            (
+                StateProcessorError::Execution(ExecutionError::GasOverflow),
+                ProcessorBaseDispositionV1::ProcessErrorExecution,
+                "GasOverflow",
+            ),
+            (
+                StateProcessorError::Build(BuildError::NoFlashblocks),
+                ProcessorBaseDispositionV1::ProcessErrorBuild,
+                "NoFlashblocks",
+            ),
+            (
+                StateProcessorError::MissingFirstFlashblock,
+                ProcessorBaseDispositionV1::MissingFirstUncacheable,
+                "MissingFirstFlashblock",
+            ),
+        ];
+
+        for (error, expected_disposition, expected_reason) in cases {
+            assert_eq!(processor_error_product(&error), (expected_disposition, expected_reason));
+        }
+    }
+
+    #[test]
+    fn processor_error_reason_inventory_is_ungrouped() {
+        let errors = [
+            StateProcessorError::Protocol(ProtocolError::MissingBase),
+            StateProcessorError::Protocol(ProtocolError::EmptyFlashblocks),
+            StateProcessorError::Execution(ExecutionError::SenderRecovery("fault".into())),
+            StateProcessorError::Execution(ExecutionError::DepositReceiptMismatch),
+            StateProcessorError::Execution(ExecutionError::EvmEnv("fault".into())),
+            StateProcessorError::Execution(ExecutionError::L1BlockInfo("fault".into())),
+            StateProcessorError::Execution(ExecutionError::BlockConversion("fault".into())),
+            StateProcessorError::Execution(ExecutionError::DepositAccountLoad),
+            StateProcessorError::Execution(ExecutionError::RpcReceiptBuild("fault".into())),
+            StateProcessorError::Execution(ExecutionError::DaFootprintEstimation("fault".into())),
+            StateProcessorError::Build(BuildError::MissingHeaders),
+        ];
+        let reasons: Vec<_> = errors.iter().map(|error| processor_error_product(error).1).collect();
+        assert_eq!(
+            reasons,
+            [
+                "MissingBase",
+                "EmptyFlashblocks",
+                "SenderRecovery",
+                "DepositReceiptMismatch",
+                "EvmEnv",
+                "L1BlockInfo",
+                "BlockConversion",
+                "DepositAccountLoad",
+                "RpcReceiptBuild",
+                "DaFootprintEstimation",
+                "MissingHeaders",
+            ]
+        );
     }
 }

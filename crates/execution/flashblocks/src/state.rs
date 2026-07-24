@@ -17,7 +17,7 @@ use tokio::sync::{
 };
 
 #[cfg(feature = "edge-measurement")]
-use crate::{EdgeMeasurementGlobal, PendingMetadataRegistryV2};
+use crate::{DecodedFlashblockKeyV1, EdgeMeasurementGlobal, EdgeMeasurementRegistryHandleV2};
 use crate::{
     FlashblocksAPI, FlashblocksReceiver, PendingBlocks, PendingFrameObserver,
     processor::{StateProcessor, StateUpdate},
@@ -90,10 +90,10 @@ impl FlashblocksState {
             observer;
     }
 
-    /// Returns the feature-private pending metadata registry used by the processor and trader CLI.
+    /// Returns the feature-private dynamic registry handle used by the sole trader CLI.
     #[cfg(feature = "edge-measurement")]
-    pub fn edge_measurement_registry(&self) -> Arc<PendingMetadataRegistryV2> {
-        EdgeMeasurementGlobal::recorder().registry()
+    pub const fn edge_measurement_registry(&self) -> EdgeMeasurementRegistryHandleV2 {
+        EdgeMeasurementGlobal::registry_handle()
     }
 
     /// Handles a canonical block being received.
@@ -114,7 +114,22 @@ impl FlashblocksReceiver for FlashblocksState {
     fn on_flashblock_received(&self, flashblock: Flashblock) {
         let flashblock_index = flashblock.index;
         let block_number = flashblock.metadata.block_number;
-        match self.queue.send(StateUpdate::Flashblock(flashblock)) {
+        #[cfg(feature = "edge-measurement")]
+        let handoff_key = DecodedFlashblockKeyV1::from_flashblock(&flashblock);
+        #[cfg(feature = "edge-measurement")]
+        let handoff_generation = EdgeMeasurementGlobal::recorder().begin_state_handoff(handoff_key);
+        let send_result = self.queue.send(StateUpdate::Flashblock(flashblock));
+        #[cfg(feature = "edge-measurement")]
+        if send_result.is_err()
+            && let Some(generation) = handoff_generation
+        {
+            EdgeMeasurementGlobal::recorder().state_handoff_failed(generation);
+        }
+        #[cfg(feature = "edge-measurement")]
+        if send_result.is_err() && handoff_generation.is_none() {
+            EdgeMeasurementGlobal::recorder().post_cutoff_state_handoff_failed(handoff_key);
+        }
+        match send_result {
             Ok(_) => {
                 debug!(
                     message = "added flashblock to processing queue",

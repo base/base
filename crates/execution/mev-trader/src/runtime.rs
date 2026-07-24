@@ -8,13 +8,11 @@ use std::{
     },
     time::{Duration, Instant},
 };
-
 #[cfg(feature = "t4b-shadow")]
 use std::{fmt::Debug, sync::atomic::AtomicBool};
 
 #[cfg(feature = "t4b-shadow")]
 use alloy_primitives::Bytes;
-
 use alloy_primitives::{Address, B256};
 use base_execution_chainspec::BaseChainSpec;
 use thiserror::Error;
@@ -30,9 +28,11 @@ use crate::{
     SoleWorker, TaskRun, TaskRunner, TaskState, TraderSnapshotPort, VictimFrame, Watchdog,
     WatchdogStatus, WorkerClaim,
 };
-
 #[cfg(feature = "edge-measurement")]
-use crate::{BlinkGenerationTerminalV1, BlinkMeasurementLedgerV1};
+use crate::{
+    BlinkGenerationTerminalV1, BlinkRejectReasonV3, EdgeMeasurementOwnerV1, EdgeProducerError,
+    edge_measurement::EdgeCandidateStageInputV3,
+};
 #[cfg(feature = "t4b-shadow")]
 use crate::{PreparedPoolState, ProcessedFrame, SnapshotHandle};
 
@@ -339,10 +339,12 @@ impl From<LifecycleError> for RuntimeInstallError {
 
 /// Exact empty-registry configuration used by the receive-only runtime.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(feature = "t4b-shadow"), derive(PartialEq, Eq))]
+#[cfg_attr(not(any(feature = "t4b-shadow", feature = "edge-measurement")), derive(PartialEq, Eq))]
 pub struct MevTraderRuntimeConfig {
     registry: FixturePoolRegistry,
     universe: Option<PoolUniverseSnapshot>,
+    #[cfg(feature = "edge-measurement")]
+    edge_owner: Option<Arc<EdgeMeasurementOwnerV1>>,
     #[cfg(feature = "t4b-shadow")]
     observer: Option<Arc<dyn CandidateTxShapeObserver>>,
 }
@@ -356,6 +358,8 @@ impl MevTraderRuntimeConfig {
         Ok(Self {
             registry,
             universe: None,
+            #[cfg(feature = "edge-measurement")]
+            edge_owner: None,
             #[cfg(feature = "t4b-shadow")]
             observer: None,
         })
@@ -368,6 +372,8 @@ impl MevTraderRuntimeConfig {
         Ok(Self {
             registry,
             universe: Some(snapshot),
+            #[cfg(feature = "edge-measurement")]
+            edge_owner: None,
             #[cfg(feature = "t4b-shadow")]
             observer: None,
         })
@@ -378,6 +384,17 @@ impl MevTraderRuntimeConfig {
     pub fn with_t4b_observer(mut self, observer: Arc<dyn CandidateTxShapeObserver>) -> Self {
         self.observer = Some(observer);
         self
+    }
+
+    /// Installs the validated once-only optional edge producer owner.
+    #[cfg(feature = "edge-measurement")]
+    pub fn with_edge_measurement_owner(
+        mut self,
+        owner: Arc<EdgeMeasurementOwnerV1>,
+    ) -> Result<Self, EdgeProducerError> {
+        owner.install()?;
+        self.edge_owner = Some(owner);
+        Ok(self)
     }
 
     /// Returns whether the measurement-only pool universe is disabled.
@@ -400,7 +417,7 @@ pub struct MevTraderRuntime {
     counters: Arc<A1Counters>,
     shadow_outcomes: ShadowOutcomeCounters,
     #[cfg(feature = "edge-measurement")]
-    edge_measurement: BlinkMeasurementLedgerV1,
+    edge_measurement: Option<Arc<EdgeMeasurementOwnerV1>>,
     #[cfg(feature = "t4b-shadow")]
     t4b_observer: Option<Arc<dyn CandidateTxShapeObserver>>,
     #[cfg(feature = "t4b-shadow")]
@@ -433,7 +450,7 @@ impl MevTraderRuntime {
             counters: Arc::new(A1Counters::default()),
             shadow_outcomes: ShadowOutcomeCounters::default(),
             #[cfg(feature = "edge-measurement")]
-            edge_measurement: BlinkMeasurementLedgerV1::default(),
+            edge_measurement: config.edge_owner,
             #[cfg(feature = "t4b-shadow")]
             t4b_observer: config.observer,
             #[cfg(feature = "t4b-shadow")]
@@ -503,10 +520,58 @@ impl MevTraderRuntime {
         &self.shadow_outcomes
     }
 
-    /// Returns the feature-private Blink conservation ledger.
+    /// Returns the installed optional edge-only producer owner.
     #[cfg(feature = "edge-measurement")]
-    pub const fn edge_measurement(&self) -> &BlinkMeasurementLedgerV1 {
-        &self.edge_measurement
+    pub const fn edge_measurement(&self) -> Option<&Arc<EdgeMeasurementOwnerV1>> {
+        self.edge_measurement.as_ref()
+    }
+
+    /// Emits one named actual Blink branch when the optional owner is installed.
+    #[cfg(feature = "edge-measurement")]
+    pub fn emit_blink_reject(&self, branch_id: &'static str, reason: BlinkRejectReasonV3) {
+        if let Some(owner) = self.edge_measurement.as_ref() {
+            owner.emit_blink_reject(branch_id, reason);
+        }
+    }
+
+    /// Latches the installed edge producer cutoff without stopping production ingress.
+    #[cfg(feature = "edge-measurement")]
+    pub fn latch_edge_cutoff(&self, fields: crate::ProducerEpochCutoffFieldsV1) {
+        if let Some(owner) = self.edge_measurement.as_ref() {
+            owner.latch_cutoff(fields);
+        }
+    }
+
+    /// Closes edge measurement authority and returns stable owner bounds without committing cutoff.
+    #[cfg(feature = "edge-measurement")]
+    pub fn prepare_edge_cutoff(
+        &self,
+    ) -> Option<Result<(u64, crate::CheckedCandidateBoundsV1), EdgeProducerError>> {
+        self.edge_measurement.as_ref().map(|owner| owner.prepare_cutoff())
+    }
+
+    /// Drains the installed producer's bounded record queue without blocking.
+    #[cfg(feature = "edge-measurement")]
+    pub fn drain_edge_records(
+        &self,
+    ) -> Option<Result<Vec<crate::EdgeProducerRecordV1>, EdgeProducerError>> {
+        self.edge_measurement.as_ref().map(|owner| owner.drain_records())
+    }
+
+    /// Drains the installed producer's bounded candidate queue without blocking.
+    #[cfg(feature = "edge-measurement")]
+    pub fn drain_edge_candidates(
+        &self,
+    ) -> Option<Result<Vec<crate::EdgeCandidateV3>, EdgeProducerError>> {
+        self.edge_measurement.as_ref().map(|owner| owner.drain_candidates())
+    }
+
+    /// Returns the exact drained final to the later CLI checkpoint coordinator.
+    #[cfg(feature = "edge-measurement")]
+    pub fn edge_final_record(
+        &self,
+    ) -> Option<Result<crate::EdgeMeasurementFinalV1, EdgeProducerError>> {
+        self.edge_measurement.as_ref().map(|owner| owner.final_record())
     }
 
     /// Records one closed A1 outcome without retaining source data.
@@ -522,22 +587,56 @@ impl MevTraderRuntime {
     /// Assigns a checked generation and performs capacity-one latest-wins submission.
     pub(crate) fn submit_blink_victim(&self, victim: BlinkVictim) {
         #[cfg(feature = "edge-measurement")]
-        let _ = self.edge_measurement.record_observed();
+        if let Some(owner) = self.edge_measurement.as_ref() {
+            owner.with_blink_admission(|owner, authoritative| {
+                self.submit_blink_victim_admitted(victim, Some((owner, authoritative)));
+            });
+            return;
+        }
+        #[cfg(feature = "edge-measurement")]
+        self.submit_blink_victim_admitted(victim, None);
+        #[cfg(not(feature = "edge-measurement"))]
+        self.submit_blink_victim_admitted(victim);
+    }
+
+    fn submit_blink_victim_admitted(
+        &self,
+        victim: BlinkVictim,
+        #[cfg(feature = "edge-measurement")] admission: Option<(&EdgeMeasurementOwnerV1, bool)>,
+    ) {
+        #[cfg(feature = "edge-measurement")]
+        if let Some((owner, true)) = admission {
+            owner.observe_ledger_result_admitted(owner.ledger().record_observed());
+        }
         if self.shutdown.is_cancelled() || self.lifecycle.state() != GlobalState::Running {
             self.record_a1(A1Outcome::SlotClosed);
             #[cfg(feature = "edge-measurement")]
-            let _ = self.edge_measurement.record_slot_closed();
+            if let Some((owner, true)) = admission {
+                owner.emit_blink_reject_admitted(
+                    "runtime-lifecycle-closed",
+                    BlinkRejectReasonV3::SlotClosed,
+                );
+                owner.observe_ledger_result_admitted(owner.ledger().record_slot_closed());
+            }
             return;
         }
         let generation =
             match self.generation.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |generation| {
                 generation.checked_add(1)
             }) {
-                Ok(previous) => previous + 1,
+                Ok(previous) => previous,
                 Err(_) => {
                     self.record_a1(A1Outcome::GenerationOverflow);
                     #[cfg(feature = "edge-measurement")]
-                    let _ = self.edge_measurement.record_generation_overflow();
+                    if let Some((owner, true)) = admission {
+                        owner.emit_blink_reject_admitted(
+                            "runtime-generation-overflow",
+                            BlinkRejectReasonV3::GenerationOverflow,
+                        );
+                        owner.observe_ledger_result_admitted(
+                            owner.ledger().record_generation_overflow(),
+                        );
+                    }
                     self.set_a1_status(A1Status::DisabledPermanent);
                     self.lifecycle.close();
                     self.shutdown.cancel();
@@ -562,11 +661,23 @@ impl MevTraderRuntime {
             SlotSubmit::Closed => A1Outcome::SlotClosed,
         };
         #[cfg(feature = "edge-measurement")]
-        let _ = self.edge_measurement.record_submission(generation, submission);
+        if let Some((owner, true)) = admission {
+            if submission == SlotSubmit::Closed {
+                owner.emit_blink_reject_admitted(
+                    "runtime-submit-closed",
+                    BlinkRejectReasonV3::SlotClosed,
+                );
+            }
+            owner.record_submission_admitted(generation, submission);
+        }
         self.record_a1(outcome);
         if outcome != A1Outcome::SlotClosed {
             self.slot_notify.notify_one();
         }
+    }
+
+    fn generation_is_latest(&self, generation: u64) -> bool {
+        self.generation.load(Ordering::SeqCst).checked_sub(1) == Some(generation)
     }
 
     /// Consumes at most one generation through capture, frame binding, Rayon4, and terminal claim.
@@ -592,7 +703,7 @@ impl MevTraderRuntime {
 
         if self.shutdown.is_cancelled()
             || self.lifecycle.state() != GlobalState::Running
-            || self.generation.load(Ordering::SeqCst) != generation
+            || !self.generation_is_latest(generation)
             || Instant::now() >= token.deadline()
         {
             self.cancel_and_claim(generation, &token, &terminal);
@@ -609,8 +720,9 @@ impl MevTraderRuntime {
             | Err(PortError::VisitorStopped)
             | Err(PortError::LimitExceeded)
             | Err(PortError::Incoherent)
+            | Err(PortError::MissingRequiredEvidence)
             | Err(PortError::FactoryAlreadyUsed) => {
-                let current = self.generation.load(Ordering::SeqCst) == generation;
+                let current = self.generation_is_latest(generation);
                 if token.complete(Instant::now(), current, &self.lifecycle) {
                     self.claim_terminal(
                         generation,
@@ -768,8 +880,19 @@ impl MevTraderRuntime {
                     }
                 };
                 #[cfg(feature = "edge-measurement")]
-                if plan.is_some() {
-                    let _ = self.edge_measurement.record_selected_preterminal(generation);
+                if let Some(plan) = plan.as_ref()
+                    && let Some(owner) = self.edge_measurement.as_ref()
+                {
+                    let _ = owner.stage_selected_candidate(EdgeCandidateStageInputV3 {
+                        generation,
+                        port,
+                        snapshot: &snapshot,
+                        processed: &processed,
+                        prepared: &prepared,
+                        plan,
+                        victim_raw: &frame.raw_tx,
+                        probe,
+                    });
                 }
                 #[cfg(feature = "t4b-shadow")]
                 if let (Some(observer), Some(plan)) = (self.t4b_observer.as_ref(), plan.as_ref()) {
@@ -829,9 +952,10 @@ impl MevTraderRuntime {
                 | PortError::VisitorStopped
                 | PortError::LimitExceeded
                 | PortError::Incoherent
+                | PortError::MissingRequiredEvidence
                 | PortError::FactoryAlreadyUsed,
             ))) => {
-                let current = self.generation.load(Ordering::SeqCst) == generation
+                let current = self.generation_is_latest(generation)
                     && port.is_current_authoritative(&snapshot);
                 if token.complete(Instant::now(), current, &self.lifecycle) {
                     self.claim_terminal(
@@ -846,7 +970,7 @@ impl MevTraderRuntime {
                 }
             }
             TaskRun::Returned(Some(Ok((None, _, analysis_outcome)))) => {
-                let current = self.generation.load(Ordering::SeqCst) == generation
+                let current = self.generation_is_latest(generation)
                     && port.is_current_authoritative(&snapshot);
                 if token.complete(Instant::now(), current, &self.lifecycle) {
                     self.claim_terminal(
@@ -861,7 +985,7 @@ impl MevTraderRuntime {
                 }
             }
             TaskRun::Returned(Some(Ok((Some(_processed), measurement, _)))) => {
-                let current = self.generation.load(Ordering::SeqCst) == generation
+                let current = self.generation_is_latest(generation)
                     && port.is_current_authoritative(&snapshot);
                 if token.complete(Instant::now(), current, &self.lifecycle) {
                     let shadow_outcome = measurement
@@ -959,14 +1083,16 @@ impl MevTraderRuntime {
             token.request_cancel();
         }
         #[cfg(feature = "edge-measurement")]
-        {
+        if let Some(owner) = self.edge_measurement.as_ref() {
             let active_generation = self
                 .active
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .as_ref()
                 .map(|(generation, _)| *generation);
-            let _ = self.edge_measurement.terminalize_shutdown_pending(active_generation);
+            owner.with_blink_admission(|owner, _| {
+                owner.terminalize_shutdown_pending_admitted(active_generation);
+            });
         }
         self.shutdown.cancel();
         self.slot_notify.notify_waiters();
@@ -1053,20 +1179,21 @@ impl MevTraderRuntime {
             )
             .is_err()
         {
+            #[cfg(feature = "edge-measurement")]
+            self.emit_blink_reject(
+                "ledger-duplicate-generation-terminal",
+                BlinkRejectReasonV3::DuplicateGenerationTerminal,
+            );
             return false;
         }
         #[cfg(feature = "edge-measurement")]
-        {
+        if let Some(owner) = self.edge_measurement.as_ref() {
             let measurement_terminal = match terminal_value {
                 TERMINAL_CANCELLED => BlinkGenerationTerminalV1::Cancelled,
                 TERMINAL_FRAME_BOUND | TERMINAL_NO_TRADE => BlinkGenerationTerminalV1::Processed,
                 _ => BlinkGenerationTerminalV1::InternalFailure,
             };
-            let _ = self.edge_measurement.record_terminal(
-                _generation,
-                measurement_terminal,
-                shadow_outcome,
-            );
+            owner.record_terminal_and_resolve(_generation, measurement_terminal, shadow_outcome);
         }
         self.record_a1(outcome);
         if self.universe.is_some()
@@ -1310,13 +1437,50 @@ mod tests {
     #[cfg(feature = "edge-measurement")]
     #[test]
     fn edge_measurement_conserves_runtime_latest_wins_product() {
-        let runtime = runtime();
+        let owner = crate::EdgeMeasurementOwnerV1::new(crate::EdgeMeasurementOwnerConfigV1 {
+            producer_epoch: 1,
+            output_root: std::path::PathBuf::from("/tmp/edge-measurement-test"),
+            output_root_handle: Arc::new(
+                std::fs::File::open(std::env::temp_dir()).expect("temporary root"),
+            ),
+            producer_digest: B256::repeat_byte(1),
+            reject_schema_digest: crate::BlinkRejectClassifierV3::reject_schema_digest(),
+            prereg_digest: B256::repeat_byte(3),
+            policy_digest: B256::repeat_byte(4),
+            config_digest: B256::repeat_byte(5),
+            owner_approval_receipt_digest: B256::repeat_byte(6),
+            record_queue_capacity: 8,
+            candidate_queue_capacity: 8,
+            measurement_sender: Address::repeat_byte(1),
+            executor_runtime_hash: B256::repeat_byte(20),
+            v2_adapter: Address::repeat_byte(2),
+            v2_adapter_runtime_hash: B256::repeat_byte(21),
+            v3_adapter: Address::repeat_byte(3),
+            v3_adapter_runtime_hash: B256::repeat_byte(22),
+            aerodrome_adapter: Address::repeat_byte(4),
+            aerodrome_adapter_runtime_hash: B256::repeat_byte(23),
+            g0_code_identity_digest: B256::repeat_byte(24),
+            raw_reject_inventory_sha256:
+                crate::EdgeMeasurementOwnerConfigV1::raw_reject_inventory_sha256(),
+            raw_reject_source_sha256: B256::new(crate::EdgeMeasurementDurabilityV1::sha256(
+                include_bytes!("edge_measurement.rs"),
+            )),
+            measurement_tx_source_sha256: B256::new(crate::EdgeMeasurementDurabilityV1::sha256(
+                include_bytes!("measurement_tx.rs"),
+            )),
+        })
+        .expect("owner");
+        let config = MevTraderRuntimeConfig::empty()
+            .expect("empty config")
+            .with_edge_measurement_owner(Arc::clone(&owner))
+            .expect("install owner");
+        let runtime = MevTraderRuntime::start(config).expect("runtime");
         let chain_spec = Arc::new(BaseChainSpec::mainnet());
         runtime.submit_blink_victim(victim());
         runtime.submit_blink_victim(victim());
         assert!(runtime.consume_once(&EmptyPort, chain_spec));
 
-        let final_snapshot = runtime.edge_measurement().verify_final().expect("closed ledger");
+        let final_snapshot = owner.ledger().verify_final().expect("closed ledger");
         assert_eq!(final_snapshot.victim_ingress_observed, 2);
         assert_eq!(final_snapshot.slot_accepted, 1);
         assert_eq!(final_snapshot.slot_replaced, 1);
@@ -1485,6 +1649,22 @@ mod tests {
         assert!(runtime.shutdown().is_cancelled());
     }
 
+    #[test]
+    fn first_generation_is_zero_and_maximum_admitted_id_is_bounded() {
+        let first = runtime();
+        first.submit_blink_victim(victim());
+        assert_eq!(first.ingress.try_take().unwrap().generation(), 0);
+        assert_eq!(first.generation.load(Ordering::SeqCst), 1);
+
+        let maximum = runtime();
+        maximum.generation.store(u64::MAX - 1, Ordering::SeqCst);
+        maximum.submit_blink_victim(victim());
+        assert_eq!(maximum.ingress.try_take().unwrap().generation(), u64::MAX - 1);
+        assert_eq!(maximum.generation.load(Ordering::SeqCst), u64::MAX);
+        maximum.submit_blink_victim(victim());
+        assert_eq!(maximum.counters().count(A1Outcome::GenerationOverflow), 1);
+        assert!(maximum.ingress.try_take().is_none());
+    }
     #[test]
     fn generation_overflow_is_terminal_and_root_cancelled() {
         let runtime = runtime();
