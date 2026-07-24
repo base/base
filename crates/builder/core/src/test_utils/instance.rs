@@ -74,7 +74,7 @@ pub struct LocalInstance {
     runtime: Option<Runtime>,
     exit_future: NodeExitFuture,
     node_handle: Option<Box<dyn Any + Send>>,
-    pool_handle: Arc<dyn ExternalTransactionPool>,
+    pool_handle: Option<Arc<dyn ExternalTransactionPool>>,
     pool_observer: TransactionPoolObserver,
     metering_provider: SharedMeteringProvider,
     /// Temporary directory backing the node's database, removed on drop.
@@ -283,10 +283,14 @@ impl LocalInstance {
         // internal node-started hook that captures the running node's transaction pool.
         let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
         let hooks = hooks.add_node_started_hook(move |full_node| {
-            let _ = txpool_ready_tx.send(full_node.pool.all_transactions_event_listener());
+            if txpool_ready_tx.send(full_node.pool.all_transactions_event_listener()).is_err() {
+                tracing::warn!("txpool ready receiver dropped before node-started hook fired");
+            }
             let pool_handle: Arc<dyn ExternalTransactionPool> =
                 Arc::new(PoolHandle { pool: full_node.pool });
-            let _ = pool_handle_tx.send(pool_handle);
+            if pool_handle_tx.send(pool_handle).is_err() {
+                tracing::warn!("pool handle receiver dropped before node-started hook fired");
+            }
             Ok(())
         });
 
@@ -303,7 +307,7 @@ impl LocalInstance {
             node_config,
             exit_future,
             node_handle: Some(node_handle),
-            pool_handle,
+            pool_handle: Some(pool_handle),
             runtime: Some(runtime),
             pool_observer: TransactionPoolObserver::new(pool_monitor),
             metering_provider,
@@ -367,7 +371,7 @@ impl LocalInstance {
 
     /// Returns a cloned handle for submitting external transactions to the pool.
     pub fn pool_handle(&self) -> Arc<dyn ExternalTransactionPool> {
-        Arc::clone(&self.pool_handle)
+        Arc::clone(self.pool_handle.as_ref().expect("pool handle present"))
     }
 
     /// Returns a reference to the shared metering provider.
@@ -393,8 +397,10 @@ impl Drop for LocalInstance {
     fn drop(&mut self) {
         if let Some(runtime) = self.runtime.take() {
             runtime.graceful_shutdown_with_timeout(Duration::from_secs(10));
-            // Drop the node (and its open database handle) before removing the backing files.
+            // Drop the node and the pool handle (both hold open database handles via the node's
+            // provider / the pool's transaction validator) before removing the backing files.
             drop(self.node_handle.take());
+            drop(self.pool_handle.take());
             if let Err(e) = std::fs::remove_dir_all(self.node_config().datadir().to_string()) {
                 eprintln!(
                     "Warning: failed to remove temporary data directory {}: {e}",
