@@ -10,6 +10,7 @@ pub use node::{FollowNode, FollowNodeConfig};
 
 mod prefetcher;
 mod proof_gate;
+mod recovery;
 mod rpc;
 mod runtime;
 mod source;

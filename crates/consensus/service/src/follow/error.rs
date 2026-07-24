@@ -73,6 +73,76 @@ pub enum FollowError {
         remote: B256,
     },
 
+    /// The local and source finalized heads disagree. Follow-mode recovery cannot rewind past
+    /// the local finalized head, so this requires operator intervention.
+    #[error(
+        "source finalized block hash {remote} does not match local finalized block hash {local} at block {number}"
+    )]
+    FinalizedDivergence {
+        /// Finalized block number compared across the source and local nodes.
+        number: u64,
+        /// Hash returned by the local node.
+        local: B256,
+        /// Hash returned by the source node.
+        remote: B256,
+    },
+
+    /// The local finalized head changed while recovery was being prepared. The safety loop should
+    /// retry the recovery against the newer finality fence.
+    #[error(
+        "local finalized head changed during recovery from {previous_hash} at block {previous_number} \
+         to {current_hash} at block {current_number}"
+    )]
+    FinalizedHeadChanged {
+        /// Finalized block number observed before recovery planning.
+        previous_number: u64,
+        /// Finalized block hash observed before recovery planning.
+        previous_hash: B256,
+        /// Finalized block number observed immediately before reset.
+        current_number: u64,
+        /// Finalized block hash observed immediately before reset.
+        current_hash: B256,
+    },
+
+    /// A source block's parent lookup did not return its direct parent.
+    #[error(
+        "source chain is discontinuous between child block {child_number} and parent block {parent_number}"
+    )]
+    SourceChainDiscontinuity {
+        /// Child block number.
+        child_number: u64,
+        /// Number reported by the block fetched using the child's parent hash.
+        parent_number: u64,
+    },
+
+    /// Recovery exceeded its shared lookup or time budget.
+    #[error("follow recovery budget exceeded during {phase} after {lookups} lookups")]
+    RecoveryBudgetExceeded {
+        /// Recovery phase that exhausted the budget.
+        phase: &'static str,
+        /// Number of lookups attempted before the budget was exhausted.
+        lookups: u64,
+    },
+
+    /// A recovery reorg was refused because it would rewind below the finalized head.
+    #[error("refusing to reorg to block {number} below the finalized head {finalized}")]
+    ReorgBelowFinalized {
+        /// Block number we were asked to reorg to.
+        number: u64,
+        /// Current local finalized head number.
+        finalized: u64,
+    },
+
+    /// The engine did not confirm the forkchoice reset to the common ancestor. This usually means
+    /// the EL returned `Syncing`, so recovery cannot safely replay payloads yet.
+    #[error("engine did not confirm reset to ancestor block {number} ({hash})")]
+    ResetToAncestorUnconfirmed {
+        /// Ancestor block number.
+        number: u64,
+        /// Ancestor block hash.
+        hash: B256,
+    },
+
     /// The local engine rejected a follow-mode task.
     #[error("engine task failed with {severity} severity: {error}")]
     EngineTask {

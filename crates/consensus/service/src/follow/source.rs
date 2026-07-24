@@ -2,6 +2,7 @@ use std::fmt::Debug;
 
 use alloy_consensus::Block;
 use alloy_eips::BlockNumberOrTag;
+use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
@@ -39,10 +40,19 @@ pub trait RemoteClient: Debug + Send + Sync {
     async fn get_block_info(&self, tag: BlockNumberOrTag)
     -> Result<BlockInfo, RemoteL2ClientError>;
 
+    /// Fetches block info by hash, pinning the lookup to one source-chain branch.
+    async fn get_block_info_by_hash(&self, hash: B256) -> Result<BlockInfo, RemoteL2ClientError>;
+
     /// Fetches a block by number and converts it to an [`BaseExecutionPayloadEnvelope`].
     async fn get_payload_by_number(
         &self,
         number: u64,
+    ) -> Result<BaseExecutionPayloadEnvelope, RemoteL2ClientError>;
+
+    /// Fetches a block by hash and converts it to an [`BaseExecutionPayloadEnvelope`].
+    async fn get_payload_by_hash(
+        &self,
+        hash: B256,
     ) -> Result<BaseExecutionPayloadEnvelope, RemoteL2ClientError>;
 }
 
@@ -88,6 +98,18 @@ impl RemoteClient for RemoteL2Client {
         Ok(BlockInfo::from(&block))
     }
 
+    async fn get_block_info_by_hash(&self, hash: B256) -> Result<BlockInfo, RemoteL2ClientError> {
+        let block = self
+            .provider
+            .get_block_by_hash(hash)
+            .await
+            .map_err(|e| RemoteL2ClientError::FetchBlock { tag: format!("{hash}"), source: e })?
+            .ok_or_else(|| RemoteL2ClientError::BlockNotFound(format!("{hash}")))?;
+        let block = block.map_header(|header| header.into_inner());
+
+        Ok(BlockInfo::from(&block))
+    }
+
     async fn get_payload_by_number(
         &self,
         number: u64,
@@ -99,6 +121,43 @@ impl RemoteClient for RemoteL2Client {
             .await
             .map_err(|e| RemoteL2ClientError::FetchBlock { tag: format!("{number}"), source: e })?
             .ok_or_else(|| RemoteL2ClientError::BlockNotFound(format!("{number}")))?;
+        let rpc_block = rpc_block.map_header(|header| header.into_inner());
+
+        let block_hash = rpc_block.header.hash;
+        let parent_beacon_block_root = rpc_block.header.parent_beacon_block_root;
+
+        let txs: Vec<BaseTxEnvelope> = rpc_block
+            .transactions
+            .into_transactions()
+            .map(|tx| tx.inner.inner.into_inner())
+            .collect();
+
+        let consensus_block: Block<BaseTxEnvelope> = Block {
+            header: rpc_block.header.inner,
+            body: alloy_consensus::BlockBody {
+                transactions: txs,
+                ommers: vec![],
+                withdrawals: rpc_block.withdrawals,
+            },
+        };
+
+        let (execution_payload, _sidecar) =
+            BaseExecutionPayload::from_block_unchecked(block_hash, &consensus_block);
+
+        Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload })
+    }
+
+    async fn get_payload_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<BaseExecutionPayloadEnvelope, RemoteL2ClientError> {
+        let rpc_block = self
+            .provider
+            .get_block_by_hash(hash)
+            .full()
+            .await
+            .map_err(|e| RemoteL2ClientError::FetchBlock { tag: format!("{hash}"), source: e })?
+            .ok_or_else(|| RemoteL2ClientError::BlockNotFound(format!("{hash}")))?;
         let rpc_block = rpc_block.map_header(|header| header.into_inner());
 
         let block_hash = rpc_block.header.hash;

@@ -1,6 +1,9 @@
 //! Mock implementations for testing engine client functionality.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_json_rpc::ErrorPayload;
@@ -10,6 +13,7 @@ use alloy_provider::{EthGetBlock, ProviderCall, RpcWithBlock};
 use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
     ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
+    PayloadStatusEnum,
 };
 use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse, Transaction as EthTransaction};
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
@@ -46,12 +50,30 @@ pub enum MockL2BlockError {
     Custom(String),
 }
 
+/// Opt-in stateful execution-layer model for recovery tests.
+///
+/// When set, `new_payload_v2` and `fork_choice_updated_v3` answer based on which blocks the EL
+/// "has" rather than from static responses: a forkchoice update to a known block is `Valid` (and
+/// advances the head); to an unknown block it is `Syncing`. A new payload whose parent is known is
+/// `Valid` (and the block becomes known); otherwise `Syncing`. This models the real distinction the
+/// follow-mode recovery relies on (reset to a block the EL has vs. the canonical tip it lacks).
+#[derive(Debug, Clone, Default)]
+pub struct StatefulEl {
+    /// Hashes of blocks the EL currently has.
+    pub known: HashSet<B256>,
+    /// The EL's current head.
+    pub head: B256,
+}
+
 /// Mock storage for engine client responses.
 ///
 /// Each API method has version-specific storage to allow tests to verify
 /// which specific version was called and return different responses per version.
 #[derive(Debug, Clone, Default)]
 pub struct MockEngineStorage {
+    /// Optional stateful EL model (see [`StatefulEl`]); when `Some`, overrides the static
+    /// `new_payload_v2` / `fork_choice_updated_v3` responses.
+    pub stateful: Option<StatefulEl>,
     /// Storage for block responses by tag.
     pub l2_blocks_by_label: HashMap<BlockNumberOrTag, L2RpcBlock>,
     /// Storage for block info responses by tag.
@@ -201,6 +223,14 @@ impl MockEngineClientBuilder {
     /// Sets the `fork_choice_updated_v3` response.
     pub fn with_fork_choice_updated_v3_response(mut self, response: ForkchoiceUpdated) -> Self {
         self.storage.fork_choice_updated_v3_response = Some(response);
+        self
+    }
+
+    /// Enables the stateful EL model (see [`StatefulEl`]), seeded with the given known block hashes
+    /// and head. While enabled, `new_payload_v2` and `fork_choice_updated_v3` answer based on block
+    /// presence instead of the static responses.
+    pub fn with_stateful_el(mut self, known: impl IntoIterator<Item = B256>, head: B256) -> Self {
+        self.storage.stateful = Some(StatefulEl { known: known.into_iter().collect(), head });
         self
     }
 
@@ -372,6 +402,11 @@ impl MockEngineClient {
     /// Returns the most recent `new_payload_v2` request, if any.
     pub async fn last_new_payload_v2(&self) -> Option<ExecutionPayloadInputV2> {
         self.storage.read().await.last_new_payload_v2_request.clone()
+    }
+
+    /// Returns the stateful EL head, if the stateful model is enabled.
+    pub async fn stateful_head(&self) -> Option<B256> {
+        self.storage.read().await.stateful.as_ref().map(|s| s.head)
     }
 
     /// Sets the `new_payload_v3` response.
@@ -566,8 +601,22 @@ impl BaseEngineApi for MockEngineClient {
         &self,
         payload: ExecutionPayloadInputV2,
     ) -> TransportResult<PayloadStatus> {
+        let block_hash = payload.execution_payload.block_hash;
+        let parent_hash = payload.execution_payload.parent_hash;
         let mut storage = self.storage.write().await;
         storage.last_new_payload_v2_request = Some(payload);
+        if let Some(st) = storage.stateful.as_mut() {
+            // A payload whose parent the EL has is Valid (and becomes known); otherwise Syncing.
+            return Ok(if st.known.contains(&parent_hash) {
+                st.known.insert(block_hash);
+                PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: Some(block_hash),
+                }
+            } else {
+                PayloadStatus { status: PayloadStatusEnum::Syncing, latest_valid_hash: None }
+            });
+        }
         storage.new_payload_v2_response.clone().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
                 "new_payload_v2 was called but no v2 response configured. \
@@ -635,6 +684,28 @@ impl BaseEngineApi for MockEngineClient {
             .push((fork_choice_state, payload_attributes.is_some()));
         if let Some(error) = storage.fork_choice_updated_v3_error.clone() {
             return Err(TransportError::ErrorResp(error));
+        }
+        if let Some(st) = storage.stateful.as_mut() {
+            // A forkchoice update to a block the EL has is Valid (and advances head); else Syncing.
+            let head = fork_choice_state.head_block_hash;
+            return Ok(if st.known.contains(&head) {
+                st.head = head;
+                ForkchoiceUpdated {
+                    payload_status: PayloadStatus {
+                        status: PayloadStatusEnum::Valid,
+                        latest_valid_hash: Some(head),
+                    },
+                    payload_id: None,
+                }
+            } else {
+                ForkchoiceUpdated {
+                    payload_status: PayloadStatus {
+                        status: PayloadStatusEnum::Syncing,
+                        latest_valid_hash: None,
+                    },
+                    payload_id: None,
+                }
+            });
         }
         storage.fork_choice_updated_v3_response.clone().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
