@@ -337,6 +337,46 @@ fn golden_create_reverts_zero_admin() {
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::ZeroAddress {}.abi_encode()));
 }
 
+// ============================================================================
+// composite policies (V2 ABI; unknown to V1)
+// ============================================================================
+
+#[test]
+fn golden_create_composite_selector_unknown_in_v1() {
+    // Composite policies are a V2 feature. The ABI is shared, but V1 predates these selectors,
+    // so it must keep reverting with UnknownFunctionSelector (raw 4-byte selector) — the old
+    // behavior — rather than routing them.
+    let mut s = fresh();
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::createCompositePolicyCall {
+            admin: ADMIN,
+            policyType: PolicyType::UNION,
+            childPolicyIds: vec![BLOCKLIST_ID, ALLOWLIST_ID],
+        }
+        .abi_encode(),
+    );
+    assert!(rev);
+    assert_eq!(bytes, Bytes::from(IPolicyRegistry::createCompositePolicyCall::SELECTOR.as_ref()));
+}
+
+#[test]
+fn golden_update_composite_selector_unknown_in_v1() {
+    let mut s = fresh();
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::updateCompositeCall {
+            policyId: BLOCKLIST_ID,
+            childPolicyIds: vec![BLOCKLIST_ID, ALLOWLIST_ID],
+        }
+        .abi_encode(),
+    );
+    assert!(rev);
+    assert_eq!(bytes, Bytes::from(IPolicyRegistry::updateCompositeCall::SELECTOR.as_ref()));
+}
+
 #[test]
 fn golden_create_with_accounts() {
     let mut s = fresh();
@@ -877,5 +917,8 @@ fn v1_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
             golden_reads_for_nonexistent_and_builtins,
             golden_stage_and_finalize_update_admin,
         ]),
+        // V2 ABI; unknown to V1. Goldens pin the UnknownFunctionSelector (old error) behavior.
+        C::createCompositePolicy(_) => covered(&[golden_create_composite_selector_unknown_in_v1]),
+        C::updateComposite(_) => covered(&[golden_update_composite_selector_unknown_in_v1]),
     }
 }

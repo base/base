@@ -343,6 +343,45 @@ fn golden_create_reverts_zero_admin() {
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::ZeroAddress {}.abi_encode()));
 }
 
+// ============================================================================
+// composite policies (V2 ABI, logic not yet wired)
+// ============================================================================
+
+#[test]
+fn golden_create_composite_reverts_unimplemented() {
+    // The composite ABI is declared for V2 but its logic is not yet wired; the dispatcher
+    // reverts with empty data as a placeholder until the follow-up composite implementation.
+    let mut s = fresh();
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::createCompositePolicyCall {
+            admin: ADMIN,
+            policyType: PolicyType::UNION,
+            childPolicyIds: vec![BLOCKLIST_ID, ALLOWLIST_ID],
+        }
+        .abi_encode(),
+    );
+    assert!(rev);
+    assert!(bytes.is_empty());
+}
+
+#[test]
+fn golden_update_composite_reverts_unimplemented() {
+    let mut s = fresh();
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::updateCompositeCall {
+            policyId: BLOCKLIST_ID,
+            childPolicyIds: vec![BLOCKLIST_ID, ALLOWLIST_ID],
+        }
+        .abi_encode(),
+    );
+    assert!(rev);
+    assert!(bytes.is_empty());
+}
+
 #[test]
 fn golden_create_with_accounts() {
     let mut s = fresh();
@@ -883,5 +922,8 @@ fn v2_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
             golden_reads_for_nonexistent_and_builtins,
             golden_stage_and_finalize_update_admin,
         ]),
+        // V2 ABI declared; logic not yet wired. Goldens pin the placeholder stub revert.
+        C::createCompositePolicy(_) => covered(&[golden_create_composite_reverts_unimplemented]),
+        C::updateComposite(_) => covered(&[golden_update_composite_reverts_unimplemented]),
     }
 }
