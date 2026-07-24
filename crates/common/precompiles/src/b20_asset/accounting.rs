@@ -17,6 +17,30 @@ pub trait AssetAccounting: TokenAccounting {
     /// Writes a new multiplier.
     fn set_multiplier(&mut self, multiplier: U256) -> Result<()>;
 
+    /// Returns the pending scheduled multiplier target (ERC-8056)
+    ///
+    /// Packs with [`Self::pending_effective_at`] into a single slot. Introduced with the
+    /// scheduled-multiplier feature (`AssetV2`); earlier versions never touch this slot.
+    fn pending_multiplier(&self) -> Result<u128> {
+        reject_frozen_selector!()
+    }
+    /// Returns the timestamp at which the pending multiplier becomes effective; `0` means none.
+    fn pending_effective_at(&self) -> Result<u64> {
+        reject_frozen_selector!()
+    }
+    /// Writes the pending schedule.
+    fn set_pending_and_effective_at(
+        &mut self,
+        _multiplier: u128,
+        _effective_at: u64,
+    ) -> Result<()> {
+        reject_frozen_selector!()
+    }
+    /// Clears the pending schedule, restoring the no-pending state.
+    fn clear_pending_multiplier_and_effective_at(&mut self) -> Result<()> {
+        reject_frozen_selector!()
+    }
+
     /// Returns the extra-metadata value for `key`, or an empty string if unset.
     fn extra_metadata(&self, key: &str) -> Result<String>;
     /// Writes (or removes when `value` is empty) the extra-metadata entry for `key`.
