@@ -24,7 +24,7 @@ use governor::{
 };
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Default P2P probe requests allowed per client IP per minute.
 pub const DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE: NonZeroU32 = NonZeroU32::new(2).unwrap();
@@ -142,17 +142,7 @@ impl PerIpRateLimit {
         request: Request,
         next: Next,
     ) -> Response {
-        let peer_ip = peer.ip();
-        let client_ip = match state.proxy.try_client_ip(peer_ip, request.headers()) {
-            Ok(ip) => ip,
-            Err(error) => {
-                // A trusted proxy must always supply the client IP header;
-                // its absence means the fronting infrastructure is
-                // misconfigured, not that the client erred.
-                warn!(error = %error, peer = %peer_ip, "trusted proxy sent no valid client IP");
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-        };
+        let client_ip = state.proxy.client_ip(peer.ip(), request.headers());
         match state.limiter.check(client_ip) {
             Ok(()) => next.run(request).await,
             Err(exceeded) => {

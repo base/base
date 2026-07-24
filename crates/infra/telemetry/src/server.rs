@@ -381,7 +381,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_missing_forwarded_header_from_trusted_proxy() {
+    async fn missing_forwarded_header_from_trusted_proxy_falls_back_to_peer() {
         let router = BaseTelemetryServer::router_with_prober(
             Arc::new(AtomicBool::new(true)),
             per_ip(1, vec!["127.0.0.0/8"]),
@@ -389,15 +389,16 @@ mod tests {
             reachable_prober(),
         );
         let (addr, handle) = start_router(router).await;
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}{P2P_REACHABILITY_PATH}");
 
-        let response = reqwest::Client::new()
-            .post(format!("http://{addr}{P2P_REACHABILITY_PATH}"))
-            .json(&test_request())
-            .send()
-            .await
-            .unwrap();
+        let first = client.post(&url).json(&test_request()).send().await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
 
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        // Without a forwarding header the peer address keys the bucket.
+        let second = client.post(&url).json(&test_request()).send().await.unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+
         handle.abort();
     }
 }

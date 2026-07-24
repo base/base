@@ -69,8 +69,8 @@ peer is inside a configured set of trusted proxy CIDRs
 (`--trusted-proxy-cidrs` or `BASE_TELEMETRY_TRUSTED_PROXY_CIDRS`), in which
 case the `X-Forwarded-For` chain is scanned right to left, skipping trusted
 proxy hops, and the first untrusted entry is used as the client IP. A missing
-or malformed header from a trusted proxy is treated as a proxy
-misconfiguration. Deployments exposed directly (no fronting proxy) leave the
+or malformed header from a trusted proxy falls back to the peer address with
+a warning. Deployments exposed directly (no fronting proxy) leave the
 CIDRs empty, so forwarding headers are ignored and the socket peer IP is used.
 Limited requests return `429` with a `Retry-After` header and a JSON body of
 `{"error":"rate_limited"}`. Limits are tracked per replica; health routes are
