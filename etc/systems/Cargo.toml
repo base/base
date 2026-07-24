@@ -97,6 +97,9 @@ clap = { workspace = true, features = ["derive"] }
 # load testing
 base-load-tests.workspace = true
 
+# test utils
+base-test-utils.workspace = true
+
 # consensus
 base-consensus-derive.workspace = true
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
