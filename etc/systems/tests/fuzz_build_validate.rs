@@ -50,6 +50,11 @@ const DEPLOY_GAS_LIMIT: u64 = 3_000_000;
 /// Pre-funded test accounts used as senders (all allocated in the test genesis).
 const SENDERS: [Account; 3] = [Account::Alice, Account::Bob, Account::Charlie];
 
+/// Regression corpus: seeds that must always build cleanly. When a fuzz run finds a
+/// build/validate divergence, add its seed here so the case replays deterministically
+/// on every run forever. Seeded here with a spread of known-good starting points.
+const CORPUS: &[u64] = &[DEFAULT_SEED, 0x1, 0xC0FFEE, 0xDEAD_BEEF];
+
 #[tokio::test]
 async fn fuzz_build_validate() -> Result<()> {
     let seed = seed_from_env();
@@ -82,6 +87,19 @@ async fn fuzz_build_validate_deterministic() -> Result<()> {
                 a.number
             ));
         }
+    }
+    Ok(())
+}
+
+/// Regression corpus: every committed seed must build cleanly. This is the
+/// deterministic replay gate — a divergence found by the nightly sweep is pinned
+/// here (by seed) and re-checked on every run, so a fixed bug never regresses.
+#[tokio::test]
+async fn fuzz_build_validate_corpus() -> Result<()> {
+    for &seed in CORPUS {
+        run_sequence(seed)
+            .await
+            .map_err(|e| eyre!("regression corpus seed {seed:#x} failed: {e}"))?;
     }
     Ok(())
 }
