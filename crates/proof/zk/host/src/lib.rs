@@ -7,8 +7,7 @@ pub use prover::{
     UnimplementedZkProver, ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState,
 };
 
-mod session_handle;
-pub use session_handle::ProofSessionHandle;
+pub use base_proof_worker::ProofSessionHandle;
 
 mod proof_submitter;
 pub use proof_submitter::ProofSubmitterRequest;
