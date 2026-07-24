@@ -25,7 +25,8 @@ use super::{
     payload::{BasePayloadBuilder, BuilderOutputs},
 };
 use crate::{
-    BuilderConfig, CandidateSource, DefaultCandidateSource, RejectedTxForwarder,
+    BuilderConfig, CandidateSource, DefaultCandidateSource, DefaultInclusionPolicy, InclusionPolicy,
+    RejectedTxForwarder,
     traits::{NodeBounds, PoolBounds},
 };
 
@@ -41,13 +42,19 @@ use crate::{
 pub struct FlashblocksServiceBuilder<S = DefaultCandidateSource> {
     config: BuilderConfig,
     candidate_source: S,
+    inclusion_policy: Arc<dyn InclusionPolicy>,
 }
 
 impl FlashblocksServiceBuilder {
     /// Create a service builder that uses the default candidate source
-    /// (the pool's priority-ordered best transactions, unchanged).
-    pub const fn new(config: BuilderConfig) -> Self {
-        Self { config, candidate_source: DefaultCandidateSource }
+    /// (the pool's priority-ordered best transactions, unchanged) and the default inclusion policy
+    /// (every executed transaction is committed, unchanged).
+    pub fn new(config: BuilderConfig) -> Self {
+        Self {
+            config,
+            candidate_source: DefaultCandidateSource,
+            inclusion_policy: Arc::new(DefaultInclusionPolicy),
+        }
     }
 }
 
@@ -55,7 +62,21 @@ impl<S> FlashblocksServiceBuilder<S> {
     /// Replace the candidate transaction source used by the flashblocks build loop.
     #[must_use]
     pub fn with_candidate_source<S2>(self, candidate_source: S2) -> FlashblocksServiceBuilder<S2> {
-        FlashblocksServiceBuilder { config: self.config, candidate_source }
+        FlashblocksServiceBuilder {
+            config: self.config,
+            candidate_source,
+            inclusion_policy: self.inclusion_policy,
+        }
+    }
+
+    /// Replace the post-execution inclusion policy consulted before committing each candidate.
+    ///
+    /// Defaults to [`DefaultInclusionPolicy`] (include every executed transaction). An alternative
+    /// policy may drop executed transactions — for example to enforce revert protection.
+    #[must_use]
+    pub fn with_inclusion_policy(mut self, inclusion_policy: Arc<dyn InclusionPolicy>) -> Self {
+        self.inclusion_policy = inclusion_policy;
+        self
     }
 
     fn spawn_payload_builder_service<Node, Pool>(
@@ -90,6 +111,7 @@ impl<S> FlashblocksServiceBuilder<S> {
             self.config.clone(),
             BuilderOutputs { payload_tx: built_payload_tx, ws_pub, rejected_tx_sender },
             self.candidate_source.clone(),
+            Arc::clone(&self.inclusion_policy),
         );
         let payload_generator = BlockPayloadJobGenerator::with_builder(
             ctx.provider().clone(),

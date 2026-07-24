@@ -155,6 +155,10 @@ pub enum TxnExecutionError {
     /// Metering data has not yet arrived for this transaction.
     #[error("metering data pending")]
     MeteringDataPending,
+
+    /// The configured inclusion policy dropped this transaction after execution.
+    #[error("dropped by inclusion policy")]
+    DroppedByInclusionPolicy,
 }
 
 impl TxnExecutionError {

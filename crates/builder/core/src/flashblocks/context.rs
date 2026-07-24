@@ -44,8 +44,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
-    ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
+    BuilderConfig, BuilderMetrics, CandidateOutcome, ExecutionInfo, ExecutionMeteringLimitExceeded,
+    InclusionDecision, InclusionPolicy, PayloadTxsBounds, ResourceLimits, TxResources,
+    TxnExecutionError, TxnOutcome,
     transaction_events::{
         BuilderAcceptedEventData, BuilderConsideredEventData, BuilderRejectedEventData,
         BuilderTransactionEventContext, emit_builder_transaction_event, rejection_reason_code,
@@ -182,7 +183,8 @@ impl FlashblockDiagnostics {
             | TxnExecutionError::NonceTooLow
             | TxnExecutionError::InternalError(_)
             | TxnExecutionError::EvmError
-            | TxnExecutionError::MaxGasUsageExceeded => {
+            | TxnExecutionError::MaxGasUsageExceeded
+            | TxnExecutionError::DroppedByInclusionPolicy => {
                 self.txs_rejected_other += 1;
             }
         }
@@ -255,6 +257,9 @@ pub struct BasePayloadBuilderCtx {
     pub builder_config: BuilderConfig,
     /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
     pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
+    /// Post-execution inclusion policy consulted before committing each candidate. Defaults to
+    /// [`DefaultInclusionPolicy`], which includes every executed transaction unchanged.
+    pub inclusion_policy: Arc<dyn InclusionPolicy>,
 }
 
 impl BasePayloadBuilderCtx {
@@ -1248,6 +1253,41 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
+            // Pluggable post-execution inclusion decision. The default policy includes every
+            // executed transaction (reverting or not), reproducing historical behavior; an
+            // alternative policy may drop it (e.g. to enforce revert protection). Dropping discards
+            // the execution's state changes — nothing is committed below — and marks the sender's
+            // subsequent transactions invalid, matching other post-execution rejections.
+            if self.inclusion_policy.decide(&CandidateOutcome {
+                hash: tx_hash,
+                sender: tx.signer(),
+                gas_used,
+                reverted: !is_success,
+                effective_tip_per_gas: tx.effective_tip_per_gas(base_fee).unwrap_or(0),
+                cumulative_gas_used: info.cumulative_gas_used,
+                block_gas_limit: self.block_gas_limit(),
+                flashblock_index: self.flashblock_index(),
+                target_flashblock_count: self.target_flashblock_count(),
+            }) == InclusionDecision::Skip
+            {
+                let err = TxnExecutionError::DroppedByInclusionPolicy;
+                diag.record_rejection(&err);
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                record_rejected_tx_priority_fee(&err, priority_fee);
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderRejectedEventData::from_error(&err, info, limits, Some(&tx_resources))
+                    },
+                );
+                log_txn(Err(err));
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
+            }
+
             info.cumulative_gas_used += gas_used;
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
@@ -1415,6 +1455,7 @@ impl BasePayloadBuilderCtx {
             extra: FlashblocksExtraCtx::default(),
             builder_config: crate::BuilderConfig::default(),
             rejected_tx_sender: None,
+            inclusion_policy: Arc::new(crate::DefaultInclusionPolicy),
         }
     }
 }

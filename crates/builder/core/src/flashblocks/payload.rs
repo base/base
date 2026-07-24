@@ -54,7 +54,7 @@ use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
     BuilderConfig, BuilderMetrics, CandidateSource, DefaultCandidateSource, ExecutionInfo,
-    PayloadBuilder, ResourceLimits,
+    InclusionPolicy, PayloadBuilder, ResourceLimits,
     flashblocks::{
         FlashblocksExtraCtx, best_txs::BestFlashblocksTxs, context::BasePayloadBuilderCtx,
         generator::BuildArguments,
@@ -135,6 +135,8 @@ pub(super) struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource> {
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
     /// Transforms the candidate transaction stream drained by the build loop.
     candidate_source: S,
+    /// Post-execution inclusion policy consulted before committing each candidate.
+    inclusion_policy: Arc<dyn InclusionPolicy>,
 }
 
 impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
@@ -146,6 +148,7 @@ impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
         config: BuilderConfig,
         outputs: BuilderOutputs,
         candidate_source: S,
+        inclusion_policy: Arc<dyn InclusionPolicy>,
     ) -> Self {
         Self {
             evm_config,
@@ -155,6 +158,7 @@ impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
             outputs,
             last_emitted_flashblock_id: Arc::default(),
             candidate_source,
+            inclusion_policy,
         }
     }
 
@@ -255,6 +259,7 @@ where
             extra,
             builder_config: self.config.clone(),
             rejected_tx_sender: self.outputs.rejected_tx_sender.clone(),
+            inclusion_policy: Arc::clone(&self.inclusion_policy),
         })
     }
 
