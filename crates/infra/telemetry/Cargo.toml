@@ -11,11 +11,14 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+ipnet.workspace = true
+governor.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
 reth-ecies.workspace = true
 reth-eth-wire.workspace = true
 alloy-primitives.workspace = true
+base-trusted-proxy.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
@@ -28,4 +31,5 @@ reth-network-peers = { workspace = true, features = ["secp256k1"] }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
+mockall.workspace = true
 reqwest = { workspace = true, features = ["json"] }

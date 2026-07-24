@@ -105,6 +105,19 @@ where
         self.derivation_origin_tx.send_replace(self.pipeline.origin());
     }
 
+    /// Sends a finalized L2 block to the engine when the retained finalized L1 signal makes one
+    /// eligible.
+    async fn try_finalize_pending(&mut self) -> Result<(), DerivationError> {
+        if let Some(l2_block_number) = self.finalizer.try_finalize_pending() {
+            self.engine_client
+                .send_finalized_l2_block(l2_block_number)
+                .await
+                .map_err(|e| DerivationError::Sender(Box::new(e)))?;
+        }
+
+        Ok(())
+    }
+
     /// Handles a [`Signal`] received over the derivation signal receiver channel.
     async fn signal(&mut self, signal: Signal) {
         if let Signal::Reset(ResetSignal { l2_safe_head: _reset_safe_head }) = signal {
@@ -240,8 +253,10 @@ where
                 self.derivation_state_machine.update(&DerivationStateUpdate::SignalProcessed)?;
             }
             DerivationActorRequest::ProcessFinalizedL1Block(finalized_l1_block) => {
-                // Attempt to finalize the block. If successful, notify engine.
-                if let Some(l2_block_number) = self.finalizer.try_finalize_next(*finalized_l1_block)
+                // Retain the signal even when no derived L2 blocks are currently queued. The
+                // finalizer will retry it after derivation rebuilds the safe head.
+                if let Some(l2_block_number) =
+                    self.finalizer.process_finalized_l1_block(*finalized_l1_block)
                 {
                     self.engine_client
                         .send_finalized_l2_block(l2_block_number)
@@ -281,6 +296,11 @@ where
                 self.derivation_state_machine
                     .update(&DerivationStateUpdate::NewAttributesConfirmed(safe_head))?;
 
+                // A reset clears derived candidates, but the finalized L1 signal is retained.
+                // Retry after the rebuilt safe head is confirmed, matching op-node's
+                // safe-derived finalization trigger.
+                self.try_finalize_pending().await?;
+
                 self.attempt_derivation().await?;
             }
             DerivationActorRequest::ProcessEngineSyncCompletionRequest(safe_head) => {
@@ -306,6 +326,12 @@ where
                     .update(&DerivationStateUpdate::ELSyncCompleted(safe_head))?;
 
                 self.attempt_derivation().await?;
+            }
+            #[cfg(test)]
+            DerivationActorRequest::CurrentStateRequest(result_tx) => {
+                if result_tx.send(self.derivation_state_machine.current_state()).is_err() {
+                    warn!(target: "derivation", "failed to return derivation state to test observer");
+                }
             }
         }
 

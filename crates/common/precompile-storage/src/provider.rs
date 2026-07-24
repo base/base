@@ -60,6 +60,16 @@ pub trait PrecompileStorageProvider {
     fn sload(&mut self, address: Address, key: U256) -> Result<U256>;
     /// Performs a TLOAD operation (transient storage read).
     fn tload(&mut self, address: Address, key: U256) -> Result<U256>;
+    /// Reads transient storage without exposing a TLOAD opcode charge.
+    ///
+    /// Native precompiles whose gas schedule prices the enclosing operation
+    /// independently use this method to access transient backing state. This is a
+    /// **required** method rather than a default delegating to [`Self::tload`]:
+    /// aliasing the two would silently double-charge the moment a provider began
+    /// metering `tload`. Implementations must read the raw transient backing
+    /// store directly and never deduct gas, so metering is composed by the
+    /// metered `tload` wrapper rather than inherited by accident.
+    fn tload_unmetered(&mut self, address: Address, key: U256) -> Result<U256>;
     /// Performs an SSTORE operation (persistent storage write).
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()>;
     /// Performs a TSTORE operation (transient storage write).
@@ -93,6 +103,11 @@ pub trait PrecompileStorageProvider {
     /// State gas is first deducted from this reservoir before spilling into regular gas.
     /// Returns zero when no reservoir was provided at construction time.
     fn reservoir(&self) -> u64;
+
+    /// Returns the active persistent-storage features.
+    fn storage_features(&self) -> StorageFeatures {
+        StorageFeatures::Legacy
+    }
 
     /// Returns whether the current call context is static.
     fn is_static(&self) -> bool;
@@ -129,10 +144,33 @@ pub trait PrecompileStorageProvider {
 ///
 /// Abstracts over persistent (SLOAD/SSTORE) and transient (TLOAD/TSTORE) storage.
 pub trait StorageOps {
+    /// Checks whether writes are allowed before any preparatory reads occur.
+    fn ensure_writable(&self) -> Result<()>;
     /// Stores a value at the provided slot.
     fn store(&mut self, slot: U256, value: U256) -> Result<()>;
     /// Loads a value from the provided slot.
     fn load(&self, slot: U256) -> Result<U256>;
+    /// Returns the active persistent-storage features.
+    fn storage_features(&self) -> StorageFeatures {
+        StorageFeatures::Legacy
+    }
+}
+
+/// Fork-dependent features for persistent storage writes.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StorageFeatures {
+    /// Preserve storage behavior from before Cobalt activation.
+    #[default]
+    Legacy,
+    /// Apply Cobalt storage behavior, including dynamic tail cleanup on shrink.
+    Cobalt,
+}
+
+impl StorageFeatures {
+    /// Returns whether dynamic storage tail cleanup is enabled.
+    pub fn dynamic_storage_tail_cleanup_enabled(self) -> bool {
+        self >= Self::Cobalt
+    }
 }
 
 /// Trait providing access to a contract's address and storage.
@@ -208,9 +246,14 @@ impl LayoutCtx {
     }
 
     #[inline]
-    /// Returns the packed offset, or `None` for [`Self::FULL`].
+    /// Returns the packed offset, or `None` for full-slot contexts.
     pub const fn packed_offset(&self) -> Option<usize> {
         if self.0 == usize::MAX { None } else { Some(self.0) }
+    }
+
+    /// Returns whether this is a full-slot context.
+    pub const fn is_full(&self) -> bool {
+        self.0 == usize::MAX
     }
 }
 

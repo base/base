@@ -14,7 +14,7 @@ mod lookup;
 pub use lookup::{BerylLookup, BerylLookupWithObserver};
 
 mod spec;
-pub use spec::BasePrecompileSpec;
+pub use spec::{BasePrecompileSpec, UpgradeGatedStorageFeatures};
 
 mod activation;
 pub use activation::{
@@ -79,7 +79,7 @@ pub use b20_factory::{
 mod policy;
 pub use policy::{
     IPolicyRegistry, PackedPolicy, PolicyAccounting, PolicyRegistryLogic, PolicyRegistryPrecompile,
-    PolicyRegistryStorage, PolicyRegistryV1, PolicyVersion, PolicyVersions,
+    PolicyRegistryStorage, PolicyRegistryV1, PolicyRegistryV2, PolicyVersion, PolicyVersions,
 };
 
 mod tx_context;

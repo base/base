@@ -137,9 +137,6 @@ pub(crate) struct DoctorArgs {
     /// Path to the local `reth.toml` file.
     #[arg(long = "reth-config", value_name = "PATH")]
     pub(crate) reth_config: Option<PathBuf>,
-    /// Base telemetry service URL used for external EL reachability checks.
-    #[arg(long = "telemetry-url", env = "BASECTL_TELEMETRY_URL", value_name = "URL")]
-    pub(crate) telemetry_url: Option<Url>,
     /// Connected peer count below which peer checks warn.
     #[arg(long = "peer-warn-threshold", value_name = "COUNT", default_value_t = 5)]
     pub(crate) peer_warn_threshold: u32,
@@ -277,9 +274,6 @@ pub(crate) enum P2pCommands {
         /// Execution-layer `enode://` URL to probe.
         #[arg(value_name = "ENODE")]
         enode: String,
-        /// Base telemetry service URL.
-        #[arg(long = "telemetry-url", env = "BASECTL_TELEMETRY_URL", value_name = "URL")]
-        telemetry_url: Url,
         /// Emit the telemetry response as JSON.
         #[arg(long)]
         json: bool,
@@ -288,10 +282,10 @@ pub(crate) enum P2pCommands {
     AddPeer(DestructivePeerArgs),
     /// Remove a single execution or consensus peer.
     RemovePeer(DestructivePeerArgs),
-    /// Ban a single consensus peer.
-    Ban(DestructiveClPeerArgs),
-    /// Unban a single consensus peer.
-    Unban(DestructiveClPeerArgs),
+    /// Ban a single execution or consensus peer.
+    Ban(DestructivePeerArgs),
+    /// Unban a single execution or consensus peer.
+    Unban(DestructivePeerArgs),
     /// Unban all currently banned consensus peers.
     UnbanAll(DestructiveClBulkArgs),
 }
@@ -324,7 +318,7 @@ pub(crate) struct P2pArgs {
 /// Shared flags for destructive `basectl p2p` subcommands.
 #[derive(Debug, Args)]
 pub(crate) struct DestructivePeerArgs {
-    /// Peer target. `enode://...` routes to EL; CL uses ENR or multiaddr for add and peer ID for remove.
+    /// Peer target. `enode://...` routes to EL; CL add accepts ENR or multiaddr, while other actions use a peer ID.
     #[arg(value_name = "TARGET")]
     pub(crate) target: String,
     /// Override the execution-layer RPC URL.
@@ -334,27 +328,6 @@ pub(crate) struct DestructivePeerArgs {
     /// fleet. Pass this flag to query a single node directly.
     #[arg(long = "el-rpc", value_name = "URL")]
     pub(crate) el_rpc: Option<Url>,
-    /// Override the consensus-node RPC URL.
-    ///
-    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
-    /// so non-devnet users must pass this flag (or set the field in
-    /// their YAML config).
-    #[arg(long = "cl-rpc", value_name = "URL")]
-    pub(crate) cl_rpc: Option<Url>,
-    /// Skip the interactive confirmation prompt.
-    #[arg(long)]
-    pub(crate) yes: bool,
-    /// Emit a structured JSON action outcome instead of pretty text.
-    #[arg(long, requires = "yes")]
-    pub(crate) json: bool,
-}
-
-/// Shared flags for destructive consensus-only `basectl p2p` peer subcommands.
-#[derive(Debug, Args)]
-pub(crate) struct DestructiveClPeerArgs {
-    /// Consensus libp2p peer ID.
-    #[arg(value_name = "PEER_ID")]
-    pub(crate) peer_id: String,
     /// Override the consensus-node RPC URL.
     ///
     /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
@@ -649,9 +622,9 @@ mod tests {
                 "basectl",
                 "p2p",
                 "unban",
-                "16Uiu2HAmExamplePeerId",
-                "--cl-rpc",
-                "http://127.0.0.1:9545",
+                "enode://example@127.0.0.1:30303",
+                "--el-rpc",
+                "http://127.0.0.1:8545",
                 "--json",
                 "--yes",
             ])
@@ -673,18 +646,7 @@ mod tests {
 
     #[test]
     fn p2p_reachability_parses() {
-        assert!(
-            try_parse([
-                "basectl",
-                "p2p",
-                "reachability",
-                "enode://example",
-                "--telemetry-url",
-                "http://127.0.0.1:8080",
-                "--json",
-            ])
-            .is_ok()
-        );
+        assert!(try_parse(["basectl", "p2p", "reachability", "enode://example", "--json"]).is_ok());
     }
 
     #[test]
@@ -770,29 +732,7 @@ mod tests {
     }
 
     #[test]
-    fn destructive_cl_p2p_commands_reject_el_rpc() {
-        assert!(
-            try_parse([
-                "basectl",
-                "p2p",
-                "ban",
-                "16Uiu2HAmExamplePeerId",
-                "--el-rpc",
-                "http://127.0.0.1:8545",
-            ])
-            .is_err()
-        );
-        assert!(
-            try_parse([
-                "basectl",
-                "p2p",
-                "unban",
-                "16Uiu2HAmExamplePeerId",
-                "--el-rpc",
-                "http://127.0.0.1:8545",
-            ])
-            .is_err()
-        );
+    fn unban_all_rejects_el_rpc() {
         assert!(
             try_parse(["basectl", "p2p", "unban-all", "--el-rpc", "http://127.0.0.1:8545",])
                 .is_err()

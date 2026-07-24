@@ -91,7 +91,8 @@ where
     async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse> {
         debug!(
             num_transactions = &bundle.txs.len(),
-            block_number = &bundle.block_number,
+            min_block_number = ?bundle.min_block_number,
+            max_block_number = ?bundle.max_block_number,
             "Starting bundle metering"
         );
 
@@ -333,7 +334,8 @@ where
 
         debug!(
             num_transactions = &bundle.txs.len(),
-            block_number = &bundle.block_number,
+            min_block_number = ?bundle.min_block_number,
+            max_block_number = ?bundle.max_block_number,
             "Starting metered priority fee estimation"
         );
 
@@ -499,7 +501,8 @@ mod tests {
     fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>) -> Bundle {
         Bundle {
             txs,
-            block_number,
+            min_block_number: Some(block_number),
+            max_block_number: Some(block_number),
             flashblock_number_min: None,
             flashblock_number_max: None,
             min_timestamp,

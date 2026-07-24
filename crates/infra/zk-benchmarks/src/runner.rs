@@ -211,7 +211,9 @@ impl ZkBenchRunner {
             Some(ProofResult::Tee(_)) => {
                 eyre::bail!("proof request {session_id} returned tee result")
             }
-            None => eyre::bail!("proof request {session_id} succeeded without a result"),
+            None => {
+                eyre::bail!("proof request {session_id} succeeded without a result")
+            }
         };
 
         match zk_backend {

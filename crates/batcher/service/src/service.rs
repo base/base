@@ -137,8 +137,12 @@ impl ReadyBatcher {
                 () = background_cancellation.cancelled() => {}
                 Some((task_name, result)) = background_tasks.next(), if !background_tasks.is_empty() => {
                     match result {
-                        Ok(()) => eyre::bail!("{task_name} exited unexpectedly"),
-                        Err(error) => eyre::bail!("{task_name} task failed: {error}"),
+                        Ok(()) => {
+                            eyre::bail!("{task_name} exited unexpectedly")
+                        }
+                        Err(error) => {
+                            eyre::bail!("{task_name} task failed: {error}")
+                        }
                     }
                 }
             }

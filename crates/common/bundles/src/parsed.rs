@@ -15,8 +15,10 @@ use crate::Bundle;
 pub struct ParsedBundle {
     /// Decoded and recovered transactions.
     pub txs: Vec<Recovered<BaseTxEnvelope>>,
-    /// The target block number for inclusion.
-    pub block_number: u64,
+    /// Minimum block number for inclusion.
+    pub min_block_number: Option<u64>,
+    /// Maximum block number for inclusion.
+    pub max_block_number: Option<u64>,
     /// Minimum flashblock number for inclusion.
     pub flashblock_number_min: Option<u64>,
     /// Maximum flashblock number for inclusion.
@@ -59,7 +61,8 @@ impl TryFrom<Bundle> for ParsedBundle {
 
         Ok(Self {
             txs,
-            block_number: bundle.block_number,
+            min_block_number: bundle.min_block_number,
+            max_block_number: bundle.max_block_number,
             flashblock_number_min: bundle.flashblock_number_min,
             flashblock_number_max: bundle.flashblock_number_max,
             min_timestamp: bundle.min_timestamp,
@@ -90,7 +93,8 @@ mod tests {
 
         let bundle = Bundle {
             txs: vec![tx_bytes.into()],
-            block_number: 100,
+            min_block_number: Some(100),
+            max_block_number: Some(105),
             flashblock_number_min: Some(1),
             flashblock_number_max: Some(5),
             min_timestamp: Some(1000),
@@ -102,7 +106,8 @@ mod tests {
 
         let parsed: ParsedBundle = bundle.try_into().unwrap();
         assert_eq!(parsed.txs.len(), 1);
-        assert_eq!(parsed.block_number, 100);
+        assert_eq!(parsed.min_block_number, Some(100));
+        assert_eq!(parsed.max_block_number, Some(105));
         assert_eq!(parsed.flashblock_number_min, Some(1));
         assert_eq!(parsed.flashblock_number_max, Some(5));
         assert_eq!(parsed.min_timestamp, Some(1000));
@@ -121,7 +126,8 @@ mod tests {
         let uuid = Uuid::new_v4();
         let bundle = Bundle {
             txs: vec![tx_bytes.into()],
-            block_number: 100,
+            min_block_number: Some(100),
+            max_block_number: Some(100),
             replacement_uuid: Some(uuid.to_string()),
             ..Default::default()
         };
@@ -134,7 +140,8 @@ mod tests {
     fn test_parsed_bundle_invalid_tx() {
         let bundle = Bundle {
             txs: vec![vec![0x00, 0x01, 0x02].into()],
-            block_number: 100,
+            min_block_number: Some(100),
+            max_block_number: Some(100),
             ..Default::default()
         };
 
@@ -147,7 +154,8 @@ mod tests {
     fn test_parsed_bundle_invalid_uuid() {
         let bundle = Bundle {
             txs: vec![],
-            block_number: 100,
+            min_block_number: Some(100),
+            max_block_number: Some(100),
             replacement_uuid: Some("not-a-valid-uuid".to_string()),
             ..Default::default()
         };

@@ -5,10 +5,17 @@ Base telemetry backend service.
 ## Usage
 
 ```sh
-base-telemetry --listen-addr 0.0.0.0:8080
+base-telemetry --listen-addr 0.0.0.0:8080 --p2p-probe-requests-per-minute 2
 ```
 
-The listen address can also be configured with `BASE_TELEMETRY_LISTEN_ADDR`.
+The listen address and P2P probe rate limit can also be configured with
+`BASE_TELEMETRY_LISTEN_ADDR` and
+`BASE_TELEMETRY_P2P_PROBE_REQUESTS_PER_MINUTE`.
+
+P2P probe requests default to 2 per minute per client IP. The client IP is read
+from the `X-Forwarded-For` header only when the direct peer is inside a CIDR
+listed in `BASE_TELEMETRY_TRUSTED_PROXY_CIDRS` (default empty); otherwise the
+peer socket address is used.
 
 The service exposes health routes and an on-demand execution-layer
 reachability check:
@@ -23,9 +30,8 @@ curl https://telemetry.example/v1/p2p/reachability/el \
 
 The `enode://` URL is printed on node startup and returned by
 `admin_nodeInfo`. Replace `YOUR_NODE_IP` with the node's advertised literal
-`IPv4` or bracketed `IPv6` address. The caller may be the node, an operator, or a
-monitoring system; the service probes the IP and TCP port in the supplied
-enode, including private addresses reachable from the service's network.
+public `IPv4` address. The caller may be the node, an operator, or a monitoring
+system; the service probes the IP and TCP port in the supplied enode.
 
 ## Deployment boundary
 

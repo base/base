@@ -153,7 +153,7 @@ impl LocalInstance {
                 base_node
                     .components()
                     .pool(pool_component())
-                    .payload(FlashblocksServiceBuilder(builder_config.clone())),
+                    .payload(FlashblocksServiceBuilder::new(builder_config.clone())),
             )
             .with_add_ons(addons)
             .on_rpc_started(move |_, _| {

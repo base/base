@@ -53,7 +53,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
+    BuilderConfig, BuilderMetrics, CandidateSource, DefaultCandidateSource, ExecutionInfo,
+    PayloadBuilder, ResourceLimits,
     flashblocks::{
         FlashblocksExtraCtx, best_txs::BestFlashblocksTxs, context::BasePayloadBuilderCtx,
         generator::BuildArguments,
@@ -100,49 +101,60 @@ impl LastEmittedFlashblockId {
     }
 }
 
-/// Base payload builder
+/// The outbound channels the flashblocks builder emits to.
+///
+/// Grouped so [`BasePayloadBuilder::new`] takes a single cohesive argument rather than threading
+/// each sink through individually.
 #[derive(Debug, Clone)]
-pub(super) struct BasePayloadBuilder<Pool, Client> {
-    /// The type responsible for creating the evm.
-    pub evm_config: BaseEvmConfig,
-    /// The transaction pool
-    pub pool: Pool,
-    /// Node client
-    pub client: Client,
+pub(super) struct BuilderOutputs {
     /// Sender for sending built payloads to [`PayloadHandler`],
     /// which broadcasts outgoing payloads via p2p.
     pub payload_tx: mpsc::Sender<BaseBuiltPayload>,
     /// WebSocket publisher for broadcasting flashblocks
     /// to all connected subscribers.
     pub ws_pub: Arc<WebSocketPublisher>,
-    /// System configuration for the builder
-    pub config: BuilderConfig,
     /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
     pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
-    /// Last flashblock emitted by this builder instance.
-    last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
 }
 
-impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
+/// Base payload builder
+#[derive(Debug, Clone)]
+pub(super) struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource> {
+    /// The type responsible for creating the evm.
+    pub evm_config: BaseEvmConfig,
+    /// The transaction pool
+    pub pool: Pool,
+    /// Node client
+    pub client: Client,
+    /// System configuration for the builder
+    pub config: BuilderConfig,
+    /// The outbound channels the builder emits built payloads, flashblocks, and rejected
+    /// transactions to.
+    pub outputs: BuilderOutputs,
+    /// Last flashblock emitted by this builder instance.
+    last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
+    /// Transforms the candidate transaction stream drained by the build loop.
+    candidate_source: S,
+}
+
+impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
     /// `BasePayloadBuilder` constructor.
     pub(super) fn new(
         evm_config: BaseEvmConfig,
         pool: Pool,
         client: Client,
         config: BuilderConfig,
-        payload_tx: mpsc::Sender<BaseBuiltPayload>,
-        ws_pub: Arc<WebSocketPublisher>,
-        rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
+        outputs: BuilderOutputs,
+        candidate_source: S,
     ) -> Self {
         Self {
             evm_config,
             pool,
             client,
-            payload_tx,
-            ws_pub,
             config,
-            rejected_tx_sender,
+            outputs,
             last_emitted_flashblock_id: Arc::default(),
+            candidate_source,
         }
     }
 
@@ -155,10 +167,12 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
     }
 }
 
-impl<Pool, Client> reth_basic_payload_builder::PayloadBuilder for BasePayloadBuilder<Pool, Client>
+impl<Pool, Client, S> reth_basic_payload_builder::PayloadBuilder
+    for BasePayloadBuilder<Pool, Client, S>
 where
     Pool: Clone + Send + Sync,
     Client: Clone + Send + Sync,
+    S: Clone + Send + Sync,
 {
     type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;
@@ -185,10 +199,11 @@ where
     }
 }
 
-impl<Pool, Client> BasePayloadBuilder<Pool, Client>
+impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
+    S: CandidateSource<Pool::Transaction>,
 {
     fn get_base_payload_builder_ctx(
         &self,
@@ -239,7 +254,7 @@ where
             cancel,
             extra,
             builder_config: self.config.clone(),
-            rejected_tx_sender: self.rejected_tx_sender.clone(),
+            rejected_tx_sender: self.outputs.rejected_tx_sender.clone(),
         })
     }
 
@@ -309,7 +324,7 @@ where
             skip_flashblocks_building, // need to calculate state root for CL sync or if not building flashblocks
         )?;
 
-        self.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
+        self.outputs.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
 
         info!(
             target: "payload_builder",
@@ -326,6 +341,7 @@ where
         // flashblocks for the same block.
         if !ctx.attributes().no_tx_pool {
             let flashblock_byte_size = self
+                .outputs
                 .ws_pub
                 .publish(&fb_payload, ctx.block_number(), 0)
                 .map_err(PayloadBuilderError::other)?;
@@ -411,10 +427,12 @@ where
         ctx = ctx.with_cancel(fb_cancel.clone()).with_extra_ctx(extra);
 
         // Create best_transaction iterator
+        let best_txs_attributes = ctx.best_transaction_attributes();
         let mut best_txs = BestFlashblocksTxs::new(
-            BestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
-            ),
+            BestPayloadTransactions::new(self.candidate_source.best_transactions(
+                self.pool.best_transactions_with_attributes(best_txs_attributes),
+                best_txs_attributes,
+            )),
             self.config.rejection_cache.clone(),
         );
         let interval = self.config.flashblocks_interval;
@@ -615,8 +633,12 @@ where
         }
 
         let best_txs_start_time = Instant::now();
+        let best_txs_attributes = ctx.best_transaction_attributes();
         best_txs.refresh_iterator(BestPayloadTransactions::new(
-            self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
+            self.candidate_source.best_transactions(
+                self.pool.best_transactions_with_attributes(best_txs_attributes),
+                best_txs_attributes,
+            ),
         ));
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
         BuilderMetrics::transaction_pool_fetch_duration().record(transaction_pool_fetch_time);
@@ -735,6 +757,7 @@ where
                         (true, 0)
                     } else {
                         let size = self
+                            .outputs
                             .ws_pub
                             .publish(&fb_payload, ctx.block_number(), flashblock_index)
                             .wrap_err("failed to publish flashblock via websocket")?;
@@ -780,7 +803,8 @@ where
                 }
 
                 // Send to handler outside mutex.
-                self.payload_tx
+                self.outputs
+                    .payload_tx
                     .send(new_payload.clone())
                     .await
                     .wrap_err("failed to send built payload to handler")?;
@@ -1053,10 +1077,11 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Pool, Client> PayloadBuilder for BasePayloadBuilder<Pool, Client>
+impl<Pool, Client, S> PayloadBuilder for BasePayloadBuilder<Pool, Client, S>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
+    S: CandidateSource<Pool::Transaction> + Clone + Unpin + 'static,
 {
     type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;

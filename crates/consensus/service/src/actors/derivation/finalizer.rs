@@ -22,6 +22,11 @@ pub struct L2Finalizer {
     /// block is received, the highest L2 block whose inputs are contained within the finalized
     /// L1 chain is finalized.
     awaiting_finalization: BTreeMap<L1BlockNumber, L2BlockNumber>,
+    /// The highest finalized L1 block observed by the finalizer.
+    ///
+    /// This survives derivation resets so that re-derived L2 blocks can be finalized without
+    /// waiting for the L1 watcher to emit the same finalized block again.
+    finalized_l1_block: Option<BlockInfo>,
 }
 
 impl L2Finalizer {
@@ -39,7 +44,32 @@ impl L2Finalizer {
             .or_insert_with(|| attributes.block_number());
     }
 
-    /// Clears the finalization queue.
+    /// Records a finalized L1 block and attempts to finalize any eligible L2 blocks.
+    ///
+    /// Finalized L1 signals are monotonic by block number. Older signals are ignored, while a
+    /// signal at the same height is accepted so that its block identity remains current.
+    pub fn process_finalized_l1_block(
+        &mut self,
+        finalized_l1_block: BlockInfo,
+    ) -> Option<L2BlockNumber> {
+        if self
+            .finalized_l1_block
+            .as_ref()
+            .is_some_and(|previous| finalized_l1_block.number < previous.number)
+        {
+            return None;
+        }
+
+        self.finalized_l1_block = Some(finalized_l1_block);
+        self.try_finalize_pending()
+    }
+
+    /// Attempts to finalize an eligible L2 block using the latest finalized L1 signal.
+    pub fn try_finalize_pending(&mut self) -> Option<L2BlockNumber> {
+        self.try_finalize_next(self.finalized_l1_block?)
+    }
+
+    /// Clears reset-sensitive derived-block tracking while preserving the finalized L1 signal.
     pub fn clear(&mut self) {
         self.awaiting_finalization.clear();
     }
@@ -108,6 +138,16 @@ mod tests {
     }
 
     #[test]
+    fn finalized_l1_signal_is_retained_until_candidates_are_ready() {
+        let mut f = L2Finalizer::default();
+        assert!(f.process_finalized_l1_block(l1_at(5)).is_none());
+
+        f.enqueue_for_finalization(&attrs(9, 5));
+
+        assert_eq!(f.try_finalize_pending(), Some(10));
+    }
+
+    #[test]
     fn single_entry_l1_not_yet_finalized() {
         let mut f = L2Finalizer::default();
         // L2 block 10 came from L1 origin 5. Finalizing at L1=3 should not include it.
@@ -158,6 +198,18 @@ mod tests {
     }
 
     #[test]
+    fn clear_preserves_finalized_l1_signal() {
+        let mut f = L2Finalizer::default();
+        f.process_finalized_l1_block(l1_at(5));
+        f.enqueue_for_finalization(&attrs(4, 1));
+
+        f.clear();
+        f.enqueue_for_finalization(&attrs(9, 5));
+
+        assert_eq!(f.try_finalize_pending(), Some(10));
+    }
+
+    #[test]
     fn drain_preserves_future_entries() {
         // After finalizing up to L1=2, entries at L1=5 must survive.
         let mut f = L2Finalizer::default();
@@ -178,5 +230,16 @@ mod tests {
         assert_eq!(f.try_finalize_next(l1_at(5)), Some(20));
         // Queue is now empty; an older signal cannot regress to a stale entry.
         assert!(f.try_finalize_next(l1_at(2)).is_none());
+    }
+
+    #[test]
+    fn older_finalized_signal_does_not_lower_high_water_mark() {
+        let mut f = L2Finalizer::default();
+        f.process_finalized_l1_block(l1_at(5));
+        assert!(f.process_finalized_l1_block(l1_at(3)).is_none());
+
+        f.enqueue_for_finalization(&attrs(9, 4));
+
+        assert_eq!(f.try_finalize_pending(), Some(10));
     }
 }

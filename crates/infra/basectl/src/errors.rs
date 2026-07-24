@@ -82,11 +82,11 @@ pub enum P2pTargetError {
         /// The target supplied by the caller.
         target: String,
     },
-    /// `remove-peer` does not accept ENR targets.
+    /// Peer removal, ban, and unban actions do not accept ENR targets.
     #[error(
-        "remove-peer needs a bare libp2p peer ID for CL targets; ENR records are only accepted by add-peer"
+        "peer removal, ban, and unban actions need a bare libp2p peer ID for CL targets; ENR records are only accepted by add-peer"
     )]
-    RemoveEnrTarget {
+    PeerActionEnrTarget {
         /// The target supplied by the caller.
         target: String,
     },
@@ -96,44 +96,11 @@ pub enum P2pTargetError {
         /// The target supplied by the caller.
         target: String,
     },
-    /// A remove-peer EL target parsed to something other than an enode.
-    #[error("remove-peer EL targets must be `enode://` records")]
-    RemoveElTargetNotEnode {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// A remove-peer CL target was URL-like or multiaddr-like instead of a bare peer ID.
-    #[error("remove-peer needs a bare libp2p peer ID for CL targets, not a URL or multiaddr")]
-    RemoveClTargetNotBarePeerId {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// The CL peer ID was empty after trimming whitespace.
-    #[error("CL peer ID cannot be empty")]
-    EmptyClPeerId,
-    /// A CL peer action was given an enode record.
-    #[error("CL peer actions need a bare libp2p peer ID, not an enode record")]
-    ClPeerIdIsEnode {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// A CL peer action was given an ENR record.
+    /// A CL peer-action target was URL-like or multiaddr-like instead of a bare peer ID.
     #[error(
-        "CL peer actions need a bare libp2p peer ID; ENR records are only accepted by add-peer"
+        "peer removal, ban, and unban actions need a bare libp2p peer ID for CL targets, not a URL or multiaddr"
     )]
-    ClPeerIdIsEnr {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// The CL peer ID contained whitespace.
-    #[error("CL peer ID must not contain whitespace")]
-    ClPeerIdContainsWhitespace {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// The CL peer ID was URL-like or multiaddr-like instead of a bare peer ID.
-    #[error("CL peer actions need a bare libp2p peer ID, not a URL or multiaddr")]
-    ClPeerIdNotBare {
+    PeerActionClTargetNotBarePeerId {
         /// The target supplied by the caller.
         target: String,
     },
@@ -176,6 +143,12 @@ pub enum P2pCommandError {
     UnsupportedPrettyAction {
         /// The unsupported action name.
         action: String,
+    },
+    /// The EL ban target is a trusted peer, which the node silently refuses to ban.
+    #[error("cannot ban peer {target}: it is in the trusted set")]
+    TrustedElPeerBan {
+        /// The enode target supplied by the caller.
+        target: String,
     },
 }
 

@@ -107,7 +107,8 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
     let validated_tx = ValidatedTransaction {
         sender,
         raw: raw_tx,
-        target_block_number: None,
+        min_block_number: None,
+        max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
     };

@@ -19,7 +19,7 @@ use revm::{
 
 use crate::{
     error::{BasePrecompileError, IntoPrecompileResult, Result},
-    provider::PrecompileStorageProvider,
+    provider::{PrecompileStorageProvider, StorageFeatures},
 };
 
 type ScopedProvider<'a> = dyn PrecompileStorageProvider + 'a;
@@ -146,9 +146,21 @@ impl<'a> StorageCtx<'a> {
         self.try_with_storage(|s| s.tload(address, key))
     }
 
+    /// Reads transient storage without exposing a TLOAD opcode charge.
+    ///
+    /// Use this only when the native operation applies its own gas schedule.
+    pub fn tload_unmetered(&self, address: Address, key: U256) -> Result<U256> {
+        self.try_with_storage(|s| s.tload_unmetered(address, key))
+    }
+
     /// Performs an SSTORE (persistent storage write).
     pub fn sstore(&self, address: Address, key: U256, value: U256) -> Result<()> {
         self.try_with_storage(|s| s.sstore(address, key, value))
+    }
+
+    /// Checks whether the current call context permits storage writes.
+    pub fn ensure_writable(&self) -> Result<()> {
+        if self.is_static() { Err(BasePrecompileError::StaticCallViolation) } else { Ok(()) }
     }
 
     /// Performs a TSTORE (transient storage write).
@@ -184,6 +196,10 @@ impl<'a> StorageCtx<'a> {
     /// Returns the remaining EIP-8037 state-gas reservoir.
     pub fn reservoir(&self) -> u64 {
         self.with_storage(|s| s.reservoir())
+    }
+    /// Returns the active persistent-storage features.
+    pub fn storage_features(&self) -> StorageFeatures {
+        self.with_storage(|s| s.storage_features())
     }
     /// Returns whether the current call context is static.
     pub fn is_static(&self) -> bool {

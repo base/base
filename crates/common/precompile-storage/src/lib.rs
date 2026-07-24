@@ -18,7 +18,8 @@ pub use packing::{
 mod provider;
 pub use provider::{
     ContractStorage, FromWord, Handler, Layout, LayoutCtx, Packable, PrecompileStorageProvider,
-    Storable, StorableType, StorageKey, StorageOps, sealed, validate_loaded_code_presence,
+    Storable, StorableType, StorageFeatures, StorageKey, StorageOps, sealed,
+    validate_loaded_code_presence,
 };
 
 mod registration;

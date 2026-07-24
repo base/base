@@ -81,7 +81,9 @@ impl SnarkE2e {
             ProofResult::Compressed(_) => {
                 bail!("expected SnarkPlonk proof result, got Compressed")
             }
-            ProofResult::Tee(_) => bail!("expected SnarkPlonk proof result, got Tee"),
+            ProofResult::Tee(_) => {
+                bail!("expected SnarkPlonk proof result, got Tee")
+            }
         }
     }
 

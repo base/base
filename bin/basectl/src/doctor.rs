@@ -24,7 +24,6 @@ pub(crate) async fn run(config: MonitoringConfig, args: DoctorArgs) -> Result<Co
         el_rpc: args.el_rpc.unwrap_or_else(|| config.rpc.clone()),
         cl_rpc: args.cl_rpc.or_else(|| config.consensus_node_rpc.clone()),
         reth_config: args.reth_config,
-        telemetry_url: args.telemetry_url,
         thresholds: DoctorThresholds {
             peer_warn_threshold: args.peer_warn_threshold,
             head_lag_warn_blocks: args.head_lag_warn_blocks,
@@ -205,10 +204,7 @@ mod tests {
     use serde_json::json;
     use url::Url;
 
-    use super::{
-        ANSI_CYAN, ANSI_GREEN, ANSI_RED, ANSI_YELLOW, colored_status, status_sort_key,
-        validate_thresholds, write_check,
-    };
+    use super::{ANSI_YELLOW, status_sort_key, validate_thresholds, write_check};
     use crate::cli::DoctorArgs;
 
     #[test]
@@ -259,14 +255,6 @@ mod tests {
     }
 
     #[test]
-    fn pretty_status_labels_are_colored() {
-        assert_eq!(colored_status(DoctorStatus::Fail), format!("{ANSI_RED}FAIL\x1b[0m"));
-        assert_eq!(colored_status(DoctorStatus::Warn), format!("{ANSI_YELLOW}WARN\x1b[0m"));
-        assert_eq!(colored_status(DoctorStatus::Info), format!("{ANSI_CYAN}INFO\x1b[0m"));
-        assert_eq!(colored_status(DoctorStatus::Pass), format!("{ANSI_GREEN}PASS\x1b[0m"));
-    }
-
-    #[test]
     fn rejects_invalid_head_lag_thresholds() {
         let args = test_args(|args| {
             args.head_lag_warn_blocks = 30;
@@ -304,7 +292,6 @@ mod tests {
             el_rpc: Some(Url::parse("http://127.0.0.1:8545").unwrap()),
             cl_rpc: None,
             reth_config: Option::<PathBuf>::None,
-            telemetry_url: None,
             peer_warn_threshold: 5,
             head_lag_warn_blocks: 10,
             head_lag_fail_blocks: 20,

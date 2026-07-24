@@ -3535,6 +3535,7 @@ dependencies = [
  "base-common-rpc-types-engine",
  "base-execution-chainspec",
  "base-execution-consensus",
+ "base-execution-eip8130",
  "base-execution-evm",
  "base-execution-payload-builder",
  "base-execution-rpc",
@@ -3719,6 +3720,7 @@ dependencies = [
  "base-prover-service-protocol",
  "base-runtime",
  "base-tx-manager",
+ "bincode 2.0.1",
  "clap",
  "eyre",
  "futures",
@@ -3729,6 +3731,7 @@ dependencies = [
  "rustls 0.23.42",
  "serde",
  "serde_json",
+ "sp1-sdk",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
@@ -4224,6 +4227,7 @@ dependencies = [
  "alloy-consensus 2.2.0",
  "alloy-eips 2.2.0",
  "alloy-genesis 2.2.0",
+ "alloy-network 2.2.0",
  "alloy-primitives",
  "alloy-provider 2.2.0",
  "alloy-rpc-client 2.2.0",
@@ -4692,6 +4696,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-evm",
  "base-common-rpc-types-engine",
+ "base-execution-eip8130",
  "base-execution-evm",
  "base-execution-txpool",
  "derive_more 2.1.1",
@@ -5826,6 +5831,7 @@ dependencies = [
  "eyre",
  "jsonrpsee",
  "k256",
+ "reqwest 0.13.4",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
@@ -6288,6 +6294,8 @@ dependencies = [
  "bollard",
  "clap",
  "futures",
+ "human_bytes",
+ "humantime",
  "rayon",
  "reth-cli-commands",
  "serde_json",
@@ -6450,7 +6458,11 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "base-health",
+ "base-trusted-proxy",
  "clap",
+ "governor",
+ "ipnet",
+ "mockall",
  "reqwest 0.13.4",
  "reth-ecies",
  "reth-eth-wire",
@@ -6481,6 +6493,16 @@ dependencies = [
  "base-common-rpc-types",
  "eyre",
  "serde_json",
+]
+
+[[package]]
+name = "base-trusted-proxy"
+version = "0.0.0"
+dependencies = [
+ "http 1.4.2",
+ "ipnet",
+ "thiserror 2.0.19",
+ "tracing",
 ]
 
 [[package]]
@@ -6655,6 +6677,45 @@ dependencies = [
  "clap",
  "eyre",
  "url",
+]
+
+[[package]]
+name = "base-zk-fork-dispute"
+version = "0.0.0"
+dependencies = [
+ "alloy-node-bindings 2.2.0",
+ "alloy-primitives",
+ "alloy-provider 2.2.0",
+ "alloy-rlp",
+ "alloy-signer-local 2.2.0",
+ "alloy-trie",
+ "base-challenger",
+ "base-cli-utils",
+ "base-common-consensus",
+ "base-proof-contracts",
+ "base-proof-rpc",
+ "base-protocol",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
+ "base-tx-manager",
+ "clap",
+ "eyre",
+ "humantime",
+ "serde",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-zk-fork-dispute-bin"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "base-zk-fork-dispute",
+ "clap",
+ "eyre",
+ "tokio",
 ]
 
 [[package]]
@@ -10325,6 +10386,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "governor"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0746aa765db78b521451ef74221663b57ba595bf83f75d0ce23cc09447c8139f"
+dependencies = [
+ "cfg-if",
+ "dashmap",
+ "futures-sink",
+ "futures-timer",
+ "futures-util",
+ "no-std-compat",
+ "nonzero_ext",
+ "parking_lot",
+ "portable-atomic",
+ "quanta",
+ "rand 0.8.7",
+ "smallvec",
+ "spinning_top",
+]
+
+[[package]]
 name = "group"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13513,6 +13595,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "no-std-compat"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b93853da6d84c2e3c7d730d6473e8817692dd89be387eb01b94d7f108ecb5b8c"
+
+[[package]]
 name = "no_std_strings"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13542,6 +13630,12 @@ checksum = "610a5acd306ec67f907abe5567859a3c693fb9886eb1f012ab8f2a47bef3db51"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "nonzero_ext"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 
 [[package]]
 name = "notify"
@@ -22144,6 +22238,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spinning_top"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d96d2d1d716fb500937168cc09353ffdc7a012be8475ac7308e1bdf0e3923300"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
 name = "spki"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -24685,10 +24788,10 @@ dependencies = [
  "axum 0.8.9",
  "backoff",
  "base-metrics",
+ "base-trusted-proxy",
  "brotli",
  "futures",
  "http 1.4.2",
- "ipnet",
  "metrics",
  "reqwest 0.13.4",
  "serde",

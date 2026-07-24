@@ -22,9 +22,12 @@ use crate::{
 pub struct SendBundleRequest {
     /// Signed transaction(s) to include. Currently limited to exactly one.
     pub txs: Vec<Bytes>,
-    /// Target block number. Must be at most [`MAX_BUNDLE_ADVANCE_BLOCKS`] ahead.
+    /// Minimum block number. Must be at most [`MAX_BUNDLE_ADVANCE_BLOCKS`] ahead.
     #[serde(default)]
-    pub block_number: Option<u64>,
+    pub min_block_number: Option<u64>,
+    /// Maximum block number. Must be at most [`MAX_BUNDLE_ADVANCE_BLOCKS`] ahead.
+    #[serde(default)]
+    pub max_block_number: Option<u64>,
     /// Minimum inclusion timestamp in milliseconds since Unix epoch.
     #[serde(default)]
     pub min_timestamp: Option<u64>,
@@ -54,7 +57,7 @@ pub trait SendBundleApi {
 pub struct SendBundleApiImpl<P> {
     pool: P,
     enabled: bool,
-    /// The latest known block number, used to validate `blockNumber` in bundle
+    /// The latest known block number, used to validate bundle block windows in
     /// requests. Callers must update this atomically (via [`Ordering::Release`]
     /// or stronger) each time a new canonical block is committed. Reads use
     /// [`Ordering::Relaxed`] because a slightly stale value is acceptable for
@@ -102,22 +105,49 @@ fn validate_bundle_request(
 
     let now_ms = crate::transaction::unix_time_millis() as u64;
 
-    if let Some(block_number) = req.block_number {
-        if block_number < current_block {
+    if let Some(min_block) = req.min_block_number {
+        if min_block < current_block {
             return Err(validation_err(
-                "block_number_past",
-                format!("blockNumber {block_number} is in the past (current {current_block})",),
+                "min_block_number_past",
+                format!("minBlockNumber {min_block} is in the past (current {current_block})",),
             ));
         }
         let max_block = current_block + MAX_BUNDLE_ADVANCE_BLOCKS;
-        if block_number > max_block {
+        if min_block > max_block {
             return Err(validation_err(
-                "block_number_too_far",
+                "min_block_number_too_far",
                 format!(
-                    "blockNumber {block_number} is too far ahead (max {max_block}, current {current_block})",
+                    "minBlockNumber {min_block} is too far ahead (max {max_block}, current {current_block})",
                 ),
             ));
         }
+    }
+
+    if let Some(max_block) = req.max_block_number {
+        if max_block < current_block {
+            return Err(validation_err(
+                "max_block_number_past",
+                format!("maxBlockNumber {max_block} is in the past (current {current_block})",),
+            ));
+        }
+        let max_allowed = current_block + MAX_BUNDLE_ADVANCE_BLOCKS;
+        if max_block > max_allowed {
+            return Err(validation_err(
+                "max_block_number_too_far",
+                format!(
+                    "maxBlockNumber {max_block} is too far ahead (max {max_allowed}, current {current_block})",
+                ),
+            ));
+        }
+    }
+
+    if let (Some(min_block), Some(max_block)) = (req.min_block_number, req.max_block_number)
+        && min_block > max_block
+    {
+        return Err(validation_err(
+            "min_after_max_block_number",
+            format!("minBlockNumber {min_block} is after maxBlockNumber {max_block}"),
+        ));
     }
 
     if let Some(min_ts) = req.min_timestamp {
@@ -199,14 +229,16 @@ where
         let encoded_len = raw.len();
 
         let pool_tx = BasePooledTransaction::new(recovered, encoded_len).with_bundle_metadata(
-            bundle.block_number,
+            bundle.min_block_number,
+            bundle.max_block_number,
             bundle.min_timestamp,
             bundle.max_timestamp,
         );
 
         debug!(
             tx_hash = %tx_hash,
-            target_block = ?bundle.block_number,
+            min_block = ?bundle.min_block_number,
+            max_block = ?bundle.max_block_number,
             min_timestamp = ?bundle.min_timestamp,
             max_timestamp = ?bundle.max_timestamp,
             "eth_sendBundle",
@@ -242,7 +274,8 @@ mod tests {
     fn rejects_empty_txs() {
         let req = SendBundleRequest {
             txs: vec![],
-            block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: None,
@@ -257,7 +290,8 @@ mod tests {
     fn rejects_multiple_txs() {
         let req = SendBundleRequest {
             txs: vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")],
-            block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: None,
@@ -269,10 +303,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_block_number_too_far_ahead() {
+    fn rejects_min_block_number_too_far_ahead() {
         let req = SendBundleRequest {
             txs: vec![Bytes::from_static(b"tx")],
-            block_number: Some(200),
+            min_block_number: Some(200),
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: None,
@@ -284,10 +319,11 @@ mod tests {
     }
 
     #[test]
-    fn accepts_block_number_within_range() {
+    fn accepts_block_window_within_range() {
         let req = SendBundleRequest {
             txs: vec![Bytes::from_static(b"tx")],
-            block_number: Some(130),
+            min_block_number: Some(120),
+            max_block_number: Some(130),
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: None,
@@ -298,10 +334,43 @@ mod tests {
     }
 
     #[test]
+    fn rejects_max_block_number_in_the_past() {
+        let req = SendBundleRequest {
+            txs: vec![Bytes::from_static(b"tx")],
+            min_block_number: None,
+            max_block_number: Some(50),
+            min_timestamp: None,
+            max_timestamp: None,
+            reverting_tx_hashes: None,
+            replacement_uuid: None,
+            builders: None,
+        };
+        let err = validate_bundle_request(&req, 100).unwrap_err();
+        assert!(err.message().contains("in the past"));
+    }
+
+    #[test]
+    fn rejects_min_block_number_after_max_block_number() {
+        let req = SendBundleRequest {
+            txs: vec![Bytes::from_static(b"tx")],
+            min_block_number: Some(120),
+            max_block_number: Some(110),
+            min_timestamp: None,
+            max_timestamp: None,
+            reverting_tx_hashes: None,
+            replacement_uuid: None,
+            builders: None,
+        };
+        let err = validate_bundle_request(&req, 100).unwrap_err();
+        assert!(err.message().contains("after maxBlockNumber"));
+    }
+
+    #[test]
     fn rejects_reverting_tx_hashes() {
         let req = SendBundleRequest {
             txs: vec![Bytes::from_static(b"tx")],
-            block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: Some(vec![TxHash::ZERO]),
@@ -316,7 +385,8 @@ mod tests {
     fn rejects_replacement_uuid() {
         let req = SendBundleRequest {
             txs: vec![Bytes::from_static(b"tx")],
-            block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: None,
@@ -331,7 +401,8 @@ mod tests {
     fn rejects_builders() {
         let req = SendBundleRequest {
             txs: vec![Bytes::from_static(b"tx")],
-            block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: None,
@@ -343,10 +414,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_block_number_in_the_past() {
+    fn rejects_min_block_number_in_the_past() {
         let req = SendBundleRequest {
             txs: vec![Bytes::from_static(b"tx")],
-            block_number: Some(50),
+            min_block_number: Some(50),
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: None,
@@ -361,7 +433,8 @@ mod tests {
     fn rejects_max_timestamp_in_the_past() {
         let req = SendBundleRequest {
             txs: vec![Bytes::from_static(b"tx")],
-            block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: Some(1),
             reverting_tx_hashes: None,
@@ -377,7 +450,8 @@ mod tests {
         let now = crate::transaction::unix_time_millis() as u64;
         let req = SendBundleRequest {
             txs: vec![Bytes::from_static(b"tx")],
-            block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: Some(now + 30_000),
             max_timestamp: Some(now + 10_000),
             reverting_tx_hashes: None,
@@ -392,7 +466,8 @@ mod tests {
     fn accepts_minimal_valid_request() {
         let req = SendBundleRequest {
             txs: vec![Bytes::from_static(b"tx")],
-            block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: None,
@@ -407,7 +482,8 @@ mod tests {
         let handler = handler(100);
         let req = SendBundleRequest {
             txs: vec![],
-            block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: None,
@@ -421,11 +497,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_bundle_rejects_block_number_too_far_ahead() {
+    async fn send_bundle_rejects_min_block_number_too_far_ahead() {
         let handler = handler(100);
         let req = SendBundleRequest {
             txs: vec![Bytes::from_static(b"tx")],
-            block_number: Some(200),
+            min_block_number: Some(200),
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: None,
