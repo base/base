@@ -123,6 +123,23 @@ pub enum OracleProviderError {
         /// The L2 chain ID claimed by the loaded rollup config.
         rollup_config_chain_id: u64,
     },
+    /// The claimed L2 block precedes the rollup genesis block.
+    #[error("L2 claim block {claim_block} precedes rollup genesis block {genesis_block}")]
+    L2ClaimBeforeGenesis {
+        /// The claimed L2 block number.
+        claim_block: u64,
+        /// The configured rollup genesis L2 block number.
+        genesis_block: u64,
+    },
+    /// Computing the claimed L2 block timestamp overflowed `u64`.
+    #[error("L2 claim block timestamp overflow for block {claim_block}")]
+    L2ClaimTimestampOverflow {
+        /// The claimed L2 block number.
+        claim_block: u64,
+    },
+    /// The rollup config has a zero L2 block time.
+    #[error("L2 block time must be non-zero")]
+    InvalidL2BlockTime,
     /// A Beryl-enabled chain is missing a trusted activation registry admin address.
     ///
     /// This error occurs when proof boot data resolves a rollup config with Beryl scheduled but no
