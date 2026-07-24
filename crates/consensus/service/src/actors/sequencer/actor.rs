@@ -32,7 +32,6 @@ use crate::{
             recovery::RecoveryModeGuard,
             seal::{PayloadSealer, SealStepOutcome},
             shadow_cycle::{ShadowCycle, ShadowReconciliationTask},
-            timestamp::ZOMBIE_BLOCK_INTERVAL,
         },
     },
 };
@@ -326,7 +325,7 @@ where
             .rollup_config
             .is_zombie_active(self.rollup_config.l2_block_timestamp(block_number))
         {
-            ZOMBIE_BLOCK_INTERVAL
+            Duration::from_millis(RollupConfig::ZOMBIE_BLOCK_INTERVAL_MILLIS)
         } else {
             Duration::from_secs(self.rollup_config.block_time)
         };

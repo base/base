@@ -26,11 +26,6 @@ pub use shadow_cycle::{ShadowCycle, ShadowReconciliationTask};
 mod ticker;
 pub use ticker::ScheduledTicker;
 
-mod timestamp;
-pub use timestamp::{
-    SequencerTimestamp, SequencerTimestampPlanner, SequencerTimestampPlannerError,
-};
-
 mod pool;
 pub use pool::PoolActivation;
 
