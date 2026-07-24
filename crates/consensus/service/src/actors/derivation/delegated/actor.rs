@@ -249,6 +249,15 @@ where
             | DerivationActorRequest::ProcessL1HeadUpdateRequest(_) => {
                 debug!(target: "derivation", request_type = ?request_type, "Ignoring request while derivation delegation");
             }
+            #[cfg(test)]
+            DerivationActorRequest::CurrentStateRequest(result_tx) => {
+                let state = if self.has_engine_sync_completed {
+                    crate::DerivationState::Deriving
+                } else {
+                    crate::DerivationState::AwaitingELSyncCompletion
+                };
+                let _ = result_tx.send(state);
+            }
         }
         Ok(())
     }

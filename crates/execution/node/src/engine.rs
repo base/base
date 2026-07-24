@@ -1,10 +1,10 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{B256, Bytes, TxKind};
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys};
+use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys, SystemAddresses};
 use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
@@ -166,15 +166,19 @@ where
         }
 
         let parent_state = parent_state()?;
-        self.validate_isthmus_post_execution(
-            state_updates(),
-            parent_state.as_ref(),
-            block.header(),
-        )?;
+        let state_updates = state_updates();
+        self.validate_isthmus_post_execution(state_updates, parent_state.as_ref(), block.header())?;
 
-        if !self.chain_spec().is_zombie_active_at_timestamp(timestamp)
-            || !self.chain_spec().is_zombie_active_at_timestamp(parent_header.timestamp())
-        {
+        if !self.chain_spec().is_zombie_active_at_timestamp(timestamp) {
+            return Ok(());
+        }
+
+        let child_millis =
+            BaseTimeUpdateTx::extract_from_transactions(&block.body().transactions, block.number())
+                .map_err(ConsensusError::other)?
+                .timestamp_millis_part();
+
+        if !self.chain_spec().is_zombie_active_at_timestamp(parent_header.timestamp()) {
             return Ok(());
         }
 
@@ -183,10 +187,6 @@ where
                 .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())?
                 .unwrap_or_default(),
         );
-        let child_millis =
-            BaseTimeUpdateTx::extract_from_transactions(&block.body().transactions, block.number())
-                .map_err(ConsensusError::other)?
-                .timestamp_millis_part();
         let parent_timestamp_ms =
             u128::from(parent_header.timestamp()) * 1_000 + u128::from(parent_millis);
         let child_timestamp_ms = u128::from(timestamp) * 1_000 + u128::from(child_millis);
@@ -245,7 +245,7 @@ where
             ExecutionData = ExecutionData,
             BuiltPayload: BuiltPayload<Primitives: NodePrimitives<SignedTx = Tx>>,
         >,
-    Tx: SignedTransaction + Unpin + 'static,
+    Tx: BaseTransaction + SignedTransaction + Unpin + 'static,
     ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
 {
     fn validate_version_specific_fields(
@@ -330,23 +330,48 @@ where
         let zombie_active = self
             .chain_spec()
             .is_zombie_active_at_timestamp(attributes.payload_attributes.timestamp);
-        match attributes.timestamp_millis_part {
-            Some(_) if !zombie_active => {
+        match (zombie_active, attributes.timestamp_millis_part) {
+            (false, Some(_)) => {
                 return Err(EngineObjectValidationError::InvalidParams(
                     "TimestampMillisPartNotAllowed".to_string().into(),
                 ));
             }
-            None if zombie_active => {
+            (true, None) => {
                 return Err(EngineObjectValidationError::InvalidParams(
                     "MissingTimestampMillisPartInPayloadAttributes".to_string().into(),
                 ));
             }
-            Some(value) if !BaseTimeUpdateTx::is_valid_timestamp_millis_part(value) => {
+            (true, Some(value)) if !BaseTimeUpdateTx::is_valid_timestamp_millis_part(value) => {
                 return Err(EngineObjectValidationError::InvalidParams(
                     "InvalidTimestampMillisPartInPayloadAttributes".to_string().into(),
                 ));
             }
-            _ => {}
+            (true, Some(value)) => {
+                let invalid_transaction = || {
+                    EngineObjectValidationError::InvalidParams(
+                        "InvalidBaseTimeTransactionInPayloadAttributes".to_string().into(),
+                    )
+                };
+                let forced_transaction = attributes
+                    .transactions
+                    .get(1)
+                    .and_then(|transaction| transaction.value().as_deposit())
+                    .filter(|deposit| {
+                        deposit.from == SystemAddresses::DEPOSITOR_ACCOUNT
+                            && deposit.to == TxKind::Call(Predeploys::BASE_TIME)
+                    })
+                    .ok_or_else(&invalid_transaction)?;
+                let forced_millis_part =
+                    BaseTimeUpdateTx::decode_calldata(&forced_transaction.input)
+                        .map_err(|_| invalid_transaction())?
+                        .timestamp_millis_part();
+                if value != forced_millis_part {
+                    return Err(EngineObjectValidationError::InvalidParams(
+                        "BaseTimeTransactionTimestampMismatch".to_string().into(),
+                    ));
+                }
+            }
+            (false, None) => {}
         }
 
         Ok(())
@@ -402,14 +427,16 @@ pub fn validate_withdrawals_presence(
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{BlockBody, EMPTY_ROOT_HASH, Header, Sealable};
-    use alloy_primitives::{Address, B64, B256, U256, b64};
+    use alloy_primitives::{Address, B64, B256, Bytes, U256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::{BaseUpgrade, ChainConfig};
     use base_common_consensus::{BasePrimitives, BaseTxEnvelope, TxDeposit};
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_consensus::BaseConsensusError;
+    use base_protocol::BaseTimeMetadataError;
     use reth_ethereum_forks::ForkCondition;
+    use reth_primitives_traits::WithEncoded;
     use reth_provider::{
         noop::NoopProvider,
         test_utils::{ExtendedAccount, MockEthProvider},
@@ -484,6 +511,17 @@ mod tests {
 
     fn zombie_attributes(timestamp: u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
         get_attributes(Some(b64!("0000000000000000")), Some(1), timestamp)
+    }
+
+    fn add_base_time_transaction(
+        attributes: &mut BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        millis_part: u16,
+    ) {
+        let metadata = BaseTimeUpdateTx::new(millis_part).unwrap().into_deposit_tx(9);
+        attributes.transactions = vec![
+            WithEncoded::from_2718_encodable(TxDeposit::default().seal_slow().into()),
+            WithEncoded::from_2718_encodable(metadata.into()),
+        ];
     }
 
     #[test]
@@ -671,15 +709,85 @@ mod tests {
     #[test]
     fn test_well_formed_attributes_post_zombie_with_valid_timestamp_millis_part() {
         let validator = zombie_validator();
+        for millis_part in [0, 200, 400, 600, 800] {
+            let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
+            attributes.timestamp_millis_part = Some(millis_part);
+            add_base_time_transaction(&mut attributes, millis_part);
+
+            let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
+                BaseEngineTypes,
+            >>::ensure_well_formed_attributes(
+                &validator, EngineApiMessageVersion::V3, &attributes
+            );
+            assert!(result.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_malformed_attributes_post_zombie_without_base_time_transaction() {
+        let validator = zombie_validator();
         let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
-        attributes.timestamp_millis_part = Some(200);
+        attributes.timestamp_millis_part = Some(400);
 
         let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
         );
-        assert!(result.is_ok());
+        assert_invalid_params_error!(result, "InvalidBaseTimeTransactionInPayloadAttributes");
+    }
+
+    #[test]
+    fn test_malformed_attributes_post_zombie_with_mismatched_base_time_transaction() {
+        let validator = zombie_validator();
+        let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
+        attributes.timestamp_millis_part = Some(200);
+        add_base_time_transaction(&mut attributes, 400);
+
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
+            BaseEngineTypes,
+        >>::ensure_well_formed_attributes(
+            &validator, EngineApiMessageVersion::V3, &attributes
+        );
+        assert_invalid_params_error!(result, "BaseTimeTransactionTimestampMismatch");
+    }
+
+    #[test]
+    fn test_malformed_attributes_post_zombie_with_invalid_base_time_transaction() {
+        let validator = zombie_validator();
+        let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
+        attributes.timestamp_millis_part = Some(400);
+        attributes.transactions = vec![
+            WithEncoded::from_2718_encodable(TxDeposit::default().seal_slow().into()),
+            WithEncoded::from_2718_encodable(TxDeposit::default().seal_slow().into()),
+        ];
+
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
+            BaseEngineTypes,
+        >>::ensure_well_formed_attributes(
+            &validator, EngineApiMessageVersion::V3, &attributes
+        );
+        assert_invalid_params_error!(result, "InvalidBaseTimeTransactionInPayloadAttributes");
+    }
+
+    #[test]
+    fn test_malformed_attributes_post_zombie_with_invalid_base_time_calldata() {
+        let validator = zombie_validator();
+        let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
+        attributes.timestamp_millis_part = Some(400);
+        let mut metadata = BaseTimeUpdateTx::new(400).unwrap().into_deposit_tx(9).into_inner();
+        metadata.input = Bytes::new();
+        attributes.transactions = vec![
+            WithEncoded::from_2718_encodable(TxDeposit::default().seal_slow().into()),
+            WithEncoded::from_2718_encodable(metadata.seal_slow().into()),
+        ];
+
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
+            BaseEngineTypes,
+        >>::ensure_well_formed_attributes(
+            &validator, EngineApiMessageVersion::V3, &attributes
+        );
+        assert_invalid_params_error!(result, "InvalidBaseTimeTransactionInPayloadAttributes");
     }
 
     fn validate_against_parent(
@@ -765,22 +873,29 @@ mod tests {
     ) -> RecoveredBlock<BaseBlock> {
         let number = 9;
         let metadata = BaseTimeUpdateTx::new(millis_part).unwrap().into_deposit_tx(number);
+        base_time_block_with_transactions(
+            timestamp,
+            withdrawals_root,
+            vec![TxDeposit::default().seal_slow().into(), metadata.into()],
+        )
+    }
+
+    fn base_time_block_with_transactions(
+        timestamp: u64,
+        withdrawals_root: B256,
+        transactions: Vec<BaseTxEnvelope>,
+    ) -> RecoveredBlock<BaseBlock> {
         let block = BaseBlock {
             header: Header {
-                number,
+                number: 9,
                 timestamp,
                 withdrawals_root: Some(withdrawals_root),
                 ..Default::default()
             },
-            body: BlockBody {
-                transactions: vec![TxDeposit::default().seal_slow().into(), metadata.into()],
-                ..Default::default()
-            },
+            body: BlockBody { transactions, ..Default::default() },
         };
-        RecoveredBlock::new_sealed(
-            SealedBlock::seal_slow(block),
-            vec![Address::ZERO, Address::ZERO],
-        )
+        let signers = vec![Address::ZERO; block.body.transactions.len()];
+        RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), signers)
     }
 
     fn parent_state(millis_part: u16) -> MockEthProvider<BasePrimitives> {
@@ -829,6 +944,13 @@ mod tests {
         error.downcast_ref()
     }
 
+    fn base_time_metadata_error(error: &InsertBlockErrorKind) -> Option<&BaseTimeMetadataError> {
+        let InsertBlockErrorKind::Consensus(ConsensusError::Other(error)) = error else {
+            return None;
+        };
+        error.downcast_ref()
+    }
+
     #[test]
     fn post_execution_skips_base_time_at_activation_but_checks_isthmus() {
         let block = post_execution_block(EMPTY_ROOT_HASH);
@@ -855,38 +977,149 @@ mod tests {
 
     #[test]
     fn post_execution_validates_exact_200ms_progression() {
-        validate_base_time_progression(
-            ZOMBIE_TIMESTAMP,
-            200,
-            ZOMBIE_TIMESTAMP,
-            400,
-            EMPTY_ROOT_HASH,
-        )
-        .unwrap();
-        validate_base_time_progression(
-            ZOMBIE_TIMESTAMP,
-            800,
-            ZOMBIE_TIMESTAMP + 1,
-            0,
-            EMPTY_ROOT_HASH,
-        )
-        .unwrap();
+        for (parent_seconds, parent_millis, child_seconds, child_millis) in [
+            (ZOMBIE_TIMESTAMP, 0, ZOMBIE_TIMESTAMP, 200),
+            (ZOMBIE_TIMESTAMP, 200, ZOMBIE_TIMESTAMP, 400),
+            (ZOMBIE_TIMESTAMP, 400, ZOMBIE_TIMESTAMP, 600),
+            (ZOMBIE_TIMESTAMP, 600, ZOMBIE_TIMESTAMP, 800),
+            (ZOMBIE_TIMESTAMP, 800, ZOMBIE_TIMESTAMP + 1, 0),
+        ] {
+            validate_base_time_progression(
+                parent_seconds,
+                parent_millis,
+                child_seconds,
+                child_millis,
+                EMPTY_ROOT_HASH,
+            )
+            .unwrap();
+        }
 
-        let error = validate_base_time_progression(
-            ZOMBIE_TIMESTAMP,
-            200,
-            ZOMBIE_TIMESTAMP + 1,
-            400,
-            EMPTY_ROOT_HASH,
+        for (parent_seconds, parent_millis, child_seconds, child_millis) in [
+            (ZOMBIE_TIMESTAMP, 200, ZOMBIE_TIMESTAMP, 200),
+            (ZOMBIE_TIMESTAMP, 400, ZOMBIE_TIMESTAMP, 200),
+            (ZOMBIE_TIMESTAMP, 200, ZOMBIE_TIMESTAMP, 600),
+            (ZOMBIE_TIMESTAMP, 800, ZOMBIE_TIMESTAMP + 1, 200),
+            (ZOMBIE_TIMESTAMP, 800, ZOMBIE_TIMESTAMP, 800),
+            (ZOMBIE_TIMESTAMP, 200, ZOMBIE_TIMESTAMP + 1, 400),
+        ] {
+            let error = validate_base_time_progression(
+                parent_seconds,
+                parent_millis,
+                child_seconds,
+                child_millis,
+                EMPTY_ROOT_HASH,
+            )
+            .unwrap_err();
+            assert!(matches!(
+                base_consensus_error(&error),
+                Some(BaseConsensusError::BaseTimeProgressionInvalid { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn post_execution_progression_error_contains_full_timestamps() {
+        for (parent_seconds, parent_millis, child_seconds, child_millis) in [
+            (ZOMBIE_TIMESTAMP, 200, ZOMBIE_TIMESTAMP, 600),
+            (ZOMBIE_TIMESTAMP, 800, ZOMBIE_TIMESTAMP + 1, 200),
+            (ZOMBIE_TIMESTAMP, 400, ZOMBIE_TIMESTAMP, 200),
+        ] {
+            let error = validate_base_time_progression(
+                parent_seconds,
+                parent_millis,
+                child_seconds,
+                child_millis,
+                EMPTY_ROOT_HASH,
+            )
+            .unwrap_err();
+            assert!(matches!(
+                base_consensus_error(&error),
+                Some(BaseConsensusError::BaseTimeProgressionInvalid {
+                    parent_timestamp_ms,
+                    child_timestamp_ms,
+                }) if *parent_timestamp_ms == u128::from(parent_seconds) * 1_000
+                    + u128::from(parent_millis)
+                    && *child_timestamp_ms == u128::from(child_seconds) * 1_000
+                        + u128::from(child_millis)
+            ));
+        }
+    }
+
+    #[test]
+    fn post_execution_rejects_invalid_claim() {
+        for (transactions, expected) in [
+            (vec![], BaseTimeMetadataError::Missing),
+            (
+                vec![
+                    TxDeposit::default().seal_slow().into(),
+                    TxDeposit::default().seal_slow().into(),
+                ],
+                BaseTimeMetadataError::InvalidSourceHash,
+            ),
+        ] {
+            let block =
+                base_time_block_with_transactions(ZOMBIE_TIMESTAMP, EMPTY_ROOT_HASH, transactions);
+            let parent = SealedHeader::seal_slow(Header {
+                timestamp: ZOMBIE_TIMESTAMP,
+                ..Default::default()
+            });
+            let state_updates = HashedPostState::default();
+            let error = PayloadValidator::<BaseEngineTypes>::
+                validate_block_post_execution_with_hashed_state(
+                    &zombie_validator(),
+                    || &state_updates,
+                    &block,
+                    &parent,
+                    || Ok(Box::new(parent_state(200))),
+                )
+                .unwrap_err();
+
+            assert_eq!(base_time_metadata_error(&error), Some(&expected));
+        }
+    }
+
+    #[test]
+    fn post_execution_accepts_valid_claim_on_first_active_block() {
+        let block = base_time_block(ZOMBIE_TIMESTAMP, 400, EMPTY_ROOT_HASH);
+        let parent = SealedHeader::seal_slow(Header {
+            timestamp: ZOMBIE_TIMESTAMP - 1,
+            ..Default::default()
+        });
+        let state_updates = HashedPostState::default();
+
+        PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
+            &zombie_validator(),
+            || &state_updates,
+            &block,
+            &parent,
+            || Ok(Box::new(parent_state(0))),
         )
-        .unwrap_err();
-        assert!(matches!(
-            base_consensus_error(&error),
-            Some(BaseConsensusError::BaseTimeProgressionInvalid {
-                parent_timestamp_ms: 1_800_000_001_200,
-                child_timestamp_ms: 1_800_000_002_400,
-            })
-        ));
+        .unwrap();
+    }
+
+    #[test]
+    fn post_execution_requires_claim_on_first_active_block() {
+        let block = base_time_block_with_transactions(
+            ZOMBIE_TIMESTAMP,
+            EMPTY_ROOT_HASH,
+            vec![TxDeposit::default().seal_slow().into()],
+        );
+        let parent = SealedHeader::seal_slow(Header {
+            timestamp: ZOMBIE_TIMESTAMP - 1,
+            ..Default::default()
+        });
+        let state_updates = HashedPostState::default();
+        let error =
+            PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
+                &zombie_validator(),
+                || &state_updates,
+                &block,
+                &parent,
+                || Ok(Box::new(parent_state(0))),
+            )
+            .unwrap_err();
+
+        assert_eq!(base_time_metadata_error(&error), Some(&BaseTimeMetadataError::Missing));
     }
 
     #[test]

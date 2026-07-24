@@ -9,6 +9,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, Predeploys};
 use base_common_evm::L1BlockInfo;
+use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{BasePooledTx, GuardMetrics, estimated_da_size::DataAvailabilitySized};
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
@@ -521,7 +522,10 @@ impl ExecutionInfo {
     }
 
     /// Returns true if the transaction would exceed the block limits:
-    /// - block gas limit: ensures the transaction still fits into the block.
+    /// - block gas limit: ensures the transaction still fits into the block. `tx_reserved_gas` is
+    ///   the gas reserved against the block budget: `gas_limit` for ordinary transactions, and
+    ///   `gas_limit + payer_auth` for EIP-8130, since payer authentication is metered on top of the
+    ///   declared gas limit (see `IntrinsicGas::max_payer_auth_cost`).
     /// - tx DA limit: if configured, ensures the tx does not exceed the maximum allowed DA limit
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
@@ -532,7 +536,7 @@ impl ExecutionInfo {
         block_gas_limit: u64,
         tx_data_limit: Option<u64>,
         block_data_limit: Option<u64>,
-        tx_gas_limit: u64,
+        tx_reserved_gas: u64,
         da_footprint_gas_scalar: Option<u16>,
     ) -> bool {
         if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
@@ -554,7 +558,7 @@ impl ExecutionInfo {
             }
         }
 
-        self.cumulative_gas_used + tx_gas_limit > block_gas_limit
+        self.cumulative_gas_used.saturating_add(tx_reserved_gas) > block_gas_limit
     }
 }
 
@@ -745,6 +749,32 @@ where
             }
 
             let tx_da_size = tx.estimated_da_size();
+
+            // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
+            // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
+            // conservative upper bound (worst-case payer policy gate) derived from the payer auth
+            // blob (`0` for non-8130 / self-pay); see `IntrinsicGas::max_payer_auth_cost`.
+            let tx_payer_auth = match tx.as_eip8130() {
+                Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
+                    Ok(payer_auth) => payer_auth,
+                    Err(err) => {
+                        trace!(
+                            target: "payload_builder",
+                            %err,
+                            tx_hash = ?tx.hash(),
+                            "skipping EIP-8130 transaction with unschedulable payer authenticator"
+                        );
+                        // Mirror the manifest pre-check above: a nonce-free replay-ID entry is
+                        // independent, so invalidating by sender would suppress unrelated entries.
+                        if tx.eip8130_replay_id().is_none() {
+                            best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        }
+                        continue;
+                    }
+                },
+                None => 0,
+            };
+
             let tx = tx.into_consensus();
 
             let da_footprint_gas_scalar = self
@@ -761,7 +791,7 @@ where
                 block_gas_limit,
                 tx_da_limit,
                 block_da_limit,
-                tx.gas_limit(),
+                tx.gas_limit().saturating_add(tx_payer_auth),
                 da_footprint_gas_scalar,
             ) {
                 // we can't fit this transaction into the block, so we need to mark it as
@@ -811,5 +841,26 @@ where
         }
 
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ExecutionInfo;
+
+    /// The block gas reservation must include EIP-8130 `payer_auth` on top of the
+    /// declared `gas_limit`: a transaction that fits on `gas_limit` alone is still
+    /// over the block limit once payer authentication is metered on top.
+    #[test]
+    fn is_tx_over_limits_reserves_eip8130_payer_auth() {
+        let mut info = ExecutionInfo::new();
+        info.cumulative_gas_used = 979_000;
+        let block_gas_limit = 1_000_000;
+
+        // gas_limit alone fits exactly (979_000 + 21_000 = 1_000_000).
+        assert!(!info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000, None));
+
+        // payer_auth metered on top (reserved = 21_000 + 2_100) pushes over the block limit.
+        assert!(info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000 + 2_100, None));
     }
 }
