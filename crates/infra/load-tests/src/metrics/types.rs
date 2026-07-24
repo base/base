@@ -237,7 +237,7 @@ pub struct ConfigSummary {
     /// Test duration.
     pub duration: Option<String>,
     /// Optional gas-per-second ceiling for adaptive pacing.
-    pub max_target_gps: Option<u64>,
+    pub target_gps: Option<u64>,
     /// Deterministic account seed.
     pub seed: u64,
     /// Chain ID.

@@ -155,7 +155,7 @@ struct OpenLoopHeadroomTarget {
     current_target_in_flight: u64,
     min_target_in_flight: u64,
     max_target_in_flight: u64,
-    max_target_gps: Option<u64>,
+    target_gps: Option<u64>,
     initial_avg_gas: u64,
     smoothed_confirmed_tps: f64,
     last_confirmed_sample_count: u64,
@@ -174,7 +174,7 @@ struct OpenLoopHeadroomUpdate {
 impl OpenLoopHeadroomTarget {
     fn new(
         max_target_in_flight: u64,
-        max_target_gps: Option<u64>,
+        target_gps: Option<u64>,
         initial_avg_gas: u64,
         initial_confirmed_count: u64,
         sampled_at: Instant,
@@ -184,7 +184,7 @@ impl OpenLoopHeadroomTarget {
                 current_target_in_flight: 0,
                 min_target_in_flight: 0,
                 max_target_in_flight: 0,
-                max_target_gps,
+                target_gps,
                 initial_avg_gas,
                 smoothed_confirmed_tps: 0.0,
                 last_confirmed_sample_count: initial_confirmed_count,
@@ -203,7 +203,7 @@ impl OpenLoopHeadroomTarget {
             current_target_in_flight: initial_target_in_flight,
             min_target_in_flight,
             max_target_in_flight,
-            max_target_gps,
+            target_gps,
             initial_avg_gas,
             smoothed_confirmed_tps: 0.0,
             last_confirmed_sample_count: initial_confirmed_count,
@@ -215,7 +215,7 @@ impl OpenLoopHeadroomTarget {
     }
 
     fn gas_derived_max_in_flight(&self, avg_gas_per_tx: Option<u64>) -> Option<u64> {
-        let cap = self.max_target_gps?;
+        let cap = self.target_gps?;
         let avg_gas = avg_gas_per_tx.unwrap_or(self.initial_avg_gas).max(1);
         Some(cap / avg_gas)
     }
@@ -1281,7 +1281,7 @@ impl LoadRunner {
     }
 
     /// Runs the load test and returns metrics summary.
-    #[instrument(skip(self), fields(max_target_gps = ?self.config.max_target_gps, continuous = self.config.duration.is_none(), duration = ?self.config.duration))]
+    #[instrument(skip(self), fields(target_gps = ?self.config.target_gps, continuous = self.config.duration.is_none(), duration = ?self.config.duration))]
     pub async fn run(&mut self) -> Result<MetricsSummary> {
         if self.b20_run_salt.is_none()
             && self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
@@ -1362,9 +1362,9 @@ impl LoadRunner {
                 SubmissionPipeline::sender_worker_count(self.submission_batch_rpcs.len()),
             max_in_flight_per_sender,
             initial_avg_gas,
-            max_target_gps = self
+            target_gps = self
                 .config
-                .max_target_gps
+                .target_gps
                 .map_or_else(|| "unbounded".to_string(), |gps| format!("{gps} gas/s")),
             "starting load test in open-loop pre-signed mode"
         );
@@ -1454,7 +1454,7 @@ impl LoadRunner {
         let max_target_in_flight = max_in_flight_per_sender.saturating_mul(account_count as u64);
         let open_loop_headroom_target = OpenLoopHeadroomTarget::new(
             max_target_in_flight,
-            self.config.max_target_gps,
+            self.config.target_gps,
             initial_avg_gas,
             self.collector.confirmed_count() as u64,
             Instant::now(),
@@ -3018,7 +3018,7 @@ mod tests {
     }
 
     #[test]
-    fn open_loop_headroom_target_clamps_to_max_target_gps_cap() {
+    fn open_loop_headroom_target_clamps_to_target_gps_cap() {
         let now = Instant::now();
         let sampled_at = now - OPEN_LOOP_TARGET_UPDATE_INTERVAL;
         let mut target =
