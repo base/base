@@ -18,14 +18,16 @@ url.workspace = true
 serde.workspace = true
 tracing.workspace = true
 humantime.workspace = true
+alloy-rlp.workspace = true
 alloy-provider.workspace = true
 alloy-primitives.workspace = true
-base-challenger.workspace = true
+alloy-signer-local.workspace = true
+alloy-trie = { workspace = true, features = ["std"] }
+base-protocol.workspace = true
 base-cli-utils.workspace = true
 base-proof-rpc.workspace = true
-base-protocol.workspace = true
+base-challenger.workspace = true
 base-tx-manager.workspace = true
-alloy-signer-local.workspace = true
 base-proof-contracts.workspace = true
 base-common-consensus.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }

@@ -1,9 +1,10 @@
 //! Fork dispute configuration resolved from CLI arguments.
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
-use base_challenger::{AccountProofVerifier, DisputeIntent};
+use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
+use base_challenger::DisputeIntent;
 use base_common_consensus::Predeploys;
 use base_proof_contracts::{DisputeGameFactoryClient, DisputeGameFactoryContractClient};
 use base_proof_rpc::L2HttpProvider;
@@ -104,10 +105,25 @@ impl Config {
                 format!("failed to fetch L2ToL1MessagePasser proof at {block_number}")
             })?;
 
-        AccountProofVerifier::verify(
-            &account_proof,
+        if account_proof.address != Predeploys::L2_TO_L1_MESSAGE_PASSER {
+            bail!(
+                "account proof address mismatch at block {block_number}: expected {}, got {}",
+                Predeploys::L2_TO_L1_MESSAGE_PASSER,
+                account_proof.address
+            );
+        }
+
+        let account = TrieAccount {
+            nonce: account_proof.nonce,
+            balance: account_proof.balance,
+            storage_root: account_proof.storage_hash,
+            code_hash: account_proof.code_hash,
+        };
+        verify_proof(
             block.header.inner.state_root,
-            Predeploys::L2_TO_L1_MESSAGE_PASSER,
+            Nibbles::unpack(keccak256(account_proof.address)),
+            Some(alloy_rlp::encode(account)),
+            &account_proof.account_proof,
         )
         .with_context(|| {
             format!("account proof verification failed for L2 block {block_number}")

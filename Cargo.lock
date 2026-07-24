@@ -6669,8 +6669,10 @@ name = "base-zk-fork-dispute"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "alloy-provider 2.0.5",
- "alloy-signer-local 2.0.5",
+ "alloy-provider 2.2.0",
+ "alloy-rlp",
+ "alloy-signer-local 2.2.0",
+ "alloy-trie",
  "base-challenger",
  "base-cli-utils",
  "base-common-consensus",
