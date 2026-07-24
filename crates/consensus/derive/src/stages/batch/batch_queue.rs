@@ -1015,8 +1015,7 @@ mod tests {
 
         let payload_block_hash =
             b256!("4444444444444444444444444444444444444444444444444444444444444444");
-        let origin_hash =
-            b256!("8527cdb6f601acf9b483817abd1da92790c92b19000000000000000000000000");
+        let origin_hash = b256!("8527cdb6f601acf9b483817abd1da92790c92b19000000000000000000000000");
 
         let cfg = Arc::new(RollupConfig {
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
