@@ -197,10 +197,10 @@ impl GameScanner {
         let scanner = &*self;
         let results: Vec<(u64, Result<Option<CandidateGame>>)> =
             stream::iter(scan_start..game_count)
-            .map(|i| async move { (i, scanner.evaluate_game(i).await) })
-            .buffer_unordered(Self::SCAN_CONCURRENCY)
-            .collect()
-            .await;
+                .map(|i| async move { (i, scanner.evaluate_game(i).await) })
+                .buffer_unordered(Self::SCAN_CONCURRENCY)
+                .collect()
+                .await;
 
         let mut candidates = Vec::new();
 
@@ -1104,5 +1104,4 @@ mod tests {
             "old game should now classify under its late state transition"
         );
     }
-
 }
