@@ -141,11 +141,12 @@ Read-only p2p commands also support:
 | `--json` | Emit humanized JSON instead of the pretty table output.                                                                      |
 | `--raw`  | With `--json`, emit raw nested RPC payloads instead of the humanized summary. Errors at parse time if used without `--json`. |
 
-`p2p reachability` requires `--telemetry-url <URL>` or
-`BASECTL_TELEMETRY_URL` and supports `--json`. It accepts an explicit enode and
-does not require EL or CL JSON-RPC access. It exits non-zero when the probe
-completes with any outcome other than `reachable`, so scripts can rely on the
-exit code.
+`p2p reachability` uses the selected config's L2 RPC to detect the live chain,
+then routes the request to the hosted Base mainnet or Base Sepolia telemetry
+service. The default config remains mainnet. Unsupported chains and failed
+network detection return an error. The command supports `--json` and exits
+non-zero when the probe completes with any outcome other than `reachable`, so
+scripts can rely on the exit code.
 
 The returned `stage` shows where the check stopped:
 
@@ -313,19 +314,19 @@ built-in preset, optional YAML override, or explicit config path through global
 specific node when the config points at shared/public endpoints.
 
 Checks include declared network vs. live chain ID, p2p endpoint context,
-canonical bootnode config context, advertised endpoint sanity, optional
+canonical bootnode config context, advertised endpoint sanity,
 telemetry-backed external EL reachability, EL/CL peer counts, EL head vs. public
 tip, safe-head recency, optional `reth.toml` headers/bodies limits,
 consensus-node RPC presence, and L1 RPC reachability. Doctor does not mutate
-node state. Without `--telemetry-url`, advertised endpoint checks remain limited
-to local config and exposed RPC metadata.
+node state. The effective `--el-rpc` chain ID selects the hosted Base mainnet or
+Base Sepolia telemetry service; the check is skipped when detection fails or
+the chain is unsupported.
 
 | Flag                                  | Description                                                                                                                                      |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `--el-rpc <URL>`                      | Override the execution-layer RPC URL used for local-node checks. Defaults to the selected config's `rpc` field.                                  |
 | `--cl-rpc <URL>`                      | Override the consensus-node RPC URL. If omitted and the selected config has no `consensus_node_rpc`, CL-dependent checks are skipped with hints. |
 | `--reth-config <PATH>`                | Path to the local `reth.toml` file. If omitted, the reth limits check is skipped.                                                                |
-| `--telemetry-url <URL>`               | Base telemetry service used to probe the enode returned by `admin_nodeInfo`. May also be set with `BASECTL_TELEMETRY_URL`.                       |
 | `--peer-warn-threshold <COUNT>`       | Connected peer count below which EL/CL peer checks warn. Default `5`.                                                                            |
 | `--head-lag-warn-blocks <BLOCKS>`     | EL head lag behind the public tip above which doctor warns. Default `10`.                                                                        |
 | `--head-lag-fail-blocks <BLOCKS>`     | EL head lag behind the public tip above which doctor fails. Default `20`.                                                                        |
@@ -456,7 +457,7 @@ basectl -c sepolia p2p info --el-rpc https://your-el.example/ --cl-rpc https://y
 basectl -c sepolia p2p peers --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/ --json | jq '{el: .el | length, cl: .cl | length}'
 
 # Probe an explicit EL enode from the telemetry service's network
-basectl p2p reachability enode://<node-id>@203.0.113.10:30303 --telemetry-url http://127.0.0.1:8080 --json
+basectl -c sepolia p2p reachability enode://<node-id>@203.0.113.10:30303 --json
 
 # Add an execution-layer peer after confirmation
 basectl -c sepolia p2p add-peer enode://<node-id>@203.0.113.10:30303 --el-rpc https://your-el.example/
@@ -539,7 +540,7 @@ basectl -c mainnet doctor
 basectl -c mainnet doctor --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/
 
 # Include an external EL reachability probe
-basectl -c mainnet doctor --el-rpc https://your-el.example/ --telemetry-url http://127.0.0.1:8080
+basectl -c mainnet doctor --el-rpc https://your-el.example/
 
 # Include local reth headers/bodies limit validation and JSON output
 basectl -c mainnet doctor --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/ --reth-config /etc/reth/reth.toml --json

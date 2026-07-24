@@ -20,9 +20,8 @@ because it is at peer capacity) is still `reachable`; its response omits
 `clientVersion`.
 
 The caller may be the node, an operator, or a monitoring system. The enode must
-contain a literal `IPv4` or `IPv6` address; hostnames are not resolved. Private
-addresses are allowed, so results describe reachability from the service's
-network rather than necessarily from the public internet.
+contain a public literal `IPv4` address; hostnames, private addresses, and `IPv6`
+addresses are rejected.
 
 Request:
 
@@ -55,11 +54,31 @@ Completed probes return HTTP `200` with an outcome of `reachable`,
 - `devp2p_hello`: exchanging the Ethereum devp2p Hello message.
 
 Invalid requests return `400`, bodies over 1 `KiB` return `413`, and exhausted
-probe capacity returns `429`. Probes have a 10-second deadline, with at most 32
-running globally. These limits do not apply to the health routes.
+probe capacity returns `429`. Probes have a 10-second deadline. Global probe
+concurrency defaults to 32, configurable with `--p2p-max-concurrent-probes` or
+`BASE_TELEMETRY_P2P_MAX_CONCURRENT_PROBES`. These limits do not apply to the
+health routes.
+
+## Rate limiting
+
+Reachability requests default to 2 per minute per client IP, configurable with
+`--p2p-probe-requests-per-minute` or
+`BASE_TELEMETRY_P2P_PROBE_REQUESTS_PER_MINUTE`, and enforced with in-memory GCRA
+token buckets. The client IP is taken from the peer socket address unless the
+peer is inside a configured set of trusted proxy CIDRs
+(`--trusted-proxy-cidrs` or `BASE_TELEMETRY_TRUSTED_PROXY_CIDRS`), in which
+case the `X-Forwarded-For` chain is scanned right to left, skipping trusted
+proxy hops, and the first untrusted entry is used as the client IP. A missing
+or malformed header from a trusted proxy falls back to the peer address with
+a warning. Deployments exposed directly (no fronting proxy) leave the
+CIDRs empty, so forwarding headers are ignored and the socket peer IP is used.
+Limited requests return `429` with a `Retry-After` header and a JSON body of
+`{"error":"rate_limited"}`. Limits are tracked per replica; health routes are
+never rate limited.
 
 ## Target selection
 
-The service probes the exact literal `IPv4` or `IPv6` socket address advertised
-by the enode, including private and other non-public addresses. Routing,
-firewall, and egress policy determine whether the backend can reach the target.
+The service probes the exact literal public `IPv4` socket address advertised by
+the enode. `IPv6` and non-public `IPv4` addresses (loopback, private, link-local,
+carrier-grade NAT, multicast, unspecified, and other IANA special-purpose
+ranges) are rejected with `400`.
