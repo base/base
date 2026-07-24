@@ -329,8 +329,8 @@ where
             .retain(|instance_id| unhealthy_instance_ids.contains(instance_id));
         for instance_id in &unhealthy_instance_ids {
             // A process restart has no signer addresses to cache. Keep an
-            // empty cache entry for one unhealthy period so orphan cleanup is
-            // deferred by the configured grace TTL rather than running now.
+            // empty cache entry for one unhealthy period so the global orphan
+            // cleanup pass is deferred by the configured grace TTL.
             if unhealthy_instance_ids_with_grace.insert(instance_id.clone())
                 && !last_known_active.contains_key(instance_id)
             {
@@ -404,7 +404,13 @@ where
                     "instance unavailable, preserving last-known active signers"
                 );
                 resolution.active_signers.extend(addresses.iter().copied());
-                if addresses.is_empty() || !unhealthy_instance_ids.contains(instance_id) {
+                if addresses.is_empty() {
+                    // We cannot identify signers to protect for an unhealthy
+                    // instance first observed after a restart.
+                    resolution.unresolved_instance_ids.insert(instance_id.clone());
+                } else if !unhealthy_instance_ids.contains(instance_id) {
+                    // A missing instance could have changed signers since its
+                    // cached addresses were last refreshed.
                     resolution.unresolved_instance_ids.insert(instance_id.clone());
                 }
                 true
