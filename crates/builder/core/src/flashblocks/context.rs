@@ -1187,6 +1187,12 @@ impl BasePayloadBuilderCtx {
             // The "simulation" terminology comes from upstream op-rbuilder's name for
             // locally executing a candidate transaction before committing it to the payload;
             // this is not metering service simulation data from MeterBundleResponse.
+            //
+            // These simulation metrics (and the success/revert counters and `log_txn` below)
+            // record every executed candidate, regardless of whether a later post-execution check
+            // rejects it — including the `MaxGasUsageExceeded` and inclusion-policy `Skip` paths
+            // below. They measure simulation work actually performed, not committed contents, so a
+            // policy dropping a large fraction of transactions will still count them here.
             BuilderMetrics::tx_simulation_duration().record(execution_time);
             BuilderMetrics::tx_byte_size().record(tx.inner().size() as f64);
             num_txs_simulated += 1;
