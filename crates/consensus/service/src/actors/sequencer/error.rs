@@ -2,8 +2,7 @@ use base_consensus_derive::PipelineErrorKind;
 use base_consensus_engine::BuildTaskError;
 
 use crate::{
-    L1OriginSelectorError, UnsafePayloadGossipClientError,
-    actors::{engine::EngineClientError, sequencer::SequencerTimestampPlannerError},
+    L1OriginSelectorError, UnsafePayloadGossipClientError, actors::engine::EngineClientError,
 };
 
 /// An error produced by the [`crate::SequencerActor`].
@@ -27,7 +26,4 @@ pub enum SequencerActorError {
     /// An error occurred while attempting to schedule unsafe payload gossip.
     #[error("An error occurred while attempting to schedule unsafe payload gossip: {0}")]
     PayloadGossip(#[from] UnsafePayloadGossipClientError),
-    /// An error occurred while planning the next block timestamp.
-    #[error(transparent)]
-    TimestampPlanner(#[from] SequencerTimestampPlannerError),
 }

@@ -357,6 +357,65 @@ impl RollupConfig {
             self.channel_timeout
         }
     }
+
+    /// Returns the first L2 block number whose legacy timestamp reaches Zombie activation.
+    ///
+    /// If Zombie is not configured, returns [`None`].
+    pub fn zombie_activation_block_number(&self) -> Option<u64> {
+        let zombie_timestamp = self.contract_upgrade_activation_timestamp(BaseUpgrade::Zombie)?;
+
+        if self.block_time == 0 {
+            return (zombie_timestamp <= self.genesis.l2_time).then_some(0);
+        }
+
+        Some(
+            zombie_timestamp
+                .saturating_sub(self.genesis.l2_time)
+                .saturating_add(self.block_time.saturating_sub(1))
+                .saturating_div(self.block_time),
+        )
+    }
+
+    /// Returns the deterministic timestamp of an L2 block in milliseconds.
+    ///
+    /// Before Zombie activation, this matches the legacy whole-second schedule exactly.
+    /// After Zombie activation, this advances by a fixed 200ms cadence from the activation block.
+    pub fn l2_block_full_millis(&self, block_number: u64) -> u64 {
+        let legacy_seconds =
+            self.genesis.l2_time.saturating_add(block_number.saturating_mul(self.block_time));
+        let legacy_millis = legacy_seconds.saturating_mul(1_000);
+
+        let Some(zombie_activation_block) = self.zombie_activation_block_number() else {
+            return legacy_millis;
+        };
+
+        if block_number < zombie_activation_block {
+            return legacy_millis;
+        }
+
+        let zombie_activation_seconds = self
+            .genesis
+            .l2_time
+            .saturating_add(zombie_activation_block.saturating_mul(self.block_time));
+        let zombie_activation_full_millis = zombie_activation_seconds.saturating_mul(1_000);
+        zombie_activation_full_millis.saturating_add(
+            block_number
+                .saturating_sub(zombie_activation_block)
+                .saturating_mul(Self::ZOMBIE_BLOCK_INTERVAL_MILLIS),
+        )
+    }
+
+    /// Returns the deterministic whole-second timestamp of an L2 block.
+    pub fn l2_block_timestamp(&self, block_number: u64) -> u64 {
+        self.l2_block_full_millis(block_number).saturating_div(1_000)
+    }
+
+    /// Returns the deterministic timestamp split into `(seconds, millis_part)`.
+    pub fn l2_block_timestamp_parts(&self, block_number: u64) -> (u64, u16) {
+        let full_millis = self.l2_block_full_millis(block_number);
+        (full_millis.saturating_div(1_000), (full_millis % 1_000) as u16)
+    }
+
     /// Computes the lower-bound block number for a timestamp, relative to the L2 genesis time and
     /// the block time.
     ///
@@ -402,6 +461,9 @@ impl RollupConfig {
 
     /// The channel timeout once the Granite hardfork is active.
     pub const GRANITE_CHANNEL_TIMEOUT: u64 = 50;
+
+    /// The fixed Zombie cadence, in milliseconds.
+    pub const ZOMBIE_BLOCK_INTERVAL_MILLIS: u64 = 200;
 
     /// Helper method for deserializing a default granite channel timeout.
     #[cfg(feature = "serde")]
@@ -1018,6 +1080,101 @@ mod tests {
         assert!(!cfg.is_zombie_active(99));
         assert!(cfg.is_zombie_active(100));
         assert!(cfg.is_zombie_active(u64::MAX));
+    }
+
+    fn rollup_config_with_zombie(
+        genesis_l2_time: u64,
+        block_time: u64,
+        zombie_time: Option<u64>,
+    ) -> RollupConfig {
+        RollupConfig {
+            genesis: ChainGenesis { l2_time: genesis_l2_time, ..Default::default() },
+            block_time,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { zombie: zombie_time, ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn l2_block_full_millis_matches_legacy_before_zombie_activation() {
+        let cfg = rollup_config_with_zombie(10, 2, Some(15));
+        assert_eq!(cfg.zombie_activation_block_number(), Some(3));
+
+        for block_number in 0..3 {
+            let expected = (10 + block_number * 2) * 1_000;
+            assert_eq!(cfg.l2_block_full_millis(block_number), expected);
+            assert_eq!(cfg.l2_block_timestamp(block_number), expected / 1_000);
+            assert_eq!(cfg.l2_block_timestamp_parts(block_number), (expected / 1_000, 0));
+        }
+    }
+
+    #[test]
+    fn l2_block_full_millis_respects_zombie_activation_boundary() {
+        let cfg = rollup_config_with_zombie(10, 2, Some(15));
+
+        assert_eq!(cfg.zombie_activation_block_number(), Some(3));
+        assert_eq!(cfg.l2_block_full_millis(3), 16_000);
+        assert_eq!(cfg.l2_block_timestamp_parts(3), (16, 0));
+    }
+
+    #[test]
+    fn l2_block_full_millis_advances_by_200ms_after_activation() {
+        let cfg = rollup_config_with_zombie(10, 2, Some(15));
+
+        let activation = cfg.l2_block_full_millis(3);
+        let next = cfg.l2_block_full_millis(4);
+        assert_eq!(next.saturating_sub(activation), RollupConfig::ZOMBIE_BLOCK_INTERVAL_MILLIS);
+        assert_eq!(next, 16_200);
+        assert_eq!(cfg.l2_block_timestamp_parts(4), (16, 200));
+    }
+
+    #[test]
+    fn l2_block_full_millis_keeps_fixed_200ms_cadence_in_zombie_era() {
+        let cfg = rollup_config_with_zombie(10, 2, Some(15));
+
+        let start_block = 3;
+        let mut previous = cfg.l2_block_full_millis(start_block);
+        for block_number in (start_block + 1)..=14 {
+            let current = cfg.l2_block_full_millis(block_number);
+            assert_eq!(
+                current.saturating_sub(previous),
+                RollupConfig::ZOMBIE_BLOCK_INTERVAL_MILLIS
+            );
+            previous = current;
+        }
+    }
+
+    #[test]
+    fn l2_block_full_millis_without_zombie_uses_legacy_formula() {
+        let cfg = rollup_config_with_zombie(11, 3, None);
+
+        assert_eq!(cfg.zombie_activation_block_number(), None);
+        for block_number in [0_u64, 1, 2, 10, 100] {
+            let expected =
+                11u64.saturating_add(block_number.saturating_mul(3)).saturating_mul(1_000);
+            assert_eq!(cfg.l2_block_full_millis(block_number), expected);
+            assert_eq!(cfg.l2_block_timestamp(block_number), expected / 1_000);
+            assert_eq!(cfg.l2_block_timestamp_parts(block_number), (expected / 1_000, 0));
+        }
+    }
+
+    #[test]
+    fn l2_block_full_millis_handles_block_time_edge_values() {
+        let zombie_after_genesis = rollup_config_with_zombie(100, 0, Some(101));
+        assert_eq!(zombie_after_genesis.zombie_activation_block_number(), None);
+        assert_eq!(zombie_after_genesis.l2_block_full_millis(0), 100_000);
+        assert_eq!(zombie_after_genesis.l2_block_full_millis(10), 100_000);
+
+        let zombie_at_genesis = rollup_config_with_zombie(100, 0, Some(100));
+        assert_eq!(zombie_at_genesis.zombie_activation_block_number(), Some(0));
+        assert_eq!(zombie_at_genesis.l2_block_full_millis(0), 100_000);
+        assert_eq!(zombie_at_genesis.l2_block_full_millis(1), 100_200);
+
+        let saturating = rollup_config_with_zombie(u64::MAX, u64::MAX, None);
+        assert_eq!(saturating.l2_block_full_millis(1), u64::MAX);
     }
 
     #[test]

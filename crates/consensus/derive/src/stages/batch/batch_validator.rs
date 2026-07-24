@@ -500,7 +500,7 @@ mod tests {
         };
         let parent = L2BlockInfo {
             l1_origin: BlockNumHash { number: 0, ..Default::default() },
-            block_info: BlockInfo { timestamp: 2, ..Default::default() },
+            block_info: BlockInfo { number: 1, timestamp: 2, ..Default::default() },
             ..Default::default()
         };
 

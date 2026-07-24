@@ -11,9 +11,11 @@ pub(super) const ZOMBIE_BLOCK_INTERVAL: Duration = Duration::from_millis(200);
 pub struct SequencerTimestamp {
     /// Whole-second timestamp.
     pub timestamp: u64,
-    /// Optional sub-second millisecond remainder.
+    /// Sub-second millisecond remainder, present once Zombie is active. When set, this is
+    /// always a multiple of the active cadence (e.g. one of 0, 200, 400, 600, 800 for the
+    /// current 200ms `ZOMBIE_BLOCK_INTERVAL`).
     pub timestamp_millis_part: Option<u16>,
-    /// Millisecond timestamp.
+    /// Millisecond timestamp, i.e. `timestamp * 1_000 + timestamp_millis_part.unwrap_or(0)`.
     pub timestamp_millis: u64,
 }
 

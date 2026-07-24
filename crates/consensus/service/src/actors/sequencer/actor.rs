@@ -276,7 +276,7 @@ where
         let canonical_head = self.engine_client.get_unsafe_head().await?;
         *shadow_cycle = Some(ShadowCycle::building(canonical_head)?);
         *next_payload_to_seal =
-            if self.is_active { self.builder.build_on(canonical_head, None).await? } else { None };
+            if self.is_active { self.builder.build_on(canonical_head).await? } else { None };
         if self.is_active && next_payload_to_seal.is_none() {
             build_ticker.reset_immediately();
         }
@@ -309,9 +309,8 @@ where
             .inspect_err(|_| self.cancellation_token.cancel())
     }
 
-    /// Wall-clock time at which a block with the given absolute timestamp should be sealed,
-    /// compensating for the time already spent sealing the previous block. A present
-    /// `timestamp_millis_part` selects millisecond-accurate (Zombie 200ms) scheduling.
+    /// Wall-clock time at which `block_number` should be sealed, compensating for the time already
+    /// spent sealing the previous block.
     ///
     /// The compensation is capped at half the block interval so a single slow seal cannot
     /// collapse the next block's build window to zero. Uncapped, a seal that overruns the
@@ -320,20 +319,13 @@ where
     /// fat/thin oscillation. Clamping guarantees every block at least `block_interval / 2` of
     /// build time and damps that loop. The raw `last_seal_duration` is still recorded for
     /// metrics; only the scheduling compensation is clamped.
-    fn block_seal_target(
-        &self,
-        timestamp: u64,
-        timestamp_millis_part: Option<u16>,
-        last_seal_duration: Duration,
-    ) -> SystemTime {
-        let target = timestamp_millis_part.map_or_else(
-            || UNIX_EPOCH + Duration::from_secs(timestamp),
-            |part| {
-                let millis = timestamp.saturating_mul(1_000).saturating_add(part as u64);
-                UNIX_EPOCH + Duration::from_millis(millis)
-            },
-        );
-        let block_interval = if timestamp_millis_part.is_some() {
+    fn block_seal_target(&self, block_number: u64, last_seal_duration: Duration) -> SystemTime {
+        let target = UNIX_EPOCH
+            + Duration::from_millis(self.rollup_config.l2_block_full_millis(block_number));
+        let block_interval = if self
+            .rollup_config
+            .is_zombie_active(self.rollup_config.l2_block_timestamp(block_number))
+        {
             ZOMBIE_BLOCK_INTERVAL
         } else {
             Duration::from_secs(self.rollup_config.block_time)
@@ -344,31 +336,10 @@ where
 
     fn next_block_seal_target(
         &self,
-        timestamp: u64,
-        timestamp_millis_part: Option<u16>,
+        block_number: u64,
         last_seal_duration: Duration,
     ) -> SystemTime {
-        timestamp_millis_part.map_or_else(
-            || {
-                self.block_seal_target(
-                    timestamp.saturating_add(self.rollup_config.block_time),
-                    None,
-                    last_seal_duration,
-                )
-            },
-            |part| {
-                let millis =
-                    timestamp.saturating_mul(1_000).saturating_add(part as u64).saturating_add(
-                        u64::try_from(ZOMBIE_BLOCK_INTERVAL.as_millis())
-                            .expect("zombie block interval fits in u64"),
-                    );
-                self.block_seal_target(
-                    millis / 1_000,
-                    Some((millis % 1_000) as u16),
-                    last_seal_duration,
-                )
-            },
-        )
+        self.block_seal_target(block_number.saturating_add(1), last_seal_duration)
     }
 }
 
@@ -422,11 +393,6 @@ where
             tokio::time::interval(Duration::from_secs(self.rollup_config.block_time));
         reconciliation_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut last_seal_duration = Duration::from_secs(0);
-
-        // Sub-second remainder of the most recently sealed block. `L2BlockInfo` records
-        // only whole seconds, so this is threaded into the next `build_on` to keep the
-        // Zombie timestamp planner's monotonicity guard strict.
-        let mut last_sealed_millis_part: Option<u16> = None;
 
         let mut last_block_complete_at: Option<Instant> = None;
 
@@ -494,7 +460,7 @@ where
                         Ok(Some(head)) => {
                             shadow_cycle.as_mut().expect("shadow reconciliation requires cycle state").reconcile(head)?;
                             if self.is_active {
-                                next_payload_to_seal = self.builder.build_on(head, None).await?;
+                                next_payload_to_seal = self.builder.build_on(head).await?;
                                 if next_payload_to_seal.is_none() {
                                     build_ticker.reset_immediately();
                                 }
@@ -567,9 +533,10 @@ where
                                 // here. Its timestamp is a hard lower bound for the steady-state
                                 // child build because variable getPayload durations can make
                                 // insertion complete early.
-                                let parent_timestamp = inserted_head.block_info.timestamp;
+                                let parent_millis =
+                                    self.rollup_config.l2_block_full_millis(inserted_head.block_info.number);
                                 pending_build_parent = Some(inserted_head);
-                                build_ticker.reset_at_unix_timestamp(parent_timestamp);
+                                build_ticker.reset_at(UNIX_EPOCH + Duration::from_millis(parent_millis));
                             }
                         }
                         Ok(SealStepOutcome::Pending) => {}
@@ -589,15 +556,16 @@ where
                     if let Some(parent) = pending_build_parent.take() {
                         // Do not start a steady-state child build before its inserted parent's
                         // timestamp. If it is already past, the ticker is immediately runnable.
-                        next_payload_to_seal =
-                            self.builder.build_on(parent, last_sealed_millis_part).await?;
+                        next_payload_to_seal = self.builder.build_on(parent).await?;
                         if let Some(ref payload) = next_payload_to_seal {
-                            let attributes = payload.attributes_with_parent.attributes();
-                            let next_block_time = self.block_seal_target(
-                                attributes.payload_attributes.timestamp,
-                                attributes.timestamp_millis_part,
-                                last_seal_duration,
-                            );
+                            let next_block_number = payload
+                                .attributes_with_parent
+                                .parent()
+                                .block_info
+                                .number
+                                .saturating_add(1);
+                            let next_block_time =
+                                self.block_seal_target(next_block_number, last_seal_duration);
                             build_ticker.reset_at(next_block_time);
                         } else {
                             // Retry through build() so the next attempt refreshes the unsafe head
@@ -605,47 +573,18 @@ where
                             build_ticker.reset_immediately();
                         }
                     } else if let Some(handle) = next_payload_to_seal.take() {
-                        // Extract data needed after try_seal_handle consumes the handle.
-                        let handle_timestamp = handle
+                        let handle_block_number = handle
                             .attributes_with_parent
-                            .attributes()
-                            .payload_attributes
-                            .timestamp;
-                        let handle_timestamp_millis_part = handle
-                            .attributes_with_parent
-                            .attributes()
-                            .timestamp_millis_part;
+                            .parent()
+                            .block_info
+                            .number
+                            .saturating_add(1);
                         match self.try_seal_handle(handle).await? {
                             Some((new_sealer, dur)) => {
                                 last_seal_duration = dur;
-                                last_sealed_millis_part = handle_timestamp_millis_part;
                                 self.sealer = Some(new_sealer);
-                                let next_block_time = if self.rollup_config.is_zombie_active(
-                                    handle_timestamp,
-                                ) {
-                                    let cadence_millis = u64::try_from(
-                                        ZOMBIE_BLOCK_INTERVAL.as_millis(),
-                                    )
-                                    .expect("zombie block interval fits in u64")
-                                    .max(1);
-                                    let current_millis = handle_timestamp
-                                        .saturating_mul(1_000)
-                                        .saturating_add(u64::from(
-                                            handle_timestamp_millis_part.unwrap_or(0),
-                                        ));
-                                    let next_millis = current_millis.saturating_add(cadence_millis);
-                                    self.block_seal_target(
-                                        next_millis / 1_000,
-                                        Some((next_millis % 1_000) as u16),
-                                        last_seal_duration,
-                                    )
-                                } else {
-                                    self.next_block_seal_target(
-                                        handle_timestamp,
-                                        None,
-                                        last_seal_duration,
-                                    )
-                                };
+                                let next_block_time =
+                                    self.next_block_seal_target(handle_block_number, last_seal_duration);
                                 build_ticker.reset_at(next_block_time);
                                 // Do not call build() here. The next payload is built after the
                                 // engine acknowledges insertion of the sealed payload.
@@ -655,12 +594,14 @@ where
                                 // the current unsafe head.
                                 next_payload_to_seal = self.builder.build().await?;
                                 if let Some(ref payload) = next_payload_to_seal {
-                                    let attributes = payload.attributes_with_parent.attributes();
-                                    let next_block_time = self.block_seal_target(
-                                        attributes.payload_attributes.timestamp,
-                                        attributes.timestamp_millis_part,
-                                        last_seal_duration,
-                                    );
+                                    let next_block_number = payload
+                                        .attributes_with_parent
+                                        .parent()
+                                        .block_info
+                                        .number
+                                        .saturating_add(1);
+                                    let next_block_time =
+                                        self.block_seal_target(next_block_number, last_seal_duration);
                                     build_ticker.reset_at(next_block_time);
                                 } else {
                                     build_ticker.reset_immediately();
@@ -670,12 +611,14 @@ where
                     } else {
                         next_payload_to_seal = self.builder.build().await?;
                         if let Some(ref payload) = next_payload_to_seal {
-                            let attributes = payload.attributes_with_parent.attributes();
-                            let next_block_time = self.block_seal_target(
-                                attributes.payload_attributes.timestamp,
-                                attributes.timestamp_millis_part,
-                                last_seal_duration,
-                            );
+                            let next_block_number = payload
+                                .attributes_with_parent
+                                .parent()
+                                .block_info
+                                .number
+                                .saturating_add(1);
+                            let next_block_time =
+                                self.block_seal_target(next_block_number, last_seal_duration);
                             build_ticker.reset_at(next_block_time);
                         } else {
                             build_ticker.reset_immediately();

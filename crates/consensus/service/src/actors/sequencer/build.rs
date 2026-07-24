@@ -4,10 +4,7 @@
 //! preparation, and block build initiation, and [`UnsealedPayloadHandle`],
 //! which carries the resulting payload identifier forward to the seal stage.
 
-use std::{
-    sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
-};
+use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_engine::PayloadId;
 use base_common_genesis::RollupConfig;
@@ -23,10 +20,6 @@ use crate::{
             error::SequencerActorError,
             origin_selector::{L1OriginSelectorError, OriginSelector},
             recovery::RecoveryModeGuard,
-            timestamp::{
-                SequencerTimestamp, SequencerTimestampPlanner, SequencerTimestampPlannerError,
-                ZOMBIE_BLOCK_INTERVAL,
-            },
         },
     },
 };
@@ -68,11 +61,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     /// next tick.
     pub async fn build(&mut self) -> Result<Option<UnsealedPayloadHandle>, SequencerActorError> {
         let unsafe_head = self.engine_client.get_unsafe_head().await?;
-        // The watch-channel unsafe head is an `L2BlockInfo`, which records only whole
-        // seconds, so no sub-second remainder is available here. Zombie timestamp planning
-        // derives both seconds and millis from the deterministic child-block-number formula,
-        // so this path safely passes `None`.
-        self.build_on(unsafe_head, None).await
+        self.build_on(unsafe_head).await
     }
 
     /// Starts building the next L2 block on top of an explicit `parent`, returning a handle to
@@ -87,7 +76,6 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     pub async fn build_on(
         &mut self,
         parent: L2BlockInfo,
-        parent_timestamp_millis_part: Option<u16>,
     ) -> Result<Option<UnsealedPayloadHandle>, SequencerActorError> {
         let Some(l1_origin) = self.get_next_payload_l1_origin(parent).await? else {
             return Ok(None);
@@ -103,9 +91,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
 
         let attributes_build_start = Instant::now();
 
-        let Some(attributes_with_parent) =
-            self.build_attributes(parent, l1_origin, parent_timestamp_millis_part).await?
-        else {
+        let Some(attributes_with_parent) = self.build_attributes(parent, l1_origin).await? else {
             return Ok(None);
         };
 
@@ -171,49 +157,6 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         Ok(Some(l1_origin))
     }
 
-    /// Plans the next block's timestamp.
-    ///
-    /// After Zombie activation, uses `SequencerTimestampPlanner::sub_second` aligned to the
-    /// fixed Zombie cadence. Otherwise advances by the whole-second `block_time` via
-    /// `SequencerTimestampPlanner::legacy`.
-    #[allow(clippy::result_large_err)]
-    fn plan_next_timestamp(
-        &self,
-        parent: L2BlockInfo,
-        parent_timestamp_millis_part: Option<u16>,
-    ) -> Result<SequencerTimestamp, SequencerActorError> {
-        let parent_timestamp = parent.block_info.timestamp;
-        let legacy =
-            SequencerTimestampPlanner::legacy(parent_timestamp, self.rollup_config.block_time)?;
-        if self.rollup_config.is_zombie_active(legacy.timestamp) {
-            let cadence_millis = u64::try_from(ZOMBIE_BLOCK_INTERVAL.as_millis())
-                .map_err(|_| SequencerTimestampPlannerError::TimestampOverflow)?
-                .max(1);
-            let parent_timestamp_millis = parent_timestamp
-                .checked_mul(1_000)
-                .and_then(|millis| {
-                    millis.checked_add(u64::from(parent_timestamp_millis_part.unwrap_or(0)))
-                })
-                .ok_or(SequencerTimestampPlannerError::TimestampOverflow)?;
-            let wall_clock_millis = u64::try_from(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|_| SequencerTimestampPlannerError::TimestampOverflow)?
-                    .as_millis(),
-            )
-            .map_err(|_| SequencerTimestampPlannerError::TimestampOverflow)?;
-
-            SequencerTimestampPlanner::sub_second(
-                parent_timestamp_millis,
-                wall_clock_millis,
-                cadence_millis,
-            )
-            .map_err(Into::into)
-        } else {
-            Ok(legacy)
-        }
-    }
-
     /// Builds the `AttributesWithParent` for the next block.
     ///
     /// Returns `Ok(None)` if no attributes could be built at this time but future
@@ -222,13 +165,10 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         &mut self,
         unsafe_head: L2BlockInfo,
         l1_origin: BlockInfo,
-        unsafe_head_timestamp_millis_part: Option<u16>,
     ) -> Result<Option<AttributesWithParent>, SequencerActorError> {
-        let planned = self.plan_next_timestamp(unsafe_head, unsafe_head_timestamp_millis_part)?;
-
         let mut attributes = match self
             .attributes_builder
-            .prepare_payload_attributes(unsafe_head, l1_origin.id(), planned.timestamp_millis_part)
+            .prepare_payload_attributes(unsafe_head, l1_origin.id())
             .await
         {
             Ok(attrs) => attrs,

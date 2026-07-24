@@ -1,6 +1,9 @@
 //! Sequencer consensus-control CLI flags.
 
-use std::{num::NonZeroU64, time::Duration};
+use std::{
+    num::{NonZeroU64, ParseIntError},
+    time::Duration,
+};
 
 use base_consensus_node::SequencerConfig;
 use clap::Parser;
@@ -49,9 +52,9 @@ pub struct SequencerArgs {
     /// Conductor service RPC timeout.
     #[arg(
         long = "conductor.rpc.timeout",
-        default_value = "1s",
+        default_value = "1",
         env = "BASE_NODE_CONDUCTOR_RPC_TIMEOUT",
-        value_parser = parse_duration
+        value_parser = |arg: &str| -> Result<Duration, ParseIntError> {Ok(Duration::from_secs(arg.parse()?))}
     )]
     pub conductor_rpc_timeout: Duration,
 
@@ -64,10 +67,6 @@ pub struct SequencerArgs {
         env = "BASE_NODE_CONDUCTOR_BINARY_COMMIT"
     )]
     pub conductor_binary_commit: bool,
-}
-
-fn parse_duration(arg: &str) -> Result<Duration, String> {
-    humantime::parse_duration(arg).map_err(|error| error.to_string())
 }
 
 impl Default for SequencerArgs {

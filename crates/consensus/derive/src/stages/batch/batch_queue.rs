@@ -581,6 +581,7 @@ mod tests {
         // Construct a future single batch.
         let cfg = Arc::new(RollupConfig {
             max_sequencer_drift: 700,
+            genesis: ChainGenesis { l2_time: 100, ..Default::default() },
             upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         });
@@ -651,7 +652,10 @@ mod tests {
     #[tokio::test]
     async fn test_add_batch_drop() {
         // Construct a single batch that will be dropped (BatchValidity::Drop).
-        let cfg = Arc::new(RollupConfig::default());
+        let cfg = Arc::new(RollupConfig {
+            genesis: ChainGenesis { l2_time: 101, ..Default::default() },
+            ..Default::default()
+        });
         assert!(!cfg.is_holocene_active(0));
         let batch = SingleBatch {
             parent_hash: B256::default(),
