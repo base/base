@@ -1060,12 +1060,7 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let anchor_registry = mock_anchor_registry(Address::ZERO);
-        let mut scanner = GameScanner::new(
-            Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
-            Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            Arc::clone(&anchor_registry),
-        );
+        let mut scanner = GameScanner::new(factory.clone(), verifier.clone(), mock_anchor_registry(Address::ZERO));
 
         // First tick: all three games are post-anchor and discovered.
         let initial = scanner.scan().await.unwrap();
@@ -1087,12 +1082,7 @@ mod tests {
             );
         }
 
-        // Recreate the scanner: game 0 is still post-anchor, so it must be returned by scan().
-        let mut scanner = GameScanner::new(
-            Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
-            Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            anchor_registry,
-        );
+        // Second tick on the same scanner: game 0 is still post-anchor and must be returned.
         let late = scanner.scan().await.unwrap();
         let game_zero = late
             .iter()
