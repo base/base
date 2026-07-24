@@ -207,7 +207,7 @@ impl PolicyRegistryV2 {
     }
 }
 
-impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV1 {
+impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV2 {
     fn create_policy(
         &self,
         storage: &mut S,
