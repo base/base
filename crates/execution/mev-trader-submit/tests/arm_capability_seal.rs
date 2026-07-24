@@ -9,6 +9,7 @@ use std::{
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
 };
+
 use syn::ext::IdentExt;
 
 /// The exact production files under `src/arm/`. A NEW arm file must be added here
@@ -191,49 +192,10 @@ fn arm_source_is_exactly_the_declared_set() {
 
 // -- b9: the crate's public `arm` surface is EXACTLY the curated allowlist ------
 
-/// The complete curated forward-B5 public API re-exported from `lib.rs`. Any change
-/// to the exported surface must update this allowlist (and be re-reviewed). No
-/// low-level injection API (arbitrary suppression paths, fixture source impls,
-/// request/custody internals) may appear here.
-const PUBLIC_API_ALLOWLIST: [&str; 37] = [
-    "ArmError",
-    "ArmRuntime",
-    "ArmRuntimeOpenError",
-    "ArmedFailSink",
-    "AttributionRetryToken",
-    "AuthorizedCandidate",
-    "AuthorizedSignedSubmission",
-    "CHAIN_ID_BASE",
-    "Channel",
-    "CheckedCandidate",
-    "CodeHashProvider",
-    "DeploymentEvidence",
-    "DeploymentIdentity",
-    "DeploymentIdentitySource",
-    "DeploymentPayload",
-    "DrawdownSource",
-    "EgressPlan",
-    "FreshnessSources",
-    "G7Attestation",
-    "G7Payload",
-    "LiveRunAttestation",
-    "LiveRunPayload",
-    "PairedSubmission",
-    "ProdBackend",
-    "ProofBindings",
-    "ProviderError",
-    "provision_suppression_anchor",
-    "RawBackend",
-    "RawEgress",
-    "RequestSpec",
-    "SubmissionAttempt",
-    "SubmitOutcome",
-    "SubmitSuppressionClear",
-    "SuppressionRollbackError",
-    "ValidatedExecutionIdentity",
-    "send_gated",
-    "try_claim_arm",
-];
+/// The complete provisioning-only root API. Low-level candidate, signer, send,
+/// backend, runtime, provider, and proof APIs remain private to the arm module.
+const PUBLIC_API_ALLOWLIST: [&str; 2] =
+    ["SuppressionRollbackError", "provision_suppression_anchor"];
 
 static MODULE_FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -1058,7 +1020,7 @@ fn arm_submodules_are_private() {
 // -- b10: exported surface == curated allowlist (normalized, glob-rejecting) ----
 
 #[test]
-fn public_api_surface_is_exactly_the_curated_allowlist() {
+fn t4d_legacy_arm_surface_has_no_public_candidate_sign_or_send_entrypoint() {
     let (source, public) = arm_reexports_from_path(&manifest_dir().join("src").join("lib.rs"))
         .expect("no glob/deep arm re-export across the public module graph");
     let expected: BTreeSet<String> =
@@ -1070,6 +1032,170 @@ fn public_api_surface_is_exactly_the_curated_allowlist() {
     assert_eq!(
         public, expected,
         "arm PUBLIC exported-name set does not match the allowlist (alias to a non-allowlisted name?)"
+    );
+    let lib = std::fs::read_to_string(manifest_dir().join("src").join("lib.rs")).expect("lib.rs");
+    let parsed = parse(&lib);
+    let arm_exports = parsed
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Use(item) => {
+                let mut leaves = Vec::new();
+                flatten_use(&item.tree, &[], &mut leaves);
+                leaves
+                    .iter()
+                    .any(|leaf| match leaf {
+                        UseLeaf::Item { source_path, .. } | UseLeaf::Glob { source_path } => {
+                            strip_crate_self(source_path).first().map(String::as_str) == Some("arm")
+                        }
+                    })
+                    .then_some(item)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(arm_exports.len(), 1, "arm root surface must be one reviewed facade");
+    assert_eq!(arm_exports[0].attrs.len(), 1, "arm facade has ambiguous attributes");
+    assert!(
+        matches!(
+            &arm_exports[0].attrs[0].meta,
+            syn::Meta::List(list)
+                if list.path.is_ident("cfg")
+                    && list.tokens.to_string()
+                        == "all (feature = \"arm\" , feature = \"arm-provisioning\")"
+        ),
+        "the provisioning-only arm facade escaped its exact dual feature gate"
+    );
+    #[derive(Default)]
+    struct ExternalArmCallsites {
+        violations: BTreeSet<String>,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for ExternalArmCallsites {
+        fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+            if !has_cfg_test(&item.attrs) {
+                syn::visit::visit_item_mod(self, item);
+            }
+        }
+
+        fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+            if has_cfg_test(&item.attrs) {
+                return;
+            }
+            let mut leaves = Vec::new();
+            flatten_use(&item.tree, &[], &mut leaves);
+            for leaf in leaves {
+                match leaf {
+                    UseLeaf::Glob { source_path }
+                        if source_path.first().map(String::as_str) == Some("mev_trader_submit") =>
+                    {
+                        self.violations.insert("submit glob import".to_string());
+                    }
+                    UseLeaf::Item { source_path, public_name } => {
+                        let source = source_path.last().map(String::as_str);
+                        if matches!(
+                            source,
+                            Some(
+                                "AuthorizedCandidate"
+                                    | "AuthorizedSignedSubmission"
+                                    | "CheckedCandidate"
+                                    | "ProdBackend"
+                                    | "RawBackend"
+                                    | "RawEgress"
+                                    | "send_gated"
+                            )
+                        ) {
+                            self.violations
+                                .insert(format!("arm import {source_path:?} as {public_name}"));
+                        }
+                    }
+                    UseLeaf::Glob { .. } => {}
+                }
+            }
+            syn::visit::visit_item_use(self, item);
+        }
+
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            if let Some(name) = path.segments.last().map(|segment| ident_name(&segment.ident))
+                && matches!(
+                    name.as_str(),
+                    "AuthorizedCandidate"
+                        | "AuthorizedSignedSubmission"
+                        | "CheckedCandidate"
+                        | "ProdBackend"
+                        | "RawBackend"
+                        | "RawEgress"
+                        | "send_gated"
+                )
+            {
+                self.violations.insert(format!("arm path {}", path_name(path)));
+            }
+            syn::visit::visit_path(self, path);
+        }
+
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            let name = ident_name(&call.method);
+            if matches!(name.as_str(), "load_and_sign" | "send_gated") {
+                self.violations.insert(format!("arm method call {name}"));
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            if mac.path.segments.last().is_some_and(|segment| segment.ident == "include") {
+                self.violations.insert("include macro redirect".to_string());
+            }
+            syn::visit::visit_macro(self, mac);
+        }
+    }
+
+    fn collect_rust(path: &Path, files: &mut Vec<PathBuf>) {
+        let mut entries = std::fs::read_dir(path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+            .map(|entry| entry.expect("source entry").path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for entry in entries {
+            if entry.is_dir() {
+                collect_rust(&entry, files);
+            } else if entry.extension().is_some_and(|extension| extension == "rs") {
+                files.push(entry);
+            }
+        }
+    }
+
+    let metadata = workspace_metadata();
+    let cli = metadata["packages"]
+        .as_array()
+        .expect("packages")
+        .iter()
+        .find(|package| package["name"] == "base-execution-cli")
+        .expect("CLI package");
+    assert!(
+        cli["dependencies"]
+            .as_array()
+            .expect("dependencies")
+            .iter()
+            .any(|dependency| dependency["name"] == "mev-trader-submit"),
+        "reviewed CLI submit edge missing"
+    );
+    let cli_root = PathBuf::from(cli["manifest_path"].as_str().expect("CLI manifest"))
+        .parent()
+        .expect("CLI root")
+        .join("src");
+    let mut files = Vec::new();
+    collect_rust(&cli_root, &mut files);
+    let mut callsites = ExternalArmCallsites::default();
+    for path in files {
+        let source = std::fs::read_to_string(&path).expect("CLI source");
+        let parsed = syn::parse_file(&source)
+            .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
+        syn::visit::Visit::visit_file(&mut callsites, &parsed);
+    }
+    assert!(
+        callsites.violations.is_empty(),
+        "workspace CLI reaches a low-level arm capability: {:?}",
+        callsites.violations
     );
 }
 

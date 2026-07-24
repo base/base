@@ -14,6 +14,10 @@ pub mod signer;
 
 #[cfg(feature = "tx-authority")]
 mod tx_authority;
+#[cfg(feature = "t4d-bridge")]
+pub use tx_authority::{
+    AdapterAwareProofBindings, BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate,
+};
 #[cfg(feature = "tx-authority")]
 pub use tx_authority::{
     DeployedContractIdentity, InstalledExecutionIdentity, ProtocolAdapterMapping,
@@ -22,34 +26,13 @@ pub use tx_authority::{
     ValidatedUnsignedAtomicTx,
 };
 
-// B3-arm tier — the real key loader + signer core + proof witness + transport
-// builders. Entered through this single line and gated behind `arm`; the default
-// and `phase-b` builds never compile it.
-//
-// B3-arm tier. The module is PRIVATE; only a curated forward-B5 surface is
-// re-exported (facade). This is the public API a separately approved, owner-gated
-// B5 arm linkage could invoke, while every low-level injection point (arbitrary
-// store paths, fixture source impls, request builders, custody loaders) stays
-// crate-private. The selected B5-1a dormant node feature does not enable or link
-// this arm tier.
+// B3-arm tier — the real key loader, signer, proof, and transport implementation
+// remains private. Only the provisioning helper and its typed failure are exposed,
+// and only in provisioning builds; node builds cannot reach low-level arm APIs.
 #[cfg(feature = "arm")]
 mod arm;
-#[cfg(feature = "arm")]
-pub use arm::Channel;
-#[cfg(all(feature = "arm", feature = "arm-live-egress", not(test)))]
-pub use arm::ProdBackend;
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
-pub use arm::provision_suppression_anchor;
-#[cfg(feature = "arm")]
-pub use arm::{
-    ArmError, ArmRuntime, ArmRuntimeOpenError, ArmedFailSink, AttributionRetryToken,
-    AuthorizedCandidate, AuthorizedSignedSubmission, CHAIN_ID_BASE, CheckedCandidate,
-    CodeHashProvider, DeploymentEvidence, DeploymentIdentity, DeploymentIdentitySource,
-    DeploymentPayload, DrawdownSource, EgressPlan, FreshnessSources, G7Attestation, G7Payload,
-    LiveRunAttestation, LiveRunPayload, PairedSubmission, ProofBindings, ProviderError, RawBackend,
-    RawEgress, RequestSpec, SubmissionAttempt, SubmitOutcome, SubmitSuppressionClear,
-    SuppressionRollbackError, ValidatedExecutionIdentity, send_gated, try_claim_arm,
-};
+pub use arm::{SuppressionRollbackError, provision_suppression_anchor};
 
 // B5-1a `presign` dormant tier. The module is PRIVATE; only the reviewed value/
 // digest surface is re-exported. It is pure and provider/filesystem/environment/
