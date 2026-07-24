@@ -1,13 +1,12 @@
 #![doc = include_str!("../README.md")]
 
+pub use base_proof_worker::ProofSessionHandle;
 pub use base_prover_service_protocol::{ZkBackend, ZkVm};
 
 mod prover;
 pub use prover::{
     UnimplementedZkProver, ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState,
 };
-
-pub use base_proof_worker::ProofSessionHandle;
 
 mod proof_submitter;
 pub use proof_submitter::ProofSubmitterRequest;

@@ -25,9 +25,7 @@ use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::{
-    ProofSubmitterRequest, ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState,
-};
+use crate::{ProofSubmitterRequest, ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
 
 /// Minimum delay between backend session polls.
 pub const MIN_PROOF_GENERATOR_POLL_INTERVAL: Duration = Duration::from_millis(1);
