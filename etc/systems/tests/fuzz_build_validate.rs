@@ -16,7 +16,11 @@
 //! Override the seed with `FUZZ_SEED`.
 
 use alloy_consensus::SignableTransaction;
-use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
+use alloy_eips::{
+    BlockNumberOrTag,
+    eip2718::Encodable2718,
+    eip2930::{AccessList, AccessListItem},
+};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
@@ -203,6 +207,7 @@ struct TxShape {
     to: Address,
     value: U256,
     input: Bytes,
+    access_list: AccessList,
 }
 
 /// Seeded generator for the fuzzed transaction stream. Kept simple for a first cut:
@@ -230,7 +235,28 @@ impl FuzzTxGenerator {
         } else {
             Bytes::new()
         };
-        TxShape { sender, to, value, input }
+        TxShape { sender, to, value, input, access_list: self.next_access_list() }
+    }
+
+    /// Generate an EIP-2930 access list over a small shared pool of addresses and
+    /// storage slots. Because the pool is small and only ~40% of txs carry a list,
+    /// the same slots recur across txs (declared/warm in some, absent/cold in
+    /// others), exercising the access-list gas accounting and warm/cold set setup
+    /// that builder and validator must agree on.
+    fn next_access_list(&mut self) -> AccessList {
+        if self.rng.random_range(0..5) >= 2 {
+            return AccessList::default();
+        }
+        let items = (0..self.rng.random_range(1..=2))
+            .map(|_| {
+                let address = SENDERS[self.rng.random_range(0..SENDERS.len())].address();
+                let storage_keys = (0..self.rng.random_range(0..=3))
+                    .map(|_| B256::from(U256::from(self.rng.random_range(0..8u64))))
+                    .collect();
+                AccessListItem { address, storage_keys }
+            })
+            .collect();
+        AccessList(items)
     }
 }
 
@@ -247,6 +273,7 @@ fn sign_tx(account: &Account, shape: &TxShape, nonce: u64) -> Result<Bytes> {
         .with_max_fee_per_gas(1_000_000_000)
         .with_max_priority_fee_per_gas(0)
         .with_chain_id(DEVNET_CHAIN_ID)
+        .with_access_list(shape.access_list.clone())
         .with_nonce(nonce);
     let typed =
         request.build_typed_tx().map_err(|req| eyre!("invalid transaction request: {req:?}"))?;
