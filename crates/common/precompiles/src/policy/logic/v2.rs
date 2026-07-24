@@ -15,7 +15,7 @@ use crate::{
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PolicyRegistryV2;
 
-impl PolicyRegistryV1 {
+impl PolicyRegistryV2 {
     /// Built-in policy ID that always authorizes every account.
     ///
     /// Encoded as BLOCKLIST (type=0) with counter=0 — an empty blocklist authorizes
