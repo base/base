@@ -1,5 +1,7 @@
 //! `PolicyAccounting` — storage port for the `PolicyRegistry` precompile.
 
+use alloc::vec::Vec;
+
 use alloy_primitives::{Address, LogData, U256};
 use base_precompile_storage::Result;
 
@@ -46,4 +48,14 @@ pub trait PolicyAccounting {
 
     /// Writes the registry's bytecode marker so subsequent storage writes are not pruned.
     fn mark_initialized(&mut self) -> Result<()>;
+
+    /// Reads the composite child-policy IDs stored for `policy_id` (empty if none).
+    fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
+        Ok(Vec::new())
+    }
+
+    /// Replaces the composite child-policy set for `policy_id` in full.
+    fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
+        Ok(())
+    }
 }

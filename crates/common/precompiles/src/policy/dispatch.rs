@@ -168,11 +168,20 @@ impl PolicyRegistryStorage<'_> {
                 let pending = logic.pending_policy_admin(self, call.policyId)?;
                 Ok(IPolicyRegistry::pendingPolicyAdminCall::abi_encode_returns(&pending).into())
             }
-            // V2-only: V1 short-circuits these selectors to UnknownFunctionSelector in
-            // `dispatch_with_observer`. The composite ABI is declared for V2 (Cobalt) but its
-            // logic is not yet wired, so revert as a placeholder until the follow-up lands.
-            C::createCompositePolicy(_) | C::updateComposite(_) => {
-                Err(BasePrecompileError::Revert(Bytes::new()))
+            // Composite ops are a V2 feature; V1 short-circuits these selectors to
+            // UnknownFunctionSelector in `dispatch_with_observer`, so this only runs under V2.
+            C::createCompositePolicy(call) => {
+                let id = logic.create_composite_policy(
+                    self,
+                    call.admin,
+                    call.policyType,
+                    call.childPolicyIds,
+                )?;
+                Ok(IPolicyRegistry::createCompositePolicyCall::abi_encode_returns(&id).into())
+            }
+            C::updateComposite(call) => {
+                logic.update_composite(self, call.policyId, call.childPolicyIds)?;
+                Ok(Bytes::new())
             }
         }
     }
