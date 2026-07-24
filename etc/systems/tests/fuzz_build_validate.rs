@@ -18,6 +18,8 @@
 //! timestamp, so a run is deterministic and a failing seed replays exactly.
 //! Override the seed with `FUZZ_SEED`.
 
+use std::sync::Arc;
+
 use alloy_consensus::SignableTransaction;
 use alloy_eips::{
     BlockNumberOrTag,
@@ -30,9 +32,11 @@ use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
+use base_common_consensus::{Call, Eip8130Constants, Eip8130Signed, TxEip8130};
 use base_common_rpc_types::BaseTransactionRequest;
-use base_node_runner::test_utils::TestHarness;
-use base_test_utils::{AccessListContract, Account, DEVNET_CHAIN_ID};
+use base_execution_chainspec::BaseChainSpec;
+use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
+use base_test_utils::{AccessListContract, Account, DEVNET_CHAIN_ID, build_test_genesis_cobalt};
 use eyre::{Result, eyre};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
@@ -54,6 +58,16 @@ const SENDERS: [Account; 3] = [Account::Alice, Account::Bob, Account::Charlie];
 /// build/validate divergence, add its seed here so the case replays deterministically
 /// on every run forever. Seeded here with a spread of known-good starting points.
 const CORPUS: &[u64] = &[DEFAULT_SEED, 0x1, 0xC0FFEE, 0xDEAD_BEEF];
+
+/// Blocks of fuzzed EIP-8130 transactions to build in one run.
+const NUM_8130_BLOCKS: u64 = 6;
+/// EIP-8130 transactions per block.
+const TXS_PER_BLOCK_8130: usize = 5;
+/// Per-tx gas for generated EIP-8130 transactions (EOA-only call phases are cheap).
+const TX_GAS_LIMIT_8130: u64 = 500_000;
+/// A far-future expiry (well past any block timestamp here) used to fuzz the
+/// `expiry` field without ever letting a transaction lapse and get dropped.
+const FAR_FUTURE_EXPIRY: u64 = 4_000_000_000;
 
 #[tokio::test]
 async fn fuzz_build_validate() -> Result<()> {
@@ -357,4 +371,219 @@ fn finish(signer: &PrivateKeySigner, request: BaseTransactionRequest) -> Result<
         request.build_typed_tx().map_err(|req| eyre!("invalid transaction request: {req:?}"))?;
     let signature = signer.sign_hash_sync(&typed.signature_hash())?;
     Ok(typed.into_signed(signature).encoded_2718().into())
+}
+
+/// Build-vs-validate over fuzzed **EIP-8130** transactions, Base's account-
+/// abstraction transaction type (type `0x79`), which only activates on a
+/// Cobalt-enabled chain. Each block forces a fuzzed set of 8130 transactions
+/// (self-pay and sponsored, with a varying number of value-less call phases,
+/// fuzzed expiry and metadata) through `getPayload`/`newPayload` and asserts the
+/// builder and validator agree, that every forced transaction is actually mined,
+/// and the per-block gas invariant holds.
+#[tokio::test]
+async fn fuzz_build_validate_eip8130() -> Result<()> {
+    let seed = seed_from_env();
+    run_eip8130_sequence(seed).await?;
+    Ok(())
+}
+
+/// Determinism oracle for the EIP-8130 stream: the same seed must build byte-
+/// identical blocks across independent runs, so a failing 8130 seed replays.
+#[tokio::test]
+async fn fuzz_build_validate_eip8130_deterministic() -> Result<()> {
+    let seed = seed_from_env();
+    let first = run_eip8130_sequence(seed).await?;
+    let second = run_eip8130_sequence(seed).await?;
+
+    if first.len() != second.len() {
+        return Err(eyre!(
+            "nondeterministic 8130 block count (seed={seed:#x}): {} != {}",
+            first.len(),
+            second.len()
+        ));
+    }
+    for (a, b) in first.iter().zip(second.iter()) {
+        if a != b {
+            return Err(eyre!(
+                "nondeterministic 8130 build at block {} (seed={seed:#x}): {a:?} != {b:?}",
+                a.number
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Build `NUM_8130_BLOCKS` blocks of fuzzed EIP-8130 transactions on a fresh
+/// Cobalt-enabled in-process node, asserting build-vs-validate agreement,
+/// full inclusion, and the per-block gas invariant, and return the observations.
+async fn run_eip8130_sequence(seed: u64) -> Result<Vec<BlockObs>> {
+    // EIP-8130 requires the Cobalt fork; the default genesis is pre-Cobalt, so use
+    // the Cobalt genesis (which funds the same accounts).
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_cobalt()));
+    let harness = TestHarness::builder().with_chain_spec(chain_spec).build().await?;
+    let mut generator = Eip8130Generator::new(seed);
+    // Per-sender nonce-channel sequence (nonce_key = 0), advanced on inclusion.
+    let mut sequences = [0u64; SENDERS.len()];
+
+    let mut observations = Vec::with_capacity(NUM_8130_BLOCKS as usize);
+    for block in 0..NUM_8130_BLOCKS {
+        // The L1 block-info deposit must lead every block; the fuzzed 8130 txs follow.
+        let mut txs = vec![L1_BLOCK_INFO_DEPOSIT_TX];
+        for _ in 0..TXS_PER_BLOCK_8130 {
+            let shape = generator.next_shape();
+            let raw = sign_8130(&shape, sequences[shape.sender])?;
+            sequences[shape.sender] += 1;
+            txs.push(raw);
+        }
+        let expected = txs.len();
+
+        // Build (getPayload) then validate (newPayload). An error is a build-vs-validate
+        // divergence: the builder produced a block the validator rejects.
+        harness.build_block_from_transactions(txs).await.map_err(|e| {
+            eyre!("8130 build/validate divergence at block {block} (seed={seed:#x}): {e}")
+        })?;
+
+        let mined =
+            harness.provider().get_block_by_number(BlockNumberOrTag::Latest).await?.ok_or_else(
+                || eyre!("no block found after building 8130 block {block} (seed={seed:#x})"),
+            )?;
+
+        // Inclusion oracle: every forced transaction must be mined. A silently
+        // dropped 8130 (the builder skipping it pre-execution) shows up here as a
+        // short block, even though `build_block_from_transactions` returned `Ok`.
+        let included = mined.transactions.len();
+        if included != expected {
+            return Err(eyre!(
+                "8130 transaction dropped at block {block} (seed={seed:#x}): \
+                 mined {included} of {expected} forced transactions"
+            ));
+        }
+
+        // Invariant: a block can never use more gas than its own limit.
+        let header = mined.header;
+        if header.gas_used > header.gas_limit {
+            return Err(eyre!(
+                "invariant violated at 8130 block {block} (seed={seed:#x}): \
+                 gas_used {} > gas_limit {}",
+                header.gas_used,
+                header.gas_limit
+            ));
+        }
+
+        observations.push(BlockObs {
+            number: header.number,
+            hash: header.hash,
+            state_root: header.state_root,
+            gas_used: header.gas_used,
+            gas_limit: header.gas_limit,
+        });
+    }
+
+    Ok(observations)
+}
+
+/// A generated EIP-8130 transaction shape, before nonce assignment and signing.
+struct Eip8130Shape {
+    /// Index into [`SENDERS`] of the transaction sender (recovered from `sender_auth`).
+    sender: usize,
+    /// Sponsoring payer index into [`SENDERS`], or `None` for a self-pay transaction.
+    payer: Option<usize>,
+    /// Call phases; each inner vector is a phase of value-less calls to EOA recipients.
+    phases: Vec<Vec<Address>>,
+    /// Transaction expiry (`0` disables it; otherwise a far-future timestamp).
+    expiry: u64,
+    /// Fuzzed metadata bytes (sometimes empty).
+    metadata: Bytes,
+}
+
+/// Seeded generator for a fuzzed EIP-8130 transaction stream: self-pay and
+/// sponsored transactions with a varying number of value-less call phases and
+/// fuzzed expiry/metadata. All calls target funded EOAs so every phase succeeds
+/// and the transaction is always includable, keeping the build-vs-validate and
+/// inclusion oracles meaningful rather than tripping on generation noise.
+struct Eip8130Generator {
+    rng: StdRng,
+}
+
+impl Eip8130Generator {
+    fn new(seed: u64) -> Self {
+        Self { rng: StdRng::seed_from_u64(seed) }
+    }
+
+    fn next_shape(&mut self) -> Eip8130Shape {
+        let sender = self.rng.random_range(0..SENDERS.len());
+        // ~25% sponsored: a different funded account authorizes and pays the gas.
+        let payer = if self.rng.random_range(0..4) == 0 {
+            let offset = self.rng.random_range(1..SENDERS.len());
+            Some((sender + offset) % SENDERS.len())
+        } else {
+            None
+        };
+        // 0..=2 phases, each with 1..=2 value-less calls to EOAs (always succeed).
+        let num_phases = self.rng.random_range(0..=2);
+        let phases = (0..num_phases)
+            .map(|_| {
+                let calls = self.rng.random_range(1..=2);
+                (0..calls).map(|_| self.random_recipient()).collect()
+            })
+            .collect();
+        let expiry = if self.rng.random_range(0..2) == 0 { 0 } else { FAR_FUTURE_EXPIRY };
+        let metadata = if self.rng.random_range(0..2) == 0 {
+            Bytes::new()
+        } else {
+            let len = self.rng.random_range(1..=4usize);
+            let mut bytes = vec![0u8; len];
+            self.rng.fill(&mut bytes[..]);
+            Bytes::from(bytes)
+        };
+        Eip8130Shape { sender, payer, phases, expiry, metadata }
+    }
+
+    fn random_recipient(&mut self) -> Address {
+        SENDERS[self.rng.random_range(0..SENDERS.len())].address()
+    }
+}
+
+/// Complete an [`Eip8130Shape`] into a signed, EIP-2718 encoded type-`0x79`
+/// transaction. The sender is recovered from `sender_auth` (so `sender` is left
+/// `None`); a sponsored transaction additionally carries a K1 payer authenticator
+/// over the payer digest (which binds to the resolved sender).
+fn sign_8130(shape: &Eip8130Shape, sequence: u64) -> Result<Bytes> {
+    let calls: Vec<Vec<Call>> = shape
+        .phases
+        .iter()
+        .map(|phase| phase.iter().map(|to| Call { to: *to, data: Bytes::new() }).collect())
+        .collect();
+    let tx = TxEip8130 {
+        chain_id: DEVNET_CHAIN_ID,
+        sender: None,
+        nonce_key: U256::ZERO,
+        nonce_sequence: sequence,
+        expiry: shape.expiry,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: TX_GAS_LIMIT_8130,
+        account_changes: Vec::new(),
+        calls,
+        metadata: shape.metadata.clone(),
+        payer: shape.payer.map(|p| SENDERS[p].address()),
+    };
+
+    let sender = SENDERS[shape.sender];
+    let sender_auth: Bytes =
+        sender.signer().sign_hash_sync(&tx.sender_signature_hash())?.as_bytes().to_vec().into();
+    let payer_auth: Bytes = match shape.payer {
+        // Explicit payer auth is `authenticator(20) || data`; for the K1 authenticator
+        // the data is the payer's 65-byte signature over the payer digest.
+        Some(p) => {
+            let sig =
+                SENDERS[p].signer().sign_hash_sync(&tx.payer_signature_hash(sender.address()))?;
+            let mut auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+            auth.extend_from_slice(&sig.as_bytes());
+            auth.into()
+        }
+        None => Bytes::new(),
+    };
+
+    Ok(Eip8130Signed::new(tx, sender_auth, payer_auth).encoded_2718().into())
 }
