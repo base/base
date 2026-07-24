@@ -6492,6 +6492,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-trusted-proxy"
+version = "0.0.0"
+dependencies = [
+ "http 1.4.2",
+ "ipnet",
+ "thiserror 2.0.19",
+ "tracing",
+]
+
+[[package]]
 name = "base-tx-forwarding"
 version = "0.0.0"
 dependencies = [
@@ -24693,10 +24703,10 @@ dependencies = [
  "axum 0.8.9",
  "backoff",
  "base-metrics",
+ "base-trusted-proxy",
  "brotli",
  "futures",
  "http 1.4.2",
- "ipnet",
  "metrics",
  "reqwest 0.13.4",
  "serde",
