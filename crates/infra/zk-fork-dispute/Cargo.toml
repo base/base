@@ -34,7 +34,3 @@ clap = { workspace = true, features = ["derive", "env"] }
 base-prover-service-client = { workspace = true }
 base-prover-service-protocol = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
-
-[dev-dependencies]
-alloy-node-bindings.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }

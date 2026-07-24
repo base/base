@@ -6668,7 +6668,6 @@ dependencies = [
 name = "base-zk-fork-dispute"
 version = "0.0.0"
 dependencies = [
- "alloy-node-bindings 2.2.0",
  "alloy-primitives",
  "alloy-provider 2.2.0",
  "alloy-rlp",
