@@ -19,7 +19,9 @@ use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_network::Base;
-use base_common_precompiles::{ActivationFeature, B20Variant, ERC8056_INTERFACE_IDS, IB20, IB20Asset};
+use base_common_precompiles::{
+    ActivationFeature, B20Variant, ERC8056_INTERFACE_IDS, IB20, IB20Asset,
+};
 use base_system_tests::{
     ANVIL_ACCOUNT_5, B20PrecompileClient, SystemTestStack, SystemTestStackBuilder,
 };
@@ -171,7 +173,9 @@ async fn test_b20_asset_is_v2_at_cobalt() -> Result<()> {
         !asset_bool(
             &b20,
             token,
-            IB20Asset::supportsInterfaceCall { interfaceId: FixedBytes::new([0x57, 0x85, 0x4f, 0xc3]) },
+            IB20Asset::supportsInterfaceCall {
+                interfaceId: FixedBytes::new([0x57, 0x85, 0x4f, 0xc3])
+            },
         )
         .await?,
         "conversion-extension interface id must not be advertised",
@@ -180,7 +184,9 @@ async fn test_b20_asset_is_v2_at_cobalt() -> Result<()> {
         !asset_bool(
             &b20,
             token,
-            IB20Asset::supportsInterfaceCall { interfaceId: FixedBytes::new([0xde, 0xad, 0xbe, 0xef]) },
+            IB20Asset::supportsInterfaceCall {
+                interfaceId: FixedBytes::new([0xde, 0xad, 0xbe, 0xef])
+            },
         )
         .await?,
         "an unrelated interface id must not be advertised",
