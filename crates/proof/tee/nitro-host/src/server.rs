@@ -1,7 +1,7 @@
 use std::{fmt, net::SocketAddr, sync::Arc};
 
 use alloy_signer::utils::public_key_to_address;
-use base_health::{HealthzApiServer, HealthzResponse, HealthzRpc};
+use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_host::ProverConfig;
 use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
 use jsonrpsee::{
@@ -73,7 +73,7 @@ impl NitroProverServer {
         Self { pool, registration_health: None }
     }
 
-    /// Enables registration-gated `/healthz`; `/readyz` remains registration-independent.
+    /// Enables registration-gated health checks.
     pub fn with_registration_health(mut self, config: RegistrationHealthConfig) -> Self {
         self.registration_health = Some(config);
         self
@@ -84,15 +84,12 @@ impl NitroProverServer {
         // SECURITY: This unauthenticated RPC server is an internal control-plane endpoint.
         // Deployments must restrict it to trusted components on a private network.
         let middleware = tower::ServiceBuilder::new()
-            .layer(ProxyGetRequestLayer::new([("/healthz", "healthz"), ("/readyz", "readyz")])?);
+            .layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?);
         let server = Server::builder().set_http_middleware(middleware).build(addr).await?;
         let addr = server.local_addr()?;
         info!(addr = %addr, "nitro rpc server started");
 
         let mut module = RpcModule::new(());
-        module.register_method("readyz", |_, _, _| {
-            RpcResult::Ok(HealthzResponse { version: env!("CARGO_PKG_VERSION").to_string() })
-        })?;
         let transports = self.pool.transports();
         let mut pool = self.pool;
 
@@ -145,9 +142,7 @@ impl NitroProverServer {
         info!(addr = %addr, "nitro registrar rpc server started");
 
         let mut module = RpcModule::new(());
-        module.register_method("readyz", |_, _, _| {
-            RpcResult::Ok(HealthzResponse { version: env!("CARGO_PKG_VERSION").to_string() })
-        })?;
+        module.register_method("readyz", |_, _, _| RpcResult::Ok(()))?;
         match registration_checker {
             Some(checker) => {
                 module.merge(
