@@ -104,6 +104,11 @@ pub trait PrecompileStorageProvider {
     /// Returns zero when no reservoir was provided at construction time.
     fn reservoir(&self) -> u64;
 
+    /// Returns the active persistent-storage features.
+    fn storage_features(&self) -> StorageFeatures {
+        StorageFeatures::Legacy
+    }
+
     /// Returns whether the current call context is static.
     fn is_static(&self) -> bool;
 
@@ -139,10 +144,33 @@ pub trait PrecompileStorageProvider {
 ///
 /// Abstracts over persistent (SLOAD/SSTORE) and transient (TLOAD/TSTORE) storage.
 pub trait StorageOps {
+    /// Checks whether writes are allowed before any preparatory reads occur.
+    fn ensure_writable(&self) -> Result<()>;
     /// Stores a value at the provided slot.
     fn store(&mut self, slot: U256, value: U256) -> Result<()>;
     /// Loads a value from the provided slot.
     fn load(&self, slot: U256) -> Result<U256>;
+    /// Returns the active persistent-storage features.
+    fn storage_features(&self) -> StorageFeatures {
+        StorageFeatures::Legacy
+    }
+}
+
+/// Fork-dependent features for persistent storage writes.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StorageFeatures {
+    /// Preserve storage behavior from before Cobalt activation.
+    #[default]
+    Legacy,
+    /// Apply Cobalt storage behavior, including dynamic tail cleanup on shrink.
+    Cobalt,
+}
+
+impl StorageFeatures {
+    /// Returns whether dynamic storage tail cleanup is enabled.
+    pub fn dynamic_storage_tail_cleanup_enabled(self) -> bool {
+        self >= Self::Cobalt
+    }
 }
 
 /// Trait providing access to a contract's address and storage.
@@ -218,9 +246,14 @@ impl LayoutCtx {
     }
 
     #[inline]
-    /// Returns the packed offset, or `None` for [`Self::FULL`].
+    /// Returns the packed offset, or `None` for full-slot contexts.
     pub const fn packed_offset(&self) -> Option<usize> {
         if self.0 == usize::MAX { None } else { Some(self.0) }
+    }
+
+    /// Returns whether this is a full-slot context.
+    pub const fn is_full(&self) -> bool {
+        self.0 == usize::MAX
     }
 }
 

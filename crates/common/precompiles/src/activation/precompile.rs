@@ -2,11 +2,12 @@
 
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::Address;
+use base_common_genesis::BaseUpgrade;
 use base_precompile_macros::precompile;
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistryStorage, PrecompileCallObserver,
-    macros::base_precompile,
+    ActivationAdminConfig, ActivationRegistryStorage, NoopPrecompileCallObserver,
+    PrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile,
 };
 
 /// Entry point for the activation registry precompile.
@@ -16,10 +17,15 @@ pub struct ActivationRegistry;
 
 impl ActivationRegistry {
     /// Installs the activation registry precompile using a static fallback admin.
-    pub fn install(precompiles: &mut PrecompilesMap, activation_admin_address: Option<Address>) {
+    pub fn install(
+        precompiles: &mut PrecompilesMap,
+        activation_admin_address: Option<Address>,
+        upgrade: BaseUpgrade,
+    ) {
         Self::install_with_config(
             precompiles,
             ActivationAdminConfig::static_fallback(activation_admin_address),
+            upgrade,
         );
     }
 
@@ -27,10 +33,11 @@ impl ActivationRegistry {
     pub fn install_with_config(
         precompiles: &mut PrecompilesMap,
         admin_config: ActivationAdminConfig,
+        upgrade: BaseUpgrade,
     ) {
         precompiles.extend_precompiles(core::iter::once((
             ActivationRegistryStorage::ADDRESS,
-            Self::precompile(admin_config),
+            Self::precompile_with_observer(admin_config, upgrade, NoopPrecompileCallObserver),
         )));
     }
 
@@ -38,25 +45,31 @@ impl ActivationRegistry {
     pub fn install_with_observer<O>(
         precompiles: &mut PrecompilesMap,
         admin_config: ActivationAdminConfig,
+        upgrade: BaseUpgrade,
         observer: O,
     ) where
         O: PrecompileCallObserver,
     {
         precompiles.extend_precompiles(core::iter::once((
             ActivationRegistryStorage::ADDRESS,
-            Self::precompile_with_observer(admin_config, observer),
+            Self::precompile_with_observer(admin_config, upgrade, observer),
         )));
     }
 
     /// Creates the EVM precompile wrapper for the activation registry with an observer.
     pub fn precompile_with_observer<O>(
         admin_config: ActivationAdminConfig,
+        upgrade: BaseUpgrade,
         observer: O,
     ) -> DynPrecompile
     where
         O: PrecompileCallObserver,
     {
-        base_precompile!("ActivationRegistry", |ctx, calldata| {
+        let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
+        base_precompile!(
+            "ActivationRegistry",
+            storage_features: storage_features,
+            |ctx, calldata| {
             let observer = observer.clone();
             ActivationRegistryStorage::new(ctx).dispatch_with_observer(
                 ctx,
@@ -64,7 +77,8 @@ impl ActivationRegistry {
                 admin_config,
                 observer,
             )
-        })
+            }
+        )
     }
 }
 
@@ -72,6 +86,7 @@ impl ActivationRegistry {
 mod tests {
     use alloy_evm::precompiles::PrecompilesMap;
     use alloy_primitives::Address;
+    use base_common_genesis::BaseUpgrade;
     use revm::precompile::Precompiles;
 
     use crate::{ActivationRegistry, ActivationRegistryStorage};
@@ -80,7 +95,11 @@ mod tests {
     fn install_accepts_static_fallback_admin() {
         let mut precompiles = PrecompilesMap::from_static(Precompiles::cancun());
 
-        ActivationRegistry::install(&mut precompiles, Some(Address::repeat_byte(0x11)));
+        ActivationRegistry::install(
+            &mut precompiles,
+            Some(Address::repeat_byte(0x11)),
+            BaseUpgrade::Beryl,
+        );
 
         assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_some());
     }

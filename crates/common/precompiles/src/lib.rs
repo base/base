@@ -14,7 +14,7 @@ mod lookup;
 pub use lookup::{BerylLookup, BerylLookupWithObserver};
 
 mod spec;
-pub use spec::BasePrecompileSpec;
+pub use spec::{BasePrecompileSpec, UpgradeGatedStorageFeatures};
 
 mod activation;
 pub use activation::{
