@@ -5831,6 +5831,7 @@ dependencies = [
  "eyre",
  "jsonrpsee",
  "k256",
+ "reqwest 0.13.4",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",

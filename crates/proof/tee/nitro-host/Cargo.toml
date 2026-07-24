@@ -45,6 +45,7 @@ tokio-vsock.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
+reqwest.workspace = true
 alloy-genesis.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }

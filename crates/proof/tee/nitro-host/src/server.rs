@@ -265,29 +265,12 @@ mod tests {
     use base_proof_primitives::EnclaveApiServer;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use jsonrpsee::core::client::ClientT as _;
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpStream,
-    };
 
     use super::*;
     use crate::test_utils::MockRegistry;
 
     async fn http_status(addr: std::net::SocketAddr, path: &str) -> u16 {
-        let mut stream = TcpStream::connect(addr).await.unwrap();
-        stream
-            .write_all(format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\n\r\n").as_bytes())
-            .await
-            .unwrap();
-        let mut response = [0; 128];
-        let bytes = stream.read(&mut response).await.unwrap();
-        std::str::from_utf8(&response[..bytes])
-            .unwrap()
-            .split_whitespace()
-            .nth(1)
-            .unwrap()
-            .parse()
-            .unwrap()
+        reqwest::get(format!("http://{addr}{path}")).await.unwrap().status().as_u16()
     }
 
     #[tokio::test]
