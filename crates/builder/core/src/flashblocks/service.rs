@@ -25,8 +25,8 @@ use super::{
     payload::{BasePayloadBuilder, BuilderOutputs},
 };
 use crate::{
-    BuilderConfig, CandidateSource, DefaultCandidateSource, DefaultInclusionPolicy, InclusionPolicy,
-    RejectedTxForwarder,
+    BuilderConfig, CandidateSource, DefaultCandidateSource, DefaultInclusionPolicy,
+    InclusionPolicy, RejectedTxForwarder,
     traits::{NodeBounds, PoolBounds},
 };
 

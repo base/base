@@ -1280,7 +1280,12 @@ impl BasePayloadBuilderCtx {
                     tx_hash,
                     Some(ordering_position),
                     || {
-                        BuilderRejectedEventData::from_error(&err, info, limits, Some(&tx_resources))
+                        BuilderRejectedEventData::from_error(
+                            &err,
+                            info,
+                            limits,
+                            Some(&tx_resources),
+                        )
                     },
                 );
                 log_txn(Err(err));
