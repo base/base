@@ -427,7 +427,7 @@ mod tests {
 
     use crate::{
         IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyAccounting, PolicyRegistryLogic,
-        PolicyRegistryV1,
+        PolicyRegistryV2,
     };
 
     const REGISTRY: Address = address!("0x8453000000000000000000000000000000000002");
@@ -435,7 +435,7 @@ mod tests {
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
     const BOB: Address = address!("0xB000000000000000000000000000000000000001");
     const NEW_ADMIN: Address = address!("0x2000000000000000000000000000000000000002");
-    const LOGIC: PolicyRegistryV1 = PolicyRegistryV1;
+    const LOGIC: PolicyRegistryV2 = PolicyRegistryV2;
 
     // --- Self-contained in-memory fake (no dependency on `common::test_utils`, so shared
     //     test scaffolding can never drift this frozen version's coverage) ---
@@ -561,15 +561,15 @@ mod tests {
     #[test]
     fn always_allow_id_authorizes_any_account() {
         let rt = initialized();
-        assert!(is_authorized(&rt, PolicyRegistryV1::ALWAYS_ALLOW_ID, ALICE));
-        assert!(is_authorized(&rt, PolicyRegistryV1::ALWAYS_ALLOW_ID, BOB));
+        assert!(is_authorized(&rt, PolicyRegistryV2::ALWAYS_ALLOW_ID, ALICE));
+        assert!(is_authorized(&rt, PolicyRegistryV2::ALWAYS_ALLOW_ID, BOB));
     }
 
     #[test]
     fn always_block_id_rejects_any_account() {
         let rt = initialized();
-        assert!(!is_authorized(&rt, PolicyRegistryV1::ALWAYS_BLOCK_ID, ALICE));
-        assert!(!is_authorized(&rt, PolicyRegistryV1::ALWAYS_BLOCK_ID, BOB));
+        assert!(!is_authorized(&rt, PolicyRegistryV2::ALWAYS_BLOCK_ID, ALICE));
+        assert!(!is_authorized(&rt, PolicyRegistryV2::ALWAYS_BLOCK_ID, BOB));
     }
 
     #[test]
@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn unknown_allowlist_policy_id_does_not_authorize_account() {
-        let unknown_allowlist = PolicyRegistryV1::make_id(PolicyType::ALLOWLIST as u8, 9999);
+        let unknown_allowlist = PolicyRegistryV2::make_id(PolicyType::ALLOWLIST as u8, 9999);
         let rt = initialized();
         assert!(!is_authorized(&rt, unknown_allowlist, ALICE));
     }
@@ -606,9 +606,9 @@ mod tests {
     fn first_create_policy_initializes_builtins_and_starts_counter_at_two() {
         let mut rt = bare();
         let id = LOGIC.create_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST).unwrap();
-        assert_eq!(id & PolicyRegistryV1::COUNTER_MASK, 2);
-        assert!(LOGIC.policy_exists(&rt, PolicyRegistryV1::ALWAYS_ALLOW_ID).unwrap());
-        assert!(LOGIC.policy_exists(&rt, PolicyRegistryV1::ALWAYS_BLOCK_ID).unwrap());
+        assert_eq!(id & PolicyRegistryV2::COUNTER_MASK, 2);
+        assert!(LOGIC.policy_exists(&rt, PolicyRegistryV2::ALWAYS_ALLOW_ID).unwrap());
+        assert!(LOGIC.policy_exists(&rt, PolicyRegistryV2::ALWAYS_BLOCK_ID).unwrap());
         assert!(rt.initialized);
     }
 
@@ -618,7 +618,7 @@ mod tests {
         for _ in 0..3 {
             LOGIC.ensure_initialized_and_get_counter(&mut rt).unwrap();
         }
-        assert_eq!(rt.next_counter, PolicyRegistryV1::BUILTIN_POLICY_COUNT);
+        assert_eq!(rt.next_counter, PolicyRegistryV2::BUILTIN_POLICY_COUNT);
     }
 
     // --- createPolicy ---
@@ -637,14 +637,14 @@ mod tests {
         let id2 = create_blocklist(&mut rt);
         assert_eq!((id1 >> 56) as u8, PolicyType::ALLOWLIST as u8);
         assert_eq!((id2 >> 56) as u8, PolicyType::BLOCKLIST as u8);
-        assert_eq!(id1 & PolicyRegistryV1::COUNTER_MASK, 2);
-        assert_eq!(id2 & PolicyRegistryV1::COUNTER_MASK, 3);
+        assert_eq!(id1 & PolicyRegistryV2::COUNTER_MASK, 2);
+        assert_eq!(id2 & PolicyRegistryV2::COUNTER_MASK, 3);
     }
 
     #[test]
     fn create_policy_at_counter_mask_reverts_with_under_overflow() {
         let mut rt = initialized();
-        rt.next_counter = PolicyRegistryV1::COUNTER_MASK;
+        rt.next_counter = PolicyRegistryV2::COUNTER_MASK;
         let err = LOGIC.create_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST).unwrap_err();
         assert_eq!(err, BasePrecompileError::under_overflow());
     }
@@ -652,9 +652,9 @@ mod tests {
     #[test]
     fn create_policy_at_counter_mask_minus_one_consumes_last_slot_then_reverts() {
         let mut rt = initialized();
-        rt.next_counter = PolicyRegistryV1::COUNTER_MASK - 1;
+        rt.next_counter = PolicyRegistryV2::COUNTER_MASK - 1;
         let id = LOGIC.create_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST).unwrap();
-        assert_eq!(id & PolicyRegistryV1::COUNTER_MASK, PolicyRegistryV1::COUNTER_MASK - 1);
+        assert_eq!(id & PolicyRegistryV2::COUNTER_MASK, PolicyRegistryV2::COUNTER_MASK - 1);
         let err = LOGIC.create_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST).unwrap_err();
         assert_eq!(err, BasePrecompileError::under_overflow());
     }
@@ -719,12 +719,12 @@ mod tests {
     fn update_allowlist_too_many_accounts_reverts() {
         let mut rt = initialized();
         let id = create_allowlist(&mut rt);
-        let accounts = many_accounts(PolicyRegistryV1::MAX_ACCOUNTS_PER_BATCH + 1);
+        let accounts = many_accounts(PolicyRegistryV2::MAX_ACCOUNTS_PER_BATCH + 1);
         let err = LOGIC.update_allowlist(&mut rt, id, true, accounts).unwrap_err();
         assert_eq!(
             err,
             BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
-                maxBatchSize: U256::from(PolicyRegistryV1::MAX_ACCOUNTS_PER_BATCH),
+                maxBatchSize: U256::from(PolicyRegistryV2::MAX_ACCOUNTS_PER_BATCH),
             })
         );
     }
@@ -733,7 +733,7 @@ mod tests {
     fn update_allowlist_max_batch_size_succeeds() {
         let mut rt = initialized();
         let id = create_allowlist(&mut rt);
-        let accounts = many_accounts(PolicyRegistryV1::MAX_ACCOUNTS_PER_BATCH);
+        let accounts = many_accounts(PolicyRegistryV2::MAX_ACCOUNTS_PER_BATCH);
         LOGIC.update_allowlist(&mut rt, id, true, accounts).unwrap();
     }
 
@@ -794,12 +794,12 @@ mod tests {
     fn update_blocklist_too_many_accounts_reverts() {
         let mut rt = initialized();
         let id = create_blocklist(&mut rt);
-        let accounts = many_accounts(PolicyRegistryV1::MAX_ACCOUNTS_PER_BATCH + 1);
+        let accounts = many_accounts(PolicyRegistryV2::MAX_ACCOUNTS_PER_BATCH + 1);
         let err = LOGIC.update_blocklist(&mut rt, id, true, accounts).unwrap_err();
         assert_eq!(
             err,
             BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
-                maxBatchSize: U256::from(PolicyRegistryV1::MAX_ACCOUNTS_PER_BATCH),
+                maxBatchSize: U256::from(PolicyRegistryV2::MAX_ACCOUNTS_PER_BATCH),
             })
         );
     }
@@ -867,14 +867,14 @@ mod tests {
     #[test]
     fn create_policy_with_accounts_too_many_accounts_reverts() {
         let mut rt = initialized();
-        let accounts = many_accounts(PolicyRegistryV1::MAX_ACCOUNTS_PER_BATCH + 1);
+        let accounts = many_accounts(PolicyRegistryV2::MAX_ACCOUNTS_PER_BATCH + 1);
         let err = LOGIC
             .create_policy_with_accounts(&mut rt, ADMIN, PolicyType::ALLOWLIST, accounts)
             .unwrap_err();
         assert_eq!(
             err,
             BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
-                maxBatchSize: U256::from(PolicyRegistryV1::MAX_ACCOUNTS_PER_BATCH),
+                maxBatchSize: U256::from(PolicyRegistryV2::MAX_ACCOUNTS_PER_BATCH),
             })
         );
     }
@@ -882,7 +882,7 @@ mod tests {
     #[test]
     fn create_policy_with_accounts_zero_admin_precedes_batch_size_revert() {
         let mut rt = initialized();
-        let accounts = many_accounts(PolicyRegistryV1::MAX_ACCOUNTS_PER_BATCH + 1);
+        let accounts = many_accounts(PolicyRegistryV2::MAX_ACCOUNTS_PER_BATCH + 1);
         let err = LOGIC
             .create_policy_with_accounts(&mut rt, Address::ZERO, PolicyType::ALLOWLIST, accounts)
             .unwrap_err();
@@ -892,7 +892,7 @@ mod tests {
     #[test]
     fn create_policy_with_accounts_invalid_policy_type_precedes_batch_size_revert() {
         let mut rt = initialized();
-        let accounts = many_accounts(PolicyRegistryV1::MAX_ACCOUNTS_PER_BATCH + 1);
+        let accounts = many_accounts(PolicyRegistryV2::MAX_ACCOUNTS_PER_BATCH + 1);
         let err = LOGIC
             .create_policy_with_accounts(&mut rt, ADMIN, PolicyType::__Invalid, accounts)
             .unwrap_err();
@@ -973,7 +973,7 @@ mod tests {
     #[test]
     fn builtin_policies_reject_admin_mutations() {
         let mut rt = initialized();
-        for policy_id in [PolicyRegistryV1::ALWAYS_ALLOW_ID, PolicyRegistryV1::ALWAYS_BLOCK_ID] {
+        for policy_id in [PolicyRegistryV2::ALWAYS_ALLOW_ID, PolicyRegistryV2::ALWAYS_BLOCK_ID] {
             let err = LOGIC.stage_update_admin(&mut rt, policy_id, ALICE).unwrap_err();
             assert!(matches!(err, BasePrecompileError::Revert(_)));
         }
@@ -984,19 +984,19 @@ mod tests {
     #[test]
     fn policy_exists_builtin_ids_always_return_true() {
         let rt = bare();
-        assert!(LOGIC.policy_exists(&rt, PolicyRegistryV1::ALWAYS_ALLOW_ID).unwrap());
-        assert!(LOGIC.policy_exists(&rt, PolicyRegistryV1::ALWAYS_BLOCK_ID).unwrap());
+        assert!(LOGIC.policy_exists(&rt, PolicyRegistryV2::ALWAYS_ALLOW_ID).unwrap());
+        assert!(LOGIC.policy_exists(&rt, PolicyRegistryV2::ALWAYS_BLOCK_ID).unwrap());
     }
 
     #[test]
     fn get_policy_admin_builtin_ids_return_zero_address() {
         let rt = initialized();
         assert_eq!(
-            LOGIC.get_policy_admin(&rt, PolicyRegistryV1::ALWAYS_ALLOW_ID).unwrap(),
+            LOGIC.get_policy_admin(&rt, PolicyRegistryV2::ALWAYS_ALLOW_ID).unwrap(),
             Address::ZERO
         );
         assert_eq!(
-            LOGIC.get_policy_admin(&rt, PolicyRegistryV1::ALWAYS_BLOCK_ID).unwrap(),
+            LOGIC.get_policy_admin(&rt, PolicyRegistryV2::ALWAYS_BLOCK_ID).unwrap(),
             Address::ZERO
         );
     }
@@ -1018,11 +1018,11 @@ mod tests {
     fn pending_policy_admin_builtin_ids_return_zero_address() {
         let rt = initialized();
         assert_eq!(
-            LOGIC.pending_policy_admin(&rt, PolicyRegistryV1::ALWAYS_ALLOW_ID).unwrap(),
+            LOGIC.pending_policy_admin(&rt, PolicyRegistryV2::ALWAYS_ALLOW_ID).unwrap(),
             Address::ZERO
         );
         assert_eq!(
-            LOGIC.pending_policy_admin(&rt, PolicyRegistryV1::ALWAYS_BLOCK_ID).unwrap(),
+            LOGIC.pending_policy_admin(&rt, PolicyRegistryV2::ALWAYS_BLOCK_ID).unwrap(),
             Address::ZERO
         );
     }
@@ -1030,7 +1030,7 @@ mod tests {
     #[test]
     fn pending_policy_admin_builtin_ids_short_circuit_staged_slot() {
         let mut rt = initialized();
-        for policy_id in [PolicyRegistryV1::ALWAYS_ALLOW_ID, PolicyRegistryV1::ALWAYS_BLOCK_ID] {
+        for policy_id in [PolicyRegistryV2::ALWAYS_ALLOW_ID, PolicyRegistryV2::ALWAYS_BLOCK_ID] {
             rt.pending_admins.insert(policy_id, NEW_ADMIN);
             assert_eq!(
                 LOGIC.pending_policy_admin(&rt, policy_id).unwrap(),
@@ -1043,8 +1043,8 @@ mod tests {
     #[test]
     fn pending_policy_admin_counter_one_blocklist_reads_staged_slot() {
         // BLOCKLIST counter=1 is not ALWAYS_BLOCK_ID, which is ALLOWLIST counter=1.
-        let counter_one_blocklist = PolicyRegistryV1::make_id(PolicyType::BLOCKLIST as u8, 1);
-        assert_ne!(counter_one_blocklist, PolicyRegistryV1::ALWAYS_BLOCK_ID);
+        let counter_one_blocklist = PolicyRegistryV2::make_id(PolicyType::BLOCKLIST as u8, 1);
+        assert_ne!(counter_one_blocklist, PolicyRegistryV2::ALWAYS_BLOCK_ID);
         let mut rt = initialized();
         rt.pending_admins.insert(counter_one_blocklist, NEW_ADMIN);
         assert_eq!(LOGIC.pending_policy_admin(&rt, counter_one_blocklist).unwrap(), NEW_ADMIN);
@@ -1066,7 +1066,7 @@ mod tests {
     #[test]
     fn pending_policy_admin_nonexistent_well_formed_policy_returns_zero_address() {
         let rt = initialized();
-        let nonexistent = PolicyRegistryV1::make_id(0, 999);
+        let nonexistent = PolicyRegistryV2::make_id(0, 999);
         assert_eq!(LOGIC.pending_policy_admin(&rt, nonexistent).unwrap(), Address::ZERO);
     }
 }
