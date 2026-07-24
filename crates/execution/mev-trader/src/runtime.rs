@@ -31,6 +31,8 @@ use crate::{
     WatchdogStatus, WorkerClaim,
 };
 
+#[cfg(feature = "edge-measurement")]
+use crate::{BlinkGenerationTerminalV1, BlinkMeasurementLedgerV1};
 #[cfg(feature = "t4b-shadow")]
 use crate::{PreparedPoolState, ProcessedFrame, SnapshotHandle};
 
@@ -397,6 +399,8 @@ pub struct MevTraderRuntime {
     watchdog: Watchdog,
     counters: Arc<A1Counters>,
     shadow_outcomes: ShadowOutcomeCounters,
+    #[cfg(feature = "edge-measurement")]
+    edge_measurement: BlinkMeasurementLedgerV1,
     #[cfg(feature = "t4b-shadow")]
     t4b_observer: Option<Arc<dyn CandidateTxShapeObserver>>,
     #[cfg(feature = "t4b-shadow")]
@@ -428,6 +432,8 @@ impl MevTraderRuntime {
             watchdog: Watchdog,
             counters: Arc::new(A1Counters::default()),
             shadow_outcomes: ShadowOutcomeCounters::default(),
+            #[cfg(feature = "edge-measurement")]
+            edge_measurement: BlinkMeasurementLedgerV1::default(),
             #[cfg(feature = "t4b-shadow")]
             t4b_observer: config.observer,
             #[cfg(feature = "t4b-shadow")]
@@ -497,6 +503,12 @@ impl MevTraderRuntime {
         &self.shadow_outcomes
     }
 
+    /// Returns the feature-private Blink conservation ledger.
+    #[cfg(feature = "edge-measurement")]
+    pub const fn edge_measurement(&self) -> &BlinkMeasurementLedgerV1 {
+        &self.edge_measurement
+    }
+
     /// Records one closed A1 outcome without retaining source data.
     pub fn record_a1(&self, outcome: A1Outcome) {
         self.counters.record(outcome);
@@ -509,8 +521,12 @@ impl MevTraderRuntime {
 
     /// Assigns a checked generation and performs capacity-one latest-wins submission.
     pub(crate) fn submit_blink_victim(&self, victim: BlinkVictim) {
+        #[cfg(feature = "edge-measurement")]
+        let _ = self.edge_measurement.record_observed();
         if self.shutdown.is_cancelled() || self.lifecycle.state() != GlobalState::Running {
             self.record_a1(A1Outcome::SlotClosed);
+            #[cfg(feature = "edge-measurement")]
+            let _ = self.edge_measurement.record_slot_closed();
             return;
         }
         let generation =
@@ -520,6 +536,8 @@ impl MevTraderRuntime {
                 Ok(previous) => previous + 1,
                 Err(_) => {
                     self.record_a1(A1Outcome::GenerationOverflow);
+                    #[cfg(feature = "edge-measurement")]
+                    let _ = self.edge_measurement.record_generation_overflow();
                     self.set_a1_status(A1Status::DisabledPermanent);
                     self.lifecycle.close();
                     self.shutdown.cancel();
@@ -537,11 +555,14 @@ impl MevTraderRuntime {
             self.control_notify.notify_one();
         }
 
-        let outcome = match self.ingress.submit(QueuedBlinkVictim::new(generation, victim)) {
+        let submission = self.ingress.submit(QueuedBlinkVictim::new(generation, victim));
+        let outcome = match submission {
             SlotSubmit::Accepted => A1Outcome::SlotAccepted,
             SlotSubmit::Replaced => A1Outcome::SlotReplaced,
             SlotSubmit::Closed => A1Outcome::SlotClosed,
         };
+        #[cfg(feature = "edge-measurement")]
+        let _ = self.edge_measurement.record_submission(generation, submission);
         self.record_a1(outcome);
         if outcome != A1Outcome::SlotClosed {
             self.slot_notify.notify_one();
@@ -746,6 +767,10 @@ impl MevTraderRuntime {
                         return Ok((Some(processed), Some(measurement), None));
                     }
                 };
+                #[cfg(feature = "edge-measurement")]
+                if plan.is_some() {
+                    let _ = self.edge_measurement.record_selected_preterminal(generation);
+                }
                 #[cfg(feature = "t4b-shadow")]
                 if let (Some(observer), Some(plan)) = (self.t4b_observer.as_ref(), plan.as_ref()) {
                     let view = CandidateAssemblyView {
@@ -933,6 +958,16 @@ impl MevTraderRuntime {
         {
             token.request_cancel();
         }
+        #[cfg(feature = "edge-measurement")]
+        {
+            let active_generation = self
+                .active
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_ref()
+                .map(|(generation, _)| *generation);
+            let _ = self.edge_measurement.terminalize_shutdown_pending(active_generation);
+        }
         self.shutdown.cancel();
         self.slot_notify.notify_waiters();
         self.control_notify.notify_waiters();
@@ -1019,6 +1054,19 @@ impl MevTraderRuntime {
             .is_err()
         {
             return false;
+        }
+        #[cfg(feature = "edge-measurement")]
+        {
+            let measurement_terminal = match terminal_value {
+                TERMINAL_CANCELLED => BlinkGenerationTerminalV1::Cancelled,
+                TERMINAL_FRAME_BOUND | TERMINAL_NO_TRADE => BlinkGenerationTerminalV1::Processed,
+                _ => BlinkGenerationTerminalV1::InternalFailure,
+            };
+            let _ = self.edge_measurement.record_terminal(
+                _generation,
+                measurement_terminal,
+                shadow_outcome,
+            );
         }
         self.record_a1(outcome);
         if self.universe.is_some()
@@ -1257,6 +1305,23 @@ mod tests {
         assert_eq!(runtime.counters().count(A1Outcome::NoTrade), 1);
         assert_eq!(runtime.counters().count(A1Outcome::Cancelled), 0);
         assert_eq!(runtime.counters().count(A1Outcome::InternalFailure), 0);
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn edge_measurement_conserves_runtime_latest_wins_product() {
+        let runtime = runtime();
+        let chain_spec = Arc::new(BaseChainSpec::mainnet());
+        runtime.submit_blink_victim(victim());
+        runtime.submit_blink_victim(victim());
+        assert!(runtime.consume_once(&EmptyPort, chain_spec));
+
+        let final_snapshot = runtime.edge_measurement().verify_final().expect("closed ledger");
+        assert_eq!(final_snapshot.victim_ingress_observed, 2);
+        assert_eq!(final_snapshot.slot_accepted, 1);
+        assert_eq!(final_snapshot.slot_replaced, 1);
+        assert_eq!(final_snapshot.replaced_before_frame, 1);
+        assert_eq!(final_snapshot.processed_terminal, 1);
     }
 
     #[test]

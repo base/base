@@ -11,6 +11,23 @@ pub use port::{
     SnapshotCaptureCoordinator, SnapshotHandle, SnapshotHandleFactory, TraderSnapshotPort,
     TransactionVisitor, VisitControl, VisitSummary,
 };
+#[cfg(feature = "edge-measurement")]
+mod measurement_tx;
+#[cfg(feature = "edge-measurement")]
+pub use measurement_tx::{
+    BackrunMeasurementTxV1, MEASUREMENT_CHAIN_ID, MEASUREMENT_EXECUTOR, MEASUREMENT_GAS_LIMIT,
+    MeasurementNonceWitnessV1, MeasurementTxDeriverV1, MeasurementTxError, MeasurementTxInputV1,
+};
+#[cfg(feature = "edge-measurement")]
+mod edge_measurement;
+#[cfg(feature = "edge-measurement")]
+pub use edge_measurement::{
+    BLINK_LEDGER_CAPACITY, BlinkGenerationTerminalV1, BlinkLedgerSnapshotV1,
+    BlinkMeasurementLedgerV1, BlinkRejectClassifierV3, BlinkRejectDispositionV3,
+    BlinkRejectReasonV3, EDGE_MAX_VICTIM_RAW_BYTES, EdgeCandidateV3, EdgeMeasurementDurabilityV1,
+    EdgeMeasurementError, EdgeMeasurementFinalV1, ProducerEpochCutoffFieldsV1,
+    ProducerEpochCutoffLatchV1, ProducerEpochCutoffV1, SelectedDtoTerminalV1,
+};
 
 mod frame;
 pub use frame::{

@@ -47,6 +47,7 @@ tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
 tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 
 [features]
+edge-measurement = []
 t4a-shadow = []
 t4b-shadow = ["t4a-shadow"]
 # P0-A external-anchor fresh-leaf bootstrap and activation. This is deliberately

@@ -126,6 +126,10 @@ serde = [
 	"secp256k1/serde",
 ]
 
+edge-measurement = [
+	"base-flashblocks/edge-measurement",
+	"base-mev-trader/edge-measurement",
+]
 t4a-shadow = [
 	"base-mev-trader/t4a-shadow",
 	"dep:libc",

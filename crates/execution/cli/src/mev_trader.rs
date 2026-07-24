@@ -424,6 +424,8 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                 Arc::clone(&self.config.flashblocks),
                 node.provider().clone(),
             ));
+            #[cfg(feature = "edge-measurement")]
+            let edge_measurement_registry = self.config.flashblocks.edge_measurement_registry();
             #[cfg(feature = "t4b-shadow")]
             let start = if self.config.t4d_shadow {
                 #[cfg(feature = "t4d-shadow")]
@@ -460,11 +462,30 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                     let snapshot_handle = tokio::spawn(async move {
                         loop {
                             tokio::select! {
-                                () = snapshot_runtime.shutdown().wait_cancelled() => return,
+                                () = snapshot_runtime.shutdown().wait_cancelled() => {
+                                    #[cfg(feature = "edge-measurement")]
+                                    let _ = edge_measurement_registry.cli_cancelled();
+                                    return;
+                                },
                                 pending = receiver.recv() => match pending {
-                                    Ok(pending) => port.record_pending_snapshot(pending, Instant::now()),
-                                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                                    Ok(pending) => {
+                                        #[cfg(feature = "edge-measurement")]
+                                        let measurement_pending = Arc::clone(&pending);
+                                        port.record_pending_snapshot(pending, Instant::now());
+                                        #[cfg(feature = "edge-measurement")]
+                                        let _ =
+                                            edge_measurement_registry.cli_received(&measurement_pending);
+                                    },
+                                    Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                                        #[cfg(feature = "edge-measurement")]
+                                        let _ = edge_measurement_registry.cli_lagged(count);
+                                        continue;
+                                    },
+                                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                        #[cfg(feature = "edge-measurement")]
+                                        let _ = edge_measurement_registry.cli_closed();
+                                        return;
+                                    },
                                 }
                             }
                         }
@@ -1397,6 +1418,42 @@ mod tests {
             B256::with_last_byte(2),
         ));
         builder.build().expect("pending blocks")
+    }
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn edge_measurement_installs_before_lookup_and_terminalizes_every_receive_branch() {
+        const CLI_MANIFEST: &str = include_str!("../Cargo.toml");
+        const CLI_SOURCE: &str = include_str!("mev_trader.rs");
+
+        let receiver_block = CLI_SOURCE
+            .split_once("let snapshot_handle = tokio::spawn")
+            .and_then(|(_, source)| source.split_once("let consumer_runtime"))
+            .map(|(source, _)| source)
+            .expect("isolated snapshot receiver block");
+        assert_eq!(receiver_block.matches("port.record_pending_snapshot(").count(), 1);
+        let install =
+            receiver_block.find("port.record_pending_snapshot(").expect("snapshot install");
+        let lookup = receiver_block
+            .find("edge_measurement_registry.cli_received(")
+            .expect("registry receive lookup");
+        assert!(install < lookup, "snapshot install must precede registry lookup");
+        for terminal in ["cli_lagged(count)", "cli_closed()", "cli_cancelled()"] {
+            assert!(receiver_block.contains(terminal), "missing receiver terminal: {terminal}");
+        }
+
+        let feature = CLI_MANIFEST
+            .split_once("edge-measurement = [")
+            .and_then(|(_, manifest)| manifest.split_once(']'))
+            .map(|(feature, _)| feature)
+            .expect("edge measurement CLI feature");
+        assert!(feature.contains("\"base-flashblocks/edge-measurement\""));
+        assert!(feature.contains("\"base-mev-trader/edge-measurement\""));
+        for forbidden in ["mev-trader-submit", "signer", "submission", "arm", "egress"] {
+            assert!(
+                !feature.contains(forbidden),
+                "forbidden measurement feature edge: {forbidden}"
+            );
+        }
     }
 
     #[test]
