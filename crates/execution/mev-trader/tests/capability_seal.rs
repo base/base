@@ -34,12 +34,14 @@ const NORMAL_DEPENDENCIES: [&str; 24] = [
     "tokio-tungstenite",
     "tracing",
 ];
-const SOURCE_FILES: [&str; 13] = [
+const SOURCE_FILES: [&str; 15] = [
     "blink_ingress.rs",
+    "edge_measurement.rs",
     "frame.rs",
     "latency.rs",
     "lib.rs",
     "lifecycle.rs",
+    "measurement_tx.rs",
     "oracle.rs",
     "pairwise.rs",
     "port.rs",
@@ -855,7 +857,7 @@ fn runtime_wiring_is_receive_only_and_preserves_forwarding_semantics() {
         );
     }
 
-    assert_eq!(adapter.matches("tokio::spawn").count(), 4);
+    assert_eq!(adapter.matches("tokio::spawn").count(), 5);
     assert_eq!(adapter.matches("spawn_critical_task").count(), 0);
     assert_eq!(adapter.matches("spawn_with_graceful_shutdown_signal").count(), 1);
     assert_eq!(adapter.matches("subscribe_to_flashblocks").count(), 1);
