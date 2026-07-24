@@ -1061,8 +1061,8 @@ mod tests {
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
         let mut scanner = GameScanner::new(
-            factory.clone(),
-            verifier.clone(),
+            Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
+            Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
             mock_anchor_registry(Address::ZERO),
         );
 
