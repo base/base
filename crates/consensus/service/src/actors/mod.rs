@@ -15,12 +15,13 @@ mod engine;
 #[cfg(test)]
 pub use engine::MockEngineDerivationClient;
 pub use engine::{
-    BootstrapRole, BuildRequest, CanonicalReconciliationInputs, EngineActor, EngineActorRequest,
-    EngineClientError, EngineClientResult, EngineConfig, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineProcessorOptions, EngineRequestHandler, EngineRequestReceiver,
-    EngineRpcProcessor, EngineRpcRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
-    QueuedEngineDerivationClient, ReconcileShadowRequest, ResetRequest, ShadowCanonicalCatchup,
-    ShadowEngineState, ShadowReconciliationGate,
+    BootstrapRole, BuildRequest, CanonicalReconciliationInputs, CanonicalUnsafeCatchup,
+    EngineActor, EngineActorRequest, EngineClientError, EngineClientResult, EngineConfig,
+    EngineDerivationClient, EngineError, EngineProcessor, EngineProcessorOptions,
+    EngineRequestHandler, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
+    GetPayloadRequest, InsertUnsafePayloadRequest, QueuedEngineDerivationClient,
+    ReconcileShadowRequest, ResetOrigin, ResetRequest, SequencerEngineState,
+    ShadowReconciliationGate,
 };
 
 mod rpc;

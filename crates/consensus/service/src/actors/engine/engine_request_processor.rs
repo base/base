@@ -20,10 +20,10 @@ use tokio::{
 use crate::{
     BuildRequest, CheckpointWriter, Conductor, EngineActorRequest, EngineClientError,
     EngineDerivationClient, EngineError, GetPayloadRequest, InsertUnsafePayloadRequest, NodeMode,
-    NoopCheckpointWriter, ResetRequest,
+    NoopCheckpointWriter, ResetOrigin, ResetRequest,
     actors::engine::{
-        CanonicalReconciliationInputs, ReconcileShadowRequest, ShadowCanonicalCatchup,
-        ShadowEngineState, ShadowReconciliationGate,
+        CanonicalReconciliationInputs, CanonicalUnsafeCatchup, ReconcileShadowRequest,
+        SequencerEngineState, ShadowReconciliationGate,
     },
 };
 
@@ -50,7 +50,7 @@ enum ResetOutcome {
     InitialELSyncReset,
 }
 
-/// Owns the engine processor and routes requests that require shadow reconciliation state.
+/// Owns the engine processor and routes sequencer catch-up and shadow reconciliation requests.
 #[derive(Debug)]
 pub struct EngineRequestHandler<EngineClient_, DerivationClient>
 where
@@ -58,8 +58,8 @@ where
     DerivationClient: EngineDerivationClient,
 {
     processor: EngineProcessor<EngineClient_, DerivationClient>,
-    /// Canonical catch-up or active reconciliation state for a shadow sequencer.
-    shadow_state: Option<ShadowEngineState>,
+    /// Canonical catch-up or active shadow reconciliation state.
+    sequencer_state: SequencerEngineState,
 }
 
 impl<EngineClient_, DerivationClient> EngineRequestHandler<EngineClient_, DerivationClient>
@@ -72,79 +72,86 @@ where
         processor: EngineProcessor<EngineClient_, DerivationClient>,
         shadow_mode: bool,
     ) -> Self {
-        let shadow_state =
-            shadow_mode.then(|| ShadowEngineState::CatchingUp(ShadowCanonicalCatchup::default()));
-        Self { processor, shadow_state }
+        let sequencer_state = if shadow_mode {
+            SequencerEngineState::CatchingUp {
+                shadow: true,
+                catchup: CanonicalUnsafeCatchup::default(),
+            }
+        } else {
+            SequencerEngineState::Regular
+        };
+        Self { processor, sequencer_state }
     }
 
     /// Returns whether this handler is configured as a shadow sequencer.
     const fn is_shadow_sequencer(&self) -> bool {
-        self.shadow_state.is_some()
+        matches!(
+            self.sequencer_state,
+            SequencerEngineState::CatchingUp { shadow: true, .. }
+                | SequencerEngineState::ShadowActive(_)
+        )
     }
 
     const fn active_shadow_gate(&mut self) -> Option<&mut ShadowReconciliationGate> {
-        match self.shadow_state.as_mut() {
-            Some(ShadowEngineState::Active(gate)) => Some(gate),
+        match &mut self.sequencer_state {
+            SequencerEngineState::ShadowActive(gate) => Some(gate),
             _ => None,
         }
     }
 
     const fn is_shadow_active(&self) -> bool {
-        matches!(self.shadow_state, Some(ShadowEngineState::Active(_)))
+        matches!(self.sequencer_state, SequencerEngineState::ShadowActive(_))
     }
 
-    async fn advance_shadow_catchup(&mut self) -> Result<(), EngineError> {
+    async fn advance_canonical_catchup(&mut self) -> Result<(), EngineError> {
         let anchor = self.processor.engine.state().sync_state.unsafe_head();
-        let payloads = match self.shadow_state.as_mut() {
-            Some(ShadowEngineState::CatchingUp(catchup)) => catchup
-                .contiguous_payloads(anchor)
-                .map_err(|error| EngineError::ShadowReconciliationFailed(error.to_string()))?,
+        let payloads = match &mut self.sequencer_state {
+            SequencerEngineState::CatchingUp { catchup, .. } => catchup.contiguous_payloads(anchor),
             _ => return Ok(()),
         };
-
-        if !payloads.is_empty() {
-            debug!(
-                target: "engine",
-                anchor = anchor.block_info.number,
-                payload_count = payloads.len(),
-                first_payload = payloads.first().map(|payload| payload.execution_payload.block_number()),
-                last_payload = payloads.last().map(|payload| payload.execution_payload.block_number()),
-                "Applying buffered canonical payloads during shadow catch-up"
-            );
-            let result = self
-                .processor
-                .engine
-                .insert_authoritative_payloads(
-                    Arc::clone(&self.processor.client),
-                    Arc::clone(&self.processor.rollup),
-                    payloads,
-                )
-                .await;
-            match result {
-                Ok(head) => {
-                    let Some(ShadowEngineState::CatchingUp(catchup)) = self.shadow_state.as_mut()
-                    else {
-                        return Ok(());
-                    };
-                    catchup.commit(head);
-                }
-                Err(error) => {
-                    debug!(
-                        target: "engine",
-                        error = ?error,
-                        severity = ?error.severity(),
-                        "Buffered canonical payload application deferred during shadow catch-up"
-                    );
-                    return match error.severity() {
-                        EngineTaskErrorSeverity::Temporary | EngineTaskErrorSeverity::Deferred => {
-                            Ok(())
-                        }
-                        _ => Err(EngineError::CriticalEngineTask(format!("{error:?}"))),
-                    };
-                }
-            }
+        if payloads.is_empty() {
+            return Ok(());
         }
 
+        debug!(
+            target: "engine",
+            anchor = anchor.block_info.number,
+            payload_count = payloads.len(),
+            first_payload = payloads.first().map(|payload| payload.execution_payload.block_number()),
+            last_payload = payloads.last().map(|payload| payload.execution_payload.block_number()),
+            "Applying ordered canonical unsafe payloads"
+        );
+        match self
+            .processor
+            .engine
+            .insert_authoritative_payloads(
+                Arc::clone(&self.processor.client),
+                Arc::clone(&self.processor.rollup),
+                payloads,
+            )
+            .await
+        {
+            Ok(head) => {
+                if let SequencerEngineState::CatchingUp { catchup, .. } = &mut self.sequencer_state
+                {
+                    catchup.commit(head);
+                }
+            }
+            Err(error) => {
+                debug!(
+                    target: "engine",
+                    error = ?error,
+                    severity = ?error.severity(),
+                    "Ordered canonical unsafe payload application deferred"
+                );
+                return match error.severity() {
+                    EngineTaskErrorSeverity::Temporary | EngineTaskErrorSeverity::Deferred => {
+                        Ok(())
+                    }
+                    _ => Err(EngineError::CriticalEngineTask(format!("{error:?}"))),
+                };
+            }
+        }
         Ok(())
     }
 }
@@ -929,17 +936,28 @@ where
             };
 
             let opt_head = reth_head.ok().flatten();
-            if self.is_shadow_sequencer() {
-                self.processor.bootstrap_conductor_follower(opt_head).await;
+            let bootstrap_role = if self.is_shadow_sequencer() {
+                BootstrapRole::ConductorFollower
             } else {
-                match self.processor.resolve_bootstrap_role().await {
-                    BootstrapRole::Validator => self.processor.bootstrap_validator(opt_head).await,
-                    BootstrapRole::ConductorFollower => {
-                        self.processor.bootstrap_conductor_follower(opt_head).await
-                    }
-                    BootstrapRole::ActiveSequencer => {
-                        self.processor.bootstrap_active_sequencer(opt_head, at_genesis).await
-                    }
+                self.processor.resolve_bootstrap_role().await
+            };
+            if bootstrap_role == BootstrapRole::ConductorFollower
+                && self.processor.node_mode.is_sequencer()
+                && !at_genesis
+                && matches!(self.sequencer_state, SequencerEngineState::Regular)
+            {
+                self.sequencer_state = SequencerEngineState::CatchingUp {
+                    shadow: false,
+                    catchup: CanonicalUnsafeCatchup::default(),
+                };
+            }
+            match bootstrap_role {
+                BootstrapRole::Validator => self.processor.bootstrap_validator(opt_head).await,
+                BootstrapRole::ConductorFollower => {
+                    self.processor.bootstrap_conductor_follower(opt_head).await
+                }
+                BootstrapRole::ActiveSequencer => {
+                    self.processor.bootstrap_active_sequencer(opt_head, at_genesis).await
                 }
             }
 
@@ -963,19 +981,17 @@ where
                 // A genuine drain reset invalidates shadow reconciliation state and is fatal. The
                 // one-time `InitialELSyncReset` (a cold-start bootstrap reset) is deliberately
                 // tolerated: it carries no reconciliation state and cannot recur.
-                if drain_outcome == ResetOutcome::Reset {
-                    match self.shadow_state.as_mut() {
-                        Some(ShadowEngineState::Active(_)) => {
-                            return Err(EngineError::ShadowInternalReset);
-                        }
-                        Some(ShadowEngineState::CatchingUp(catchup)) => {
-                            *catchup = ShadowCanonicalCatchup::default();
-                        }
-                        None => {}
-                    }
+                if drain_outcome == ResetOutcome::Reset && self.is_shadow_active() {
+                    return Err(EngineError::ShadowInternalReset);
+                }
+                if drain_outcome == ResetOutcome::Reset
+                    && let SequencerEngineState::CatchingUp { catchup, .. } =
+                        &mut self.sequencer_state
+                {
+                    *catchup = CanonicalUnsafeCatchup::default();
                 }
 
-                self.advance_shadow_catchup().await?;
+                self.advance_canonical_catchup().await?;
 
                 // If the unsafe head has updated, propagate it to the outbound channels.
                 if let Some(unsafe_head_tx) = self.processor.unsafe_head_tx.as_ref() {
@@ -1085,21 +1101,29 @@ where
                         self.processor.engine.enqueue(task);
                     }
                     EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
-                        match self.shadow_state.as_mut() {
-                            Some(ShadowEngineState::CatchingUp(catchup)) => {
+                        match &mut self.sequencer_state {
+                            SequencerEngineState::CatchingUp { catchup, .. } => {
                                 catchup.buffer_payload(*envelope);
                             }
-                            Some(ShadowEngineState::Active(gate)) => {
+                            SequencerEngineState::ShadowActive(gate) => {
                                 gate.buffer_payload(*envelope);
                             }
-                            None => self.processor.handle_external_unsafe_l2_block(*envelope),
+                            SequencerEngineState::Regular => {
+                                self.processor.handle_external_unsafe_l2_block(*envelope);
+                            }
                         }
                     }
                     EngineActorRequest::ProcessAdminUnsafeL2BlockRequest(envelope) => {
-                        if self.is_shadow_sequencer() {
-                            warn!(target: "engine", "Ignoring admin unsafe payload on shadow sequencer");
-                        } else {
-                            self.processor.handle_admin_unsafe_l2_block(*envelope);
+                        match self.sequencer_state {
+                            SequencerEngineState::CatchingUp { .. } => {
+                                warn!(target: "engine", "Ignoring admin unsafe payload during canonical catch-up");
+                            }
+                            SequencerEngineState::ShadowActive(_) => {
+                                warn!(target: "engine", "Ignoring admin unsafe payload on shadow sequencer");
+                            }
+                            SequencerEngineState::Regular => {
+                                self.processor.handle_admin_unsafe_l2_block(*envelope);
+                            }
                         }
                     }
                     EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(envelope) => {
@@ -1113,8 +1137,8 @@ where
                     }
                     EngineActorRequest::ReconcileShadowRequest(request) => {
                         let ReconcileShadowRequest { shadow_head, result_tx } = *request;
-                        let result = match self.shadow_state.as_mut() {
-                            Some(ShadowEngineState::Active(gate)) => {
+                        let result = match &mut self.sequencer_state {
+                            SequencerEngineState::ShadowActive(gate) => {
                                 match gate.prepare(shadow_head) {
                                     Ok(Some(inputs)) => {
                                         self.processor.apply_canonical_inputs(inputs).await
@@ -1123,7 +1147,8 @@ where
                                     Err(error) => Err(error),
                                 }
                             }
-                            Some(ShadowEngineState::CatchingUp(_)) | None => {
+                            SequencerEngineState::Regular
+                            | SequencerEngineState::CatchingUp { .. } => {
                                 Err(EngineClientError::ShadowReconciliationDisabled)
                             }
                         };
@@ -1139,40 +1164,76 @@ where
                         }
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
-                        let ResetRequest { result_tx, shadow_cycle_coordinated } = *reset_request;
+                        let ResetRequest { result_tx, origin } = *reset_request;
                         let head = self.processor.engine.state().sync_state.unsafe_head();
-                        let shadow_catchup_complete = matches!(
-                            self.shadow_state.as_ref(),
-                            Some(ShadowEngineState::CatchingUp(catchup))
-                                if catchup.is_complete(head)
-                        );
-                        if shadow_cycle_coordinated && shadow_catchup_complete {
-                            info!(
-                                target: "engine",
-                                canonical_head = head.block_info.number,
-                                canonical_hash = %head.block_info.hash,
-                                "Shadow canonical catch-up completed"
-                            );
-                            self.shadow_state = Some(ShadowEngineState::Active(
-                                ShadowReconciliationGate::new(head),
-                            ));
-                            if let Some(unsafe_head_tx) = self.processor.unsafe_head_tx.as_ref() {
-                                unsafe_head_tx.send_replace(head);
+                        if origin != ResetOrigin::Derivation {
+                            let catchup = match &self.sequencer_state {
+                                SequencerEngineState::CatchingUp { shadow, catchup } => {
+                                    Some((*shadow, catchup.is_complete(head)))
+                                }
+                                _ => None,
+                            };
+                            match catchup {
+                                Some((_, false)) => {
+                                    warn!(target: "engine", "Deferring sequencer reset until canonical catch-up completes");
+                                    if result_tx
+                                        .send(Err(EngineClientError::ELSyncing))
+                                        .await
+                                        .is_err()
+                                    {
+                                        warn!(target: "engine", "Sending ELSyncing response failed");
+                                    }
+                                    continue;
+                                }
+                                Some((true, true)) => {
+                                    if origin != ResetOrigin::ShadowCycleCoordinated {
+                                        if result_tx
+                                            .send(Err(
+                                                EngineClientError::ShadowReconciliationDisabled,
+                                            ))
+                                            .await
+                                            .is_err()
+                                        {
+                                            warn!(target: "engine", "Sending shadow activation response failed");
+                                        }
+                                        continue;
+                                    }
+                                    info!(
+                                        target: "engine",
+                                        canonical_head = head.block_info.number,
+                                        canonical_hash = %head.block_info.hash,
+                                        "Shadow canonical catch-up completed"
+                                    );
+                                    self.sequencer_state = SequencerEngineState::ShadowActive(
+                                        Box::new(ShadowReconciliationGate::new(head)),
+                                    );
+                                    if let Some(unsafe_head_tx) =
+                                        self.processor.unsafe_head_tx.as_ref()
+                                    {
+                                        unsafe_head_tx.send_replace(head);
+                                    }
+                                    if result_tx.send(Ok(())).await.is_err() {
+                                        warn!(target: "engine", "Sending shadow activation response failed");
+                                    }
+                                    continue;
+                                }
+                                Some((false, true)) => {
+                                    info!(
+                                        target: "engine",
+                                        canonical_head = head.block_info.number,
+                                        canonical_hash = %head.block_info.hash,
+                                        "Sequencer canonical catch-up completed"
+                                    );
+                                    self.sequencer_state = SequencerEngineState::Regular;
+                                }
+                                None => {}
                             }
-                            if result_tx.send(Ok(())).await.is_err() {
-                                warn!(target: "engine", "Sending shadow activation response failed");
-                            }
-                            continue;
                         }
                         // Do not reset the engine while the EL is still syncing. A Reset sends a
                         // forkchoice_updated to reth pointing at the sync-start block, which will
                         // return Valid and cause reth to set that stale block as canonical,
                         // aborting any in-progress snap sync. Defer until el_sync_finished=true.
-                        let shadow_catchup_pending = shadow_cycle_coordinated
-                            && self.is_shadow_sequencer()
-                            && !self.is_shadow_active();
-                        if !self.processor.engine.state().el_sync_finished || shadow_catchup_pending
-                        {
+                        if !self.processor.engine.state().el_sync_finished {
                             warn!(target: "engine", "Deferring engine reset: EL sync not yet complete");
                             if result_tx.send(Err(EngineClientError::ELSyncing)).await.is_err() {
                                 warn!(target: "engine", "Sending ELSyncing response failed");
@@ -1185,12 +1246,12 @@ where
                         let reset_res = self.processor.reset_engine_state().await;
                         if let Ok(safe_head) = &reset_res {
                             let anchor = self.processor.engine.state().sync_state.unsafe_head();
-                            match self.shadow_state.as_mut() {
-                                Some(ShadowEngineState::Active(gate)) => gate.reanchor(anchor),
-                                Some(ShadowEngineState::CatchingUp(catchup)) => {
-                                    *catchup = ShadowCanonicalCatchup::default();
+                            match &mut self.sequencer_state {
+                                SequencerEngineState::ShadowActive(gate) => gate.reanchor(anchor),
+                                SequencerEngineState::CatchingUp { catchup, .. } => {
+                                    *catchup = CanonicalUnsafeCatchup::default();
                                 }
-                                None => {}
+                                SequencerEngineState::Regular => {}
                             }
                             if let Some(unsafe_head_tx) = self.processor.unsafe_head_tx.as_ref() {
                                 unsafe_head_tx.send_replace(anchor);
@@ -1226,7 +1287,10 @@ where
                             // return the error.
                             reset_res?;
                         }
-                        if reset_succeeded && self.is_shadow_active() && !shadow_cycle_coordinated {
+                        if reset_succeeded
+                            && self.is_shadow_active()
+                            && origin != ResetOrigin::ShadowCycleCoordinated
+                        {
                             return Err(EngineError::ShadowInternalReset);
                         }
                     }
@@ -1667,7 +1731,7 @@ mod tests {
         req_tx
             .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
                 result_tx,
-                shadow_cycle_coordinated: false,
+                origin: crate::ResetOrigin::Derivation,
             })))
             .await
             .expect("failed to send reset request");
@@ -1878,7 +1942,7 @@ mod tests {
         );
         let (req_tx, req_rx) = mpsc::channel(8);
         let mut handler = EngineRequestHandler::new(processor, true);
-        handler.shadow_state = Some(super::ShadowEngineState::Active(
+        handler.sequencer_state = super::SequencerEngineState::ShadowActive(Box::new(
             super::ShadowReconciliationGate::new(genesis_l2_info),
         ));
         let handle = handler.start(req_rx);
@@ -1908,7 +1972,7 @@ mod tests {
         req_tx
             .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
                 result_tx,
-                shadow_cycle_coordinated: false,
+                origin: crate::ResetOrigin::Derivation,
             })))
             .await
             .expect("failed to send reset during private build");
@@ -2128,6 +2192,12 @@ mod tests {
     fn config_bootstrap_role_active_sequencer() {
         let p = test_processor(true, false, None);
         assert_eq!(p.config_bootstrap_role(), super::BootstrapRole::ActiveSequencer);
+    }
+
+    #[test]
+    fn active_sequencer_does_not_wait_for_canonical_gossip() {
+        let handler = EngineRequestHandler::new(test_processor(true, false, None), false);
+        assert!(matches!(handler.sequencer_state, super::SequencerEngineState::Regular));
     }
 
     #[tokio::test]

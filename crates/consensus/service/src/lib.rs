@@ -22,8 +22,8 @@ pub use follow::{FollowError, RemoteClient, RemoteL2Client, RemoteL2ClientError}
 mod actors;
 pub use actors::{
     AlloyL1BlockFetcher, BlockStream, BootstrapRole, BuildRequest, CancellableContext,
-    CanonicalReconciliationInputs, CheckpointActor, CheckpointClient, CheckpointDB,
-    CheckpointError, CheckpointRequest, CheckpointWriter, Conductor, ConductorClient,
+    CanonicalReconciliationInputs, CanonicalUnsafeCatchup, CheckpointActor, CheckpointClient,
+    CheckpointDB, CheckpointError, CheckpointRequest, CheckpointWriter, Conductor, ConductorClient,
     ConductorError, DelayedL1OriginSelectorProvider, DelegateDerivationActor, DerivationActor,
     DerivationActorRequest, DerivationClientError, DerivationClientResult,
     DerivationDelegateClient, DerivationDelegateClientError, DerivationEngineClient,
@@ -41,10 +41,10 @@ pub use actors::{
     QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, ReconcileShadowRequest,
-    RecoveryModeGuard, ResetRequest, RpcActor, RpcActorError, RpcContext, ScheduledTicker,
-    SealState, SealStepError, SealStepOutcome, SequencerActor, SequencerActorError,
-    SequencerAdminQuery, SequencerConfig, SequencerEngineClient, ShadowCanonicalCatchup,
-    ShadowCycle, ShadowEngineState, ShadowReconciliationGate, ShadowReconciliationTask,
+    RecoveryModeGuard, ResetOrigin, ResetRequest, RpcActor, RpcActorError, RpcContext,
+    ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
+    SequencerActorError, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
+    SequencerEngineState, ShadowCycle, ShadowReconciliationGate, ShadowReconciliationTask,
     UnsafePayloadGossipClient, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     UpgradeSignalMetricsActor, UpgradeSignalNodeConfig,
 };

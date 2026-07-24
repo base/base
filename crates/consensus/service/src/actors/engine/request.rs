@@ -119,9 +119,19 @@ pub struct BuildRequest {
 pub struct ResetRequest {
     /// response will be sent to this channel, if `Some`.
     pub result_tx: mpsc::Sender<EngineClientResult<()>>,
-    /// Whether the caller coordinates rebuilding its shadow-cycle state around this reset.
-    /// Uncoordinated successful resets terminate an active shadow handler after responding.
-    pub shadow_cycle_coordinated: bool,
+    /// The subsystem and coordination path that requested the reset.
+    pub origin: ResetOrigin,
+}
+
+/// Identifies the state owner coordinating an engine reset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResetOrigin {
+    /// Derivation requested pipeline recovery.
+    Derivation,
+    /// The sequencer requested its ordinary startup or recovery reset.
+    Sequencer,
+    /// The shadow sequencer coordinated its private-cycle state around the reset.
+    ShadowCycleCoordinated,
 }
 
 /// A request to insert a local unsafe payload.

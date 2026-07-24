@@ -6,10 +6,10 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-use base_consensus_node::ShadowCanonicalCatchup;
+use base_consensus_node::CanonicalUnsafeCatchup;
 
-/// A late shadow retains future unsafe gossip without starving safe derivation, then applies the
-/// contiguous unsafe suffix before private shadow sequencing can begin.
+/// A late sequencer retains future unsafe gossip while deriving safe blocks, then applies the
+/// contiguous unsafe suffix in canonical order.
 #[tokio::test]
 async fn late_shadow_catches_up_safe_then_unsafe() {
     const SAFE_BLOCKS: usize = 5;
@@ -48,7 +48,7 @@ async fn late_shadow_catches_up_safe_then_unsafe() {
             parent_beacon_block_root: block.header.parent_beacon_block_root,
         }
     };
-    let mut catchup = ShadowCanonicalCatchup::default();
+    let mut catchup = CanonicalUnsafeCatchup::default();
     catchup.buffer_payload(envelope(7));
     catchup.buffer_payload(envelope(5));
     catchup.buffer_payload(envelope(6));
@@ -57,9 +57,7 @@ async fn late_shadow_catches_up_safe_then_unsafe() {
     assert_eq!(shadow.run_until_idle().await, SAFE_BLOCKS);
     assert_eq!(shadow.l2_safe_number(), SAFE_BLOCKS as u64);
 
-    let payloads = catchup
-        .contiguous_payloads(shadow.l2_unsafe())
-        .expect("buffered canonical suffix must be valid");
+    let payloads = catchup.contiguous_payloads(shadow.l2_unsafe());
     assert_eq!(payloads.len(), UNSAFE_BLOCKS);
     for payload in payloads {
         let block = ExecutionPayloadConverter::block_from_envelope(&payload)

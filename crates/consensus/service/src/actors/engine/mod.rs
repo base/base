@@ -15,7 +15,8 @@ pub use error::EngineError;
 mod request;
 pub use request::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineClientResult, EngineRpcRequest,
-    GetPayloadRequest, InsertUnsafePayloadRequest, ReconcileShadowRequest, ResetRequest,
+    GetPayloadRequest, InsertUnsafePayloadRequest, ReconcileShadowRequest, ResetOrigin,
+    ResetRequest,
 };
 
 mod engine_request_processor;
@@ -28,7 +29,7 @@ pub use engine_request_processor::{
 
 mod shadow_reconciliation_gate;
 pub use shadow_reconciliation_gate::{
-    CanonicalReconciliationInputs, ShadowCanonicalCatchup, ShadowEngineState,
+    CanonicalReconciliationInputs, CanonicalUnsafeCatchup, SequencerEngineState,
     ShadowReconciliationGate,
 };
 

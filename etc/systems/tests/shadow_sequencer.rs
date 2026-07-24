@@ -244,7 +244,18 @@ async fn late_shadow_catches_up_then_reconciles_private_blocks() -> Result<()> {
     wait_for_balance(&shadow_builder, signer.address()).await?;
     let nonce = shadow_builder.get_transaction_count(signer.address()).await?;
     let shadow_tx = send_transfer(&shadow_builder, &signer, nonce, dead_address(0x03)).await?;
-    let receipt = wait_for_receipt(&shadow_builder, shadow_tx, TX_RECEIPT_TIMEOUT).await?;
+    let receipt = match wait_for_receipt(&shadow_builder, shadow_tx, Duration::from_secs(15)).await
+    {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            let shadow_height = shadow_builder.get_block_number().await?;
+            let active_height = active_builder.get_block_number().await?;
+            eyre::bail!(
+                "late shadow did not include its private transaction: shadow_height={shadow_height}, \
+                 active_height={active_height}, error={error}"
+            );
+        }
+    };
     let private_height = receipt
         .inner
         .block_number

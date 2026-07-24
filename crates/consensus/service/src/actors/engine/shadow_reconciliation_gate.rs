@@ -10,58 +10,66 @@ use tracing::debug;
 
 use crate::{EngineClientError, SequencerConfig};
 
-/// Shadow-sequencer engine state before and after canonical catch-up completes.
+/// Sequencer engine state while following canonical blocks or producing shadow blocks.
 #[derive(Debug)]
-pub enum ShadowEngineState {
-    /// Safe derivation remains active while canonical unsafe payloads are retained for catch-up.
-    CatchingUp(ShadowCanonicalCatchup),
+pub enum SequencerEngineState {
+    /// No canonical catch-up or shadow reconciliation routing is active.
+    Regular,
+    /// The sequencer is following canonical safe derivation and unsafe gossip.
+    CatchingUp {
+        /// Whether catch-up completion should activate private shadow production.
+        shadow: bool,
+        /// Rolling canonical unsafe payload buffer shared by follower sequencers.
+        catchup: CanonicalUnsafeCatchup,
+    },
     /// Private block production is active and canonical inputs are buffered for reconciliation.
-    Active(ShadowReconciliationGate),
+    ShadowActive(Box<ShadowReconciliationGate>),
 }
 
-/// Canonical unsafe payloads retained while safe derivation catches a shadow sequencer up.
+/// Rolling canonical unsafe payloads retained while safe derivation catches up.
 #[derive(Debug, Default)]
-pub struct ShadowCanonicalCatchup {
+pub struct CanonicalUnsafeCatchup {
     payloads: BTreeMap<u64, BaseExecutionPayloadEnvelope>,
+    observations: BTreeMap<u64, B256>,
     highest_observed: Option<(u64, B256)>,
     faulted: bool,
 }
 
-impl ShadowCanonicalCatchup {
-    /// Maximum canonical unsafe payloads retained during catch-up.
+impl CanonicalUnsafeCatchup {
+    /// Maximum recent canonical unsafe payloads retained during catch-up.
     pub const MAX_PAYLOADS: usize = SequencerConfig::MAX_SHADOW_BLOCKS_PER_CYCLE as usize;
 
-    /// Retains an authenticated canonical payload without blocking safe derivation.
+    /// Retains an authenticated canonical payload in the rolling recent window.
     pub fn buffer_payload(&mut self, envelope: BaseExecutionPayloadEnvelope) {
         let number = envelope.execution_payload.block_number();
         let hash = envelope.execution_payload.block_hash();
         if self.faulted {
             return;
         }
-        if let Some(existing) = self.payloads.get(&number) {
-            if existing.execution_payload.block_hash() != hash {
+        if let Some(existing_hash) = self.observations.get(&number) {
+            if *existing_hash != hash {
                 self.faulted = true;
             }
             return;
         }
-        if self.payloads.len() >= Self::MAX_PAYLOADS {
-            self.faulted = true;
-            return;
-        }
+        self.observations.insert(number, hash);
         if self.highest_observed.is_none_or(|(highest, _)| number > highest) {
             self.highest_observed = Some((number, hash));
         }
         self.payloads.insert(number, envelope);
+        while self.payloads.len() > Self::MAX_PAYLOADS {
+            self.payloads.pop_first();
+        }
+        while self.observations.len() > Self::MAX_PAYLOADS {
+            self.observations.pop_first();
+        }
     }
 
     /// Returns the contiguous canonical suffix that can extend `anchor` now.
     pub fn contiguous_payloads(
         &mut self,
         anchor: L2BlockInfo,
-    ) -> Result<Vec<BaseExecutionPayloadEnvelope>, EngineClientError> {
-        if self.faulted {
-            return Err(EngineClientError::ShadowBufferFaulted);
-        }
+    ) -> Vec<BaseExecutionPayloadEnvelope> {
         self.payloads.retain(|number, _| *number > anchor.block_info.number);
 
         let mut number = anchor.block_info.number.saturating_add(1);
@@ -69,15 +77,13 @@ impl ShadowCanonicalCatchup {
         let mut payloads = Vec::new();
         while let Some(payload) = self.payloads.get(&number) {
             if payload.execution_payload.parent_hash() != parent {
-                return Err(EngineClientError::InvalidShadowReconciliation(
-                    "canonical catch-up payload parent mismatch".to_string(),
-                ));
+                break;
             }
             parent = payload.execution_payload.block_hash();
             payloads.push(payload.clone());
             number = number.saturating_add(1);
         }
-        Ok(payloads)
+        payloads
     }
 
     /// Removes payloads acknowledged by the execution engine.
@@ -85,14 +91,13 @@ impl ShadowCanonicalCatchup {
         self.payloads.retain(|number, _| *number > head.block_info.number);
     }
 
-    /// Returns whether the acknowledged engine head covers every observed canonical payload.
+    /// Returns whether the acknowledged engine head covers the latest observed canonical payload.
     pub fn is_complete(&self, head: L2BlockInfo) -> bool {
-        if self.faulted || !self.payloads.is_empty() {
-            return false;
-        }
         self.highest_observed.is_some_and(|(number, hash)| {
-            head.block_info.number > number
-                || (head.block_info.number == number && head.block_info.hash == hash)
+            !self.faulted
+                && self.payloads.is_empty()
+                && head.block_info.number == number
+                && head.block_info.hash == hash
         })
     }
 }
@@ -296,7 +301,7 @@ mod tests {
     use base_consensus_engine::ConsolidateInput;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
-    use super::{ShadowCanonicalCatchup, ShadowReconciliationGate};
+    use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};
     use crate::EngineClientError;
 
     fn head(number: u64, hash: B256) -> L2BlockInfo {
@@ -329,13 +334,13 @@ mod tests {
     }
 
     #[test]
-    fn catchup_waits_for_safe_parent_then_returns_contiguous_unsafe_suffix() {
+    fn catchup_waits_for_parent_then_returns_contiguous_suffix() {
         let safe = head(10, B256::with_last_byte(10));
-        let mut catchup = ShadowCanonicalCatchup::default();
+        let mut catchup = CanonicalUnsafeCatchup::default();
         catchup.buffer_payload(payload(12, B256::with_last_byte(11), B256::with_last_byte(12)));
         catchup.buffer_payload(payload(11, safe.block_info.hash, B256::with_last_byte(11)));
 
-        let payloads = catchup.contiguous_payloads(safe).unwrap();
+        let payloads = catchup.contiguous_payloads(safe);
         assert_eq!(payloads.len(), 2);
         assert_eq!(payloads[0].execution_payload.block_number(), 11);
         assert_eq!(payloads[1].execution_payload.block_number(), 12);
@@ -347,26 +352,42 @@ mod tests {
     }
 
     #[test]
-    fn safe_derivation_can_overtake_buffered_payloads() {
-        let mut catchup = ShadowCanonicalCatchup::default();
-        catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
-        catchup.buffer_payload(payload(12, B256::with_last_byte(11), B256::with_last_byte(12)));
+    fn catchup_retains_rolling_latest_payload_window() {
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        let mut parent = B256::ZERO;
+        for number in 1..=CanonicalUnsafeCatchup::MAX_PAYLOADS as u64 + 2 {
+            let hash = B256::from(U256::from(number));
+            catchup.buffer_payload(payload(number, parent, hash));
+            parent = hash;
+        }
 
-        let safe = head(12, B256::with_last_byte(12));
-        assert!(catchup.contiguous_payloads(safe).unwrap().is_empty());
-        assert!(catchup.is_complete(safe));
+        assert_eq!(catchup.payloads.len(), CanonicalUnsafeCatchup::MAX_PAYLOADS);
+        assert_eq!(catchup.payloads.first_key_value().map(|(number, _)| *number), Some(3));
+        let anchor = head(2, B256::from(U256::from(2)));
+        assert_eq!(catchup.contiguous_payloads(anchor).len(), CanonicalUnsafeCatchup::MAX_PAYLOADS);
     }
 
     #[test]
-    fn conflicting_catchup_payload_faults_the_buffer() {
-        let mut catchup = ShadowCanonicalCatchup::default();
-        catchup.buffer_payload(payload(1, B256::ZERO, B256::with_last_byte(1)));
-        catchup.buffer_payload(payload(1, B256::ZERO, B256::with_last_byte(2)));
+    fn safe_head_beyond_last_observed_payload_does_not_complete_catchup() {
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
+        catchup.commit(head(12, B256::with_last_byte(12)));
 
-        assert!(matches!(
-            catchup.contiguous_payloads(L2BlockInfo::default()),
-            Err(EngineClientError::ShadowBufferFaulted)
-        ));
+        assert!(!catchup.is_complete(head(12, B256::with_last_byte(12))));
+    }
+
+    #[test]
+    fn conflict_after_original_payload_was_applied_prevents_completion() {
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        let original = head(11, B256::with_last_byte(11));
+        catchup.buffer_payload(payload(11, B256::with_last_byte(10), original.block_info.hash));
+        catchup.commit(original);
+        assert!(catchup.is_complete(original));
+
+        catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(99)));
+
+        assert!(catchup.faulted);
+        assert!(!catchup.is_complete(original));
     }
 
     #[test]
