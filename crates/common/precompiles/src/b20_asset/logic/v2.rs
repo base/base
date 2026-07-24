@@ -10,7 +10,7 @@
 //! pending schedule can exist yet: `set_ui_multiplier` is a frozen default until that PR, so
 //! nothing can populate the pending slot for `update_multiplier` to clear.
 
-use crate::AssetV1;
+use crate::{AssetV1, macros::delegate_asset};
 
 /// Second B-20 Asset precompile implementation, introduced at Cobalt.
 #[derive(Debug, Default, Clone, Copy)]
