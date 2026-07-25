@@ -4,39 +4,150 @@ use std::io::{self, Write};
 
 use anyhow::{Context, Result, anyhow};
 use base_consensus_peers::BootNode;
-use basectl_cli::{
-    CommandOutcome, Confirm, DestructiveClBulkArgs, DestructivePeerArgs, ElReachabilityOutcome,
-    JsonOutput, KeyValueTable, MonitoringConfig, P2pArgs, P2pCommandError, P2pCommands,
-    P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary, TelemetryClient,
-    add_peer, ban_el_peer, ban_peer, connect_peer, disconnect_peer, el_peer_is_trusted,
-    fetch_connected_peers, fetch_info, fetch_l2_chain_id, fetch_raw_info, fetch_raw_peers,
-    list_banned_peers, remove_peer, unban_el_peer, unban_peer,
-};
 use serde::Serialize;
 use url::Url;
 
-/// Runs the `basectl p2p` command group.
-pub(crate) async fn run(config: &str, command: P2pCommands) -> Result<CommandOutcome> {
-    match command {
-        P2pCommands::Reachability { enode, json } => {
-            let config = MonitoringConfig::load(config).await?;
-            run_reachability(&config, &enode, json).await
-        }
-        other => {
-            let config = MonitoringConfig::load(config).await?;
-            match other {
-                P2pCommands::Peers(args) => run_peers(config, args).await?,
-                P2pCommands::Info(args) => run_info(config, args).await?,
-                P2pCommands::AddPeer(args) => run_add_peer(config, args).await?,
-                P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await?,
-                P2pCommands::Ban(args) => run_peer_ban_action(config, args, BanAction::Ban).await?,
-                P2pCommands::Unban(args) => {
-                    run_peer_ban_action(config, args, BanAction::Unban).await?
-                }
-                P2pCommands::UnbanAll(args) => run_unban_all(config, args).await?,
-                P2pCommands::Reachability { .. } => unreachable!(),
+use crate::{
+    CommandOutcome, Confirm, ElReachabilityOutcome, JsonOutput, KeyValueTable, MonitoringConfig,
+    P2pCommandError, P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary,
+    TelemetryClient, add_peer, ban_el_peer, ban_peer, connect_peer, disconnect_peer,
+    el_peer_is_trusted, fetch_connected_peers, fetch_info, fetch_l2_chain_id, fetch_raw_info,
+    fetch_raw_peers, list_banned_peers, remove_peer, unban_el_peer, unban_peer,
+};
+
+/// Inspect p2p peers and advertised endpoints.
+#[derive(Debug, clap::Args)]
+pub struct P2pCommand {
+    /// P2P operation to run.
+    #[command(subcommand)]
+    pub command: P2pCommands,
+}
+
+/// P2P inspection and peer-management commands.
+#[derive(Debug, clap::Subcommand)]
+pub enum P2pCommands {
+    /// List connected peers per layer.
+    Peers(P2pArgs),
+    /// Show advertised endpoints and peer-count summary per layer.
+    Info(P2pArgs),
+    /// Ask the Base telemetry service to probe an execution-layer enode.
+    Reachability {
+        /// Execution-layer `enode://` URL to probe.
+        #[arg(value_name = "ENODE")]
+        enode: String,
+        /// Emit the telemetry response as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Add a single execution or consensus peer.
+    AddPeer(DestructivePeerArgs),
+    /// Remove a single execution or consensus peer.
+    RemovePeer(DestructivePeerArgs),
+    /// Ban a single execution or consensus peer.
+    Ban(DestructivePeerArgs),
+    /// Unban a single execution or consensus peer.
+    Unban(DestructivePeerArgs),
+    /// Unban all currently banned consensus peers.
+    UnbanAll(DestructiveClBulkArgs),
+}
+
+/// Shared flags for the read-only `basectl p2p` subcommands.
+#[derive(Debug, clap::Args)]
+pub struct P2pArgs {
+    /// Override the execution-layer RPC URL.
+    ///
+    /// Defaults to the chain config's `rpc` field, which on the
+    /// `mainnet` and `sepolia` presets resolves to the public proxyd
+    /// fleet. Pass this flag to query a single node directly.
+    #[arg(long = "el-rpc", value_name = "URL")]
+    pub el_rpc: Option<Url>,
+    /// Override the consensus-node RPC URL.
+    ///
+    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
+    /// so non-devnet users must pass this flag (or set the field in
+    /// their YAML config).
+    #[arg(long = "cl-rpc", value_name = "URL")]
+    pub cl_rpc: Option<Url>,
+    /// Emit JSON instead of the pretty table output.
+    #[arg(long)]
+    pub json: bool,
+    /// With `--json`, emit raw RPC wire shapes instead of the humanized summary.
+    #[arg(long, requires = "json")]
+    pub raw: bool,
+}
+
+/// Shared flags for destructive `basectl p2p` subcommands.
+#[derive(Debug, clap::Args)]
+pub struct DestructivePeerArgs {
+    /// Peer target. `enode://...` routes to EL; CL add accepts ENR or multiaddr, while other actions use a peer ID.
+    #[arg(value_name = "TARGET")]
+    pub target: String,
+    /// Override the execution-layer RPC URL.
+    ///
+    /// Defaults to the chain config's `rpc` field, which on the
+    /// `mainnet` and `sepolia` presets resolves to the public proxyd
+    /// fleet. Pass this flag to query a single node directly.
+    #[arg(long = "el-rpc", value_name = "URL")]
+    pub el_rpc: Option<Url>,
+    /// Override the consensus-node RPC URL.
+    ///
+    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
+    /// so non-devnet users must pass this flag (or set the field in
+    /// their YAML config).
+    #[arg(long = "cl-rpc", value_name = "URL")]
+    pub cl_rpc: Option<Url>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub json: bool,
+}
+
+/// Shared flags for destructive consensus-only `basectl p2p` bulk subcommands.
+#[derive(Debug, clap::Args)]
+pub struct DestructiveClBulkArgs {
+    /// Override the consensus-node RPC URL.
+    ///
+    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
+    /// so non-devnet users must pass this flag (or set the field in
+    /// their YAML config).
+    #[arg(long = "cl-rpc", value_name = "URL")]
+    pub cl_rpc: Option<Url>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub json: bool,
+}
+
+impl P2pCommand {
+    /// Runs the selected `basectl p2p` operation.
+    pub async fn run(self, config: &str) -> Result<CommandOutcome> {
+        match self.command {
+            P2pCommands::Reachability { enode, json } => {
+                let config = MonitoringConfig::load(config).await?;
+                run_reachability(&config, &enode, json).await
             }
-            Ok(CommandOutcome::Success)
+            other => {
+                let config = MonitoringConfig::load(config).await?;
+                match other {
+                    P2pCommands::Peers(args) => run_peers(config, args).await?,
+                    P2pCommands::Info(args) => run_info(config, args).await?,
+                    P2pCommands::AddPeer(args) => run_add_peer(config, args).await?,
+                    P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await?,
+                    P2pCommands::Ban(args) => {
+                        run_peer_ban_action(config, args, BanAction::Ban).await?
+                    }
+                    P2pCommands::Unban(args) => {
+                        run_peer_ban_action(config, args, BanAction::Unban).await?
+                    }
+                    P2pCommands::UnbanAll(args) => run_unban_all(config, args).await?,
+                    P2pCommands::Reachability { .. } => unreachable!(),
+                }
+                Ok(CommandOutcome::Success)
+            }
         }
     }
 }
@@ -101,7 +212,7 @@ async fn run_peers(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
 async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Result<()> {
     let DestructivePeerArgs { target, el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, yes, json } =
         args;
-    let target = parse_add_target(&target)?;
+    let target = AddTarget::parse(&target)?;
 
     match target {
         AddTarget::Enode(enode) => {
@@ -147,7 +258,7 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
 async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Result<()> {
     let DestructivePeerArgs { target, el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, yes, json } =
         args;
-    let target = parse_peer_target(&target)?;
+    let target = PeerTarget::parse(&target)?;
 
     match target {
         PeerTarget::Enode(enode) => {
@@ -204,7 +315,7 @@ async fn run_peer_ban_action(
         BanAction::Ban => ("Ban", "p2p ban"),
         BanAction::Unban => ("Unban", "p2p unban"),
     };
-    match parse_peer_target(&target)? {
+    match PeerTarget::parse(&target)? {
         PeerTarget::Enode(enode) => {
             warn_ignored_rpc_override(
                 cl_rpc_override.as_ref(),
@@ -363,126 +474,169 @@ fn warn_ignored_rpc_override(
     }
 }
 
+/// Parsed peer target accepted by `basectl p2p add-peer`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum AddTarget {
+pub enum AddTarget {
+    /// Execution-layer enode target.
     Enode(String),
+    /// Consensus-layer multiaddr target.
     Multiaddr(String),
 }
 
+/// Parsed peer target accepted by remove, ban, and unban operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum PeerTarget {
+pub enum PeerTarget {
+    /// Execution-layer enode target.
     Enode(String),
+    /// Consensus-layer libp2p peer ID.
     PeerId(String),
 }
 
-fn parse_add_target(raw: &str) -> Result<AddTarget, P2pTargetError> {
-    let target = raw.trim();
-    if target.is_empty() {
-        return Err(P2pTargetError::EmptyTarget);
-    }
-    if target.starts_with('/') {
-        if !target.contains("/p2p/") {
-            return Err(P2pTargetError::MultiaddrMissingPeerId { target: target.to_string() });
+impl AddTarget {
+    /// Parses an add-peer target and determines its execution or consensus layer.
+    pub fn parse(raw: &str) -> Result<Self, P2pTargetError> {
+        let target = raw.trim();
+        if target.is_empty() {
+            return Err(P2pTargetError::EmptyTarget);
         }
-        return Ok(AddTarget::Multiaddr(target.to_string()));
-    }
+        if target.starts_with('/') {
+            if !target.contains("/p2p/") {
+                return Err(P2pTargetError::MultiaddrMissingPeerId { target: target.to_string() });
+            }
+            return Ok(Self::Multiaddr(target.to_string()));
+        }
 
-    let bootnode = BootNode::parse_bootnode(target).map_err(|error| {
-        P2pTargetError::InvalidBootnode { target: target.to_string(), message: error.to_string() }
-    })?;
-    match &bootnode {
-        BootNode::Enode(_) => Ok(AddTarget::Enode(target.to_string())),
-        BootNode::Enr(_) => {
-            let multiaddr = bootnode.to_multiaddr().ok_or_else(|| {
-                P2pTargetError::EnrMissingMultiaddr { target: target.to_string() }
+        let bootnode =
+            BootNode::parse_bootnode(target).map_err(|error| P2pTargetError::InvalidBootnode {
+                target: target.to_string(),
+                message: error.to_string(),
             })?;
-            Ok(AddTarget::Multiaddr(multiaddr.to_string()))
+        match &bootnode {
+            BootNode::Enode(_) => Ok(Self::Enode(target.to_string())),
+            BootNode::Enr(_) => {
+                let multiaddr = bootnode.to_multiaddr().ok_or_else(|| {
+                    P2pTargetError::EnrMissingMultiaddr { target: target.to_string() }
+                })?;
+                Ok(Self::Multiaddr(multiaddr.to_string()))
+            }
         }
     }
 }
 
-fn parse_peer_target(raw: &str) -> Result<PeerTarget, P2pTargetError> {
-    let target = raw.trim();
-    if target.is_empty() {
-        return Err(P2pTargetError::EmptyTarget);
-    }
-    if target.starts_with("enr:") {
-        return Err(P2pTargetError::PeerActionEnrTarget { target: target.to_string() });
-    }
-    if target.split_whitespace().count() != 1 {
-        return Err(P2pTargetError::TargetContainsWhitespace { target: target.to_string() });
-    }
+impl PeerTarget {
+    /// Parses a remove, ban, or unban target and determines its peer layer.
+    pub fn parse(raw: &str) -> Result<Self, P2pTargetError> {
+        let target = raw.trim();
+        if target.is_empty() {
+            return Err(P2pTargetError::EmptyTarget);
+        }
+        if target.starts_with("enr:") {
+            return Err(P2pTargetError::PeerActionEnrTarget { target: target.to_string() });
+        }
+        if target.split_whitespace().count() != 1 {
+            return Err(P2pTargetError::TargetContainsWhitespace { target: target.to_string() });
+        }
 
-    if target.starts_with("enode://") {
-        BootNode::parse_bootnode(target).map_err(|error| P2pTargetError::InvalidBootnode {
-            target: target.to_string(),
-            message: error.to_string(),
-        })?;
-        return Ok(PeerTarget::Enode(target.to_string()));
-    }
-    if target.contains(':') || target.contains('/') {
-        return Err(P2pTargetError::PeerActionClTargetNotBarePeerId { target: target.to_string() });
-    }
-    if target.len() < MIN_LIBP2P_PEER_ID_LEN {
-        return Err(P2pTargetError::ClPeerIdTooShort {
-            target: target.to_string(),
-            min_len: MIN_LIBP2P_PEER_ID_LEN,
-        });
-    }
+        if target.starts_with("enode://") {
+            BootNode::parse_bootnode(target).map_err(|error| P2pTargetError::InvalidBootnode {
+                target: target.to_string(),
+                message: error.to_string(),
+            })?;
+            return Ok(Self::Enode(target.to_string()));
+        }
+        if target.contains(':') || target.contains('/') {
+            return Err(P2pTargetError::PeerActionClTargetNotBarePeerId {
+                target: target.to_string(),
+            });
+        }
+        if target.len() < MIN_LIBP2P_PEER_ID_LEN {
+            return Err(P2pTargetError::ClPeerIdTooShort {
+                target: target.to_string(),
+                min_len: MIN_LIBP2P_PEER_ID_LEN,
+            });
+        }
 
-    Ok(PeerTarget::PeerId(target.to_string()))
+        Ok(Self::PeerId(target.to_string()))
+    }
 }
 
+/// Structured JSON outcome for a peer-management action.
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged, rename_all = "camelCase")]
-enum PeerActionJson {
+pub enum PeerActionJson {
+    /// Execution-layer peer action outcome.
     El {
+        /// Selected network name.
         network: String,
+        /// Peer action performed.
         action: PeerAction,
+        /// Peer layer targeted.
         layer: PeerLayer,
+        /// Enode target.
         target: String,
+        /// Whether the execution client accepted the action.
         accepted: bool,
     },
+    /// Consensus-layer peer action outcome.
     Cl {
+        /// Selected network name.
         network: String,
+        /// Peer action performed.
         action: PeerAction,
+        /// Peer layer targeted.
         layer: PeerLayer,
+        /// Peer target.
         target: String,
+        /// Best-effort disconnect error after a successful ban.
         #[serde(rename = "disconnectError")]
         #[serde(skip_serializing_if = "Option::is_none")]
         disconnect_error: Option<String>,
     },
+    /// Consensus-layer bulk peer action outcome.
     ClBulk {
+        /// Selected network name.
         network: String,
+        /// Peer action performed.
         action: PeerAction,
+        /// Peer layer targeted.
         layer: PeerLayer,
+        /// Number of peers attempted.
         attempted: usize,
+        /// Number of successful actions.
         succeeded: usize,
+        /// Number of failed actions.
         failed: usize,
+        /// Per-peer action results.
         results: Vec<PeerBulkActionResultJson>,
     },
 }
 
+/// Peer-management action represented in command output.
 #[derive(Debug, Clone, Copy, Serialize)]
-enum PeerAction {
+pub enum PeerAction {
+    /// Add or connect a peer.
     #[serde(rename = "addPeer")]
     Add,
+    /// Remove or disconnect a peer.
     #[serde(rename = "removePeer")]
     Remove,
+    /// Ban a peer.
     #[serde(rename = "banPeer")]
     Ban,
+    /// Unban a peer.
     #[serde(rename = "unbanPeer")]
     Unban,
+    /// Unban every banned consensus peer.
     #[serde(rename = "unbanAll")]
     UnbanAll,
 }
 
-/// The two peer actions handled by `run_peer_ban_action`, so the shared handler
-/// is exhaustive over exactly the cases it supports rather than the wider
-/// `PeerAction`.
+/// Ban operation handled by the shared peer ban workflow.
 #[derive(Debug, Clone, Copy)]
-enum BanAction {
+pub enum BanAction {
+    /// Ban a peer.
     Ban,
+    /// Unban a peer.
     Unban,
 }
 
@@ -495,10 +649,13 @@ impl BanAction {
     }
 }
 
+/// Peer layer targeted by a p2p operation.
 #[derive(Debug, Clone, Copy, Serialize)]
-enum PeerLayer {
+pub enum PeerLayer {
+    /// Execution layer.
     #[serde(rename = "el")]
     El,
+    /// Consensus layer.
     #[serde(rename = "cl")]
     Cl,
 }
@@ -559,13 +716,17 @@ impl PeerActionJson {
     }
 }
 
+/// Structured result for one peer in a bulk peer action.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PeerBulkActionResultJson {
-    target: String,
-    ok: bool,
+pub struct PeerBulkActionResultJson {
+    /// Peer target.
+    pub target: String,
+    /// Whether the action succeeded.
+    pub ok: bool,
+    /// Failure message when the action did not succeed.
     #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
+    pub error: Option<String>,
 }
 
 impl PeerBulkActionResultJson {
@@ -653,12 +814,16 @@ fn print_peer_action_pretty(action: &PeerActionJson) -> Result<()> {
     Ok(())
 }
 
+/// Humanized JSON shape for connected peers by layer.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PeersJson {
-    network: String,
-    el: Option<Vec<PeerSummary>>,
-    cl: Option<Vec<PeerSummary>>,
+pub struct PeersJson {
+    /// Selected network name.
+    pub network: String,
+    /// Connected execution-layer peers, when the RPC exposes them.
+    pub el: Option<Vec<PeerSummary>>,
+    /// Connected consensus-layer peers, when the RPC exposes them.
+    pub cl: Option<Vec<PeerSummary>>,
 }
 
 impl PeersJson {
@@ -710,21 +875,20 @@ mod tests {
     use std::net::TcpListener;
 
     use alloy_primitives::Address;
-    use basectl_cli::{P2pCommandError, P2pCommands, P2pTargetError};
     use serde_json::json;
     use url::Url;
 
     use super::{
-        AddTarget, PeerAction, PeerActionJson, PeerBulkActionResultJson, PeerTarget,
-        fail_unban_all_if_partial, parse_add_target, parse_peer_target, resolve_cl_rpc, run,
-        run_reachability,
+        AddTarget, P2pCommand, P2pCommands, PeerAction, PeerActionJson, PeerBulkActionResultJson,
+        PeerTarget, fail_unban_all_if_partial, resolve_cl_rpc, run_reachability,
     };
+    use crate::{MonitoringConfig, P2pCommandError, P2pTargetError};
 
     const VALID_ENODE: &str = "enode://d7dfaea49c7ef37701e668652bcf1bc63d3abb2ae97593374a949e175e4ff128730a2f35199f3462a56298b981dfc395a5abebd2d6f0284ffe5bdc3d8e258b86@127.0.0.1:30304?discport=30301";
     const VALID_ENR: &str = "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg";
 
-    fn test_config(consensus_node_rpc: Option<Url>) -> basectl_cli::MonitoringConfig {
-        basectl_cli::MonitoringConfig {
+    fn test_config(consensus_node_rpc: Option<Url>) -> MonitoringConfig {
+        MonitoringConfig {
             name: "devnet".to_string(),
             rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
             flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
@@ -779,9 +943,11 @@ mod tests {
 
     #[tokio::test]
     async fn reachability_loads_selected_monitoring_config() {
-        let command = P2pCommands::Reachability { enode: VALID_ENODE.to_string(), json: false };
+        let command = P2pCommand {
+            command: P2pCommands::Reachability { enode: VALID_ENODE.to_string(), json: false },
+        };
 
-        let error = run("/definitely/missing/basectl.yaml", command).await.unwrap_err();
+        let error = command.run("/definitely/missing/basectl.yaml").await.unwrap_err();
 
         assert!(
             error.to_string().starts_with("Config '/definitely/missing/basectl.yaml' not found")
@@ -806,14 +972,14 @@ mod tests {
     #[test]
     fn parse_add_target_routes_enode_to_el() {
         assert_eq!(
-            parse_add_target(VALID_ENODE).unwrap(),
+            AddTarget::parse(VALID_ENODE).unwrap(),
             AddTarget::Enode(VALID_ENODE.to_string())
         );
     }
 
     #[test]
     fn parse_add_target_routes_enr_to_cl_multiaddr() {
-        let AddTarget::Multiaddr(multiaddr) = parse_add_target(VALID_ENR).unwrap() else {
+        let AddTarget::Multiaddr(multiaddr) = AddTarget::parse(VALID_ENR).unwrap() else {
             panic!("expected ENR to route to CL multiaddr");
         };
 
@@ -824,7 +990,7 @@ mod tests {
     #[test]
     fn parse_add_target_rejects_garbage() {
         assert!(matches!(
-            parse_add_target("not-a-peer").unwrap_err(),
+            AddTarget::parse("not-a-peer").unwrap_err(),
             P2pTargetError::InvalidBootnode { target, .. } if target == "not-a-peer"
         ));
     }
@@ -834,14 +1000,14 @@ mod tests {
         let multiaddr = "/ip4/127.0.0.1/tcp/9000/p2p/16Uiu2HAmExample";
 
         assert_eq!(
-            parse_add_target(multiaddr).unwrap(),
+            AddTarget::parse(multiaddr).unwrap(),
             AddTarget::Multiaddr(multiaddr.to_string())
         );
     }
 
     #[test]
     fn parse_add_target_rejects_multiaddr_without_peer_id() {
-        let err = parse_add_target("/ip4/127.0.0.1/tcp/9000")
+        let err = AddTarget::parse("/ip4/127.0.0.1/tcp/9000")
             .expect_err("multiaddr without peer ID should be rejected");
 
         assert!(matches!(
@@ -854,7 +1020,7 @@ mod tests {
     #[test]
     fn parse_peer_target_routes_enode_to_el() {
         assert_eq!(
-            parse_peer_target(VALID_ENODE).unwrap(),
+            PeerTarget::parse(VALID_ENODE).unwrap(),
             PeerTarget::Enode(VALID_ENODE.to_string())
         );
     }
@@ -863,13 +1029,13 @@ mod tests {
     fn parse_peer_target_routes_peer_id_to_cl() {
         let peer_id = "16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12";
 
-        assert_eq!(parse_peer_target(peer_id).unwrap(), PeerTarget::PeerId(peer_id.to_string()));
+        assert_eq!(PeerTarget::parse(peer_id).unwrap(), PeerTarget::PeerId(peer_id.to_string()));
     }
 
     #[test]
     fn parse_peer_target_rejects_enr() {
         assert!(matches!(
-            parse_peer_target(VALID_ENR).unwrap_err(),
+            PeerTarget::parse(VALID_ENR).unwrap_err(),
             P2pTargetError::PeerActionEnrTarget { target } if target == VALID_ENR
         ));
     }
@@ -877,7 +1043,7 @@ mod tests {
     #[test]
     fn parse_peer_target_rejects_multiaddr() {
         assert!(matches!(
-            parse_peer_target("/ip4/127.0.0.1/tcp/9000/p2p/16Uiu2HAmExample").unwrap_err(),
+            PeerTarget::parse("/ip4/127.0.0.1/tcp/9000/p2p/16Uiu2HAmExample").unwrap_err(),
             P2pTargetError::PeerActionClTargetNotBarePeerId { .. }
         ));
     }
@@ -885,7 +1051,7 @@ mod tests {
     #[test]
     fn parse_peer_target_rejects_url_like_target() {
         assert!(matches!(
-            parse_peer_target("https://example.com").unwrap_err(),
+            PeerTarget::parse("https://example.com").unwrap_err(),
             P2pTargetError::PeerActionClTargetNotBarePeerId { target }
                 if target == "https://example.com"
         ));
@@ -893,7 +1059,7 @@ mod tests {
 
     #[test]
     fn parse_peer_target_rejects_obviously_short_peer_id() {
-        let err = parse_peer_target("hello").expect_err("short peer ID should be rejected");
+        let err = PeerTarget::parse("hello").expect_err("short peer ID should be rejected");
 
         assert!(matches!(
             err,
@@ -905,7 +1071,7 @@ mod tests {
     #[test]
     fn parse_peer_target_rejects_whitespace() {
         assert!(matches!(
-            parse_peer_target("16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12 extra")
+            PeerTarget::parse("16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12 extra")
                 .unwrap_err(),
             P2pTargetError::TargetContainsWhitespace { .. }
         ));

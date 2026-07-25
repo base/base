@@ -4,22 +4,86 @@ use std::io::{self, Write};
 
 use alloy_primitives::{Address, TxHash};
 use anyhow::Result;
-use basectl_cli::{
-    Confirm, JsonOutput, KeyValueTable, MonitoringConfig, TxpoolClearArgs, TxpoolClient,
-    TxpoolCommands, TxpoolCounts, TxpoolReadArgs, TxpoolReport, TxpoolScope, TxpoolSenderSummary,
-    TxpoolTransactionRow, format_gas, format_gwei,
-};
+use clap::{Args, Subcommand};
 use serde::Serialize;
 use tracing::{debug, info, warn};
 use url::Url;
 
-/// Runs the `basectl txpool` command group.
-pub(crate) async fn run(config: MonitoringConfig, command: TxpoolCommands) -> Result<()> {
-    match command {
-        TxpoolCommands::Pending(args) => run_read(config, TxpoolScope::Pending, args).await,
-        TxpoolCommands::Queued(args) => run_read(config, TxpoolScope::Queued, args).await,
-        TxpoolCommands::All(args) => run_read(config, TxpoolScope::All, args).await,
-        TxpoolCommands::Clear(args) => run_clear(config, args).await,
+use crate::{
+    Confirm, JsonOutput, KeyValueTable, MonitoringConfig, TxpoolClient, TxpoolCounts, TxpoolReport,
+    TxpoolScope, TxpoolSenderSummary, TxpoolTransactionRow, format_gas, format_gwei,
+};
+
+/// Inspect and clear execution-layer txpool contents.
+#[derive(Debug, Args)]
+pub struct TxpoolCommand {
+    /// Txpool operation to run.
+    #[command(subcommand)]
+    pub command: TxpoolCommands,
+}
+
+/// Transaction-pool inspection and destructive clearing commands.
+#[derive(Debug, Subcommand)]
+pub enum TxpoolCommands {
+    /// Show pending txpool transactions.
+    Pending(TxpoolReadArgs),
+    /// Show queued txpool transactions.
+    Queued(TxpoolReadArgs),
+    /// Show pending and queued txpool transactions.
+    All(TxpoolReadArgs),
+    /// Clear the txpool or drop every transaction for one sender.
+    Clear(TxpoolClearArgs),
+}
+
+/// Shared flags for read-only `basectl txpool` subcommands.
+#[derive(Debug, Args)]
+pub struct TxpoolReadArgs {
+    /// Optional sender address to filter at the RPC layer.
+    #[arg(value_name = "SENDER")]
+    pub sender: Option<Address>,
+    /// Override the execution-layer RPC URL.
+    ///
+    /// Defaults to the chain config's `rpc` field. Pass this flag to query a
+    /// single node directly.
+    #[arg(long = "el-rpc", value_name = "URL")]
+    pub el_rpc: Option<Url>,
+    /// Emit humanized JSON instead of pretty text.
+    #[arg(long)]
+    pub json: bool,
+    /// With `--json`, emit the txpool wire shape instead of the humanized summary.
+    #[arg(long, requires = "json")]
+    pub raw: bool,
+}
+
+/// Flags for destructive `basectl txpool clear`.
+#[derive(Debug, Args)]
+pub struct TxpoolClearArgs {
+    /// Sender address whose txpool transactions should be dropped.
+    #[arg(long, value_name = "ADDRESS")]
+    pub sender: Option<Address>,
+    /// Override the execution-layer RPC URL.
+    ///
+    /// Defaults to the chain config's `rpc` field. Destructive txpool calls
+    /// usually require an admin-enabled node RPC.
+    #[arg(long = "el-rpc", value_name = "URL")]
+    pub el_rpc: Option<Url>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub json: bool,
+}
+
+impl TxpoolCommand {
+    /// Runs the selected txpool subcommand.
+    pub async fn run(self, config: MonitoringConfig) -> Result<()> {
+        match self.command {
+            TxpoolCommands::Pending(args) => run_read(config, TxpoolScope::Pending, args).await,
+            TxpoolCommands::Queued(args) => run_read(config, TxpoolScope::Queued, args).await,
+            TxpoolCommands::All(args) => run_read(config, TxpoolScope::All, args).await,
+            TxpoolCommands::Clear(args) => run_clear(config, args).await,
+        }
     }
 }
 
@@ -28,19 +92,18 @@ async fn run_read(
     scope: TxpoolScope,
     args: TxpoolReadArgs,
 ) -> Result<()> {
-    let TxpoolReadArgs { sender, el_rpc: el_rpc_override, json, raw } = args;
-    let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
+    let el_rpc = args.el_rpc.unwrap_or_else(|| config.rpc.clone());
     info!(
         network = %config.name,
         rpc = %el_rpc,
         scope = %scope.as_str(),
-        sender = ?sender,
-        json,
-        raw,
+        sender = ?args.sender,
+        json = args.json,
+        raw = args.raw,
         "fetching txpool content"
     );
 
-    match (json, raw, sender) {
+    match (args.json, args.raw, args.sender) {
         (true, true, Some(sender)) => {
             let mut content = TxpoolClient::fetch_txpool_content_from(&el_rpc, sender)
                 .await
@@ -131,21 +194,20 @@ async fn run_read(
 }
 
 async fn run_clear(config: MonitoringConfig, args: TxpoolClearArgs) -> Result<()> {
-    let TxpoolClearArgs { sender, el_rpc: el_rpc_override, yes, json } = args;
-    let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
+    let el_rpc = args.el_rpc.unwrap_or_else(|| config.rpc.clone());
     info!(
         network = %config.name,
         rpc = %el_rpc,
-        sender = ?sender,
-        json,
-        yes,
+        sender = ?args.sender,
+        json = args.json,
+        yes = args.yes,
         "running txpool clear command"
     );
 
-    match sender {
+    match args.sender {
         Some(sender) => {
             let prompt = format!("Drop txpool transactions from {sender} through {el_rpc}? [y/N] ");
-            if !Confirm::prompt_or_abort(&prompt, yes)? {
+            if !Confirm::prompt_or_abort(&prompt, args.yes)? {
                 debug!(
                     network = %config.name,
                     rpc = %el_rpc,
@@ -166,7 +228,7 @@ async fn run_clear(config: MonitoringConfig, args: TxpoolClearArgs) -> Result<()
                     );
                 })?;
             let action = TxpoolClearJson::drop_sender(&config.name, &el_rpc, sender, hashes);
-            print_clear_action(&action, json)?;
+            print_clear_action(&action, args.json)?;
             info!(
                 network = %config.name,
                 rpc = %el_rpc,
@@ -177,7 +239,7 @@ async fn run_clear(config: MonitoringConfig, args: TxpoolClearArgs) -> Result<()
         }
         None => {
             let prompt = format!("Clear all txpool transactions through {el_rpc}? [y/N] ");
-            if !Confirm::prompt_or_abort(&prompt, yes)? {
+            if !Confirm::prompt_or_abort(&prompt, args.yes)? {
                 debug!(
                     network = %config.name,
                     rpc = %el_rpc,
@@ -194,7 +256,7 @@ async fn run_clear(config: MonitoringConfig, args: TxpoolClearArgs) -> Result<()
                 );
             })?;
             let action = TxpoolClearJson::clear(&config.name, &el_rpc, removed);
-            print_clear_action(&action, json)?;
+            print_clear_action(&action, args.json)?;
             info!(
                 network = %config.name,
                 rpc = %el_rpc,
@@ -207,21 +269,30 @@ async fn run_clear(config: MonitoringConfig, args: TxpoolClearArgs) -> Result<()
     Ok(())
 }
 
+/// Humanized JSON shape for read-only `basectl txpool` output.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TxpoolReadJson {
-    network: String,
-    rpc: String,
-    scope: TxpoolScope,
+pub struct TxpoolReadJson {
+    /// Selected network name.
+    pub network: String,
+    /// Execution-layer RPC URL that was queried.
+    pub rpc: String,
+    /// Txpool scope that was requested.
+    pub scope: TxpoolScope,
+    /// Optional sender filter applied to the report.
     #[serde(skip_serializing_if = "Option::is_none")]
-    sender: Option<Address>,
-    counts: TxpoolCounts,
-    senders: Vec<TxpoolSenderSummary>,
-    transactions: Vec<TxpoolTransactionRow>,
+    pub sender: Option<Address>,
+    /// Aggregate pending/queued/total counts for the report.
+    pub counts: TxpoolCounts,
+    /// Per-sender summaries included in the report.
+    pub senders: Vec<TxpoolSenderSummary>,
+    /// Individual transaction rows included in the report.
+    pub transactions: Vec<TxpoolTransactionRow>,
 }
 
 impl TxpoolReadJson {
-    fn from_report(network: &str, rpc: &Url, report: &TxpoolReport) -> Self {
+    /// Builds a humanized read response from a txpool report.
+    pub fn from_report(network: &str, rpc: &Url, report: &TxpoolReport) -> Self {
         Self {
             network: network.to_string(),
             rpc: rpc.to_string(),
@@ -234,28 +305,45 @@ impl TxpoolReadJson {
     }
 }
 
+/// Structured JSON outcome for destructive `basectl txpool clear` actions.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "action")]
-enum TxpoolClearJson {
+pub enum TxpoolClearJson {
+    /// Cleared every transaction currently in the txpool.
     #[serde(rename = "clearTxpool")]
-    Clear { network: String, rpc: String, removed: u64 },
+    Clear {
+        /// Selected network name.
+        network: String,
+        /// Execution-layer RPC URL that performed the clear.
+        rpc: String,
+        /// Number of transactions removed.
+        removed: u64,
+    },
+    /// Dropped every txpool transaction belonging to one sender.
     #[serde(rename = "dropSenderTransactions")]
     DropSender {
+        /// Selected network name.
         network: String,
+        /// Execution-layer RPC URL that performed the drop.
         rpc: String,
+        /// Sender whose transactions were dropped.
         sender: Address,
+        /// Number of transactions removed.
         removed: u64,
+        /// Transaction hashes that were dropped.
         #[serde(skip_serializing_if = "Vec::is_empty")]
         hashes: Vec<TxHash>,
     },
 }
 
 impl TxpoolClearJson {
-    fn clear(network: &str, rpc: &Url, removed: u64) -> Self {
+    /// Builds a clear-all action outcome.
+    pub fn clear(network: &str, rpc: &Url, removed: u64) -> Self {
         Self::Clear { network: network.to_string(), rpc: rpc.to_string(), removed }
     }
 
-    fn drop_sender(network: &str, rpc: &Url, sender: Address, hashes: Vec<TxHash>) -> Self {
+    /// Builds a drop-sender action outcome from the dropped transaction hashes.
+    pub fn drop_sender(network: &str, rpc: &Url, sender: Address, hashes: Vec<TxHash>) -> Self {
         let removed = u64::try_from(hashes.len()).unwrap_or(u64::MAX);
         Self::DropSender {
             network: network.to_string(),
@@ -387,16 +475,16 @@ fn print_clear_action_pretty(action: &TxpoolClearJson) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{B256, address};
-    use basectl_cli::{
-        TxpoolCounts, TxpoolReport, TxpoolScope, TxpoolSenderSummary, TxpoolTransactionPool,
-        TxpoolTransactionRow,
-    };
     use serde_json::json;
     use url::Url;
 
     use super::{
         TxpoolClearJson, TxpoolReadJson, format_destination, format_nonce_range,
         format_transaction_fee, print_read_pretty_to,
+    };
+    use crate::{
+        TxpoolCounts, TxpoolReport, TxpoolScope, TxpoolSenderSummary, TxpoolTransactionPool,
+        TxpoolTransactionRow,
     };
 
     fn sample_report() -> TxpoolReport {
