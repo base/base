@@ -28,12 +28,12 @@ pub use edge_measurement::{
     BLINK_LEDGER_CAPACITY, BLINK_REJECT_BRANCH_INVENTORY_V3, BlinkGenerationTerminalV1,
     BlinkLedgerSnapshotV1, BlinkMeasurementLedgerV1, BlinkRejectClassifierV3,
     BlinkRejectDispositionV3, BlinkRejectReasonV3, BlinkRejectRecordV3,
-    CandidatePreEnqueueDropReasonV3, CheckedCandidateBoundsV1, EDGE_MAX_VICTIM_RAW_BYTES,
-    EdgeCandidateDetailV1, EdgeCandidateEvidenceV3, EdgeCandidateStageInputV3, EdgeCandidateV3,
-    EdgeMeasurementDurabilityV1, EdgeMeasurementError, EdgeMeasurementFinalV1,
-    EdgeMeasurementOwnerConfigV1, EdgeMeasurementOwnerV1, EdgeProducerError, EdgeProducerRecordV1,
-    ProducerEpochCutoffFieldsV1, ProducerEpochCutoffLatchV1, ProducerEpochCutoffV1,
-    SelectedDtoTerminalV1,
+    CandidatePreEnqueueDropCountersV1, CandidatePreEnqueueDropReasonV3, CheckedCandidateBoundsV1,
+    EDGE_MAX_VICTIM_RAW_BYTES, EdgeCandidateDetailV1, EdgeCandidateEvidenceV3,
+    EdgeCandidateStageInputV3, EdgeCandidateV3, EdgeMeasurementDurabilityV1, EdgeMeasurementError,
+    EdgeMeasurementFinalV1, EdgeMeasurementOwnerConfigV1, EdgeMeasurementOwnerV1,
+    EdgeProducerError, EdgeProducerRecordV1, ProducerEpochCutoffFieldsV1,
+    ProducerEpochCutoffLatchV1, ProducerEpochCutoffV1, SelectedDtoTerminalV1,
 };
 
 mod frame;

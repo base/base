@@ -46,10 +46,14 @@ serde = { workspace = true, features = ["derive", "std"] }
 tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
 tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 
+[dev-dependencies]
+reth-revm = { workspace = true, features = ["test-utils"] }
+
 [features]
 edge-measurement = []
 t4a-shadow = []
 t4b-shadow = ["t4a-shadow"]
+test-utils = ["reth-revm/test-utils"]
 # P0-A external-anchor fresh-leaf bootstrap and activation. This is deliberately
 # absent from default features so production cannot create, adopt, or reseed an anchor.
 p0-provisioning = []

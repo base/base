@@ -858,42 +858,50 @@ impl MevTraderRuntime {
                 };
                 let discovered_candidate_count =
                     u32::try_from(candidates.len()).map_err(|_| PortError::LimitExceeded)?;
-                let plan = match PairwiseEngine::select_measurement(&processed, &candidates, probe)
-                {
-                    Ok(plan) => plan,
-                    Err(error) => {
-                        let outcome = if error == PairwiseError::Cancelled {
-                            ShadowOutcome::Cancelled
-                        } else {
-                            ShadowOutcome::AnalysisRejected
-                        };
-                        let measurement = ShadowFrameMeasurement {
-                            context,
-                            registry_digest: universe.registry_digest(),
-                            dirty_pool_count,
-                            prepared_pool_count,
-                            discovered_candidate_count,
-                            outcome,
-                            plan: None,
-                        };
-                        return Ok((Some(processed), Some(measurement), None));
-                    }
+                let selected_plan =
+                    match PairwiseEngine::select_measurement(&processed, &candidates, probe) {
+                        Ok(plan) => plan,
+                        Err(error) => {
+                            let outcome = if error == PairwiseError::Cancelled {
+                                ShadowOutcome::Cancelled
+                            } else {
+                                ShadowOutcome::AnalysisRejected
+                            };
+                            let measurement = ShadowFrameMeasurement {
+                                context,
+                                registry_digest: universe.registry_digest(),
+                                dirty_pool_count,
+                                prepared_pool_count,
+                                discovered_candidate_count,
+                                outcome,
+                                plan: None,
+                            };
+                            return Ok((Some(processed), Some(measurement), None));
+                        }
+                    };
+                #[cfg(feature = "edge-measurement")]
+                let candidate_stage_failed = match selected_plan.as_ref() {
+                    Some(plan) => match self.edge_measurement.as_ref() {
+                        Some(owner) => owner
+                            .stage_selected_candidate(EdgeCandidateStageInputV3 {
+                                generation,
+                                port,
+                                snapshot: &snapshot,
+                                processed: &processed,
+                                prepared: &prepared,
+                                plan,
+                                victim_raw: &frame.raw_tx,
+                                probe,
+                            })
+                            .is_err(),
+                        None => false,
+                    },
+                    None => false,
                 };
                 #[cfg(feature = "edge-measurement")]
-                if let Some(plan) = plan.as_ref()
-                    && let Some(owner) = self.edge_measurement.as_ref()
-                {
-                    let _ = owner.stage_selected_candidate(EdgeCandidateStageInputV3 {
-                        generation,
-                        port,
-                        snapshot: &snapshot,
-                        processed: &processed,
-                        prepared: &prepared,
-                        plan,
-                        victim_raw: &frame.raw_tx,
-                        probe,
-                    });
-                }
+                let plan = if candidate_stage_failed { None } else { selected_plan };
+                #[cfg(not(feature = "edge-measurement"))]
+                let plan = selected_plan;
                 #[cfg(feature = "t4b-shadow")]
                 if let (Some(observer), Some(plan)) = (self.t4b_observer.as_ref(), plan.as_ref()) {
                     let view = CandidateAssemblyView {
@@ -910,10 +918,21 @@ impl MevTraderRuntime {
                     ShadowOutcome::NoDirtyPools
                 } else if candidates.is_empty() {
                     ShadowOutcome::NoCandidate
-                } else if plan.is_some() {
-                    ShadowOutcome::Selected
                 } else {
-                    ShadowOutcome::NoPositivePlan
+                    #[cfg(feature = "edge-measurement")]
+                    if candidate_stage_failed {
+                        ShadowOutcome::FrameRejected
+                    } else if plan.is_some() {
+                        ShadowOutcome::Selected
+                    } else {
+                        ShadowOutcome::NoPositivePlan
+                    }
+                    #[cfg(not(feature = "edge-measurement"))]
+                    if plan.is_some() {
+                        ShadowOutcome::Selected
+                    } else {
+                        ShadowOutcome::NoPositivePlan
+                    }
                 };
                 let measurement = ShadowFrameMeasurement {
                     context,

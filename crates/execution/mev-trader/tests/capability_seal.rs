@@ -203,7 +203,18 @@ fn metadata_has_exact_target_and_dependency_shape() {
         .filter(|dependency| dependency["kind"] == "dev")
         .map(|dependency| dependency["name"].as_str().expect("dependency name"))
         .collect();
-    assert!(development.is_empty());
+    assert_eq!(development, BTreeSet::from(["reth-revm"]));
+    let reth_revm_test = dependencies
+        .iter()
+        .find(|dependency| {
+            dependency["kind"] == "dev" && dependency["name"].as_str() == Some("reth-revm")
+        })
+        .expect("exact dev-only reth-revm test support");
+    assert_eq!(
+        reth_revm_test["features"].as_array().expect("dev features"),
+        &[Value::String("test-utils".into())]
+    );
+    assert!(reth_revm_test["uses_default_features"].as_bool().expect("dev defaults"));
     assert!(!dependencies.iter().any(|dependency| dependency["kind"] == "build"));
 
     let expected = dependency_features();

@@ -803,6 +803,44 @@ pub enum CandidatePreEnqueueDropReasonV3 {
     CandidateQueueClosed,
 }
 
+impl CandidatePreEnqueueDropReasonV3 {
+    const COUNT: usize = 8;
+
+    const fn counter_index(self) -> usize {
+        match self {
+            Self::MissingRequiredEvidence => 0,
+            Self::EvidenceMismatch => 1,
+            Self::MeasurementDerivationRejected => 2,
+            Self::CancelledAfterDraft => 3,
+            Self::StaleAfterDraft => 4,
+            Self::FailedAfterDraft => 5,
+            Self::CandidateQueueFull => 6,
+            Self::CandidateQueueClosed => 7,
+        }
+    }
+}
+
+/// Exact cumulative counts of selected candidates that did not enter the candidate queue.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct CandidatePreEnqueueDropCountersV1 {
+    /// Same-frame staging failures caused by missing required evidence.
+    pub missing_required_evidence: u64,
+    /// Same-frame staging failures caused by evidence mismatch.
+    pub evidence_mismatch: u64,
+    /// Unsigned measurement transaction derivation rejections.
+    pub measurement_derivation_rejected: u64,
+    /// Staged candidates cancelled before enqueue.
+    pub cancelled_after_draft: u64,
+    /// Staged candidates that became stale before enqueue.
+    pub stale_after_draft: u64,
+    /// Staged candidates that failed before enqueue.
+    pub failed_after_draft: u64,
+    /// Candidate enqueue attempts rejected because the bounded queue was full.
+    pub candidate_queue_full: u64,
+    /// Candidate enqueue attempts rejected because the bounded queue was closed.
+    pub candidate_queue_closed: u64,
+}
+
 /// Borrowed, same-frame evidence required to stage one candidate without future queries.
 #[derive(Debug)]
 pub struct EdgeCandidateStageInputV3<'a> {
@@ -940,11 +978,11 @@ pub struct EdgeMeasurementOwnerV1 {
     staged: Mutex<BTreeMap<u64, EdgeCandidateEvidenceV3>>,
     reject_sequence: AtomicU64,
     candidate_sequence: AtomicU64,
+    candidate_drop_counts: [AtomicU64; CandidatePreEnqueueDropReasonV3::COUNT],
     pending_records: AtomicU64,
     pending_candidates: AtomicU64,
     reject_previous_hash: Mutex<[u8; 32]>,
     poisoned: AtomicBool,
-    cutoff_drain_deadline_exceeded: AtomicBool,
     installed: AtomicBool,
     cutoff_latched: AtomicBool,
 }
@@ -969,11 +1007,11 @@ impl EdgeMeasurementOwnerV1 {
             staged: Mutex::new(BTreeMap::new()),
             reject_sequence: AtomicU64::new(0),
             candidate_sequence: AtomicU64::new(0),
+            candidate_drop_counts: std::array::from_fn(|_| AtomicU64::new(0)),
             pending_records: AtomicU64::new(0),
             pending_candidates: AtomicU64::new(0),
             reject_previous_hash: Mutex::new([0; 32]),
             poisoned: AtomicBool::new(false),
-            cutoff_drain_deadline_exceeded: AtomicBool::new(false),
             installed: AtomicBool::new(false),
             cutoff_latched: AtomicBool::new(false),
         }))
@@ -1035,7 +1073,28 @@ impl EdgeMeasurementOwnerV1 {
         CheckedCandidateBoundsV1 { count, last_sequence: count.checked_sub(1) }
     }
 
-    /// Latches measurement poison after any ledger result fails.
+    /// Returns an immutable exact cumulative snapshot of every candidate pre-enqueue drop reason.
+    pub fn candidate_pre_enqueue_drop_counters(&self) -> CandidatePreEnqueueDropCountersV1 {
+        let count = |reason: CandidatePreEnqueueDropReasonV3| {
+            self.candidate_drop_counts[reason.counter_index()].load(Ordering::Acquire)
+        };
+        CandidatePreEnqueueDropCountersV1 {
+            missing_required_evidence: count(
+                CandidatePreEnqueueDropReasonV3::MissingRequiredEvidence,
+            ),
+            evidence_mismatch: count(CandidatePreEnqueueDropReasonV3::EvidenceMismatch),
+            measurement_derivation_rejected: count(
+                CandidatePreEnqueueDropReasonV3::MeasurementDerivationRejected,
+            ),
+            cancelled_after_draft: count(CandidatePreEnqueueDropReasonV3::CancelledAfterDraft),
+            stale_after_draft: count(CandidatePreEnqueueDropReasonV3::StaleAfterDraft),
+            failed_after_draft: count(CandidatePreEnqueueDropReasonV3::FailedAfterDraft),
+            candidate_queue_full: count(CandidatePreEnqueueDropReasonV3::CandidateQueueFull),
+            candidate_queue_closed: count(CandidatePreEnqueueDropReasonV3::CandidateQueueClosed),
+        }
+    }
+
+    /// Latches measurement poison after a structurally inconsistent ledger result.
     pub fn observe_ledger_result(&self, result: Result<(), EdgeMeasurementError>) {
         let Ok(_admission) = self.admission.lock() else {
             self.poison(EdgeProducerError::Ledger);
@@ -1057,11 +1116,17 @@ impl EdgeMeasurementOwnerV1 {
             if let Some(reason) = reason
                 && self.is_accepting()
                 && let Some(branch_id) = BlinkRejectClassifierV3::branch_id(reason)
-                && let Err(error) = self.try_emit_blink_reject(branch_id, reason)
+                && let Err(record_error) = self.try_emit_blink_reject(branch_id, reason)
+                && !matches!(
+                    record_error,
+                    EdgeProducerError::QueueFull | EdgeProducerError::QueueClosed
+                )
             {
-                self.poison(error);
+                self.poison(record_error);
             }
-            self.poison(EdgeProducerError::Ledger);
+            if error != EdgeMeasurementError::LedgerCapacityOverflow {
+                self.poison(EdgeProducerError::Ledger);
+            }
         }
     }
 
@@ -1148,11 +1213,7 @@ impl EdgeMeasurementOwnerV1 {
                 }
                 _ => CandidatePreEnqueueDropReasonV3::EvidenceMismatch,
             };
-            if let Err(record_error) =
-                self.try_send_record(EdgeProducerRecordV1::CandidateDrop { generation, reason })
-            {
-                self.poison(record_error);
-            }
+            self.record_candidate_drop(generation, reason);
         }
         result
     }
@@ -1165,7 +1226,7 @@ impl EdgeMeasurementOwnerV1 {
             .map_err(|_| EdgeProducerError::CandidateEvidenceMismatch)?;
         let generation = input.generation;
         let draft = self.build_selected_draft(input)?;
-        let mut staged = self.staged.lock().map_err(|_| EdgeProducerError::Ledger)?;
+        let mut staged = self.staged.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
         if staged.len() >= BLINK_LEDGER_CAPACITY || staged.contains_key(&generation) {
             return Err(EdgeProducerError::CandidateEvidenceMismatch);
         }
@@ -1188,11 +1249,7 @@ impl EdgeMeasurementOwnerV1 {
         if !self.is_accepting() {
             return;
         }
-        if let Err(error) =
-            self.try_send_record(EdgeProducerRecordV1::CandidateDrop { generation, reason })
-        {
-            self.poison(error);
-        }
+        self.record_candidate_drop(generation, reason);
     }
 
     /// Emits exactly one named record for an actual Blink branch.
@@ -1209,7 +1266,9 @@ impl EdgeMeasurementOwnerV1 {
         if !self.is_accepting() {
             return;
         }
-        if let Err(error) = self.try_emit_blink_reject(branch_id, reason) {
+        if let Err(error) = self.try_emit_blink_reject(branch_id, reason)
+            && !matches!(error, EdgeProducerError::QueueFull | EdgeProducerError::QueueClosed)
+        {
             self.poison(error);
         }
     }
@@ -1240,12 +1299,10 @@ impl EdgeMeasurementOwnerV1 {
         if !BLINK_REJECT_BRANCH_INVENTORY_V3.contains(&(branch_id, reason)) {
             return Err(EdgeProducerError::CandidateEvidenceMismatch);
         }
-        let sequence = self
-            .reject_sequence
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| value.checked_add(1))
-            .map_err(|_| EdgeProducerError::SequenceOverflow)?;
         let mut previous =
             self.reject_previous_hash.lock().map_err(|_| EdgeProducerError::Ledger)?;
+        let sequence = self.reject_sequence.load(Ordering::Acquire);
+        let next_sequence = sequence.checked_add(1).ok_or(EdgeProducerError::SequenceOverflow)?;
         let canonical = format!(
             "{{\"branchId\":\"{}\",\"previousRecordHash\":\"{}\",\"producerEpoch\":\"{}\",\"reason\":\"{}\",\"schema\":\"edge-blink-reject/v3\",\"sequence\":\"{}\",\"state\":\"Rejected\"}}",
             branch_id,
@@ -1266,8 +1323,20 @@ impl EdgeMeasurementOwnerV1 {
             record_hash: hex::encode(record_hash),
         };
         self.try_send_record(EdgeProducerRecordV1::BlinkReject(record))?;
+        self.reject_sequence.store(next_sequence, Ordering::Release);
         *previous = record_hash;
         Ok(())
+    }
+
+    fn record_candidate_drop(&self, generation: u64, reason: CandidatePreEnqueueDropReasonV3) {
+        if self.candidate_drop_counts[reason.counter_index()]
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| count.checked_add(1))
+            .is_err()
+        {
+            self.poison(EdgeProducerError::SequenceOverflow);
+            return;
+        }
+        let _ = self.try_send_record(EdgeProducerRecordV1::CandidateDrop { generation, reason });
     }
 
     fn try_send_record(&self, record: EdgeProducerRecordV1) -> Result<(), EdgeProducerError> {
@@ -1282,6 +1351,15 @@ impl EdgeMeasurementOwnerV1 {
             });
         }
         Ok(())
+    }
+    fn try_send_candidate<T>(
+        sender: &SyncSender<T>,
+        candidate: T,
+    ) -> Result<(), CandidatePreEnqueueDropReasonV3> {
+        sender.try_send(candidate).map_err(|error| match error {
+            TrySendError::Full(_) => CandidatePreEnqueueDropReasonV3::CandidateQueueFull,
+            TrySendError::Disconnected(_) => CandidatePreEnqueueDropReasonV3::CandidateQueueClosed,
+        })
     }
 
     fn build_selected_draft(
@@ -1697,24 +1775,9 @@ impl EdgeMeasurementOwnerV1 {
                 self.release_generation_authority(generation);
                 return;
             }
-            if let Err(error) = self.candidate_sender.try_send(detail) {
+            if let Err(reason) = Self::try_send_candidate(&self.candidate_sender, detail) {
                 self.pending_candidates.fetch_sub(1, Ordering::AcqRel);
-                let (error, reason) = match error {
-                    TrySendError::Full(_) => (
-                        EdgeProducerError::QueueFull,
-                        CandidatePreEnqueueDropReasonV3::CandidateQueueFull,
-                    ),
-                    TrySendError::Disconnected(_) => (
-                        EdgeProducerError::QueueClosed,
-                        CandidatePreEnqueueDropReasonV3::CandidateQueueClosed,
-                    ),
-                };
-                if let Err(record_error) =
-                    self.try_send_record(EdgeProducerRecordV1::CandidateDrop { generation, reason })
-                {
-                    self.poison(record_error);
-                }
-                self.poison(error);
+                self.record_candidate_drop(generation, reason);
                 self.release_generation_authority(generation);
                 return;
             }
@@ -1729,11 +1792,7 @@ impl EdgeMeasurementOwnerV1 {
             }
             _ => CandidatePreEnqueueDropReasonV3::StaleAfterDraft,
         };
-        if let Err(error) =
-            self.try_send_record(EdgeProducerRecordV1::CandidateDrop { generation, reason })
-        {
-            self.poison(error);
-        }
+        self.record_candidate_drop(generation, reason);
         self.release_generation_authority(generation);
     }
 
@@ -1750,7 +1809,7 @@ impl EdgeMeasurementOwnerV1 {
         let _admission =
             self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
         if self.is_accepting() {
-            return Err(self.poison(EdgeProducerError::CutoffMissing));
+            return Err(EdgeProducerError::CutoffMissing);
         }
         detail
             .validate_detail()
@@ -1810,8 +1869,6 @@ impl EdgeMeasurementOwnerV1 {
         let unresolved = timeout.timed_out() && !authority.is_empty();
         drop(authority);
         if unresolved {
-            self.cutoff_drain_deadline_exceeded.store(true, Ordering::Release);
-            self.poison(EdgeProducerError::CutoffDrainDeadline);
             self.terminalize_shutdown_pending_admitted(None);
         }
         let admitted_blink_generations = self
@@ -1859,7 +1916,7 @@ impl EdgeMeasurementOwnerV1 {
                 }
                 Err(TryRecvError::Empty) => return Ok(records),
                 Err(TryRecvError::Disconnected) => {
-                    return Err(self.poison(EdgeProducerError::QueueClosed));
+                    return Err(EdgeProducerError::QueueClosed);
                 }
             }
         }
@@ -1884,7 +1941,7 @@ impl EdgeMeasurementOwnerV1 {
                 }
                 Err(TryRecvError::Empty) => return Ok(details),
                 Err(TryRecvError::Disconnected) => {
-                    return Err(self.poison(EdgeProducerError::QueueClosed));
+                    return Err(EdgeProducerError::QueueClosed);
                 }
             }
         }
@@ -1895,11 +1952,7 @@ impl EdgeMeasurementOwnerV1 {
         let _admission =
             self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
         if self.poisoned.load(Ordering::SeqCst) {
-            return Err(if self.cutoff_drain_deadline_exceeded.load(Ordering::Acquire) {
-                EdgeProducerError::CutoffDrainDeadline
-            } else {
-                EdgeProducerError::Ledger
-            });
+            return Err(EdgeProducerError::Ledger);
         }
         if self.cutoff.get().map_err(|_| self.poison(EdgeProducerError::Ledger))?.is_none() {
             return Ok(false);
@@ -1913,7 +1966,7 @@ impl EdgeMeasurementOwnerV1 {
         {
             return Ok(false);
         }
-        Ok(self.staged.lock().map_err(|_| EdgeProducerError::Ledger)?.is_empty())
+        Ok(self.staged.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?.is_empty())
     }
 
     /// Seals only the Blink final and returns it to the later CLI checkpoint coordinator.
@@ -1921,22 +1974,17 @@ impl EdgeMeasurementOwnerV1 {
         let _admission =
             self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
         if self.poisoned.load(Ordering::SeqCst) {
-            return Err(if self.cutoff_drain_deadline_exceeded.load(Ordering::Acquire) {
-                EdgeProducerError::CutoffDrainDeadline
-            } else {
-                EdgeProducerError::Ledger
-            });
+            return Err(EdgeProducerError::Ledger);
         }
         let cutoff = self
             .cutoff
             .get()
             .map_err(|_| self.poison(EdgeProducerError::Ledger))?
-            .ok_or_else(|| self.poison(EdgeProducerError::CutoffMissing))?;
+            .ok_or(EdgeProducerError::CutoffMissing)?;
         if !self.queues_drained()? {
-            return Err(self.poison(EdgeProducerError::Ledger));
+            return Err(EdgeProducerError::Ledger);
         }
-        let blink =
-            self.ledger.verify_final().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
+        let blink = self.ledger.verify_final().map_err(|_| EdgeProducerError::Ledger)?;
         Ok(EdgeMeasurementFinalV1 {
             blink,
             cutoff,
@@ -1950,7 +1998,7 @@ impl EdgeMeasurementOwnerV1 {
         {
             return Ok(false);
         }
-        Ok(self.staged.lock().map_err(|_| EdgeProducerError::Ledger)?.is_empty())
+        Ok(self.staged.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?.is_empty())
     }
 
     fn poison(&self, error: EdgeProducerError) -> EdgeProducerError {
@@ -2073,7 +2121,9 @@ impl BlinkMeasurementLedgerV1 {
                     Some(replaced_generation)
                 } else {
                     if generations.len() >= BLINK_LEDGER_CAPACITY {
-                        return Err(self.poison(EdgeMeasurementError::LedgerCapacityOverflow));
+                        Self::increment(&self.generation_overflow)
+                            .map_err(|error| self.poison(error))?;
+                        return Err(EdgeMeasurementError::LedgerCapacityOverflow);
                     }
                     None
                 };
@@ -2886,6 +2936,384 @@ impl EdgeMeasurementDurabilityV1 {
     }
 }
 
+#[cfg(feature = "test-utils")]
+mod candidate_fixture {
+    use std::{
+        collections::BTreeMap,
+        str::FromStr,
+        sync::{Arc, Mutex},
+        time::{Duration, Instant},
+    };
+
+    use alloy_consensus::{Header, Sealed, Transaction, transaction::SignerRecoverable};
+    use alloy_eips::{Decodable2718, Typed2718};
+    use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::HashMap};
+    use alloy_rpc_types_engine::PayloadId;
+    use base_common_consensus::BaseTxEnvelope;
+    use base_execution_chainspec::BaseChainSpec;
+    use reth_provider::StateProviderBox;
+    use reth_revm::state::AccountInfo;
+    use reth_revm::test_utils::StateProviderTest;
+
+    use super::{
+        BlinkGenerationTerminalV1, EdgeCandidateStageInputV3, EdgeMeasurementOwnerV1,
+        EdgeProducerError, ExactProtocol, PreparedPoolQuote, PreparedPoolState, ShadowOutcome,
+        SlotSubmit,
+    };
+    use crate::{
+        AuditedWriteKey, BackrunHop, BackrunPlan, BackrunPlanDigest, BundleVisitor,
+        CancellationProbe, CancellationToken, EdgeSnapshotEvidenceV1, FrameAuditPlan,
+        FrameProcessor, GlobalLifecycle, MeasurementEncoder, PayloadVisitor, PendingSnapshotView,
+        PortError, SnapshotCaptureCoordinator, SnapshotHandle, SnapshotHandleFactory,
+        TraderSnapshotPort, TransactionVisitor, VisitControl, VisitSummary, WETH,
+    };
+
+    const RAW_VICTIM: &str = "02f86c8221058034839a4ae283021528942f16386bb37709016023232523ff6d9daf444be380841249c58bc080a001b927eda2af9b00b52a57be0885e0303c39dd2831732e14051c2336470fd468a0681bf120baf562915841a48601c2b54a6742511e535cf8f71c95115af7ff63bd";
+    const BLOCK_NUMBER: u64 = 100;
+    const PREDECESSOR_INDEX: u64 = 1;
+    fn payload_id() -> PayloadId {
+        PayloadId::new([2; 8])
+    }
+
+    #[derive(Debug)]
+    struct FixtureView {
+        parent_hash: B256,
+        latest_header: Mutex<Sealed<Header>>,
+    }
+
+    impl PendingSnapshotView for FixtureView {
+        fn parent_hash(&self) -> B256 {
+            self.parent_hash
+        }
+
+        fn latest_block_number(&self) -> u64 {
+            BLOCK_NUMBER
+        }
+
+        fn canonical_block_number(&self) -> u64 {
+            BLOCK_NUMBER - 1
+        }
+
+        fn latest_flashblock_index(&self) -> u64 {
+            PREDECESSOR_INDEX
+        }
+
+        fn latest_header(&self) -> Sealed<Header> {
+            self.latest_header.lock().expect("fixture header lock").clone()
+        }
+
+        fn pending_account_nonce(
+            &self,
+            _address: Address,
+        ) -> Result<Option<crate::PendingAccountNonce>, PortError> {
+            Ok(None)
+        }
+
+        fn latest_block_transaction_count(&self) -> usize {
+            0
+        }
+
+        fn has_transaction_hash(&self, _transaction_hash: B256) -> bool {
+            false
+        }
+
+        fn transaction_position(
+            &self,
+            _block_number: u64,
+            _transaction_hash: B256,
+        ) -> Option<usize> {
+            None
+        }
+
+        fn visit_latest_block_payloads(
+            &self,
+            visitor: &mut dyn PayloadVisitor,
+        ) -> Result<VisitSummary, PortError> {
+            let control = visitor.visit(payload_id(), PREDECESSOR_INDEX)?;
+            Ok(VisitSummary { visited: 1, complete: control == VisitControl::Continue })
+        }
+
+        fn visit_transactions_for_block(
+            &self,
+            block_number: u64,
+            start: usize,
+            limit: usize,
+            _visitor: &mut dyn TransactionVisitor,
+        ) -> Result<VisitSummary, PortError> {
+            if block_number != BLOCK_NUMBER || start != 0 || limit != 0 {
+                return Err(PortError::Incoherent);
+            }
+            Ok(VisitSummary { visited: 0, complete: true })
+        }
+
+        fn visit_bundle(
+            &self,
+            _visitor: &mut dyn BundleVisitor,
+        ) -> Result<VisitSummary, PortError> {
+            Ok(VisitSummary { visited: 0, complete: true })
+        }
+    }
+
+    #[derive(Debug)]
+    struct FixturePort {
+        view: Arc<dyn PendingSnapshotView + Send + Sync>,
+        received_at: Instant,
+        parent_header: Sealed<Header>,
+        provider: StateProviderTest,
+        evidence: EdgeSnapshotEvidenceV1,
+    }
+
+    impl TraderSnapshotPort for FixturePort {
+        fn capture_latest(
+            &self,
+            factory: &SnapshotHandleFactory,
+        ) -> Result<Option<SnapshotHandle>, PortError> {
+            factory
+                .issue_with_edge_evidence(Arc::clone(&self.view), self.received_at, self.evidence)
+                .map(Some)
+        }
+
+        fn is_current_authoritative(&self, handle: &SnapshotHandle) -> bool {
+            handle.matches_capture(&self.view, self.received_at)
+        }
+
+        fn state_at_hash(&self, block_hash: B256) -> Result<StateProviderBox, PortError> {
+            if block_hash != self.parent_header.hash() {
+                return Err(PortError::Incoherent);
+            }
+            Ok(Box::new(self.provider.clone()))
+        }
+
+        fn sealed_header_at_hash(&self, block_hash: B256) -> Result<Sealed<Header>, PortError> {
+            if block_hash != self.parent_header.hash() {
+                return Err(PortError::Incoherent);
+            }
+            Ok(self.parent_header.clone())
+        }
+    }
+
+    pub(super) fn stage(
+        owner: &EdgeMeasurementOwnerV1,
+        evidence: EdgeSnapshotEvidenceV1,
+    ) -> Result<(), EdgeProducerError> {
+        let victim_raw = Bytes::from_str(&format!("0x{RAW_VICTIM}"))
+            .map_err(|_| EdgeProducerError::CandidateEvidenceMismatch)?;
+        let transaction = BaseTxEnvelope::decode_2718_exact(victim_raw.as_ref())
+            .map_err(|_| EdgeProducerError::CandidateEvidenceMismatch)?;
+        let victim_hash = keccak256(&victim_raw);
+        let victim_sender = transaction
+            .recover_signer()
+            .map_err(|_| EdgeProducerError::CandidateEvidenceMismatch)?;
+
+        let parent_header = Sealed::new(Header {
+            number: BLOCK_NUMBER - 1,
+            gas_limit: 30_000_000,
+            state_root: B256::repeat_byte(0x44),
+            ..Default::default()
+        });
+        let parent_hash = parent_header.hash();
+        let latest_header = Sealed::new(Header {
+            parent_hash,
+            number: BLOCK_NUMBER,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(0),
+            ..Default::default()
+        });
+        let view = Arc::new(FixtureView { parent_hash, latest_header: Mutex::new(latest_header) });
+        let captured_view: Arc<dyn PendingSnapshotView + Send + Sync> =
+            Arc::<FixtureView>::clone(&view);
+
+        let mut provider = StateProviderTest::default();
+        let measurement_account = Default::default();
+        provider.insert_account(
+            owner.config.measurement_sender,
+            measurement_account,
+            None,
+            HashMap::default(),
+        );
+        let mut victim_account = AccountInfo::default();
+        victim_account.balance = U256::MAX;
+        victim_account.nonce = transaction.nonce();
+        provider.insert_account(victim_sender, victim_account.into(), None, HashMap::default());
+        for (address, runtime_hash) in [
+            (crate::MEASUREMENT_EXECUTOR, owner.config.executor_runtime_hash),
+            (owner.config.v2_adapter, owner.config.v2_adapter_runtime_hash),
+            (owner.config.v3_adapter, owner.config.v3_adapter_runtime_hash),
+            (owner.config.aerodrome_adapter, owner.config.aerodrome_adapter_runtime_hash),
+        ] {
+            assert_eq!(runtime_hash, keccak256([]));
+            provider.insert_account(
+                address,
+                Default::default(),
+                Some(Bytes::new()),
+                HashMap::default(),
+            );
+        }
+        let received_at = Instant::now();
+        let port =
+            FixturePort { view: captured_view, received_at, parent_header, provider, evidence };
+        let snapshot = SnapshotCaptureCoordinator
+            .capture(&port)
+            .map_err(|_| EdgeProducerError::MissingCandidateEvidence)?
+            .ok_or(EdgeProducerError::MissingCandidateEvidence)?;
+
+        let probe = CancellationProbe::new(
+            Arc::new(CancellationToken::new(Instant::now() + Duration::from_secs(30))),
+            Arc::new(GlobalLifecycle::default()),
+        );
+        let audit = FrameAuditPlan::new(
+            vec![
+                AuditedWriteKey::AccountBalance {
+                    address: victim_sender,
+                    evidence_digest: B256::repeat_byte(0x45),
+                },
+                AuditedWriteKey::AccountNonce {
+                    address: victim_sender,
+                    evidence_digest: B256::repeat_byte(0x46),
+                },
+                AuditedWriteKey::AccountBalance {
+                    address: Address::ZERO,
+                    evidence_digest: B256::repeat_byte(0x47),
+                },
+            ],
+            BTreeMap::new(),
+        )
+        .map_err(|_| EdgeProducerError::CandidateEvidenceMismatch)?;
+        let frame = crate::VictimFrame {
+            chain_id: transaction.chain_id().ok_or(EdgeProducerError::CandidateEvidenceMismatch)?,
+            transaction_type: transaction.ty(),
+            transaction_hash: victim_hash,
+            from: victim_sender,
+            raw_tx: victim_raw.clone(),
+            parent_hash,
+            block_number: BLOCK_NUMBER,
+            victim_flashblock_index: PREDECESSOR_INDEX + 1,
+            received_at: Instant::now(),
+        };
+        let processed = FrameProcessor::process(
+            &port,
+            &snapshot,
+            &frame,
+            Instant::now(),
+            Arc::new(BaseChainSpec::mainnet()),
+            &audit,
+            &probe,
+        )
+        .map_err(|_| EdgeProducerError::CandidateEvidenceMismatch)?
+        .ok_or(EdgeProducerError::CandidateEvidenceMismatch)?;
+
+        *view.latest_header.lock().map_err(|_| EdgeProducerError::Ledger)? = Sealed::new(Header {
+            parent_hash,
+            number: BLOCK_NUMBER,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(1),
+            ..Default::default()
+        });
+
+        let token = Address::repeat_byte(0x51);
+        let prepared = [
+            PreparedPoolState {
+                pool: Address::repeat_byte(0x52),
+                protocol: ExactProtocol::UniswapV2,
+                token0: WETH,
+                token1: token,
+                decimals0: 18,
+                decimals1: 18,
+                fee_pips: 3_000,
+                quote: PreparedPoolQuote::ConstantProduct {
+                    reserve0: U256::from(1_000_000),
+                    reserve1: U256::from(2_000_000),
+                },
+            },
+            PreparedPoolState {
+                pool: Address::repeat_byte(0x53),
+                protocol: ExactProtocol::UniswapV2,
+                token0: token,
+                token1: WETH,
+                decimals0: 18,
+                decimals1: 18,
+                fee_pips: 3_000,
+                quote: PreparedPoolQuote::ConstantProduct {
+                    reserve0: U256::from(1_000_000),
+                    reserve1: U256::from(1_000_000),
+                },
+            },
+        ];
+        let amount_in = U256::from(1_000);
+        let first_out = prepared[0]
+            .quote_exact_in(WETH, amount_in, &probe)
+            .map_err(|_| EdgeProducerError::CandidateEvidenceMismatch)?;
+        let amount_out = prepared[1]
+            .quote_exact_in(token, first_out, &probe)
+            .map_err(|_| EdgeProducerError::CandidateEvidenceMismatch)?;
+        let gross_profit = amount_out
+            .checked_sub(amount_in)
+            .ok_or(EdgeProducerError::CandidateEvidenceMismatch)?;
+        let mut plan = BackrunPlan {
+            parent_hash,
+            block_number: BLOCK_NUMBER,
+            predecessor_index: PREDECESSOR_INDEX,
+            payload_id: payload_id(),
+            victim: victim_hash,
+            route: [
+                BackrunHop {
+                    pool: prepared[0].pool,
+                    protocol: prepared[0].protocol,
+                    token_in: WETH,
+                    token_out: token,
+                    fee_pips: prepared[0].fee_pips,
+                },
+                BackrunHop {
+                    pool: prepared[1].pool,
+                    protocol: prepared[1].protocol,
+                    token_in: token,
+                    token_out: WETH,
+                    fee_pips: prepared[1].fee_pips,
+                },
+            ],
+            amount_in,
+            amount_out,
+            gross_profit,
+            digest: BackrunPlanDigest(B256::ZERO),
+        };
+        plan.digest = MeasurementEncoder::digest(&plan)
+            .map_err(|_| EdgeProducerError::CandidateEvidenceMismatch)?;
+
+        owner.with_blink_admission(|owner, authoritative| {
+            if authoritative {
+                owner.observe_ledger_result_admitted(owner.ledger().record_observed());
+                owner.record_submission_admitted(0, SlotSubmit::Accepted);
+            }
+        });
+        owner.stage_selected_candidate(EdgeCandidateStageInputV3 {
+            generation: 0,
+            port: &port,
+            snapshot: &snapshot,
+            processed: &processed,
+            prepared: &prepared,
+            plan: &plan,
+            victim_raw: &victim_raw,
+            probe: &probe,
+        })?;
+        owner.record_terminal_and_resolve(
+            0,
+            BlinkGenerationTerminalV1::Processed,
+            Some(ShadowOutcome::Selected),
+        );
+        Ok(())
+    }
+}
+
+#[cfg(feature = "test-utils")]
+impl EdgeMeasurementOwnerV1 {
+    /// Stages and terminalizes one deterministic candidate through the production producer path.
+    pub fn stage_deterministic_test_candidate(
+        &self,
+        evidence: crate::EdgeSnapshotEvidenceV1,
+    ) -> Result<(), EdgeProducerError> {
+        candidate_fixture::stage(self, evidence)
+    }
+}
 #[cfg(test)]
 mod tests {
     use std::{sync::mpsc, thread, time::Duration};
@@ -3087,7 +3515,7 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_live_generation_capacity_overflow_still_poisons_at_4096() {
+    fn concurrent_live_generation_capacity_overflow_is_counted_without_poison() {
         const THREADS: u64 = 8;
         const ATTEMPTS: u64 = BLINK_LEDGER_CAPACITY as u64 + 1;
 
@@ -3120,7 +3548,8 @@ mod tests {
         assert_eq!(admitted, BLINK_LEDGER_CAPACITY);
         assert_eq!(overflowed, 1);
         assert_eq!(snapshot.generation_pending, BLINK_LEDGER_CAPACITY as u64);
-        assert!(snapshot.poisoned);
+        assert_eq!(snapshot.generation_overflow, 1);
+        assert!(!snapshot.poisoned);
         assert_eq!(ledger.generations.lock().unwrap().len(), BLINK_LEDGER_CAPACITY);
         assert!(ledger.selected.lock().unwrap().is_empty());
     }
@@ -3243,7 +3672,7 @@ mod tests {
     }
 
     #[test]
-    fn cutoff_deadline_terminalizes_unresolved_blink_authority_and_poisons_final() {
+    fn cutoff_deadline_terminalizes_unresolved_blink_authority_without_poisoning() {
         let owner = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
         owner.observe_ledger_result_admitted(owner.ledger().record_observed());
         owner.record_submission_admitted(0, SlotSubmit::Accepted);
@@ -3252,8 +3681,10 @@ mod tests {
         assert_eq!(bounds.0, 1);
         assert!(started.elapsed() < Duration::from_secs(1));
         assert!(owner.generation_authority.lock().expect("authority").is_empty());
-        assert!(owner.poisoned.load(Ordering::Acquire));
-        assert_eq!(owner.finalization_ready(), Err(EdgeProducerError::CutoffDrainDeadline));
+        assert!(!owner.poisoned.load(Ordering::Acquire));
+        owner.latch_cutoff(cutoff_fields(10));
+        assert_eq!(owner.finalization_ready(), Ok(true));
+        assert!(owner.final_record().is_ok());
     }
     #[test]
     fn late_post_cutoff_terminal_without_authority_is_an_inert_noop() {
@@ -3402,6 +3833,98 @@ mod tests {
         );
         assert!(owner.poisoned.load(Ordering::SeqCst));
         assert_eq!(owner.checked_candidate_bounds().count, 0);
+    }
+
+    #[test]
+    fn staging_failure_drop_is_counted_and_finalizable() {
+        let owner = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
+        owner.with_blink_admission(|owner, authoritative| {
+            assert!(authoritative);
+            owner.observe_ledger_result_admitted(owner.ledger().record_observed());
+            owner.record_submission_admitted(0, SlotSubmit::Accepted);
+        });
+        owner.emit_candidate_drop(0, CandidatePreEnqueueDropReasonV3::MissingRequiredEvidence);
+        owner.record_terminal_and_resolve(
+            0,
+            BlinkGenerationTerminalV1::Processed,
+            Some(ShadowOutcome::FrameRejected),
+        );
+
+        assert_eq!(
+            owner.drain_records().unwrap(),
+            vec![EdgeProducerRecordV1::CandidateDrop {
+                generation: 0,
+                reason: CandidatePreEnqueueDropReasonV3::MissingRequiredEvidence,
+            }]
+        );
+        assert_eq!(
+            owner.candidate_pre_enqueue_drop_counters(),
+            CandidatePreEnqueueDropCountersV1 {
+                missing_required_evidence: 1,
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            owner.checked_candidate_bounds(),
+            CheckedCandidateBoundsV1 { count: 0, last_sequence: None }
+        );
+        owner.latch_cutoff(cutoff_fields(10));
+        let final_record = owner.final_record().unwrap();
+        assert_eq!(final_record.blink.processed_terminal, 1);
+        assert_eq!(final_record.blink.selected_dto_built_preterminal, 0);
+        assert_eq!(final_record.blink.selected_dto_committed, 0);
+        assert!(!final_record.blink.poisoned);
+    }
+
+    #[test]
+    fn full_candidate_and_record_queues_preserve_exact_drop_count_and_final_readiness() {
+        let mut config = owner_config();
+        config.record_queue_capacity = 1;
+        let owner = EdgeMeasurementOwnerV1::new(config).unwrap();
+        owner.with_blink_admission(|owner, authoritative| {
+            assert!(authoritative);
+            owner.observe_ledger_result_admitted(owner.ledger().record_observed());
+            owner.record_submission_admitted(0, SlotSubmit::Accepted);
+            owner.observe_ledger_result_admitted(
+                owner.ledger().record_selected_preterminal_authorized(0),
+            );
+        });
+        owner.emit_blink_reject("wire-end", BlinkRejectReasonV3::WireEnd);
+        let (candidate_sender, _candidate_receiver) = sync_channel(1);
+        candidate_sender.try_send(()).unwrap();
+        let reason = EdgeMeasurementOwnerV1::try_send_candidate(&candidate_sender, ()).unwrap_err();
+        owner.emit_candidate_drop(0, reason);
+        owner.observe_ledger_result(owner.ledger().record_terminal(
+            0,
+            BlinkGenerationTerminalV1::Processed,
+            Some(ShadowOutcome::Selected),
+        ));
+        owner.release_generation_authority(0);
+        assert_eq!(
+            owner.candidate_pre_enqueue_drop_counters(),
+            CandidatePreEnqueueDropCountersV1 { candidate_queue_full: 1, ..Default::default() }
+        );
+
+        let records = owner.drain_records().unwrap();
+        assert_eq!(records.len(), 1);
+        assert!(matches!(
+            records.as_slice(),
+            [EdgeProducerRecordV1::BlinkReject(BlinkRejectRecordV3 {
+                reason: BlinkRejectReasonV3::WireEnd,
+                ..
+            })]
+        ));
+        assert_eq!(
+            owner.checked_candidate_bounds(),
+            CheckedCandidateBoundsV1 { count: 0, last_sequence: None }
+        );
+        owner.latch_cutoff(cutoff_fields(10));
+        assert_eq!(owner.finalization_ready(), Ok(true));
+        let final_record = owner.final_record().unwrap();
+        assert_eq!(final_record.blink.processed_terminal, 1);
+        assert_eq!(final_record.blink.selected_dto_built_preterminal, 1);
+        assert_eq!(final_record.blink.selected_dto_committed, 1);
+        assert!(!final_record.blink.poisoned);
     }
     #[test]
     fn cutoff_closes_reject_and_draft_admission() {
