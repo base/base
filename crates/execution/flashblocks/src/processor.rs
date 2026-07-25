@@ -507,6 +507,8 @@ where
         source_generation: Option<u64>,
         cache_resolved: bool,
     ) {
+        #[cfg(not(feature = "edge-measurement"))]
+        let _ = (source_generation, cache_resolved);
         let start_time = Instant::now();
         // Move the blocking MDBX read-tx + EVM rebuild off the async worker
         // thread (multi_thread runtime; borrows stay on-thread, no clone).

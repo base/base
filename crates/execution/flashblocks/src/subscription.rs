@@ -135,6 +135,7 @@ where
                                         );
                                         continue;
                                     };
+                                    Metrics::upstream_messages().increment(1);
                                     match msg {
                                         Ok(msg @ (Message::Binary(_) | Message::Text(_))) => {
                                             #[cfg(feature = "edge-measurement")]
@@ -152,7 +153,6 @@ where
                                                 _ => unreachable!("matched data message"),
                                             };
                                             let bytes = msg.into_data();
-                                            Metrics::upstream_messages().increment(1);
                                             match Flashblock::try_decode_message(bytes) {
                                                 Ok(payload) => {
                                                     #[cfg(feature = "edge-measurement")]
@@ -260,6 +260,8 @@ where
                                         }
                                         Ok(Message::Pong(data)) => {
                                             #[cfg(feature = "edge-measurement")]
+                                            let was_awaiting_pong = awaiting_pong_resp;
+                                            #[cfg(feature = "edge-measurement")]
                                             recorder.connection_transition(
                                                 SourceConnectionTransitionV1::ControlPongReceived,
                                             );
@@ -269,9 +271,11 @@ where
                                             );
                                             awaiting_pong_resp = false;
                                             #[cfg(feature = "edge-measurement")]
-                                            recorder.connection_transition(
-                                                SourceConnectionTransitionV1::PongObserved,
-                                            );
+                                            if was_awaiting_pong {
+                                                recorder.connection_transition(
+                                                    SourceConnectionTransitionV1::PongObserved,
+                                                );
+                                            }
                                         }
                                         Err(e) => {
                                             #[cfg(feature = "edge-measurement")]
@@ -417,6 +421,8 @@ where
                         #[cfg(feature = "edge-measurement")]
                         admission,
                     } => {
+                        #[cfg(not(feature = "edge-measurement"))]
+                        let _ = source_generation;
                         #[cfg(feature = "edge-measurement")]
                         if let Some(source_generation) = source_generation {
                             EdgeMeasurementGlobal::recorder().actor_delivered(source_generation);

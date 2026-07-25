@@ -311,57 +311,125 @@ pub struct PendingRegistryCountersV2 {
     pub cli_cancelled_attributed: u64,
 }
 
+/// Sparse exact sequence bitmap with at most one tree entry per 64-sequence word.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PendingSequenceBitmapV2 {
+    words: BTreeMap<u64, u64>,
+    len: usize,
+}
+
+impl PendingSequenceBitmapV2 {
+    fn insert(&mut self, sequence: u64) -> bool {
+        let word = sequence / 64;
+        let mask = 1_u64 << (sequence % 64);
+        let entry = self.words.entry(word).or_default();
+        if *entry & mask != 0 {
+            return false;
+        }
+        *entry |= mask;
+        self.len += 1;
+        true
+    }
+
+    fn remove(&mut self, sequence: &u64) -> bool {
+        let word = *sequence / 64;
+        let mask = 1_u64 << (*sequence % 64);
+        let Some(entry) = self.words.get_mut(&word) else {
+            return false;
+        };
+        if *entry & mask == 0 {
+            return false;
+        }
+        *entry &= !mask;
+        self.len -= 1;
+        if *entry == 0 {
+            self.words.remove(&word);
+        }
+        true
+    }
+
+    fn contains(&self, sequence: &u64) -> bool {
+        self.words
+            .get(&(*sequence / 64))
+            .is_some_and(|word| *word & (1_u64 << (*sequence % 64)) != 0)
+    }
+
+    /// Returns the exact number of represented sequences.
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns whether no sequence is represented.
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn iter(&self) -> impl Iterator<Item = u64> + '_ {
+        self.words.iter().flat_map(|(word_index, word)| {
+            let base = word_index * 64;
+            (0..64).filter_map(move |bit| (word & (1_u64 << bit) != 0).then_some(base + bit))
+        })
+    }
+}
+
+#[cfg(test)]
+impl PartialEq<BTreeSet<u64>> for PendingSequenceBitmapV2 {
+    fn eq(&self, other: &BTreeSet<u64>) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter().copied())
+    }
+}
+
 /// Exact sequence sets used by every H2 conservation equation.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct PendingRegistrySequenceSetsV2 {
     /// All allocated advanced snapshots.
-    pub advanced_with_snapshot: BTreeSet<u64>,
+    pub advanced_with_snapshot: PendingSequenceBitmapV2,
     /// Registration successes.
-    pub registration_succeeded: BTreeSet<u64>,
+    pub registration_succeeded: PendingSequenceBitmapV2,
     /// Registration failures.
-    pub registration_failed: BTreeSet<u64>,
+    pub registration_failed: PendingSequenceBitmapV2,
     /// Successful registrations subsequently published.
-    pub registered_published: BTreeSet<u64>,
+    pub registered_published: PendingSequenceBitmapV2,
     /// Successful registrations with no receivers.
-    pub registered_no_receivers: BTreeSet<u64>,
+    pub registered_no_receivers: PendingSequenceBitmapV2,
     /// Failed registrations subsequently published.
-    pub failed_registration_published: BTreeSet<u64>,
+    pub failed_registration_published: PendingSequenceBitmapV2,
     /// Failed registrations with no receivers.
-    pub failed_registration_no_receivers: BTreeSet<u64>,
+    pub failed_registration_no_receivers: PendingSequenceBitmapV2,
     /// All published sends.
-    pub send_published: BTreeSet<u64>,
+    pub send_published: PendingSequenceBitmapV2,
     /// All no-receiver sends.
-    pub send_no_receivers: BTreeSet<u64>,
+    pub send_no_receivers: PendingSequenceBitmapV2,
     /// CLI lookup successes.
-    pub cli_received_lookup_succeeded: BTreeSet<u64>,
+    pub cli_received_lookup_succeeded: PendingSequenceBitmapV2,
     /// CLI lookup failures.
-    pub cli_registry_lookup_failed: BTreeSet<u64>,
+    pub cli_registry_lookup_failed: PendingSequenceBitmapV2,
     /// Lag-attributed sequences.
-    pub cli_lagged_attributed: BTreeSet<u64>,
+    pub cli_lagged_attributed: PendingSequenceBitmapV2,
     /// Close-attributed sequences.
-    pub cli_closed_attributed: BTreeSet<u64>,
+    pub cli_closed_attributed: PendingSequenceBitmapV2,
     /// Cancel-attributed sequences.
-    pub cli_cancelled_attributed: BTreeSet<u64>,
+    pub cli_cancelled_attributed: PendingSequenceBitmapV2,
     /// Published sequences lacking a CLI terminal.
-    pub pending_delivery_final: BTreeSet<u64>,
+    pub pending_delivery_final: PendingSequenceBitmapV2,
     /// All CLI `Ok` receipts.
-    pub cli_ok_received: BTreeSet<u64>,
+    pub cli_ok_received: PendingSequenceBitmapV2,
     /// Snapshot records installed before measurement lookup.
-    pub snapshot_records_installed: BTreeSet<u64>,
+    pub snapshot_records_installed: PendingSequenceBitmapV2,
     /// Failed registrations ending in lookup failure.
-    pub failed_reg_cli_registry_lookup_failed: BTreeSet<u64>,
+    pub failed_reg_cli_registry_lookup_failed: PendingSequenceBitmapV2,
     /// Failed registrations attributed to lag.
-    pub failed_reg_cli_lagged_attributed: BTreeSet<u64>,
+    pub failed_reg_cli_lagged_attributed: PendingSequenceBitmapV2,
     /// Failed registrations attributed to close.
-    pub failed_reg_cli_closed_attributed: BTreeSet<u64>,
+    pub failed_reg_cli_closed_attributed: PendingSequenceBitmapV2,
     /// Failed registrations attributed to cancellation.
-    pub failed_reg_cli_cancelled_attributed: BTreeSet<u64>,
+    pub failed_reg_cli_cancelled_attributed: PendingSequenceBitmapV2,
     /// Failed registrations lacking a terminal.
-    pub failed_reg_pending_final: BTreeSet<u64>,
+    pub failed_reg_pending_final: PendingSequenceBitmapV2,
     /// Failed registrations with no receivers.
-    pub registration_failed_no_receivers: BTreeSet<u64>,
+    pub registration_failed_no_receivers: PendingSequenceBitmapV2,
     /// Forbidden failed-registration lookup-success intersection.
-    pub failed_reg_cli_received_lookup_succeeded: BTreeSet<u64>,
+    pub failed_reg_cli_received_lookup_succeeded: PendingSequenceBitmapV2,
 }
 
 /// Named poison latched without changing the production send.
@@ -375,6 +443,8 @@ pub enum PendingRegistryPoisonV2 {
     DuplicateSequence(u64),
     /// A primary, secondary, or terminal binding was inconsistent.
     BindingConflict(u64),
+    /// The owner-approved primary registry capacity was exceeded.
+    CapacityOverflow,
     /// A failed registration was incorrectly classified as lookup success.
     PendingRegistrationFailureUnexpectedLookupSuccess(u64),
     /// A lock was recovered after poisoning.
@@ -402,6 +472,8 @@ pub struct PendingRegistryStateV2 {
     pub unregistered_send_records: Vec<(PendingSendJournalMarkerV2, PendingSendDispositionV2)>,
     /// Terminal records accepted by the coverage queue.
     pub terminal_records: Vec<PendingTerminalRecordV2>,
+    /// Pending-snapshot sequence to terminal-record position for exact logarithmic lookup.
+    pub terminal_record_index: BTreeMap<u64, usize>,
     /// FIFO `(coverage sequence, pending snapshot sequence)` bindings awaiting durability.
     pub durability_pending: VecDeque<(u64, u64)>,
     /// Sequences explicitly acknowledged durable by the caller.
@@ -460,6 +532,7 @@ impl PendingMetadataRegistryV2 {
                 unregistered_send_inflight: 0,
                 unregistered_send_records: Vec::new(),
                 terminal_records: Vec::new(),
+                terminal_record_index: BTreeMap::new(),
                 durability_pending: VecDeque::new(),
                 durability_acked: BTreeSet::new(),
                 cleanup_events: Vec::new(),
@@ -529,6 +602,21 @@ impl PendingMetadataRegistryV2 {
             pending_public_subset_digest_v1: Self::pending_public_subset_digest_v1(pending),
         };
 
+        if state.primary.len() >= self.capacity {
+            Self::poison(&mut state, PendingRegistryPoisonV2::CapacityOverflow);
+            if let Err(field) =
+                Self::increment(&mut state, PendingAccountingFieldV2::RegistrationFailed)
+            {
+                Self::poison(&mut state, PendingRegistryPoisonV2::AccountingOverflow(field));
+            }
+            Self::insert(&mut state, sequence, |sets| &mut sets.registration_failed);
+            return PendingRegistrationAttemptV2 {
+                pending_snapshot_sequence: Some(sequence),
+                disposition: PendingRegistrationDispositionV2::Failed(
+                    PendingRegistrationFailure::PendingRegistryCapacityOverflow,
+                ),
+            };
+        }
         let pointer_failure = state.secondary.get(&pointer).and_then(|queue| {
             queue.iter().find_map(|indexed| {
                 let entry = state.primary.get(indexed)?;
@@ -545,10 +633,6 @@ impl PendingMetadataRegistryV2 {
             .map(PendingRegistrationFailure::PendingAccountingOverflow)
             .or_else(|| {
                 was_poisoned.then_some(PendingRegistrationFailure::PendingRegistryLockPoisoned)
-            })
-            .or_else(|| {
-                (state.primary.len() >= self.capacity)
-                    .then_some(PendingRegistrationFailure::PendingRegistryCapacityOverflow)
             })
             .or(pointer_failure)
             .or_else(|| {
@@ -668,6 +752,24 @@ impl PendingMetadataRegistryV2 {
                 return Err(error);
             }
         };
+        if matches!(
+            attempt.disposition,
+            PendingRegistrationDispositionV2::Failed(
+                PendingRegistrationFailure::PendingRegistryCapacityOverflow
+            )
+        ) && !state.primary.contains_key(&sequence)
+        {
+            if receiver_count.is_some() {
+                state.send_journal.push_back(
+                    PendingSendJournalEntryV2::RegistrationFailedWithoutSequence(
+                        PendingRegistrationFailure::PendingRegistryCapacityOverflow,
+                    ),
+                );
+            }
+            drop(state);
+            self.send_recorded.notify_all();
+            return Ok(());
+        }
         let result = (|| {
             let send = receiver_count
                 .map_or(PendingSendDispositionV2::NoReceivers, |receiver_count| {
@@ -1049,9 +1151,28 @@ impl PendingMetadataRegistryV2 {
         }
     }
 
-    /// Returns terminal records in coverage-queue acceptance order.
-    pub fn terminal_records(&self) -> Vec<PendingTerminalRecordV2> {
-        self.lock_state().0.terminal_records.clone()
+    /// Returns terminal records at or after `start_coverage_sequence` in acceptance order.
+    ///
+    /// Only the unread suffix is cloned.
+    pub fn terminal_records_from(
+        &self,
+        start_coverage_sequence: u64,
+    ) -> Vec<PendingTerminalRecordV2> {
+        let state = self.lock_state().0;
+        let start = usize::try_from(start_coverage_sequence)
+            .unwrap_or(usize::MAX)
+            .min(state.terminal_records.len());
+        state.terminal_records[start..].to_vec()
+    }
+
+    /// Returns the exact terminal for one pending snapshot sequence in logarithmic time.
+    pub fn terminal_record(
+        &self,
+        pending_snapshot_sequence: u64,
+    ) -> Option<PendingTerminalRecordV2> {
+        let state = self.lock_state().0;
+        let index = *state.terminal_record_index.get(&pending_snapshot_sequence)?;
+        state.terminal_records.get(index).copied()
     }
 
     /// Returns cleanup-order evidence.
@@ -1179,7 +1300,14 @@ impl PendingMetadataRegistryV2 {
                 .iter()
                 .enumerate()
                 .all(|(index, record)| u64::try_from(index) == Ok(record.coverage_sequence));
-        if !coverage_cursor_matches {
+        let terminal_index_matches = state.terminal_record_index.len()
+            == state.terminal_records.len()
+            && state.terminal_record_index.iter().all(|(pending_sequence, index)| {
+                state.terminal_records.get(*index).is_some_and(|record| {
+                    record.metadata.identity.pending_snapshot_sequence == *pending_sequence
+                })
+            });
+        if !coverage_cursor_matches || !terminal_index_matches {
             return Err(PendingFinalSealErrorV2::SequenceSetMismatch);
         }
         if was_poisoned || state.poisoned || !state.poisons.is_empty() {
@@ -1295,6 +1423,11 @@ impl PendingMetadataRegistryV2 {
             PendingRegistryError::CoverageSequenceOverflow
         })?;
         state.cleanup_events.push(PendingCleanupEventV2::TerminalAppended(sequence));
+        let terminal_index = state.terminal_records.len();
+        if state.terminal_record_index.insert(sequence, terminal_index).is_some() {
+            Self::poison(state, PendingRegistryPoisonV2::BindingConflict(sequence));
+            return Err(PendingRegistryError::DuplicateTerminal);
+        }
         state.terminal_records.push(PendingTerminalRecordV2 {
             coverage_sequence,
             metadata,
@@ -1432,7 +1565,7 @@ impl PendingMetadataRegistryV2 {
     fn insert(
         state: &mut PendingRegistryStateV2,
         sequence: u64,
-        select: impl FnOnce(&mut PendingRegistrySequenceSetsV2) -> &mut BTreeSet<u64>,
+        select: impl FnOnce(&mut PendingRegistrySequenceSetsV2) -> &mut PendingSequenceBitmapV2,
     ) {
         if !select(&mut state.sets).insert(sequence) {
             Self::poison(state, PendingRegistryPoisonV2::DuplicateSequence(sequence));
@@ -1445,13 +1578,13 @@ impl PendingMetadataRegistryV2 {
     }
 
     fn partition(
-        whole: &BTreeSet<u64>,
-        parts: &[&BTreeSet<u64>],
+        whole: &PendingSequenceBitmapV2,
+        parts: &[&PendingSequenceBitmapV2],
     ) -> Result<(), PendingFinalSealErrorV2> {
-        let mut union = BTreeSet::new();
+        let mut union = PendingSequenceBitmapV2::default();
         for part in parts {
-            for sequence in *part {
-                if !union.insert(*sequence) {
+            for sequence in part.iter() {
+                if !union.insert(sequence) {
                     return Err(PendingFinalSealErrorV2::SequenceSetOverlap);
                 }
             }
@@ -1462,11 +1595,14 @@ impl PendingMetadataRegistryV2 {
         Ok(())
     }
     fn exact_intersection(
-        recorded: &BTreeSet<u64>,
-        left: &BTreeSet<u64>,
-        right: &BTreeSet<u64>,
+        recorded: &PendingSequenceBitmapV2,
+        left: &PendingSequenceBitmapV2,
+        right: &PendingSequenceBitmapV2,
     ) -> Result<(), PendingFinalSealErrorV2> {
-        let expected: BTreeSet<u64> = left.intersection(right).copied().collect();
+        let mut expected = PendingSequenceBitmapV2::default();
+        for sequence in left.iter().filter(|sequence| right.contains(sequence)) {
+            expected.insert(sequence);
+        }
         if &expected != recorded {
             return Err(PendingFinalSealErrorV2::SequenceSetMismatch);
         }
@@ -1694,6 +1830,104 @@ pub struct SourceCoverageRecordV3 {
     pub record_hash: B256,
 }
 
+/// Merged S2 terminal vocabulary for the authoritative source-coverage ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceCoverageTerminalV3 {
+    /// Wire bytes failed decode.
+    DecodeRejected,
+    /// Actor enqueue closed before delivery.
+    ActorEnqueueClosed,
+    /// Actor mailbox closed while a pending item was retained.
+    ActorMailboxClosedWithPending,
+    /// State queue closed before processor ownership.
+    StateQueueClosed,
+    /// State processor queue closed while a pending item was retained.
+    StateProcessorQueueClosedWithPending,
+    /// Cached input resolved to processor ownership.
+    CacheResolved,
+    /// Cached input was replaced.
+    CacheReplaced,
+    /// Cached input was evicted.
+    CacheEvicted,
+    /// Cache rejected the input.
+    CacheRejected,
+    /// Cache ownership remained unresolved at cutoff.
+    CachedUnresolvedAtCutoff,
+    /// Processor emitted its terminal product.
+    ProcessorProduct,
+    /// CLI lookup succeeded.
+    CliReceivedLookupSucceeded,
+    /// CLI registry lookup failed.
+    CliRegistryLookupFailed,
+    /// CLI lagged the terminal.
+    CliLagged,
+    /// CLI closed the terminal.
+    CliClosed,
+    /// CLI cancelled the terminal.
+    CliCancelled,
+    /// Publication had no receivers.
+    NoReceivers,
+    /// Post-cutoff traffic was routed without authority.
+    CutoffRouted,
+}
+
+impl SourceCoverageTerminalV3 {
+    /// Exact merged S2 wire label.
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::DecodeRejected => "DecodeRejected",
+            Self::ActorEnqueueClosed => "ActorEnqueueClosed",
+            Self::ActorMailboxClosedWithPending => "ActorMailboxClosedWithPending",
+            Self::StateQueueClosed => "StateQueueClosed",
+            Self::StateProcessorQueueClosedWithPending => "StateProcessorQueueClosedWithPending",
+            Self::CacheResolved => "CacheResolved",
+            Self::CacheReplaced => "CacheReplaced",
+            Self::CacheEvicted => "CacheEvicted",
+            Self::CacheRejected => "CacheRejected",
+            Self::CachedUnresolvedAtCutoff => "CachedUnresolvedAtCutoff",
+            Self::ProcessorProduct => "ProcessorProduct",
+            Self::CliReceivedLookupSucceeded => "CliReceivedLookupSucceeded",
+            Self::CliRegistryLookupFailed => "CliRegistryLookupFailed",
+            Self::CliLagged => "CliLagged",
+            Self::CliClosed => "CliClosed",
+            Self::CliCancelled => "CliCancelled",
+            Self::NoReceivers => "NoReceivers",
+            Self::CutoffRouted => "CutoffRouted",
+        }
+    }
+}
+
+/// Truthful terminal evidence awaiting the CLI-owned strict S2 chain envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceTerminalCoverageV3 {
+    /// Producer epoch.
+    pub producer_epoch: u64,
+    /// Sequence in the authority or exclusion terminal ledger.
+    pub coverage_sequence: u64,
+    /// Route fixed at wire admission.
+    pub route: EpochRouteV1,
+    /// Source generation when one was allocated.
+    pub source_generation: Option<u64>,
+    /// Exact terminal class.
+    pub terminal: SourceCoverageTerminalV3,
+    /// Hash of the terminal evidence.
+    pub terminal_hash: B256,
+    /// Payload-first authority hash when available.
+    pub payload_first_record_hash: Option<B256>,
+    /// Pending snapshot sequence when applicable.
+    pub pending_snapshot_sequence: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SourceTerminalEvidenceV3 {
+    route: EpochRouteV1,
+    source_generation: Option<u64>,
+    terminal: SourceCoverageTerminalV3,
+    terminal_hash: B256,
+    payload_first_record_hash: Option<B256>,
+    pending_snapshot_sequence: Option<u64>,
+}
+
 /// Bounded source record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EdgeSourceEventV1 {
@@ -1707,6 +1941,8 @@ pub enum EdgeSourceEventV1 {
     Processor(ProcessorLifecycleProductV1),
     /// Independent exact source-coverage record.
     Coverage(SourceCoverageRecordV3),
+    /// Strict terminal evidence for the merged S2 source-coverage ledger.
+    TerminalCoverage(SourceTerminalCoverageV3),
     /// Cutoff record.
     Cutoff(ProducerEpochCutoffV1),
 }
@@ -2292,6 +2528,8 @@ pub struct EdgeMeasurementRecorderStateV1 {
     next_excluded_coverage_sequence: u64,
     last_excluded_coverage_hash: B256,
     excluded_coverage_record_count: u64,
+    next_terminal_coverage_sequence: u64,
+    next_excluded_terminal_coverage_sequence: u64,
     post_cutoff_routes: HashMap<DecodedFlashblockKeyV1, VecDeque<EpochAdmissionTokenV1>>,
     cutoff_fence: bool,
     connection_phase: ConnectionPhaseV1,
@@ -2419,6 +2657,8 @@ impl EdgeMeasurementRecorderV1 {
                 next_excluded_coverage_sequence: 0,
                 last_excluded_coverage_hash: B256::ZERO,
                 excluded_coverage_record_count: 0,
+                next_terminal_coverage_sequence: 0,
+                next_excluded_terminal_coverage_sequence: 0,
                 post_cutoff_routes: HashMap::new(),
                 cutoff_fence: false,
                 connection_phase: ConnectionPhaseV1::New,
@@ -2559,6 +2799,20 @@ impl EdgeMeasurementRecorderV1 {
             });
         self.enqueue(state, EdgeSourceEventV1::ClockAnchor(record));
     }
+    fn catch_up_anchors_locked(
+        &self,
+        state: &mut EdgeMeasurementRecorderStateV1,
+        through_mono_ns: u64,
+    ) {
+        while through_mono_ns >= state.next_anchor_due_mono_ns {
+            let previous_due = state.next_anchor_due_mono_ns;
+            self.record_anchor_locked(state, false);
+            if state.next_anchor_due_mono_ns == previous_due {
+                break;
+            }
+        }
+    }
+
     fn enqueue(&self, state: &mut EdgeMeasurementRecorderStateV1, event: EdgeSourceEventV1) {
         match self.event_sender.try_send(event) {
             Ok(()) => {
@@ -2575,6 +2829,74 @@ impl EdgeMeasurementRecorderV1 {
                 state.poisons.push(EdgeMeasurementPoisonV1::EventQueueClosed);
             }
         }
+    }
+
+    fn terminal_evidence_hash(
+        &self,
+        wire_ordinal: u64,
+        source_generation: Option<u64>,
+        terminal: SourceCoverageTerminalV3,
+    ) -> B256 {
+        let json = format!(
+            "{{\"producerEpoch\":\"{}\",\"sourceGeneration\":{},\"terminal\":\"{}\",\"wireOrdinal\":\"{}\"}}",
+            self.config.producer_epoch,
+            source_generation
+                .map(|value| format!("\"{value}\""))
+                .unwrap_or_else(|| "null".to_owned()),
+            terminal.wire_name(),
+            wire_ordinal,
+        );
+        AuthorityRecordHasherV1::authority("edge-source-terminal-evidence/v1", &json)
+    }
+
+    fn terminal_coverage_locked(
+        &self,
+        state: &mut EdgeMeasurementRecorderStateV1,
+        evidence: SourceTerminalEvidenceV3,
+    ) {
+        let SourceTerminalEvidenceV3 {
+            route,
+            source_generation,
+            terminal,
+            terminal_hash,
+            payload_first_record_hash,
+            pending_snapshot_sequence,
+        } = evidence;
+        let sequence = match route {
+            EpochRouteV1::Authority => state.next_terminal_coverage_sequence,
+            EpochRouteV1::PostCutoffNonAuthority => state.next_excluded_terminal_coverage_sequence,
+        };
+        let Some(next) = sequence.checked_add(1) else {
+            state.poisons.push(EdgeMeasurementPoisonV1::RecordSequenceOverflow);
+            return;
+        };
+        match route {
+            EpochRouteV1::Authority => state.next_terminal_coverage_sequence = next,
+            EpochRouteV1::PostCutoffNonAuthority => {
+                state.next_excluded_terminal_coverage_sequence = next;
+            }
+        }
+        self.enqueue(
+            state,
+            EdgeSourceEventV1::TerminalCoverage(SourceTerminalCoverageV3 {
+                producer_epoch: self.config.producer_epoch.get(),
+                coverage_sequence: sequence,
+                route,
+                source_generation,
+                terminal,
+                terminal_hash,
+                payload_first_record_hash,
+                pending_snapshot_sequence,
+            }),
+        );
+    }
+
+    fn payload_hash_locked(
+        state: &EdgeMeasurementRecorderStateV1,
+        source_generation: u64,
+    ) -> Option<B256> {
+        let context = state.source_generation_contexts.get(&source_generation)?;
+        state.payload_first.get(&context.payload_first_key).map(|record| record.record_hash)
     }
 
     fn lifecycle_locked(
@@ -2798,20 +3120,45 @@ impl EdgeMeasurementRecorderV1 {
             && state.event_pending_ack == 0
             && self.registry.verify_final_seal().is_ok()
     }
-    /// Records exact unresolved ownership when the owner-approved drain deadline expires.
+    /// Terminalizes exact cache-owned generations and records unresolved ownership at cutoff.
+    ///
+    /// This API is called by the coordinator after its bounded drain deadline.
     pub fn record_cutoff_drain_deadline(&self) -> Vec<(u64, bool)> {
-        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let unresolved: Vec<_> = state
-            .source_generation_contexts
-            .keys()
-            .copied()
-            .map(|generation| (generation, state.cache_pending.contains_key(&generation)))
-            .collect();
-        for (generation, cache_owned) in unresolved.iter().copied() {
-            state.poisons.push(if cache_owned {
-                EdgeMeasurementPoisonV1::CutoffDeadlineCacheGeneration(generation)
-            } else {
-                EdgeMeasurementPoisonV1::CutoffDeadlineProcessorGeneration(generation)
+        let (unresolved, cache_generations) = {
+            let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let unresolved: Vec<_> = state
+                .source_generation_contexts
+                .keys()
+                .copied()
+                .map(|generation| (generation, state.cache_pending.contains_key(&generation)))
+                .collect();
+            let cache_generations: Vec<_> = unresolved
+                .iter()
+                .filter_map(|(generation, cache_owned)| cache_owned.then_some(*generation))
+                .collect();
+            if !cache_generations.is_empty()
+                && !state.poisons.contains(&EdgeMeasurementPoisonV1::CacheDrainIncomplete)
+            {
+                state.poisons.push(EdgeMeasurementPoisonV1::CacheDrainIncomplete);
+            }
+            for (generation, cache_owned) in unresolved.iter().copied() {
+                state.poisons.push(if cache_owned {
+                    EdgeMeasurementPoisonV1::CutoffDeadlineCacheGeneration(generation)
+                } else {
+                    EdgeMeasurementPoisonV1::CutoffDeadlineProcessorGeneration(generation)
+                });
+            }
+            (unresolved, cache_generations)
+        };
+        for source_generation in cache_generations {
+            self.record_generation_product(ProcessorTerminalInputV1 {
+                source_generation,
+                base_disposition: ProcessorBaseDispositionV1::CachedUnresolvedAtCutoff,
+                observer_disposition: ProcessorObserverDispositionV1::Absent,
+                publish_disposition: ProcessorPublishDispositionV1::NotApplicable,
+                pending_snapshot_sequence: None,
+                processor_error_reason: None,
+                cache_resolved_final_disposition: None,
             });
         }
         unresolved
@@ -2877,13 +3224,7 @@ impl EdgeMeasurementRecorderV1 {
             return;
         }
         if let Some(current_mono_ns) = current_mono_ns {
-            while current_mono_ns >= state.next_anchor_due_mono_ns {
-                let previous_due = state.next_anchor_due_mono_ns;
-                self.record_anchor_locked(&mut state, false);
-                if state.next_anchor_due_mono_ns == previous_due {
-                    break;
-                }
-            }
+            self.catch_up_anchors_locked(&mut state, current_mono_ns);
         } else {
             self.record_anchor_locked(&mut state, false);
         }
@@ -2956,8 +3297,8 @@ impl EdgeMeasurementRecorderV1 {
             None,
             WireLifecycleTransitionV1::WireObserved,
         );
-        while observation.mono_ns.is_some_and(|mono| mono >= state.next_anchor_due_mono_ns) {
-            self.record_anchor_locked(&mut state, false);
+        if let Some(mono_ns) = observation.mono_ns {
+            self.catch_up_anchors_locked(&mut state, mono_ns);
         }
         Some(EpochAdmissionTokenV1 {
             producer_epoch: self.config.producer_epoch.get(),
@@ -2981,6 +3322,19 @@ impl EdgeMeasurementRecorderV1 {
             return;
         }
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let terminal = SourceCoverageTerminalV3::DecodeRejected;
+        let terminal_hash = self.terminal_evidence_hash(admission.wire_ordinal, None, terminal);
+        self.terminal_coverage_locked(
+            &mut state,
+            SourceTerminalEvidenceV3 {
+                route: EpochRouteV1::Authority,
+                source_generation: None,
+                terminal,
+                terminal_hash,
+                payload_first_record_hash: None,
+                pending_snapshot_sequence: None,
+            },
+        );
         state.poisons.push(EdgeMeasurementPoisonV1::DecodeRejectedBeforePayloadAuthority);
         self.terminalize_wire_locked(
             &mut state,
@@ -3150,6 +3504,19 @@ impl EdgeMeasurementRecorderV1 {
                 admission.route,
                 WireLifecycleTransitionV1::PostCutoffProcessorExcluded,
             );
+            let terminal = SourceCoverageTerminalV3::CutoffRouted;
+            let terminal_hash = self.terminal_evidence_hash(admission.wire_ordinal, None, terminal);
+            self.terminal_coverage_locked(
+                &mut state,
+                SourceTerminalEvidenceV3 {
+                    route: admission.route,
+                    source_generation: None,
+                    terminal,
+                    terminal_hash,
+                    payload_first_record_hash: None,
+                    pending_snapshot_sequence: None,
+                },
+            );
         }
         None
     }
@@ -3171,6 +3538,35 @@ impl EdgeMeasurementRecorderV1 {
                 WireLifecycleTransitionV1::PostCutoffNonAuthority
             },
         );
+        if !succeeded {
+            let retained_key = state.post_cutoff_routes.iter().find_map(|(key, routes)| {
+                routes
+                    .iter()
+                    .position(|retained| retained.wire_ordinal == admission.wire_ordinal)
+                    .map(|position| (*key, position))
+            });
+            if let Some((key, position)) = retained_key {
+                if let Some(routes) = state.post_cutoff_routes.get_mut(&key) {
+                    routes.remove(position);
+                }
+                if state.post_cutoff_routes.get(&key).is_some_and(VecDeque::is_empty) {
+                    state.post_cutoff_routes.remove(&key);
+                }
+            }
+            let terminal = SourceCoverageTerminalV3::CutoffRouted;
+            let terminal_hash = self.terminal_evidence_hash(admission.wire_ordinal, None, terminal);
+            self.terminal_coverage_locked(
+                &mut state,
+                SourceTerminalEvidenceV3 {
+                    route: admission.route,
+                    source_generation: None,
+                    terminal,
+                    terminal_hash,
+                    payload_first_record_hash: None,
+                    pending_snapshot_sequence: None,
+                },
+            );
+        }
     }
 
     /// Records private excluded-route actor delivery.
@@ -3212,6 +3608,21 @@ impl EdgeMeasurementRecorderV1 {
                 WireLifecycleTransitionV1::ActorEnqueueSucceeded,
             );
         } else {
+            let terminal = SourceCoverageTerminalV3::ActorEnqueueClosed;
+            let terminal_hash =
+                self.terminal_evidence_hash(wire_ordinal, Some(source_generation), terminal);
+            let payload_hash = Self::payload_hash_locked(&state, source_generation);
+            self.terminal_coverage_locked(
+                &mut state,
+                SourceTerminalEvidenceV3 {
+                    route: EpochRouteV1::Authority,
+                    source_generation: Some(source_generation),
+                    terminal,
+                    terminal_hash,
+                    payload_first_record_hash: payload_hash,
+                    pending_snapshot_sequence: None,
+                },
+            );
             self.remove_generation_locked(&mut state, source_generation);
             self.terminalize_wire_locked(
                 &mut state,
@@ -3316,6 +3727,20 @@ impl EdgeMeasurementRecorderV1 {
             state.poisons.push(EdgeMeasurementPoisonV1::WireLifecycleConflict);
             return;
         }
+        let terminal = SourceCoverageTerminalV3::StateQueueClosed;
+        let terminal_hash = self.terminal_evidence_hash(wire_ordinal, Some(generation), terminal);
+        let payload_hash = Self::payload_hash_locked(&state, generation);
+        self.terminal_coverage_locked(
+            &mut state,
+            SourceTerminalEvidenceV3 {
+                route: EpochRouteV1::Authority,
+                source_generation: Some(generation),
+                terminal,
+                terminal_hash,
+                payload_first_record_hash: payload_hash,
+                pending_snapshot_sequence: None,
+            },
+        );
         self.remove_generation_locked(&mut state, generation);
         self.terminalize_wire_locked(
             &mut state,
@@ -3469,6 +3894,28 @@ impl EdgeMeasurementRecorderV1 {
         B256::from(DefaultCrypto.sha256(&bytes))
     }
 
+    const fn processor_coverage_terminal(
+        disposition: ProcessorBaseDispositionV1,
+    ) -> SourceCoverageTerminalV3 {
+        match disposition {
+            ProcessorBaseDispositionV1::CacheResolvedToProcessor => {
+                SourceCoverageTerminalV3::CacheResolved
+            }
+            ProcessorBaseDispositionV1::CacheReplacedOldGeneration => {
+                SourceCoverageTerminalV3::CacheReplaced
+            }
+            ProcessorBaseDispositionV1::CacheEvicted => SourceCoverageTerminalV3::CacheEvicted,
+            ProcessorBaseDispositionV1::CacheRejectedAhead
+            | ProcessorBaseDispositionV1::MissingFirstUncacheable => {
+                SourceCoverageTerminalV3::CacheRejected
+            }
+            ProcessorBaseDispositionV1::CachedUnresolvedAtCutoff => {
+                SourceCoverageTerminalV3::CachedUnresolvedAtCutoff
+            }
+            _ => SourceCoverageTerminalV3::ProcessorProduct,
+        }
+    }
+
     /// Records one terminal product for an admitted source generation.
     pub(crate) fn record_generation_product(&self, input: ProcessorTerminalInputV1) {
         let ProcessorTerminalInputV1 {
@@ -3536,6 +3983,17 @@ impl EdgeMeasurementRecorderV1 {
                 }
             }
         }
+        self.terminal_coverage_locked(
+            &mut state,
+            SourceTerminalEvidenceV3 {
+                route: EpochRouteV1::Authority,
+                source_generation: Some(source_generation),
+                terminal: Self::processor_coverage_terminal(product.base_disposition),
+                terminal_hash: product.structural_terminal_hash,
+                payload_first_record_hash: product.payload_first_record_hash,
+                pending_snapshot_sequence: product.pending_snapshot_sequence,
+            },
+        );
         Self::release_payload_generation_locked(&mut state, context.payload_first_key);
         self.enqueue(&mut state, EdgeSourceEventV1::Processor(product));
         if let Some(wire_ordinal) = wire_ordinal {
@@ -3580,16 +4038,16 @@ impl EdgeMeasurementRecorderV1 {
             (
                 Phase::Established {
                     read_half_closed,
-                    ping_due: true,
+                    ping_due,
                     ping_written,
                     control_pong_seen: _,
                 },
                 Transition::ControlPongReceived,
             ) => Some(Phase::Established {
                 read_half_closed,
-                ping_due: true,
+                ping_due,
                 ping_written,
-                control_pong_seen: true,
+                control_pong_seen: ping_due && ping_written,
             }),
             (
                 Phase::Established {
@@ -3812,11 +4270,8 @@ impl EdgeMeasurementRecorderV1 {
             return cutoff;
         }
         let sample = Self::sample_locked(&mut state);
-        while sample
-            .and_then(|observation| observation.mono_ns)
-            .is_some_and(|mono| mono >= state.next_anchor_due_mono_ns)
-        {
-            self.record_anchor_locked(&mut state, false);
+        if let Some(mono_ns) = sample.and_then(|observation| observation.mono_ns) {
+            self.catch_up_anchors_locked(&mut state, mono_ns);
         }
         let cutoff_clock_observation_ordinal =
             state.next_clock_ordinal.checked_sub(1).unwrap_or_else(|| {
@@ -3833,6 +4288,11 @@ impl EdgeMeasurementRecorderV1 {
                 state.poisons.push(EdgeMeasurementPoisonV1::CutoffBoundMissing("source"));
                 0
             });
+        let last_coverage_sequence =
+            state.next_terminal_coverage_sequence.checked_sub(1).unwrap_or_else(|| {
+                state.poisons.push(EdgeMeasurementPoisonV1::CutoffBoundMissing("coverage"));
+                0
+            });
         let mut cutoff = ProducerEpochCutoffV1 {
             producer_epoch: self.config.producer_epoch.get(),
             cutoff_clock_observation_ordinal,
@@ -3844,7 +4304,7 @@ impl EdgeMeasurementRecorderV1 {
                 .snapshot()
                 .last_pending_snapshot_sequence
                 .unwrap_or(0),
-            last_coverage_sequence: state.next_coverage_sequence.saturating_sub(1),
+            last_coverage_sequence,
             last_candidate_sequence: external.last_candidate_sequence,
             latch_mono_ns: sample.and_then(|value| value.mono_ns).unwrap_or(0),
             record_hash: B256::ZERO,
@@ -3897,6 +4357,7 @@ impl EdgeMeasurementRecorderV1 {
     pub fn record_terminal_durable(
         &self,
         terminal: PendingTerminalRecordV2,
+        terminal_hash: B256,
     ) -> Result<(), EdgeMeasurementPoisonV1> {
         let sequence = terminal.metadata.identity.pending_snapshot_sequence;
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -3926,6 +4387,36 @@ impl EdgeMeasurementRecorderV1 {
             state.poisons.push(EdgeMeasurementPoisonV1::MissingSourceIdentity);
             return Err(EdgeMeasurementPoisonV1::MissingSourceIdentity);
         }
+        let coverage_terminal = match terminal.terminal {
+            PendingCliTerminalV2::CliReceivedLookupSucceeded => {
+                SourceCoverageTerminalV3::CliReceivedLookupSucceeded
+            }
+            PendingCliTerminalV2::CliRegistryLookupFailed(_) => {
+                SourceCoverageTerminalV3::CliRegistryLookupFailed
+            }
+            PendingCliTerminalV2::CliLagged => SourceCoverageTerminalV3::CliLagged,
+            PendingCliTerminalV2::CliClosed => SourceCoverageTerminalV3::CliClosed,
+            PendingCliTerminalV2::CliCancelled => SourceCoverageTerminalV3::CliCancelled,
+            PendingCliTerminalV2::NoReceivers
+            | PendingCliTerminalV2::RegistrationFailedNoReceivers => {
+                SourceCoverageTerminalV3::NoReceivers
+            }
+        };
+        let payload_first_record_hash = state
+            .payload_first_by_generation
+            .get(&source_generation)
+            .map(|record| record.record_hash);
+        self.terminal_coverage_locked(
+            &mut state,
+            SourceTerminalEvidenceV3 {
+                route: EpochRouteV1::Authority,
+                source_generation: Some(source_generation),
+                terminal: coverage_terminal,
+                terminal_hash,
+                payload_first_record_hash,
+                pending_snapshot_sequence: Some(sequence),
+            },
+        );
         self.coverage_locked(
             &mut state,
             wire_ordinal,
@@ -4002,8 +4493,9 @@ impl EdgeMeasurementRecorderV1 {
         let h3_final = last_connection_valid
             && state.connection_phase == ConnectionPhaseV1::Exited
             && state.connection_established_count == state.connection_closed_count;
-        let coverage_final = state.coverage_record_count == state.next_coverage_sequence
-            && cutoff.last_coverage_sequence == state.next_coverage_sequence.saturating_sub(1);
+        let expected_last_coverage_sequence =
+            state.next_terminal_coverage_sequence.saturating_sub(1);
+        let coverage_final = cutoff.last_coverage_sequence == expected_last_coverage_sequence;
         let source_final = state.authority_wire_terminals == state.next_wire_ordinal;
         if !h3_final || !coverage_final || !source_final {
             return Err(EdgeSourceFinalSealErrorV1::ConnectionFinalInvalid);
@@ -4025,6 +4517,18 @@ impl EdgeMeasurementRecorderV1 {
             state.authority_wire_terminals,
             state.event_pending_ack,
             state.poisons.len(),
+        )
+    }
+    /// Returns producer poison and coordinator-failure counts from live recorder state.
+    pub fn producer_failure_counts(&self) -> (usize, usize) {
+        let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        (
+            state.poisons.len(),
+            state
+                .poisons
+                .iter()
+                .filter(|poison| matches!(poison, EdgeMeasurementPoisonV1::CoordinatorFailure(_)))
+                .count(),
         )
     }
     #[cfg(test)]
@@ -4059,10 +4563,10 @@ impl EdgeMeasurementRecorderV1 {
         }
         let connection = state.last_connection_record?;
         drop(state);
-        let registry_terminal = self.registry.terminal_records().into_iter().find(|record| {
-            record.metadata.identity.pending_snapshot_sequence == sequence
-                && record.metadata == metadata
-        })?;
+        let registry_terminal = self.registry.terminal_record(sequence)?;
+        if registry_terminal.metadata != metadata {
+            return None;
+        }
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if state
             .snapshot_products
@@ -4147,9 +4651,6 @@ impl AuthorityRecordHasherV1 {
         realtime_resolution_ns: u64,
         monotonic_resolution_ns: u64,
     ) -> B256 {
-        let optional = |value: Option<u64>| {
-            value.map_or_else(|| "null".to_string(), |value| format!("\"{value}\""))
-        };
         let (pair_status, disposition, failure) =
             match (record.observation.utc_status, record.observation.mono_status) {
                 (ClockStatusV1::Ok, ClockStatusV1::Ok) => ("BothOk", "Sampled", "null"),
@@ -4165,26 +4666,37 @@ impl AuthorityRecordHasherV1 {
             };
         let anchor_kind = if record.startup { "Startup" } else { "Periodic" };
         let boot_id = String::from_utf8_lossy(&boot_id);
-        let json = format!(
-            "{{\"anchorKind\":\"{}\",\"anchorSequence\":\"{}\",\"bootId\":\"{}\",\"clockObservationOrdinal\":\"{}\",\"clockSourceVersion\":\"{}\",\"disposition\":\"{}\",\"dueMonoNs\":\"{}\",\"failureEvidence\":{},\"kind\":\"Anchor\",\"monoNs\":{},\"monotonicResolutionNs\":\"{}\",\"pairStatus\":\"{}\",\"persistenceSequence\":\"{}\",\"previousAnchorHash\":\"{}\",\"producerEpoch\":\"{}\",\"realtimeResolutionNs\":\"{}\",\"sampledMonoNs\":\"{}\",\"schema\":\"edge-clock-anchor/v1\",\"utcNs\":{}}}",
-            anchor_kind,
-            record.anchor_sequence,
-            boot_id,
-            record.observation.clock_observation_ordinal,
-            EDGE_CLOCK_SOURCE_VERSION_V1,
-            disposition,
-            record.due_mono_ns,
-            failure,
-            optional(record.observation.mono_ns),
-            monotonic_resolution_ns,
-            pair_status,
-            record.anchor_sequence,
-            Self::hex(record.previous_anchor_hash),
-            record.producer_epoch,
-            realtime_resolution_ns,
-            record.sampled_mono_ns,
-            optional(record.observation.utc_ns),
-        );
+        let mut fields = vec![
+            format!("\"anchorKind\":\"{anchor_kind}\""),
+            format!("\"anchorSequence\":\"{}\"", record.anchor_sequence),
+            format!("\"bootId\":\"{boot_id}\""),
+            format!(
+                "\"clockObservationOrdinal\":\"{}\"",
+                record.observation.clock_observation_ordinal
+            ),
+            format!("\"clockSourceVersion\":\"{EDGE_CLOCK_SOURCE_VERSION_V1}\""),
+            format!("\"disposition\":\"{disposition}\""),
+            format!("\"dueMonoNs\":\"{}\"", record.due_mono_ns),
+            format!("\"failureEvidence\":{failure}"),
+            "\"kind\":\"Anchor\"".to_owned(),
+        ];
+        if let Some(mono_ns) = record.observation.mono_ns {
+            fields.push(format!("\"monoNs\":\"{mono_ns}\""));
+        }
+        fields.extend([
+            format!("\"monotonicResolutionNs\":\"{monotonic_resolution_ns}\""),
+            format!("\"pairStatus\":\"{pair_status}\""),
+            format!("\"persistenceSequence\":\"{}\"", record.anchor_sequence),
+            format!("\"previousAnchorHash\":\"{}\"", Self::hex(record.previous_anchor_hash)),
+            format!("\"producerEpoch\":\"{}\"", record.producer_epoch),
+            format!("\"realtimeResolutionNs\":\"{realtime_resolution_ns}\""),
+            format!("\"sampledMonoNs\":\"{}\"", record.sampled_mono_ns),
+            "\"schema\":\"edge-clock-anchor/v1\"".to_owned(),
+        ]);
+        if let Some(utc_ns) = record.observation.utc_ns {
+            fields.push(format!("\"utcNs\":\"{utc_ns}\""));
+        }
+        let json = format!("{{{}}}", fields.join(","));
         Self::authority("edge-clock-anchor/v1", &json)
     }
     fn connection(record: &SourceConnectionRecordV1) -> B256 {
@@ -4523,6 +5035,43 @@ mod tests {
     }
 
     #[test]
+    fn both_failed_anchor_hash_omits_failed_clock_keys() {
+        let record = ClockAnchorRecordV1 {
+            producer_epoch: 9,
+            anchor_sequence: 0,
+            observation: WireObservationV1 {
+                clock_observation_ordinal: 1,
+                utc_status: ClockStatusV1::Failed(ClockFailureV1 { status: -1, errno: 5 }),
+                utc_ns: None,
+                mono_status: ClockStatusV1::Failed(ClockFailureV1 { status: -1, errno: 6 }),
+                mono_ns: None,
+                wire_digest: B256::ZERO,
+            },
+            startup: true,
+            due_mono_ns: 2,
+            sampled_mono_ns: 2,
+            previous_anchor_hash: B256::ZERO,
+            record_hash: B256::ZERO,
+        };
+        let expected_json = concat!(
+            "{\"anchorKind\":\"Startup\",\"anchorSequence\":\"0\",",
+            "\"bootId\":\"000000000000000000000000000000000000\",",
+            "\"clockObservationOrdinal\":\"1\",\"clockSourceVersion\":\"linux-clock-gettime-realtime-monotonic/v1\",",
+            "\"disposition\":\"Failed\",\"dueMonoNs\":\"2\",",
+            "\"failureEvidence\":\"BothSyscallsFailed\",\"kind\":\"Anchor\",",
+            "\"monotonicResolutionNs\":\"4\",\"pairStatus\":\"BothFailed\",",
+            "\"persistenceSequence\":\"0\",",
+            "\"previousAnchorHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",",
+            "\"producerEpoch\":\"9\",\"realtimeResolutionNs\":\"3\",",
+            "\"sampledMonoNs\":\"2\",\"schema\":\"edge-clock-anchor/v1\"}"
+        );
+        assert_eq!(
+            AuthorityRecordHasherV1::clock_anchor(&record, [b'0'; 36], 3, 4),
+            AuthorityRecordHasherV1::authority("edge-clock-anchor/v1", expected_json)
+        );
+    }
+
+    #[test]
     fn pending_public_subset_digest_matches_node_crypto_golden_vector() {
         let digest = PendingPublicSubsetHasherV1::digest(
             1,
@@ -4703,11 +5252,13 @@ mod tests {
     }
 
     #[test]
-    fn failed_registration_published_cli_ok_is_lookup_failed() {
+    fn capacity_overflow_fails_without_retaining_registry_identity() {
         let pending = test_pending_blocks();
         let registry = PendingMetadataRegistryV2::new(4, 1);
         let occupying = registry.register(&pending, None);
         registry.record_send(occupying, None).expect("occupying terminal");
+        assert_eq!(Arc::weak_count(&pending), 1);
+
         let failed = registry.register(&pending, Some(8));
         assert_eq!(
             failed.disposition,
@@ -4715,8 +5266,17 @@ mod tests {
                 PendingRegistrationFailure::PendingRegistryCapacityOverflow
             )
         );
+        assert_eq!(Arc::weak_count(&pending), 1);
+        let snapshot = registry.snapshot();
+        assert_eq!(snapshot.primary_pending, 1);
+        assert_eq!(snapshot.secondary_pending, 1);
+        assert!(snapshot.poisoned);
+        assert!(
+            registry.lock_state().0.poisons.contains(&PendingRegistryPoisonV2::CapacityOverflow)
+        );
+
         registry.ack_terminal_durable(0).expect("release successful entry");
-        registry.record_send(failed, Some(1)).expect("failed registration still published");
+        registry.record_send(failed, Some(1)).expect("failed send journaled");
         let failure = registry.cli_received(&pending).expect_err("lookup cannot succeed");
         assert_eq!(
             failure.reason,
@@ -4724,29 +5284,28 @@ mod tests {
                 PendingRegistrationFailure::PendingRegistryCapacityOverflow
             )
         );
-        registry.ack_terminal_durable(1).expect("failed terminal ack");
-        let sets = registry.snapshot().sets;
-        assert_eq!(sets.failed_registration_published, BTreeSet::from([1]));
-        assert_eq!(sets.failed_reg_cli_registry_lookup_failed, BTreeSet::from([1]));
-        assert!(sets.failed_reg_cli_received_lookup_succeeded.is_empty());
+        let snapshot = registry.snapshot();
+        assert_eq!(snapshot.primary_pending, 0);
+        assert_eq!(snapshot.secondary_pending, 0);
+        assert_eq!(snapshot.terminal_records, 1);
+        assert_eq!(Arc::weak_count(&pending), 0);
     }
 
     #[test]
-    fn failed_registration_no_receivers_has_distinct_terminal() {
+    fn zero_capacity_overflow_retains_no_primary_secondary_or_weak() {
         let pending = test_pending_blocks();
         let registry = PendingMetadataRegistryV2::new(5, 0);
         let failed = registry.register(&pending, None);
-        registry.record_send(failed, None).expect("no-receiver terminal accepted");
-        assert_eq!(
-            registry.terminal_records()[0].terminal,
-            PendingCliTerminalV2::RegistrationFailedNoReceivers
-        );
-        assert_eq!(registry.snapshot().sets.registration_failed_no_receivers, BTreeSet::from([0]));
-        registry.ack_terminal_durable(0).expect("failed no-receiver ack");
+        registry.record_send(failed, None).expect("failed send recorded");
+        let snapshot = registry.snapshot();
+        assert_eq!(snapshot.primary_pending, 0);
+        assert_eq!(snapshot.secondary_pending, 0);
+        assert_eq!(snapshot.terminal_records, 0);
+        assert_eq!(Arc::weak_count(&pending), 0);
     }
 
     #[test]
-    fn lag_preserves_mixed_registration_intersections() {
+    fn lag_ignores_unretained_capacity_failure_journal_entry() {
         let first = test_pending_blocks();
         let second = test_pending_blocks();
         let registry = PendingMetadataRegistryV2::new(6, 1);
@@ -4755,11 +5314,11 @@ mod tests {
         registry.record_send(succeeded, Some(1)).expect("success published");
         registry.record_send(failed, Some(1)).expect("failure published");
         registry.cli_lagged(2).expect("exact lag range");
-        registry.ack_terminal_durable(0).expect("first ack");
-        registry.ack_terminal_durable(1).expect("second ack");
-        let sets = registry.snapshot().sets;
-        assert_eq!(sets.cli_lagged_attributed, BTreeSet::from([0, 1]));
-        assert_eq!(sets.failed_reg_cli_lagged_attributed, BTreeSet::from([1]));
+        registry.ack_terminal_durable(0).expect("successful terminal");
+        let snapshot = registry.snapshot();
+        assert_eq!(snapshot.sets.cli_lagged_attributed, BTreeSet::from([0]));
+        assert_eq!(snapshot.primary_pending, 0);
+        assert_eq!(snapshot.secondary_pending, 0);
     }
 
     #[test]
@@ -4794,8 +5353,58 @@ mod tests {
         let one = registry.snapshot();
         assert_eq!(one.coverage_count, 1);
         assert_eq!(one.last_coverage_sequence, Some(0));
-        assert_eq!(registry.terminal_records()[0].coverage_sequence, 0);
+        assert_eq!(registry.terminal_records_from(0)[0].coverage_sequence, 0);
         registry.ack_terminal_durable(0).expect("coverage durable");
+    }
+    #[test]
+    fn exact_sequence_bitmap_compresses_72_hour_campaign_by_sixty_four() {
+        const RECORDS_72H_AT_FIVE_HZ: u64 = 72 * 60 * 60 * 5;
+        let mut bitmap = PendingSequenceBitmapV2::default();
+        for sequence in 0..RECORDS_72H_AT_FIVE_HZ {
+            assert!(bitmap.insert(sequence));
+        }
+        assert_eq!(
+            bitmap.len(),
+            usize::try_from(RECORDS_72H_AT_FIVE_HZ).expect("72h fixture fits usize")
+        );
+        assert_eq!(
+            bitmap.words.len(),
+            usize::try_from(RECORDS_72H_AT_FIVE_HZ.div_ceil(64)).expect("word count fits usize")
+        );
+        assert!(bitmap.contains(&(RECORDS_72H_AT_FIVE_HZ - 1)));
+    }
+    #[test]
+    fn terminal_suffix_clone_bytes_depend_only_on_unread_records() {
+        const HISTORY_RECORDS: u64 = 2_048;
+        const UNREAD_RECORDS: u64 = 7;
+
+        let pending = test_pending_blocks();
+        let registry = PendingMetadataRegistryV2::new(82, 1);
+        for coverage_sequence in 0..HISTORY_RECORDS {
+            let attempt = registry.register(&pending, None);
+            registry.record_send(attempt, None).expect("terminal accepted");
+            registry.ack_terminal_durable(coverage_sequence).expect("terminal durable");
+        }
+
+        let start = HISTORY_RECORDS - UNREAD_RECORDS;
+        let unread = registry.terminal_records_from(start);
+        let returned_clone_bytes = unread.len() * std::mem::size_of::<PendingTerminalRecordV2>();
+        assert_eq!(unread.len(), usize::try_from(UNREAD_RECORDS).expect("small fixture"));
+        assert_eq!(
+            returned_clone_bytes,
+            usize::try_from(UNREAD_RECORDS).expect("small fixture")
+                * std::mem::size_of::<PendingTerminalRecordV2>()
+        );
+        assert!(
+            returned_clone_bytes
+                < usize::try_from(HISTORY_RECORDS).expect("small fixture")
+                    * std::mem::size_of::<PendingTerminalRecordV2>()
+        );
+        assert_eq!(unread.first().map(|record| record.coverage_sequence), Some(start));
+        assert_eq!(
+            registry.terminal_record(HISTORY_RECORDS - 1).map(|record| record.coverage_sequence),
+            Some(HISTORY_RECORDS - 1)
+        );
     }
     #[test]
     fn final_seal_requires_ack_and_cleanup_order_is_exact() {
@@ -4945,6 +5554,29 @@ mod tests {
             1
         );
     }
+    #[test]
+    fn empty_coverage_cutoff_uses_zero_and_latches_named_missing_bound() {
+        let recorder = test_recorder(320);
+        let cutoff = recorder.latch_cutoff(ProducerExternalBoundsV1 {
+            last_admitted_blink_generation: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+        });
+        assert_eq!(cutoff.last_coverage_sequence, 0);
+        assert!(
+            recorder
+                .state
+                .lock()
+                .expect("state")
+                .poisons
+                .contains(&EdgeMeasurementPoisonV1::CutoffBoundMissing("coverage"))
+        );
+        let (poison_count, coordinator_count) = recorder.producer_failure_counts();
+        assert!(poison_count > 0);
+        assert_eq!(coordinator_count, 0);
+        recorder.latch_coordinator_failure("test-coordinator");
+        assert_eq!(recorder.producer_failure_counts(), (poison_count + 1, 1));
+    }
 
     #[test]
     fn cutoff_during_backoff_does_not_complete_or_change_reconnect_flow() {
@@ -5052,7 +5684,7 @@ mod tests {
         }
     }
     #[test]
-    fn cache_cutoff_fails_closed_without_synthetic_terminal() {
+    fn cache_cutoff_deadline_emits_real_terminal_and_fails_closed() {
         let pending = test_pending_blocks();
         let flashblock = pending.get_flashblocks().remove(0);
         let recorder = test_recorder(21);
@@ -5065,6 +5697,7 @@ mod tests {
             last_coverage_sequence: 0,
             last_candidate_sequence: 0,
         });
+        assert_eq!(recorder.record_cutoff_drain_deadline(), vec![(0, true)]);
 
         let mut products = Vec::new();
         while let EdgeEventDrainStatusV1::Event(event) = recorder.try_recv_event() {
@@ -5072,11 +5705,18 @@ mod tests {
                 products.push(product);
             }
         }
-        assert!(products.is_empty());
+        assert_eq!(products.len(), 1);
+        assert_eq!(products[0].source_generation, 0);
+        assert_eq!(
+            products[0].base_disposition,
+            ProcessorBaseDispositionV1::CachedUnresolvedAtCutoff
+        );
         let state = recorder.state.lock().expect("state");
-        assert!(!state.cache_pending.is_empty());
-        assert!(!state.source_generation_contexts.is_empty());
+        assert!(state.cache_pending.is_empty());
+        assert!(state.source_generation_contexts.is_empty());
+        assert_eq!(state.processor_terminal_count, 1);
         assert!(state.poisons.contains(&EdgeMeasurementPoisonV1::CacheDrainIncomplete));
+        assert!(state.poisons.contains(&EdgeMeasurementPoisonV1::CutoffDeadlineCacheGeneration(0)));
     }
 
     #[test]
@@ -5227,7 +5867,7 @@ mod tests {
         let state = recorder.state.lock().expect("state");
         assert_eq!(
             state.cutoff.expect("cutoff").last_coverage_sequence,
-            state.next_coverage_sequence.saturating_sub(1)
+            state.next_terminal_coverage_sequence.saturating_sub(1)
         );
     }
 
@@ -5311,11 +5951,10 @@ mod tests {
     }
 
     #[test]
-    fn h3_rejects_duplicate_half_close_ping_without_due_and_unsolicited_pong() {
+    fn h3_rejects_duplicate_half_close_and_ping_without_due() {
         for invalid in [
             SourceConnectionTransitionV1::ReadHalfClosedWaitingForControl,
             SourceConnectionTransitionV1::OutgoingPingWritten,
-            SourceConnectionTransitionV1::ControlPongReceived,
         ] {
             let recorder = test_recorder(201);
             recorder.connection_transition(SourceConnectionTransitionV1::OwnerStart);
@@ -5335,6 +5974,55 @@ mod tests {
                     .contains(&EdgeMeasurementPoisonV1::ConnectionTransitionConflict)
             );
         }
+    }
+    #[test]
+    fn h3_accepts_unsolicited_control_pong_but_keeps_pong_equation_strict() {
+        for ping_due in [false, true] {
+            let recorder = test_recorder(211 + u64::from(ping_due));
+            recorder.connection_transition(SourceConnectionTransitionV1::OwnerStart);
+            recorder
+                .connection_transition(SourceConnectionTransitionV1::InitialConnectAttemptStarted);
+            recorder.connection_transition(SourceConnectionTransitionV1::Established);
+            if ping_due {
+                recorder.connection_transition(SourceConnectionTransitionV1::OutgoingPingDue);
+            }
+            recorder.connection_transition(SourceConnectionTransitionV1::ControlPongReceived);
+            assert!(
+                !recorder
+                    .state
+                    .lock()
+                    .expect("state")
+                    .poisons
+                    .contains(&EdgeMeasurementPoisonV1::ConnectionTransitionConflict)
+            );
+            recorder.connection_transition(SourceConnectionTransitionV1::PongObserved);
+            assert!(
+                recorder
+                    .state
+                    .lock()
+                    .expect("state")
+                    .poisons
+                    .contains(&EdgeMeasurementPoisonV1::ConnectionTransitionConflict)
+            );
+        }
+
+        let recorder = test_recorder(213);
+        recorder.connection_transition(SourceConnectionTransitionV1::OwnerStart);
+        recorder.connection_transition(SourceConnectionTransitionV1::InitialConnectAttemptStarted);
+        recorder.connection_transition(SourceConnectionTransitionV1::Established);
+        recorder.connection_transition(SourceConnectionTransitionV1::ControlPongReceived);
+        recorder.connection_transition(SourceConnectionTransitionV1::OutgoingPingDue);
+        recorder.connection_transition(SourceConnectionTransitionV1::OutgoingPingWritten);
+        recorder.connection_transition(SourceConnectionTransitionV1::ControlPongReceived);
+        recorder.connection_transition(SourceConnectionTransitionV1::PongObserved);
+        assert!(
+            !recorder
+                .state
+                .lock()
+                .expect("state")
+                .poisons
+                .contains(&EdgeMeasurementPoisonV1::ConnectionTransitionConflict)
+        );
     }
 
     #[test]
@@ -5374,6 +6062,31 @@ mod tests {
             WireLifecycleTransitionV1::PostCutoffStateHandedOff,
             WireLifecycleTransitionV1::PostCutoffProcessorExcluded,
         ]));
+    }
+    #[test]
+    fn failed_post_cutoff_actor_enqueue_releases_retained_route() {
+        let flashblock = test_pending_blocks().get_flashblocks().remove(0);
+        let recorder = test_recorder(214);
+        recorder.prepare_cutoff();
+        let admission = recorder.observe_wire(b"excluded-failure").expect("excluded admission");
+        assert_eq!(recorder.decoded_flashblock(admission, &flashblock), None);
+        recorder.post_cutoff_actor_enqueue(admission, false);
+        let state = recorder.state.lock().expect("state");
+        assert!(state.post_cutoff_routes.is_empty());
+        drop(state);
+
+        let mut excluded_terminal = false;
+        while let EdgeEventDrainStatusV1::Event(event) = recorder.try_recv_event() {
+            excluded_terminal |= matches!(
+                *event,
+                EdgeSourceEventV1::TerminalCoverage(SourceTerminalCoverageV3 {
+                    route: EpochRouteV1::PostCutoffNonAuthority,
+                    terminal: SourceCoverageTerminalV3::CutoffRouted,
+                    ..
+                })
+            );
+        }
+        assert!(excluded_terminal);
     }
     #[test]
     fn index_zero_terminal_preserves_binding_for_later_payload_index() {
@@ -5477,21 +6190,24 @@ mod tests {
                 state.snapshot_wire_ordinals.insert(sequence, (generation, admission.wire_ordinal));
             }
             recorder
-                .record_terminal_durable(PendingTerminalRecordV2 {
-                    coverage_sequence: sequence,
-                    metadata: PendingSnapshotMetadataV2 {
-                        identity: PendingSnapshotIdentityV2 {
-                            producer_epoch: 206,
-                            pending_snapshot_sequence: sequence,
-                            arc_pointer_identity: 1,
+                .record_terminal_durable(
+                    PendingTerminalRecordV2 {
+                        coverage_sequence: sequence,
+                        metadata: PendingSnapshotMetadataV2 {
+                            identity: PendingSnapshotIdentityV2 {
+                                producer_epoch: 206,
+                                pending_snapshot_sequence: sequence,
+                                arc_pointer_identity: 1,
+                            },
+                            source_generation: Some(generation),
+                            pending_public_subset_digest_v1: B256::ZERO,
                         },
-                        source_generation: Some(generation),
-                        pending_public_subset_digest_v1: B256::ZERO,
+                        registration: PendingRegistrationDispositionV2::Succeeded,
+                        send: PendingSendDispositionV2::NoReceivers,
+                        terminal,
                     },
-                    registration: PendingRegistrationDispositionV2::Succeeded,
-                    send: PendingSendDispositionV2::NoReceivers,
-                    terminal,
-                })
+                    B256::with_last_byte(sequence as u8 + 1),
+                )
                 .expect("durable cleanup");
         }
 

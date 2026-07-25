@@ -39,11 +39,12 @@ pub use edge_measurement::{
     PendingRegistrationFailure, PendingRegistryCountersV2, PendingRegistryEntryV2,
     PendingRegistryError, PendingRegistryPoisonV2, PendingRegistrySequenceSetsV2,
     PendingRegistrySnapshotV2, PendingRegistryStateV2, PendingSendDispositionV2,
-    PendingSendJournalEntryV2, PendingSendJournalMarkerV2, PendingSnapshotIdentityV2,
-    PendingSnapshotMetadataV2, PendingTerminalRecordV2, ProcessorBaseDispositionV1,
-    ProcessorLifecycleProductV1, ProcessorObserverDispositionV1, ProcessorPublishDispositionV1,
-    ProducerEpochCutoffV1, ProducerExternalBoundsV1, SourceConnectionErrorClassV1,
-    SourceConnectionRecordV1, SourceConnectionTransitionV1, SourceCoverageRecordV3,
+    PendingSendJournalEntryV2, PendingSendJournalMarkerV2, PendingSequenceBitmapV2,
+    PendingSnapshotIdentityV2, PendingSnapshotMetadataV2, PendingTerminalRecordV2,
+    ProcessorBaseDispositionV1, ProcessorLifecycleProductV1, ProcessorObserverDispositionV1,
+    ProcessorPublishDispositionV1, ProducerEpochCutoffV1, ProducerExternalBoundsV1,
+    SourceConnectionErrorClassV1, SourceConnectionRecordV1, SourceConnectionTransitionV1,
+    SourceCoverageRecordV3, SourceCoverageTerminalV3, SourceTerminalCoverageV3,
     WireLifecycleTransitionV1, WireObservationV1,
 };
 

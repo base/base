@@ -10,7 +10,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256};
@@ -32,6 +32,7 @@ use crate::{
     VisitControl,
 };
 
+const BLINK_CUTOFF_DRAIN_DEADLINE_V1: Duration = Duration::from_secs(30);
 /// Fixed maximum number of simultaneously retained Blink generations.
 pub const BLINK_LEDGER_CAPACITY: usize = 4_096;
 /// Maximum retained victim bytes in one future-query-free candidate.
@@ -653,6 +654,9 @@ pub enum EdgeProducerError {
     /// Measurement accounting failed.
     #[error("edge measurement ledger failed")]
     Ledger,
+    /// Pre-cutoff generation authority did not drain before the finite deadline.
+    #[error("Blink generation authority cutoff drain deadline exceeded")]
+    CutoffDrainDeadline,
     /// Cutoff had not been latched.
     #[error("edge measurement cutoff is missing")]
     CutoffMissing,
@@ -766,6 +770,8 @@ pub struct BlinkRejectRecordV3 {
     pub producer_epoch: String,
     /// Checked record sequence.
     pub sequence: String,
+    /// Stable terminal state for the chained reject ledger.
+    pub state: &'static str,
     /// Stable identity of the actual source emit branch.
     pub branch_id: &'static str,
     /// Actual named branch reason.
@@ -939,6 +945,7 @@ pub struct EdgeMeasurementOwnerV1 {
     pending_candidates: AtomicU64,
     reject_previous_hash: Mutex<[u8; 32]>,
     poisoned: AtomicBool,
+    cutoff_drain_deadline_exceeded: AtomicBool,
     installed: AtomicBool,
     cutoff_latched: AtomicBool,
 }
@@ -968,6 +975,7 @@ impl EdgeMeasurementOwnerV1 {
             pending_candidates: AtomicU64::new(0),
             reject_previous_hash: Mutex::new([0; 32]),
             poisoned: AtomicBool::new(false),
+            cutoff_drain_deadline_exceeded: AtomicBool::new(false),
             installed: AtomicBool::new(false),
             cutoff_latched: AtomicBool::new(false),
         }))
@@ -1208,6 +1216,24 @@ impl EdgeMeasurementOwnerV1 {
         }
     }
 
+    fn authority_record_hash(
+        domain: &str,
+        canonical_record: &str,
+    ) -> Result<[u8; 32], EdgeProducerError> {
+        let mut bytes = Vec::new();
+        for field in [
+            b"base-edge-authority-record-v1\0".as_slice(),
+            domain.as_bytes(),
+            canonical_record.as_bytes(),
+        ] {
+            let length =
+                u32::try_from(field.len()).map_err(|_| EdgeProducerError::SequenceOverflow)?;
+            bytes.extend_from_slice(&length.to_be_bytes());
+            bytes.extend_from_slice(field);
+        }
+        Ok(DefaultCrypto.sha256(&bytes))
+    }
+
     fn try_emit_blink_reject(
         &self,
         branch_id: &'static str,
@@ -1223,18 +1249,19 @@ impl EdgeMeasurementOwnerV1 {
         let mut previous =
             self.reject_previous_hash.lock().map_err(|_| EdgeProducerError::Ledger)?;
         let canonical = format!(
-            "{{\"branchId\":\"{}\",\"previousRecordHash\":\"{}\",\"producerEpoch\":\"{}\",\"reason\":\"{}\",\"schema\":\"edge-blink-reject/v3\",\"sequence\":\"{}\"}}",
+            "{{\"branchId\":\"{}\",\"previousRecordHash\":\"{}\",\"producerEpoch\":\"{}\",\"reason\":\"{}\",\"schema\":\"edge-blink-reject/v3\",\"sequence\":\"{}\",\"state\":\"Rejected\"}}",
             branch_id,
             hex::encode(*previous),
             self.config.producer_epoch,
             reason.wire_name(),
             sequence,
         );
-        let record_hash = DefaultCrypto.sha256(canonical.as_bytes());
+        let record_hash = Self::authority_record_hash("edge-blink-reject/v3", &canonical)?;
         let record = BlinkRejectRecordV3 {
             schema: "edge-blink-reject/v3",
             producer_epoch: self.config.producer_epoch.to_string(),
             sequence: sequence.to_string(),
+            state: "Rejected",
             branch_id,
             reason,
             previous_record_hash: hex::encode(*previous),
@@ -1786,6 +1813,13 @@ impl EdgeMeasurementOwnerV1 {
     /// Fences new measurement admission, drains every pre-cutoff generation authority, and then
     /// returns stable Blink and candidate bounds.
     pub fn prepare_cutoff(&self) -> Result<(u64, CheckedCandidateBoundsV1), EdgeProducerError> {
+        self.prepare_cutoff_until(Instant::now() + BLINK_CUTOFF_DRAIN_DEADLINE_V1)
+    }
+
+    fn prepare_cutoff_until(
+        &self,
+        deadline: Instant,
+    ) -> Result<(u64, CheckedCandidateBoundsV1), EdgeProducerError> {
         let admission =
             self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
         self.cutoff_latched.store(true, Ordering::Release);
@@ -1794,10 +1828,18 @@ impl EdgeMeasurementOwnerV1 {
 
         let authority =
             self.generation_authority.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
-        let _authority = self
+        let wait = deadline.saturating_duration_since(Instant::now());
+        let (authority, timeout) = self
             .generation_authority_drained
-            .wait_while(authority, |authority| !authority.is_empty())
+            .wait_timeout_while(authority, wait, |authority| !authority.is_empty())
             .map_err(|_| self.poison(EdgeProducerError::Ledger))?;
+        let unresolved = timeout.timed_out() && !authority.is_empty();
+        drop(authority);
+        if unresolved {
+            self.cutoff_drain_deadline_exceeded.store(true, Ordering::Release);
+            self.poison(EdgeProducerError::CutoffDrainDeadline);
+            self.terminalize_shutdown_pending_admitted(None);
+        }
         let admitted_blink_generations = self
             .ledger
             .snapshot()
@@ -1882,7 +1924,11 @@ impl EdgeMeasurementOwnerV1 {
         let _admission =
             self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
         if self.poisoned.load(Ordering::SeqCst) {
-            return Err(EdgeProducerError::Ledger);
+            return Err(if self.cutoff_drain_deadline_exceeded.load(Ordering::Acquire) {
+                EdgeProducerError::CutoffDrainDeadline
+            } else {
+                EdgeProducerError::Ledger
+            });
         }
         if self.cutoff.get().map_err(|_| self.poison(EdgeProducerError::Ledger))?.is_none() {
             return Ok(false);
@@ -1904,7 +1950,11 @@ impl EdgeMeasurementOwnerV1 {
         let _admission =
             self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
         if self.poisoned.load(Ordering::SeqCst) {
-            return Err(EdgeProducerError::Ledger);
+            return Err(if self.cutoff_drain_deadline_exceeded.load(Ordering::Acquire) {
+                EdgeProducerError::CutoffDrainDeadline
+            } else {
+                EdgeProducerError::Ledger
+            });
         }
         let cutoff = self
             .cutoff
@@ -1950,6 +2000,14 @@ pub struct BlinkMeasurementLedgerV1 {
     slot_replaced: AtomicU64,
     slot_closed: AtomicU64,
     generation_overflow: AtomicU64,
+    admitted_generations: AtomicU64,
+    processed_terminal: AtomicU64,
+    replaced_before_frame: AtomicU64,
+    cancelled_before_frame: AtomicU64,
+    selected_dto_built_preterminal: AtomicU64,
+    selected_dto_committed: AtomicU64,
+    selected_dto_cancelled_before_terminal: AtomicU64,
+    selected_dto_preterminal_failure: AtomicU64,
     admission_closed: AtomicBool,
     poisoned: AtomicBool,
     generations: Mutex<BTreeMap<u64, Option<BlinkGenerationTerminalV1>>>,
@@ -1965,6 +2023,14 @@ impl Default for BlinkMeasurementLedgerV1 {
             slot_replaced: AtomicU64::new(0),
             slot_closed: AtomicU64::new(0),
             generation_overflow: AtomicU64::new(0),
+            admitted_generations: AtomicU64::new(0),
+            processed_terminal: AtomicU64::new(0),
+            replaced_before_frame: AtomicU64::new(0),
+            cancelled_before_frame: AtomicU64::new(0),
+            selected_dto_built_preterminal: AtomicU64::new(0),
+            selected_dto_committed: AtomicU64::new(0),
+            selected_dto_cancelled_before_terminal: AtomicU64::new(0),
+            selected_dto_preterminal_failure: AtomicU64::new(0),
             admission_closed: AtomicBool::new(false),
             poisoned: AtomicBool::new(false),
             generations: Mutex::new(BTreeMap::new()),
@@ -2022,24 +2088,54 @@ impl BlinkMeasurementLedgerV1 {
                     .generations
                     .lock()
                     .map_err(|_| self.poison(EdgeMeasurementError::LockPoisoned))?;
-                if generations.len() >= BLINK_LEDGER_CAPACITY {
-                    return Err(self.poison(EdgeMeasurementError::LedgerCapacityOverflow));
-                }
-                if generations.insert(generation, None).is_some() {
+                if generations.contains_key(&generation) {
                     return Err(self.poison(EdgeMeasurementError::GenerationConflict));
                 }
-                if result == SlotSubmit::Replaced {
-                    let replaced = generations.iter_mut().rev().find(|(candidate, terminal)| {
-                        **candidate < generation && terminal.is_none()
-                    });
-                    let Some((_, terminal)) = replaced else {
+
+                let replaced_generation = if result == SlotSubmit::Replaced {
+                    let Some((&replaced_generation, _)) =
+                        generations.iter().rev().find(|(candidate, terminal)| {
+                            **candidate < generation && terminal.is_none()
+                        })
+                    else {
                         return Err(self.poison(EdgeMeasurementError::GenerationConflict));
                     };
-                    *terminal = Some(BlinkGenerationTerminalV1::ReplacedBeforeFrame);
-                    Self::increment(&self.slot_replaced)
+                    Some(replaced_generation)
                 } else {
-                    Self::increment(&self.slot_accepted)
+                    if generations.len() >= BLINK_LEDGER_CAPACITY {
+                        return Err(self.poison(EdgeMeasurementError::LedgerCapacityOverflow));
+                    }
+                    None
+                };
+
+                let mut selected = self
+                    .selected
+                    .lock()
+                    .map_err(|_| self.poison(EdgeMeasurementError::LockPoisoned))?;
+                Self::increment(&self.admitted_generations).map_err(|error| self.poison(error))?;
+                if let Some(replaced_generation) = replaced_generation {
+                    let Some(current) = generations.get_mut(&replaced_generation) else {
+                        return Err(self.poison(EdgeMeasurementError::GenerationConflict));
+                    };
+                    if current.replace(BlinkGenerationTerminalV1::ReplacedBeforeFrame).is_some() {
+                        return Err(self.poison(EdgeMeasurementError::GenerationConflict));
+                    }
+                    Self::increment(&self.replaced_before_frame)
+                        .and_then(|()| Self::increment(&self.slot_replaced))
+                        .map_err(|error| self.poison(error))?;
+                    generations.remove(&replaced_generation);
+                    if let Some(mut current) = selected.remove(&replaced_generation) {
+                        if current.replace(SelectedDtoTerminalV1::PreterminalFailure).is_some() {
+                            return Err(self.poison(EdgeMeasurementError::SelectedDtoConflict));
+                        }
+                        Self::increment(&self.selected_dto_preterminal_failure)
+                            .map_err(|error| self.poison(error))?;
+                    }
+                } else {
+                    Self::increment(&self.slot_accepted).map_err(|error| self.poison(error))?;
                 }
+                generations.insert(generation, None);
+                Ok(())
             }
         }
     }
@@ -2057,15 +2153,26 @@ impl BlinkMeasurementLedgerV1 {
         &self,
         generation: u64,
     ) -> Result<(), EdgeMeasurementError> {
+        let mut generations =
+            self.generations.lock().map_err(|_| self.poison(EdgeMeasurementError::LockPoisoned))?;
+        let Some(generation_terminal) = generations.get_mut(&generation) else {
+            return Err(self.poison(EdgeMeasurementError::GenerationConflict));
+        };
+        if generation_terminal.is_some() {
+            return Err(self.poison(EdgeMeasurementError::GenerationConflict));
+        }
         let mut selected =
             self.selected.lock().map_err(|_| self.poison(EdgeMeasurementError::LockPoisoned))?;
-        if selected.insert(generation, None).is_some() {
+        if selected.contains_key(&generation) {
             return Err(self.poison(EdgeMeasurementError::SelectedDtoConflict));
         }
+        Self::increment(&self.selected_dto_built_preterminal)
+            .map_err(|error| self.poison(error))?;
+        selected.insert(generation, None);
         Ok(())
     }
 
-    /// Terminalizes one admitted generation and its selected preterminal, when present.
+    /// Terminalizes one admitted generation and evicts its selected preterminal, when present.
     pub fn record_terminal(
         &self,
         generation: u64,
@@ -2080,52 +2187,86 @@ impl BlinkMeasurementLedgerV1 {
         if current.replace(terminal).is_some() {
             return Err(self.poison(EdgeMeasurementError::GenerationConflict));
         }
-        drop(generations);
 
         let mut selected =
             self.selected.lock().map_err(|_| self.poison(EdgeMeasurementError::LockPoisoned))?;
-        if let Some(current) = selected.get_mut(&generation) {
+        let selected_terminal = selected.get_mut(&generation).map(|current| {
             let selected_terminal = match shadow {
                 Some(ShadowOutcome::Selected) => SelectedDtoTerminalV1::Committed,
                 Some(ShadowOutcome::Cancelled) => SelectedDtoTerminalV1::CancelledBeforeTerminal,
                 _ => SelectedDtoTerminalV1::PreterminalFailure,
             };
+            (current, selected_terminal)
+        });
+        if let Some((current, selected_terminal)) = selected_terminal {
             if current.replace(selected_terminal).is_some() {
                 return Err(self.poison(EdgeMeasurementError::SelectedDtoConflict));
             }
+            let counter = match selected_terminal {
+                SelectedDtoTerminalV1::Committed => &self.selected_dto_committed,
+                SelectedDtoTerminalV1::CancelledBeforeTerminal => {
+                    &self.selected_dto_cancelled_before_terminal
+                }
+                SelectedDtoTerminalV1::PreterminalFailure => &self.selected_dto_preterminal_failure,
+            };
+            Self::increment(counter).map_err(|error| self.poison(error))?;
+            selected.remove(&generation);
         }
+
+        let counter = match terminal {
+            BlinkGenerationTerminalV1::Processed
+            | BlinkGenerationTerminalV1::Cancelled
+            | BlinkGenerationTerminalV1::InternalFailure => &self.processed_terminal,
+            BlinkGenerationTerminalV1::ReplacedBeforeFrame => &self.replaced_before_frame,
+            BlinkGenerationTerminalV1::CancelledBeforeFrame => &self.cancelled_before_frame,
+        };
+        Self::increment(counter).map_err(|error| self.poison(error))?;
+        generations.remove(&generation);
         Ok(())
     }
 
-    /// Terminalizes every queued generation except an optional active generation at shutdown.
+    /// Terminalizes and evicts every queued generation except an optional active generation.
     pub fn terminalize_shutdown_pending(
         &self,
         active_generation: Option<u64>,
     ) -> Result<(), EdgeMeasurementError> {
         let mut generations =
             self.generations.lock().map_err(|_| self.poison(EdgeMeasurementError::LockPoisoned))?;
-        for (generation, terminal) in &mut *generations {
-            if terminal.is_none() && Some(*generation) != active_generation {
-                *terminal = Some(BlinkGenerationTerminalV1::CancelledBeforeFrame);
+        let mut selected =
+            self.selected.lock().map_err(|_| self.poison(EdgeMeasurementError::LockPoisoned))?;
+        loop {
+            let generation = generations.iter().find_map(|(generation, terminal)| {
+                (terminal.is_none() && Some(*generation) != active_generation)
+                    .then_some(*generation)
+            });
+            let Some(generation) = generation else {
+                break;
+            };
+            let Some(current) = generations.get_mut(&generation) else {
+                return Err(self.poison(EdgeMeasurementError::GenerationConflict));
+            };
+            if current.replace(BlinkGenerationTerminalV1::CancelledBeforeFrame).is_some() {
+                return Err(self.poison(EdgeMeasurementError::GenerationConflict));
+            }
+            Self::increment(&self.cancelled_before_frame).map_err(|error| self.poison(error))?;
+            generations.remove(&generation);
+            if let Some(mut current) = selected.remove(&generation) {
+                if current.replace(SelectedDtoTerminalV1::PreterminalFailure).is_some() {
+                    return Err(self.poison(EdgeMeasurementError::SelectedDtoConflict));
+                }
+                Self::increment(&self.selected_dto_preterminal_failure)
+                    .map_err(|error| self.poison(error))?;
             }
         }
         Ok(())
     }
 
-    /// Returns exact counters and pending cardinalities for conservation checks.
+    /// Returns exact cumulative counters and live pending cardinalities for conservation checks.
     pub fn snapshot(&self) -> Result<BlinkLedgerSnapshotV1, EdgeMeasurementError> {
         let generations =
             self.generations.lock().map_err(|_| self.poison(EdgeMeasurementError::LockPoisoned))?;
         let selected =
             self.selected.lock().map_err(|_| self.poison(EdgeMeasurementError::LockPoisoned))?;
-        let count_generation = |terminal| {
-            generations.values().filter(|value| **value == Some(terminal)).count() as u64
-        };
-        let count_selected =
-            |terminal| selected.values().filter(|value| **value == Some(terminal)).count() as u64;
-        let processed_terminal = count_generation(BlinkGenerationTerminalV1::Processed)
-            + count_generation(BlinkGenerationTerminalV1::Cancelled)
-            + count_generation(BlinkGenerationTerminalV1::InternalFailure);
         Ok(BlinkLedgerSnapshotV1 {
             victim_ingress_observed: self.observed.load(Ordering::SeqCst),
             victim_ingress_accepted: self.accepted.load(Ordering::SeqCst),
@@ -2133,24 +2274,22 @@ impl BlinkMeasurementLedgerV1 {
             slot_replaced: self.slot_replaced.load(Ordering::SeqCst),
             slot_closed: self.slot_closed.load(Ordering::SeqCst),
             generation_overflow: self.generation_overflow.load(Ordering::SeqCst),
-            admitted_generations: generations.len() as u64,
-            processed_terminal,
-            replaced_before_frame: count_generation(BlinkGenerationTerminalV1::ReplacedBeforeFrame),
-            cancelled_before_frame: count_generation(
-                BlinkGenerationTerminalV1::CancelledBeforeFrame,
-            ),
-            selected_dto_built_preterminal: selected.len() as u64,
-            selected_dto_committed: count_selected(SelectedDtoTerminalV1::Committed),
-            selected_dto_cancelled_before_terminal: count_selected(
-                SelectedDtoTerminalV1::CancelledBeforeTerminal,
-            ),
-            selected_dto_preterminal_failure: count_selected(
-                SelectedDtoTerminalV1::PreterminalFailure,
-            ),
-            generation_pending: generations.values().filter(|terminal| terminal.is_none()).count()
-                as u64,
-            selected_pending: selected.values().filter(|terminal| terminal.is_none()).count()
-                as u64,
+            admitted_generations: self.admitted_generations.load(Ordering::SeqCst),
+            processed_terminal: self.processed_terminal.load(Ordering::SeqCst),
+            replaced_before_frame: self.replaced_before_frame.load(Ordering::SeqCst),
+            cancelled_before_frame: self.cancelled_before_frame.load(Ordering::SeqCst),
+            selected_dto_built_preterminal: self
+                .selected_dto_built_preterminal
+                .load(Ordering::SeqCst),
+            selected_dto_committed: self.selected_dto_committed.load(Ordering::SeqCst),
+            selected_dto_cancelled_before_terminal: self
+                .selected_dto_cancelled_before_terminal
+                .load(Ordering::SeqCst),
+            selected_dto_preterminal_failure: self
+                .selected_dto_preterminal_failure
+                .load(Ordering::SeqCst),
+            generation_pending: generations.len() as u64,
+            selected_pending: selected.len() as u64,
             poisoned: self.poisoned.load(Ordering::SeqCst),
         })
     }
@@ -2171,11 +2310,13 @@ impl BlinkMeasurementLedgerV1 {
             .selected_dto_committed
             .checked_add(snapshot.selected_dto_cancelled_before_terminal)
             .and_then(|value| value.checked_add(snapshot.selected_dto_preterminal_failure));
+        let admitted_rhs = snapshot.slot_accepted.checked_add(snapshot.slot_replaced);
         if snapshot.poisoned
             || snapshot.generation_pending != 0
             || snapshot.selected_pending != 0
             || ingress_rhs != Some(snapshot.victim_ingress_observed)
-            || snapshot.admitted_generations != snapshot.slot_accepted + snapshot.slot_replaced
+            || ingress_rhs != Some(snapshot.victim_ingress_accepted)
+            || admitted_rhs != Some(snapshot.admitted_generations)
             || generation_rhs != Some(snapshot.admitted_generations)
             || selected_rhs != Some(snapshot.selected_dto_built_preterminal)
         {
@@ -2700,6 +2841,82 @@ mod tests {
     }
 
     #[test]
+    fn terminal_eviction_keeps_sequential_72_hour_ledger_counts_exact() {
+        const SEQUENTIAL_GENERATIONS: u64 = 10_000;
+
+        let ledger = BlinkMeasurementLedgerV1::default();
+        let mut max_live_entries = 0;
+        for generation in 0..SEQUENTIAL_GENERATIONS {
+            ledger.record_observed().unwrap();
+            ledger.record_submission(generation, SlotSubmit::Accepted).unwrap();
+            ledger.record_selected_preterminal(generation).unwrap();
+            max_live_entries = max_live_entries.max(
+                ledger.generations.lock().unwrap().len() + ledger.selected.lock().unwrap().len(),
+            );
+            let shadow = if generation % 2 == 0 {
+                ShadowOutcome::Selected
+            } else {
+                ShadowOutcome::Cancelled
+            };
+            ledger
+                .record_terminal(generation, BlinkGenerationTerminalV1::Processed, Some(shadow))
+                .unwrap();
+            assert!(ledger.generations.lock().unwrap().is_empty());
+            assert!(ledger.selected.lock().unwrap().is_empty());
+        }
+
+        let snapshot = ledger.verify_final().unwrap();
+        assert_eq!(snapshot.victim_ingress_observed, SEQUENTIAL_GENERATIONS);
+        assert_eq!(snapshot.victim_ingress_accepted, SEQUENTIAL_GENERATIONS);
+        assert_eq!(snapshot.admitted_generations, SEQUENTIAL_GENERATIONS);
+        assert_eq!(snapshot.processed_terminal, SEQUENTIAL_GENERATIONS);
+        assert_eq!(snapshot.selected_dto_built_preterminal, SEQUENTIAL_GENERATIONS);
+        assert_eq!(snapshot.selected_dto_committed, SEQUENTIAL_GENERATIONS / 2);
+        assert_eq!(snapshot.selected_dto_cancelled_before_terminal, SEQUENTIAL_GENERATIONS / 2);
+        assert_eq!(max_live_entries, 2);
+        assert!(max_live_entries <= BLINK_LEDGER_CAPACITY * 2);
+    }
+
+    #[test]
+    fn concurrent_live_generation_capacity_overflow_still_poisons_at_4096() {
+        const THREADS: u64 = 8;
+        const ATTEMPTS: u64 = BLINK_LEDGER_CAPACITY as u64 + 1;
+
+        let ledger = Arc::new(BlinkMeasurementLedgerV1::default());
+        let mut handles = Vec::new();
+        for worker in 0..THREADS {
+            let ledger = Arc::clone(&ledger);
+            handles.push(thread::spawn(move || {
+                let mut admitted = 0;
+                let mut overflowed = 0;
+                for generation in (worker..ATTEMPTS).step_by(THREADS as usize) {
+                    ledger.record_observed().unwrap();
+                    match ledger.record_submission(generation, SlotSubmit::Accepted) {
+                        Ok(()) => admitted += 1,
+                        Err(EdgeMeasurementError::LedgerCapacityOverflow) => overflowed += 1,
+                        Err(error) => panic!("unexpected ledger result: {error}"),
+                    }
+                }
+                (admitted, overflowed)
+            }));
+        }
+
+        let (admitted, overflowed) = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .fold((0, 0), |(admitted, overflowed), result| {
+                (admitted + result.0, overflowed + result.1)
+            });
+        let snapshot = ledger.snapshot().unwrap();
+        assert_eq!(admitted, BLINK_LEDGER_CAPACITY);
+        assert_eq!(overflowed, 1);
+        assert_eq!(snapshot.generation_pending, BLINK_LEDGER_CAPACITY as u64);
+        assert!(snapshot.poisoned);
+        assert_eq!(ledger.generations.lock().unwrap().len(), BLINK_LEDGER_CAPACITY);
+        assert!(ledger.selected.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn replacement_without_old_generation_poison_fails_closed() {
         let ledger = BlinkMeasurementLedgerV1::default();
         ledger.record_observed().unwrap();
@@ -2816,6 +3033,19 @@ mod tests {
         assert_eq!(conflicting_owner.final_record(), Err(EdgeProducerError::Ledger));
     }
 
+    #[test]
+    fn cutoff_deadline_terminalizes_unresolved_blink_authority_and_poisons_final() {
+        let owner = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
+        owner.observe_ledger_result_admitted(owner.ledger().record_observed());
+        owner.record_submission_admitted(0, SlotSubmit::Accepted);
+        let started = Instant::now();
+        let bounds = owner.prepare_cutoff_until(started).expect("bounded cutoff");
+        assert_eq!(bounds.0, 1);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(owner.generation_authority.lock().expect("authority").is_empty());
+        assert!(owner.poisoned.load(Ordering::Acquire));
+        assert_eq!(owner.finalization_ready(), Err(EdgeProducerError::CutoffDrainDeadline));
+    }
     #[test]
     fn cutoff_cannot_split_observed_from_slot_accounting() {
         let owner = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
