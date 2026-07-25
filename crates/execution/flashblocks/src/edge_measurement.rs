@@ -495,6 +495,8 @@ pub struct PendingRegistryStateV2 {
     pub published: VecDeque<u64>,
     /// Every successful broadcast send in exact production order.
     pub send_journal: VecDeque<PendingSendJournalEntryV2>,
+    /// Whether the source cutoff fence has closed new measurement attribution.
+    pub measurement_closed: bool,
     /// Non-authority sends begun before the unchanged production send returns.
     pub unregistered_send_inflight: u64,
     /// Failed registrations without an H2 sequence awaiting their send disposition.
@@ -581,6 +583,7 @@ impl PendingMetadataRegistryV2 {
                 secondary: HashMap::new(),
                 published: VecDeque::new(),
                 send_journal: VecDeque::new(),
+                measurement_closed: false,
                 unregistered_send_inflight: 0,
                 registration_without_sequence_send_inflight: 0,
                 unregistered_send_count: 0,
@@ -950,6 +953,14 @@ impl PendingMetadataRegistryV2 {
         result
     }
 
+    /// Closes new CLI attribution while allowing already-journaled sends to drain.
+    pub fn close_measurement(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.measurement_closed = true;
+        drop(state);
+        self.send_recorded.notify_all();
+    }
+
     /// Records one CLI `Ok` after the existing snapshot installation.
     pub fn cli_received(
         &self,
@@ -985,6 +996,9 @@ impl PendingMetadataRegistryV2 {
                     });
                 }
             };
+        }
+        if state.send_journal.is_empty() && state.measurement_closed {
+            return Ok(Err(PendingSendJournalMarkerV2::PostCutoffAdvancedNonAuthority));
         }
         let Some(journal_entry) = state.send_journal.pop_front() else {
             state.poisoned = true;
@@ -1411,6 +1425,46 @@ impl PendingMetadataRegistryV2 {
             && state.unregistered_send_inflight == 0
             && state.registration_without_sequence_send_inflight == 0
     }
+    /// Distinguishes transient live registry state from structural final-seal failure.
+    fn finalization_preflight(
+        &self,
+    ) -> Result<Option<PendingFinalSealErrorV2>, PendingFinalSealErrorV2> {
+        let (state, was_poisoned) = self.lock_state();
+        if was_poisoned || state.poisoned || !state.poisons.is_empty() {
+            return Err(PendingFinalSealErrorV2::Poisoned);
+        }
+        if !state.sets.pending_delivery_final.is_empty()
+            || !state.sets.failed_reg_pending_final.is_empty()
+        {
+            return Ok(Some(PendingFinalSealErrorV2::PendingDeliveryNotEmpty));
+        }
+        if !state.durability_pending.is_empty()
+            || state.terminal_records.len() != state.durability_acked
+        {
+            return Ok(Some(PendingFinalSealErrorV2::DurabilityAckPending));
+        }
+        if !state.terminal_exclusions.is_empty()
+            || !state.primary.is_empty()
+            || !state.secondary.is_empty()
+            || !state.published.is_empty()
+            || !state.send_journal.is_empty()
+            || state.unregistered_send_inflight != 0
+            || state.registration_without_sequence_send_inflight != 0
+        {
+            return Ok(Some(PendingFinalSealErrorV2::RegistryNotEmpty));
+        }
+        drop(state);
+        match self.verify_final_seal() {
+            Ok(()) => Ok(None),
+            Err(
+                error @ (PendingFinalSealErrorV2::PendingDeliveryNotEmpty
+                | PendingFinalSealErrorV2::DurabilityAckPending
+                | PendingFinalSealErrorV2::RegistryNotEmpty),
+            ) => Ok(Some(error)),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Verifies all sorted disjoint-union equations and the final empty seal.
     pub fn verify_final_seal(&self) -> Result<(), PendingFinalSealErrorV2> {
         let (state, was_poisoned) = self.lock_state();
@@ -2843,6 +2897,30 @@ pub struct ProducerExternalBoundsV1 {
     pub last_candidate_sequence: u64,
 }
 
+/// Transient reason why source finalization must be retried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeSourceFinalNotReadyV1 {
+    /// Authority cutoff has not yet been latched.
+    CutoffMissing,
+    /// An enqueued writer record has not yet been durably acknowledged.
+    EventPending,
+    /// Source-owned mutable state remains live.
+    ActiveStatePending,
+    /// The connection lifecycle has not yet reached task exit.
+    ConnectionPending,
+    /// H1/H2 registry work or durability remains live.
+    PendingRegistry(PendingFinalSealErrorV2),
+}
+
+/// Allocation-free source finalization preflight result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeSourceFinalPreflightV1 {
+    /// Every source-final prerequisite is satisfied.
+    Ready(ProducerEpochCutoffV1),
+    /// Structurally healthy state still has named transient work.
+    NotReady(EdgeSourceFinalNotReadyV1),
+}
+
 /// Zero-drop final seal failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EdgeSourceFinalSealErrorV1 {
@@ -2947,48 +3025,37 @@ pub enum EdgeMeasurementMissingEvidenceReasonV1 {
 }
 
 impl EdgeMeasurementMissingEvidenceReasonV1 {
-    /// Traverses every reason in a stable artifact order.
-    ///
-    /// `next` is exhaustive, so adding a reason without extending traversal fails to compile.
-    pub fn all() -> impl Iterator<Item = Self> {
-        std::iter::successors(Some(Self::DecodedGenerationCapacityExcluded), |reason| reason.next())
-    }
+    /// Every reason in stable artifact order.
+    pub const ALL: [Self; 24] = [
+        Self::DecodedGenerationCapacityExcluded,
+        Self::PayloadGenerationRefCapacityExcluded,
+        Self::PayloadFirstMapCapacityExcluded,
+        Self::PayloadFirstQueueFullExcluded,
+        Self::PayloadFirstQueueClosedExcluded,
+        Self::EventQueueFull,
+        Self::EventQueueClosed,
+        Self::ConnectionEventQueueFullExcluded,
+        Self::ConnectionEventQueueClosedExcluded,
+        Self::ConnectionTransitionAfterQueueLoss,
+        Self::CutoffBoundMissing,
+        Self::CoordinatorFailure,
+        Self::PayloadIndexZeroLate,
+        Self::PayloadIndexZeroMissing,
+        Self::MissingSourceIdentity,
+        Self::ObserverPanicked,
+        Self::CacheDrainIncomplete,
+        Self::CutoffDeadlineCacheGeneration,
+        Self::CutoffDeadlineProcessorGeneration,
+        Self::LateProcessorCompletion,
+        Self::TerminalRecordCapacityExcluded,
+        Self::TerminalRecordAllocationExcluded,
+        Self::SnapshotBindingCapacityExcluded,
+        Self::SnapshotPayloadFirstUnavailable,
+    ];
 
-    const fn next(self) -> Option<Self> {
-        match self {
-            Self::DecodedGenerationCapacityExcluded => {
-                Some(Self::PayloadGenerationRefCapacityExcluded)
-            }
-            Self::PayloadGenerationRefCapacityExcluded => {
-                Some(Self::PayloadFirstMapCapacityExcluded)
-            }
-            Self::PayloadFirstMapCapacityExcluded => Some(Self::PayloadFirstQueueFullExcluded),
-            Self::PayloadFirstQueueFullExcluded => Some(Self::PayloadFirstQueueClosedExcluded),
-            Self::PayloadFirstQueueClosedExcluded => Some(Self::EventQueueFull),
-            Self::EventQueueFull => Some(Self::EventQueueClosed),
-            Self::EventQueueClosed => Some(Self::ConnectionEventQueueFullExcluded),
-            Self::ConnectionEventQueueFullExcluded => {
-                Some(Self::ConnectionEventQueueClosedExcluded)
-            }
-            Self::ConnectionEventQueueClosedExcluded => {
-                Some(Self::ConnectionTransitionAfterQueueLoss)
-            }
-            Self::ConnectionTransitionAfterQueueLoss => Some(Self::CutoffBoundMissing),
-            Self::CutoffBoundMissing => Some(Self::CoordinatorFailure),
-            Self::CoordinatorFailure => Some(Self::PayloadIndexZeroLate),
-            Self::PayloadIndexZeroLate => Some(Self::PayloadIndexZeroMissing),
-            Self::PayloadIndexZeroMissing => Some(Self::MissingSourceIdentity),
-            Self::MissingSourceIdentity => Some(Self::ObserverPanicked),
-            Self::ObserverPanicked => Some(Self::CacheDrainIncomplete),
-            Self::CacheDrainIncomplete => Some(Self::CutoffDeadlineCacheGeneration),
-            Self::CutoffDeadlineCacheGeneration => Some(Self::CutoffDeadlineProcessorGeneration),
-            Self::CutoffDeadlineProcessorGeneration => Some(Self::LateProcessorCompletion),
-            Self::LateProcessorCompletion => Some(Self::TerminalRecordCapacityExcluded),
-            Self::TerminalRecordCapacityExcluded => Some(Self::TerminalRecordAllocationExcluded),
-            Self::TerminalRecordAllocationExcluded => Some(Self::SnapshotBindingCapacityExcluded),
-            Self::SnapshotBindingCapacityExcluded => Some(Self::SnapshotPayloadFirstUnavailable),
-            Self::SnapshotPayloadFirstUnavailable => None,
-        }
+    /// Traverses every reason in stable artifact order.
+    pub fn all() -> impl ExactSizeIterator<Item = Self> {
+        Self::ALL.into_iter()
     }
 
     /// Stable lower-camel-case key used by final artifact missing-evidence maps.
@@ -3420,7 +3487,6 @@ pub struct EdgeMeasurementRecorderStateV1 {
     authority_wire_terminals: u64,
     authority_decode_rejected: u64,
     next_coverage_sequence: u64,
-    next_post_cutoff_wire_ordinal: u64,
     last_coverage_hash: B256,
     coverage_record_count: u64,
     next_excluded_coverage_sequence: u64,
@@ -3575,7 +3641,6 @@ impl EdgeMeasurementRecorderV1 {
                 authority_wire_terminals: 0,
                 authority_decode_rejected: 0,
                 next_coverage_sequence: 0,
-                next_post_cutoff_wire_ordinal: 0,
                 last_coverage_hash: B256::ZERO,
                 coverage_record_count: 0,
                 next_excluded_coverage_sequence: 0,
@@ -4233,6 +4298,8 @@ impl EdgeMeasurementRecorderV1 {
     pub fn prepare_cutoff(&self) {
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         state.cutoff_fence = true;
+        drop(state);
+        self.registry.close_measurement();
     }
 
     /// Returns O(1) readiness for every admitted authority route and registry terminal.
@@ -4384,17 +4451,15 @@ impl EdgeMeasurementRecorderV1 {
         let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let pre_cutoff_generation = source_generation
             .is_some_and(|generation| state.source_generation_contexts.contains_key(&generation));
-        if advanced && (!state.cutoff_fence || pre_cutoff_generation) {
+        if state.cutoff_fence && !pre_cutoff_generation {
+            return (None, None);
+        }
+        if advanced {
             let registration = self.registry.register(pending, source_generation);
             return (Some(registration), None);
         }
-        let marker = if advanced {
-            PendingSendJournalMarkerV2::PostCutoffAdvancedNonAuthority
-        } else {
-            PendingSendJournalMarkerV2::PassthroughNonAdvanced
-        };
         self.registry.begin_unregistered_send();
-        (None, Some(marker))
+        (None, Some(PendingSendJournalMarkerV2::PassthroughNonAdvanced))
     }
     /// Canonical lowercase boot identifier bound at installation.
     pub const fn boot_id(&self) -> [u8; 36] {
@@ -4429,35 +4494,7 @@ impl EdgeMeasurementRecorderV1 {
     pub fn observe_wire(&self, bytes: &[u8]) -> Option<EpochAdmissionTokenV1> {
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if state.cutoff_fence {
-            let wire_ordinal = state.next_post_cutoff_wire_ordinal;
-            state.next_post_cutoff_wire_ordinal =
-                wire_ordinal.checked_add(1).unwrap_or_else(|| {
-                    state.poisons.push(EdgeMeasurementPoisonV1::WireOrdinalOverflow);
-                    u64::MAX
-                });
-            let (utc_status, utc_ns) = Self::raw_clock(ClockIdV1::Realtime, false);
-            let (mono_status, mono_ns) = Self::raw_clock(ClockIdV1::Monotonic, false);
-            let admission = EpochAdmissionTokenV1 {
-                producer_epoch: self.config.producer_epoch.get(),
-                wire_ordinal,
-                observation: WireObservationV1 {
-                    clock_observation_ordinal: state.next_clock_ordinal,
-                    utc_status,
-                    utc_ns,
-                    mono_status,
-                    mono_ns,
-                    wire_digest: B256::from(DefaultCrypto.sha256(bytes)),
-                },
-                route: EpochRouteV1::PostCutoffNonAuthority,
-            };
-            self.coverage_locked(
-                &mut state,
-                wire_ordinal,
-                None,
-                admission.route,
-                WireLifecycleTransitionV1::WireObserved,
-            );
-            return Some(admission);
+            return None;
         }
         let route = EpochRouteV1::Authority;
         let wire_ordinal = state.next_wire_ordinal;
@@ -5864,8 +5901,13 @@ impl EdgeMeasurementRecorderV1 {
         Ok(())
     }
 
-    /// Verifies independent zero-drop source and pending-registry finals.
-    pub fn verify_source_final(&self) -> Result<ProducerEpochCutoffV1, EdgeSourceFinalSealErrorV1> {
+    /// Performs the allocation-free full source-final preflight used immediately before persistence.
+    ///
+    /// Live writer, source, connection, and registry state returns `NotReady`; structural
+    /// conservation failures and poison remain errors.
+    pub fn source_final_preflight(
+        &self,
+    ) -> Result<EdgeSourceFinalPreflightV1, EdgeSourceFinalSealErrorV1> {
         self.reconcile_terminal_exclusions();
         let state = match self.state.lock() {
             Ok(state) => state,
@@ -5875,12 +5917,22 @@ impl EdgeMeasurementRecorderV1 {
                 return Err(EdgeSourceFinalSealErrorV1::Poisoned);
             }
         };
-        let cutoff = state.cutoff.ok_or(EdgeSourceFinalSealErrorV1::CutoffMissing)?;
         if !state.poisons.is_empty() {
             return Err(EdgeSourceFinalSealErrorV1::Poisoned);
         }
+        let registry_not_ready = self
+            .registry
+            .finalization_preflight()
+            .map_err(EdgeSourceFinalSealErrorV1::PendingRegistry)?;
+        let Some(cutoff) = state.cutoff else {
+            return Ok(EdgeSourceFinalPreflightV1::NotReady(
+                EdgeSourceFinalNotReadyV1::CutoffMissing,
+            ));
+        };
         if state.event_pending_ack != 0 {
-            return Err(EdgeSourceFinalSealErrorV1::EventPending);
+            return Ok(EdgeSourceFinalPreflightV1::NotReady(
+                EdgeSourceFinalNotReadyV1::EventPending,
+            ));
         }
         if !state.decoded_source_generations.is_empty()
             || !state.payload_without_index_zero.is_empty()
@@ -5895,8 +5947,16 @@ impl EdgeMeasurementRecorderV1 {
             || !state.payload_first_by_generation.is_empty()
             || !state.snapshot_wire_ordinals.is_empty()
             || !state.snapshot_evidence_captured.is_empty()
+            || !state.post_cutoff_routes.is_empty()
         {
-            return Err(EdgeSourceFinalSealErrorV1::ActiveStatePending);
+            return Ok(EdgeSourceFinalPreflightV1::NotReady(
+                EdgeSourceFinalNotReadyV1::ActiveStatePending,
+            ));
+        }
+        if state.connection_phase != ConnectionPhaseV1::Exited {
+            return Ok(EdgeSourceFinalPreflightV1::NotReady(
+                EdgeSourceFinalNotReadyV1::ConnectionPending,
+            ));
         }
         let last_connection_valid = state.last_connection_record.map_or(
             state.connection_record_count == 0
@@ -5916,7 +5976,6 @@ impl EdgeMeasurementRecorderV1 {
             != 0
             || state.missing_evidence.connection_event_queue_closed_excluded != 0;
         let h3_final = last_connection_valid
-            && state.connection_phase == ConnectionPhaseV1::Exited
             && (connection_queue_loss
                 || (state.connection_recorded_phase == ConnectionPhaseV1::Exited
                     && state.connection_established_count == state.connection_closed_count));
@@ -5928,8 +5987,34 @@ impl EdgeMeasurementRecorderV1 {
             return Err(EdgeSourceFinalSealErrorV1::ConnectionFinalInvalid);
         }
         drop(state);
-        self.registry.verify_final_seal().map_err(EdgeSourceFinalSealErrorV1::PendingRegistry)?;
-        Ok(cutoff)
+        if let Some(reason) = registry_not_ready {
+            return Ok(EdgeSourceFinalPreflightV1::NotReady(
+                EdgeSourceFinalNotReadyV1::PendingRegistry(reason),
+            ));
+        }
+        Ok(EdgeSourceFinalPreflightV1::Ready(cutoff))
+    }
+
+    /// Verifies independent zero-drop source and pending-registry finals.
+    pub fn verify_source_final(&self) -> Result<ProducerEpochCutoffV1, EdgeSourceFinalSealErrorV1> {
+        match self.source_final_preflight()? {
+            EdgeSourceFinalPreflightV1::Ready(cutoff) => Ok(cutoff),
+            EdgeSourceFinalPreflightV1::NotReady(reason) => Err(match reason {
+                EdgeSourceFinalNotReadyV1::CutoffMissing => {
+                    EdgeSourceFinalSealErrorV1::CutoffMissing
+                }
+                EdgeSourceFinalNotReadyV1::EventPending => EdgeSourceFinalSealErrorV1::EventPending,
+                EdgeSourceFinalNotReadyV1::ActiveStatePending => {
+                    EdgeSourceFinalSealErrorV1::ActiveStatePending
+                }
+                EdgeSourceFinalNotReadyV1::ConnectionPending => {
+                    EdgeSourceFinalSealErrorV1::ConnectionFinalInvalid
+                }
+                EdgeSourceFinalNotReadyV1::PendingRegistry(error) => {
+                    EdgeSourceFinalSealErrorV1::PendingRegistry(error)
+                }
+            }),
+        }
     }
 
     /// Returns finite source counters, missing evidence, and pending cardinalities for final artifacts.
@@ -6723,6 +6808,21 @@ mod tests {
     }
 
     #[test]
+    fn post_cutoff_cli_receipt_without_journal_is_measurement_inert() {
+        let pending = test_pending_blocks();
+        let registry = PendingMetadataRegistryV2::new(10, 4);
+        registry.close_measurement();
+        let before = registry.snapshot();
+
+        assert_eq!(
+            registry.cli_received(&pending),
+            Ok(Err(PendingSendJournalMarkerV2::PostCutoffAdvancedNonAuthority))
+        );
+        assert_eq!(registry.snapshot(), before);
+        assert_eq!(registry.verify_final_seal(), Ok(()));
+    }
+
+    #[test]
     fn non_authority_send_count_is_exact_beyond_diagnostic_ring() {
         let registry = PendingMetadataRegistryV2::new(11, 4);
         for _ in 0..100 {
@@ -7302,7 +7402,8 @@ mod tests {
     }
 
     #[test]
-    fn cutoff_during_connect_does_not_cancel_production_or_admit_more_authority() {
+    fn cutoff_during_connect_freezes_measurement_hooks() {
+        let pending = test_pending_blocks();
         let recorder = test_recorder(31);
         recorder.connection_transition(SourceConnectionTransitionV1::OwnerStart);
         recorder.connection_transition(SourceConnectionTransitionV1::InitialConnectAttemptStarted);
@@ -7311,29 +7412,22 @@ mod tests {
             last_coverage_sequence: 0,
             last_candidate_sequence: 0,
         });
-        let records_at_cutoff = recorder.connection_records();
+        let state_at_cutoff = format!("{:?}", recorder.state.lock().expect("state"));
+        let registry_at_cutoff = recorder.registry().snapshot();
+
         recorder.connection_transition(SourceConnectionTransitionV1::Established);
         recorder.connection_transition(SourceConnectionTransitionV1::ConnectFailure);
-        let post_cutoff = recorder.observe_wire(b"production-continues").expect("explicit route");
+        recorder.record_due_anchor();
+        assert_eq!(recorder.observe_wire(b"production-continues"), None);
+        assert_eq!(recorder.prepare_pending_publication(&pending, true, None), (None, None));
+        assert_eq!(recorder.prepare_pending_publication(&pending, false, None), (None, None));
+        assert_eq!(
+            recorder.prepare_pending_publication(&pending, true, Some(u64::MAX)),
+            (None, None)
+        );
 
-        assert_eq!(post_cutoff.route, EpochRouteV1::PostCutoffNonAuthority);
-        assert_eq!(recorder.connection_records(), records_at_cutoff);
-        assert!(!records_at_cutoff.iter().any(
-            |record| record.transition == SourceConnectionTransitionV1::OwnerShutdownRequested
-        ));
-        assert_eq!(
-            records_at_cutoff
-                .iter()
-                .filter(|record| {
-                    record.transition == SourceConnectionTransitionV1::ConnectionTaskExited
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
-            records_at_cutoff.last().map(|record| record.transition),
-            Some(SourceConnectionTransitionV1::ConnectionTaskExited)
-        );
+        assert_eq!(format!("{:?}", recorder.state.lock().expect("state")), state_at_cutoff);
+        assert_eq!(recorder.registry().snapshot(), registry_at_cutoff);
     }
 
     #[test]
@@ -7922,68 +8016,21 @@ mod tests {
     }
 
     #[test]
-    fn authority_admission_survives_decode_after_cutoff_fence() {
+    fn authority_admission_survives_decode_and_publication_after_cutoff_fence() {
         let pending = test_pending_blocks();
         let flashblock = pending.get_flashblocks().remove(0);
         let recorder = test_recorder(202);
         let admission = recorder.observe_wire(b"before-fence").expect("admission");
         recorder.prepare_cutoff();
         assert_eq!(admission.route, EpochRouteV1::Authority);
-        assert_eq!(recorder.decoded_flashblock(admission, &flashblock), Some(0));
+        let generation =
+            recorder.decoded_flashblock(admission, &flashblock).expect("pre-cutoff generation");
+        let (registration, marker) =
+            recorder.prepare_pending_publication(&pending, true, Some(generation));
+        assert!(registration.is_some());
+        assert_eq!(marker, None);
     }
 
-    #[test]
-    fn post_cutoff_route_emits_explicit_exclusion_through_processor() {
-        let pending = test_pending_blocks();
-        let flashblock = pending.get_flashblocks().remove(0);
-        let key = DecodedFlashblockKeyV1::from_flashblock(&flashblock);
-        let recorder = test_recorder(203);
-        recorder.prepare_cutoff();
-        let admission = recorder.observe_wire(b"excluded").expect("excluded admission");
-        assert_eq!(recorder.decoded_flashblock(admission, &flashblock), None);
-        recorder.post_cutoff_actor_enqueue(admission, true);
-        recorder.post_cutoff_actor_delivered(admission);
-        assert_eq!(recorder.begin_state_handoff(key), None);
-        assert_eq!(recorder.take_source_generation(&flashblock), None);
-
-        let mut transitions = Vec::new();
-        while let EdgeEventDrainStatusV1::Event(event) = recorder.try_recv_event() {
-            if let EdgeSourceEventV1::Coverage(record) = *event {
-                transitions.push(record.transition);
-            }
-        }
-        assert!(transitions.ends_with(&[
-            WireLifecycleTransitionV1::PostCutoffActorEnqueued,
-            WireLifecycleTransitionV1::PostCutoffActorDelivered,
-            WireLifecycleTransitionV1::PostCutoffStateHandedOff,
-            WireLifecycleTransitionV1::PostCutoffProcessorExcluded,
-        ]));
-    }
-    #[test]
-    fn failed_post_cutoff_actor_enqueue_releases_retained_route() {
-        let flashblock = test_pending_blocks().get_flashblocks().remove(0);
-        let recorder = test_recorder(214);
-        recorder.prepare_cutoff();
-        let admission = recorder.observe_wire(b"excluded-failure").expect("excluded admission");
-        assert_eq!(recorder.decoded_flashblock(admission, &flashblock), None);
-        recorder.post_cutoff_actor_enqueue(admission, false);
-        let state = recorder.state.lock().expect("state");
-        assert!(state.post_cutoff_routes.is_empty());
-        drop(state);
-
-        let mut excluded_terminal = false;
-        while let EdgeEventDrainStatusV1::Event(event) = recorder.try_recv_event() {
-            excluded_terminal |= matches!(
-                *event,
-                EdgeSourceEventV1::TerminalCoverage(SourceTerminalCoverageV3 {
-                    route: EpochRouteV1::PostCutoffNonAuthority,
-                    terminal: SourceCoverageTerminalV3::CutoffRouted,
-                    ..
-                })
-            );
-        }
-        assert!(excluded_terminal);
-    }
     #[test]
     fn index_zero_terminal_preserves_binding_for_later_payload_index() {
         let pending = test_pending_blocks();
@@ -8272,33 +8319,37 @@ mod tests {
         assert!(final_result.is_ok(), "{final_result:?}");
     }
     #[test]
-    fn post_cutoff_exclusion_remains_durable_after_authority_final() {
+    fn late_hooks_after_final_preserve_ready_preflight_and_empty_worksets() {
+        let pending = test_pending_blocks();
         let recorder = test_recorder(205);
-        recorder.latch_cutoff(ProducerExternalBoundsV1 {
+        let cutoff = recorder.latch_cutoff(ProducerExternalBoundsV1 {
             last_admitted_blink_generation: 0,
             last_coverage_sequence: 0,
             last_candidate_sequence: 0,
         });
-        let admission = recorder.observe_wire(b"after-authority-final").expect("excluded wire");
-        assert_eq!(admission.route, EpochRouteV1::PostCutoffNonAuthority);
-
-        let mut cutoff_seen = false;
-        let mut post_cutoff_after_final = false;
-        while let EdgeEventDrainStatusV1::Event(event) = recorder.try_recv_event() {
-            match *event {
-                EdgeSourceEventV1::Cutoff(_) => cutoff_seen = true,
-                EdgeSourceEventV1::Coverage(record)
-                    if cutoff_seen && record.route == EpochRouteV1::PostCutoffNonAuthority =>
-                {
-                    post_cutoff_after_final = true;
-                }
-                _ => {}
-            }
+        while let EdgeEventDrainStatusV1::Event(_) = recorder.try_recv_event() {
             recorder.ack_event_durable().expect("durable event");
         }
-        assert!(cutoff_seen);
-        assert!(post_cutoff_after_final);
-        assert_eq!(recorder.source_final_counters().6, 0);
+        assert_eq!(
+            recorder.source_final_preflight(),
+            Ok(EdgeSourceFinalPreflightV1::Ready(cutoff))
+        );
+        assert_eq!(recorder.try_recv_event(), EdgeEventDrainStatusV1::Empty);
+        let state_at_final = format!("{:?}", recorder.state.lock().expect("state"));
+        let registry_at_final = recorder.registry().snapshot();
+
+        assert_eq!(recorder.observe_wire(b"after-authority-final"), None);
+        assert_eq!(recorder.prepare_pending_publication(&pending, true, None), (None, None));
+        recorder.connection_transition(SourceConnectionTransitionV1::OwnerStart);
+        recorder.record_due_anchor();
+
+        assert_eq!(
+            recorder.source_final_preflight(),
+            Ok(EdgeSourceFinalPreflightV1::Ready(cutoff))
+        );
+        assert_eq!(recorder.try_recv_event(), EdgeEventDrainStatusV1::Empty);
+        assert_eq!(format!("{:?}", recorder.state.lock().expect("state")), state_at_final);
+        assert_eq!(recorder.registry().snapshot(), registry_at_final);
     }
     #[test]
     fn processor_cutoff_deadline_terminalizes_truthful_owner_and_reaches_final() {
@@ -8841,5 +8892,100 @@ mod tests {
             counts.snapshot(),
             vec![("CanonicalWriterFatalDrain", 2), ("CutoffDrainDeadlineExceeded", 1),]
         );
+    }
+    #[test]
+    fn source_final_preflight_matches_verifier_and_retries_post_cutoff_registry_activity() {
+        let recorder = test_recorder(216);
+        assert_eq!(
+            recorder.source_final_preflight(),
+            Ok(EdgeSourceFinalPreflightV1::NotReady(EdgeSourceFinalNotReadyV1::CutoffMissing,))
+        );
+        assert_eq!(recorder.verify_source_final(), Err(EdgeSourceFinalSealErrorV1::CutoffMissing));
+
+        recorder.connection_transition(SourceConnectionTransitionV1::OwnerStart);
+        recorder.connection_transition(SourceConnectionTransitionV1::InitialConnectAttemptStarted);
+        let cutoff = recorder.latch_cutoff(ProducerExternalBoundsV1 {
+            last_admitted_blink_generation: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+        });
+        assert_eq!(
+            recorder.source_final_preflight(),
+            Ok(EdgeSourceFinalPreflightV1::NotReady(EdgeSourceFinalNotReadyV1::EventPending,))
+        );
+        assert_eq!(recorder.verify_source_final(), Err(EdgeSourceFinalSealErrorV1::EventPending));
+        while let EdgeEventDrainStatusV1::Event(_) = recorder.try_recv_event() {
+            recorder.ack_event_durable().expect("event durable");
+        }
+        assert_eq!(
+            recorder.source_final_preflight(),
+            Ok(EdgeSourceFinalPreflightV1::Ready(cutoff))
+        );
+        assert_eq!(recorder.verify_source_final(), Ok(cutoff));
+
+        let registry = recorder.registry();
+        registry.begin_unregistered_send();
+        assert_eq!(
+            recorder.source_final_preflight(),
+            Ok(EdgeSourceFinalPreflightV1::NotReady(EdgeSourceFinalNotReadyV1::PendingRegistry(
+                PendingFinalSealErrorV2::RegistryNotEmpty,
+            ),))
+        );
+        registry
+            .record_unregistered_send(
+                PendingSendJournalMarkerV2::PostCutoffAdvancedNonAuthority,
+                Some(1),
+            )
+            .expect("post-cutoff send journal");
+        assert_eq!(
+            recorder.source_final_preflight(),
+            Ok(EdgeSourceFinalPreflightV1::NotReady(EdgeSourceFinalNotReadyV1::PendingRegistry(
+                PendingFinalSealErrorV2::RegistryNotEmpty,
+            ),))
+        );
+        registry.cli_closed().expect("journal terminal");
+        assert_eq!(
+            recorder.source_final_preflight(),
+            Ok(EdgeSourceFinalPreflightV1::Ready(cutoff))
+        );
+        assert_eq!(recorder.verify_source_final(), Ok(cutoff));
+    }
+
+    #[test]
+    fn missing_evidence_reason_table_has_exhaustive_cardinality_and_mapping() {
+        const EXPECTED: [(&str, &str); 24] = [
+            ("decodedGenerationCapacityExcluded", "DecodedGenerationCapacityExcluded"),
+            ("payloadGenerationRefCapacityExcluded", "PayloadGenerationRefCapacityExcluded"),
+            ("payloadFirstMapCapacityExcluded", "PayloadFirstMapCapacityExcluded"),
+            ("payloadFirstQueueFullExcluded", "PayloadFirstQueueFullExcluded"),
+            ("payloadFirstQueueClosedExcluded", "PayloadFirstQueueClosedExcluded"),
+            ("eventQueueFull", "EventQueueFull"),
+            ("eventQueueClosed", "EventQueueClosed"),
+            ("connectionEventQueueFullExcluded", "ConnectionEventQueueFullExcluded"),
+            ("connectionEventQueueClosedExcluded", "ConnectionEventQueueClosedExcluded"),
+            ("connectionTransitionAfterQueueLoss", "ConnectionTransitionAfterQueueLoss"),
+            ("cutoffBoundMissing", "CutoffBoundMissing"),
+            ("coordinatorFailure", "CoordinatorFailure"),
+            ("payloadIndexZeroLate", "PayloadIndexZeroLate"),
+            ("payloadIndexZeroMissing", "PayloadIndexZeroMissing"),
+            ("missingSourceIdentity", "MissingSourceIdentity"),
+            ("observerPanicked", "ObserverPanicked"),
+            ("cacheDrainIncomplete", "CacheDrainIncomplete"),
+            ("cutoffDeadlineCacheGeneration", "CutoffDeadlineCacheGeneration"),
+            ("cutoffDeadlineProcessorGeneration", "CutoffDeadlineProcessorGeneration"),
+            ("lateProcessorCompletion", "LateProcessorCompletion"),
+            ("terminalRecordCapacityExcluded", "TerminalRecordCapacityExcluded"),
+            ("terminalRecordAllocationExcluded", "TerminalRecordAllocationExcluded"),
+            ("snapshotBindingCapacityExcluded", "SnapshotBindingCapacityExcluded"),
+            ("snapshotPayloadFirstUnavailable", "SnapshotPayloadFirstUnavailable"),
+        ];
+
+        let reasons = EdgeMeasurementMissingEvidenceReasonV1::all();
+        assert_eq!(reasons.len(), EXPECTED.len());
+        assert_eq!(
+            reasons.map(|reason| (reason.artifact_key(), reason.reason_name())).collect::<Vec<_>>(),
+            EXPECTED
+        );
+        assert_ne!(EdgeEventDrainStatusV1::Empty, EdgeEventDrainStatusV1::Closed);
     }
 }

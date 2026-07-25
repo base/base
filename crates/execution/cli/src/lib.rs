@@ -22,6 +22,8 @@ pub use node::{ExecutionNodeArgs, ExecutionNodeLaunchConfig};
 /// Standard Base execution-node runner wiring.
 pub mod standard_node;
 
+#[cfg(feature = "edge-measurement")]
+use std::time::Duration;
 use std::{ffi::OsString, fmt, marker::PhantomData};
 
 pub use app::CliApp;
@@ -33,6 +35,8 @@ use commands::Commands;
 use futures::Future;
 use reth_cli_commands::launcher::FnLauncher;
 use reth_cli_runner::CliRunner;
+#[cfg(feature = "edge-measurement")]
+use reth_cli_runner::CliRunnerConfig;
 use reth_db::DatabaseEnv;
 use reth_node_builder::{NodeBuilder, WithLaunchContext};
 use reth_node_core::{
@@ -111,7 +115,12 @@ where
         L: FnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv, BaseChainSpec>>, Ext) -> Fut,
         Fut: Future<Output = eyre::Result<()>>,
     {
-        self.with_runner(CliRunner::try_default_runtime()?, launcher)
+        let runner = CliRunner::try_default_runtime()?;
+        #[cfg(feature = "edge-measurement")]
+        let runner = runner.with_config(
+            CliRunnerConfig::new().with_graceful_shutdown_timeout(Duration::from_secs(240)),
+        );
+        self.with_runner(runner, launcher)
     }
 
     /// Execute the configured cli command with the provided [`CliRunner`].

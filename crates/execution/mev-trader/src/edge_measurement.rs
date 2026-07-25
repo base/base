@@ -1245,6 +1245,9 @@ impl EdgeMeasurementOwnerV1 {
         let _admission =
             self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
         if !self.generation_is_authoritative(input.generation)? {
+            if !self.is_accepting() {
+                return Ok(());
+            }
             self.record_candidate_drop(
                 input.generation,
                 CandidatePreEnqueueDropReasonV3::MissingRequiredEvidence,
@@ -4116,6 +4119,25 @@ mod tests {
             CheckedCandidateBoundsV1 { count: 0, last_sequence: None }
         );
         assert!(!owner.poisoned.load(Ordering::Acquire));
+    }
+    #[test]
+    fn post_cutoff_non_authoritative_staging_is_measurement_inert() {
+        let owner = EdgeMeasurementOwnerV1::new(candidate_fixture_owner_config()).unwrap();
+        owner.latch_cutoff(cutoff_fields(10));
+
+        assert_eq!(
+            candidate_fixture::stage(&owner, candidate_fixture_evidence(), false, false),
+            Ok(())
+        );
+        assert_eq!(
+            owner.candidate_pre_enqueue_drop_counters(),
+            CandidatePreEnqueueDropCountersV1::default()
+        );
+        assert_eq!(owner.pending_records.load(Ordering::Acquire), 0);
+        assert!(owner.staged.lock().unwrap().is_empty());
+        assert!(owner.staging_failures.lock().unwrap().is_empty());
+        assert!(owner.drain_records().unwrap().is_empty());
+        assert_eq!(owner.finalization_ready(), Ok(true));
     }
 
     #[test]

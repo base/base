@@ -1288,8 +1288,8 @@ mod tests {
     };
     #[cfg(feature = "edge-measurement")]
     use crate::{
-        BundleVisitor, MeasurementEncoder, PayloadVisitor, PendingSnapshotView, TransactionVisitor,
-        VisitControl, VisitSummary, WETH,
+        BundleVisitor, MeasurementEncoder, PayloadVisitor, PendingSnapshotView,
+        ProducerEpochCutoffFieldsV1, TransactionVisitor, VisitControl, VisitSummary, WETH,
     };
 
     #[derive(Debug)]
@@ -1661,7 +1661,7 @@ mod tests {
 
     #[cfg(feature = "edge-measurement")]
     #[test]
-    fn consume_once_preserves_selected_plan_when_production_staging_fails() {
+    fn consume_once_keeps_post_cutoff_selected_plan_measurement_inert() {
         let raw_tx =
             Bytes::from_str(&format!("0x{SELECTED_RAW_VICTIM}")).expect("signed victim bytes");
         let transaction =
@@ -1845,6 +1845,19 @@ mod tests {
         .expect("blink victim");
 
         runtime.submit_blink_victim(victim);
+        owner.terminalize_shutdown_pending_admitted(None);
+        owner.latch_cutoff(ProducerEpochCutoffFieldsV1 {
+            producer_epoch: 1,
+            cutoff_clock_observation_ordinal: 0,
+            last_admitted_wire_ordinal: 0,
+            last_admitted_source_generation: 0,
+            last_admitted_blink_generation: 0,
+            last_pending_snapshot_sequence: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+            latch_mono_ns: 1,
+        });
+        assert_eq!(owner.finalization_ready(), Ok(true));
         assert!(runtime.consume_once(&port, Arc::new(BaseChainSpec::mainnet())));
         assert_eq!(runtime.counters().count(A1Outcome::FrameBound), 1);
         assert_eq!(runtime.shadow_outcome_counters().count(ShadowOutcome::Selected), 1);
@@ -1857,16 +1870,14 @@ mod tests {
         assert!(!plan.gross_profit.is_zero());
         assert_eq!(runtime.counters().count(A1Outcome::FrameBound), 1);
         assert_eq!(runtime.shadow_outcome_counters().count(ShadowOutcome::Selected), 1);
-        assert_eq!(owner.candidate_pre_enqueue_drop_counters().missing_required_evidence, 1);
         assert_eq!(
-            owner.drain_records().expect("candidate terminal channel"),
-            vec![crate::EdgeProducerRecordV1::CandidateDrop {
-                generation: 0,
-                reason: crate::CandidatePreEnqueueDropReasonV3::MissingRequiredEvidence,
-            }]
+            owner.candidate_pre_enqueue_drop_counters(),
+            crate::CandidatePreEnqueueDropCountersV1::default()
         );
+        assert!(owner.drain_records().expect("candidate terminal channel").is_empty());
+        assert_eq!(owner.finalization_ready(), Ok(true));
         let ledger = owner.ledger().verify_final().expect("terminal ledger");
-        assert_eq!(ledger.processed_terminal, 1);
+        assert_eq!(ledger.cancelled_before_frame, 1);
     }
 
     #[test]

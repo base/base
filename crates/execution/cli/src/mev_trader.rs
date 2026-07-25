@@ -6,7 +6,10 @@ use std::{
     num::NonZeroU64,
     os::{
         fd::AsRawFd,
-        unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+        unix::{
+            ffi::OsStrExt,
+            fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+        },
     },
     path::{Component, Path, PathBuf},
     str::FromStr,
@@ -77,6 +80,10 @@ fn latch_edge_failure(failure: &'static str) {
     }
 }
 #[cfg(feature = "edge-measurement")]
+unsafe extern "C" {
+    fn flock(fd: std::os::raw::c_int, operation: std::os::raw::c_int) -> std::os::raw::c_int;
+}
+#[cfg(feature = "edge-measurement")]
 fn cleanup_snapshot_task_registry(
     registry: &EdgeMeasurementRegistryHandleV2,
     failure: &'static str,
@@ -88,7 +95,13 @@ fn cleanup_snapshot_task_registry(
 #[cfg(feature = "edge-measurement")]
 const EDGE_CUTOFF_DRAIN_DEADLINE_V1: Duration = Duration::from_secs(30);
 #[cfg(feature = "edge-measurement")]
-const EDGE_SHUTDOWN_JOIN_DEADLINE_V1: Duration = Duration::from_secs(30);
+const EDGE_FINALIZATION_PREFLIGHT_RETRY_DEADLINE_V1: Duration = Duration::from_secs(30);
+#[cfg(feature = "edge-measurement")]
+const EDGE_SHUTDOWN_JOIN_DEADLINE_V1: Duration = Duration::from_millis(500);
+#[cfg(feature = "edge-measurement")]
+const EDGE_SHUTDOWN_CUTOFF_DEADLINE_V1: Duration = Duration::from_secs(65);
+#[cfg(feature = "edge-measurement")]
+const EDGE_SHUTDOWN_WRITER_DEADLINE_V1: Duration = Duration::from_secs(120);
 #[cfg(feature = "edge-measurement")]
 const EDGE_CANDIDATE_DETAIL_DRAIN_BUDGET_V1: usize = 64;
 
@@ -114,30 +127,46 @@ struct EdgeCutoffLatchV1 {
 #[cfg(feature = "edge-measurement")]
 impl EdgeCutoffLatchV1 {
     fn wait_for_completion(&self, deadline: Instant) -> bool {
-        while !self.completed.load(Ordering::Acquire) {
+        while self.started.load(Ordering::Acquire) && !self.completed.load(Ordering::Acquire) {
             if Instant::now() >= deadline {
                 return false;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        true
+        self.completed.load(Ordering::Acquire)
     }
 }
 
 #[cfg(feature = "edge-measurement")]
-fn latch_edge_cutoff_once(
+fn latch_edge_cutoff_once_with(
     latched: &EdgeCutoffLatchV1,
     recorder: &EdgeMeasurementRecorderV1,
     owner: &EdgeMeasurementOwnerV1,
+    prepare_owner: impl FnOnce(
+        &EdgeMeasurementOwnerV1,
+    ) -> Result<
+        (u64, base_mev_trader::CheckedCandidateBoundsV1),
+        base_mev_trader::EdgeProducerError,
+    >,
 ) {
-    if latched.started.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
-        if !latched.wait_for_completion(Instant::now() + EDGE_CUTOFF_TASK_JOIN_DEADLINE_V1) {
-            latch_edge_failure("CutoffTaskCompletionTimeout");
+    loop {
+        if latched
+            .started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            break;
         }
-        return;
+        if latched.wait_for_completion(Instant::now() + EDGE_CUTOFF_TASK_JOIN_DEADLINE_V1) {
+            return;
+        }
+        if latched.started.load(Ordering::Acquire) {
+            latch_edge_failure("CutoffTaskCompletionTimeout");
+            return;
+        }
     }
     recorder.prepare_cutoff();
-    match owner.prepare_cutoff() {
+    match prepare_owner(owner) {
         Ok((blink_count, candidate_bounds)) => {
             let last_blink = blink_count.saturating_sub(1);
             let drained =
@@ -169,9 +198,40 @@ fn latch_edge_cutoff_once(
                 latch_mono_ns: cutoff.latch_mono_ns,
             });
         }
-        Err(_) => latch_edge_failure("BlinkCursorUnavailableAtCutoff"),
+        Err(_) => {
+            latch_edge_failure("BlinkCursorUnavailableAtCutoffRetryable");
+            latched.started.store(false, Ordering::Release);
+            return;
+        }
     }
     latched.completed.store(true, Ordering::Release);
+}
+#[cfg(feature = "edge-measurement")]
+fn latch_edge_cutoff_once(
+    latched: &EdgeCutoffLatchV1,
+    recorder: &EdgeMeasurementRecorderV1,
+    owner: &EdgeMeasurementOwnerV1,
+) {
+    latch_edge_cutoff_once_with(latched, recorder, owner, EdgeMeasurementOwnerV1::prepare_cutoff);
+}
+#[cfg(feature = "edge-measurement")]
+fn latch_edge_cutoff_until(
+    latched: &EdgeCutoffLatchV1,
+    recorder: &EdgeMeasurementRecorderV1,
+    owner: &EdgeMeasurementOwnerV1,
+    deadline: Instant,
+) -> bool {
+    loop {
+        latch_edge_cutoff_once(latched, recorder, owner);
+        if recorder.cutoff_sealed() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            latch_edge_failure("BlinkCursorUnavailableAtCutoffRetryDeadlineExceeded");
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 #[cfg(feature = "edge-measurement")]
 enum EdgeShutdownTaskOutcome<T> {
@@ -215,7 +275,7 @@ const EDGE_SEGMENT_MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
 #[cfg(feature = "edge-measurement")]
 const EDGE_SEGMENT_MAX_FLUSH_LATENCY: Duration = Duration::from_secs(5);
 #[cfg(feature = "edge-measurement")]
-const EDGE_CUTOFF_TASK_JOIN_DEADLINE_V1: Duration = Duration::from_secs(65);
+const EDGE_CUTOFF_TASK_JOIN_DEADLINE_V1: Duration = Duration::from_millis(500);
 #[cfg(feature = "edge-measurement")]
 const EDGE_CLOCK_OBSERVATION_CAPACITY: usize = 8_192;
 #[cfg(feature = "edge-measurement")]
@@ -281,6 +341,20 @@ struct EdgeCandidateJoinV1 {
     connection_record_hash: B256,
     registry_terminal_record_hash: B256,
 }
+
+#[cfg(feature = "edge-measurement")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EdgeFinalizationPreflightV1 {
+    Ready,
+    NotReady(&'static str),
+    FatalStructural(&'static str),
+}
+
+#[cfg(feature = "edge-measurement")]
+#[derive(Debug)]
+struct EdgeOutputLeaseV1 {
+    _file: File,
+}
 #[cfg(feature = "edge-measurement")]
 #[derive(Debug)]
 struct EdgeCanonicalWriterV1 {
@@ -312,6 +386,7 @@ struct EdgeCanonicalWriterV1 {
     registry_durable_cursor: u64,
     cutoff_batches_flushed: bool,
     finalized: bool,
+    finalization_preflight_started_at: Option<Instant>,
 }
 
 #[cfg(feature = "edge-measurement")]
@@ -352,6 +427,7 @@ impl EdgeCanonicalWriterV1 {
             registry_durable_cursor: 0,
             cutoff_batches_flushed: false,
             finalized: false,
+            finalization_preflight_started_at: None,
         }
     }
     fn append_sequence_hash(
@@ -373,8 +449,50 @@ impl EdgeCanonicalWriterV1 {
         usize::try_from(sequence).ok().and_then(|index| hashes.get(index)).copied()
     }
 
+    fn acquire_output_lease(&self) -> io::Result<EdgeOutputLeaseV1> {
+        const LOCK_EX: i32 = 2;
+        const LOCK_NB: i32 = 4;
+
+        let file = File::open(&self.directory)?;
+        // SAFETY: `file` owns a valid descriptor for the pinned output directory for the
+        // duration of this call, and `flock` neither retains the pointer nor dereferences memory.
+        let result = unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) };
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(EdgeOutputLeaseV1 { _file: file })
+    }
+
+    fn sweep_stale_open(&self, _lease: &EdgeOutputLeaseV1) -> io::Result<()> {
+        let mut stale_paths = Vec::new();
+        for entry in fs::read_dir(&self.directory)? {
+            let entry = entry?;
+            if !entry.file_name().as_bytes().ends_with(b".open") {
+                continue;
+            }
+            let file_type = entry.file_type()?;
+            if !file_type.is_file() && !file_type.is_symlink() {
+                return Err(io::Error::other("stale .open entry is not a regular file or symlink"));
+            }
+            stale_paths.push(entry.path());
+        }
+        for path in stale_paths {
+            if let Err(error) = fs::remove_file(path) {
+                return match self.directory_handle.sync_all() {
+                    Ok(()) => Err(error),
+                    Err(sync_error) => Err(io::Error::new(
+                        error.kind(),
+                        format!("{error}; stale .open sweep root fsync failed: {sync_error}"),
+                    )),
+                };
+            }
+        }
+        self.directory_handle.sync_all()
+    }
+
     fn run(mut self) -> io::Result<()> {
-        self.directory_handle.sync_all()?;
+        let lease = self.acquire_output_lease()?;
+        self.sweep_stale_open(&lease)?;
         loop {
             let progressed = match self.drain_once() {
                 Ok(progressed) => progressed,
@@ -391,32 +509,35 @@ impl EdgeCanonicalWriterV1 {
                 && !self.finalized
                 && !self.has_buffered_records()
             {
-                match self.recorder.cutoff_drain_status() {
-                    Ok(false) => {}
-                    Ok(true) => match self.owner.finalization_ready() {
-                        Ok(false) => {}
-                        Ok(true) => {
-                            if let Err(error) = self.finalize() {
-                                self.recorder
-                                    .latch_coordinator_failure("CanonicalWriterFatalPublication");
-                                return Err(error);
-                            }
-                        }
+                match self.finalization_preflight() {
+                    EdgeFinalizationPreflightV1::Ready => match self.finalize() {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                         Err(error) => {
-                            let failure = if error
-                                == base_mev_trader::EdgeProducerError::CutoffDrainDeadline
-                            {
-                                "BlinkCutoffDrainDeadlineExceeded"
-                            } else {
-                                "CanonicalWriterFatalBlinkFinalSeal"
-                            };
-                            self.recorder.latch_coordinator_failure(failure);
-                            return Err(io::Error::other("fatal Blink final readiness rejection"));
+                            self.recorder
+                                .latch_coordinator_failure("CanonicalWriterFatalPublication");
+                            return Err(error);
                         }
                     },
-                    Err(_) => {
-                        self.recorder.latch_coordinator_failure("CanonicalWriterFatalFinalSeal");
-                        return Err(io::Error::other("fatal source drain readiness rejection"));
+                    EdgeFinalizationPreflightV1::NotReady(reason) => {
+                        let started =
+                            self.finalization_preflight_started_at.get_or_insert_with(Instant::now);
+                        if started.elapsed() >= EDGE_FINALIZATION_PREFLIGHT_RETRY_DEADLINE_V1 {
+                            self.recorder.latch_coordinator_failure(reason);
+                            self.recorder.latch_coordinator_failure(
+                                "FinalizationPreflightRetryDeadlineExceeded",
+                            );
+                            return Err(io::Error::new(
+                                io::ErrorKind::TimedOut,
+                                "finalization preflight retry deadline exceeded",
+                            ));
+                        }
+                    }
+                    EdgeFinalizationPreflightV1::FatalStructural(reason) => {
+                        self.recorder.latch_coordinator_failure(reason);
+                        return Err(io::Error::other(
+                            "fatal structural finalization preflight rejection",
+                        ));
                     }
                 }
             }
@@ -429,7 +550,34 @@ impl EdgeCanonicalWriterV1 {
         self.ledgers.values().any(|ledger| !ledger.records.is_empty())
     }
 
+    fn finalization_preflight(&self) -> EdgeFinalizationPreflightV1 {
+        match self.recorder.source_final_preflight() {
+            Ok(base_flashblocks::EdgeSourceFinalPreflightV1::Ready(_)) => {}
+            Ok(base_flashblocks::EdgeSourceFinalPreflightV1::NotReady(_)) => {
+                return EdgeFinalizationPreflightV1::NotReady("SourceFinalQuiescencePending");
+            }
+            Err(_) => {
+                return EdgeFinalizationPreflightV1::FatalStructural(
+                    "CanonicalWriterFatalSourceStructuralPoisonOrConservation",
+                );
+            }
+        }
+        match self.owner.finalization_ready() {
+            Ok(false) => return EdgeFinalizationPreflightV1::NotReady("BlinkQuiescencePending"),
+            Ok(true) => {}
+            Err(_) => {
+                return EdgeFinalizationPreflightV1::FatalStructural(
+                    "CanonicalWriterFatalBlinkStructuralPoison",
+                );
+            }
+        }
+        EdgeFinalizationPreflightV1::Ready
+    }
+
     fn drain_once(&mut self) -> io::Result<bool> {
+        if self.finalized {
+            return Ok(false);
+        }
         let mut progressed = false;
         let flush_cutoff = self.recorder.cutoff_sealed() && !self.cutoff_batches_flushed;
         while let EdgeEventDrainStatusV1::Event(event) = self.recorder.try_recv_event() {
@@ -1798,37 +1946,66 @@ impl EdgeCanonicalWriterV1 {
         .map(|(reason, count)| (reason, count.to_string()))
         .collect()
     }
+    fn descriptor_array_bytes(
+        descriptors: &[EdgeSegmentDescriptorV1],
+        prefix: &[u8],
+    ) -> io::Result<Vec<u8>> {
+        let mut descriptors = descriptors.iter().collect::<Vec<_>>();
+        descriptors.sort_unstable_by(|left, right| left.filename.cmp(&right.filename));
+        let prefix =
+            std::str::from_utf8(prefix).map_err(|_| io::Error::other("descriptor hash domain"))?;
+        let mut output = String::from(prefix);
+        output.push('[');
+        for (index, descriptor) in descriptors.into_iter().enumerate() {
+            if index != 0 {
+                output.push(',');
+            }
+            output.push_str("{\"fileSha256\":");
+            output.push_str(
+                &serde_json::to_string(&descriptor.file_sha256).map_err(io::Error::other)?,
+            );
+            output.push_str(",\"filename\":");
+            output
+                .push_str(&serde_json::to_string(&descriptor.filename).map_err(io::Error::other)?);
+            output.push_str(",\"firstSequence\":");
+            output.push_str(
+                &serde_json::to_string(&descriptor.first_sequence).map_err(io::Error::other)?,
+            );
+            output.push_str(",\"lastSequence\":");
+            output.push_str(
+                &serde_json::to_string(&descriptor.last_sequence).map_err(io::Error::other)?,
+            );
+            output.push_str(",\"recordCount\":");
+            output.push_str(
+                &serde_json::to_string(&descriptor.record_count).map_err(io::Error::other)?,
+            );
+            output.push_str(",\"segmentSealSha256\":");
+            output.push_str(
+                &serde_json::to_string(&descriptor.segment_seal_sha256)
+                    .map_err(io::Error::other)?,
+            );
+            output.push('}');
+        }
+        output.push(']');
+        Ok(output.into_bytes())
+    }
+
     fn ledger_segment_set_sha256(&self, ledger_name: &'static str) -> io::Result<String> {
-        let mut descriptors = self
-            .ledgers
-            .get(ledger_name)
-            .map(|ledger| {
-                ledger
-                    .descriptors
-                    .iter()
-                    .map(|descriptor| {
-                        json!({
-                            "fileSha256": descriptor.file_sha256,
-                            "filename": descriptor.filename,
-                            "firstSequence": descriptor.first_sequence,
-                            "lastSequence": descriptor.last_sequence,
-                            "recordCount": descriptor.record_count,
-                            "segmentSealSha256": descriptor.segment_seal_sha256,
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        descriptors
-            .sort_by(|left, right| left["filename"].as_str().cmp(&right["filename"].as_str()));
-        let mut domain = b"edge-sidecar-segment-set-v1\0".to_vec();
-        domain.extend_from_slice(&Self::canonical_bytes(&JsonValue::Array(descriptors))?);
-        Ok(Self::sha256_hex(&domain))
+        let descriptors =
+            self.ledgers.get(ledger_name).map_or(&[][..], |ledger| ledger.descriptors.as_slice());
+        Ok(Self::sha256_hex(&Self::descriptor_array_bytes(
+            descriptors,
+            b"edge-sidecar-segment-set-v1\0",
+        )?))
     }
 
     fn rolling_descriptor_manifest(&self) -> io::Result<JsonValue> {
         let mut ledgers = Vec::new();
         for (name, ledger) in &self.ledgers {
+            let segment_set_sha256 = Self::sha256_hex(&Self::descriptor_array_bytes(
+                &ledger.descriptors,
+                b"edge-sidecar-segment-set-v1\0",
+            )?);
             let mut descriptors = ledger
                 .descriptors
                 .iter()
@@ -1845,12 +2022,9 @@ impl EdgeCanonicalWriterV1 {
                 .collect::<Vec<_>>();
             descriptors
                 .sort_by(|left, right| left["filename"].as_str().cmp(&right["filename"].as_str()));
-            let descriptors = JsonValue::Array(descriptors);
-            let mut set_domain = b"edge-sidecar-segment-set-v1\0".to_vec();
-            set_domain.extend_from_slice(&Self::canonical_bytes(&descriptors)?);
             ledgers.push(json!({
                 "ledger": name,
-                "segmentSetSha256": Self::sha256_hex(&set_domain),
+                "segmentSetSha256": segment_set_sha256,
                 "segments": descriptors,
             }));
         }
@@ -1878,6 +2052,26 @@ impl EdgeCanonicalWriterV1 {
         }
     }
 
+    fn cleanup_open_after_error(&self, open_path: &Path, primary: io::Error) -> io::Error {
+        let unlink_error = match fs::remove_file(open_path) {
+            Ok(()) => None,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => Some(error),
+        };
+        let sync_error = self.directory_handle.sync_all().err();
+        match (unlink_error, sync_error) {
+            (None, None) => primary,
+            (unlink_error, sync_error) => io::Error::new(
+                primary.kind(),
+                format!(
+                    "{primary}; .open cleanup failed: unlink={}; root_fsync={}",
+                    unlink_error.as_ref().map_or_else(|| "ok".to_owned(), ToString::to_string),
+                    sync_error.as_ref().map_or_else(|| "ok".to_owned(), ToString::to_string),
+                ),
+            ),
+        }
+    }
+
     fn persist_immutable(&self, filename: &str, bytes: &[u8]) -> io::Result<()> {
         Self::validate_canonical_artifact(bytes)?;
         let final_path = self.directory.join(filename);
@@ -1888,30 +2082,46 @@ impl EdgeCanonicalWriterV1 {
             return Ok(());
         }
         let open_path = self.directory.join(format!("{filename}.open"));
-        let mut file =
-            OpenOptions::new().create_new(true).write(true).mode(0o600).open(&open_path)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        if !Self::immutable_file_matches(&open_path, bytes)? {
-            return Err(io::Error::other("durable re-read mismatch"));
-        }
-        match fs::hard_link(&open_path, &final_path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                if !Self::immutable_file_matches(&final_path, bytes)? {
-                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "immutable conflict"));
-                }
+        let file = OpenOptions::new().create_new(true).write(true).mode(0o600).open(&open_path)?;
+        let result = (|| {
+            let mut file = file;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            drop(file);
+            if !Self::immutable_file_matches(&open_path, bytes)? {
+                return Err(io::Error::other("durable re-read mismatch"));
             }
-            Err(error) => return Err(error),
-        }
-        fs::remove_file(open_path)?;
-        self.directory_handle.sync_all()
+            match fs::hard_link(&open_path, &final_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    if !Self::immutable_file_matches(&final_path, bytes)? {
+                        return Err(io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            "immutable conflict",
+                        ));
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+            self.directory_handle.sync_all()?;
+            fs::remove_file(&open_path)?;
+            self.directory_handle.sync_all()
+        })();
+        result.map_err(|error| self.cleanup_open_after_error(&open_path, error))
     }
 
     fn finalize(&mut self) -> io::Result<()> {
         if self.finalized {
             return Ok(());
+        }
+        match self.finalization_preflight() {
+            EdgeFinalizationPreflightV1::Ready => {}
+            EdgeFinalizationPreflightV1::NotReady(reason) => {
+                return Err(io::Error::new(io::ErrorKind::WouldBlock, reason));
+            }
+            EdgeFinalizationPreflightV1::FatalStructural(reason) => {
+                return Err(io::Error::other(reason));
+            }
         }
         let source_final = self
             .recorder
@@ -2437,7 +2647,7 @@ impl EdgeCanonicalWriterV1 {
                 })
             })
             .collect::<Vec<_>>();
-        let manifest = json!({
+        let mut manifest = json!({
             "artifacts": artifacts,
             "blinkCount": blink_count.to_string(),
             "blinkEmpty": blink_count == 0,
@@ -2459,17 +2669,21 @@ impl EdgeCanonicalWriterV1 {
             "schemaVersion": "edge-producer-manifest-v1",
         });
         self.persist_named_artifact("producer-manifest-v1.json", &manifest)?;
+        let JsonValue::Array(mut indexed_artifacts) = manifest["artifacts"].take() else {
+            return Err(io::Error::other("producer manifest artifact inventory malformed"));
+        };
         drop(manifest);
-        let indexed_artifacts = self
+        let producer_manifest_sha256 = self
             .persisted_artifacts
-            .iter()
-            .map(|(filename, sha256)| {
-                json!({
-                    "filename": filename,
-                    "sha256": sha256,
-                })
-            })
-            .collect::<Vec<_>>();
+            .get("producer-manifest-v1.json")
+            .ok_or_else(|| io::Error::other("producer manifest inventory entry missing"))?;
+        indexed_artifacts.push(json!({
+            "filename": "producer-manifest-v1.json",
+            "sha256": producer_manifest_sha256,
+        }));
+        indexed_artifacts.sort_unstable_by(|left, right| {
+            left["filename"].as_str().cmp(&right["filename"].as_str())
+        });
         self.persist_named_artifact(
             "artifact-index-v1.json",
             &json!({
@@ -3611,7 +3825,12 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                             let latched = Arc::clone(&edge_cutoff_latched);
                             tokio::spawn(async move {
                                 tokio::time::sleep(Duration::from_secs(72 * 60 * 60)).await;
-                                latch_edge_cutoff_once(&latched, &recorder, &owner);
+                                let _ = latch_edge_cutoff_until(
+                                    &latched,
+                                    &recorder,
+                                    &owner,
+                                    Instant::now() + EDGE_SHUTDOWN_CUTOFF_DEADLINE_V1,
+                                );
                             })
                         });
                     let snapshot_runtime = Arc::clone(&runtime);
@@ -3740,8 +3959,40 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
 
                     let _guard = signal.await;
                     #[cfg(feature = "edge-measurement")]
+                    let edge_shutdown_cutoff_handle =
+                        EdgeMeasurementGlobal::installed().zip(edge_cutoff_owner.clone()).map(
+                            |(recorder, owner)| {
+                                let latched = Arc::clone(&edge_cutoff_latched);
+                                tokio::task::spawn_blocking(move || {
+                                    let _ = latch_edge_cutoff_until(
+                                        &latched,
+                                        &recorder,
+                                        &owner,
+                                        Instant::now() + EDGE_SHUTDOWN_CUTOFF_DEADLINE_V1,
+                                    );
+                                })
+                            },
+                        );
+                    #[cfg(feature = "edge-measurement")]
                     abort_and_await_edge_cutoff_task(edge_cutoff_handle).await;
                     runtime.close();
+                    #[cfg(feature = "edge-measurement")]
+                    if let Some(handle) = edge_shutdown_cutoff_handle {
+                        match await_edge_shutdown_task(
+                            handle,
+                            EDGE_SHUTDOWN_CUTOFF_DEADLINE_V1,
+                        )
+                        .await
+                        {
+                            EdgeShutdownTaskOutcome::Completed(()) => {}
+                            EdgeShutdownTaskOutcome::JoinFailed => {
+                                latch_edge_failure("ShutdownCutoffTaskJoinFailed");
+                            }
+                            EdgeShutdownTaskOutcome::TimedOut => {
+                                latch_edge_failure("ShutdownCutoffBestEffortDeadlineExceeded");
+                            }
+                        }
+                    }
                     #[cfg(feature = "edge-measurement")]
                     match await_edge_shutdown_task(
                         snapshot_handle,
@@ -3816,14 +4067,8 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                         let _ = handle.await;
                     }
                     #[cfg(feature = "edge-measurement")]
-                    if let (Some(recorder), Some(owner)) =
-                        (EdgeMeasurementGlobal::installed(), edge_cutoff_owner.as_ref())
-                    {
-                        latch_edge_cutoff_once(&edge_cutoff_latched, &recorder, owner);
-                    }
-                    #[cfg(feature = "edge-measurement")]
                     if let Some(handle) = edge_writer_handle {
-                        match await_edge_shutdown_task(handle, EDGE_SHUTDOWN_JOIN_DEADLINE_V1).await {
+                        match await_edge_shutdown_task(handle, EDGE_SHUTDOWN_WRITER_DEADLINE_V1).await {
                             EdgeShutdownTaskOutcome::Completed(Ok(())) => {}
                             EdgeShutdownTaskOutcome::Completed(Err(_)) => {
                                 latch_edge_failure("CanonicalWriterFinalFailed");
@@ -5239,6 +5484,113 @@ mod tests {
         .expect("test owner");
         (EdgeCanonicalWriterV1::new(config, recorder, owner), root)
     }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn edge_writer_sweeps_stale_regular_open() {
+        let (writer, root) = edge_test_writer("stale-regular-open");
+        let stale = root.join("segment.ndjson.open");
+        fs::write(&stale, b"stale").expect("stale open");
+        let lease = writer.acquire_output_lease().expect("writer lease");
+
+        writer.sweep_stale_open(&lease).expect("stale sweep");
+
+        assert!(!stale.exists());
+        drop(lease);
+        drop(writer);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn edge_writer_sweep_preserves_hardlinked_committed_final() {
+        let (writer, root) = edge_test_writer("hardlinked-final");
+        let stale = root.join("segment.ndjson.open");
+        let final_path = root.join("segment.ndjson");
+        fs::write(&stale, b"committed").expect("stale open");
+        fs::hard_link(&stale, &final_path).expect("committed final");
+        let lease = writer.acquire_output_lease().expect("writer lease");
+
+        writer.sweep_stale_open(&lease).expect("stale sweep");
+
+        assert!(!stale.exists());
+        assert_eq!(fs::read(&final_path).expect("committed bytes"), b"committed");
+        drop(lease);
+        drop(writer);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn edge_writer_sweep_unlinks_symlink_without_deleting_target() {
+        use std::os::unix::fs::symlink;
+
+        let (writer, root) = edge_test_writer("symlink-open");
+        let target = root.join("target");
+        let stale = root.join("segment.ndjson.open");
+        fs::write(&target, b"target").expect("target");
+        symlink(&target, &stale).expect("stale symlink");
+        let lease = writer.acquire_output_lease().expect("writer lease");
+
+        writer.sweep_stale_open(&lease).expect("stale sweep");
+
+        assert!(!stale.exists());
+        assert_eq!(fs::read(&target).expect("target bytes"), b"target");
+        drop(lease);
+        drop(writer);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn edge_writer_sweep_rejects_directory_open() {
+        let (writer, root) = edge_test_writer("directory-open");
+        let conflict = root.join("segment.ndjson.open");
+        fs::create_dir(&conflict).expect("directory conflict");
+        let lease = writer.acquire_output_lease().expect("writer lease");
+
+        let error = writer.sweep_stale_open(&lease).expect_err("directory rejected");
+
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert!(conflict.is_dir());
+        drop(lease);
+        drop(writer);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn second_live_edge_writer_cannot_sweep_output_root() {
+        let (writer, root) = edge_test_writer("second-live-writer");
+        let stale = root.join("segment.ndjson.open");
+        fs::write(&stale, b"stale").expect("stale open");
+        let lease = writer.acquire_output_lease().expect("first writer lease");
+
+        let error = writer.acquire_output_lease().expect_err("second writer rejected");
+
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert!(stale.is_file());
+        writer.sweep_stale_open(&lease).expect("lease holder sweep");
+        drop(lease);
+        drop(writer);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn edge_writer_post_create_failure_cleanup_removes_open() {
+        let (writer, root) = edge_test_writer("post-create-cleanup");
+        let stale = root.join("segment.ndjson.open");
+        fs::write(&stale, b"partial").expect("created open");
+
+        let error = writer
+            .cleanup_open_after_error(&stale, io::Error::other("injected post-create failure"));
+
+        assert_eq!(error.to_string(), "injected post-create failure");
+        assert!(!stale.exists());
+        drop(writer);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
     #[cfg(feature = "edge-measurement")]
     fn seal_empty_test_writer(writer: &mut EdgeCanonicalWriterV1) {
         loop {
@@ -5441,8 +5793,16 @@ mod tests {
 
     #[cfg(feature = "edge-measurement")]
     #[test]
-    fn timer_cutoff_finalizes_without_shutdown_stop() {
+    fn timer_cutoff_finalizes_live_transient_activity_without_shutdown_stop() {
         let (writer, root) = edge_test_writer("timer-cutoff");
+        let flashblock = pending_blocks().get_flashblocks().remove(0);
+        let admission =
+            writer.recorder.observe_wire(b"timer-live-transient").expect("live wire admission");
+        let generation = writer
+            .recorder
+            .decoded_flashblock(admission, &flashblock)
+            .expect("live source generation");
+        writer.recorder.actor_enqueue(generation, false);
         let recorder = Arc::clone(&writer.recorder);
         let owner = Arc::clone(&writer.owner);
         let handle = std::thread::spawn(move || writer.run());
@@ -5453,6 +5813,64 @@ mod tests {
 
         assert!(root.join("producer-health-final-v1.json").is_file());
         assert!(root.join("producer-manifest-v1.json").is_file());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn finalize_not_ready_retries_after_live_transient_activity_drains() {
+        let (mut writer, root) = edge_test_writer("finalize-not-ready-retry");
+        let flashblock = pending_blocks().get_flashblocks().remove(0);
+        let admission =
+            writer.recorder.observe_wire(b"finalize-live-transient").expect("live wire admission");
+        let generation = writer
+            .recorder
+            .decoded_flashblock(admission, &flashblock)
+            .expect("live source generation");
+
+        assert!(matches!(
+            writer.finalization_preflight(),
+            EdgeFinalizationPreflightV1::NotReady(_)
+        ));
+        writer.recorder.actor_enqueue(generation, false);
+        seal_empty_test_writer(&mut writer);
+        assert_eq!(writer.finalization_preflight(), EdgeFinalizationPreflightV1::Ready);
+        writer.finalize().expect("retry finalization");
+        assert!(root.join("artifact-index-v1.json").is_file());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn owner_cutoff_first_failure_leaves_latch_retryable() {
+        let (mut writer, root) = edge_test_writer("owner-cutoff-retry");
+        let latched = EdgeCutoffLatchV1::default();
+        latch_edge_cutoff_once_with(&latched, &writer.recorder, &writer.owner, |_| {
+            Err(base_mev_trader::EdgeProducerError::QueueFull)
+        });
+        assert!(!latched.started.load(Ordering::Acquire));
+        assert!(!latched.completed.load(Ordering::Acquire));
+
+        latch_edge_cutoff_once(&latched, &writer.recorder, &writer.owner);
+        assert!(latched.started.load(Ordering::Acquire));
+        assert!(latched.completed.load(Ordering::Acquire));
+        while writer.drain_once().expect("retry cutoff drain") {}
+        writer.finalize().expect("retry cutoff finalization");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn drain_once_is_inert_after_final_artifact_index_is_durable() {
+        let (mut writer, root) = edge_test_writer("finalized-drain-guard");
+        seal_empty_test_writer(&mut writer);
+        writer.finalize().expect("finalization");
+        let persisted = writer.persisted_artifacts.clone();
+        let files_before = fs::read_dir(&root).expect("read final directory").count();
+
+        assert!(!writer.drain_once().expect("post-final drain"));
+        assert_eq!(writer.persisted_artifacts, persisted);
+        assert_eq!(fs::read_dir(&root).expect("re-read final directory").count(), files_before);
         fs::remove_dir_all(root).expect("cleanup");
     }
     #[cfg(feature = "edge-measurement")]
@@ -5598,6 +6016,57 @@ mod tests {
         assert_eq!(writer.persisted_artifacts.len(), FORMER_DESCRIPTOR_CAPACITY + 2);
         drop(writer);
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn bounded_descriptor_encoder_matches_preoptimization_canonical_bytes() {
+        let descriptors = vec![
+            EdgeSegmentDescriptorV1 {
+                filename: "z-\"segment.ndjson".to_owned(),
+                first_sequence: "10".to_owned(),
+                last_sequence: "11".to_owned(),
+                record_count: "2".to_owned(),
+                segment_seal_sha256: "seal-z".to_owned(),
+                file_sha256: "file-z".to_owned(),
+            },
+            EdgeSegmentDescriptorV1 {
+                filename: "a-segment.ndjson".to_owned(),
+                first_sequence: "0".to_owned(),
+                last_sequence: "9".to_owned(),
+                record_count: "10".to_owned(),
+                segment_seal_sha256: "seal-a".to_owned(),
+                file_sha256: "file-a".to_owned(),
+            },
+        ];
+        let mut legacy = descriptors
+            .iter()
+            .map(|descriptor| {
+                json!({
+                    "fileSha256": descriptor.file_sha256,
+                    "filename": descriptor.filename,
+                    "firstSequence": descriptor.first_sequence,
+                    "lastSequence": descriptor.last_sequence,
+                    "recordCount": descriptor.record_count,
+                    "segmentSealSha256": descriptor.segment_seal_sha256,
+                })
+            })
+            .collect::<Vec<_>>();
+        legacy.sort_by(|left, right| left["filename"].as_str().cmp(&right["filename"].as_str()));
+        let mut expected = b"edge-sidecar-segment-set-v1\0".to_vec();
+        expected.extend_from_slice(
+            &EdgeCanonicalWriterV1::canonical_bytes(&JsonValue::Array(legacy))
+                .expect("legacy canonical descriptor bytes"),
+        );
+
+        assert_eq!(
+            EdgeCanonicalWriterV1::descriptor_array_bytes(
+                &descriptors,
+                b"edge-sidecar-segment-set-v1\0",
+            )
+            .expect("bounded descriptor bytes"),
+            expected
+        );
     }
 
     #[cfg(feature = "edge-measurement")]
