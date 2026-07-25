@@ -680,6 +680,17 @@ impl MevTraderRuntime {
         self.generation.load(Ordering::SeqCst).checked_sub(1) == Some(generation)
     }
 
+    #[cfg(feature = "edge-measurement")]
+    fn observe_candidate_staging(
+        plan: Option<BackrunPlan>,
+        stage: impl FnOnce(&BackrunPlan) -> Result<(), EdgeProducerError>,
+    ) -> Option<BackrunPlan> {
+        if let Some(selected) = plan.as_ref() {
+            let _ = stage(selected);
+        }
+        plan
+    }
+
     /// Consumes at most one generation through capture, frame binding, Rayon4, and terminal claim.
     pub fn consume_once(
         &self,
@@ -880,26 +891,19 @@ impl MevTraderRuntime {
                         }
                     };
                 #[cfg(feature = "edge-measurement")]
-                let candidate_stage_failed = match selected_plan.as_ref() {
-                    Some(plan) => match self.edge_measurement.as_ref() {
-                        Some(owner) => owner
-                            .stage_selected_candidate(EdgeCandidateStageInputV3 {
-                                generation,
-                                port,
-                                snapshot: &snapshot,
-                                processed: &processed,
-                                prepared: &prepared,
-                                plan,
-                                victim_raw: &frame.raw_tx,
-                                probe,
-                            })
-                            .is_err(),
-                        None => false,
-                    },
-                    None => false,
-                };
-                #[cfg(feature = "edge-measurement")]
-                let plan = if candidate_stage_failed { None } else { selected_plan };
+                let plan = Self::observe_candidate_staging(selected_plan, |plan| {
+                    let Some(owner) = self.edge_measurement.as_ref() else { return Ok(()) };
+                    owner.stage_selected_candidate(EdgeCandidateStageInputV3 {
+                        generation,
+                        port,
+                        snapshot: &snapshot,
+                        processed: &processed,
+                        prepared: &prepared,
+                        plan,
+                        victim_raw: &frame.raw_tx,
+                        probe,
+                    })
+                });
                 #[cfg(not(feature = "edge-measurement"))]
                 let plan = selected_plan;
                 #[cfg(feature = "t4b-shadow")]
@@ -918,21 +922,10 @@ impl MevTraderRuntime {
                     ShadowOutcome::NoDirtyPools
                 } else if candidates.is_empty() {
                     ShadowOutcome::NoCandidate
+                } else if plan.is_some() {
+                    ShadowOutcome::Selected
                 } else {
-                    #[cfg(feature = "edge-measurement")]
-                    if candidate_stage_failed {
-                        ShadowOutcome::FrameRejected
-                    } else if plan.is_some() {
-                        ShadowOutcome::Selected
-                    } else {
-                        ShadowOutcome::NoPositivePlan
-                    }
-                    #[cfg(not(feature = "edge-measurement"))]
-                    if plan.is_some() {
-                        ShadowOutcome::Selected
-                    } else {
-                        ShadowOutcome::NoPositivePlan
-                    }
+                    ShadowOutcome::NoPositivePlan
                 };
                 let measurement = ShadowFrameMeasurement {
                     context,
@@ -1508,7 +1501,7 @@ mod tests {
     }
 
     #[test]
-    fn t4a_pairwise_pipeline_emits_zero_or_one_frame_bound_measurement_plan() {
+    fn t4a_pairwise_pipeline_preserves_selected_plan_when_runtime_staging_fails() {
         let processed = crate::frame::test_utils::processed_frame();
         let probe = CancellationProbe::new(
             Arc::new(CancellationToken::new(Instant::now() + Duration::from_secs(1))),
@@ -1556,6 +1549,19 @@ mod tests {
         assert_eq!(plan.victim, processed.measurement_context().victim);
         assert!(!plan.gross_profit.is_zero());
         MeasurementEncoder::validate(&plan).expect("measurement digest");
+
+        #[cfg(feature = "edge-measurement")]
+        {
+            let expected = plan.clone();
+            let stage_called = Cell::new(false);
+            let retained = MevTraderRuntime::observe_candidate_staging(Some(plan), |staged| {
+                stage_called.set(true);
+                assert_eq!(staged, &expected);
+                Err(EdgeProducerError::MissingCandidateEvidence)
+            });
+            assert!(stage_called.get());
+            assert_eq!(retained, Some(expected));
+        }
     }
 
     #[test]

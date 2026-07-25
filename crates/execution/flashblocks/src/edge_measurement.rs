@@ -466,6 +466,8 @@ pub enum PendingRegistryPoisonV2 {
     SequenceOverflow,
     /// A checked counter overflowed.
     AccountingOverflow(PendingAccountingFieldV2),
+    /// An exact operational-exclusion counter overflowed.
+    MissingEvidenceCountOverflow,
     /// A sequence appeared twice in one exact set.
     DuplicateSequence(u64),
     /// A primary, secondary, or terminal binding was inconsistent.
@@ -495,12 +497,16 @@ pub struct PendingRegistryStateV2 {
     pub send_journal: VecDeque<PendingSendJournalEntryV2>,
     /// Non-authority sends begun before the unchanged production send returns.
     pub unregistered_send_inflight: u64,
+    /// Failed registrations without an H2 sequence awaiting their send disposition.
+    pub registration_without_sequence_send_inflight: u64,
     /// Exact cumulative number of non-authority send dispositions.
     pub unregistered_send_count: u64,
     /// Publications terminalized without a durable terminal record because capacity was exhausted.
     pub terminal_record_capacity_missing: u64,
     /// Publications terminalized without a durable terminal record because allocation failed.
     pub terminal_record_allocation_missing: u64,
+    /// Advanced snapshots excluded before H2 allocation because registry capacity was unavailable.
+    pub registration_capacity_missing: u64,
     /// Exact cleanup receipts for terminals that can never receive durable H2.
     terminal_exclusions: VecDeque<PendingTerminalExclusionV2>,
     /// Visible disposition for every non-authority broadcast send attempt.
@@ -576,9 +582,11 @@ impl PendingMetadataRegistryV2 {
                 published: VecDeque::new(),
                 send_journal: VecDeque::new(),
                 unregistered_send_inflight: 0,
+                registration_without_sequence_send_inflight: 0,
                 unregistered_send_count: 0,
                 terminal_record_capacity_missing: 0,
                 terminal_record_allocation_missing: 0,
+                registration_capacity_missing: 0,
                 terminal_exclusions: VecDeque::with_capacity(capacity),
                 unregistered_send_records: Vec::new(),
                 terminal_records: Vec::new(),
@@ -612,6 +620,19 @@ impl PendingMetadataRegistryV2 {
         )
     }
 
+    fn begin_registration_without_sequence_send_locked(state: &mut PendingRegistryStateV2) {
+        state.registration_without_sequence_send_inflight =
+            state.registration_without_sequence_send_inflight.checked_add(1).unwrap_or_else(|| {
+                Self::poison(
+                    state,
+                    PendingRegistryPoisonV2::AccountingOverflow(
+                        PendingAccountingFieldV2::SendPublished,
+                    ),
+                );
+                u64::MAX
+            });
+    }
+
     /// Registers one advanced snapshot before the unchanged production send.
     pub fn register(
         &self,
@@ -622,36 +643,44 @@ impl PendingMetadataRegistryV2 {
         if was_poisoned {
             Self::poison(&mut state, PendingRegistryPoisonV2::LockPoisoned);
         }
-        let accounting_failure =
-            Self::increment(&mut state, PendingAccountingFieldV2::AdvancedWithSnapshot).err();
-
         let Some(next_sequence) = state.next_sequence.checked_add(1) else {
             Self::poison(&mut state, PendingRegistryPoisonV2::SequenceOverflow);
-            let failure =
-                match Self::increment(&mut state, PendingAccountingFieldV2::RegistrationFailed) {
-                    Ok(()) => PendingRegistrationFailure::PendingSnapshotSequenceOverflow,
-                    Err(field) => PendingRegistrationFailure::PendingAccountingOverflow(field),
-                };
+            Self::begin_registration_without_sequence_send_locked(&mut state);
             return PendingRegistrationAttemptV2 {
                 pending_snapshot_sequence: None,
-                disposition: PendingRegistrationDispositionV2::Failed(failure),
+                disposition: PendingRegistrationDispositionV2::Failed(
+                    PendingRegistrationFailure::PendingSnapshotSequenceOverflow,
+                ),
             };
         };
         let cumulative_sequence_capacity =
             self.terminal_record_capacity.saturating_add(self.capacity);
-        if usize::try_from(state.next_sequence)
-            .map_or(true, |sequence| sequence >= cumulative_sequence_capacity)
+        if state.primary.len() >= self.capacity
+            || usize::try_from(state.next_sequence)
+                .map_or(true, |sequence| sequence >= cumulative_sequence_capacity)
         {
-            let failure =
-                match Self::increment(&mut state, PendingAccountingFieldV2::RegistrationFailed) {
-                    Ok(()) => PendingRegistrationFailure::PendingRegistryCapacityOverflow,
-                    Err(field) => PendingRegistrationFailure::PendingAccountingOverflow(field),
+            let Some(next_missing) = state.registration_capacity_missing.checked_add(1) else {
+                Self::poison(&mut state, PendingRegistryPoisonV2::MissingEvidenceCountOverflow);
+                Self::begin_registration_without_sequence_send_locked(&mut state);
+                return PendingRegistrationAttemptV2 {
+                    pending_snapshot_sequence: None,
+                    disposition: PendingRegistrationDispositionV2::Failed(
+                        PendingRegistrationFailure::PendingRegistryCapacityOverflow,
+                    ),
                 };
+            };
+            state.registration_capacity_missing = next_missing;
+            Self::begin_registration_without_sequence_send_locked(&mut state);
             return PendingRegistrationAttemptV2 {
                 pending_snapshot_sequence: None,
-                disposition: PendingRegistrationDispositionV2::Failed(failure),
+                disposition: PendingRegistrationDispositionV2::Failed(
+                    PendingRegistrationFailure::PendingRegistryCapacityOverflow,
+                ),
             };
         }
+
+        let accounting_failure =
+            Self::increment(&mut state, PendingAccountingFieldV2::AdvancedWithSnapshot).err();
         let sequence = state.next_sequence;
         state.next_sequence = next_sequence;
         Self::insert(&mut state, sequence, |sets| &mut sets.advanced_with_snapshot);
@@ -666,21 +695,6 @@ impl PendingMetadataRegistryV2 {
             source_generation,
             pending_public_subset_digest_v1: Self::pending_public_subset_digest_v1(pending),
         };
-
-        if state.primary.len() >= self.capacity {
-            if let Err(field) =
-                Self::increment(&mut state, PendingAccountingFieldV2::RegistrationFailed)
-            {
-                Self::poison(&mut state, PendingRegistryPoisonV2::AccountingOverflow(field));
-            }
-            Self::insert(&mut state, sequence, |sets| &mut sets.registration_failed);
-            return PendingRegistrationAttemptV2 {
-                pending_snapshot_sequence: Some(sequence),
-                disposition: PendingRegistrationDispositionV2::Failed(
-                    PendingRegistrationFailure::PendingRegistryCapacityOverflow,
-                ),
-            };
-        }
         let pointer_failure = state.secondary.get(&pointer).and_then(|queue| {
             queue.iter().find_map(|indexed| {
                 let entry = state.primary.get(indexed)?;
@@ -811,6 +825,12 @@ impl PendingMetadataRegistryV2 {
                 return Ok(());
             };
             let mut state = self.lock_state_checked()?;
+            state.registration_without_sequence_send_inflight = state
+                .registration_without_sequence_send_inflight
+                .checked_sub(1)
+                .ok_or(PendingRegistryError::AccountingOverflow(
+                    PendingAccountingFieldV2::SendPublished,
+                ))?;
             if receiver_count.is_some() {
                 state.send_journal.push_back(
                     PendingSendJournalEntryV2::RegistrationFailedWithoutSequence(failure),
@@ -942,6 +962,7 @@ impl PendingMetadataRegistryV2 {
         };
         while state.send_journal.is_empty()
             && (state.unregistered_send_inflight != 0
+                || state.registration_without_sequence_send_inflight != 0
                 || state.primary.values().any(|entry| entry.send.is_none()))
         {
             state = match self.send_recorded.wait(state) {
@@ -1243,15 +1264,78 @@ impl PendingMetadataRegistryV2 {
             send_journal: state.send_journal.iter().copied().collect(),
             unregistered_send_records: state.unregistered_send_records.clone(),
             unregistered_send_inflight: state.unregistered_send_inflight,
+            registration_without_sequence_send_inflight: state
+                .registration_without_sequence_send_inflight,
             unregistered_send_count: state.unregistered_send_count,
             terminal_record_capacity_missing: state.terminal_record_capacity_missing,
             terminal_record_allocation_missing: state.terminal_record_allocation_missing,
+            registration_capacity_missing: state.registration_capacity_missing,
             coverage_queue_pending_ack: state.durability_pending.len(),
             durability_acked: state.durability_acked,
             terminal_records: state.terminal_records.len(),
             coverage_count: state.next_coverage_sequence,
             last_coverage_sequence: state.next_coverage_sequence.checked_sub(1),
             last_pending_snapshot_sequence: state.next_sequence.checked_sub(1),
+            poisoned: state.poisoned || was_poisoned,
+        }
+    }
+    /// Returns the inclusive last allocated coverage sequence without cloning registry history.
+    pub fn last_coverage_sequence(&self) -> Option<u64> {
+        self.lock_state().0.next_coverage_sequence.checked_sub(1)
+    }
+
+    /// Returns the compact scalar and set-cardinality view used by final artifacts.
+    pub fn final_summary(&self) -> PendingRegistryFinalSummaryV2 {
+        let (state, was_poisoned) = self.lock_state();
+        let sets = &state.sets;
+        PendingRegistryFinalSummaryV2 {
+            counters: state.counters,
+            set_cardinalities: PendingRegistrySequenceSetCardinalitiesV2 {
+                advanced_with_snapshot: sets.advanced_with_snapshot.len(),
+                registration_succeeded: sets.registration_succeeded.len(),
+                registration_failed: sets.registration_failed.len(),
+                registered_published: sets.registered_published.len(),
+                registered_no_receivers: sets.registered_no_receivers.len(),
+                failed_registration_published: sets.failed_registration_published.len(),
+                failed_registration_no_receivers: sets.failed_registration_no_receivers.len(),
+                send_published: sets.send_published.len(),
+                send_no_receivers: sets.send_no_receivers.len(),
+                cli_received_lookup_succeeded: sets.cli_received_lookup_succeeded.len(),
+                cli_registry_lookup_failed: sets.cli_registry_lookup_failed.len(),
+                cli_lagged_attributed: sets.cli_lagged_attributed.len(),
+                cli_closed_attributed: sets.cli_closed_attributed.len(),
+                cli_cancelled_attributed: sets.cli_cancelled_attributed.len(),
+                pending_delivery_final: sets.pending_delivery_final.len(),
+                cli_ok_received: sets.cli_ok_received.len(),
+                snapshot_records_installed: sets.snapshot_records_installed.len(),
+                failed_reg_cli_registry_lookup_failed: sets
+                    .failed_reg_cli_registry_lookup_failed
+                    .len(),
+                failed_reg_cli_lagged_attributed: sets.failed_reg_cli_lagged_attributed.len(),
+                failed_reg_cli_closed_attributed: sets.failed_reg_cli_closed_attributed.len(),
+                failed_reg_cli_cancelled_attributed: sets.failed_reg_cli_cancelled_attributed.len(),
+                failed_reg_pending_final: sets.failed_reg_pending_final.len(),
+                registration_failed_no_receivers: sets.registration_failed_no_receivers.len(),
+                failed_reg_cli_received_lookup_succeeded: sets
+                    .failed_reg_cli_received_lookup_succeeded
+                    .len(),
+            },
+            primary_pending: state.primary.len(),
+            secondary_pending: state.secondary.values().map(VecDeque::len).sum(),
+            published_pending: state.published.len(),
+            unregistered_send_inflight: state.unregistered_send_inflight,
+            registration_without_sequence_send_inflight: state
+                .registration_without_sequence_send_inflight,
+            unregistered_send_count: state.unregistered_send_count,
+            terminal_record_capacity_missing: state.terminal_record_capacity_missing,
+            terminal_record_allocation_missing: state.terminal_record_allocation_missing,
+            registration_capacity_missing: state.registration_capacity_missing,
+            coverage_queue_pending_ack: state.durability_pending.len(),
+            durability_acked: state.durability_acked,
+            terminal_records: state.terminal_records.len(),
+            last_pending_snapshot_sequence: state.next_sequence.checked_sub(1),
+            coverage_count: state.next_coverage_sequence,
+            last_coverage_sequence: state.next_coverage_sequence.checked_sub(1),
             poisoned: state.poisoned || was_poisoned,
         }
     }
@@ -1311,6 +1395,7 @@ impl PendingMetadataRegistryV2 {
             && state.published.is_empty()
             && state.send_journal.is_empty()
             && state.unregistered_send_inflight == 0
+            && state.registration_without_sequence_send_inflight == 0
     }
     /// Verifies all sorted disjoint-union equations and the final empty seal.
     pub fn verify_final_seal(&self) -> Result<(), PendingFinalSealErrorV2> {
@@ -1461,6 +1546,7 @@ impl PendingMetadataRegistryV2 {
             || !state.published.is_empty()
             || !state.send_journal.is_empty()
             || state.unregistered_send_inflight != 0
+            || state.registration_without_sequence_send_inflight != 0
         {
             return Err(PendingFinalSealErrorV2::RegistryNotEmpty);
         }
@@ -1861,12 +1947,109 @@ pub struct PendingRegistrySnapshotV2 {
     pub unregistered_send_records: Vec<(PendingSendJournalMarkerV2, PendingSendDispositionV2)>,
     /// Non-authority sends begun but not yet dispositioned.
     pub unregistered_send_inflight: u64,
+    /// Failed registrations without an H2 sequence awaiting their send disposition.
+    pub registration_without_sequence_send_inflight: u64,
     /// Exact cumulative number of non-authority send dispositions.
     pub unregistered_send_count: u64,
     /// Publications released after terminal-record capacity exhaustion.
     pub terminal_record_capacity_missing: u64,
     /// Publications released after terminal-record allocation exhaustion.
     pub terminal_record_allocation_missing: u64,
+    /// Advanced snapshots excluded before H2 allocation because registry capacity was unavailable.
+    pub registration_capacity_missing: u64,
+    /// Coverage-queue records awaiting explicit durability acknowledgement.
+    pub coverage_queue_pending_ack: usize,
+    /// Explicit durable acknowledgements observed.
+    pub durability_acked: usize,
+    /// Terminal records accepted by the coverage queue.
+    pub terminal_records: usize,
+    /// Inclusive last pending snapshot sequence allocated by the registry.
+    pub last_pending_snapshot_sequence: Option<u64>,
+    /// Checked number of coverage records allocated in this epoch.
+    pub coverage_count: u64,
+    /// Inclusive last coverage sequence, absent for a clean empty epoch.
+    pub last_coverage_sequence: Option<u64>,
+    /// Whether the measurement epoch is poisoned.
+    pub poisoned: bool,
+}
+/// Cardinalities of every exact H2 sequence set serialized by final CLI artifacts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingRegistrySequenceSetCardinalitiesV2 {
+    /// All allocated advanced snapshots.
+    pub advanced_with_snapshot: usize,
+    /// Registration successes.
+    pub registration_succeeded: usize,
+    /// Registration failures.
+    pub registration_failed: usize,
+    /// Successful registrations subsequently published.
+    pub registered_published: usize,
+    /// Successful registrations with no receivers.
+    pub registered_no_receivers: usize,
+    /// Failed registrations subsequently published.
+    pub failed_registration_published: usize,
+    /// Failed registrations with no receivers.
+    pub failed_registration_no_receivers: usize,
+    /// All published sends.
+    pub send_published: usize,
+    /// All no-receiver sends.
+    pub send_no_receivers: usize,
+    /// CLI lookup successes.
+    pub cli_received_lookup_succeeded: usize,
+    /// CLI lookup failures.
+    pub cli_registry_lookup_failed: usize,
+    /// Lag-attributed sequences.
+    pub cli_lagged_attributed: usize,
+    /// Close-attributed sequences.
+    pub cli_closed_attributed: usize,
+    /// Cancel-attributed sequences.
+    pub cli_cancelled_attributed: usize,
+    /// Published sequences lacking a CLI terminal.
+    pub pending_delivery_final: usize,
+    /// All CLI `Ok` receipts.
+    pub cli_ok_received: usize,
+    /// Snapshot records installed before measurement lookup.
+    pub snapshot_records_installed: usize,
+    /// Failed registrations ending in lookup failure.
+    pub failed_reg_cli_registry_lookup_failed: usize,
+    /// Failed registrations attributed to lag.
+    pub failed_reg_cli_lagged_attributed: usize,
+    /// Failed registrations attributed to close.
+    pub failed_reg_cli_closed_attributed: usize,
+    /// Failed registrations attributed to cancellation.
+    pub failed_reg_cli_cancelled_attributed: usize,
+    /// Failed registrations lacking a terminal.
+    pub failed_reg_pending_final: usize,
+    /// Failed registrations with no receivers.
+    pub registration_failed_no_receivers: usize,
+    /// Forbidden failed-registration lookup-success intersection.
+    pub failed_reg_cli_received_lookup_succeeded: usize,
+}
+
+/// Compact final registry view without exact sequence storage or diagnostic collections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingRegistryFinalSummaryV2 {
+    /// H2 counters.
+    pub counters: PendingRegistryCountersV2,
+    /// Cardinalities of the exact H2 sequence sets.
+    pub set_cardinalities: PendingRegistrySequenceSetCardinalitiesV2,
+    /// Live primary entry count.
+    pub primary_pending: usize,
+    /// Live secondary sequence count.
+    pub secondary_pending: usize,
+    /// Published journal entries awaiting a CLI terminal.
+    pub published_pending: usize,
+    /// Non-authority sends begun but not yet dispositioned.
+    pub unregistered_send_inflight: u64,
+    /// Failed registrations without an H2 sequence awaiting their send disposition.
+    pub registration_without_sequence_send_inflight: u64,
+    /// Exact cumulative number of non-authority send dispositions.
+    pub unregistered_send_count: u64,
+    /// Publications released after terminal-record capacity exhaustion.
+    pub terminal_record_capacity_missing: u64,
+    /// Publications released after terminal-record allocation exhaustion.
+    pub terminal_record_allocation_missing: u64,
+    /// Advanced snapshots excluded before H2 allocation because registry capacity was unavailable.
+    pub registration_capacity_missing: u64,
     /// Coverage-queue records awaiting explicit durability acknowledgement.
     pub coverage_queue_pending_ack: usize,
     /// Explicit durable acknowledgements observed.
@@ -2694,10 +2877,26 @@ pub enum EdgeMeasurementPoisonV1 {
 pub enum EdgeMeasurementMissingEvidenceReasonV1 {
     /// Active state exceeded its configured cap.
     ActiveStateCapacityOverflow,
+    /// A decoded generation was excluded because the active-generation cap was reached.
+    DecodedGenerationCapacityExcluded,
+    /// A decoded generation was excluded because its payload reference count was exhausted.
+    PayloadGenerationRefCapacityExcluded,
+    /// A decoded generation was excluded because the payload-first map cap was reached.
+    PayloadFirstMapCapacityExcluded,
+    /// A decoded generation was excluded after its payload-first writer enqueue found a full queue.
+    PayloadFirstQueueFullExcluded,
+    /// A decoded generation was excluded after its payload-first writer enqueue found a closed queue.
+    PayloadFirstQueueClosedExcluded,
     /// The bounded writer queue was full.
     EventQueueFull,
     /// The bounded writer queue was closed.
     EventQueueClosed,
+    /// An H3 connection record was excluded because the writer queue was full.
+    ConnectionEventQueueFullExcluded,
+    /// An H3 connection record was excluded because the writer queue was closed.
+    ConnectionEventQueueClosedExcluded,
+    /// A later H3 transition could not be represented after a connection-record exclusion.
+    ConnectionTransitionAfterQueueLoss,
     /// Cutoff was requested before a named source bound existed.
     CutoffBoundMissing,
     /// The coordinator could not durably complete an operational step.
@@ -2722,6 +2921,10 @@ pub enum EdgeMeasurementMissingEvidenceReasonV1 {
     TerminalRecordCapacityExcluded,
     /// H2 terminal allocation excluded a recorder binding from durable completion.
     TerminalRecordAllocationExcluded,
+    /// Snapshot evidence could not be retained because a recorder binding map reached its cap.
+    SnapshotBindingCapacityExcluded,
+    /// Snapshot evidence could not be retained because payload-first authority was unavailable.
+    SnapshotPayloadFirstUnavailable,
 }
 
 /// Bounded exact counters for coordinator-supplied static reason names.
@@ -2763,10 +2966,26 @@ pub struct EdgeMeasurementMissingEvidenceV1 {
     pub total: u64,
     /// Active-state capacity exclusions.
     pub active_state_capacity_overflow: u64,
+    /// Decoded-generation capacity exclusions.
+    pub decoded_generation_capacity_excluded: u64,
+    /// Payload-generation reference-capacity exclusions.
+    pub payload_generation_ref_capacity_excluded: u64,
+    /// Payload-first map-capacity exclusions.
+    pub payload_first_map_capacity_excluded: u64,
+    /// Payload-first writer queue-full exclusions.
+    pub payload_first_queue_full_excluded: u64,
+    /// Payload-first writer queue-closed exclusions.
+    pub payload_first_queue_closed_excluded: u64,
     /// Writer queue-full exclusions.
     pub event_queue_full: u64,
     /// Writer queue-closed exclusions.
     pub event_queue_closed: u64,
+    /// H3 connection writer queue-full exclusions.
+    pub connection_event_queue_full_excluded: u64,
+    /// H3 connection writer queue-closed exclusions.
+    pub connection_event_queue_closed_excluded: u64,
+    /// H3 transitions omitted after an earlier connection-record queue loss.
+    pub connection_transition_after_queue_loss: u64,
     /// Missing cutoff-bound exclusions.
     pub cutoff_bound_missing: u64,
     /// Coordinator operational-failure exclusions.
@@ -2791,6 +3010,10 @@ pub struct EdgeMeasurementMissingEvidenceV1 {
     pub terminal_record_capacity_excluded: u64,
     /// Recorder bindings released after H2 terminal-allocation exclusion.
     pub terminal_record_allocation_excluded: u64,
+    /// Snapshot evidence excluded because a recorder binding map reached its cap.
+    pub snapshot_binding_capacity_excluded: u64,
+    /// Snapshot evidence excluded because payload-first authority was unavailable.
+    pub snapshot_payload_first_unavailable: u64,
     /// Bounded exact coordinator reason-name counters.
     pub coordinator_reasons: EdgeCoordinatorMissingEvidenceCountsV1,
     samples: Vec<EdgeMeasurementMissingEvidenceReasonV1>,
@@ -2804,9 +3027,39 @@ impl EdgeMeasurementMissingEvidenceV1 {
             EdgeMeasurementMissingEvidenceReasonV1::ActiveStateCapacityOverflow => {
                 &mut self.active_state_capacity_overflow
             }
+            EdgeMeasurementMissingEvidenceReasonV1::DecodedGenerationCapacityExcluded => {
+                &mut self.decoded_generation_capacity_excluded
+            }
+            EdgeMeasurementMissingEvidenceReasonV1::PayloadGenerationRefCapacityExcluded => {
+                &mut self.payload_generation_ref_capacity_excluded
+            }
+            EdgeMeasurementMissingEvidenceReasonV1::PayloadFirstMapCapacityExcluded => {
+                &mut self.payload_first_map_capacity_excluded
+            }
+            EdgeMeasurementMissingEvidenceReasonV1::PayloadFirstQueueFullExcluded => {
+                &mut self.payload_first_queue_full_excluded
+            }
+            EdgeMeasurementMissingEvidenceReasonV1::PayloadFirstQueueClosedExcluded => {
+                &mut self.payload_first_queue_closed_excluded
+            }
             EdgeMeasurementMissingEvidenceReasonV1::EventQueueFull => &mut self.event_queue_full,
             EdgeMeasurementMissingEvidenceReasonV1::EventQueueClosed => {
                 &mut self.event_queue_closed
+            }
+            EdgeMeasurementMissingEvidenceReasonV1::ConnectionEventQueueFullExcluded => {
+                &mut self.connection_event_queue_full_excluded
+            }
+            EdgeMeasurementMissingEvidenceReasonV1::ConnectionEventQueueClosedExcluded => {
+                &mut self.connection_event_queue_closed_excluded
+            }
+            EdgeMeasurementMissingEvidenceReasonV1::ConnectionTransitionAfterQueueLoss => {
+                &mut self.connection_transition_after_queue_loss
+            }
+            EdgeMeasurementMissingEvidenceReasonV1::SnapshotBindingCapacityExcluded => {
+                &mut self.snapshot_binding_capacity_excluded
+            }
+            EdgeMeasurementMissingEvidenceReasonV1::SnapshotPayloadFirstUnavailable => {
+                &mut self.snapshot_payload_first_unavailable
             }
             EdgeMeasurementMissingEvidenceReasonV1::CutoffBoundMissing => {
                 &mut self.cutoff_bound_missing
@@ -2966,6 +3219,7 @@ pub struct EdgeMeasurementRecorderStateV1 {
     next_excluded_terminal_coverage_sequence: u64,
     post_cutoff_routes: HashMap<DecodedFlashblockKeyV1, VecDeque<EpochAdmissionTokenV1>>,
     cutoff_fence: bool,
+    /// Source-observed transport phase, advanced even when its diagnostic record is excluded.
     connection_phase: ConnectionPhaseV1,
     /// H3 phase represented by the retained count/hash chain.
     connection_recorded_phase: ConnectionPhaseV1,
@@ -3306,7 +3560,7 @@ impl EdgeMeasurementRecorderV1 {
                 state.poisons.push(EdgeMeasurementPoisonV1::RecordSequenceOverflow);
                 u64::MAX
             });
-        self.enqueue(state, EdgeSourceEventV1::ClockAnchor(record));
+        let _ = self.enqueue(state, EdgeSourceEventV1::ClockAnchor(record));
     }
     fn catch_up_anchors_locked(
         &self,
@@ -3417,7 +3671,7 @@ impl EdgeMeasurementRecorderV1 {
         &self,
         state: &mut EdgeMeasurementRecorderStateV1,
         event: EdgeSourceEventV1,
-    ) -> bool {
+    ) -> Result<(), EdgeMeasurementMissingEvidenceReasonV1> {
         match self.event_sender.try_send(event) {
             Ok(()) => {
                 state.event_pending_ack =
@@ -3425,23 +3679,33 @@ impl EdgeMeasurementRecorderV1 {
                         state.poisons.push(EdgeMeasurementPoisonV1::RecordSequenceOverflow);
                         u64::MAX
                     });
-                true
+                Ok(())
             }
             Err(TrySendError::Full(event)) => {
+                let connection_event = matches!(&event, EdgeSourceEventV1::Connection(_));
                 Self::exclude_unpersisted_event(state, event);
-                Self::record_missing_evidence(
-                    state,
-                    EdgeMeasurementMissingEvidenceReasonV1::EventQueueFull,
-                );
-                false
+                let reason = EdgeMeasurementMissingEvidenceReasonV1::EventQueueFull;
+                Self::record_missing_evidence(state, reason);
+                if connection_event {
+                    Self::record_missing_evidence(
+                        state,
+                        EdgeMeasurementMissingEvidenceReasonV1::ConnectionEventQueueFullExcluded,
+                    );
+                }
+                Err(reason)
             }
             Err(TrySendError::Disconnected(event)) => {
+                let connection_event = matches!(&event, EdgeSourceEventV1::Connection(_));
                 Self::exclude_unpersisted_event(state, event);
-                Self::record_missing_evidence(
-                    state,
-                    EdgeMeasurementMissingEvidenceReasonV1::EventQueueClosed,
-                );
-                false
+                let reason = EdgeMeasurementMissingEvidenceReasonV1::EventQueueClosed;
+                Self::record_missing_evidence(state, reason);
+                if connection_event {
+                    Self::record_missing_evidence(
+                        state,
+                        EdgeMeasurementMissingEvidenceReasonV1::ConnectionEventQueueClosedExcluded,
+                    );
+                }
+                Err(reason)
             }
         }
     }
@@ -3491,7 +3755,7 @@ impl EdgeMeasurementRecorderV1 {
                 state.next_excluded_terminal_coverage_sequence = next;
             }
         }
-        self.enqueue(
+        let _ = self.enqueue(
             state,
             EdgeSourceEventV1::TerminalCoverage(SourceTerminalCoverageV3 {
                 producer_epoch: self.config.producer_epoch.get(),
@@ -3519,29 +3783,35 @@ impl EdgeMeasurementRecorderV1 {
         state: &mut EdgeMeasurementRecorderStateV1,
         wire_ordinal: u64,
         source_generation: u64,
+        payload_ref_acquired: bool,
+        reason: EdgeMeasurementMissingEvidenceReasonV1,
     ) {
-        let terminal = SourceCoverageTerminalV3::ActorMailboxClosedWithPending;
-        let terminal_hash =
-            self.terminal_evidence_hash(wire_ordinal, Some(source_generation), terminal);
-        let payload_first_record_hash = Self::payload_hash_locked(state, source_generation);
-        self.terminal_coverage_locked(
-            state,
-            SourceTerminalEvidenceV3 {
-                route: EpochRouteV1::Authority,
-                source_generation: Some(source_generation),
-                terminal,
-                terminal_hash,
-                payload_first_record_hash,
-                pending_snapshot_sequence: None,
-            },
-        );
-        self.remove_generation_locked(state, source_generation);
-        self.terminalize_wire_locked(
-            state,
-            wire_ordinal,
-            Some(source_generation),
-            WireLifecycleTransitionV1::ActorEnqueueFailed,
-        );
+        Self::record_missing_evidence(state, reason);
+        if payload_ref_acquired {
+            self.remove_generation_locked(state, source_generation);
+        } else if let Some(context) = state.source_generation_contexts.remove(&source_generation)
+            && let Some(generations) =
+                state.decoded_source_generations.get_mut(&context.structural_key)
+        {
+            generations.retain(|generation| *generation != source_generation);
+            if generations.is_empty() {
+                state.decoded_source_generations.remove(&context.structural_key);
+            }
+        }
+        if !matches!(
+            state.wire_lifecycle.get(&wire_ordinal),
+            Some(phase) if *phase != WireLifecyclePhaseV1::Terminal
+        ) {
+            state.poisons.push(EdgeMeasurementPoisonV1::WireLifecycleConflict);
+            return;
+        }
+        state.wire_lifecycle.remove(&wire_ordinal);
+        state.generation_wire_ordinals.remove(&source_generation);
+        state.authority_wire_terminals =
+            state.authority_wire_terminals.checked_add(1).unwrap_or_else(|| {
+                state.poisons.push(EdgeMeasurementPoisonV1::ProcessorTerminalCountOverflow);
+                u64::MAX
+            });
     }
 
     fn lifecycle_locked(
@@ -3719,7 +3989,7 @@ impl EdgeMeasurementRecorderV1 {
                 state.last_excluded_coverage_hash = record_hash;
             }
         }
-        self.enqueue(state, EdgeSourceEventV1::Coverage(record));
+        let _ = self.enqueue(state, EdgeSourceEventV1::Coverage(record));
     }
 
     fn terminalize_wire_locked(
@@ -4112,11 +4382,13 @@ impl EdgeMeasurementRecorderV1 {
         let structural_key = DecodedFlashblockKeyV1::from_flashblock(flashblock);
         let pending: usize = state.decoded_source_generations.values().map(VecDeque::len).sum();
         if pending >= self.config.active_state_capacity {
-            Self::record_missing_evidence(
+            self.exclude_active_generation_locked(
                 &mut state,
-                EdgeMeasurementMissingEvidenceReasonV1::ActiveStateCapacityOverflow,
+                admission.wire_ordinal,
+                generation,
+                false,
+                EdgeMeasurementMissingEvidenceReasonV1::DecodedGenerationCapacityExcluded,
             );
-            self.exclude_active_generation_locked(&mut state, admission.wire_ordinal, generation);
             return None;
         }
         state.decoded_source_generations.entry(structural_key).or_default().push_back(generation);
@@ -4139,11 +4411,13 @@ impl EdgeMeasurementRecorderV1 {
         let next_refs =
             state.payload_generation_refs.get(&key).copied().unwrap_or_default().checked_add(1);
         let Some(next_refs) = next_refs else {
-            Self::record_missing_evidence(
+            self.exclude_active_generation_locked(
                 &mut state,
-                EdgeMeasurementMissingEvidenceReasonV1::ActiveStateCapacityOverflow,
+                admission.wire_ordinal,
+                generation,
+                false,
+                EdgeMeasurementMissingEvidenceReasonV1::PayloadGenerationRefCapacityExcluded,
             );
-            self.exclude_active_generation_locked(&mut state, admission.wire_ordinal, generation);
             return None;
         };
         state.payload_generation_refs.insert(key, next_refs);
@@ -4166,14 +4440,12 @@ impl EdgeMeasurementRecorderV1 {
                 return Some(generation);
             }
             if state.payload_first.len() >= self.config.active_state_capacity {
-                Self::record_missing_evidence(
-                    &mut state,
-                    EdgeMeasurementMissingEvidenceReasonV1::ActiveStateCapacityOverflow,
-                );
                 self.exclude_active_generation_locked(
                     &mut state,
                     admission.wire_ordinal,
                     generation,
+                    true,
+                    EdgeMeasurementMissingEvidenceReasonV1::PayloadFirstMapCapacityExcluded,
                 );
                 return None;
             }
@@ -4198,11 +4470,24 @@ impl EdgeMeasurementRecorderV1 {
             state.next_payload_first_sequence = next;
             state.last_payload_first_hash = binding.record_hash;
             state.payload_first.insert(key, binding);
-            if !self.enqueue(&mut state, EdgeSourceEventV1::PayloadFirst(binding)) {
+            if let Err(queue_reason) =
+                self.enqueue(&mut state, EdgeSourceEventV1::PayloadFirst(binding))
+            {
+                let exclusion_reason = match queue_reason {
+                    EdgeMeasurementMissingEvidenceReasonV1::EventQueueFull => {
+                        EdgeMeasurementMissingEvidenceReasonV1::PayloadFirstQueueFullExcluded
+                    }
+                    EdgeMeasurementMissingEvidenceReasonV1::EventQueueClosed => {
+                        EdgeMeasurementMissingEvidenceReasonV1::PayloadFirstQueueClosedExcluded
+                    }
+                    _ => unreachable!("enqueue returns only queue reasons"),
+                };
                 self.exclude_active_generation_locked(
                     &mut state,
                     admission.wire_ordinal,
                     generation,
+                    true,
+                    exclusion_reason,
                 );
                 return None;
             }
@@ -4756,27 +5041,39 @@ impl EdgeMeasurementRecorderV1 {
             let payload_first = state.payload_first.get(&context.payload_first_key).copied();
             if state.excluded_pending_snapshot_sequences.contains(&sequence) {
                 // The exact H2 exclusion receipt already counted and released this binding.
-            } else if state.snapshot_products.len() >= self.config.active_state_capacity
-                || state.payload_first_by_generation.len() >= self.config.active_state_capacity
-                || state.snapshot_wire_ordinals.len() >= self.config.active_state_capacity
-                || payload_first.is_none()
-            {
-                Self::record_missing_evidence(
-                    &mut state,
-                    EdgeMeasurementMissingEvidenceReasonV1::ActiveStateCapacityOverflow,
-                );
-            } else if let Some(payload_first) = payload_first {
-                state.payload_first_by_generation.insert(source_generation, payload_first);
-                state.snapshot_products.insert(sequence, product);
-                if let Some(wire_ordinal) = wire_ordinal {
+            } else {
+                let exclusion_reason = if state.snapshot_products.len()
+                    >= self.config.active_state_capacity
+                    || state.payload_first_by_generation.len() >= self.config.active_state_capacity
+                    || state.snapshot_wire_ordinals.len() >= self.config.active_state_capacity
+                {
+                    Some(EdgeMeasurementMissingEvidenceReasonV1::SnapshotBindingCapacityExcluded)
+                } else if payload_first.is_none() {
+                    Some(EdgeMeasurementMissingEvidenceReasonV1::SnapshotPayloadFirstUnavailable)
+                } else if wire_ordinal.is_none() {
+                    Some(EdgeMeasurementMissingEvidenceReasonV1::MissingSourceIdentity)
+                } else {
+                    None
+                };
+                if let Some(reason) = exclusion_reason {
+                    Self::record_missing_evidence(&mut state, reason);
+                    if !state.excluded_pending_snapshot_sequences.insert(sequence) {
+                        state.poisons.push(EdgeMeasurementPoisonV1::DuplicateProcessorTerminal);
+                    }
+                    state.snapshot_evidence_captured.remove(&sequence);
+                    state.snapshot_products.remove(&sequence);
+                    state.snapshot_wire_ordinals.remove(&sequence);
+                    state.payload_first_by_generation.remove(&source_generation);
+                } else if let (Some(payload_first), Some(wire_ordinal)) =
+                    (payload_first, wire_ordinal)
+                {
+                    state.payload_first_by_generation.insert(source_generation, payload_first);
+                    state.snapshot_products.insert(sequence, product);
                     state
                         .snapshot_wire_ordinals
                         .insert(sequence, (source_generation, wire_ordinal));
                 } else {
-                    Self::record_missing_evidence(
-                        &mut state,
-                        EdgeMeasurementMissingEvidenceReasonV1::MissingSourceIdentity,
-                    );
+                    state.poisons.push(EdgeMeasurementPoisonV1::MissingSourceIdentity);
                 }
             }
         }
@@ -4792,7 +5089,7 @@ impl EdgeMeasurementRecorderV1 {
             },
         );
         Self::release_payload_generation_locked(&mut state, context.payload_first_key);
-        self.enqueue(&mut state, EdgeSourceEventV1::Processor(product));
+        let _ = self.enqueue(&mut state, EdgeSourceEventV1::Processor(product));
         if let Some(wire_ordinal) = wire_ordinal {
             self.terminalize_wire_locked(
                 &mut state,
@@ -4998,7 +5295,16 @@ impl EdgeMeasurementRecorderV1 {
         let previous_phase = state.connection_phase;
         let Some(next_phase) = Self::advance_connection_phase(state.connection_phase, transition)
         else {
-            state.poisons.push(EdgeMeasurementPoisonV1::ConnectionTransitionConflict);
+            if state.missing_evidence.connection_event_queue_full_excluded != 0
+                || state.missing_evidence.connection_event_queue_closed_excluded != 0
+            {
+                Self::record_missing_evidence(
+                    state,
+                    EdgeMeasurementMissingEvidenceReasonV1::ConnectionTransitionAfterQueueLoss,
+                );
+            } else {
+                state.poisons.push(EdgeMeasurementPoisonV1::ConnectionTransitionConflict);
+            }
             return;
         };
         state.connection_phase = next_phase;
@@ -5071,7 +5377,7 @@ impl EdgeMeasurementRecorderV1 {
         state.last_connection_record = Some(record);
         #[cfg(test)]
         state.connection_records.push_back(record);
-        if self.enqueue(state, EdgeSourceEventV1::Connection(record)) {
+        if self.enqueue(state, EdgeSourceEventV1::Connection(record)).is_ok() {
             state.connection_recorded_phase = next_phase;
         }
     }
@@ -5170,7 +5476,10 @@ impl EdgeMeasurementRecorderV1 {
                 state.payload_close_pending.insert(key);
             }
         }
-        if state.connection_established_count > state.connection_closed_count {
+        if matches!(
+            state.connection_phase,
+            ConnectionPhaseV1::Established { .. } | ConnectionPhaseV1::AwaitingEstablishedClose(_)
+        ) {
             self.connection_transition_locked(
                 &mut state,
                 SourceConnectionTransitionV1::EstablishedClosedByCutoff,
@@ -5184,18 +5493,18 @@ impl EdgeMeasurementRecorderV1 {
             &mut state,
             SourceConnectionTransitionV1::ConnectionTaskExited,
         );
-        self.enqueue(&mut state, EdgeSourceEventV1::Cutoff(cutoff));
+        let _ = self.enqueue(&mut state, EdgeSourceEventV1::Cutoff(cutoff));
         cutoff
     }
     /// Returns whether consumer evidence was captured before durable terminal cleanup.
     pub fn terminal_durable_ready(&self, terminal: PendingTerminalRecordV2) -> bool {
-        terminal.terminal != PendingCliTerminalV2::CliReceivedLookupSucceeded
-            || self
-                .state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .snapshot_evidence_captured
-                .contains(&terminal.metadata.identity.pending_snapshot_sequence)
+        if terminal.terminal != PendingCliTerminalV2::CliReceivedLookupSucceeded {
+            return true;
+        }
+        let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let sequence = terminal.metadata.identity.pending_snapshot_sequence;
+        state.snapshot_evidence_captured.contains(&sequence)
+            || state.excluded_pending_snapshot_sequences.contains(&sequence)
     }
     /// Returns the next terminal only when its dependent evidence is ready for persistence.
     ///
@@ -5221,6 +5530,15 @@ impl EdgeMeasurementRecorderV1 {
     ) -> Result<(), EdgeMeasurementPoisonV1> {
         let sequence = terminal.metadata.identity.pending_snapshot_sequence;
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.excluded_pending_snapshot_sequences.remove(&sequence) {
+            state.snapshot_evidence_captured.remove(&sequence);
+            state.snapshot_products.remove(&sequence);
+            state.snapshot_wire_ordinals.remove(&sequence);
+            if let Some(source_generation) = terminal.metadata.source_generation {
+                state.payload_first_by_generation.remove(&source_generation);
+            }
+            return Ok(());
+        }
         let Some(source_generation) = terminal.metadata.source_generation else {
             Self::record_missing_evidence(
                 &mut state,
@@ -5307,7 +5625,7 @@ impl EdgeMeasurementRecorderV1 {
     /// Records exactly one processor product through the bounded sink.
     pub fn record_processor_product(&self, product: ProcessorLifecycleProductV1) {
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.enqueue(&mut state, EdgeSourceEventV1::Processor(product));
+        let _ = self.enqueue(&mut state, EdgeSourceEventV1::Processor(product));
     }
 
     /// Returns one source record without blocking.
@@ -5380,12 +5698,14 @@ impl EdgeMeasurementRecorderV1 {
                     && record.record_hash == AuthorityRecordHasherV1::connection(&record)
             },
         );
-        let connection_drop = state.missing_evidence.event_queue_full != 0
-            || state.missing_evidence.event_queue_closed != 0;
+        let connection_queue_loss = state.missing_evidence.connection_event_queue_full_excluded
+            != 0
+            || state.missing_evidence.connection_event_queue_closed_excluded != 0;
         let h3_final = last_connection_valid
             && state.connection_phase == ConnectionPhaseV1::Exited
-            && (state.connection_established_count == state.connection_closed_count
-                || connection_drop);
+            && (connection_queue_loss
+                || (state.connection_recorded_phase == ConnectionPhaseV1::Exited
+                    && state.connection_established_count == state.connection_closed_count));
         let expected_last_coverage_sequence =
             state.next_terminal_coverage_sequence.saturating_sub(1);
         let coverage_final = cutoff.last_coverage_sequence == expected_last_coverage_sequence;
@@ -6185,6 +6505,97 @@ mod tests {
         assert_eq!(snapshot.unregistered_send_count, 100);
         assert_eq!(snapshot.unregistered_send_records.len(), PENDING_DIAGNOSTIC_RING_CAPACITY_V2);
     }
+    #[test]
+    fn compact_final_summary_matches_full_snapshot_scalars_and_set_cardinalities() {
+        let published = test_pending_blocks();
+        let no_receivers = test_pending_blocks();
+        let registry = PendingMetadataRegistryV2::new(12, 4);
+
+        let published_attempt = registry.register(&published, Some(7));
+        registry.record_send(published_attempt, Some(1)).expect("published");
+        assert!(registry.cli_received(&published).expect("lookup").is_ok());
+        registry.ack_terminal_durable(0).expect("published durable");
+
+        let no_receivers_attempt = registry.register(&no_receivers, Some(8));
+        registry.record_send(no_receivers_attempt, None).expect("no receivers");
+        registry.ack_terminal_durable(1).expect("no-receivers durable");
+
+        registry.begin_unregistered_send();
+        registry
+            .record_unregistered_send(PendingSendJournalMarkerV2::PassthroughNonAdvanced, None)
+            .expect("unregistered send");
+        {
+            let (mut state, _) = registry.lock_state();
+            state.terminal_record_capacity_missing = 2;
+            state.terminal_record_allocation_missing = 3;
+            state.registration_capacity_missing = 4;
+        }
+
+        let full = registry.snapshot();
+        let compact = registry.final_summary();
+        assert_eq!(registry.last_coverage_sequence(), full.last_coverage_sequence);
+        assert_eq!(compact.counters, full.counters);
+        assert_eq!(
+            compact.set_cardinalities,
+            PendingRegistrySequenceSetCardinalitiesV2 {
+                advanced_with_snapshot: full.sets.advanced_with_snapshot.len(),
+                registration_succeeded: full.sets.registration_succeeded.len(),
+                registration_failed: full.sets.registration_failed.len(),
+                registered_published: full.sets.registered_published.len(),
+                registered_no_receivers: full.sets.registered_no_receivers.len(),
+                failed_registration_published: full.sets.failed_registration_published.len(),
+                failed_registration_no_receivers: full.sets.failed_registration_no_receivers.len(),
+                send_published: full.sets.send_published.len(),
+                send_no_receivers: full.sets.send_no_receivers.len(),
+                cli_received_lookup_succeeded: full.sets.cli_received_lookup_succeeded.len(),
+                cli_registry_lookup_failed: full.sets.cli_registry_lookup_failed.len(),
+                cli_lagged_attributed: full.sets.cli_lagged_attributed.len(),
+                cli_closed_attributed: full.sets.cli_closed_attributed.len(),
+                cli_cancelled_attributed: full.sets.cli_cancelled_attributed.len(),
+                pending_delivery_final: full.sets.pending_delivery_final.len(),
+                cli_ok_received: full.sets.cli_ok_received.len(),
+                snapshot_records_installed: full.sets.snapshot_records_installed.len(),
+                failed_reg_cli_registry_lookup_failed: full
+                    .sets
+                    .failed_reg_cli_registry_lookup_failed
+                    .len(),
+                failed_reg_cli_lagged_attributed: full.sets.failed_reg_cli_lagged_attributed.len(),
+                failed_reg_cli_closed_attributed: full.sets.failed_reg_cli_closed_attributed.len(),
+                failed_reg_cli_cancelled_attributed: full
+                    .sets
+                    .failed_reg_cli_cancelled_attributed
+                    .len(),
+                failed_reg_pending_final: full.sets.failed_reg_pending_final.len(),
+                registration_failed_no_receivers: full.sets.registration_failed_no_receivers.len(),
+                failed_reg_cli_received_lookup_succeeded: full
+                    .sets
+                    .failed_reg_cli_received_lookup_succeeded
+                    .len(),
+            }
+        );
+        assert_eq!(compact.primary_pending, full.primary_pending);
+        assert_eq!(compact.secondary_pending, full.secondary_pending);
+        assert_eq!(compact.published_pending, full.published_pending);
+        assert_eq!(compact.unregistered_send_inflight, full.unregistered_send_inflight);
+        assert_eq!(
+            compact.registration_without_sequence_send_inflight,
+            full.registration_without_sequence_send_inflight
+        );
+        assert_eq!(compact.unregistered_send_count, full.unregistered_send_count);
+        assert_eq!(compact.terminal_record_capacity_missing, full.terminal_record_capacity_missing);
+        assert_eq!(
+            compact.terminal_record_allocation_missing,
+            full.terminal_record_allocation_missing
+        );
+        assert_eq!(compact.registration_capacity_missing, full.registration_capacity_missing);
+        assert_eq!(compact.coverage_queue_pending_ack, full.coverage_queue_pending_ack);
+        assert_eq!(compact.durability_acked, full.durability_acked);
+        assert_eq!(compact.terminal_records, full.terminal_records);
+        assert_eq!(compact.last_pending_snapshot_sequence, full.last_pending_snapshot_sequence);
+        assert_eq!(compact.coverage_count, full.coverage_count);
+        assert_eq!(compact.last_coverage_sequence, full.last_coverage_sequence);
+        assert_eq!(compact.poisoned, full.poisoned);
+    }
 
     #[test]
     fn cli_lookup_waits_until_send_accounting_is_conserved() {
@@ -6225,6 +6636,47 @@ mod tests {
         assert_eq!(sets.send_published, BTreeSet::from([0]));
         assert_eq!(sets.cli_received_lookup_succeeded, BTreeSet::from([0]));
         assert!(sets.pending_delivery_final.is_empty());
+        assert_eq!(registry.verify_final_seal(), Ok(()));
+    }
+    #[test]
+    fn capacity_rejection_receive_waits_for_sequence_less_send_journal() {
+        let pending = test_pending_blocks();
+        let registry = StdArc::new(PendingMetadataRegistryV2::new(13, 0));
+        let attempt = registry.register(&pending, Some(15));
+        assert_eq!(attempt.pending_snapshot_sequence, None);
+        let barrier = StdArc::new(Barrier::new(2));
+        let (result_sender, result_receiver) = mpsc::sync_channel(1);
+        let lookup_registry = StdArc::clone(&registry);
+        let lookup_pending = Arc::clone(&pending);
+        let lookup_barrier = StdArc::clone(&barrier);
+        let lookup = thread::spawn(move || {
+            lookup_barrier.wait();
+            result_sender
+                .send(lookup_registry.cli_received(&lookup_pending))
+                .expect("result receiver");
+        });
+
+        barrier.wait();
+        assert!(matches!(
+            result_receiver.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        registry.record_send(attempt, Some(1)).expect("capacity-rejected send journal");
+        let failure = result_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("lookup unblocked")
+            .expect_err("sequence-less registration remains a named failure");
+        lookup.join().expect("lookup thread");
+        assert_eq!(
+            failure.reason,
+            CliRegistryLookupFailureReason::RegistrationFailed(
+                PendingRegistrationFailure::PendingRegistryCapacityOverflow
+            )
+        );
+        let snapshot = registry.snapshot();
+        assert_eq!(snapshot.registration_without_sequence_send_inflight, 0);
+        assert_eq!(snapshot.registration_capacity_missing, 1);
+        assert!(!snapshot.poisoned);
         assert_eq!(registry.verify_final_seal(), Ok(()));
     }
     #[test]
@@ -6278,9 +6730,7 @@ mod tests {
         );
         let (state, _) = registry.lock_state();
         assert_eq!(state.counters.advanced_with_snapshot, u64::MAX);
-        assert!(state.poisons.contains(&PendingRegistryPoisonV2::AccountingOverflow(
-            PendingAccountingFieldV2::AdvancedWithSnapshot
-        )));
+        assert!(state.poisons.contains(&PendingRegistryPoisonV2::SequenceOverflow));
     }
 
     #[test]
@@ -6298,12 +6748,14 @@ mod tests {
                 PendingRegistrationFailure::PendingRegistryCapacityOverflow
             )
         );
+        assert_eq!(failed.pending_snapshot_sequence, None);
         assert_eq!(Arc::weak_count(&pending), 1);
         let snapshot = registry.snapshot();
         assert_eq!(snapshot.primary_pending, 1);
         assert_eq!(snapshot.secondary_pending, 1);
         assert!(!snapshot.poisoned);
         assert!(registry.lock_state().0.poisons.is_empty());
+        assert_eq!(snapshot.registration_capacity_missing, 1);
 
         registry.ack_terminal_durable(0).expect("release successful entry");
         registry.record_send(failed, Some(1)).expect("failed send journaled");
@@ -6319,6 +6771,8 @@ mod tests {
         assert_eq!(snapshot.secondary_pending, 0);
         assert_eq!(snapshot.terminal_records, 1);
         assert_eq!(Arc::weak_count(&pending), 0);
+        assert_eq!(snapshot.registration_capacity_missing, 1);
+        assert_eq!(registry.verify_final_seal(), Ok(()));
     }
 
     #[test]
@@ -6332,6 +6786,8 @@ mod tests {
         assert_eq!(snapshot.secondary_pending, 0);
         assert_eq!(snapshot.terminal_records, 0);
         assert_eq!(Arc::weak_count(&pending), 0);
+        assert_eq!(snapshot.registration_capacity_missing, 1);
+        assert_eq!(registry.verify_final_seal(), Ok(()));
     }
 
     #[test]
@@ -6709,7 +7165,7 @@ mod tests {
     }
 
     #[test]
-    fn bounded_queue_full_poison_does_not_block_transition() {
+    fn bounded_queue_full_is_counted_and_preserves_observed_phase() {
         let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
             producer_epoch: NonZeroU64::new(11).expect("nonzero"),
             event_queue_capacity: 1,
@@ -6722,6 +7178,8 @@ mod tests {
         recorder.connection_transition(SourceConnectionTransitionV1::InitialConnectAttemptStarted);
         let state = recorder.state.lock().expect("state");
         assert_eq!(state.missing_evidence.event_queue_full, 2);
+        assert_eq!(state.missing_evidence.connection_event_queue_full_excluded, 2);
+        assert_eq!(state.missing_evidence.connection_transition_after_queue_loss, 0);
         assert_eq!(state.next_connection_sequence, 0);
     }
     #[test]
@@ -6747,9 +7205,9 @@ mod tests {
             record_hash: B256::ZERO,
         };
         let mut state = recorder.state.lock().expect("state");
-        recorder.enqueue(&mut state, EdgeSourceEventV1::Cutoff(cutoff));
+        assert!(recorder.enqueue(&mut state, EdgeSourceEventV1::Cutoff(cutoff)).is_err());
         for _ in 0..(EDGE_MEASUREMENT_POISON_SAMPLE_CAPACITY_V1 * 3) {
-            recorder.enqueue(&mut state, EdgeSourceEventV1::Cutoff(cutoff));
+            assert!(recorder.enqueue(&mut state, EdgeSourceEventV1::Cutoff(cutoff)).is_err());
         }
         state.cutoff = Some(cutoff);
         assert_eq!(state.poisons.len(), 0);
@@ -7344,6 +7802,147 @@ mod tests {
         assert_eq!(cli_wires, vec![admission.wire_ordinal; terminals.len()]);
     }
     #[test]
+    fn snapshot_binding_capacity_exclusion_does_not_wedge_success_terminal_or_final() {
+        let pending = test_pending_blocks();
+        let flashblock = pending.get_flashblocks().remove(0);
+        let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: NonZeroU64::new(215).expect("nonzero epoch"),
+            event_queue_capacity: 64,
+            active_state_capacity: 1,
+            pending_registry_capacity: 4,
+            terminal_record_capacity: 4,
+        })
+        .expect("recorder");
+        let registry = recorder.registry();
+        let attempt = registry.register(&pending, Some(0));
+        assert_eq!(attempt.pending_snapshot_sequence, Some(0));
+        registry.record_send(attempt, Some(1)).expect("published send");
+        let metadata =
+            registry.cli_received(&pending).expect("registry lookup").expect("authority metadata");
+
+        let admission = recorder.observe_wire(b"binding-capacity").expect("wire");
+        let generation =
+            recorder.decoded_flashblock(admission, &flashblock).expect("decoded generation");
+        assert_eq!(generation, 0);
+        recorder.actor_enqueue(generation, true);
+        recorder.actor_delivered(generation);
+        assert_eq!(
+            recorder.begin_state_handoff(DecodedFlashblockKeyV1::from_flashblock(&flashblock)),
+            Some(generation)
+        );
+        recorder.take_source_generation(&flashblock).expect("processor admission");
+        {
+            let mut state = recorder.state.lock().expect("state");
+            state.snapshot_wire_ordinals.insert(u64::MAX, (u64::MAX, u64::MAX));
+        }
+        recorder.record_generation_product(ProcessorTerminalInputV1 {
+            source_generation: generation,
+            base_disposition: ProcessorBaseDispositionV1::AdvancedInitialBase,
+            observer_disposition: ProcessorObserverDispositionV1::Absent,
+            publish_disposition: ProcessorPublishDispositionV1::Published(1),
+            pending_snapshot_sequence: Some(metadata.identity.pending_snapshot_sequence),
+            processor_error_reason: None,
+            cache_resolved_final_disposition: None,
+        });
+        {
+            let mut state = recorder.state.lock().expect("state");
+            state.snapshot_wire_ordinals.remove(&u64::MAX);
+            assert!(
+                state
+                    .excluded_pending_snapshot_sequences
+                    .contains(&metadata.identity.pending_snapshot_sequence)
+            );
+            assert_eq!(state.missing_evidence.snapshot_binding_capacity_excluded, 1);
+        }
+
+        let terminal = recorder
+            .next_terminal_durable_record(0)
+            .expect("named exclusion makes terminal durable");
+        recorder
+            .record_terminal_durable(terminal, B256::with_last_byte(1))
+            .expect("excluded durable cleanup");
+        registry.ack_terminal_durable(0).expect("durable terminal ack");
+        recorder.close_payloads_through(flashblock.metadata.block_number);
+        recorder.latch_cutoff(ProducerExternalBoundsV1 {
+            last_admitted_blink_generation: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+        });
+        while let EdgeEventDrainStatusV1::Event(_) = recorder.try_recv_event() {
+            recorder.ack_event_durable().expect("event durable");
+        }
+
+        assert_eq!(registry.verify_final_seal(), Ok(()));
+        let state = recorder.state.lock().expect("state");
+        assert!(state.poisons.is_empty(), "{:?}", state.poisons);
+        drop(state);
+        let final_result = recorder.verify_source_final();
+        assert!(final_result.is_ok(), "{final_result:?}");
+    }
+    #[test]
+    fn payload_first_unavailable_exclusion_does_not_wedge_success_terminal_or_final() {
+        let pending = test_pending_blocks();
+        let mut flashblock = pending.get_flashblocks().remove(0);
+        flashblock.index = 1;
+        flashblock.base = None;
+        let recorder = test_recorder(216);
+        let registry = recorder.registry();
+        let attempt = registry.register(&pending, Some(0));
+        registry.record_send(attempt, Some(1)).expect("published send");
+        let metadata =
+            registry.cli_received(&pending).expect("registry lookup").expect("authority metadata");
+
+        let admission = recorder.observe_wire(b"payload-first-unavailable").expect("wire");
+        let generation =
+            recorder.decoded_flashblock(admission, &flashblock).expect("decoded generation");
+        recorder.actor_enqueue(generation, true);
+        recorder.actor_delivered(generation);
+        assert_eq!(
+            recorder.begin_state_handoff(DecodedFlashblockKeyV1::from_flashblock(&flashblock)),
+            Some(generation)
+        );
+        recorder.take_source_generation(&flashblock).expect("processor admission");
+        recorder.record_generation_product(ProcessorTerminalInputV1 {
+            source_generation: generation,
+            base_disposition: ProcessorBaseDispositionV1::AdvancedInitialBase,
+            observer_disposition: ProcessorObserverDispositionV1::Absent,
+            publish_disposition: ProcessorPublishDispositionV1::Published(1),
+            pending_snapshot_sequence: Some(metadata.identity.pending_snapshot_sequence),
+            processor_error_reason: None,
+            cache_resolved_final_disposition: None,
+        });
+        {
+            let state = recorder.state.lock().expect("state");
+            assert!(
+                state
+                    .excluded_pending_snapshot_sequences
+                    .contains(&metadata.identity.pending_snapshot_sequence)
+            );
+            assert_eq!(state.missing_evidence.snapshot_payload_first_unavailable, 1);
+        }
+
+        let terminal = recorder
+            .next_terminal_durable_record(0)
+            .expect("named exclusion makes terminal durable");
+        recorder
+            .record_terminal_durable(terminal, B256::with_last_byte(2))
+            .expect("excluded durable cleanup");
+        registry.ack_terminal_durable(0).expect("durable terminal ack");
+        recorder.close_payloads_through(flashblock.metadata.block_number);
+        recorder.latch_cutoff(ProducerExternalBoundsV1 {
+            last_admitted_blink_generation: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+        });
+        while let EdgeEventDrainStatusV1::Event(_) = recorder.try_recv_event() {
+            recorder.ack_event_durable().expect("event durable");
+        }
+
+        assert_eq!(registry.verify_final_seal(), Ok(()));
+        let final_result = recorder.verify_source_final();
+        assert!(final_result.is_ok(), "{final_result:?}");
+    }
+    #[test]
     fn post_cutoff_exclusion_remains_durable_after_authority_final() {
         let recorder = test_recorder(205);
         recorder.latch_cutoff(ProducerExternalBoundsV1 {
@@ -7506,7 +8105,7 @@ mod tests {
     fn payload_first_queue_drop_releases_generation_and_reaches_source_final() {
         let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
             producer_epoch: NonZeroU64::new(215).expect("nonzero"),
-            event_queue_capacity: 1,
+            event_queue_capacity: 3,
             active_state_capacity: 4,
             pending_registry_capacity: 4,
             terminal_record_capacity: 4,
@@ -7515,6 +8114,8 @@ mod tests {
         let flashblock = test_pending_blocks().get_flashblocks().remove(0);
         let admission = recorder.observe_wire(b"payload-first-drop").expect("wire");
         assert_eq!(recorder.decoded_flashblock(admission, &flashblock), None);
+        let evidence = recorder.missing_evidence_counts();
+        assert_eq!(evidence.payload_first_queue_full_excluded, 1);
         recorder.latch_cutoff(ProducerExternalBoundsV1 {
             last_admitted_blink_generation: 0,
             last_coverage_sequence: 0,
@@ -7535,10 +8136,10 @@ mod tests {
     }
 
     #[test]
-    fn connection_queue_drop_rolls_back_h3_chain_without_blocking_final() {
+    fn connection_queue_drop_preserves_observed_h3_phase_and_remains_finalizable() {
         let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
             producer_epoch: NonZeroU64::new(216).expect("nonzero"),
-            event_queue_capacity: 1,
+            event_queue_capacity: 3,
             active_state_capacity: 4,
             pending_registry_capacity: 4,
             terminal_record_capacity: 4,
@@ -7547,6 +8148,16 @@ mod tests {
         recorder.connection_transition(SourceConnectionTransitionV1::OwnerStart);
         recorder.connection_transition(SourceConnectionTransitionV1::InitialConnectAttemptStarted);
         recorder.connection_transition(SourceConnectionTransitionV1::Established);
+        {
+            let state = recorder.state.lock().expect("state");
+            assert!(matches!(state.connection_phase, ConnectionPhaseV1::Established { .. }));
+            assert_eq!(state.connection_recorded_phase, ConnectionPhaseV1::Connecting);
+            assert_eq!(state.connection_established_count, 0);
+            assert_eq!(state.connection_closed_count, 0);
+        }
+        while let EdgeEventDrainStatusV1::Event(_) = recorder.try_recv_event() {
+            recorder.ack_event_durable().expect("pre-cutoff durable event");
+        }
         recorder.latch_cutoff(ProducerExternalBoundsV1 {
             last_admitted_blink_generation: 0,
             last_coverage_sequence: 0,
@@ -7558,17 +8169,98 @@ mod tests {
 
         let state = recorder.state.lock().expect("state");
         assert_eq!(state.connection_phase, ConnectionPhaseV1::Exited);
-        assert_eq!(state.connection_recorded_phase, ConnectionPhaseV1::New);
-        assert_eq!(state.next_connection_sequence, 0);
-        assert_eq!(state.connection_record_count, 0);
-        assert_eq!(state.last_connection_hash, B256::ZERO);
+        assert_eq!(state.connection_recorded_phase, ConnectionPhaseV1::Exited);
+        assert_eq!(state.connection_established_count, 0);
+        assert_eq!(state.connection_closed_count, 1);
         assert!(state.poisons.is_empty(), "{:?}", state.poisons);
         drop(state);
         assert!(recorder.verify_source_final().is_ok());
     }
 
     #[test]
-    fn active_capacity_overflow_terminalizes_the_rejected_wire() {
+    fn dropped_read_error_preserves_observed_close_and_does_not_fabricate_cutoff_close() {
+        let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: NonZeroU64::new(222).expect("nonzero"),
+            event_queue_capacity: 1,
+            active_state_capacity: 4,
+            pending_registry_capacity: 4,
+            terminal_record_capacity: 4,
+        })
+        .expect("Linux recorder");
+        let drain = || {
+            while let EdgeEventDrainStatusV1::Event(_) = recorder.try_recv_event() {
+                recorder.ack_event_durable().expect("durable event");
+            }
+        };
+        drain();
+        for transition in [
+            SourceConnectionTransitionV1::OwnerStart,
+            SourceConnectionTransitionV1::InitialConnectAttemptStarted,
+            SourceConnectionTransitionV1::Established,
+        ] {
+            recorder.connection_transition(transition);
+            drain();
+        }
+
+        {
+            let mut state = recorder.state.lock().expect("state");
+            let filler = ProducerEpochCutoffV1 {
+                producer_epoch: 222,
+                cutoff_clock_observation_ordinal: 0,
+                last_admitted_wire_ordinal: 0,
+                last_admitted_source_generation: 0,
+                last_admitted_blink_generation: 0,
+                last_pending_snapshot_sequence: 0,
+                last_coverage_sequence: 0,
+                last_candidate_sequence: 0,
+                latch_mono_ns: 0,
+                record_hash: B256::ZERO,
+            };
+            assert!(recorder.enqueue(&mut state, EdgeSourceEventV1::Cutoff(filler)).is_ok());
+        }
+        recorder.connection_transition(SourceConnectionTransitionV1::ReadError);
+        {
+            let state = recorder.state.lock().expect("state");
+            assert_eq!(state.connection_phase, ConnectionPhaseV1::AwaitingEstablishedClose(1));
+            assert!(matches!(
+                state.connection_recorded_phase,
+                ConnectionPhaseV1::Established { .. }
+            ));
+            assert_eq!(state.missing_evidence.connection_event_queue_full_excluded, 1);
+        }
+        drain();
+
+        for transition in [
+            SourceConnectionTransitionV1::EstablishedClosedByReadError,
+            SourceConnectionTransitionV1::DirectReconnectAttemptStarted,
+            SourceConnectionTransitionV1::ConnectFailure,
+        ] {
+            recorder.connection_transition(transition);
+            drain();
+        }
+        recorder.latch_cutoff(ProducerExternalBoundsV1 {
+            last_admitted_blink_generation: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+        });
+        drain();
+
+        let state = recorder.state.lock().expect("state");
+        assert!(state.connection_records.iter().any(|record| {
+            record.transition == SourceConnectionTransitionV1::EstablishedClosedByReadError
+        }));
+        assert!(state.connection_records.iter().all(|record| {
+            record.transition != SourceConnectionTransitionV1::EstablishedClosedByCutoff
+        }));
+        assert_eq!(state.connection_phase, ConnectionPhaseV1::Exited);
+        assert_eq!(state.connection_established_count, state.connection_closed_count);
+        assert!(state.poisons.is_empty(), "{:?}", state.poisons);
+        drop(state);
+        assert!(recorder.verify_source_final().is_ok());
+    }
+
+    #[test]
+    fn active_capacity_exclusion_is_counted_without_a_false_actor_terminal() {
         let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
             producer_epoch: NonZeroU64::new(217).expect("nonzero"),
             event_queue_capacity: 64,
@@ -7597,8 +8289,122 @@ mod tests {
         }
 
         assert_eq!(recorder.source_final_counters().5, 2);
-        assert_eq!(recorder.missing_evidence_counts().active_state_capacity_overflow, 1);
+        assert_eq!(recorder.missing_evidence_counts().decoded_generation_capacity_excluded, 1);
         assert!(recorder.verify_source_final().is_ok());
+    }
+
+    #[test]
+    fn payload_reference_capacity_exclusion_is_exact_and_does_not_consume_an_existing_ref() {
+        let recorder = test_recorder(221);
+        let flashblock = test_pending_blocks().get_flashblocks().remove(0);
+        let key = PayloadFirstKeyV1 {
+            producer_epoch: 221,
+            block_number: flashblock.metadata.block_number,
+            payload_id: flashblock.payload_id.0.into(),
+        };
+        recorder.state.lock().expect("state").payload_generation_refs.insert(key, usize::MAX);
+
+        let admission = recorder.observe_wire(b"payload-ref-capacity").expect("wire");
+        assert_eq!(recorder.decoded_flashblock(admission, &flashblock), None);
+        {
+            let mut state = recorder.state.lock().expect("state");
+            assert_eq!(state.payload_generation_refs.get(&key), Some(&usize::MAX));
+            assert_eq!(state.missing_evidence.payload_generation_ref_capacity_excluded, 1);
+            assert!(state.wire_lifecycle.is_empty());
+            state.payload_generation_refs.remove(&key);
+        }
+        recorder.latch_cutoff(ProducerExternalBoundsV1 {
+            last_admitted_blink_generation: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+        });
+        while let EdgeEventDrainStatusV1::Event(_) = recorder.try_recv_event() {
+            recorder.ack_event_durable().expect("durable event");
+        }
+        assert!(recorder.verify_source_final().is_ok());
+    }
+
+    #[test]
+    fn payload_first_map_capacity_exclusion_is_exact_and_finalizable() {
+        let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: NonZeroU64::new(222).expect("nonzero"),
+            event_queue_capacity: 64,
+            active_state_capacity: 1,
+            pending_registry_capacity: 4,
+            terminal_record_capacity: 4,
+        })
+        .expect("Linux recorder");
+        let flashblock = test_pending_blocks().get_flashblocks().remove(0);
+        let occupied_key =
+            PayloadFirstKeyV1 { producer_epoch: 222, block_number: 0, payload_id: [9; 8] };
+        recorder.state.lock().expect("state").payload_first.insert(
+            occupied_key,
+            PayloadFirstObservationV1 {
+                key: occupied_key,
+                source_generation: u64::MAX,
+                observation: WireObservationV1 {
+                    clock_observation_ordinal: 0,
+                    utc_status: ClockStatusV1::Ok,
+                    utc_ns: Some(0),
+                    mono_status: ClockStatusV1::Ok,
+                    mono_ns: Some(0),
+                    wire_digest: B256::ZERO,
+                },
+                boot_id: recorder.boot_id,
+                realtime_resolution_ns: recorder.realtime_resolution_ns,
+                monotonic_resolution_ns: recorder.monotonic_resolution_ns,
+                record_sequence: 0,
+                previous_record_hash: B256::ZERO,
+                record_hash: B256::ZERO,
+            },
+        );
+
+        let admission = recorder.observe_wire(b"payload-map-capacity").expect("wire");
+        assert_eq!(recorder.decoded_flashblock(admission, &flashblock), None);
+        {
+            let mut state = recorder.state.lock().expect("state");
+            assert_eq!(state.missing_evidence.payload_first_map_capacity_excluded, 1);
+            assert!(state.wire_lifecycle.is_empty());
+            state.payload_first.remove(&occupied_key);
+        }
+        recorder.latch_cutoff(ProducerExternalBoundsV1 {
+            last_admitted_blink_generation: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+        });
+        while let EdgeEventDrainStatusV1::Event(_) = recorder.try_recv_event() {
+            recorder.ack_event_durable().expect("durable event");
+        }
+        assert!(recorder.verify_source_final().is_ok());
+    }
+
+    #[test]
+    fn connection_count_mismatch_is_not_waived_by_an_unrelated_queue_loss() {
+        let recorder = test_recorder(220);
+        recorder.connection_transition(SourceConnectionTransitionV1::OwnerStart);
+        recorder.connection_transition(SourceConnectionTransitionV1::InitialConnectAttemptStarted);
+        recorder.connection_transition(SourceConnectionTransitionV1::Established);
+        recorder.latch_cutoff(ProducerExternalBoundsV1 {
+            last_admitted_blink_generation: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+        });
+        while let EdgeEventDrainStatusV1::Event(_) = recorder.try_recv_event() {
+            recorder.ack_event_durable().expect("durable event");
+        }
+        {
+            let mut state = recorder.state.lock().expect("state");
+            state.connection_closed_count = state.connection_closed_count.saturating_sub(1);
+            EdgeMeasurementRecorderV1::record_missing_evidence(
+                &mut state,
+                EdgeMeasurementMissingEvidenceReasonV1::EventQueueFull,
+            );
+        }
+
+        assert_eq!(
+            recorder.verify_source_final(),
+            Err(EdgeSourceFinalSealErrorV1::ConnectionFinalInvalid)
+        );
     }
     #[test]
     fn terminal_exclusion_receipts_release_all_recorder_snapshot_bindings() {

@@ -29,11 +29,12 @@ use alloy_primitives::{Address, B256};
 #[cfg(feature = "edge-measurement")]
 use base_flashblocks::{
     ClockAnchorRecordV1, EdgeEventDrainStatusV1, EdgeMeasurementGlobal,
-    EdgeMeasurementInstallConfigV1, EdgeMeasurementRecorderV1, EdgeSourceEventV1, EpochRouteV1,
-    PENDING_TERMINAL_RECORD_CAPACITY_MAX_V2, PayloadFirstObservationV1, PendingCliTerminalV2,
-    PendingRegistrySnapshotV2, PendingTerminalRecordV2, ProcessorLifecycleProductV1,
-    ProducerExternalBoundsV1, SourceConnectionRecordV1, SourceCoverageRecordV3,
-    SourceTerminalCoverageV3, WireLifecycleTransitionV1,
+    EdgeMeasurementInstallConfigV1, EdgeMeasurementMissingEvidenceV1, EdgeMeasurementRecorderV1,
+    EdgeSourceEventV1, EpochRouteV1, PENDING_TERMINAL_RECORD_CAPACITY_MAX_V2,
+    PayloadFirstObservationV1, PendingCliTerminalV2, PendingRegistryFinalSummaryV2,
+    PendingTerminalRecordV2, ProcessorLifecycleProductV1, ProducerExternalBoundsV1,
+    SourceConnectionRecordV1, SourceCoverageRecordV3, SourceTerminalCoverageV3,
+    WireLifecycleTransitionV1,
 };
 use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState, PendingBlocks};
 use base_mev_trader::{
@@ -77,6 +78,8 @@ fn latch_edge_failure(failure: &'static str) {
 }
 #[cfg(feature = "edge-measurement")]
 const EDGE_CUTOFF_DRAIN_DEADLINE_V1: Duration = Duration::from_secs(30);
+#[cfg(feature = "edge-measurement")]
+const EDGE_CANDIDATE_DETAIL_DRAIN_BUDGET_V1: usize = 64;
 
 #[cfg(feature = "edge-measurement")]
 fn await_edge_cutoff_drain(recorder: &EdgeMeasurementRecorderV1, deadline: Instant) -> bool {
@@ -114,8 +117,7 @@ fn latch_edge_cutoff_once(
                 }
             }
             let last_candidate = candidate_bounds.last_sequence.unwrap_or(0);
-            let registry = recorder.registry().snapshot();
-            let last_coverage = registry.last_coverage_sequence.unwrap_or(0);
+            let last_coverage = recorder.registry().last_coverage_sequence().unwrap_or(0);
             let cutoff = recorder.latch_cutoff(ProducerExternalBoundsV1 {
                 last_admitted_blink_generation: last_blink,
                 last_coverage_sequence: last_coverage,
@@ -256,14 +258,14 @@ struct EdgeCanonicalWriterV1 {
     persisted_artifacts: BTreeMap<String, String>,
     clock_observations: Vec<JsonValue>,
     missing_evidence: BTreeSet<&'static str>,
-    registry_segment_sha: BTreeMap<u64, B256>,
-    registry_record_sha: BTreeMap<u64, B256>,
+    registry_segment_sha: Vec<B256>,
+    registry_record_sha: Vec<B256>,
     connection_segment_sha: Vec<(u64, B256)>,
-    connection_records: BTreeMap<u64, B256>,
+    connection_records: Vec<B256>,
     candidate_joins: BTreeMap<u64, EdgeCandidateJoinV1>,
     candidate_validated_count: u64,
     candidate_durable: BTreeSet<u64>,
-    registry_h1_segment_sha: BTreeMap<u64, B256>,
+    registry_h1_segment_sha: Vec<B256>,
     source_sequence_by_ledger: BTreeMap<(&'static str, u64), u64>,
     source_durable: BTreeSet<u64>,
     source_durable_ack_cursor: u64,
@@ -295,14 +297,14 @@ impl EdgeCanonicalWriterV1 {
             persisted_artifacts: BTreeMap::new(),
             missing_evidence: BTreeSet::new(),
             clock_observations: Vec::new(),
-            registry_segment_sha: BTreeMap::new(),
-            registry_record_sha: BTreeMap::new(),
+            registry_segment_sha: Vec::new(),
+            registry_record_sha: Vec::new(),
             connection_segment_sha: Vec::new(),
-            connection_records: BTreeMap::new(),
+            connection_records: Vec::new(),
             candidate_joins: BTreeMap::new(),
             candidate_validated_count: 0,
             candidate_durable: BTreeSet::new(),
-            registry_h1_segment_sha: BTreeMap::new(),
+            registry_h1_segment_sha: Vec::new(),
             source_sequence_by_ledger: BTreeMap::new(),
             source_durable: BTreeSet::new(),
             source_durable_ack_cursor: 0,
@@ -311,6 +313,24 @@ impl EdgeCanonicalWriterV1 {
             cutoff_batches_flushed: false,
             finalized: false,
         }
+    }
+    fn append_sequence_hash(
+        hashes: &mut Vec<B256>,
+        sequence: u64,
+        hash: B256,
+        mismatch: &'static str,
+    ) -> io::Result<()> {
+        let index = usize::try_from(sequence)
+            .map_err(|_| io::Error::other("sequence does not fit usize"))?;
+        if index != hashes.len() {
+            return Err(io::Error::other(mismatch));
+        }
+        hashes.push(hash);
+        Ok(())
+    }
+
+    fn sequence_hash(hashes: &[B256], sequence: u64) -> Option<B256> {
+        usize::try_from(sequence).ok().and_then(|index| hashes.get(index)).copied()
     }
 
     fn run(mut self, stop: Arc<AtomicBool>) -> io::Result<()> {
@@ -331,6 +351,7 @@ impl EdgeCanonicalWriterV1 {
                 return Ok(());
             }
             if self.recorder.cutoff_sealed()
+                && stop.load(Ordering::Acquire)
                 && !progressed
                 && !self.finalized
                 && !self.has_buffered_records()
@@ -433,10 +454,13 @@ impl EdgeCanonicalWriterV1 {
                 "coverage-detail" => "edge-source-coverage-diagnostic/v1",
                 _ => "edge-source-detail/v1",
             };
-            if let Some((connection_sequence, record_hash)) = connection_sequence
-                && self.connection_records.insert(connection_sequence, record_hash).is_some()
-            {
-                return Err(io::Error::other("duplicate connection record"));
+            if let Some((connection_sequence, record_hash)) = connection_sequence {
+                Self::append_sequence_hash(
+                    &mut self.connection_records,
+                    connection_sequence,
+                    record_hash,
+                    "connection record sequence mismatch",
+                )?;
             }
             let ledger_sequence = self.ledgers.get(ledger).map_or(0, |ledger| ledger.next_sequence);
             if let Some((producer_epoch, coverage_sequence)) = terminal_coverage_identity
@@ -510,9 +534,13 @@ impl EdgeCanonicalWriterV1 {
             let h2_value = Self::registry_h2_value(terminal);
             let record_hash =
                 B256::new(EdgeMeasurementDurabilityV1::sha256(&Self::canonical_bytes(&h2_value)?));
-            if self.registry_record_sha.insert(coverage_sequence, record_hash).is_some()
-                || self.registry_pending.insert(coverage_sequence, terminal).is_some()
-            {
+            Self::append_sequence_hash(
+                &mut self.registry_record_sha,
+                coverage_sequence,
+                record_hash,
+                "registry terminal record sequence mismatch",
+            )?;
+            if self.registry_pending.insert(coverage_sequence, terminal).is_some() {
                 return Err(io::Error::other("duplicate registry terminal record"));
             }
 
@@ -563,15 +591,14 @@ impl EdgeCanonicalWriterV1 {
         {
             let coverage_sequence = terminal.coverage_sequence;
             let pending_sequence = terminal.metadata.identity.pending_snapshot_sequence;
-            if !self.registry_segment_sha.contains_key(&coverage_sequence)
-                || !self.registry_h1_segment_sha.contains_key(&pending_sequence)
+            if Self::sequence_hash(&self.registry_segment_sha, coverage_sequence).is_none()
+                || Self::sequence_hash(&self.registry_h1_segment_sha, pending_sequence).is_none()
             {
                 break;
             }
-            let terminal_hash = *self
-                .registry_record_sha
-                .get(&coverage_sequence)
-                .ok_or_else(|| io::Error::other("registry H2 record hash missing"))?;
+            let terminal_hash =
+                Self::sequence_hash(&self.registry_record_sha, coverage_sequence)
+                    .ok_or_else(|| io::Error::other("registry H2 record hash missing"))?;
             registry
                 .ack_terminal_durable(coverage_sequence)
                 .map_err(|_| io::Error::other("registry durable ACK mismatch"))?;
@@ -646,11 +673,16 @@ impl EdgeCanonicalWriterV1 {
                 progressed = true;
             }
         }
-        for detail in self
-            .owner
-            .drain_candidate_details()
-            .map_err(|_| io::Error::other("candidate detail drain failed"))?
-        {
+        let mut candidate_detail_queue_drained = false;
+        for _ in 0..EDGE_CANDIDATE_DETAIL_DRAIN_BUDGET_V1 {
+            let Some(detail) = self
+                .owner
+                .try_receive_candidate_detail()
+                .map_err(|_| io::Error::other("candidate detail receive failed"))?
+            else {
+                candidate_detail_queue_drained = true;
+                break;
+            };
             detail
                 .validate_detail()
                 .map_err(|_| io::Error::other("candidate detail validation failed"))?;
@@ -695,7 +727,7 @@ impl EdgeCanonicalWriterV1 {
         if self.release_candidate_joins()? {
             progressed = true;
         }
-        if flush_cutoff {
+        if flush_cutoff && candidate_detail_queue_drained {
             self.cutoff_batches_flushed = true;
         }
         Ok(progressed)
@@ -1624,7 +1656,7 @@ impl EdgeCanonicalWriterV1 {
                 .get(&sequence)
                 .ok_or_else(|| io::Error::other("candidate compact join missing"))?;
             let Some(connection_record_hash) =
-                self.connection_records.get(&join.connection_sequence).copied()
+                Self::sequence_hash(&self.connection_records, join.connection_sequence)
             else {
                 break;
             };
@@ -1639,14 +1671,14 @@ impl EdgeCanonicalWriterV1 {
                 break;
             }
             let Some(registry_record_hash) =
-                self.registry_record_sha.get(&join.coverage_generation).copied()
+                Self::sequence_hash(&self.registry_record_sha, join.coverage_generation)
             else {
                 break;
             };
             if registry_record_hash != join.registry_terminal_record_hash {
                 return Err(io::Error::other("candidate compact join validation failed"));
             }
-            if !self.registry_segment_sha.contains_key(&join.coverage_generation) {
+            if Self::sequence_hash(&self.registry_segment_sha, join.coverage_generation).is_none() {
                 break;
             }
             if sequence != join.candidate_sequence {
@@ -1677,23 +1709,81 @@ impl EdgeCanonicalWriterV1 {
                 .registry_pending
                 .get(coverage_sequence)
                 .ok_or_else(|| io::Error::other("registry durable identity missing"))?;
-            let replaced = if ledger == "registry-h1" {
-                self.registry_h1_segment_sha
-                    .insert(terminal.metadata.identity.pending_snapshot_sequence, segment_hash)
+            if ledger == "registry-h1" {
+                Self::append_sequence_hash(
+                    &mut self.registry_h1_segment_sha,
+                    terminal.metadata.identity.pending_snapshot_sequence,
+                    segment_hash,
+                    "registry H1 durable segment sequence mismatch",
+                )?;
             } else if ledger == "registry-h2" {
-                self.registry_segment_sha.insert(*coverage_sequence, segment_hash)
+                Self::append_sequence_hash(
+                    &mut self.registry_segment_sha,
+                    *coverage_sequence,
+                    segment_hash,
+                    "registry H2 durable segment sequence mismatch",
+                )?;
             } else {
                 return Err(io::Error::other("unknown registry ledger"));
-            };
-            if replaced.is_some() {
-                return Err(io::Error::other("duplicate registry durable segment identity"));
             }
         }
         Ok(())
     }
 
-    const fn registry_final_non_authority_send_count(registry: &PendingRegistrySnapshotV2) -> u64 {
+    const fn registry_final_non_authority_send_count(
+        registry: &PendingRegistryFinalSummaryV2,
+    ) -> u64 {
         registry.unregistered_send_count
+    }
+    fn source_missing_evidence_counts(
+        counts: &EdgeMeasurementMissingEvidenceV1,
+    ) -> BTreeMap<&'static str, String> {
+        [
+            ("activeStateCapacityOverflow", counts.active_state_capacity_overflow),
+            ("cacheDrainIncomplete", counts.cache_drain_incomplete),
+            ("coordinatorFailure", counts.coordinator_failure),
+            ("cutoffBoundMissing", counts.cutoff_bound_missing),
+            ("cutoffDeadlineCacheGeneration", counts.cutoff_deadline_cache_generation),
+            ("cutoffDeadlineProcessorGeneration", counts.cutoff_deadline_processor_generation),
+            ("decodedGenerationCapacityExcluded", counts.decoded_generation_capacity_excluded),
+            ("eventQueueClosed", counts.event_queue_closed),
+            ("eventQueueFull", counts.event_queue_full),
+            ("lateProcessorCompletion", counts.late_processor_completion),
+            ("connectionEventQueueClosedExcluded", counts.connection_event_queue_closed_excluded),
+            ("connectionEventQueueFullExcluded", counts.connection_event_queue_full_excluded),
+            ("connectionTransitionAfterQueueLoss", counts.connection_transition_after_queue_loss),
+            ("missingSourceIdentity", counts.missing_source_identity),
+            ("snapshotBindingCapacityExcluded", counts.snapshot_binding_capacity_excluded),
+            ("snapshotPayloadFirstUnavailable", counts.snapshot_payload_first_unavailable),
+            ("observerPanicked", counts.observer_panicked),
+            ("payloadIndexZeroLate", counts.payload_index_zero_late),
+            ("payloadIndexZeroMissing", counts.payload_index_zero_missing),
+            ("payloadFirstMapCapacityExcluded", counts.payload_first_map_capacity_excluded),
+            ("payloadFirstQueueClosedExcluded", counts.payload_first_queue_closed_excluded),
+            ("payloadFirstQueueFullExcluded", counts.payload_first_queue_full_excluded),
+            (
+                "payloadGenerationRefCapacityExcluded",
+                counts.payload_generation_ref_capacity_excluded,
+            ),
+            ("terminalRecordAllocationExcluded", counts.terminal_record_allocation_excluded),
+            ("terminalRecordCapacityExcluded", counts.terminal_record_capacity_excluded),
+        ]
+        .into_iter()
+        .map(|(reason, count)| (reason, count.to_string()))
+        .collect()
+    }
+
+    fn registry_terminal_exclusion_counts(
+        registry: &PendingRegistryFinalSummaryV2,
+    ) -> BTreeMap<&'static str, String> {
+        [
+            ("terminalRecordAllocationMissing", registry.terminal_record_allocation_missing),
+            ("terminalRecordCapacityMissing", registry.terminal_record_capacity_missing),
+            ("registrationCapacityMissing", registry.registration_capacity_missing),
+        ]
+        .into_iter()
+        .map(|(reason, count)| (reason, count.to_string()))
+        .collect()
     }
     fn ledger_segment_set_sha256(&self, ledger_name: &'static str) -> io::Result<String> {
         let mut descriptors = self
@@ -1742,9 +1832,9 @@ impl EdgeCanonicalWriterV1 {
                 .collect::<Vec<_>>();
             descriptors
                 .sort_by(|left, right| left["filename"].as_str().cmp(&right["filename"].as_str()));
+            let descriptors = JsonValue::Array(descriptors);
             let mut set_domain = b"edge-sidecar-segment-set-v1\0".to_vec();
-            set_domain
-                .extend_from_slice(&Self::canonical_bytes(&JsonValue::Array(descriptors.clone()))?);
+            set_domain.extend_from_slice(&Self::canonical_bytes(&descriptors)?);
             ledgers.push(json!({
                 "ledger": name,
                 "segmentSetSha256": Self::sha256_hex(&set_domain),
@@ -1756,13 +1846,32 @@ impl EdgeCanonicalWriterV1 {
             "schemaVersion": "edge-segment-descriptor-manifest-v1",
         }))
     }
+    fn immutable_file_matches(path: &Path, expected: &[u8]) -> io::Result<bool> {
+        let mut file = File::open(path)?;
+        let mut offset = 0;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                return Ok(offset == expected.len());
+            }
+            let Some(end) = offset.checked_add(read) else {
+                return Ok(false);
+            };
+            if expected.get(offset..end) != Some(&buffer[..read]) {
+                return Ok(false);
+            }
+            offset = end;
+        }
+    }
+
     fn persist_immutable(&self, filename: &str, bytes: &[u8]) -> io::Result<()> {
+        Self::validate_canonical_artifact(bytes)?;
         let final_path = self.directory.join(filename);
-        if let Ok(existing) = fs::read(&final_path) {
-            if existing != bytes {
+        if final_path.try_exists()? {
+            if !Self::immutable_file_matches(&final_path, bytes)? {
                 return Err(io::Error::new(io::ErrorKind::AlreadyExists, "immutable conflict"));
             }
-            Self::validate_canonical_artifact(&existing)?;
             return Ok(());
         }
         let open_path = self.directory.join(format!("{filename}.open"));
@@ -1771,15 +1880,13 @@ impl EdgeCanonicalWriterV1 {
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        let reread = fs::read(&open_path)?;
-        if reread != bytes {
+        if !Self::immutable_file_matches(&open_path, bytes)? {
             return Err(io::Error::other("durable re-read mismatch"));
         }
-        Self::validate_canonical_artifact(&reread)?;
         match fs::hard_link(&open_path, &final_path) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                if fs::read(&final_path)? != bytes {
+                if !Self::immutable_file_matches(&final_path, bytes)? {
                     return Err(io::Error::new(io::ErrorKind::AlreadyExists, "immutable conflict"));
                 }
             }
@@ -1797,7 +1904,7 @@ impl EdgeCanonicalWriterV1 {
             .recorder
             .verify_source_final()
             .map_err(|_| io::Error::other("source final seal rejected"))?;
-        let registry = self.recorder.registry().snapshot();
+        let registry = self.recorder.registry().final_summary();
         let candidate_bounds = self.owner.checked_candidate_bounds();
         let (blink_count, _) = self
             .owner
@@ -1838,6 +1945,7 @@ impl EdgeCanonicalWriterV1 {
             || registry.secondary_pending != 0
             || registry.published_pending != 0
             || registry.unregistered_send_inflight != 0
+            || registry.registration_without_sequence_send_inflight != 0
             || registry.terminal_records != coverage_len
             || registry.durability_acked != coverage_len
             || self.registry_h1_segment_sha.len() != coverage_len
@@ -1852,13 +1960,14 @@ impl EdgeCanonicalWriterV1 {
                 && blink_count.checked_sub(1) != Some(source_final.last_admitted_blink_generation))
         {
             return Err(io::Error::other(format!(
-                "final conservation mismatch: coverageLedger={coverage_ledger_conserved} registryPoisoned={} poison={poison_count} sourcePending={source_pending} coverageAck={} primary={} secondary={} published={} inflight={} terminals={}/{} durability={}/{} h1={} h2={} hashes={} connections={}/{} connectionSegments={}/{} registryLast={:?}",
+                "final conservation mismatch: coverageLedger={coverage_ledger_conserved} registryPoisoned={} poison={poison_count} sourcePending={source_pending} coverageAck={} primary={} secondary={} published={} nonAuthorityInflight={} sequenceLessRegistrationInflight={} terminals={}/{} durability={}/{} h1={} h2={} hashes={} connections={}/{} connectionSegments={}/{} registryLast={:?}",
                 registry.poisoned,
                 registry.coverage_queue_pending_ack,
                 registry.primary_pending,
                 registry.secondary_pending,
                 registry.published_pending,
                 registry.unregistered_send_inflight,
+                registry.registration_without_sequence_send_inflight,
                 registry.terminal_records,
                 coverage_len,
                 registry.durability_acked,
@@ -1873,38 +1982,24 @@ impl EdgeCanonicalWriterV1 {
                 registry.last_coverage_sequence,
             )));
         }
-
-        let mut previous_connection_sequence = None;
-        let mut connection_segments = Vec::with_capacity(self.connection_segment_sha.len());
-        for (sequence, sha) in &self.connection_segment_sha {
-            if previous_connection_sequence.is_some_and(|previous| previous >= *sequence) {
-                return Err(io::Error::other("connection durable segment order mismatch"));
-            }
-            connection_segments.push(json!({
-                "segmentSha256": Self::hex(sha.as_slice()),
-                "sequence": sequence.to_string(),
-            }));
-            previous_connection_sequence = Some(*sequence);
+        if self.connection_segment_sha.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+            return Err(io::Error::other("connection durable segment order mismatch"));
         }
-        let connection_record_hashes = self
-            .connection_records
-            .iter()
-            .map(|(sequence, hash)| {
-                json!({
-                    "recordHash": Self::hex(hash.as_slice()),
-                    "sequence": sequence.to_string(),
-                })
-            })
-            .collect::<Vec<_>>();
+
+        let connection_segment_set_sha256 = self.ledger_segment_set_sha256("connection")?;
+        let connection_final_record_hash = self.ledgers.get("connection").map_or_else(
+            || EDGE_ZERO_HASH.to_owned(),
+            |ledger| ledger.previous_record_hash.clone(),
+        );
         let connection_final_value = json!({
             "connectionCount": connection_count.to_string(),
             "connectionEmpty": connection_count == 0,
             "cutoffRecordHash": Self::hex(source_final.record_hash.as_slice()),
+            "finalRecordHash": connection_final_record_hash,
             "lastConnectionSequenceInclusive": connection_count.checked_sub(1).map(|value| JsonValue::String(value.to_string())),
-            "orderedPersistedSegments": connection_segments,
-            "orderedRecordHashes": connection_record_hashes,
             "pending": "0",
             "schemaVersion": "edge-connection-final-v1",
+            "segmentSetSha256": connection_segment_set_sha256,
         });
         if let Some(segment) = self.flush_rolling_ledger("candidate")? {
             self.validate_candidate_segment(&segment)?;
@@ -1926,6 +2021,9 @@ impl EdgeCanonicalWriterV1 {
             return Err(io::Error::other("candidate final conservation mismatch"));
         }
         self.persist_named_artifact("connection-final-v1.json", &connection_final_value)?;
+        drop(connection_final_value);
+        drop(std::mem::take(&mut self.connection_records));
+        drop(std::mem::take(&mut self.connection_segment_sha));
 
         let source_value = json!({
             "cutoffClockObservationOrdinal": source_final.cutoff_clock_observation_ordinal.to_string(),
@@ -1954,10 +2052,12 @@ impl EdgeCanonicalWriterV1 {
         }
         self.persist_named_artifact("source-final-v1.json", &source_value)?;
         self.persist_named_artifact("blink-final-v1.json", &blink_value)?;
+        drop(source_value);
+        drop(blink_value);
 
         let non_authority_send_count = Self::registry_final_non_authority_send_count(&registry);
         let counters = registry.counters;
-        let sets = registry.sets;
+        let sets = registry.set_cardinalities;
         let registry_h1_segment_set_sha256 = self.ledger_segment_set_sha256("registry-h1")?;
         let registry_h2_segment_set_sha256 = self.ledger_segment_set_sha256("registry-h2")?;
         let mut registry_value = Self::stringify_numbers(json!({
@@ -1985,40 +2085,41 @@ impl EdgeCanonicalWriterV1 {
             "pending": "0",
             "pendingBreakdown": {
                 "coverageAck": registry.coverage_queue_pending_ack,
-                "delivery": sets.pending_delivery_final.len(),
+                "delivery": sets.pending_delivery_final,
                 "primary": registry.primary_pending,
                 "published": registry.published_pending,
                 "secondary": registry.secondary_pending,
                 "unregisteredSendInflight": registry.unregistered_send_inflight,
+                "sequenceLessRegistrationSendInflight": registry.registration_without_sequence_send_inflight,
             },
             "poisoned": registry.poisoned,
             "nonAuthoritySendCount": non_authority_send_count,
             "schemaVersion": "edge-registry-final-v1",
             "setCardinalities": {
-                "advancedWithSnapshot": sets.advanced_with_snapshot.len(),
-                "cliCancelledAttributed": sets.cli_cancelled_attributed.len(),
-                "cliClosedAttributed": sets.cli_closed_attributed.len(),
-                "cliLaggedAttributed": sets.cli_lagged_attributed.len(),
-                "cliOkReceived": sets.cli_ok_received.len(),
-                "cliReceivedLookupSucceeded": sets.cli_received_lookup_succeeded.len(),
-                "cliRegistryLookupFailed": sets.cli_registry_lookup_failed.len(),
-                "failedRegCliCancelledAttributed": sets.failed_reg_cli_cancelled_attributed.len(),
-                "failedRegCliClosedAttributed": sets.failed_reg_cli_closed_attributed.len(),
-                "failedRegCliLaggedAttributed": sets.failed_reg_cli_lagged_attributed.len(),
-                "failedRegCliRegistryLookupFailed": sets.failed_reg_cli_registry_lookup_failed.len(),
-                "failedRegCliReceivedLookupSucceeded": sets.failed_reg_cli_received_lookup_succeeded.len(),
-                "failedRegPendingFinal": sets.failed_reg_pending_final.len(),
-                "failedRegistrationNoReceivers": sets.failed_registration_no_receivers.len(),
-                "failedRegistrationPublished": sets.failed_registration_published.len(),
-                "pendingDeliveryFinal": sets.pending_delivery_final.len(),
-                "registeredNoReceivers": sets.registered_no_receivers.len(),
-                "registeredPublished": sets.registered_published.len(),
-                "registrationFailed": sets.registration_failed.len(),
-                "registrationFailedNoReceivers": sets.registration_failed_no_receivers.len(),
-                "registrationSucceeded": sets.registration_succeeded.len(),
-                "sendNoReceivers": sets.send_no_receivers.len(),
-                "sendPublished": sets.send_published.len(),
-                "snapshotRecordsInstalled": sets.snapshot_records_installed.len(),
+                "advancedWithSnapshot": sets.advanced_with_snapshot,
+                "cliCancelledAttributed": sets.cli_cancelled_attributed,
+                "cliClosedAttributed": sets.cli_closed_attributed,
+                "cliLaggedAttributed": sets.cli_lagged_attributed,
+                "cliOkReceived": sets.cli_ok_received,
+                "cliReceivedLookupSucceeded": sets.cli_received_lookup_succeeded,
+                "cliRegistryLookupFailed": sets.cli_registry_lookup_failed,
+                "failedRegCliCancelledAttributed": sets.failed_reg_cli_cancelled_attributed,
+                "failedRegCliClosedAttributed": sets.failed_reg_cli_closed_attributed,
+                "failedRegCliLaggedAttributed": sets.failed_reg_cli_lagged_attributed,
+                "failedRegCliRegistryLookupFailed": sets.failed_reg_cli_registry_lookup_failed,
+                "failedRegCliReceivedLookupSucceeded": sets.failed_reg_cli_received_lookup_succeeded,
+                "failedRegPendingFinal": sets.failed_reg_pending_final,
+                "failedRegistrationNoReceivers": sets.failed_registration_no_receivers,
+                "failedRegistrationPublished": sets.failed_registration_published,
+                "pendingDeliveryFinal": sets.pending_delivery_final,
+                "registeredNoReceivers": sets.registered_no_receivers,
+                "registeredPublished": sets.registered_published,
+                "registrationFailed": sets.registration_failed,
+                "registrationFailedNoReceivers": sets.registration_failed_no_receivers,
+                "registrationSucceeded": sets.registration_succeeded,
+                "sendNoReceivers": sets.send_no_receivers,
+                "sendPublished": sets.send_published,
+                "snapshotRecordsInstalled": sets.snapshot_records_installed,
             },
             "terminalRecordCount": registry.terminal_records,
         }));
@@ -2028,6 +2129,10 @@ impl EdgeCanonicalWriterV1 {
             object.insert("terminalizedThrough".to_owned(), JsonValue::String(through.to_string()));
         }
         self.persist_named_artifact("registry-final-v1.json", &registry_value)?;
+        drop(registry_value);
+        drop(std::mem::take(&mut self.registry_h1_segment_sha));
+        drop(std::mem::take(&mut self.registry_segment_sha));
+        drop(std::mem::take(&mut self.registry_record_sha));
 
         let source_segment_hashes = self
             .persisted_artifacts
@@ -2069,19 +2174,165 @@ impl EdgeCanonicalWriterV1 {
             "wireCount": wire_count.to_string(),
         });
         self.persist_named_artifact("source-coverage-final-v1.json", &source_coverage_value)?;
+        drop(source_coverage_value);
 
+        let source_missing_evidence = self.recorder.missing_evidence_counts();
+        let source_missing_evidence_counts =
+            Self::source_missing_evidence_counts(&source_missing_evidence);
+        let source_missing_evidence_total = [
+            source_missing_evidence.active_state_capacity_overflow,
+            source_missing_evidence.cache_drain_incomplete,
+            source_missing_evidence.coordinator_failure,
+            source_missing_evidence.cutoff_bound_missing,
+            source_missing_evidence.cutoff_deadline_cache_generation,
+            source_missing_evidence.cutoff_deadline_processor_generation,
+            source_missing_evidence.decoded_generation_capacity_excluded,
+            source_missing_evidence.event_queue_closed,
+            source_missing_evidence.event_queue_full,
+            source_missing_evidence.late_processor_completion,
+            source_missing_evidence.connection_event_queue_closed_excluded,
+            source_missing_evidence.connection_event_queue_full_excluded,
+            source_missing_evidence.connection_transition_after_queue_loss,
+            source_missing_evidence.missing_source_identity,
+            source_missing_evidence.observer_panicked,
+            source_missing_evidence.payload_index_zero_late,
+            source_missing_evidence.payload_index_zero_missing,
+            source_missing_evidence.payload_first_map_capacity_excluded,
+            source_missing_evidence.payload_first_queue_closed_excluded,
+            source_missing_evidence.payload_first_queue_full_excluded,
+            source_missing_evidence.payload_generation_ref_capacity_excluded,
+            source_missing_evidence.terminal_record_allocation_excluded,
+            source_missing_evidence.terminal_record_capacity_excluded,
+            source_missing_evidence.snapshot_binding_capacity_excluded,
+            source_missing_evidence.snapshot_payload_first_unavailable,
+        ]
+        .into_iter()
+        .try_fold(0_u64, u64::checked_add)
+        .ok_or_else(|| io::Error::other("source missing-evidence total overflow"))?;
+        if source_missing_evidence_total != missing_evidence_count {
+            return Err(io::Error::other("source missing-evidence total mismatch"));
+        }
+        for (reason, count) in [
+            ("ActiveStateCapacityOverflow", source_missing_evidence.active_state_capacity_overflow),
+            ("CacheDrainIncomplete", source_missing_evidence.cache_drain_incomplete),
+            ("CoordinatorFailure", source_missing_evidence.coordinator_failure),
+            ("CutoffBoundMissing", source_missing_evidence.cutoff_bound_missing),
+            (
+                "CutoffDeadlineCacheGeneration",
+                source_missing_evidence.cutoff_deadline_cache_generation,
+            ),
+            (
+                "CutoffDeadlineProcessorGeneration",
+                source_missing_evidence.cutoff_deadline_processor_generation,
+            ),
+            (
+                "DecodedGenerationCapacityExcluded",
+                source_missing_evidence.decoded_generation_capacity_excluded,
+            ),
+            ("EventQueueClosed", source_missing_evidence.event_queue_closed),
+            ("EventQueueFull", source_missing_evidence.event_queue_full),
+            ("LateProcessorCompletion", source_missing_evidence.late_processor_completion),
+            (
+                "ConnectionEventQueueClosedExcluded",
+                source_missing_evidence.connection_event_queue_closed_excluded,
+            ),
+            (
+                "ConnectionEventQueueFullExcluded",
+                source_missing_evidence.connection_event_queue_full_excluded,
+            ),
+            (
+                "ConnectionTransitionAfterQueueLoss",
+                source_missing_evidence.connection_transition_after_queue_loss,
+            ),
+            ("MissingSourceIdentity", source_missing_evidence.missing_source_identity),
+            (
+                "SnapshotBindingCapacityExcluded",
+                source_missing_evidence.snapshot_binding_capacity_excluded,
+            ),
+            (
+                "SnapshotPayloadFirstUnavailable",
+                source_missing_evidence.snapshot_payload_first_unavailable,
+            ),
+            ("ObserverPanicked", source_missing_evidence.observer_panicked),
+            ("PayloadIndexZeroLate", source_missing_evidence.payload_index_zero_late),
+            ("PayloadIndexZeroMissing", source_missing_evidence.payload_index_zero_missing),
+            (
+                "PayloadFirstMapCapacityExcluded",
+                source_missing_evidence.payload_first_map_capacity_excluded,
+            ),
+            (
+                "PayloadFirstQueueClosedExcluded",
+                source_missing_evidence.payload_first_queue_closed_excluded,
+            ),
+            (
+                "PayloadFirstQueueFullExcluded",
+                source_missing_evidence.payload_first_queue_full_excluded,
+            ),
+            (
+                "PayloadGenerationRefCapacityExcluded",
+                source_missing_evidence.payload_generation_ref_capacity_excluded,
+            ),
+            (
+                "TerminalRecordAllocationExcluded",
+                source_missing_evidence.terminal_record_allocation_excluded,
+            ),
+            (
+                "TerminalRecordCapacityExcluded",
+                source_missing_evidence.terminal_record_capacity_excluded,
+            ),
+        ] {
+            if count != 0 {
+                self.missing_evidence.insert(reason);
+            }
+        }
         let (_, coordinator_failure_count) = self.recorder.producer_failure_counts();
-        let coordinator_missing_evidence_counts = self
-            .recorder
-            .coordinator_missing_evidence_counts()
-            .snapshot()
+        let coordinator_missing_evidence_snapshot =
+            source_missing_evidence.coordinator_reasons.snapshot();
+        let coordinator_missing_evidence_total = coordinator_missing_evidence_snapshot
+            .iter()
+            .map(|(_, count)| *count)
+            .try_fold(0_u64, u64::checked_add)
+            .ok_or_else(|| io::Error::other("coordinator missing-evidence total overflow"))?;
+        if coordinator_missing_evidence_total != coordinator_failure_count {
+            return Err(io::Error::other("coordinator missing-evidence total mismatch"));
+        }
+        for (reason, count) in &coordinator_missing_evidence_snapshot {
+            if *count != 0 {
+                self.missing_evidence.insert(reason);
+            }
+        }
+        let coordinator_missing_evidence_counts = coordinator_missing_evidence_snapshot
             .into_iter()
             .map(|(reason, count)| (reason, count.to_string()))
             .collect::<BTreeMap<_, _>>();
+        let registry_terminal_exclusion_count = registry
+            .terminal_record_capacity_missing
+            .checked_add(registry.terminal_record_allocation_missing)
+            .and_then(|count| count.checked_add(registry.registration_capacity_missing))
+            .ok_or_else(|| io::Error::other("registry terminal exclusion total overflow"))?;
+        if registry.terminal_record_capacity_missing
+            != source_missing_evidence.terminal_record_capacity_excluded
+            || registry.terminal_record_allocation_missing
+                != source_missing_evidence.terminal_record_allocation_excluded
+        {
+            return Err(io::Error::other("registry and source terminal exclusion counts mismatch"));
+        }
+        let registry_terminal_exclusion_counts =
+            Self::registry_terminal_exclusion_counts(&registry);
+        for (reason, count) in [
+            ("TerminalRecordAllocationMissing", registry.terminal_record_allocation_missing),
+            ("TerminalRecordCapacityMissing", registry.terminal_record_capacity_missing),
+            ("RegistrationCapacityMissing", registry.registration_capacity_missing),
+        ] {
+            if count != 0 {
+                self.missing_evidence.insert(reason);
+            }
+        }
         let candidate_drops = self.owner.candidate_pre_enqueue_drop_counters();
         let candidate_drop_counts = json!({
             "cancelledAfterDraft": candidate_drops.cancelled_after_draft.to_string(),
             "candidateQueueClosed": candidate_drops.candidate_queue_closed.to_string(),
+            "cutoffDrainDeadline": candidate_drops.cutoff_drain_deadline.to_string(),
             "candidateQueueFull": candidate_drops.candidate_queue_full.to_string(),
             "evidenceMismatch": candidate_drops.evidence_mismatch.to_string(),
             "failedAfterDraft": candidate_drops.failed_after_draft.to_string(),
@@ -2089,22 +2340,39 @@ impl EdgeCanonicalWriterV1 {
             "missingRequiredEvidence": candidate_drops.missing_required_evidence.to_string(),
             "staleAfterDraft": candidate_drops.stale_after_draft.to_string(),
         });
+        let blink_reject_queue_loss = self.owner.blink_reject_queue_loss_counters();
+        let blink_reject_queue_loss_counts = json!({
+            "queueClosed": blink_reject_queue_loss.queue_closed.to_string(),
+            "queueFull": blink_reject_queue_loss.queue_full.to_string(),
+        });
+        for (reason, count) in [
+            ("BlinkRejectQueueClosed", blink_reject_queue_loss.queue_closed),
+            ("BlinkRejectQueueFull", blink_reject_queue_loss.queue_full),
+        ] {
+            if count != 0 {
+                self.missing_evidence.insert(reason);
+            }
+        }
         let health_value = json!({
             "coordinatorFailureCount": coordinator_failure_count.to_string(),
             "coordinatorMissingEvidenceCounts": coordinator_missing_evidence_counts.clone(),
             "candidatePreEnqueueDropCounts": candidate_drop_counts,
+            "blinkRejectQueueLossCounts": blink_reject_queue_loss_counts,
             "missingEvidenceCount": missing_evidence_count.to_string(),
             "pending": "0",
             "poisonCount": poison_count.to_string(),
             "poisoned": poison_count != 0 || registry.poisoned,
             "producerEpoch": self.owner.producer_epoch().to_string(),
+            "registryTerminalExclusionCount": registry_terminal_exclusion_count.to_string(),
+            "registryTerminalExclusionCounts": registry_terminal_exclusion_counts.clone(),
             "schemaVersion": "edge-producer-health-final-v1",
+            "sourceMissingEvidenceCounts": source_missing_evidence_counts.clone(),
         });
         self.persist_named_artifact("producer-health-final-v1.json", &health_value)?;
-        self.persist_named_artifact(
-            "clock-observations-v1.json",
-            &JsonValue::Array(self.clock_observations.clone()),
-        )?;
+        drop(health_value);
+        let clock_observations = JsonValue::Array(std::mem::take(&mut self.clock_observations));
+        self.persist_named_artifact("clock-observations-v1.json", &clock_observations)?;
+        drop(clock_observations);
 
         let candidate_segment_hashes = self
             .persisted_artifacts
@@ -2138,6 +2406,7 @@ impl EdgeCanonicalWriterV1 {
             "strictCandidateSourceAvailable": false,
         });
         self.persist_named_artifact("candidate-detail-final-v1.json", &candidate_value)?;
+        drop(candidate_value);
 
         let provenance = &self.provenance;
         let provenance_value = json!({
@@ -2170,8 +2439,10 @@ impl EdgeCanonicalWriterV1 {
             "v3AdapterRuntimeHash": provenance.v3_adapter_runtime_hash.to_string(),
         });
         self.persist_named_artifact("producer-provenance-final-v1.json", &provenance_value)?;
+        drop(provenance_value);
         let descriptor_manifest = self.rolling_descriptor_manifest()?;
         self.persist_named_artifact("segment-descriptors-v1.json", &descriptor_manifest)?;
+        drop(descriptor_manifest);
         self.missing_evidence.insert("CandidateFreezeV5InputUnavailable");
         let missing_evidence: Vec<_> = self.missing_evidence.iter().copied().collect();
         let missing_value = json!({
@@ -2179,11 +2450,17 @@ impl EdgeCanonicalWriterV1 {
             "checkpointPublished": false,
             "coordinatorMissingEvidenceCounts": coordinator_missing_evidence_counts.clone(),
             "candidatePreEnqueueDropCounts": candidate_drop_counts,
+            "blinkRejectQueueLossCounts": blink_reject_queue_loss_counts,
             "missingEvidence": missing_evidence,
+            "missingEvidenceCount": missing_evidence_count.to_string(),
             "producerEpoch": self.owner.producer_epoch().to_string(),
+            "registryTerminalExclusionCount": registry_terminal_exclusion_count.to_string(),
+            "registryTerminalExclusionCounts": registry_terminal_exclusion_counts,
             "schemaVersion": "edge-missing-evidence-final-v1",
+            "sourceMissingEvidenceCounts": source_missing_evidence_counts,
         });
         self.persist_named_artifact("missing-evidence-final.json", &missing_value)?;
+        drop(missing_value);
 
         let artifacts = self
             .persisted_artifacts
@@ -2203,6 +2480,7 @@ impl EdgeCanonicalWriterV1 {
             "candidateEmpty": candidate_bounds.count == 0,
             "candidateReconcileVeto": "CandidateFreezeV5InputUnavailable",
             "candidatePreEnqueueDropCounts": candidate_drop_counts,
+            "blinkRejectQueueLossCounts": blink_reject_queue_loss_counts,
             "coordinatorMissingEvidenceCounts": coordinator_missing_evidence_counts,
             "checkpointPublished": false,
             "coverageCount": registry.coverage_count.to_string(),
@@ -2215,6 +2493,7 @@ impl EdgeCanonicalWriterV1 {
             "schemaVersion": "edge-producer-manifest-v1",
         });
         self.persist_named_artifact("producer-manifest-v1.json", &manifest)?;
+        drop(manifest);
         let indexed_artifacts = self
             .persisted_artifacts
             .iter()
@@ -5080,6 +5359,61 @@ mod tests {
 
     #[cfg(feature = "edge-measurement")]
     #[test]
+    fn writer_waits_for_shutdown_diagnostics_before_publishing_finals() {
+        let (mut writer, root) = edge_test_writer("shutdown-diagnostic-fence");
+        loop {
+            for ledger in writer.ledgers.values_mut() {
+                if !ledger.records.is_empty() {
+                    ledger.batch_started_at = Some(Instant::now() - EDGE_SEGMENT_MAX_FLUSH_LATENCY);
+                }
+            }
+            if !writer.drain_once().expect("startup drain") {
+                break;
+            }
+        }
+        writer.recorder.prepare_cutoff();
+        let (blink_count, candidate_bounds) = writer.owner.prepare_cutoff().expect("Blink cutoff");
+        assert_eq!(blink_count, 0);
+        assert_eq!(candidate_bounds.count, 0);
+        let cutoff = writer.recorder.latch_cutoff(ProducerExternalBoundsV1 {
+            last_admitted_blink_generation: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+        });
+        writer.owner.latch_cutoff(base_mev_trader::ProducerEpochCutoffFieldsV1 {
+            producer_epoch: cutoff.producer_epoch,
+            cutoff_clock_observation_ordinal: cutoff.cutoff_clock_observation_ordinal,
+            last_admitted_wire_ordinal: cutoff.last_admitted_wire_ordinal,
+            last_admitted_source_generation: cutoff.last_admitted_source_generation,
+            last_admitted_blink_generation: cutoff.last_admitted_blink_generation,
+            last_pending_snapshot_sequence: cutoff.last_pending_snapshot_sequence,
+            last_coverage_sequence: cutoff.last_coverage_sequence,
+            last_candidate_sequence: cutoff.last_candidate_sequence,
+            latch_mono_ns: cutoff.latch_mono_ns,
+        });
+        while writer.drain_once().expect("cutoff drain") {}
+
+        let recorder = Arc::clone(&writer.recorder);
+        let stop = Arc::new(AtomicBool::new(false));
+        let writer_stop = Arc::clone(&stop);
+        let handle = std::thread::spawn(move || writer.run(writer_stop));
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!root.join("producer-health-final-v1.json").exists());
+
+        recorder.latch_coordinator_failure("SyntheticShutdownJoinFailure");
+        stop.store(true, Ordering::Release);
+        handle.join().expect("writer join").expect("writer finalization");
+
+        let health: JsonValue = serde_json::from_slice(
+            &fs::read(root.join("producer-health-final-v1.json")).expect("health final"),
+        )
+        .expect("health JSON");
+        assert_eq!(health["coordinatorMissingEvidenceCounts"]["SyntheticShutdownJoinFailure"], "1");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
     fn finalize_succeeds_with_independent_registry_and_source_cursors() {
         let (mut writer, root) = edge_test_writer("finalize-success");
         let flashblock = pending_blocks().get_flashblocks().remove(0);
@@ -5142,9 +5476,9 @@ mod tests {
                 .expect("non-authority disposition");
         }
 
-        let snapshot = registry.snapshot();
-        assert_eq!(EdgeCanonicalWriterV1::registry_final_non_authority_send_count(&snapshot), 100);
-        assert!(snapshot.unregistered_send_records.len() < 100);
+        let summary = registry.final_summary();
+        assert_eq!(EdgeCanonicalWriterV1::registry_final_non_authority_send_count(&summary), 100);
+        assert!(registry.snapshot().unregistered_send_records.len() < 100);
         drop(writer);
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -5188,10 +5522,10 @@ mod tests {
         let (mut writer, root) = edge_test_writer("candidate-join-release");
         let connection_hash = B256::with_last_byte(1);
         let registry_hash = B256::with_last_byte(2);
-        writer.connection_records.insert(0, connection_hash);
+        writer.connection_records.push(connection_hash);
         writer.connection_segment_sha.push((0, B256::with_last_byte(3)));
-        writer.registry_segment_sha.insert(0, B256::with_last_byte(4));
-        writer.registry_record_sha.insert(0, registry_hash);
+        writer.registry_segment_sha.push(B256::with_last_byte(4));
+        writer.registry_record_sha.push(registry_hash);
         let descriptor = EdgeSegmentDescriptorV1 {
             filename: "candidate-test.ndjson".to_owned(),
             first_sequence: "0".to_owned(),
@@ -5695,6 +6029,35 @@ mod tests {
         assert_eq!(source_coverage["coverageCount"], "3");
         assert_eq!(source_coverage["coverageEmpty"], false);
         assert_eq!(source_coverage["lastSequenceInclusive"], "2");
+        let connection_final: JsonValue = serde_json::from_slice(
+            &fs::read(root.join("connection-final-v1.json")).expect("connection final"),
+        )
+        .expect("connection final JSON");
+        assert!(connection_final.get("orderedPersistedSegments").is_none());
+        assert!(connection_final.get("orderedRecordHashes").is_none());
+        assert_eq!(connection_final["segmentSetSha256"].as_str().map(str::len), Some(64));
+        assert_eq!(connection_final["finalRecordHash"].as_str().map(str::len), Some(64));
+        let producer_health: JsonValue = serde_json::from_slice(
+            &fs::read(root.join("producer-health-final-v1.json")).expect("producer health final"),
+        )
+        .expect("producer health JSON");
+        let missing_evidence: JsonValue = serde_json::from_slice(
+            &fs::read(root.join("missing-evidence-final.json")).expect("missing evidence final"),
+        )
+        .expect("missing evidence JSON");
+        for value in [&producer_health, &missing_evidence] {
+            let source_counts =
+                value["sourceMissingEvidenceCounts"].as_object().expect("source reason counts");
+            let registry_counts = value["registryTerminalExclusionCounts"]
+                .as_object()
+                .expect("registry exclusion counts");
+            assert_eq!(source_counts.len(), 25);
+            assert_eq!(registry_counts.len(), 3);
+            assert!(source_counts.values().all(|count| count == "0"));
+            assert!(registry_counts.values().all(|count| count == "0"));
+            assert_eq!(value["missingEvidenceCount"], "0");
+            assert_eq!(value["registryTerminalExclusionCount"], "0");
+        }
         let candidate_detail: JsonValue = serde_json::from_slice(
             &fs::read(root.join("candidate-detail-final-v1.json")).expect("candidate detail final"),
         )

@@ -797,6 +797,8 @@ pub enum CandidatePreEnqueueDropReasonV3 {
     StaleAfterDraft,
     /// The selected generation failed after its draft was staged.
     FailedAfterDraft,
+    /// The cutoff drain deadline abandoned a staged draft.
+    CutoffDrainDeadline,
     /// The bounded candidate queue was full.
     CandidateQueueFull,
     /// The bounded candidate queue was closed.
@@ -804,7 +806,7 @@ pub enum CandidatePreEnqueueDropReasonV3 {
 }
 
 impl CandidatePreEnqueueDropReasonV3 {
-    const COUNT: usize = 8;
+    const COUNT: usize = 9;
 
     const fn counter_index(self) -> usize {
         match self {
@@ -814,8 +816,9 @@ impl CandidatePreEnqueueDropReasonV3 {
             Self::CancelledAfterDraft => 3,
             Self::StaleAfterDraft => 4,
             Self::FailedAfterDraft => 5,
-            Self::CandidateQueueFull => 6,
-            Self::CandidateQueueClosed => 7,
+            Self::CutoffDrainDeadline => 6,
+            Self::CandidateQueueFull => 7,
+            Self::CandidateQueueClosed => 8,
         }
     }
 }
@@ -835,10 +838,21 @@ pub struct CandidatePreEnqueueDropCountersV1 {
     pub stale_after_draft: u64,
     /// Staged candidates that failed before enqueue.
     pub failed_after_draft: u64,
+    /// Staged candidates abandoned at the cutoff drain deadline.
+    pub cutoff_drain_deadline: u64,
     /// Candidate enqueue attempts rejected because the bounded queue was full.
     pub candidate_queue_full: u64,
     /// Candidate enqueue attempts rejected because the bounded queue was closed.
     pub candidate_queue_closed: u64,
+}
+
+/// Exact cumulative counts of Blink reject records lost at the bounded record queue.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct BlinkRejectQueueLossCountersV1 {
+    /// Reject records dropped because the bounded record queue was full.
+    pub queue_full: u64,
+    /// Reject records dropped because the bounded record queue was closed.
+    pub queue_closed: u64,
 }
 
 /// Borrowed, same-frame evidence required to stage one candidate without future queries.
@@ -976,9 +990,12 @@ pub struct EdgeMeasurementOwnerV1 {
     candidate_sender: SyncSender<EdgeCandidateDetailV1>,
     candidate_receiver: Mutex<Receiver<EdgeCandidateDetailV1>>,
     staged: Mutex<BTreeMap<u64, EdgeCandidateEvidenceV3>>,
+    staging_failures: Mutex<BTreeSet<u64>>,
     reject_sequence: AtomicU64,
     candidate_sequence: AtomicU64,
     candidate_drop_counts: [AtomicU64; CandidatePreEnqueueDropReasonV3::COUNT],
+    blink_reject_queue_full: AtomicU64,
+    blink_reject_queue_closed: AtomicU64,
     pending_records: AtomicU64,
     pending_candidates: AtomicU64,
     reject_previous_hash: Mutex<[u8; 32]>,
@@ -1005,9 +1022,12 @@ impl EdgeMeasurementOwnerV1 {
             candidate_sender,
             candidate_receiver: Mutex::new(candidate_receiver),
             staged: Mutex::new(BTreeMap::new()),
+            staging_failures: Mutex::new(BTreeSet::new()),
             reject_sequence: AtomicU64::new(0),
             candidate_sequence: AtomicU64::new(0),
             candidate_drop_counts: std::array::from_fn(|_| AtomicU64::new(0)),
+            blink_reject_queue_full: AtomicU64::new(0),
+            blink_reject_queue_closed: AtomicU64::new(0),
             pending_records: AtomicU64::new(0),
             pending_candidates: AtomicU64::new(0),
             reject_previous_hash: Mutex::new([0; 32]),
@@ -1089,8 +1109,17 @@ impl EdgeMeasurementOwnerV1 {
             cancelled_after_draft: count(CandidatePreEnqueueDropReasonV3::CancelledAfterDraft),
             stale_after_draft: count(CandidatePreEnqueueDropReasonV3::StaleAfterDraft),
             failed_after_draft: count(CandidatePreEnqueueDropReasonV3::FailedAfterDraft),
+            cutoff_drain_deadline: count(CandidatePreEnqueueDropReasonV3::CutoffDrainDeadline),
             candidate_queue_full: count(CandidatePreEnqueueDropReasonV3::CandidateQueueFull),
             candidate_queue_closed: count(CandidatePreEnqueueDropReasonV3::CandidateQueueClosed),
+        }
+    }
+
+    /// Returns an immutable exact cumulative snapshot of lost Blink reject records.
+    pub fn blink_reject_queue_loss_counters(&self) -> BlinkRejectQueueLossCountersV1 {
+        BlinkRejectQueueLossCountersV1 {
+            queue_full: self.blink_reject_queue_full.load(Ordering::Acquire),
+            queue_closed: self.blink_reject_queue_closed.load(Ordering::Acquire),
         }
     }
 
@@ -1116,13 +1145,9 @@ impl EdgeMeasurementOwnerV1 {
             if let Some(reason) = reason
                 && self.is_accepting()
                 && let Some(branch_id) = BlinkRejectClassifierV3::branch_id(reason)
-                && let Err(record_error) = self.try_emit_blink_reject(branch_id, reason)
-                && !matches!(
-                    record_error,
-                    EdgeProducerError::QueueFull | EdgeProducerError::QueueClosed
-                )
             {
-                self.poison(record_error);
+                let result = self.try_emit_blink_reject(branch_id, reason);
+                self.handle_blink_reject_emit_result(result);
             }
             if error != EdgeMeasurementError::LedgerCapacityOverflow {
                 self.poison(EdgeProducerError::Ledger);
@@ -1213,6 +1238,15 @@ impl EdgeMeasurementOwnerV1 {
                 }
                 _ => CandidatePreEnqueueDropReasonV3::EvidenceMismatch,
             };
+            let failure_recorded = self
+                .staging_failures
+                .lock()
+                .map(|mut failures| failures.insert(generation))
+                .unwrap_or(false);
+            if !failure_recorded {
+                self.poison(EdgeProducerError::Ledger);
+                return Err(EdgeProducerError::Ledger);
+            }
             self.record_candidate_drop(generation, reason);
         }
         result
@@ -1266,10 +1300,25 @@ impl EdgeMeasurementOwnerV1 {
         if !self.is_accepting() {
             return;
         }
-        if let Err(error) = self.try_emit_blink_reject(branch_id, reason)
-            && !matches!(error, EdgeProducerError::QueueFull | EdgeProducerError::QueueClosed)
+        let result = self.try_emit_blink_reject(branch_id, reason);
+        self.handle_blink_reject_emit_result(result);
+    }
+
+    fn handle_blink_reject_emit_result(&self, result: Result<(), EdgeProducerError>) {
+        let counter = match result {
+            Ok(()) => return,
+            Err(EdgeProducerError::QueueFull) => &self.blink_reject_queue_full,
+            Err(EdgeProducerError::QueueClosed) => &self.blink_reject_queue_closed,
+            Err(error) => {
+                self.poison(error);
+                return;
+            }
+        };
+        if counter
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| count.checked_add(1))
+            .is_err()
         {
-            self.poison(error);
+            self.poison(EdgeProducerError::SequenceOverflow);
         }
     }
 
@@ -1744,7 +1793,16 @@ impl EdgeMeasurementOwnerV1 {
             return;
         };
         let resolved = staged.remove(&generation);
-        if outcome == Some(ShadowOutcome::Selected) && resolved.is_none() {
+        drop(staged);
+        let staging_failed = match self.staging_failures.lock() {
+            Ok(mut failures) => failures.remove(&generation),
+            Err(_) => {
+                self.poison(EdgeProducerError::Ledger);
+                self.release_generation_authority(generation);
+                return;
+            }
+        };
+        if outcome == Some(ShadowOutcome::Selected) && resolved.is_none() && !staging_failed {
             self.poison(EdgeProducerError::CandidateEvidenceMismatch);
             self.release_generation_authority(generation);
             return;
@@ -1868,6 +1926,9 @@ impl EdgeMeasurementOwnerV1 {
             .map_err(|_| self.poison(EdgeProducerError::Ledger))?;
         let unresolved = timeout.timed_out() && !authority.is_empty();
         drop(authority);
+        let _admission =
+            self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
+        self.sweep_cutoff_deadline_drafts()?;
         if unresolved {
             self.terminalize_shutdown_pending_admitted(None);
         }
@@ -1877,6 +1938,24 @@ impl EdgeMeasurementOwnerV1 {
             .map_err(|_| self.poison(EdgeProducerError::Ledger))?
             .admitted_generations;
         Ok((admitted_blink_generations, self.checked_candidate_bounds()))
+    }
+
+    fn sweep_cutoff_deadline_drafts(&self) -> Result<(), EdgeProducerError> {
+        let generations = {
+            let mut staged =
+                self.staged.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
+            let generations = staged.keys().copied().collect::<Vec<_>>();
+            staged.clear();
+            generations
+        };
+        for generation in generations {
+            self.record_candidate_drop(
+                generation,
+                CandidatePreEnqueueDropReasonV3::CutoffDrainDeadline,
+            );
+        }
+        self.staging_failures.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?.clear();
+        Ok(())
     }
     /// Latches the exact current-epoch cutoff.
     pub fn latch_cutoff(&self, fields: ProducerEpochCutoffFieldsV1) {
@@ -1922,6 +2001,30 @@ impl EdgeMeasurementOwnerV1 {
         }
     }
 
+    /// Receives at most one campaign-time selected candidate detail without blocking.
+    ///
+    /// `Ok(None)` means the queue is currently empty. A disconnected queue returns
+    /// [`EdgeProducerError::QueueClosed`].
+    pub fn try_receive_candidate_detail(
+        &self,
+    ) -> Result<Option<EdgeCandidateDetailV1>, EdgeProducerError> {
+        let _admission =
+            self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
+        let receiver =
+            self.candidate_receiver.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
+        match receiver.try_recv() {
+            Ok(detail) => {
+                self.pending_candidates
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
+                        pending.checked_sub(1)
+                    })
+                    .map_err(|_| self.poison(EdgeProducerError::Ledger))?;
+                Ok(Some(detail))
+            }
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(EdgeProducerError::QueueClosed),
+        }
+    }
     /// Nonblocking drain of all campaign-time selected candidate details.
     pub fn drain_candidate_details(&self) -> Result<Vec<EdgeCandidateDetailV1>, EdgeProducerError> {
         let _admission =
@@ -2936,7 +3039,7 @@ impl EdgeMeasurementDurabilityV1 {
     }
 }
 
-#[cfg(feature = "test-utils")]
+#[cfg(any(test, feature = "test-utils"))]
 mod candidate_fixture {
     use std::{
         collections::BTreeMap,
@@ -3095,6 +3198,7 @@ mod candidate_fixture {
     pub(super) fn stage(
         owner: &EdgeMeasurementOwnerV1,
         evidence: EdgeSnapshotEvidenceV1,
+        terminalize: bool,
     ) -> Result<(), EdgeProducerError> {
         let victim_raw = Bytes::from_str(&format!("0x{RAW_VICTIM}"))
             .map_err(|_| EdgeProducerError::CandidateEvidenceMismatch)?;
@@ -3131,9 +3235,8 @@ mod candidate_fixture {
             None,
             HashMap::default(),
         );
-        let mut victim_account = AccountInfo::default();
-        victim_account.balance = U256::MAX;
-        victim_account.nonce = transaction.nonce();
+        let victim_account =
+            AccountInfo { balance: U256::MAX, nonce: transaction.nonce(), ..Default::default() };
         provider.insert_account(victim_sender, victim_account.into(), None, HashMap::default());
         for (address, runtime_hash) in [
             (crate::MEASUREMENT_EXECUTOR, owner.config.executor_runtime_hash),
@@ -3295,11 +3398,13 @@ mod candidate_fixture {
             victim_raw: &victim_raw,
             probe: &probe,
         })?;
-        owner.record_terminal_and_resolve(
-            0,
-            BlinkGenerationTerminalV1::Processed,
-            Some(ShadowOutcome::Selected),
-        );
+        if terminalize {
+            owner.record_terminal_and_resolve(
+                0,
+                BlinkGenerationTerminalV1::Processed,
+                Some(ShadowOutcome::Selected),
+            );
+        }
         Ok(())
     }
 }
@@ -3311,7 +3416,7 @@ impl EdgeMeasurementOwnerV1 {
         &self,
         evidence: crate::EdgeSnapshotEvidenceV1,
     ) -> Result<(), EdgeProducerError> {
-        candidate_fixture::stage(self, evidence)
+        candidate_fixture::stage(self, evidence, true)
     }
 }
 #[cfg(test)]
@@ -3613,6 +3718,36 @@ mod tests {
         }
     }
 
+    fn candidate_fixture_owner_config() -> EdgeMeasurementOwnerConfigV1 {
+        let mut config = owner_config();
+        let empty_runtime_hash = keccak256([]);
+        config.executor_runtime_hash = empty_runtime_hash;
+        config.v2_adapter_runtime_hash = empty_runtime_hash;
+        config.v3_adapter_runtime_hash = empty_runtime_hash;
+        config.aerodrome_adapter_runtime_hash = empty_runtime_hash;
+        config.g0_code_identity_digest = EdgeMeasurementOwnerV1::deployment_identity_digest(&[
+            (crate::MEASUREMENT_EXECUTOR, empty_runtime_hash),
+            (config.v2_adapter, empty_runtime_hash),
+            (config.v3_adapter, empty_runtime_hash),
+            (config.aerodrome_adapter, empty_runtime_hash),
+        ]);
+        config
+    }
+
+    fn candidate_fixture_evidence() -> crate::EdgeSnapshotEvidenceV1 {
+        crate::EdgeSnapshotEvidenceV1 {
+            source_generation: 1,
+            pending_snapshot_sequence: 2,
+            coverage_sequence: 3,
+            payload_first_record_sequence: 4,
+            payload_first_record_hash: B256::repeat_byte(5),
+            structural_terminal_hash: B256::repeat_byte(6),
+            connection_sequence: 7,
+            connection_record_hash: B256::repeat_byte(8),
+            registry_terminal_record_hash: B256::repeat_byte(9),
+        }
+    }
+
     const fn cutoff_fields(latch_mono_ns: u64) -> ProducerEpochCutoffFieldsV1 {
         ProducerEpochCutoffFieldsV1 {
             producer_epoch: 1,
@@ -3685,6 +3820,39 @@ mod tests {
         owner.latch_cutoff(cutoff_fields(10));
         assert_eq!(owner.finalization_ready(), Ok(true));
         assert!(owner.final_record().is_ok());
+    }
+
+    #[test]
+    fn cutoff_deadline_sweeps_staged_production_draft_without_poisoning_final() {
+        let owner = EdgeMeasurementOwnerV1::new(candidate_fixture_owner_config()).unwrap();
+        candidate_fixture::stage(&owner, candidate_fixture_evidence(), false)
+            .expect("production candidate staging");
+        assert_eq!(owner.staged.lock().unwrap().len(), 1);
+
+        let bounds = owner.prepare_cutoff_until(Instant::now()).expect("bounded cutoff");
+        assert_eq!(bounds.0, 1);
+        assert_eq!(bounds.1, CheckedCandidateBoundsV1 { count: 0, last_sequence: None });
+        assert!(owner.staged.lock().unwrap().is_empty());
+        assert!(owner.generation_authority.lock().unwrap().is_empty());
+        assert_eq!(
+            owner.candidate_pre_enqueue_drop_counters(),
+            CandidatePreEnqueueDropCountersV1 { cutoff_drain_deadline: 1, ..Default::default() }
+        );
+        assert_eq!(
+            owner.drain_records().unwrap(),
+            vec![EdgeProducerRecordV1::CandidateDrop {
+                generation: 0,
+                reason: CandidatePreEnqueueDropReasonV3::CutoffDrainDeadline,
+            }]
+        );
+
+        owner.latch_cutoff(cutoff_fields(10));
+        assert_eq!(owner.finalization_ready(), Ok(true));
+        let final_record = owner.final_record().expect("recordable final");
+        assert_eq!(final_record.blink.cancelled_before_frame, 1);
+        assert_eq!(final_record.blink.selected_dto_built_preterminal, 1);
+        assert_eq!(final_record.blink.selected_dto_preterminal_failure, 1);
+        assert!(!final_record.blink.poisoned);
     }
     #[test]
     fn late_post_cutoff_terminal_without_authority_is_an_inert_noop() {
@@ -3837,32 +4005,29 @@ mod tests {
 
     #[test]
     fn staging_failure_drop_is_counted_and_finalizable() {
-        let owner = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
-        owner.with_blink_admission(|owner, authoritative| {
-            assert!(authoritative);
-            owner.observe_ledger_result_admitted(owner.ledger().record_observed());
-            owner.record_submission_admitted(0, SlotSubmit::Accepted);
-        });
-        owner.emit_candidate_drop(0, CandidatePreEnqueueDropReasonV3::MissingRequiredEvidence);
+        let owner = EdgeMeasurementOwnerV1::new(candidate_fixture_owner_config()).unwrap();
+        let mut evidence = candidate_fixture_evidence();
+        evidence.structural_terminal_hash = B256::ZERO;
+        assert_eq!(
+            candidate_fixture::stage(&owner, evidence, false),
+            Err(EdgeProducerError::CandidateEvidenceMismatch)
+        );
         owner.record_terminal_and_resolve(
             0,
             BlinkGenerationTerminalV1::Processed,
-            Some(ShadowOutcome::FrameRejected),
+            Some(ShadowOutcome::Selected),
         );
 
         assert_eq!(
             owner.drain_records().unwrap(),
             vec![EdgeProducerRecordV1::CandidateDrop {
                 generation: 0,
-                reason: CandidatePreEnqueueDropReasonV3::MissingRequiredEvidence,
+                reason: CandidatePreEnqueueDropReasonV3::EvidenceMismatch,
             }]
         );
         assert_eq!(
             owner.candidate_pre_enqueue_drop_counters(),
-            CandidatePreEnqueueDropCountersV1 {
-                missing_required_evidence: 1,
-                ..Default::default()
-            }
+            CandidatePreEnqueueDropCountersV1 { evidence_mismatch: 1, ..Default::default() }
         );
         assert_eq!(
             owner.checked_candidate_bounds(),
@@ -3876,6 +4041,70 @@ mod tests {
         assert!(!final_record.blink.poisoned);
     }
 
+    #[test]
+    fn bounded_candidate_receive_preserves_order_and_decrements_pending_once() {
+        let owner = EdgeMeasurementOwnerV1::new(candidate_fixture_owner_config()).unwrap();
+        candidate_fixture::stage(&owner, candidate_fixture_evidence(), true).unwrap();
+        assert_eq!(owner.pending_candidates.load(Ordering::Acquire), 1);
+
+        let first = owner.try_receive_candidate_detail().unwrap().unwrap();
+        assert_eq!(first.candidate_sequence, 0);
+        assert_eq!(owner.pending_candidates.load(Ordering::Acquire), 0);
+        assert_eq!(owner.try_receive_candidate_detail().unwrap(), None);
+        assert_eq!(owner.pending_candidates.load(Ordering::Acquire), 0);
+
+        let mut second = first.clone();
+        second.candidate_sequence = 1;
+        owner.candidate_sender.try_send(first).unwrap();
+        owner.pending_candidates.fetch_add(1, Ordering::Release);
+        owner.candidate_sender.try_send(second).unwrap();
+        owner.pending_candidates.fetch_add(1, Ordering::Release);
+
+        assert_eq!(owner.try_receive_candidate_detail().unwrap().unwrap().candidate_sequence, 0);
+        assert_eq!(owner.pending_candidates.load(Ordering::Acquire), 1);
+        assert_eq!(owner.try_receive_candidate_detail().unwrap().unwrap().candidate_sequence, 1);
+        assert_eq!(owner.pending_candidates.load(Ordering::Acquire), 0);
+        assert_eq!(owner.try_receive_candidate_detail().unwrap(), None);
+    }
+
+    #[test]
+    fn blink_reject_full_and_closed_losses_are_counted_without_advancing_or_poisoning() {
+        let mut full_config = owner_config();
+        full_config.record_queue_capacity = 1;
+        let full = EdgeMeasurementOwnerV1::new(full_config).unwrap();
+        full.emit_blink_reject("wire-end", BlinkRejectReasonV3::WireEnd);
+        let accepted_hash = *full.reject_previous_hash.lock().unwrap();
+        full.emit_blink_reject("wire-end", BlinkRejectReasonV3::WireEnd);
+        full.emit_blink_reject("wire-end", BlinkRejectReasonV3::WireEnd);
+        assert_eq!(
+            full.blink_reject_queue_loss_counters(),
+            BlinkRejectQueueLossCountersV1 { queue_full: 2, queue_closed: 0 }
+        );
+        assert_eq!(full.reject_sequence.load(Ordering::Acquire), 1);
+        assert_eq!(*full.reject_previous_hash.lock().unwrap(), accepted_hash);
+        assert!(!full.poisoned.load(Ordering::Acquire));
+        assert_eq!(full.drain_records().unwrap().len(), 1);
+        full.latch_cutoff(cutoff_fields(10));
+        assert_eq!(full.finalization_ready(), Ok(true));
+        assert!(full.final_record().is_ok());
+
+        let closed = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
+        let (_replacement_sender, replacement_receiver) = sync_channel(1);
+        let original_receiver =
+            std::mem::replace(&mut *closed.record_receiver.lock().unwrap(), replacement_receiver);
+        drop(original_receiver);
+        closed.emit_blink_reject("wire-end", BlinkRejectReasonV3::WireEnd);
+        assert_eq!(
+            closed.blink_reject_queue_loss_counters(),
+            BlinkRejectQueueLossCountersV1 { queue_full: 0, queue_closed: 1 }
+        );
+        assert_eq!(closed.reject_sequence.load(Ordering::Acquire), 0);
+        assert_eq!(*closed.reject_previous_hash.lock().unwrap(), [0; 32]);
+        assert!(!closed.poisoned.load(Ordering::Acquire));
+        closed.latch_cutoff(cutoff_fields(10));
+        assert_eq!(closed.finalization_ready(), Ok(true));
+        assert!(closed.final_record().is_ok());
+    }
     #[test]
     fn full_candidate_and_record_queues_preserve_exact_drop_count_and_final_readiness() {
         let mut config = owner_config();
