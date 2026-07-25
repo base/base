@@ -855,6 +855,15 @@ pub struct BlinkRejectQueueLossCountersV1 {
     pub queue_closed: u64,
 }
 
+/// Exact cumulative counts of candidate-drop records lost at the bounded record queue.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct CandidateDropQueueLossCountersV1 {
+    /// Candidate-drop records lost because the bounded record queue was full.
+    pub queue_full: u64,
+    /// Candidate-drop records lost because the bounded record queue was closed.
+    pub queue_closed: u64,
+}
+
 /// Borrowed, same-frame evidence required to stage one candidate without future queries.
 #[derive(Debug)]
 pub struct EdgeCandidateStageInputV3<'a> {
@@ -996,6 +1005,8 @@ pub struct EdgeMeasurementOwnerV1 {
     candidate_drop_counts: [AtomicU64; CandidatePreEnqueueDropReasonV3::COUNT],
     blink_reject_queue_full: AtomicU64,
     blink_reject_queue_closed: AtomicU64,
+    candidate_drop_queue_full: AtomicU64,
+    candidate_drop_queue_closed: AtomicU64,
     pending_records: AtomicU64,
     pending_candidates: AtomicU64,
     reject_previous_hash: Mutex<[u8; 32]>,
@@ -1028,6 +1039,8 @@ impl EdgeMeasurementOwnerV1 {
             candidate_drop_counts: std::array::from_fn(|_| AtomicU64::new(0)),
             blink_reject_queue_full: AtomicU64::new(0),
             blink_reject_queue_closed: AtomicU64::new(0),
+            candidate_drop_queue_full: AtomicU64::new(0),
+            candidate_drop_queue_closed: AtomicU64::new(0),
             pending_records: AtomicU64::new(0),
             pending_candidates: AtomicU64::new(0),
             reject_previous_hash: Mutex::new([0; 32]),
@@ -1120,6 +1133,14 @@ impl EdgeMeasurementOwnerV1 {
         BlinkRejectQueueLossCountersV1 {
             queue_full: self.blink_reject_queue_full.load(Ordering::Acquire),
             queue_closed: self.blink_reject_queue_closed.load(Ordering::Acquire),
+        }
+    }
+
+    /// Returns an immutable exact cumulative snapshot of lost candidate-drop records.
+    pub fn candidate_drop_queue_loss_counters(&self) -> CandidateDropQueueLossCountersV1 {
+        CandidateDropQueueLossCountersV1 {
+            queue_full: self.candidate_drop_queue_full.load(Ordering::Acquire),
+            queue_closed: self.candidate_drop_queue_closed.load(Ordering::Acquire),
         }
     }
 
@@ -1224,6 +1245,10 @@ impl EdgeMeasurementOwnerV1 {
         let _admission =
             self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
         if !self.generation_is_authoritative(input.generation)? {
+            self.record_candidate_drop(
+                input.generation,
+                CandidatePreEnqueueDropReasonV3::MissingRequiredEvidence,
+            );
             return Err(EdgeProducerError::CandidateEvidenceMismatch);
         }
         let generation = input.generation;
@@ -1322,6 +1347,24 @@ impl EdgeMeasurementOwnerV1 {
         }
     }
 
+    fn handle_candidate_drop_emit_result(&self, result: Result<(), EdgeProducerError>) {
+        let counter = match result {
+            Ok(()) => return,
+            Err(EdgeProducerError::QueueFull) => &self.candidate_drop_queue_full,
+            Err(EdgeProducerError::QueueClosed) => &self.candidate_drop_queue_closed,
+            Err(error) => {
+                self.poison(error);
+                return;
+            }
+        };
+        if counter
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| count.checked_add(1))
+            .is_err()
+        {
+            self.poison(EdgeProducerError::SequenceOverflow);
+        }
+    }
+
     fn authority_record_hash(
         domain: &str,
         canonical_record: &str,
@@ -1385,7 +1428,9 @@ impl EdgeMeasurementOwnerV1 {
             self.poison(EdgeProducerError::SequenceOverflow);
             return;
         }
-        let _ = self.try_send_record(EdgeProducerRecordV1::CandidateDrop { generation, reason });
+        let result =
+            self.try_send_record(EdgeProducerRecordV1::CandidateDrop { generation, reason });
+        self.handle_candidate_drop_emit_result(result);
     }
 
     fn try_send_record(&self, record: EdgeProducerRecordV1) -> Result<(), EdgeProducerError> {
@@ -3198,6 +3243,7 @@ mod candidate_fixture {
     pub(super) fn stage(
         owner: &EdgeMeasurementOwnerV1,
         evidence: EdgeSnapshotEvidenceV1,
+        admit_generation: bool,
         terminalize: bool,
     ) -> Result<(), EdgeProducerError> {
         let victim_raw = Bytes::from_str(&format!("0x{RAW_VICTIM}"))
@@ -3382,12 +3428,14 @@ mod candidate_fixture {
         plan.digest = MeasurementEncoder::digest(&plan)
             .map_err(|_| EdgeProducerError::CandidateEvidenceMismatch)?;
 
-        owner.with_blink_admission(|owner, authoritative| {
-            if authoritative {
-                owner.observe_ledger_result_admitted(owner.ledger().record_observed());
-                owner.record_submission_admitted(0, SlotSubmit::Accepted);
-            }
-        });
+        if admit_generation {
+            owner.with_blink_admission(|owner, authoritative| {
+                if authoritative {
+                    owner.observe_ledger_result_admitted(owner.ledger().record_observed());
+                    owner.record_submission_admitted(0, SlotSubmit::Accepted);
+                }
+            });
+        }
         owner.stage_selected_candidate(EdgeCandidateStageInputV3 {
             generation: 0,
             port: &port,
@@ -3416,7 +3464,7 @@ impl EdgeMeasurementOwnerV1 {
         &self,
         evidence: crate::EdgeSnapshotEvidenceV1,
     ) -> Result<(), EdgeProducerError> {
-        candidate_fixture::stage(self, evidence, true)
+        candidate_fixture::stage(self, evidence, true, true)
     }
 }
 #[cfg(test)]
@@ -3825,7 +3873,7 @@ mod tests {
     #[test]
     fn cutoff_deadline_sweeps_staged_production_draft_without_poisoning_final() {
         let owner = EdgeMeasurementOwnerV1::new(candidate_fixture_owner_config()).unwrap();
-        candidate_fixture::stage(&owner, candidate_fixture_evidence(), false)
+        candidate_fixture::stage(&owner, candidate_fixture_evidence(), true, false)
             .expect("production candidate staging");
         assert_eq!(owner.staged.lock().unwrap().len(), 1);
 
@@ -4009,7 +4057,7 @@ mod tests {
         let mut evidence = candidate_fixture_evidence();
         evidence.structural_terminal_hash = B256::ZERO;
         assert_eq!(
-            candidate_fixture::stage(&owner, evidence, false),
+            candidate_fixture::stage(&owner, evidence, true, false),
             Err(EdgeProducerError::CandidateEvidenceMismatch)
         );
         owner.record_terminal_and_resolve(
@@ -4042,9 +4090,38 @@ mod tests {
     }
 
     #[test]
+    fn non_authoritative_staging_is_named_and_counted_without_poisoning() {
+        let owner = EdgeMeasurementOwnerV1::new(candidate_fixture_owner_config()).unwrap();
+        assert_eq!(
+            candidate_fixture::stage(&owner, candidate_fixture_evidence(), false, false),
+            Err(EdgeProducerError::CandidateEvidenceMismatch)
+        );
+        assert_eq!(
+            owner.candidate_pre_enqueue_drop_counters(),
+            CandidatePreEnqueueDropCountersV1 {
+                missing_required_evidence: 1,
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            owner.drain_records().unwrap(),
+            vec![EdgeProducerRecordV1::CandidateDrop {
+                generation: 0,
+                reason: CandidatePreEnqueueDropReasonV3::MissingRequiredEvidence,
+            }]
+        );
+        assert!(owner.staged.lock().unwrap().is_empty());
+        assert_eq!(
+            owner.checked_candidate_bounds(),
+            CheckedCandidateBoundsV1 { count: 0, last_sequence: None }
+        );
+        assert!(!owner.poisoned.load(Ordering::Acquire));
+    }
+
+    #[test]
     fn bounded_candidate_receive_preserves_order_and_decrements_pending_once() {
         let owner = EdgeMeasurementOwnerV1::new(candidate_fixture_owner_config()).unwrap();
-        candidate_fixture::stage(&owner, candidate_fixture_evidence(), true).unwrap();
+        candidate_fixture::stage(&owner, candidate_fixture_evidence(), true, true).unwrap();
         assert_eq!(owner.pending_candidates.load(Ordering::Acquire), 1);
 
         let first = owner.try_receive_candidate_detail().unwrap().unwrap();
@@ -4104,6 +4181,47 @@ mod tests {
         closed.latch_cutoff(cutoff_fields(10));
         assert_eq!(closed.finalization_ready(), Ok(true));
         assert!(closed.final_record().is_ok());
+    }
+
+    #[test]
+    fn candidate_drop_full_and_closed_losses_are_counted_without_poisoning() {
+        let mut full_config = owner_config();
+        full_config.record_queue_capacity = 1;
+        let full = EdgeMeasurementOwnerV1::new(full_config).unwrap();
+        full.emit_candidate_drop(0, CandidatePreEnqueueDropReasonV3::MissingRequiredEvidence);
+        full.emit_candidate_drop(1, CandidatePreEnqueueDropReasonV3::EvidenceMismatch);
+        full.emit_candidate_drop(2, CandidatePreEnqueueDropReasonV3::MeasurementDerivationRejected);
+        assert_eq!(
+            full.candidate_drop_queue_loss_counters(),
+            CandidateDropQueueLossCountersV1 { queue_full: 2, queue_closed: 0 }
+        );
+        assert_eq!(
+            full.candidate_pre_enqueue_drop_counters(),
+            CandidatePreEnqueueDropCountersV1 {
+                missing_required_evidence: 1,
+                evidence_mismatch: 1,
+                measurement_derivation_rejected: 1,
+                ..Default::default()
+            }
+        );
+        assert!(!full.poisoned.load(Ordering::Acquire));
+        assert_eq!(full.drain_records().unwrap().len(), 1);
+
+        let closed = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
+        let (_replacement_sender, replacement_receiver) = sync_channel(1);
+        let original_receiver =
+            std::mem::replace(&mut *closed.record_receiver.lock().unwrap(), replacement_receiver);
+        drop(original_receiver);
+        closed.emit_candidate_drop(3, CandidatePreEnqueueDropReasonV3::CandidateQueueClosed);
+        assert_eq!(
+            closed.candidate_drop_queue_loss_counters(),
+            CandidateDropQueueLossCountersV1 { queue_full: 0, queue_closed: 1 }
+        );
+        assert_eq!(
+            closed.candidate_pre_enqueue_drop_counters(),
+            CandidatePreEnqueueDropCountersV1 { candidate_queue_closed: 1, ..Default::default() }
+        );
+        assert!(!closed.poisoned.load(Ordering::Acquire));
     }
     #[test]
     fn full_candidate_and_record_queues_preserve_exact_drop_count_and_final_readiness() {

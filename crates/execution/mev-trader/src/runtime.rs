@@ -429,6 +429,8 @@ pub struct MevTraderRuntime {
     control_notify: Notify,
     active: Mutex<Option<(u64, Arc<CancellationToken>)>>,
     active_terminal: Mutex<Option<(u64, Arc<AtomicU8>)>>,
+    #[cfg(test)]
+    test_deadline_millis: AtomicU64,
 }
 
 impl MevTraderRuntime {
@@ -462,6 +464,8 @@ impl MevTraderRuntime {
             control_notify: Notify::new(),
             active: Mutex::new(None),
             active_terminal: Mutex::new(None),
+            #[cfg(test)]
+            test_deadline_millis: AtomicU64::new(0),
         })
     }
 
@@ -700,7 +704,14 @@ impl MevTraderRuntime {
         let Some(queued) = self.ingress.try_take() else { return false };
         let generation = queued.generation();
         let victim = queued.into_victim();
-        let deadline = victim.received_at() + Duration::from_millis(crate::DEADLINE_MILLIS);
+        #[cfg(test)]
+        let deadline_millis = match self.test_deadline_millis.load(Ordering::Acquire) {
+            0 => crate::DEADLINE_MILLIS,
+            deadline_millis => deadline_millis,
+        };
+        #[cfg(not(test))]
+        let deadline_millis = crate::DEADLINE_MILLIS;
+        let deadline = victim.received_at() + Duration::from_millis(deadline_millis);
         let token = Arc::new(CancellationToken::new(deadline));
         let terminal = Arc::new(AtomicU8::new(TERMINAL_UNCLAIMED));
         {
@@ -761,6 +772,14 @@ impl MevTraderRuntime {
             victim_flashblock_index: victim.flashblock_index(),
             received_at: victim.received_at(),
         };
+        #[cfg(test)]
+        let frame_observed_at = if self.test_deadline_millis.load(Ordering::Acquire) == 0 {
+            Instant::now()
+        } else {
+            frame.received_at
+        };
+        #[cfg(not(test))]
+        let frame_observed_at = Instant::now();
         let probe = CancellationProbe::new(Arc::clone(&token), Arc::clone(&self.lifecycle));
         let run = TaskRunner.run(&self.lifecycle, || {
             self.analysis.install(&probe, |probe| {
@@ -771,7 +790,7 @@ impl MevTraderRuntime {
                         port,
                         &snapshot,
                         &frame,
-                        Instant::now(),
+                        frame_observed_at,
                         chain_spec,
                         &audit,
                         probe,
@@ -793,7 +812,7 @@ impl MevTraderRuntime {
                     port,
                     &snapshot,
                     &frame,
-                    Instant::now(),
+                    frame_observed_at,
                     chain_spec,
                     universe.audit(),
                     probe,
@@ -1241,17 +1260,36 @@ impl MevTraderRuntime {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "edge-measurement")]
+    use std::str::FromStr;
     use std::{cell::Cell, collections::BTreeMap, sync::Arc};
 
     use alloy_consensus::{Header, Sealed};
     use alloy_primitives::{Address, B256, U256};
     use reth_provider::StateProviderBox;
 
+    #[cfg(feature = "edge-measurement")]
+    use alloy_consensus::{Transaction, transaction::SignerRecoverable};
+    #[cfg(feature = "edge-measurement")]
+    use alloy_eips::Decodable2718;
+    #[cfg(feature = "edge-measurement")]
+    use alloy_primitives::{Bytes, hex, keccak256, map::HashMap};
+    #[cfg(feature = "edge-measurement")]
+    use alloy_rpc_types_engine::PayloadId;
+    #[cfg(feature = "edge-measurement")]
+    use base_common_consensus::BaseTxEnvelope;
+    #[cfg(feature = "edge-measurement")]
+    use reth_revm::{state::AccountInfo, test_utils::StateProviderTest};
+
     use super::*;
     use crate::{
         AuditedWriteKey, DescriptorHasher, DescriptorPlanDigest, ExactProtocol, FieldKind,
-        FieldRead, FixturePoolRegistry, MeasurementEncoder, PreparedPoolQuote, PreparedPoolState,
-        RegistryHasher, SnapshotHandleFactory, StorageReadPlan, WETH,
+        FieldRead, FixturePoolRegistry, RegistryHasher, SnapshotHandleFactory, StorageReadPlan,
+    };
+    #[cfg(feature = "edge-measurement")]
+    use crate::{
+        BundleVisitor, MeasurementEncoder, PayloadVisitor, PendingSnapshotView, TransactionVisitor,
+        VisitControl, VisitSummary, WETH,
     };
 
     #[derive(Debug)]
@@ -1275,6 +1313,127 @@ mod tests {
 
         fn sealed_header_at_hash(&self, _block_hash: B256) -> Result<Sealed<Header>, PortError> {
             Err(PortError::HeaderUnavailable)
+        }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    const SELECTED_RAW_VICTIM: &str = "02f86c8221058034839a4ae283021528942f16386bb37709016023232523ff6d9daf444be380841249c58bc080a001b927eda2af9b00b52a57be0885e0303c39dd2831732e14051c2336470fd468a0681bf120baf562915841a48601c2b54a6742511e535cf8f71c95115af7ff63bd";
+
+    #[cfg(feature = "edge-measurement")]
+    #[derive(Debug)]
+    struct SelectedFixtureView {
+        parent_hash: B256,
+        latest_header: Sealed<Header>,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    impl PendingSnapshotView for SelectedFixtureView {
+        fn parent_hash(&self) -> B256 {
+            self.parent_hash
+        }
+
+        fn latest_block_number(&self) -> u64 {
+            100
+        }
+
+        fn canonical_block_number(&self) -> u64 {
+            99
+        }
+
+        fn latest_flashblock_index(&self) -> u64 {
+            1
+        }
+
+        fn latest_header(&self) -> Sealed<Header> {
+            self.latest_header.clone()
+        }
+
+        fn pending_account_nonce(
+            &self,
+            _address: Address,
+        ) -> Result<Option<crate::PendingAccountNonce>, PortError> {
+            Ok(None)
+        }
+
+        fn latest_block_transaction_count(&self) -> usize {
+            0
+        }
+
+        fn has_transaction_hash(&self, _transaction_hash: B256) -> bool {
+            false
+        }
+
+        fn transaction_position(
+            &self,
+            _block_number: u64,
+            _transaction_hash: B256,
+        ) -> Option<usize> {
+            None
+        }
+
+        fn visit_latest_block_payloads(
+            &self,
+            visitor: &mut dyn PayloadVisitor,
+        ) -> Result<VisitSummary, PortError> {
+            let control = visitor.visit(PayloadId::new([2; 8]), 1)?;
+            Ok(VisitSummary { visited: 1, complete: control == VisitControl::Continue })
+        }
+
+        fn visit_transactions_for_block(
+            &self,
+            block_number: u64,
+            start: usize,
+            limit: usize,
+            _visitor: &mut dyn TransactionVisitor,
+        ) -> Result<VisitSummary, PortError> {
+            if block_number != 100 || start != 0 || limit != 0 {
+                return Err(PortError::Incoherent);
+            }
+            Ok(VisitSummary { visited: 0, complete: true })
+        }
+
+        fn visit_bundle(
+            &self,
+            _visitor: &mut dyn BundleVisitor,
+        ) -> Result<VisitSummary, PortError> {
+            Ok(VisitSummary { visited: 0, complete: true })
+        }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[derive(Debug)]
+    struct SelectedFixturePort {
+        view: Arc<dyn PendingSnapshotView + Send + Sync>,
+        received_at: Instant,
+        parent_header: Sealed<Header>,
+        provider: StateProviderTest,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    impl TraderSnapshotPort for SelectedFixturePort {
+        fn capture_latest(
+            &self,
+            factory: &SnapshotHandleFactory,
+        ) -> Result<Option<crate::SnapshotHandle>, PortError> {
+            factory.issue(Arc::clone(&self.view), self.received_at).map(Some)
+        }
+
+        fn is_current_authoritative(&self, handle: &crate::SnapshotHandle) -> bool {
+            handle.matches_capture(&self.view, self.received_at)
+        }
+
+        fn state_at_hash(&self, block_hash: B256) -> Result<StateProviderBox, PortError> {
+            if block_hash != self.parent_header.hash() {
+                return Err(PortError::Incoherent);
+            }
+            Ok(Box::new(self.provider.clone()))
+        }
+
+        fn sealed_header_at_hash(&self, block_hash: B256) -> Result<Sealed<Header>, PortError> {
+            if block_hash != self.parent_header.hash() {
+                return Err(PortError::Incoherent);
+            }
+            Ok(self.parent_header.clone())
         }
     }
 
@@ -1500,68 +1659,214 @@ mod tests {
         assert_eq!(final_snapshot.processed_terminal, 1);
     }
 
+    #[cfg(feature = "edge-measurement")]
     #[test]
-    fn t4a_pairwise_pipeline_preserves_selected_plan_when_runtime_staging_fails() {
-        let processed = crate::frame::test_utils::processed_frame();
-        let probe = CancellationProbe::new(
-            Arc::new(CancellationToken::new(Instant::now() + Duration::from_secs(1))),
-            Arc::new(GlobalLifecycle::default()),
-        );
-        let token = Address::with_last_byte(0xaa);
-        let pools = vec![
-            PreparedPoolState {
-                pool: Address::with_last_byte(1),
-                protocol: ExactProtocol::UniswapV2,
-                token0: WETH,
-                token1: token,
-                decimals0: 18,
-                decimals1: 18,
-                fee_pips: 3_000,
-                quote: PreparedPoolQuote::constant_product(
-                    U256::from(1_000_000_000_000_000_000u64),
-                    U256::from(1_000_000_000_000_000_000u64),
-                ),
-            },
-            PreparedPoolState {
-                pool: Address::with_last_byte(2),
-                protocol: ExactProtocol::UniswapV2,
-                token0: WETH,
-                token1: token,
-                decimals0: 18,
-                decimals1: 18,
-                fee_pips: 500,
-                quote: PreparedPoolQuote::constant_product(
-                    U256::from(2_000_000_000_000_000_000u64),
-                    U256::from(1_000_000_000_000_000_000u64),
-                ),
-            },
-        ];
-        let candidates = PairwiseEngine::discover("t4a-runtime", &pools, &[pools[0].pool], &probe)
-            .expect("pairwise discovery");
-        assert!(!candidates.is_empty());
-        let plan = PairwiseEngine::select_measurement(&processed, &candidates, &probe)
-            .expect("measurement selection")
-            .expect("one positive plan");
-        assert_eq!(plan.parent_hash, processed.measurement_context().parent_hash);
-        assert_eq!(plan.block_number, processed.measurement_context().block_number);
-        assert_eq!(plan.predecessor_index, processed.measurement_context().predecessor_index);
-        assert_eq!(plan.payload_id, processed.measurement_context().payload_id);
-        assert_eq!(plan.victim, processed.measurement_context().victim);
-        assert!(!plan.gross_profit.is_zero());
-        MeasurementEncoder::validate(&plan).expect("measurement digest");
+    fn consume_once_preserves_selected_plan_when_production_staging_fails() {
+        let raw_tx =
+            Bytes::from_str(&format!("0x{SELECTED_RAW_VICTIM}")).expect("signed victim bytes");
+        let transaction =
+            BaseTxEnvelope::decode_2718_exact(raw_tx.as_ref()).expect("signed victim transaction");
+        let victim_hash = keccak256(&raw_tx);
+        let victim_sender = transaction.recover_signer().expect("signed victim sender");
+        let first_pool = transaction.to().expect("victim target");
+        let second_pool = Address::repeat_byte(0x53);
+        assert!(first_pool < second_pool);
 
-        #[cfg(feature = "edge-measurement")]
-        {
-            let expected = plan.clone();
-            let stage_called = Cell::new(false);
-            let retained = MevTraderRuntime::observe_candidate_staging(Some(plan), |staged| {
-                stage_called.set(true);
-                assert_eq!(staged, &expected);
-                Err(EdgeProducerError::MissingCandidateEvidence)
-            });
-            assert!(stage_called.get());
-            assert_eq!(retained, Some(expected));
-        }
+        let parent_header = Sealed::new(Header {
+            number: 99,
+            gas_limit: 30_000_000,
+            state_root: B256::repeat_byte(0x44),
+            ..Default::default()
+        });
+        let parent_hash = parent_header.hash();
+        let latest_header = Sealed::new(Header {
+            parent_hash,
+            number: 100,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(0),
+            ..Default::default()
+        });
+        let view: Arc<dyn PendingSnapshotView + Send + Sync> =
+            Arc::new(SelectedFixtureView { parent_hash, latest_header });
+
+        let first_code = Bytes::from(vec![
+            0x67, 0x0d, 0xe0, 0xb6, 0xb3, 0xa7, 0x64, 0x00, 0x00, 0x60, 0x00, 0x55, 0x00,
+        ]);
+        let first_code_hash = keccak256(&first_code);
+        let empty_code_hash = keccak256([]);
+        let reserve = U256::from(1_000_000_000_000_000_000u64);
+        let mut provider = StateProviderTest::default();
+        provider.insert_account(
+            victim_sender,
+            AccountInfo { balance: U256::MAX, nonce: transaction.nonce(), ..Default::default() }
+                .into(),
+            None,
+            HashMap::default(),
+        );
+        let mut first_storage = HashMap::default();
+        first_storage.insert(U256::ZERO.into(), reserve * U256::from(2));
+        first_storage.insert(U256::from(1).into(), reserve);
+        provider.insert_account(first_pool, Default::default(), Some(first_code), first_storage);
+        let mut second_storage = HashMap::default();
+        second_storage.insert(U256::ZERO.into(), reserve * U256::from(2));
+        second_storage.insert(U256::from(1).into(), reserve);
+        provider.insert_account(
+            second_pool,
+            Default::default(),
+            Some(Bytes::new()),
+            second_storage,
+        );
+
+        let token = Address::repeat_byte(0xff);
+        let descriptor = |pool, fee, code_hash, include_sender| {
+            let field = |kind, slot| FieldRead {
+                kind,
+                slot: U256::from(slot),
+                bit_offset: 0,
+                bit_width: 112,
+                signed: false,
+            };
+            let mut audited_writes = vec![
+                AuditedWriteKey::Storage {
+                    address: pool,
+                    slot: U256::ZERO,
+                    evidence_digest: B256::repeat_byte(if pool == first_pool {
+                        0x31
+                    } else {
+                        0x41
+                    }),
+                },
+                AuditedWriteKey::Storage {
+                    address: pool,
+                    slot: U256::from(1),
+                    evidence_digest: B256::repeat_byte(if pool == first_pool {
+                        0x32
+                    } else {
+                        0x42
+                    }),
+                },
+            ];
+            if include_sender {
+                audited_writes.extend([
+                    AuditedWriteKey::AccountBalance {
+                        address: victim_sender,
+                        evidence_digest: B256::repeat_byte(0x33),
+                    },
+                    AuditedWriteKey::AccountNonce {
+                        address: victim_sender,
+                        evidence_digest: B256::repeat_byte(0x34),
+                    },
+                    AuditedWriteKey::AccountBalance {
+                        address: Address::ZERO,
+                        evidence_digest: B256::repeat_byte(0x35),
+                    },
+                ]);
+            }
+            audited_writes.sort_unstable();
+            let mut descriptor = PoolDescriptor {
+                pool,
+                protocol: ExactProtocol::UniswapV2,
+                token0: WETH,
+                token1: token,
+                decimals0: 18,
+                decimals1: 18,
+                fee,
+                code_hash,
+                read_plan: StorageReadPlan::constant_product(
+                    field(FieldKind::Reserve0, 0),
+                    field(FieldKind::Reserve1, 1),
+                ),
+                audited_writes,
+                descriptor_digest: DescriptorPlanDigest(B256::ZERO),
+            };
+            descriptor.descriptor_digest =
+                DescriptorHasher::digest(&descriptor).expect("descriptor digest");
+            descriptor
+        };
+        let descriptors = vec![
+            descriptor(first_pool, 3_000, first_code_hash, true),
+            descriptor(second_pool, 500, empty_code_hash, false),
+        ];
+        let digest = RegistryHasher::digest(&descriptors).expect("registry digest");
+        let registry = FixturePoolRegistry::new(descriptors, digest).expect("registry");
+        let universe = PoolUniverseSnapshot::capture(&registry).expect("pool universe");
+
+        let owner = crate::EdgeMeasurementOwnerV1::new(crate::EdgeMeasurementOwnerConfigV1 {
+            producer_epoch: 1,
+            output_root: std::path::PathBuf::from("/tmp/runtime-selected-staging-test"),
+            output_root_handle: Arc::new(
+                std::fs::File::open(std::env::temp_dir()).expect("temporary root"),
+            ),
+            producer_digest: B256::repeat_byte(1),
+            reject_schema_digest: crate::BlinkRejectClassifierV3::reject_schema_digest(),
+            prereg_digest: B256::repeat_byte(3),
+            policy_digest: B256::repeat_byte(4),
+            config_digest: B256::repeat_byte(5),
+            owner_approval_receipt_digest: B256::repeat_byte(6),
+            record_queue_capacity: 8,
+            candidate_queue_capacity: 8,
+            measurement_sender: Address::repeat_byte(1),
+            executor_runtime_hash: B256::repeat_byte(20),
+            v2_adapter: Address::repeat_byte(2),
+            v2_adapter_runtime_hash: B256::repeat_byte(21),
+            v3_adapter: Address::repeat_byte(3),
+            v3_adapter_runtime_hash: B256::repeat_byte(22),
+            aerodrome_adapter: Address::repeat_byte(4),
+            aerodrome_adapter_runtime_hash: B256::repeat_byte(23),
+            g0_code_identity_digest: B256::repeat_byte(24),
+            raw_reject_inventory_sha256:
+                crate::EdgeMeasurementOwnerConfigV1::raw_reject_inventory_sha256(),
+            raw_reject_source_sha256: B256::new(crate::EdgeMeasurementDurabilityV1::sha256(
+                include_bytes!("edge_measurement.rs"),
+            )),
+            measurement_tx_source_sha256: B256::new(crate::EdgeMeasurementDurabilityV1::sha256(
+                include_bytes!("measurement_tx.rs"),
+            )),
+        })
+        .expect("owner");
+        let config = MevTraderRuntimeConfig::shadow(universe)
+            .expect("shadow config")
+            .with_edge_measurement_owner(Arc::clone(&owner))
+            .expect("measurement owner");
+        let runtime = MevTraderRuntime::start(config).expect("runtime");
+        runtime.test_deadline_millis.store(5_000, Ordering::Release);
+        let received_at = Instant::now();
+        let port = SelectedFixturePort { view, received_at, parent_header, provider };
+        let victim = BlinkVictim::decode(
+            &format!(
+                r#"{{"jsonrpc":"2.0","method":"eth_subscription","params":{{"subscription":"sub","timestamp":1,"publishTime":2,"blockNumber":"0x64","flashblockIndex":"0x2","result":{{"chainId":"0x2105","type":"0x2","hash":"0x{}","from":"0x{}","rawTx":"0x{}"}}}}}}"#,
+                hex::encode(victim_hash),
+                hex::encode(victim_sender),
+                hex::encode(&raw_tx),
+            ),
+            "sub",
+            received_at,
+        )
+        .expect("blink victim");
+
+        runtime.submit_blink_victim(victim);
+        assert!(runtime.consume_once(&port, Arc::new(BaseChainSpec::mainnet())));
+        assert_eq!(runtime.counters().count(A1Outcome::FrameBound), 1);
+        assert_eq!(runtime.shadow_outcome_counters().count(ShadowOutcome::Selected), 1);
+
+        let measurement = runtime.shadow.try_take().expect("selected measurement channel");
+        assert_eq!(measurement.outcome, ShadowOutcome::Selected);
+        let plan = measurement.plan.expect("production selected plan");
+        MeasurementEncoder::validate(&plan).expect("selected plan digest");
+        assert_eq!(plan.victim, victim_hash);
+        assert!(!plan.gross_profit.is_zero());
+        assert_eq!(runtime.counters().count(A1Outcome::FrameBound), 1);
+        assert_eq!(runtime.shadow_outcome_counters().count(ShadowOutcome::Selected), 1);
+        assert_eq!(owner.candidate_pre_enqueue_drop_counters().missing_required_evidence, 1);
+        assert_eq!(
+            owner.drain_records().expect("candidate terminal channel"),
+            vec![crate::EdgeProducerRecordV1::CandidateDrop {
+                generation: 0,
+                reason: crate::CandidatePreEnqueueDropReasonV3::MissingRequiredEvidence,
+            }]
+        );
+        let ledger = owner.ledger().verify_final().expect("terminal ledger");
+        assert_eq!(ledger.processed_terminal, 1);
     }
 
     #[test]

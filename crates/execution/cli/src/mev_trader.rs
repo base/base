@@ -29,7 +29,7 @@ use alloy_primitives::{Address, B256};
 #[cfg(feature = "edge-measurement")]
 use base_flashblocks::{
     ClockAnchorRecordV1, EdgeEventDrainStatusV1, EdgeMeasurementGlobal,
-    EdgeMeasurementInstallConfigV1, EdgeMeasurementMissingEvidenceV1, EdgeMeasurementRecorderV1,
+    EdgeMeasurementInstallConfigV1, EdgeMeasurementRecorderV1, EdgeMeasurementRegistryHandleV2,
     EdgeSourceEventV1, EpochRouteV1, PENDING_TERMINAL_RECORD_CAPACITY_MAX_V2,
     PayloadFirstObservationV1, PendingCliTerminalV2, PendingRegistryFinalSummaryV2,
     PendingTerminalRecordV2, ProcessorLifecycleProductV1, ProducerExternalBoundsV1,
@@ -77,7 +77,18 @@ fn latch_edge_failure(failure: &'static str) {
     }
 }
 #[cfg(feature = "edge-measurement")]
+fn cleanup_snapshot_task_registry(
+    registry: &EdgeMeasurementRegistryHandleV2,
+    failure: &'static str,
+) {
+    if registry.cli_cancelled().is_err() {
+        latch_edge_failure(failure);
+    }
+}
+#[cfg(feature = "edge-measurement")]
 const EDGE_CUTOFF_DRAIN_DEADLINE_V1: Duration = Duration::from_secs(30);
+#[cfg(feature = "edge-measurement")]
+const EDGE_SHUTDOWN_JOIN_DEADLINE_V1: Duration = Duration::from_secs(30);
 #[cfg(feature = "edge-measurement")]
 const EDGE_CANDIDATE_DETAIL_DRAIN_BUDGET_V1: usize = 64;
 
@@ -94,12 +105,35 @@ fn await_edge_cutoff_drain(recorder: &EdgeMeasurementRecorderV1, deadline: Insta
     }
 }
 #[cfg(feature = "edge-measurement")]
+#[derive(Debug, Default)]
+struct EdgeCutoffLatchV1 {
+    started: AtomicBool,
+    completed: AtomicBool,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeCutoffLatchV1 {
+    fn wait_for_completion(&self, deadline: Instant) -> bool {
+        while !self.completed.load(Ordering::Acquire) {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        true
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
 fn latch_edge_cutoff_once(
-    latched: &AtomicBool,
+    latched: &EdgeCutoffLatchV1,
     recorder: &EdgeMeasurementRecorderV1,
     owner: &EdgeMeasurementOwnerV1,
 ) {
-    if latched.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+    if latched.started.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+        if !latched.wait_for_completion(Instant::now() + EDGE_CUTOFF_TASK_JOIN_DEADLINE_V1) {
+            latch_edge_failure("CutoffTaskCompletionTimeout");
+        }
         return;
     }
     recorder.prepare_cutoff();
@@ -137,15 +171,39 @@ fn latch_edge_cutoff_once(
         }
         Err(_) => latch_edge_failure("BlinkCursorUnavailableAtCutoff"),
     }
+    latched.completed.store(true, Ordering::Release);
+}
+#[cfg(feature = "edge-measurement")]
+enum EdgeShutdownTaskOutcome<T> {
+    Completed(T),
+    JoinFailed,
+    TimedOut,
+}
+
+#[cfg(feature = "edge-measurement")]
+async fn await_edge_shutdown_task<T>(
+    mut handle: tokio::task::JoinHandle<T>,
+    deadline: Duration,
+) -> EdgeShutdownTaskOutcome<T> {
+    match tokio::time::timeout(deadline, &mut handle).await {
+        Ok(Ok(output)) => EdgeShutdownTaskOutcome::Completed(output),
+        Ok(Err(_)) => EdgeShutdownTaskOutcome::JoinFailed,
+        Err(_) => {
+            handle.abort();
+            EdgeShutdownTaskOutcome::TimedOut
+        }
+    }
 }
 #[cfg(feature = "edge-measurement")]
 async fn abort_and_await_edge_cutoff_task(handle: Option<tokio::task::JoinHandle<()>>) {
-    if let Some(handle) = handle {
+    if let Some(mut handle) = handle {
         handle.abort();
-        if let Err(error) = handle.await
-            && !error.is_cancelled()
-        {
-            latch_edge_failure("CutoffTaskJoinFailed");
+        match tokio::time::timeout(EDGE_CUTOFF_TASK_JOIN_DEADLINE_V1, &mut handle).await {
+            Ok(Err(error)) if !error.is_cancelled() => {
+                latch_edge_failure("CutoffTaskJoinFailed");
+            }
+            Err(_) => latch_edge_failure("CutoffTaskJoinTimeout"),
+            Ok(_) => {}
         }
     }
 }
@@ -157,28 +215,11 @@ const EDGE_SEGMENT_MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
 #[cfg(feature = "edge-measurement")]
 const EDGE_SEGMENT_MAX_FLUSH_LATENCY: Duration = Duration::from_secs(5);
 #[cfg(feature = "edge-measurement")]
+const EDGE_CUTOFF_TASK_JOIN_DEADLINE_V1: Duration = Duration::from_secs(65);
+#[cfg(feature = "edge-measurement")]
 const EDGE_CLOCK_OBSERVATION_CAPACITY: usize = 8_192;
 #[cfg(feature = "edge-measurement")]
 const EDGE_CANDIDATE_JOIN_CAPACITY: usize = 65_536;
-#[cfg(feature = "edge-measurement")]
-const EDGE_MEASUREMENT_HORIZON_SECS: usize = 72 * 60 * 60;
-#[cfg(feature = "edge-measurement")]
-const EDGE_HORIZON_FLUSH_SEGMENTS: usize =
-    EDGE_MEASUREMENT_HORIZON_SECS / EDGE_SEGMENT_MAX_FLUSH_LATENCY.as_secs() as usize + 1;
-#[cfg(feature = "edge-measurement")]
-const EDGE_SEGMENT_DESCRIPTOR_CAPACITY: usize =
-    if EDGE_HORIZON_FLUSH_SEGMENTS > EDGE_CANDIDATE_JOIN_CAPACITY {
-        EDGE_HORIZON_FLUSH_SEGMENTS
-    } else {
-        EDGE_CANDIDATE_JOIN_CAPACITY
-    };
-#[cfg(feature = "edge-measurement")]
-const EDGE_MAX_ROLLING_LEDGERS: usize = 13;
-#[cfg(feature = "edge-measurement")]
-const EDGE_FINAL_ARTIFACT_CAPACITY: usize = 32;
-#[cfg(feature = "edge-measurement")]
-const EDGE_ARTIFACT_INDEX_CAPACITY: usize =
-    EDGE_SEGMENT_DESCRIPTOR_CAPACITY * EDGE_MAX_ROLLING_LEDGERS + EDGE_FINAL_ARTIFACT_CAPACITY;
 #[cfg(feature = "edge-measurement")]
 const EDGE_ZERO_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -222,9 +263,6 @@ impl EdgeRollingLedgerV1 {
             descriptors: Vec::new(),
         }
     }
-    const fn descriptor_capacity_available(descriptor_count: usize) -> bool {
-        descriptor_count < EDGE_SEGMENT_DESCRIPTOR_CAPACITY
-    }
 }
 
 #[cfg(feature = "edge-measurement")]
@@ -265,7 +303,8 @@ struct EdgeCanonicalWriterV1 {
     candidate_joins: BTreeMap<u64, EdgeCandidateJoinV1>,
     candidate_validated_count: u64,
     candidate_durable: BTreeSet<u64>,
-    registry_h1_segment_sha: Vec<B256>,
+    registry_h1_segment_sha: BTreeMap<u64, (u64, B256)>,
+    candidate_join_exclusions: BTreeSet<u64>,
     source_sequence_by_ledger: BTreeMap<(&'static str, u64), u64>,
     source_durable: BTreeSet<u64>,
     source_durable_ack_cursor: u64,
@@ -304,7 +343,8 @@ impl EdgeCanonicalWriterV1 {
             candidate_joins: BTreeMap::new(),
             candidate_validated_count: 0,
             candidate_durable: BTreeSet::new(),
-            registry_h1_segment_sha: Vec::new(),
+            registry_h1_segment_sha: BTreeMap::new(),
+            candidate_join_exclusions: BTreeSet::new(),
             source_sequence_by_ledger: BTreeMap::new(),
             source_durable: BTreeSet::new(),
             source_durable_ack_cursor: 0,
@@ -333,7 +373,7 @@ impl EdgeCanonicalWriterV1 {
         usize::try_from(sequence).ok().and_then(|index| hashes.get(index)).copied()
     }
 
-    fn run(mut self, stop: Arc<AtomicBool>) -> io::Result<()> {
+    fn run(mut self) -> io::Result<()> {
         self.directory_handle.sync_all()?;
         loop {
             let progressed = match self.drain_once() {
@@ -343,15 +383,10 @@ impl EdgeCanonicalWriterV1 {
                     return Err(error);
                 }
             };
-            if self.finalized
-                && stop.load(Ordering::Acquire)
-                && !progressed
-                && !self.has_buffered_records()
-            {
+            if self.finalized && !progressed && !self.has_buffered_records() {
                 return Ok(());
             }
             if self.recorder.cutoff_sealed()
-                && stop.load(Ordering::Acquire)
                 && !progressed
                 && !self.finalized
                 && !self.has_buffered_records()
@@ -384,9 +419,6 @@ impl EdgeCanonicalWriterV1 {
                         return Err(io::Error::other("fatal source drain readiness rejection"));
                     }
                 }
-            } else if stop.load(Ordering::Acquire) && !self.recorder.cutoff_sealed() {
-                self.recorder.latch_coordinator_failure("WriterStoppedBeforeCutoff");
-                return Err(io::Error::other("writer stopped before cutoff"));
             }
             if !progressed {
                 std::thread::sleep(Duration::from_millis(10));
@@ -432,10 +464,12 @@ impl EdgeCanonicalWriterV1 {
                 _ => "source-detail",
             };
             if let EdgeSourceEventV1::ClockAnchor(record) = *event {
-                if self.clock_observations.len() == EDGE_CLOCK_OBSERVATION_CAPACITY {
-                    return Err(io::Error::other("clock observation capacity exceeded"));
+                if self.clock_observations.len() < EDGE_CLOCK_OBSERVATION_CAPACITY {
+                    self.clock_observations.push(self.clock_anchor_value(record));
+                } else {
+                    self.missing_evidence.insert("ClockObservationCapacityExcluded");
+                    self.recorder.latch_coordinator_failure("ClockObservationCapacityExcluded");
                 }
-                self.clock_observations.push(self.clock_anchor_value(record));
             }
             let value = self.source_event_value(*event);
             let state = value
@@ -561,15 +595,14 @@ impl EdgeCanonicalWriterV1 {
             )? {
                 self.record_registry_segment("registry-h2", &segment)?;
             }
-            if pending_sequence
-                != self
-                    .registry_pending
-                    .get(&coverage_sequence)
-                    .expect("terminal inserted")
-                    .metadata
-                    .identity
-                    .pending_snapshot_sequence
-            {
+            let inserted_pending_sequence = self
+                .registry_pending
+                .get(&coverage_sequence)
+                .ok_or_else(|| io::Error::other("registry terminal insert missing"))?
+                .metadata
+                .identity
+                .pending_snapshot_sequence;
+            if pending_sequence != inserted_pending_sequence {
                 return Err(io::Error::other("registry pending identity changed"));
             }
             self.next_registry_terminal = self
@@ -592,7 +625,9 @@ impl EdgeCanonicalWriterV1 {
             let coverage_sequence = terminal.coverage_sequence;
             let pending_sequence = terminal.metadata.identity.pending_snapshot_sequence;
             if Self::sequence_hash(&self.registry_segment_sha, coverage_sequence).is_none()
-                || Self::sequence_hash(&self.registry_h1_segment_sha, pending_sequence).is_none()
+                || self.registry_h1_segment_sha.get(&pending_sequence).is_none_or(
+                    |(stored_coverage_sequence, _)| *stored_coverage_sequence != coverage_sequence,
+                )
             {
                 break;
             }
@@ -694,26 +729,35 @@ impl EdgeCanonicalWriterV1 {
             {
                 return Err(io::Error::other("candidate detail sequence mismatch"));
             }
-            if self.candidate_joins.len() >= EDGE_CANDIDATE_JOIN_CAPACITY {
-                return Err(io::Error::other("candidate compact join capacity exceeded"));
-            }
-            let join = EdgeCandidateJoinV1 {
-                candidate_sequence: sequence,
-                coverage_generation: detail.coverage_generation,
-                connection_sequence: detail.connection_sequence_at_capture,
-                connection_record_hash: B256::new(detail.connection_record_hash_at_capture),
-                registry_terminal_record_hash: B256::new(detail.registry_terminal_record_hash),
+            let (state, value) = if self.candidate_joins.len() >= EDGE_CANDIDATE_JOIN_CAPACITY {
+                self.missing_evidence.insert("CandidateCompactJoinCapacityExcluded");
+                self.recorder.latch_coordinator_failure("CandidateCompactJoinCapacityExcluded");
+                if !self.candidate_join_exclusions.insert(sequence) {
+                    return Err(io::Error::other("duplicate candidate join exclusion"));
+                }
+                (
+                    "CandidateDetailExcluded",
+                    Self::compact_candidate_detail_exclusion(
+                        &Self::candidate_detail_value(detail)?,
+                        "CandidateCompactJoinCapacityExcluded",
+                    )?,
+                )
+            } else {
+                let join = EdgeCandidateJoinV1 {
+                    candidate_sequence: sequence,
+                    coverage_generation: detail.coverage_generation,
+                    connection_sequence: detail.connection_sequence_at_capture,
+                    connection_record_hash: B256::new(detail.connection_record_hash_at_capture),
+                    registry_terminal_record_hash: B256::new(detail.registry_terminal_record_hash),
+                };
+                if self.candidate_joins.insert(sequence, join).is_some() {
+                    return Err(io::Error::other("duplicate candidate detail sequence"));
+                }
+                ("CandidateDetail", Self::candidate_detail_value(detail)?)
             };
-            if self.candidate_joins.insert(sequence, join).is_some() {
-                return Err(io::Error::other("duplicate candidate detail sequence"));
-            }
-            let value = Self::candidate_detail_value(detail)?;
-            for segment in self.push_rolling_record(
-                "candidate",
-                "edge-candidate-detail/v1",
-                "CandidateDetail",
-                value,
-            )? {
+            for segment in
+                self.push_rolling_record("candidate", "edge-candidate-detail/v1", state, value)?
+            {
                 self.validate_candidate_segment(&segment)?;
             }
             progressed = true;
@@ -959,12 +1003,13 @@ impl EdgeCanonicalWriterV1 {
             "schema": "edge-clock-anchor/v1",
             "utcNs": record.observation.utc_ns.map(|value| JsonValue::String(value.to_string())),
         });
-        let object = value.as_object_mut().expect("clock anchor is an object");
-        if record.observation.mono_ns.is_none() {
-            object.remove("monoNs");
-        }
-        if record.observation.utc_ns.is_none() {
-            object.remove("utcNs");
+        if let Some(object) = value.as_object_mut() {
+            if record.observation.mono_ns.is_none() {
+                object.remove("monoNs");
+            }
+            if record.observation.utc_ns.is_none() {
+                object.remove("utcNs");
+            }
         }
         value
     }
@@ -1383,7 +1428,10 @@ impl EdgeCanonicalWriterV1 {
         Ok(Self::sha256_hex(&bytes))
     }
 
-    fn compact_candidate_detail_exclusion(record: &JsonValue) -> io::Result<JsonValue> {
+    fn compact_candidate_detail_exclusion(
+        record: &JsonValue,
+        reason: &'static str,
+    ) -> io::Result<JsonValue> {
         let object = record
             .as_object()
             .ok_or_else(|| io::Error::other("candidate detail must be an object"))?;
@@ -1402,7 +1450,7 @@ impl EdgeCanonicalWriterV1 {
             "payloadFirstRecordHash": required("payloadFirstRecordHash")?,
             "payloadFirstRecordSequence": required("payloadFirstRecordSequence")?,
             "pendingSnapshotSequence": required("pendingSnapshotSequence")?,
-            "reason": "CandidateDetailRecordTooLarge",
+            "reason": reason,
             "registryTerminalRecordHash": required("registryTerminalRecordHash")?,
             "schema": "edge-candidate-detail-exclusion/v1",
             "selectedPlanDigest": required("selectedPlanDigest")?,
@@ -1444,34 +1492,33 @@ impl EdgeCanonicalWriterV1 {
         let mut record_hash = Self::authority_record_hash(hash_domain, &record)?;
         record
             .as_object_mut()
-            .expect("record object checked")
+            .ok_or_else(|| io::Error::other("rolling record must remain an object"))?
             .insert("recordHash".to_owned(), JsonValue::String(record_hash.clone()));
         let mut line_len = Self::canonical_line(&record)?.len();
         if line_len + 1024 > EDGE_SEGMENT_MAX_RECORD_BYTES && ledger_name == "candidate" {
-            record = Self::compact_candidate_detail_exclusion(&record)?;
-            {
-                let object = record.as_object_mut().expect("candidate exclusion object");
-                object.insert(
-                    "producerEpoch".to_owned(),
-                    JsonValue::String(self.owner.producer_epoch().to_string()),
-                );
-                object.insert(
-                    "sequence".to_owned(),
-                    JsonValue::String(ledger.next_sequence.to_string()),
-                );
-                object.insert(
-                    "state".to_owned(),
-                    JsonValue::String("CandidateDetailExcluded".to_owned()),
-                );
-                object.insert(
-                    "previousRecordHash".to_owned(),
-                    JsonValue::String(ledger.previous_record_hash.clone()),
-                );
-            }
+            record =
+                Self::compact_candidate_detail_exclusion(&record, "CandidateDetailRecordTooLarge")?;
+            let object = record
+                .as_object_mut()
+                .ok_or_else(|| io::Error::other("candidate exclusion must be an object"))?;
+            object.insert(
+                "producerEpoch".to_owned(),
+                JsonValue::String(self.owner.producer_epoch().to_string()),
+            );
+            object
+                .insert("sequence".to_owned(), JsonValue::String(ledger.next_sequence.to_string()));
+            object.insert(
+                "state".to_owned(),
+                JsonValue::String("CandidateDetailExcluded".to_owned()),
+            );
+            object.insert(
+                "previousRecordHash".to_owned(),
+                JsonValue::String(ledger.previous_record_hash.clone()),
+            );
             let exclusion_hash = Self::authority_record_hash(hash_domain, &record)?;
             record
                 .as_object_mut()
-                .expect("candidate exclusion object")
+                .ok_or_else(|| io::Error::other("candidate exclusion must be an object"))?
                 .insert("recordHash".to_owned(), JsonValue::String(exclusion_hash.clone()));
             record_hash = exclusion_hash;
             line_len = Self::canonical_line(&record)?.len();
@@ -1574,15 +1621,7 @@ impl EdgeCanonicalWriterV1 {
         if bytes.len() > EDGE_SEGMENT_MAX_RECORD_BYTES {
             return Err(io::Error::other("sealed segment exceeds byte bound"));
         }
-        if !EdgeRollingLedgerV1::descriptor_capacity_available(ledger.descriptors.len()) {
-            return Err(io::Error::other("segment descriptor capacity exceeded"));
-        }
         let filename = format!("{}-{:020}.ndjson", ledger.name, ledger.next_segment);
-        if self.persisted_artifacts.len() >= EDGE_ARTIFACT_INDEX_CAPACITY
-            && !self.persisted_artifacts.contains_key(&filename)
-        {
-            return Err(io::Error::other("artifact index capacity exceeded"));
-        }
         self.persist_immutable(&filename, &bytes)?;
         let descriptor = EdgeSegmentDescriptorV1 {
             filename: filename.clone(),
@@ -1651,6 +1690,15 @@ impl EdgeCanonicalWriterV1 {
             if !self.candidate_durable.contains(&sequence) {
                 break;
             }
+            if self.candidate_join_exclusions.remove(&sequence) {
+                self.candidate_durable.remove(&sequence);
+                self.candidate_validated_count = self
+                    .candidate_validated_count
+                    .checked_add(1)
+                    .ok_or_else(|| io::Error::other("candidate validated count overflow"))?;
+                progressed = true;
+                continue;
+            }
             let join = self
                 .candidate_joins
                 .get(&sequence)
@@ -1710,12 +1758,14 @@ impl EdgeCanonicalWriterV1 {
                 .get(coverage_sequence)
                 .ok_or_else(|| io::Error::other("registry durable identity missing"))?;
             if ledger == "registry-h1" {
-                Self::append_sequence_hash(
-                    &mut self.registry_h1_segment_sha,
-                    terminal.metadata.identity.pending_snapshot_sequence,
-                    segment_hash,
-                    "registry H1 durable segment sequence mismatch",
-                )?;
+                let pending_sequence = terminal.metadata.identity.pending_snapshot_sequence;
+                if self
+                    .registry_h1_segment_sha
+                    .insert(pending_sequence, (*coverage_sequence, segment_hash))
+                    .is_some()
+                {
+                    return Err(io::Error::other("duplicate registry H1 pending sequence"));
+                }
             } else if ledger == "registry-h2" {
                 Self::append_sequence_hash(
                     &mut self.registry_segment_sha,
@@ -1734,43 +1784,6 @@ impl EdgeCanonicalWriterV1 {
         registry: &PendingRegistryFinalSummaryV2,
     ) -> u64 {
         registry.unregistered_send_count
-    }
-    fn source_missing_evidence_counts(
-        counts: &EdgeMeasurementMissingEvidenceV1,
-    ) -> BTreeMap<&'static str, String> {
-        [
-            ("activeStateCapacityOverflow", counts.active_state_capacity_overflow),
-            ("cacheDrainIncomplete", counts.cache_drain_incomplete),
-            ("coordinatorFailure", counts.coordinator_failure),
-            ("cutoffBoundMissing", counts.cutoff_bound_missing),
-            ("cutoffDeadlineCacheGeneration", counts.cutoff_deadline_cache_generation),
-            ("cutoffDeadlineProcessorGeneration", counts.cutoff_deadline_processor_generation),
-            ("decodedGenerationCapacityExcluded", counts.decoded_generation_capacity_excluded),
-            ("eventQueueClosed", counts.event_queue_closed),
-            ("eventQueueFull", counts.event_queue_full),
-            ("lateProcessorCompletion", counts.late_processor_completion),
-            ("connectionEventQueueClosedExcluded", counts.connection_event_queue_closed_excluded),
-            ("connectionEventQueueFullExcluded", counts.connection_event_queue_full_excluded),
-            ("connectionTransitionAfterQueueLoss", counts.connection_transition_after_queue_loss),
-            ("missingSourceIdentity", counts.missing_source_identity),
-            ("snapshotBindingCapacityExcluded", counts.snapshot_binding_capacity_excluded),
-            ("snapshotPayloadFirstUnavailable", counts.snapshot_payload_first_unavailable),
-            ("observerPanicked", counts.observer_panicked),
-            ("payloadIndexZeroLate", counts.payload_index_zero_late),
-            ("payloadIndexZeroMissing", counts.payload_index_zero_missing),
-            ("payloadFirstMapCapacityExcluded", counts.payload_first_map_capacity_excluded),
-            ("payloadFirstQueueClosedExcluded", counts.payload_first_queue_closed_excluded),
-            ("payloadFirstQueueFullExcluded", counts.payload_first_queue_full_excluded),
-            (
-                "payloadGenerationRefCapacityExcluded",
-                counts.payload_generation_ref_capacity_excluded,
-            ),
-            ("terminalRecordAllocationExcluded", counts.terminal_record_allocation_excluded),
-            ("terminalRecordCapacityExcluded", counts.terminal_record_capacity_excluded),
-        ]
-        .into_iter()
-        .map(|(reason, count)| (reason, count.to_string()))
-        .collect()
     }
 
     fn registry_terminal_exclusion_counts(
@@ -1919,7 +1932,7 @@ impl EdgeCanonicalWriterV1 {
             authority_wire_terminal_count,
             source_pending,
             poison_count,
-            missing_evidence_count,
+            _,
         ) = self.recorder.source_final_counters();
         let coverage_len = usize::try_from(registry.coverage_count)
             .map_err(|_| io::Error::other("coverage count does not fit usize"))?;
@@ -2016,6 +2029,7 @@ impl EdgeCanonicalWriterV1 {
             || persisted_candidate_count != candidate_bounds.count
             || self.candidate_validated_count != candidate_bounds.count
             || !self.candidate_joins.is_empty()
+            || !self.candidate_join_exclusions.is_empty()
             || !self.candidate_durable.is_empty()
         {
             return Err(io::Error::other("candidate final conservation mismatch"));
@@ -2124,7 +2138,9 @@ impl EdgeCanonicalWriterV1 {
             "terminalRecordCount": registry.terminal_records,
         }));
         if let Some(through) = registry.last_coverage_sequence {
-            let object = registry_value.as_object_mut().expect("registry final is an object");
+            let object = registry_value
+                .as_object_mut()
+                .ok_or_else(|| io::Error::other("registry final must be an object"))?;
             object.insert("expectedThrough".to_owned(), JsonValue::String(through.to_string()));
             object.insert("terminalizedThrough".to_owned(), JsonValue::String(through.to_string()));
         }
@@ -2176,132 +2192,73 @@ impl EdgeCanonicalWriterV1 {
         self.persist_named_artifact("source-coverage-final-v1.json", &source_coverage_value)?;
         drop(source_coverage_value);
 
-        let source_missing_evidence = self.recorder.missing_evidence_counts();
-        let source_missing_evidence_counts =
-            Self::source_missing_evidence_counts(&source_missing_evidence);
-        let source_missing_evidence_total = [
-            source_missing_evidence.active_state_capacity_overflow,
-            source_missing_evidence.cache_drain_incomplete,
-            source_missing_evidence.coordinator_failure,
-            source_missing_evidence.cutoff_bound_missing,
-            source_missing_evidence.cutoff_deadline_cache_generation,
-            source_missing_evidence.cutoff_deadline_processor_generation,
-            source_missing_evidence.decoded_generation_capacity_excluded,
-            source_missing_evidence.event_queue_closed,
-            source_missing_evidence.event_queue_full,
-            source_missing_evidence.late_processor_completion,
-            source_missing_evidence.connection_event_queue_closed_excluded,
-            source_missing_evidence.connection_event_queue_full_excluded,
-            source_missing_evidence.connection_transition_after_queue_loss,
-            source_missing_evidence.missing_source_identity,
-            source_missing_evidence.observer_panicked,
-            source_missing_evidence.payload_index_zero_late,
-            source_missing_evidence.payload_index_zero_missing,
-            source_missing_evidence.payload_first_map_capacity_excluded,
-            source_missing_evidence.payload_first_queue_closed_excluded,
-            source_missing_evidence.payload_first_queue_full_excluded,
-            source_missing_evidence.payload_generation_ref_capacity_excluded,
-            source_missing_evidence.terminal_record_allocation_excluded,
-            source_missing_evidence.terminal_record_capacity_excluded,
-            source_missing_evidence.snapshot_binding_capacity_excluded,
-            source_missing_evidence.snapshot_payload_first_unavailable,
-        ]
-        .into_iter()
-        .try_fold(0_u64, u64::checked_add)
-        .ok_or_else(|| io::Error::other("source missing-evidence total overflow"))?;
-        if source_missing_evidence_total != missing_evidence_count {
-            return Err(io::Error::other("source missing-evidence total mismatch"));
+        let source_missing_evidence_snapshot = self.recorder.missing_evidence_snapshot();
+        let mut source_missing_evidence_numeric = source_missing_evidence_snapshot
+            .breakdown
+            .iter()
+            .map(|entry| (entry.artifact_key, entry.count))
+            .collect::<BTreeMap<_, _>>();
+        let mut source_missing_evidence_total = source_missing_evidence_snapshot.total;
+        let source_breakdown_total = source_missing_evidence_snapshot
+            .breakdown
+            .iter()
+            .try_fold(0_u64, |total, entry| total.checked_add(entry.count));
+        let mut coordinator_missing_evidence_numeric = source_missing_evidence_snapshot
+            .coordinator_breakdown
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        let coordinator_missing_evidence_total = coordinator_missing_evidence_numeric
+            .values()
+            .try_fold(0_u64, |total, count| total.checked_add(*count));
+        let source_coordinator_failure_count =
+            source_missing_evidence_numeric.get("coordinatorFailure").copied().unwrap_or(0);
+        let registry_source_terminal_mismatch = registry.terminal_record_capacity_missing
+            != source_missing_evidence_numeric
+                .get("terminalRecordCapacityExcluded")
+                .copied()
+                .unwrap_or(0)
+            || registry.terminal_record_allocation_missing
+                != source_missing_evidence_numeric
+                    .get("terminalRecordAllocationExcluded")
+                    .copied()
+                    .unwrap_or(0);
+        let mut snapshot_mismatches = Vec::new();
+        if source_breakdown_total != Some(source_missing_evidence_total) {
+            snapshot_mismatches.push("SourceMissingEvidenceSnapshotMismatch");
         }
-        for (reason, count) in [
-            ("ActiveStateCapacityOverflow", source_missing_evidence.active_state_capacity_overflow),
-            ("CacheDrainIncomplete", source_missing_evidence.cache_drain_incomplete),
-            ("CoordinatorFailure", source_missing_evidence.coordinator_failure),
-            ("CutoffBoundMissing", source_missing_evidence.cutoff_bound_missing),
-            (
-                "CutoffDeadlineCacheGeneration",
-                source_missing_evidence.cutoff_deadline_cache_generation,
-            ),
-            (
-                "CutoffDeadlineProcessorGeneration",
-                source_missing_evidence.cutoff_deadline_processor_generation,
-            ),
-            (
-                "DecodedGenerationCapacityExcluded",
-                source_missing_evidence.decoded_generation_capacity_excluded,
-            ),
-            ("EventQueueClosed", source_missing_evidence.event_queue_closed),
-            ("EventQueueFull", source_missing_evidence.event_queue_full),
-            ("LateProcessorCompletion", source_missing_evidence.late_processor_completion),
-            (
-                "ConnectionEventQueueClosedExcluded",
-                source_missing_evidence.connection_event_queue_closed_excluded,
-            ),
-            (
-                "ConnectionEventQueueFullExcluded",
-                source_missing_evidence.connection_event_queue_full_excluded,
-            ),
-            (
-                "ConnectionTransitionAfterQueueLoss",
-                source_missing_evidence.connection_transition_after_queue_loss,
-            ),
-            ("MissingSourceIdentity", source_missing_evidence.missing_source_identity),
-            (
-                "SnapshotBindingCapacityExcluded",
-                source_missing_evidence.snapshot_binding_capacity_excluded,
-            ),
-            (
-                "SnapshotPayloadFirstUnavailable",
-                source_missing_evidence.snapshot_payload_first_unavailable,
-            ),
-            ("ObserverPanicked", source_missing_evidence.observer_panicked),
-            ("PayloadIndexZeroLate", source_missing_evidence.payload_index_zero_late),
-            ("PayloadIndexZeroMissing", source_missing_evidence.payload_index_zero_missing),
-            (
-                "PayloadFirstMapCapacityExcluded",
-                source_missing_evidence.payload_first_map_capacity_excluded,
-            ),
-            (
-                "PayloadFirstQueueClosedExcluded",
-                source_missing_evidence.payload_first_queue_closed_excluded,
-            ),
-            (
-                "PayloadFirstQueueFullExcluded",
-                source_missing_evidence.payload_first_queue_full_excluded,
-            ),
-            (
-                "PayloadGenerationRefCapacityExcluded",
-                source_missing_evidence.payload_generation_ref_capacity_excluded,
-            ),
-            (
-                "TerminalRecordAllocationExcluded",
-                source_missing_evidence.terminal_record_allocation_excluded,
-            ),
-            (
-                "TerminalRecordCapacityExcluded",
-                source_missing_evidence.terminal_record_capacity_excluded,
-            ),
-        ] {
-            if count != 0 {
-                self.missing_evidence.insert(reason);
+        if coordinator_missing_evidence_total != Some(source_coordinator_failure_count) {
+            snapshot_mismatches.push("CoordinatorMissingEvidenceSnapshotMismatch");
+        }
+        if registry_source_terminal_mismatch {
+            snapshot_mismatches.push("RegistrySourceTerminalExclusionMismatch");
+        }
+        for entry in &source_missing_evidence_snapshot.breakdown {
+            if entry.count != 0 {
+                self.missing_evidence.insert(entry.reason_name);
             }
         }
-        let (_, coordinator_failure_count) = self.recorder.producer_failure_counts();
-        let coordinator_missing_evidence_snapshot =
-            source_missing_evidence.coordinator_reasons.snapshot();
-        let coordinator_missing_evidence_total = coordinator_missing_evidence_snapshot
-            .iter()
-            .map(|(_, count)| *count)
-            .try_fold(0_u64, u64::checked_add)
-            .ok_or_else(|| io::Error::other("coordinator missing-evidence total overflow"))?;
-        if coordinator_missing_evidence_total != coordinator_failure_count {
-            return Err(io::Error::other("coordinator missing-evidence total mismatch"));
+        for reason in snapshot_mismatches {
+            self.missing_evidence.insert(reason);
+            let count = coordinator_missing_evidence_numeric.entry(reason).or_default();
+            *count = count.saturating_add(1);
+            let coordinator_failure =
+                source_missing_evidence_numeric.entry("coordinatorFailure").or_default();
+            *coordinator_failure = coordinator_failure.saturating_add(1);
+            source_missing_evidence_total = source_missing_evidence_total.saturating_add(1);
         }
-        for (reason, count) in &coordinator_missing_evidence_snapshot {
+        for (reason, count) in &coordinator_missing_evidence_numeric {
             if *count != 0 {
                 self.missing_evidence.insert(reason);
             }
         }
-        let coordinator_missing_evidence_counts = coordinator_missing_evidence_snapshot
+        let coordinator_failure_count =
+            source_missing_evidence_numeric.get("coordinatorFailure").copied().unwrap_or(0);
+        let missing_evidence_count = source_missing_evidence_total;
+        let source_missing_evidence_counts = source_missing_evidence_numeric
+            .into_iter()
+            .map(|(reason, count)| (reason, count.to_string()))
+            .collect::<BTreeMap<_, _>>();
+        let coordinator_missing_evidence_counts = coordinator_missing_evidence_numeric
             .into_iter()
             .map(|(reason, count)| (reason, count.to_string()))
             .collect::<BTreeMap<_, _>>();
@@ -2310,13 +2267,6 @@ impl EdgeCanonicalWriterV1 {
             .checked_add(registry.terminal_record_allocation_missing)
             .and_then(|count| count.checked_add(registry.registration_capacity_missing))
             .ok_or_else(|| io::Error::other("registry terminal exclusion total overflow"))?;
-        if registry.terminal_record_capacity_missing
-            != source_missing_evidence.terminal_record_capacity_excluded
-            || registry.terminal_record_allocation_missing
-                != source_missing_evidence.terminal_record_allocation_excluded
-        {
-            return Err(io::Error::other("registry and source terminal exclusion counts mismatch"));
-        }
         let registry_terminal_exclusion_counts =
             Self::registry_terminal_exclusion_counts(&registry);
         for (reason, count) in [
@@ -2353,10 +2303,24 @@ impl EdgeCanonicalWriterV1 {
                 self.missing_evidence.insert(reason);
             }
         }
+        let candidate_drop_queue_loss = self.owner.candidate_drop_queue_loss_counters();
+        let candidate_drop_queue_loss_counts = json!({
+            "queueClosed": candidate_drop_queue_loss.queue_closed.to_string(),
+            "queueFull": candidate_drop_queue_loss.queue_full.to_string(),
+        });
+        for (reason, count) in [
+            ("CandidateDropQueueClosed", candidate_drop_queue_loss.queue_closed),
+            ("CandidateDropQueueFull", candidate_drop_queue_loss.queue_full),
+        ] {
+            if count != 0 {
+                self.missing_evidence.insert(reason);
+            }
+        }
         let health_value = json!({
             "coordinatorFailureCount": coordinator_failure_count.to_string(),
             "coordinatorMissingEvidenceCounts": coordinator_missing_evidence_counts.clone(),
             "candidatePreEnqueueDropCounts": candidate_drop_counts,
+            "candidateDropQueueLossCounts": candidate_drop_queue_loss_counts,
             "blinkRejectQueueLossCounts": blink_reject_queue_loss_counts,
             "missingEvidenceCount": missing_evidence_count.to_string(),
             "pending": "0",
@@ -2450,6 +2414,7 @@ impl EdgeCanonicalWriterV1 {
             "checkpointPublished": false,
             "coordinatorMissingEvidenceCounts": coordinator_missing_evidence_counts.clone(),
             "candidatePreEnqueueDropCounts": candidate_drop_counts,
+            "candidateDropQueueLossCounts": candidate_drop_queue_loss_counts,
             "blinkRejectQueueLossCounts": blink_reject_queue_loss_counts,
             "missingEvidence": missing_evidence,
             "missingEvidenceCount": missing_evidence_count.to_string(),
@@ -2480,6 +2445,7 @@ impl EdgeCanonicalWriterV1 {
             "candidateEmpty": candidate_bounds.count == 0,
             "candidateReconcileVeto": "CandidateFreezeV5InputUnavailable",
             "candidatePreEnqueueDropCounts": candidate_drop_counts,
+            "candidateDropQueueLossCounts": candidate_drop_queue_loss_counts,
             "blinkRejectQueueLossCounts": blink_reject_queue_loss_counts,
             "coordinatorMissingEvidenceCounts": coordinator_missing_evidence_counts,
             "checkpointPublished": false,
@@ -2517,11 +2483,6 @@ impl EdgeCanonicalWriterV1 {
     }
 
     fn persist_named_artifact(&mut self, filename: &str, value: &JsonValue) -> io::Result<()> {
-        if self.persisted_artifacts.len() >= EDGE_ARTIFACT_INDEX_CAPACITY
-            && !self.persisted_artifacts.contains_key(filename)
-        {
-            return Err(io::Error::other("artifact index capacity exceeded"));
-        }
         let bytes = Self::canonical_line(value)?;
         self.persist_immutable(filename, &bytes)?;
         self.persisted_artifacts.insert(filename.to_owned(), Self::sha256_hex(&bytes));
@@ -3635,17 +3596,14 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
             executor.spawn_with_graceful_shutdown_signal(move |signal| {
                 Box::pin(async move {
                     #[cfg(feature = "edge-measurement")]
-                    let edge_writer_stop = Arc::new(AtomicBool::new(false));
-                    #[cfg(feature = "edge-measurement")]
                     let edge_writer_handle =
                         edge_writer_inputs.map(|(provenance, recorder, owner)| {
-                            let stop = Arc::clone(&edge_writer_stop);
                             tokio::task::spawn_blocking(move || {
-                                EdgeCanonicalWriterV1::new(provenance, recorder, owner).run(stop)
+                                EdgeCanonicalWriterV1::new(provenance, recorder, owner).run()
                             })
                         });
                     #[cfg(feature = "edge-measurement")]
-                    let edge_cutoff_latched = Arc::new(AtomicBool::new(false));
+                    let edge_cutoff_latched = Arc::new(EdgeCutoffLatchV1::default());
                     #[cfg(feature = "edge-measurement")]
                     let edge_cutoff_handle = EdgeMeasurementGlobal::installed()
                         .zip(edge_cutoff_owner.clone())
@@ -3657,6 +3615,8 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                             })
                         });
                     let snapshot_runtime = Arc::clone(&runtime);
+                    #[cfg(feature = "edge-measurement")]
+                    let snapshot_cleanup_registry = edge_measurement_registry;
                     let snapshot_handle = tokio::spawn(async move {
                         loop {
                             tokio::select! {
@@ -3781,39 +3741,98 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                     let _guard = signal.await;
                     #[cfg(feature = "edge-measurement")]
                     abort_and_await_edge_cutoff_task(edge_cutoff_handle).await;
+                    runtime.close();
+                    #[cfg(feature = "edge-measurement")]
+                    match await_edge_shutdown_task(
+                        snapshot_handle,
+                        EDGE_SHUTDOWN_JOIN_DEADLINE_V1,
+                    )
+                    .await
+                    {
+                        EdgeShutdownTaskOutcome::Completed(()) => {}
+                        EdgeShutdownTaskOutcome::JoinFailed => {
+                            latch_edge_failure("SnapshotTaskJoinFailed");
+                            cleanup_snapshot_task_registry(
+                                &snapshot_cleanup_registry,
+                                "SnapshotTaskJoinFailedCliCancellationRangeFailed",
+                            );
+                        }
+                        EdgeShutdownTaskOutcome::TimedOut => {
+                            latch_edge_failure("SnapshotTaskJoinTimeout");
+                            cleanup_snapshot_task_registry(
+                                &snapshot_cleanup_registry,
+                                "SnapshotTaskJoinTimeoutCliCancellationRangeFailed",
+                            );
+                        }
+                    }
+                    #[cfg(not(feature = "edge-measurement"))]
+                    let _ = snapshot_handle.await;
+                    #[cfg(feature = "edge-measurement")]
+                    match await_edge_shutdown_task(
+                        consumer_handle,
+                        EDGE_SHUTDOWN_JOIN_DEADLINE_V1,
+                    )
+                    .await
+                    {
+                        EdgeShutdownTaskOutcome::Completed(()) => {}
+                        EdgeShutdownTaskOutcome::JoinFailed => {
+                            latch_edge_failure("ConsumerTaskJoinFailed");
+                        }
+                        EdgeShutdownTaskOutcome::TimedOut => {
+                            latch_edge_failure("ConsumerTaskJoinTimeout");
+                        }
+                    }
+                    #[cfg(not(feature = "edge-measurement"))]
+                    let _ = consumer_handle.await;
+                    #[cfg(feature = "edge-measurement")]
+                    match await_edge_shutdown_task(
+                        control_handle,
+                        EDGE_SHUTDOWN_JOIN_DEADLINE_V1,
+                    )
+                    .await
+                    {
+                        EdgeShutdownTaskOutcome::Completed(()) => {}
+                        EdgeShutdownTaskOutcome::JoinFailed => {
+                            latch_edge_failure("ControlTaskJoinFailed");
+                        }
+                        EdgeShutdownTaskOutcome::TimedOut => {
+                            latch_edge_failure("ControlTaskJoinTimeout");
+                        }
+                    }
+                    #[cfg(not(feature = "edge-measurement"))]
+                    let _ = control_handle.await;
+                    if let Some(handle) = ingress_handle {
+                        #[cfg(feature = "edge-measurement")]
+                        match await_edge_shutdown_task(handle, EDGE_SHUTDOWN_JOIN_DEADLINE_V1).await {
+                            EdgeShutdownTaskOutcome::Completed(()) => {}
+                            EdgeShutdownTaskOutcome::JoinFailed => {
+                                latch_edge_failure("IngressTaskJoinFailed");
+                            }
+                            EdgeShutdownTaskOutcome::TimedOut => {
+                                latch_edge_failure("IngressTaskJoinTimeout");
+                            }
+                        }
+                        #[cfg(not(feature = "edge-measurement"))]
+                        let _ = handle.await;
+                    }
                     #[cfg(feature = "edge-measurement")]
                     if let (Some(recorder), Some(owner)) =
                         (EdgeMeasurementGlobal::installed(), edge_cutoff_owner.as_ref())
                     {
                         latch_edge_cutoff_once(&edge_cutoff_latched, &recorder, owner);
                     }
-                    runtime.close();
-                    if snapshot_handle.await.is_err() {
-                        #[cfg(feature = "edge-measurement")]
-                        latch_edge_failure("SnapshotTaskJoinFailed");
-                    }
-                    if consumer_handle.await.is_err() {
-                        #[cfg(feature = "edge-measurement")]
-                        latch_edge_failure("ConsumerTaskJoinFailed");
-                    }
-                    if control_handle.await.is_err() {
-                        #[cfg(feature = "edge-measurement")]
-                        latch_edge_failure("ControlTaskJoinFailed");
-                    }
-                    if let Some(handle) = ingress_handle
-                        && handle.await.is_err()
-                    {
-                        #[cfg(feature = "edge-measurement")]
-                        latch_edge_failure("IngressTaskJoinFailed");
-                    }
                     #[cfg(feature = "edge-measurement")]
-                    {
-                        edge_writer_stop.store(true, Ordering::Release);
-                        if let Some(handle) = edge_writer_handle {
-                            match handle.await {
-                                Ok(Ok(())) => {}
-                                Ok(Err(_)) => latch_edge_failure("CanonicalWriterFinalFailed"),
-                                Err(_) => latch_edge_failure("CanonicalWriterJoinFailed"),
+                    if let Some(handle) = edge_writer_handle {
+                        match await_edge_shutdown_task(handle, EDGE_SHUTDOWN_JOIN_DEADLINE_V1).await {
+                            EdgeShutdownTaskOutcome::Completed(Ok(())) => {}
+                            EdgeShutdownTaskOutcome::Completed(Err(_)) => {
+                                latch_edge_failure("CanonicalWriterFinalFailed");
+                            }
+                            EdgeShutdownTaskOutcome::JoinFailed => {
+                                latch_edge_failure("CanonicalWriterJoinFailed");
+                            }
+                            EdgeShutdownTaskOutcome::TimedOut => {
+                                latch_edge_failure("CanonicalWriterJoinTimeout");
                             }
                         }
                     }
@@ -5090,6 +5109,29 @@ mod tests {
         assert!(!await_edge_cutoff_drain(&recorder, Instant::now()));
     }
     #[cfg(feature = "edge-measurement")]
+    #[tokio::test]
+    async fn hung_shutdown_join_timeout_continues_to_finals() {
+        let (mut writer, root) = edge_test_writer("hung-shutdown-join");
+        seal_empty_test_writer(&mut writer);
+
+        let handle = tokio::task::spawn(std::future::pending::<()>());
+        let outcome = await_edge_shutdown_task(handle, Duration::ZERO).await;
+        assert!(matches!(outcome, EdgeShutdownTaskOutcome::TimedOut));
+        writer.recorder.latch_coordinator_failure("SyntheticShutdownTaskJoinTimeout");
+        writer.run().expect("writer finalization after shutdown timeout");
+
+        let health: JsonValue = serde_json::from_slice(
+            &fs::read(root.join("producer-health-final-v1.json")).expect("health final"),
+        )
+        .expect("health JSON");
+        assert_eq!(
+            health["coordinatorMissingEvidenceCounts"]["SyntheticShutdownTaskJoinTimeout"],
+            "1"
+        );
+        assert!(root.join("producer-manifest-v1.json").is_file());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+    #[cfg(feature = "edge-measurement")]
     fn edge_test_writer(label: &str) -> (EdgeCanonicalWriterV1, PathBuf) {
         let root = std::env::temp_dir().join(format!(
             "base-edge-writer-{label}-{}-{}",
@@ -5197,6 +5239,40 @@ mod tests {
         .expect("test owner");
         (EdgeCanonicalWriterV1::new(config, recorder, owner), root)
     }
+    #[cfg(feature = "edge-measurement")]
+    fn seal_empty_test_writer(writer: &mut EdgeCanonicalWriterV1) {
+        loop {
+            for ledger in writer.ledgers.values_mut() {
+                if !ledger.records.is_empty() {
+                    ledger.batch_started_at = Some(Instant::now() - EDGE_SEGMENT_MAX_FLUSH_LATENCY);
+                }
+            }
+            if !writer.drain_once().expect("startup drain") {
+                break;
+            }
+        }
+        writer.recorder.prepare_cutoff();
+        let (blink_count, candidate_bounds) = writer.owner.prepare_cutoff().expect("Blink cutoff");
+        assert_eq!(blink_count, 0);
+        assert_eq!(candidate_bounds.count, 0);
+        let cutoff = writer.recorder.latch_cutoff(ProducerExternalBoundsV1 {
+            last_admitted_blink_generation: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+        });
+        writer.owner.latch_cutoff(base_mev_trader::ProducerEpochCutoffFieldsV1 {
+            producer_epoch: cutoff.producer_epoch,
+            cutoff_clock_observation_ordinal: cutoff.cutoff_clock_observation_ordinal,
+            last_admitted_wire_ordinal: cutoff.last_admitted_wire_ordinal,
+            last_admitted_source_generation: cutoff.last_admitted_source_generation,
+            last_admitted_blink_generation: cutoff.last_admitted_blink_generation,
+            last_pending_snapshot_sequence: cutoff.last_pending_snapshot_sequence,
+            last_coverage_sequence: cutoff.last_coverage_sequence,
+            last_candidate_sequence: cutoff.last_candidate_sequence,
+            latch_mono_ns: cutoff.latch_mono_ns,
+        });
+        while writer.drain_once().expect("cutoff drain") {}
+    }
 
     #[cfg(feature = "edge-measurement")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5216,7 +5292,7 @@ mod tests {
             .observe_wire(b"campaign-interruption-rejected")
             .expect("interruption wire");
         writer.recorder.decode_rejected(rejected);
-        let latched = Arc::new(AtomicBool::new(false));
+        let latched = Arc::new(EdgeCutoffLatchV1::default());
         let task_latched = Arc::clone(&latched);
         let recorder = Arc::clone(&writer.recorder);
         let owner = Arc::clone(&writer.owner);
@@ -5226,17 +5302,23 @@ mod tests {
         });
 
         let deadline = Instant::now() + Duration::from_secs(5);
-        while !cutoff_handle.is_finished() {
+        while !latched.started.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "cutoff task did not start");
+            tokio::task::yield_now().await;
+        }
+        let cutoff_join = tokio::task::spawn(abort_and_await_edge_cutoff_task(Some(cutoff_handle)));
+        while !cutoff_join.is_finished() {
             writer.drain_once().expect("campaign interruption drain");
             for ledger in writer.ledgers.values_mut() {
                 if !ledger.records.is_empty() {
                     ledger.batch_started_at = Some(Instant::now() - EDGE_SEGMENT_MAX_FLUSH_LATENCY);
                 }
             }
-            assert!(Instant::now() < deadline, "cutoff task did not finish");
+            assert!(Instant::now() < deadline, "in-progress cutoff task did not finish");
             tokio::task::yield_now().await;
         }
-        abort_and_await_edge_cutoff_task(Some(cutoff_handle)).await;
+        cutoff_join.await.expect("cutoff join observer");
+        assert!(latched.completed.load(Ordering::Acquire));
 
         loop {
             for ledger in writer.ledgers.values_mut() {
@@ -5359,56 +5441,47 @@ mod tests {
 
     #[cfg(feature = "edge-measurement")]
     #[test]
-    fn writer_waits_for_shutdown_diagnostics_before_publishing_finals() {
-        let (mut writer, root) = edge_test_writer("shutdown-diagnostic-fence");
-        loop {
-            for ledger in writer.ledgers.values_mut() {
-                if !ledger.records.is_empty() {
-                    ledger.batch_started_at = Some(Instant::now() - EDGE_SEGMENT_MAX_FLUSH_LATENCY);
-                }
-            }
-            if !writer.drain_once().expect("startup drain") {
-                break;
-            }
-        }
-        writer.recorder.prepare_cutoff();
-        let (blink_count, candidate_bounds) = writer.owner.prepare_cutoff().expect("Blink cutoff");
-        assert_eq!(blink_count, 0);
-        assert_eq!(candidate_bounds.count, 0);
-        let cutoff = writer.recorder.latch_cutoff(ProducerExternalBoundsV1 {
-            last_admitted_blink_generation: 0,
-            last_coverage_sequence: 0,
-            last_candidate_sequence: 0,
-        });
-        writer.owner.latch_cutoff(base_mev_trader::ProducerEpochCutoffFieldsV1 {
-            producer_epoch: cutoff.producer_epoch,
-            cutoff_clock_observation_ordinal: cutoff.cutoff_clock_observation_ordinal,
-            last_admitted_wire_ordinal: cutoff.last_admitted_wire_ordinal,
-            last_admitted_source_generation: cutoff.last_admitted_source_generation,
-            last_admitted_blink_generation: cutoff.last_admitted_blink_generation,
-            last_pending_snapshot_sequence: cutoff.last_pending_snapshot_sequence,
-            last_coverage_sequence: cutoff.last_coverage_sequence,
-            last_candidate_sequence: cutoff.last_candidate_sequence,
-            latch_mono_ns: cutoff.latch_mono_ns,
-        });
-        while writer.drain_once().expect("cutoff drain") {}
-
+    fn timer_cutoff_finalizes_without_shutdown_stop() {
+        let (writer, root) = edge_test_writer("timer-cutoff");
         let recorder = Arc::clone(&writer.recorder);
-        let stop = Arc::new(AtomicBool::new(false));
-        let writer_stop = Arc::clone(&stop);
-        let handle = std::thread::spawn(move || writer.run(writer_stop));
-        std::thread::sleep(Duration::from_millis(50));
-        assert!(!root.join("producer-health-final-v1.json").exists());
+        let owner = Arc::clone(&writer.owner);
+        let handle = std::thread::spawn(move || writer.run());
 
-        recorder.latch_coordinator_failure("SyntheticShutdownJoinFailure");
-        stop.store(true, Ordering::Release);
+        let latched = EdgeCutoffLatchV1::default();
+        latch_edge_cutoff_once(&latched, &recorder, &owner);
         handle.join().expect("writer join").expect("writer finalization");
 
-        let health: JsonValue = serde_json::from_slice(
-            &fs::read(root.join("producer-health-final-v1.json")).expect("health final"),
-        )
-        .expect("health JSON");
-        assert_eq!(health["coordinatorMissingEvidenceCounts"]["SyntheticShutdownJoinFailure"], "1");
+        assert!(root.join("producer-health-final-v1.json").is_file());
+        assert!(root.join("producer-manifest-v1.json").is_file());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn missing_evidence_counter_mutation_does_not_abort_finalize() {
+        let (mut writer, root) = edge_test_writer("missing-evidence-mutation");
+        seal_empty_test_writer(&mut writer);
+
+        let recorder = Arc::clone(&writer.recorder);
+        let mutating = Arc::new(AtomicBool::new(true));
+        let mutation_started = Arc::new(AtomicBool::new(false));
+        let thread_started = Arc::clone(&mutation_started);
+        let mutating_thread = Arc::clone(&mutating);
+        let mutation_handle = std::thread::spawn(move || {
+            while mutating_thread.load(Ordering::Acquire) {
+                recorder.latch_coordinator_failure("SyntheticCounterMutationDuringFinalize");
+                thread_started.store(true, Ordering::Release);
+                std::thread::yield_now();
+            }
+        });
+        while !mutation_started.load(Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+        let result = writer.finalize();
+        mutating.store(false, Ordering::Release);
+        mutation_handle.join().expect("mutation join");
+
+        result.expect("counter mutation must not abort finalization");
+        assert!(root.join("producer-manifest-v1.json").is_file());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -5485,35 +5558,46 @@ mod tests {
 
     #[cfg(feature = "edge-measurement")]
     #[test]
-    fn descriptor_capacity_covers_full_seventy_two_hour_flush_horizon() {
-        assert_eq!(EDGE_HORIZON_FLUSH_SEGMENTS, 51_841);
-        const { assert!(EDGE_SEGMENT_DESCRIPTOR_CAPACITY >= EDGE_HORIZON_FLUSH_SEGMENTS) };
-        assert_eq!(
-            [
-                "payload-first",
-                "connection",
-                "clock",
-                "coverage",
-                "coverage-postcutoff-excluded",
-                "postcutoff-diagnostic",
-                "coverage-detail",
+    fn rolling_descriptor_and_artifact_indexes_have_no_campaign_hard_cap() {
+        const FORMER_DESCRIPTOR_CAPACITY: usize = 65_814;
+        let (mut writer, root) = edge_test_writer("uncapped-segment-index");
+        let descriptor = EdgeSegmentDescriptorV1 {
+            filename: String::new(),
+            first_sequence: String::new(),
+            last_sequence: String::new(),
+            record_count: String::new(),
+            segment_seal_sha256: String::new(),
+            file_sha256: String::new(),
+        };
+        let ledger = writer
+            .ledgers
+            .entry("source-detail")
+            .or_insert_with(|| EdgeRollingLedgerV1::new("source-detail", "edge-source-detail/v1"));
+        ledger.descriptors.resize(FORMER_DESCRIPTOR_CAPACITY + 1, descriptor);
+        for index in 0..=FORMER_DESCRIPTOR_CAPACITY {
+            writer
+                .persisted_artifacts
+                .insert(format!("prior-{index:020}.ndjson"), EDGE_ZERO_HASH.to_owned());
+        }
+        writer
+            .push_rolling_record(
                 "source-detail",
-                "registry-h1",
-                "registry-h2",
-                "blink-reject",
-                "candidate-drop",
-                "candidate",
-            ]
-            .len(),
-            EDGE_MAX_ROLLING_LEDGERS
-        );
+                "edge-source-detail/v1",
+                "Observed",
+                json!({"schema": "edge-source-detail/v1"}),
+            )
+            .expect("record beyond former cap");
+        writer
+            .flush_rolling_ledger("source-detail")
+            .expect("flush beyond former cap")
+            .expect("sealed segment beyond former cap");
         assert_eq!(
-            EDGE_ARTIFACT_INDEX_CAPACITY,
-            EDGE_SEGMENT_DESCRIPTOR_CAPACITY * EDGE_MAX_ROLLING_LEDGERS
-                + EDGE_FINAL_ARTIFACT_CAPACITY
+            writer.ledgers["source-detail"].descriptors.len(),
+            FORMER_DESCRIPTOR_CAPACITY + 2
         );
-
-        assert!(EdgeRollingLedgerV1::descriptor_capacity_available(EDGE_HORIZON_FLUSH_SEGMENTS));
+        assert_eq!(writer.persisted_artifacts.len(), FORMER_DESCRIPTOR_CAPACITY + 2);
+        drop(writer);
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[cfg(feature = "edge-measurement")]
@@ -5756,6 +5840,65 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn registry_h1_pending_sequence_index_allows_sparse_keys_in_coverage_order() {
+        let (mut writer, root) = edge_test_writer("sparse-registry-h1");
+        let first_hash = B256::with_last_byte(1);
+        let second_hash = B256::with_last_byte(2);
+        assert!(writer.registry_h1_segment_sha.insert(4, (0, first_hash)).is_none());
+        assert!(writer.registry_h1_segment_sha.insert(9, (1, second_hash)).is_none());
+        assert_eq!(writer.registry_h1_segment_sha.get(&4), Some(&(0, first_hash)));
+        assert_eq!(writer.registry_h1_segment_sha.get(&9), Some(&(1, second_hash)));
+        let mut coverage_order =
+            writer.registry_h1_segment_sha.values().copied().collect::<Vec<_>>();
+        coverage_order.sort_by_key(|(coverage_sequence, _)| *coverage_sequence);
+        assert_eq!(coverage_order, vec![(0, first_hash), (1, second_hash)]);
+        drop(writer);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn snapshot_join_cleanup_terminalizes_outstanding_delivery() {
+        let (writer, root) = edge_test_writer("snapshot-join-cleanup");
+        let registry = writer.recorder.registry();
+        let pending = Arc::new(pending_blocks());
+        let registration = registry.register(&pending, None);
+        registry.record_send(registration, Some(1)).expect("published outstanding delivery");
+        assert_eq!(registry.final_summary().set_cardinalities.pending_delivery_final, 1);
+
+        registry.cli_cancelled().expect("snapshot task registry cleanup");
+
+        let summary = registry.final_summary();
+        assert_eq!(summary.set_cardinalities.pending_delivery_final, 0);
+        assert_eq!(summary.counters.cli_cancelled_attributed, 1);
+        drop(writer);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn clock_observation_capacity_plus_one_still_finalizes() {
+        let (mut writer, root) = edge_test_writer("clock-capacity-plus-one");
+        writer.clock_observations = vec![json!({}); EDGE_CLOCK_OBSERVATION_CAPACITY];
+
+        seal_empty_test_writer(&mut writer);
+
+        assert_eq!(writer.clock_observations.len(), EDGE_CLOCK_OBSERVATION_CAPACITY);
+        assert!(writer.missing_evidence.contains("ClockObservationCapacityExcluded"));
+        writer.finalize().expect("clock capacity finalization");
+        let health: JsonValue = serde_json::from_slice(
+            &fs::read(root.join("producer-health-final-v1.json")).expect("health final"),
+        )
+        .expect("health JSON");
+        assert_eq!(
+            health["coordinatorMissingEvidenceCounts"]["ClockObservationCapacityExcluded"],
+            "1"
+        );
+        assert!(root.join("producer-manifest-v1.json").is_file());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
     #[cfg(feature = "edge-measurement")]
     #[test]
     fn edge_clock_both_failed_omits_failed_values() {
@@ -6051,7 +6194,7 @@ mod tests {
             let registry_counts = value["registryTerminalExclusionCounts"]
                 .as_object()
                 .expect("registry exclusion counts");
-            assert_eq!(source_counts.len(), 25);
+            assert_eq!(source_counts.len(), 24);
             assert_eq!(registry_counts.len(), 3);
             assert!(source_counts.values().all(|count| count == "0"));
             assert!(registry_counts.values().all(|count| count == "0"));
