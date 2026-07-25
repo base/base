@@ -558,12 +558,12 @@ impl MevTraderRuntime {
         self.edge_measurement.as_ref().map(|owner| owner.drain_records())
     }
 
-    /// Drains the installed producer's bounded candidate queue without blocking.
+    /// Drains the installed producer's bounded campaign-time detail queue without blocking.
     #[cfg(feature = "edge-measurement")]
-    pub fn drain_edge_candidates(
+    pub fn drain_edge_candidate_details(
         &self,
-    ) -> Option<Result<Vec<crate::EdgeCandidateV3>, EdgeProducerError>> {
-        self.edge_measurement.as_ref().map(|owner| owner.drain_candidates())
+    ) -> Option<Result<Vec<crate::EdgeCandidateDetailV1>, EdgeProducerError>> {
+        self.edge_measurement.as_ref().map(|owner| owner.drain_candidate_details())
     }
 
     /// Returns the exact drained final to the later CLI checkpoint coordinator.

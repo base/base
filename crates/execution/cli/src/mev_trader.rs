@@ -30,9 +30,10 @@ use alloy_primitives::{Address, B256};
 use base_flashblocks::{
     ClockAnchorRecordV1, EdgeEventDrainStatusV1, EdgeMeasurementGlobal,
     EdgeMeasurementInstallConfigV1, EdgeMeasurementRecorderV1, EdgeSourceEventV1, EpochRouteV1,
-    PayloadFirstObservationV1, PendingCliTerminalV2, PendingTerminalRecordV2,
-    ProcessorLifecycleProductV1, ProducerExternalBoundsV1, SourceConnectionRecordV1,
-    SourceCoverageRecordV3, SourceTerminalCoverageV3, WireLifecycleTransitionV1,
+    PENDING_TERMINAL_RECORD_CAPACITY_MAX_V2, PayloadFirstObservationV1, PendingCliTerminalV2,
+    PendingTerminalRecordV2, ProcessorLifecycleProductV1, ProducerExternalBoundsV1,
+    SourceConnectionRecordV1, SourceCoverageRecordV3, SourceTerminalCoverageV3,
+    WireLifecycleTransitionV1,
 };
 use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState, PendingBlocks};
 use base_mev_trader::{
@@ -43,9 +44,9 @@ use base_mev_trader::{
 };
 #[cfg(feature = "edge-measurement")]
 use base_mev_trader::{
-    AuditedWriteKey, EdgeCandidateV3, EdgeMeasurementDurabilityV1, EdgeMeasurementOwnerConfigV1,
-    EdgeMeasurementOwnerV1, EdgeProducerRecordV1, EdgeSnapshotEvidenceV1, ExactProtocol,
-    PreparedPoolQuote,
+    AuditedWriteKey, EdgeCandidateDetailV1, EdgeMeasurementDurabilityV1,
+    EdgeMeasurementOwnerConfigV1, EdgeMeasurementOwnerV1, EdgeProducerRecordV1,
+    EdgeSnapshotEvidenceV1, ExactProtocol, PreparedPoolQuote,
 };
 #[cfg(feature = "t4b-shadow")]
 use base_mev_trader::{
@@ -194,6 +195,16 @@ struct EdgeSealedSegmentV1 {
     descriptor: EdgeSegmentDescriptorV1,
     member_sequences: Vec<u64>,
 }
+
+#[cfg(feature = "edge-measurement")]
+#[derive(Debug)]
+struct EdgeCandidateJoinV1 {
+    candidate_sequence: u64,
+    coverage_generation: u64,
+    connection_sequence: u64,
+    connection_record_hash: B256,
+    registry_terminal_record_hash: B256,
+}
 #[cfg(feature = "edge-measurement")]
 #[derive(Debug)]
 struct EdgeCanonicalWriterV1 {
@@ -213,6 +224,7 @@ struct EdgeCanonicalWriterV1 {
     registry_record_sha: BTreeMap<u64, B256>,
     connection_segment_sha: Vec<(u64, B256)>,
     connection_records: BTreeMap<u64, B256>,
+    candidate_joins: BTreeMap<u64, EdgeCandidateJoinV1>,
     registry_h1_segment_sha: BTreeMap<u64, B256>,
     source_sequence_by_ledger: BTreeMap<(&'static str, u64), u64>,
     source_durable: BTreeSet<u64>,
@@ -249,6 +261,7 @@ impl EdgeCanonicalWriterV1 {
             registry_record_sha: BTreeMap::new(),
             connection_segment_sha: Vec::new(),
             connection_records: BTreeMap::new(),
+            candidate_joins: BTreeMap::new(),
             registry_h1_segment_sha: BTreeMap::new(),
             source_sequence_by_ledger: BTreeMap::new(),
             source_durable: BTreeSet::new(),
@@ -282,8 +295,9 @@ impl EdgeCanonicalWriterV1 {
                 && !self.finalized
                 && !self.has_buffered_records()
             {
-                match self.recorder.verify_source_final() {
-                    Ok(_) => match self.owner.finalization_ready() {
+                match self.recorder.cutoff_drain_status() {
+                    Ok(false) => {}
+                    Ok(true) => match self.owner.finalization_ready() {
                         Ok(false) => {}
                         Ok(true) => {
                             if let Err(error) = self.finalize() {
@@ -304,18 +318,9 @@ impl EdgeCanonicalWriterV1 {
                             return Err(io::Error::other("fatal Blink final readiness rejection"));
                         }
                     },
-                    Err(
-                        base_flashblocks::EdgeSourceFinalSealErrorV1::EventPending
-                        | base_flashblocks::EdgeSourceFinalSealErrorV1::ActiveStatePending
-                        | base_flashblocks::EdgeSourceFinalSealErrorV1::PendingRegistry(
-                            base_flashblocks::PendingFinalSealErrorV2::DurabilityAckPending
-                            | base_flashblocks::PendingFinalSealErrorV2::RegistryNotEmpty
-                            | base_flashblocks::PendingFinalSealErrorV2::PendingDeliveryNotEmpty,
-                        ),
-                    ) => {}
                     Err(_) => {
                         self.recorder.latch_coordinator_failure("CanonicalWriterFatalFinalSeal");
-                        return Err(io::Error::other("fatal final seal rejection"));
+                        return Err(io::Error::other("fatal source drain readiness rejection"));
                     }
                 }
             } else if stop.load(Ordering::Acquire) && !self.recorder.cutoff_sealed() {
@@ -348,6 +353,7 @@ impl EdgeCanonicalWriterV1 {
                 _ => None,
             };
             let ledger = match *event {
+                EdgeSourceEventV1::PayloadFirst(_) => "payload-first",
                 EdgeSourceEventV1::Connection(_) => "connection",
                 EdgeSourceEventV1::ClockAnchor(_) => "clock",
                 EdgeSourceEventV1::TerminalCoverage(record)
@@ -379,6 +385,7 @@ impl EdgeCanonicalWriterV1 {
                 .unwrap_or(ledger)
                 .to_owned();
             let domain = match ledger {
+                "payload-first" => "edge-payload-first-envelope/v1",
                 "connection" => "edge-source-connection/v1",
                 "clock" => "edge-clock-anchor/v1",
                 "coverage" | "coverage-postcutoff-excluded" => "edge-source-coverage/v3",
@@ -407,7 +414,20 @@ impl EdgeCanonicalWriterV1 {
             {
                 return Err(io::Error::other("duplicate source ledger sequence"));
             }
-            for segment in self.push_rolling_record(ledger, domain, &state, value)? {
+            let record = if ledger == "payload-first" {
+                let record_hash = value
+                    .get("recordHash")
+                    .cloned()
+                    .ok_or_else(|| io::Error::other("payload-first authority hash missing"))?;
+                json!({
+                    "payloadFirst": value,
+                    "payloadFirstRecordHash": record_hash,
+                    "schema": "edge-payload-first-envelope/v1",
+                })
+            } else {
+                value
+            };
+            for segment in self.push_rolling_record(ledger, domain, &state, record)? {
                 self.ack_source_segment(ledger, &segment)?;
             }
             self.source_file_sequence = self
@@ -418,6 +438,7 @@ impl EdgeCanonicalWriterV1 {
         }
         let flush_source = flush_cutoff;
         for ledger in [
+            "payload-first",
             "connection",
             "clock",
             "coverage",
@@ -435,11 +456,12 @@ impl EdgeCanonicalWriterV1 {
         }
 
         let registry = self.recorder.registry();
-        let terminals = registry.terminal_records_from(self.next_registry_terminal);
-        for terminal in terminals {
-            if !self.recorder.terminal_durable_ready(terminal) {
+        loop {
+            let Some(terminal) =
+                self.recorder.next_terminal_durable_record(self.next_registry_terminal)
+            else {
                 break;
-            }
+            };
             let coverage_sequence = terminal.coverage_sequence;
             if coverage_sequence != self.next_registry_terminal {
                 return Err(io::Error::other("registry terminal read cursor mismatch"));
@@ -584,13 +606,15 @@ impl EdgeCanonicalWriterV1 {
                 progressed = true;
             }
         }
-        for candidate in
-            self.owner.drain_candidates().map_err(|_| io::Error::other("candidate drain failed"))?
+        for detail in self
+            .owner
+            .drain_candidate_details()
+            .map_err(|_| io::Error::other("candidate detail drain failed"))?
         {
-            candidate
-                .validate()
-                .map_err(|_| io::Error::other("candidate validation failed at durable drain"))?;
-            let sequence = candidate.candidate_sequence;
+            detail
+                .validate_detail()
+                .map_err(|_| io::Error::other("candidate detail validation failed"))?;
+            let sequence = detail.candidate_sequence;
             if self
                 .ledgers
                 .get("candidate")
@@ -598,18 +622,24 @@ impl EdgeCanonicalWriterV1 {
             {
                 return Err(io::Error::other("candidate detail sequence mismatch"));
             }
-            let value = Self::candidate_value(candidate)?;
+            let join = EdgeCandidateJoinV1 {
+                candidate_sequence: sequence,
+                coverage_generation: detail.coverage_generation,
+                connection_sequence: detail.connection_sequence_at_capture,
+                connection_record_hash: B256::new(detail.connection_record_hash_at_capture),
+                registry_terminal_record_hash: B256::new(detail.registry_terminal_record_hash),
+            };
+            let value = Self::candidate_detail_value(detail)?;
             self.push_rolling_record(
                 "candidate",
                 "edge-candidate-detail/v1",
                 "CandidateDetail",
                 value,
             )?;
-            progressed = true;
-        }
-        if (flush_cutoff || self.rolling_flush_due("candidate", Instant::now()))
-            && self.flush_rolling_ledger("candidate")?.is_some()
-        {
+            self.flush_rolling_ledger("candidate")?;
+            if self.candidate_joins.insert(sequence, join).is_some() {
+                return Err(io::Error::other("duplicate candidate detail sequence"));
+            }
             progressed = true;
         }
         if flush_cutoff {
@@ -763,7 +793,7 @@ impl EdgeCanonicalWriterV1 {
     }
 
     fn payload_first_value(record: PayloadFirstObservationV1) -> JsonValue {
-        let mut value = json!({
+        json!({
             "blockNumber": record.key.block_number.to_string(),
             "bootId": String::from_utf8_lossy(&record.boot_id),
             "clockObservationOrdinal": record.observation.clock_observation_ordinal.to_string(),
@@ -787,15 +817,7 @@ impl EdgeCanonicalWriterV1 {
             "utcNs": record.observation.utc_ns.map(|value| JsonValue::String(value.to_string())),
             "utcStatus": record.observation.utc_status.wire_name(),
             "wireDigest": Self::hex(record.observation.wire_digest.as_slice()),
-        });
-        let object = value.as_object_mut().expect("payload clock observation is an object");
-        if record.observation.mono_ns.is_none() {
-            object.remove("monoNs");
-        }
-        if record.observation.utc_ns.is_none() {
-            object.remove("utcNs");
-        }
-        value
+        })
     }
 
     fn connection_value(record: SourceConnectionRecordV1) -> JsonValue {
@@ -1072,7 +1094,7 @@ impl EdgeCanonicalWriterV1 {
         })
     }
 
-    fn candidate_value(candidate: EdgeCandidateV3) -> io::Result<JsonValue> {
+    fn candidate_detail_value(candidate: EdgeCandidateDetailV1) -> io::Result<JsonValue> {
         let transaction = &candidate.backrun_measurement_tx;
         let nonce = transaction.nonce_witness;
         let selected_hops = candidate
@@ -1167,9 +1189,11 @@ impl EdgeCanonicalWriterV1 {
             "candidateSequence": candidate.candidate_sequence.to_string(),
             "codeWitnessDigest": Self::hex(candidate.code_witness_digest.as_slice()),
             "configDigest": Self::hex(candidate.config_digest.as_slice()),
-            "connectionCoverageReceiptHash": Self::hex(&candidate.connection_coverage_receipt_hash),
+            "connectionRecordHashAtCapture": Self::hex(&candidate.connection_record_hash_at_capture),
+            "connectionSequenceAtCapture": candidate.connection_sequence_at_capture.to_string(),
             "coverageGeneration": candidate.coverage_generation.to_string(),
-            "cutoffRecordHash": Self::hex(&candidate.cutoff_record_hash),
+            "orderedTransactionCutoffPosition": candidate.ordered_transaction_cutoff_position.to_string(),
+            "orderedTransactionDigest": Self::hex(candidate.ordered_transaction_digest.as_slice()),
             "economicsEvidenceDigest": Self::hex(candidate.economics_evidence_digest.as_slice()),
             "deploymentIdentities": candidate.deployment_identities.iter().map(|(address, hash)| json!({
                 "address": format!("0x{}", Self::hex(address.as_slice())),
@@ -1193,7 +1217,6 @@ impl EdgeCanonicalWriterV1 {
             "preregDigest": Self::hex(candidate.prereg_digest.as_slice()),
             "producerDigest": Self::hex(candidate.producer_digest.as_slice()),
             "producerEpoch": candidate.producer_epoch.to_string(),
-            "registryTerminalReceiptHash": Self::hex(&candidate.registry_terminal_receipt_hash),
             "registryTerminalRecordHash": Self::hex(&candidate.registry_terminal_record_hash),
             "schema": "edge-candidate-detail/v1",
             "selectedPlanDigest": Self::hex(candidate.selected_plan_digest.as_slice()),
@@ -1459,33 +1482,6 @@ impl EdgeCanonicalWriterV1 {
         Ok(())
     }
 
-    #[cfg(test)]
-    fn fixture_candidate_source(
-        &mut self,
-        mut authority_fields: JsonValue,
-        freeze_sha256: &str,
-    ) -> io::Result<Vec<EdgeSealedSegmentV1>> {
-        if freeze_sha256.len() != 64
-            || !freeze_sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        {
-            return Err(io::Error::other("fixture freeze SHA-256 is not canonical"));
-        }
-        let object = authority_fields
-            .as_object_mut()
-            .ok_or_else(|| io::Error::other("candidate fixture fields must be an object"))?;
-        object.insert("schema".to_owned(), json!("edge-candidate-source/v3"));
-        object.insert("freezeSha256".to_owned(), json!(freeze_sha256));
-        let state = object.get("state").and_then(JsonValue::as_str).unwrap_or("Final").to_owned();
-        self.push_rolling_record(
-            "candidate-source",
-            "edge-candidate-source/v3",
-            &state,
-            authority_fields,
-        )
-    }
-
     fn ledger_segment_set_sha256(&self, ledger_name: &'static str) -> io::Result<String> {
         let mut descriptors = self
             .ledgers
@@ -1514,25 +1510,6 @@ impl EdgeCanonicalWriterV1 {
         Ok(Self::sha256_hex(&domain))
     }
 
-    #[cfg(test)]
-    fn source_ledger_final_value(&self, ledger_name: &'static str) -> io::Result<JsonValue> {
-        let ledger =
-            self.ledgers.get(ledger_name).ok_or_else(|| io::Error::other("ledger is absent"))?;
-        if !ledger.records.is_empty() || ledger.descriptors.is_empty() || ledger.next_sequence == 0
-        {
-            return Err(io::Error::other("ledger is not completely sealed"));
-        }
-        let segment_set_sha256 = self.ledger_segment_set_sha256(ledger_name)?;
-        Ok(json!({
-            "finalRecordHash": ledger.previous_record_hash,
-            "lastSequence": (ledger.next_sequence - 1).to_string(),
-            "ledger": if ledger_name == "candidate-source" { "candidate" } else { "coverage" },
-            "pending": "0",
-            "producerEpoch": self.owner.producer_epoch().to_string(),
-            "schema": "edge-source-ledger-final/v1",
-            "segmentSetSha256": segment_set_sha256,
-        }))
-    }
     fn rolling_descriptor_manifest(&self) -> io::Result<JsonValue> {
         let mut ledgers = Vec::new();
         for (name, ledger) in &self.ledgers {
@@ -1689,49 +1666,30 @@ impl EdgeCanonicalWriterV1 {
             "pending": "0",
             "schemaVersion": "edge-connection-final-v1",
         });
-        let connection_final_bytes = Self::canonical_line(&connection_final_value)?;
-        let connection_final_receipt_hash =
-            B256::new(EdgeMeasurementDurabilityV1::sha256(&connection_final_bytes));
-
-        self.owner
-            .finalize_candidates(
-                source_final.record_hash,
-                connection_final_receipt_hash,
-                &self.connection_records,
-                &self.registry_segment_sha,
-                &self.registry_record_sha,
-            )
-            .map_err(|_| io::Error::other("candidate post-cutoff join failed"))?;
-        for candidate in self
-            .owner
-            .drain_candidates()
-            .map_err(|_| io::Error::other("candidate post-cutoff drain failed"))?
-        {
-            candidate
-                .validate()
-                .map_err(|_| io::Error::other("post-cutoff candidate validation failed"))?;
-            let sequence = candidate.candidate_sequence;
-            if self
-                .ledgers
-                .get("candidate")
-                .map_or(sequence != 0, |ledger| ledger.next_sequence != sequence)
-            {
-                return Err(io::Error::other("candidate detail sequence mismatch"));
-            }
-            let value = Self::candidate_value(candidate)?;
-            self.push_rolling_record(
-                "candidate",
-                "edge-candidate-detail/v1",
-                "CandidateDetail",
-                value,
-            )?;
-        }
         self.flush_rolling_ledger("candidate")?;
+        for (sequence, join) in &self.candidate_joins {
+            if *sequence != join.candidate_sequence
+                || self.connection_records.get(&join.connection_sequence).copied()
+                    != Some(join.connection_record_hash)
+                || !self.registry_segment_sha.contains_key(&join.coverage_generation)
+                || self.registry_record_sha.get(&join.coverage_generation).copied()
+                    != Some(join.registry_terminal_record_hash)
+            {
+                return Err(io::Error::other("candidate compact join validation failed"));
+            }
+        }
         let blink_final =
             self.owner.final_record().map_err(|_| io::Error::other("Blink final seal rejected"))?;
-        let persisted_candidate_count =
-            self.ledgers.get("candidate").map_or(0, |ledger| ledger.next_sequence);
-        if persisted_candidate_count != candidate_bounds.count {
+        let candidate_ledger = self.ledgers.get("candidate");
+        let persisted_candidate_count = candidate_ledger.map_or(0, |ledger| ledger.next_sequence);
+        let candidate_ledger_sealed = candidate_ledger.is_none_or(|ledger| {
+            ledger.records.is_empty()
+                && (ledger.next_sequence == 0 || !ledger.descriptors.is_empty())
+        });
+        if !candidate_ledger_sealed
+            || persisted_candidate_count != candidate_bounds.count
+            || u64::try_from(self.candidate_joins.len()) != Ok(candidate_bounds.count)
+        {
             return Err(io::Error::other("candidate final conservation mismatch"));
         }
         self.persist_named_artifact("connection-final-v1.json", &connection_final_value)?;
@@ -1834,7 +1792,10 @@ impl EdgeCanonicalWriterV1 {
             .persisted_artifacts
             .iter()
             .filter(|(filename, _)| {
-                filename.starts_with("source-") && filename.ends_with(".ndjson")
+                filename.ends_with(".ndjson")
+                    && !filename.starts_with("blink-")
+                    && !filename.starts_with("candidate")
+                    && !filename.starts_with("registry-")
             })
             .map(|(filename, sha256)| json!({"filename": filename, "sha256": sha256}))
             .collect::<Vec<_>>();
@@ -1892,15 +1853,22 @@ impl EdgeCanonicalWriterV1 {
         let candidate_value = json!({
             "candidateCount": candidate_bounds.count.to_string(),
             "candidateEmpty": candidate_bounds.count == 0,
+            "candidateReconcileVeto": "StrictCandidateSourceLedgerUnavailableDueToS2Cycle",
             "candidateSegmentHashes": candidate_segment_hashes,
+            "finalRecordHash": self.ledgers.get("candidate").map_or_else(
+                || EDGE_ZERO_HASH.to_owned(),
+                |ledger| ledger.previous_record_hash.clone(),
+            ),
             "lastCandidateSequenceInclusive": candidate_bounds.last_sequence.map(|value| JsonValue::String(value.to_string())),
             "lastSequence": candidate_bounds.last_sequence.unwrap_or(0).to_string(),
+            "ledger": "candidate-detail",
             "pending": "0",
             "producerEpoch": self.owner.producer_epoch().to_string(),
-            "schemaVersion": "edge-candidate-final-v1",
+            "schemaVersion": "edge-candidate-detail-final-v1",
             "segmentSetSha256": candidate_segment_set_sha256,
+            "strictCandidateSourceAvailable": false,
         });
-        self.persist_named_artifact("candidate-final-v1.json", &candidate_value)?;
+        self.persist_named_artifact("candidate-detail-final-v1.json", &candidate_value)?;
 
         let provenance = &self.provenance;
         let provenance_value = json!({
@@ -1936,8 +1904,10 @@ impl EdgeCanonicalWriterV1 {
         let descriptor_manifest = self.rolling_descriptor_manifest()?;
         self.persist_named_artifact("segment-descriptors-v1.json", &descriptor_manifest)?;
         self.missing_evidence.insert("CandidateFreezeSha256UnavailableDueToS2Cycle");
+        self.missing_evidence.insert("StrictCandidateSourceLedgerUnavailableDueToS2Cycle");
         let missing_evidence: Vec<_> = self.missing_evidence.iter().copied().collect();
         let missing_value = json!({
+            "candidateReconcileVeto": "StrictCandidateSourceLedgerUnavailableDueToS2Cycle",
             "checkpointPublished": false,
             "missingEvidence": missing_evidence,
             "producerEpoch": self.owner.producer_epoch().to_string(),
@@ -1961,6 +1931,7 @@ impl EdgeCanonicalWriterV1 {
             "blinkEmpty": blink_count == 0,
             "candidateCount": candidate_bounds.count.to_string(),
             "candidateEmpty": candidate_bounds.count == 0,
+            "candidateReconcileVeto": "StrictCandidateSourceLedgerUnavailableDueToS2Cycle",
             "checkpointPublished": false,
             "coverageCount": registry.coverage_count.to_string(),
             "coverageEmpty": registry.coverage_count == 0,
@@ -1972,6 +1943,24 @@ impl EdgeCanonicalWriterV1 {
             "schemaVersion": "edge-producer-manifest-v1",
         });
         self.persist_named_artifact("producer-manifest-v1.json", &manifest)?;
+        let indexed_artifacts = self
+            .persisted_artifacts
+            .iter()
+            .map(|(filename, sha256)| {
+                json!({
+                    "filename": filename,
+                    "sha256": sha256,
+                })
+            })
+            .collect::<Vec<_>>();
+        self.persist_named_artifact(
+            "artifact-index-v1.json",
+            &json!({
+                "artifacts": indexed_artifacts,
+                "producerEpoch": self.owner.producer_epoch().to_string(),
+                "schemaVersion": "edge-production-artifact-index-v1",
+            }),
+        )?;
         self.finalized = true;
         Ok(())
     }
@@ -2882,6 +2871,7 @@ impl BaseNodeTraderConfig {
             event_queue_capacity: config.flash_event_capacity,
             active_state_capacity: config.flash_active_capacity,
             pending_registry_capacity: config.flash_registry_capacity,
+            terminal_record_capacity: PENDING_TERMINAL_RECORD_CAPACITY_MAX_V2,
         })
         .map_err(|error| eyre::eyre!("flash edge owner installation failed: {error:?}"))?;
         *self.edge_owner.write().unwrap_or_else(|poisoned| poisoned.into_inner()) =
@@ -4540,6 +4530,7 @@ mod tests {
             event_queue_capacity: 8,
             active_state_capacity: 8,
             pending_registry_capacity: 8,
+            terminal_record_capacity: 8,
         })
         .expect("Linux recorder");
         assert!(!await_edge_cutoff_drain(&recorder, Instant::now()));
@@ -4600,6 +4591,7 @@ mod tests {
             event_queue_capacity: config.flash_event_capacity,
             active_state_capacity: config.flash_active_capacity,
             pending_registry_capacity: config.flash_registry_capacity,
+            terminal_record_capacity: PENDING_TERMINAL_RECORD_CAPACITY_MAX_V2,
         })
         .expect("test recorder");
         let owner = EdgeMeasurementOwnerV1::new(EdgeMeasurementOwnerConfigV1 {
@@ -4629,6 +4621,45 @@ mod tests {
         })
         .expect("test owner");
         (EdgeCanonicalWriterV1::new(config, recorder, owner), root)
+    }
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn blink_terminal_completing_after_cutoff_fence_reaches_final() {
+        let (writer, root) = edge_test_writer("blink-cutoff-late-terminal");
+        writer.owner.with_blink_admission(|owner, authoritative| {
+            assert!(authoritative);
+            owner.observe_ledger_result_admitted(owner.ledger().record_observed());
+            owner.record_submission_admitted(0, base_mev_trader::SlotSubmit::Accepted);
+        });
+        let cutoff_owner = Arc::clone(&writer.owner);
+        let cutoff = std::thread::spawn(move || cutoff_owner.prepare_cutoff());
+        while writer.owner.is_accepting() {
+            std::thread::yield_now();
+        }
+        writer.owner.record_terminal_and_resolve(
+            0,
+            base_mev_trader::BlinkGenerationTerminalV1::Processed,
+            None,
+        );
+        let (blink_count, candidate_bounds) =
+            cutoff.join().expect("cutoff thread").expect("late terminal cutoff");
+        assert_eq!(blink_count, 1);
+        assert_eq!(candidate_bounds.count, 0);
+        writer.owner.latch_cutoff(base_mev_trader::ProducerEpochCutoffFieldsV1 {
+            producer_epoch: 9,
+            cutoff_clock_observation_ordinal: 0,
+            last_admitted_wire_ordinal: 0,
+            last_admitted_source_generation: 0,
+            last_admitted_blink_generation: 0,
+            last_pending_snapshot_sequence: 0,
+            last_coverage_sequence: 0,
+            last_candidate_sequence: 0,
+            latch_mono_ns: 1,
+        });
+        let final_record = writer.owner.final_record().expect("Blink final");
+        assert_eq!(final_record.candidate_bounds.count, 0);
+        drop(writer);
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[cfg(feature = "edge-measurement")]
@@ -4677,7 +4708,7 @@ mod tests {
         assert!(writer.finalized);
         assert!(root.join("source-final-v1.json").is_file());
         assert!(root.join("registry-final-v1.json").is_file());
-        assert!(root.join("candidate-final-v1.json").is_file());
+        assert!(root.join("candidate-detail-final-v1.json").is_file());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -4857,153 +4888,173 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
     #[cfg(feature = "edge-measurement")]
-    fn fixture_candidate_fields(hash: &str) -> JsonValue {
-        json!({
-            "candidateSequence": "0",
-            "connectionCoverageReceiptHash": hash,
-            "coverageSequence": "0",
-            "cutoffRecordHash": hash,
-            "payloadFirstRecordHash": hash,
-            "payloadFirstRecordSequence": "0",
-            "pendingSnapshotSequence": "0",
-            "registryTerminalReceiptHash": hash,
-            "sourceGeneration": "0",
-            "state": "Final",
-            "structuralTerminalHash": hash,
-        })
-    }
-
-    #[cfg(feature = "edge-measurement")]
     #[test]
-    fn edge_candidate_source_fixture_is_exact_and_fail_closed() {
-        let (mut writer, root) = edge_test_writer("candidate-source");
-        assert!(writer.fixture_candidate_source(json!({}), "not-a-sha").is_err());
-        let freeze_sha = EdgeCanonicalWriterV1::sha256_hex(b"fixture freeze authority");
+    fn payload_first_failed_clocks_are_nullable_and_authority_hashes_survive_enveloping() {
+        let (mut writer, root) = edge_test_writer("payload-first-failed-clock");
+        let authority_hash_placeholder = B256::ZERO;
+        let mut value = EdgeCanonicalWriterV1::payload_first_value(PayloadFirstObservationV1 {
+            key: base_flashblocks::PayloadFirstKeyV1 {
+                producer_epoch: 9,
+                block_number: 10,
+                payload_id: [3; 8],
+            },
+            source_generation: 4,
+            observation: base_flashblocks::WireObservationV1 {
+                clock_observation_ordinal: 2,
+                utc_status: base_flashblocks::ClockStatusV1::Failed(
+                    base_flashblocks::ClockFailureV1 { status: -1, errno: 5 },
+                ),
+                utc_ns: None,
+                mono_status: base_flashblocks::ClockStatusV1::Failed(
+                    base_flashblocks::ClockFailureV1 { status: -1, errno: 5 },
+                ),
+                mono_ns: None,
+                wire_digest: B256::with_last_byte(6),
+            },
+            boot_id: *b"00000000-0000-0000-0000-000000000000",
+            realtime_resolution_ns: 1,
+            monotonic_resolution_ns: 1,
+            record_sequence: 0,
+            previous_record_hash: B256::ZERO,
+            record_hash: authority_hash_placeholder,
+        });
+        let authority_hash = EdgeCanonicalWriterV1::authority_record_hash(
+            "edge-payload-first-observation/v1",
+            &value,
+        )
+        .expect("payload-first authority hash");
+        value["recordHash"] = JsonValue::String(authority_hash.clone());
+        assert_eq!(value["utcNs"], JsonValue::Null);
+        assert_eq!(value["monoNs"], JsonValue::Null);
+        let original_previous = value["previousRecordHash"].clone();
+        let original_hash = value["recordHash"].clone();
         writer
-            .fixture_candidate_source(fixture_candidate_fields(&"11".repeat(32)), &freeze_sha)
-            .expect("candidate fixture");
-        let sealed = writer
-            .flush_rolling_ledger("candidate-source")
-            .expect("flush")
-            .expect("candidate segment");
-        let bytes = fs::read(root.join(sealed.descriptor.filename)).expect("candidate bytes");
-        let record: JsonValue =
+            .push_rolling_record(
+                "payload-first",
+                "edge-payload-first-envelope/v1",
+                "edge-payload-first-envelope/v1",
+                json!({
+                    "payloadFirst": value,
+                    "payloadFirstRecordHash": original_hash.clone(),
+                    "schema": "edge-payload-first-envelope/v1",
+                }),
+            )
+            .expect("payload-first envelope");
+        let segment =
+            writer.flush_rolling_ledger("payload-first").expect("flush").expect("segment");
+        let bytes = fs::read(root.join(segment.descriptor.filename)).expect("segment bytes");
+        let envelope: JsonValue =
             serde_json::from_slice(bytes.split(|byte| *byte == b'\n').next().expect("record"))
-                .expect("candidate JSON");
-        assert_eq!(record.as_object().expect("object").len(), 17);
-        assert_eq!(record["schema"], "edge-candidate-source/v3");
-        assert_eq!(record["freezeSha256"], freeze_sha);
-        assert_eq!(
-            record["recordHash"],
-            EdgeCanonicalWriterV1::authority_record_hash("edge-candidate-source/v3", &record)
-                .expect("record hash")
-        );
+                .expect("envelope JSON");
+        assert_eq!(envelope["payloadFirst"]["previousRecordHash"], original_previous);
+        assert_eq!(envelope["payloadFirst"]["recordHash"], original_hash);
+        assert_eq!(envelope["payloadFirstRecordHash"], original_hash);
         drop(writer);
-        fs::remove_dir_all(root).expect("cleanup");
+        if let Some(fixture_dir) =
+            std::env::var_os("EDGE_FAILED_CLOCK_FIXTURE_DIR").map(PathBuf::from)
+        {
+            assert!(!fixture_dir.exists(), "EDGE_FAILED_CLOCK_FIXTURE_DIR must not already exist");
+            fs::rename(root, fixture_dir)
+                .expect("publish failed-clock production serializer output");
+        } else {
+            fs::remove_dir_all(root).expect("cleanup");
+        }
     }
 
     #[cfg(feature = "edge-measurement")]
     #[test]
-    fn edge_s2_consumer_fixture() {
-        let Some(fixture_dir) = std::env::var_os("EDGE_S2_FIXTURE_DIR").map(PathBuf::from) else {
-            return;
-        };
-        assert!(!fixture_dir.exists(), "EDGE_S2_FIXTURE_DIR must not already exist");
-        let (mut writer, root) = edge_test_writer("s2-consumer");
-        let clock = match writer.recorder.try_recv_event() {
-            EdgeEventDrainStatusV1::Event(event) => match *event {
-                EdgeSourceEventV1::ClockAnchor(record) => {
-                    JsonValue::Array(vec![writer.clock_anchor_value(record)])
-                }
-                _ => panic!("startup event must be a clock anchor"),
-            },
-            status => panic!("missing startup clock anchor: {status:?}"),
-        };
-        let hash = "22".repeat(32);
-        let freeze_sha = EdgeCanonicalWriterV1::sha256_hex(b"acyclic fixture freeze authority");
-        writer
-            .fixture_candidate_source(fixture_candidate_fields(&hash), &freeze_sha)
-            .expect("candidate source");
-        writer
-            .push_rolling_record(
-                "coverage",
-                "edge-source-coverage/v3",
-                "CliReceivedLookupSucceeded",
-                json!({
-                    "coverageSequence": "0",
-                    "payloadFirstRecordHash": hash,
-                    "pendingSnapshotSequence": "0",
-                    "schema": "edge-source-coverage/v3",
-                    "sourceGeneration": "0",
-                    "terminal": "CliReceivedLookupSucceeded",
-                    "terminalHash": hash,
-                }),
-            )
-            .expect("coverage");
-        writer
-            .push_rolling_record(
-                "connection",
-                "edge-source-connection/v1",
-                "OwnerStart",
-                json!({
-                    "clockObservationOrdinal": "0",
-                    "connectionSequence": "0",
-                    "errorClass": JsonValue::Null,
-                    "monoNs": "1",
-                    "schema": "edge-source-connection/v1",
-                    "transition": "OwnerStart",
-                }),
-            )
-            .expect("connection");
-        for ledger in ["candidate-source", "coverage", "connection"] {
-            writer.flush_rolling_ledger(ledger).expect("fixture flush");
+    fn edge_s2_consumer_fixture_uses_production_drain_cutoff_and_finalize() {
+        let fixture_dir = std::env::var_os("EDGE_S2_FIXTURE_DIR").map(PathBuf::from);
+        if let Some(fixture_dir) = &fixture_dir {
+            assert!(!fixture_dir.exists(), "EDGE_S2_FIXTURE_DIR must not already exist");
         }
-        let candidate_final =
-            writer.source_ledger_final_value("candidate-source").expect("candidate final");
-        let coverage_final = writer.source_ledger_final_value("coverage").expect("coverage final");
-        writer
-            .persist_named_artifact("candidate-final-v1.json", &candidate_final)
-            .expect("candidate final file");
-        writer
-            .persist_named_artifact("source-coverage-final-v1.json", &coverage_final)
-            .expect("coverage final file");
-        writer.persist_named_artifact("clock-observations-v1.json", &clock).expect("clock fixture");
-        let descriptors = writer.rolling_descriptor_manifest().expect("descriptors");
-        writer
-            .persist_named_artifact("segment-descriptors-v1.json", &descriptors)
-            .expect("descriptor fixture");
-        let index = json!({
-            "candidateFinal": "candidate-final-v1.json",
-            "candidateSegments": ["candidate-source-00000000000000000000.ndjson"],
-            "clockObservations": "clock-observations-v1.json",
-            "connectionSegments": ["connection-00000000000000000000.ndjson"],
-            "coverageFinal": "source-coverage-final-v1.json",
-            "coverageSegments": ["coverage-00000000000000000000.ndjson"],
-            "freezeSha256": freeze_sha,
-            "producerEpoch": "9",
-            "schema": "edge-s2-consumer-fixture-index/v1",
+        let (mut writer, root) = edge_test_writer("s2-consumer-production");
+
+        let flashblock = pending_blocks().get_flashblocks().remove(0);
+        let admission =
+            writer.recorder.observe_wire(b"fixture-decode-success").expect("wire admission");
+        let generation =
+            writer.recorder.decoded_flashblock(admission, &flashblock).expect("source generation");
+        writer.recorder.actor_enqueue(generation, false);
+        let rejected =
+            writer.recorder.observe_wire(b"fixture-decode-rejected").expect("rejected admission");
+        writer.recorder.decode_rejected(rejected);
+
+        writer.recorder.prepare_cutoff();
+        let (blink_count, candidate_bounds) = writer.owner.prepare_cutoff().expect("Blink cutoff");
+        assert_eq!(blink_count, 0);
+        assert_eq!(candidate_bounds.count, 0);
+        assert!(writer.drain_once().expect("production recorder drain"));
+        for ledger in writer.ledgers.values_mut() {
+            if !ledger.records.is_empty() {
+                ledger.batch_started_at = Some(Instant::now() - EDGE_SEGMENT_MAX_FLUSH_LATENCY);
+            }
+        }
+        writer.drain_once().expect("production durable drain");
+        assert!(writer.recorder.cutoff_drain_complete());
+
+        let cutoff = writer.recorder.latch_cutoff(ProducerExternalBoundsV1 {
+            last_admitted_blink_generation: 0,
+            last_coverage_sequence: 1,
+            last_candidate_sequence: 0,
         });
-        writer.persist_named_artifact("fixture-index.json", &index).expect("index");
-        let reconcile = json!({
-            "candidateDirectory": ".",
-            "candidateHashDomain": "edge-candidate-source/v3",
-            "candidateSegmentPaths": ["candidate-source-00000000000000000000.ndjson"],
-            "coverageDirectory": ".",
-            "coverageHashDomain": "edge-source-coverage/v3",
-            "coverageSegmentPaths": ["coverage-00000000000000000000.ndjson"],
-            "cursors": {
-                "lastCandidateSequence": "0",
-                "lastClockObservationOrdinal": "0",
-                "lastCoverageSequence": "0",
-                "lastPendingSnapshotSequence": "0",
-                "lastSourceGeneration": "0",
-            },
-            "outputDirectory": ".",
-            "producerEpoch": "9",
-            "schema": "edge-s2-reconcile-input-fixture/v1",
+        writer.owner.latch_cutoff(base_mev_trader::ProducerEpochCutoffFieldsV1 {
+            producer_epoch: cutoff.producer_epoch,
+            cutoff_clock_observation_ordinal: cutoff.cutoff_clock_observation_ordinal,
+            last_admitted_wire_ordinal: cutoff.last_admitted_wire_ordinal,
+            last_admitted_source_generation: cutoff.last_admitted_source_generation,
+            last_admitted_blink_generation: cutoff.last_admitted_blink_generation,
+            last_pending_snapshot_sequence: cutoff.last_pending_snapshot_sequence,
+            last_coverage_sequence: cutoff.last_coverage_sequence,
+            last_candidate_sequence: cutoff.last_candidate_sequence,
+            latch_mono_ns: cutoff.latch_mono_ns,
         });
-        writer.persist_named_artifact("reconcile-input.json", &reconcile).expect("reconcile input");
+        while writer.drain_once().expect("post-cutoff production drain") {}
+        writer.recorder.verify_source_final().expect("source final");
+        assert!(writer.owner.finalization_ready().expect("Blink readiness"));
+        writer.finalize().expect("production finalization");
+
+        let candidate_detail: JsonValue = serde_json::from_slice(
+            &fs::read(root.join("candidate-detail-final-v1.json")).expect("candidate detail final"),
+        )
+        .expect("candidate detail JSON");
+        assert_eq!(
+            candidate_detail["candidateReconcileVeto"],
+            "StrictCandidateSourceLedgerUnavailableDueToS2Cycle"
+        );
+        assert_eq!(candidate_detail["finalRecordHash"], EDGE_ZERO_HASH);
+        assert!(!root.join("candidate-final-v1.json").exists());
+        assert!(!root.join("reconcile-input.json").exists());
+
+        let artifact_index: JsonValue = serde_json::from_slice(
+            &fs::read(root.join("artifact-index-v1.json")).expect("artifact index"),
+        )
+        .expect("artifact index JSON");
+        let indexed = artifact_index["artifacts"]
+            .as_array()
+            .expect("artifact entries")
+            .iter()
+            .filter_map(|entry| entry["filename"].as_str())
+            .collect::<BTreeSet<_>>();
+        for required in [
+            "candidate-detail-final-v1.json",
+            "clock-observations-v1.json",
+            "missing-evidence-final.json",
+            "producer-manifest-v1.json",
+            "registry-final-v1.json",
+            "segment-descriptors-v1.json",
+            "source-coverage-final-v1.json",
+            "source-final-v1.json",
+        ] {
+            assert!(indexed.contains(required), "production index missing {required}");
+        }
+        assert!(indexed.iter().any(|name| name.starts_with("coverage-")));
+        assert!(indexed.iter().any(|name| name.starts_with("payload-first-")));
         drop(writer);
-        fs::rename(root, fixture_dir).expect("publish fixture directory");
+        if let Some(fixture_dir) = fixture_dir {
+            fs::rename(root, fixture_dir).expect("publish exact production output directory");
+        } else {
+            fs::remove_dir_all(root).expect("cleanup production fixture");
+        }
     }
 }

@@ -29,7 +29,7 @@ pub use edge_measurement::{
     BlinkLedgerSnapshotV1, BlinkMeasurementLedgerV1, BlinkRejectClassifierV3,
     BlinkRejectDispositionV3, BlinkRejectReasonV3, BlinkRejectRecordV3,
     CandidatePreEnqueueDropReasonV3, CheckedCandidateBoundsV1, EDGE_MAX_VICTIM_RAW_BYTES,
-    EdgeCandidateEvidenceV3, EdgeCandidateStageInputV3, EdgeCandidateV3,
+    EdgeCandidateDetailV1, EdgeCandidateEvidenceV3, EdgeCandidateStageInputV3, EdgeCandidateV3,
     EdgeMeasurementDurabilityV1, EdgeMeasurementError, EdgeMeasurementFinalV1,
     EdgeMeasurementOwnerConfigV1, EdgeMeasurementOwnerV1, EdgeProducerError, EdgeProducerRecordV1,
     ProducerEpochCutoffFieldsV1, ProducerEpochCutoffLatchV1, ProducerEpochCutoffV1,
