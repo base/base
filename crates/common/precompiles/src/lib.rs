@@ -67,7 +67,7 @@ mod b20_stablecoin;
 pub use b20_stablecoin::{
     B20StablecoinExtensionStorage, B20StablecoinInit, B20StablecoinPrecompile,
     B20StablecoinStorage, B20StablecoinToken, IB20Stablecoin, Stablecoin, StablecoinAccounting,
-    StablecoinV1, StablecoinVersion, StablecoinVersions,
+    StablecoinV1, StablecoinV2, StablecoinVersion, StablecoinVersions,
 };
 
 mod b20_factory;

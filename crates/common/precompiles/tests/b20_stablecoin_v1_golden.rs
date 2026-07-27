@@ -218,14 +218,10 @@ fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
 // ============================================================================
 
 #[test]
-fn resolver_maps_forks_to_versions() {
+fn resolver_activates_v1_at_beryl() {
     assert_eq!(StablecoinVersions::from_base_upgrade(BaseUpgrade::Azul), None);
     assert_eq!(
         StablecoinVersions::from_base_upgrade(BaseUpgrade::Beryl),
-        Some(StablecoinVersion::V1)
-    );
-    assert_eq!(
-        StablecoinVersions::from_base_upgrade(BaseUpgrade::Cobalt),
         Some(StablecoinVersion::V1)
     );
 }
