@@ -12,7 +12,10 @@ use super::{
 };
 
 /// Maximum allowed decoded flashblock payload size, in bytes.
-pub const MAX_DECOMPRESSED_FLASHBLOCK_BYTES: usize = 5 * 1024 * 1024;
+///
+/// High-gas benchmark blocks can produce broadcast deltas larger than 5 MiB. Keep a
+/// bounded decoder while allowing those valid deltas to be observed by consumers.
+pub const MAX_DECOMPRESSED_FLASHBLOCK_BYTES: usize = 32 * 1024 * 1024;
 
 /// A flashblock containing partial block data.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]

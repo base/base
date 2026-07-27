@@ -2,8 +2,8 @@
 //!
 //! The watcher polls for new canonical blocks and reports the transaction hashes
 //! contained in each block to the [`ResultsTracker`], which records landing latency.
-//! Canonical receipts (gas, revert status) are fetched separately in a single batch
-//! pass at the end of the run via [`BlockWatcher::fetch_receipts`], not during polling.
+//! Canonical receipts are sampled during the run for gas calibration and fetched again
+//! in a complete end-of-run pass for final metrics.
 
 use std::time::{Duration, Instant};
 
@@ -119,7 +119,14 @@ impl BlockWatcher {
                             let Some((block, tx_hashes)) = observed else {
                                 break;
                             };
+                            let has_measured_pending =
+                                self.results_tracker.has_measured_pending(&tx_hashes);
                             self.results_tracker.on_new_block_hashes(block, tx_hashes);
+                            if has_measured_pending {
+                                let (receipts, _) =
+                                    Self::fetch_block_receipts(&self.provider, block_number).await;
+                                self.results_tracker.observe_live_receipts(&receipts);
+                            }
                             last_seen_block = Some(block_number);
                         }
                     }

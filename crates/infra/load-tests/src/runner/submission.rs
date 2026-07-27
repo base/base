@@ -141,6 +141,8 @@ pub struct SignedBatch {
     pub id: u64,
     /// Current send attempt.
     pub attempt: u32,
+    /// Whether accepted transactions belong to the measured cohort.
+    pub measured: bool,
     /// Signed transactions.
     pub txs: Vec<SignedTransaction>,
 }
@@ -594,6 +596,7 @@ impl SubmissionPipeline {
         (!signed_txs.is_empty()).then_some(SignedBatch {
             id: batch.id,
             attempt: 0,
+            measured: true,
             txs: signed_txs,
         })
     }
@@ -604,6 +607,7 @@ impl SubmissionPipeline {
         shutdown: &CancellationToken,
     ) -> u64 {
         let batch_id = batch.id;
+        let measured = batch.measured;
         let mut submitted = 0u64;
 
         loop {
@@ -663,16 +667,26 @@ impl SubmissionPipeline {
             for (signed, result) in batch.txs.into_iter().zip(batch_results) {
                 match result {
                     BatchSendResult::Success(hash) => {
-                        submitted +=
-                            Self::record_submitted(&ctx, signed, hash, "tx submitted (batch)")
-                                .await;
+                        submitted += Self::record_submitted(
+                            &ctx,
+                            signed,
+                            hash,
+                            measured,
+                            "tx submitted (batch)",
+                        )
+                        .await;
                     }
                     BatchSendResult::Error(msg) => match Self::classify_batch_error(msg) {
                         BatchTxError::AlreadyKnown => {
                             let tx_hash = signed.tx_hash;
-                            submitted +=
-                                Self::record_submitted(&ctx, signed, tx_hash, "tx already known")
-                                    .await;
+                            submitted += Self::record_submitted(
+                                &ctx,
+                                signed,
+                                tx_hash,
+                                measured,
+                                "tx already known",
+                            )
+                            .await;
                         }
                         BatchTxError::RetryableRejected(msg) => {
                             debug!(
@@ -710,6 +724,7 @@ impl SubmissionPipeline {
                                 &ctx,
                                 signed,
                                 tx_hash,
+                                measured,
                                 "tx nonce already used",
                             )
                             .await;
@@ -753,7 +768,12 @@ impl SubmissionPipeline {
             }
 
             retry_unknown_txs.extend(retry_rejected_txs);
-            batch = SignedBatch { id: batch_id, attempt: attempt + 1, txs: retry_unknown_txs };
+            batch = SignedBatch {
+                id: batch_id,
+                attempt: attempt + 1,
+                measured,
+                txs: retry_unknown_txs,
+            };
             if !Self::wait_submit_retry(shutdown, batch.attempt).await {
                 Self::fail_signed_batch(&ctx.submit_event_tx, batch.txs, "submit worker shutdown")
                     .await;
@@ -766,6 +786,7 @@ impl SubmissionPipeline {
         ctx: &SenderContext,
         signed: SignedTransaction,
         tx_hash: TxHash,
+        measured: bool,
         message: &'static str,
     ) -> u64 {
         let tracked_hash = if tx_hash != signed.tx_hash {
@@ -779,8 +800,11 @@ impl SubmissionPipeline {
             signed.tx_hash
         };
         Self::release_signed(&ctx.submit_event_tx, &signed).await;
-        ctx.results_tracker
-            .sent_transactions(vec![SentTransaction { tx_hash: tracked_hash, from: signed.from }]);
+        ctx.results_tracker.sent_transactions(vec![SentTransaction {
+            tx_hash: tracked_hash,
+            from: signed.from,
+            measured,
+        }]);
         let _ = ctx.submit_event_tx.send(SubmitEvent::Submitted(tracked_hash)).await;
         debug!(
             tx_hash = %tracked_hash,
@@ -1046,6 +1070,7 @@ mod tests {
             .send(SignedBatch {
                 id: 1,
                 attempt: 0,
+                measured: true,
                 txs: vec![SignedTransaction {
                     raw: Bytes::new(),
                     tx_hash: TxHash::ZERO,
