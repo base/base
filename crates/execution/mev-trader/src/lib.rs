@@ -6,10 +6,42 @@ pub use blink_ingress::{
     BlinkVictim, QueuedBlinkVictim, RuntimeShutdown,
 };
 mod port;
+#[cfg(feature = "edge-measurement")]
+pub use port::EdgeSnapshotEvidenceV1;
 pub use port::{
     BundleVisitor, PayloadVisitor, PendingAccountNonce, PendingSnapshotView, PortError,
     SnapshotCaptureCoordinator, SnapshotHandle, SnapshotHandleFactory, TraderSnapshotPort,
     TransactionVisitor, VisitControl, VisitSummary,
+};
+#[cfg(feature = "edge-measurement")]
+mod measurement_tx;
+#[cfg(feature = "edge-measurement")]
+pub use measurement_tx::{
+    BackrunMeasurementBindingV1, MEASUREMENT_CHAIN_ID, MEASUREMENT_EXECUTOR,
+    MeasurementBindingDeriverV1, MeasurementBindingError, MeasurementBindingInputV1,
+    MeasurementExecutionHopV1, SnapshotNonceWitnessV1,
+};
+#[cfg(feature = "edge-measurement")]
+mod edge_measurement;
+#[cfg(all(feature = "edge-measurement", feature = "test-utils"))]
+pub use edge_measurement::EdgeCandidateDetailOracleV1;
+#[cfg(feature = "edge-measurement")]
+pub use edge_measurement::{
+    BLINK_LEDGER_CAPACITY, BLINK_REJECT_BRANCH_INVENTORY_V3, BlinkGenerationTerminalV1,
+    BlinkLedgerSnapshotV1, BlinkMeasurementLedgerV1, BlinkRejectClassifierV3,
+    BlinkRejectDispositionV3, BlinkRejectQueueLossCountersV1, BlinkRejectReasonV3,
+    BlinkRejectRecordV3, CandidateDropQueueLossCountersV1, CandidatePreEnqueueDropCountersV1,
+    CandidatePreEnqueueDropReasonV3, CheckedCandidateBoundsV1, EDGE_MAX_VICTIM_RAW_BYTES,
+    EdgeCandidateDetailV1, EdgeCandidateEvidenceV3, EdgeCandidateStageInputV3,
+    EdgeCutoffDrainedSnapshotV1, EdgeMeasurementDurabilityV1, EdgeMeasurementError,
+    EdgeMeasurementOwnerConfigV1, EdgeMeasurementOwnerV1, EdgeProducerError, EdgeProducerRecordV1,
+    EdgeQueueAccountingSnapshotV1, EdgeRawAccountingSnapshotV1, ProducerEpochCutoffFieldsV1,
+    ProducerEpochCutoffLatchV1, ProducerEpochCutoffV1, SelectedDtoTerminalV1,
+};
+#[cfg(all(feature = "edge-measurement", any(test, feature = "test-utils")))]
+pub use edge_measurement::{
+    BlinkMeasurementLedgerAuthorityAuditSnapshotV1, EdgeMeasurementOwnerAuthorityAuditSnapshotV1,
+    EdgeMeasurementOwnerConfigAuditSnapshotV1,
 };
 
 mod frame;

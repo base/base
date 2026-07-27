@@ -93,4 +93,6 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [features]
 default = [ "metrics" ]
+edge-measurement = []
+test-utils = ["edge-measurement"]
 metrics = [ "base-metrics/metrics", "dep:metrics", "reth-evm/metrics" ]

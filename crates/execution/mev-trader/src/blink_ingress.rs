@@ -15,6 +15,10 @@ use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::{sync::Notify, time};
+#[cfg(not(test))]
+use tokio_tungstenite::connect_async_tls_with_config;
+#[cfg(test)]
+use tokio_tungstenite::connect_async_with_config;
 use tokio_tungstenite::tungstenite::{
     Error as WebSocketError,
     client::IntoClientRequest,
@@ -22,16 +26,12 @@ use tokio_tungstenite::tungstenite::{
     protocol::{Message, WebSocketConfig},
 };
 
-#[cfg(not(test))]
-use tokio_tungstenite::connect_async_tls_with_config;
-#[cfg(test)]
-use tokio_tungstenite::connect_async_with_config;
-
 use crate::MevTraderRuntime;
+#[cfg(feature = "edge-measurement")]
+use crate::{BlinkRejectClassifierV3, BlinkRejectReasonV3};
 
 const BLINK_ENDPOINT: &str = "wss://baseauction.blinklabs.xyz/ws/v1/";
-const BLINK_SUBSCRIBE: &str =
-    r#"{"jsonrpc":"2.0","id":1,"method":"eth_subscribe","params":["blink_partialPendingTransactions"]}"#;
+const BLINK_SUBSCRIBE: &str = r#"{"jsonrpc":"2.0","id":1,"method":"eth_subscribe","params":["blink_partialPendingTransactions"]}"#;
 const MAX_WIRE_BYTES: usize = 1_048_576;
 const MAX_RAW_TX_BYTES: usize = 131_072;
 const MAX_CREDENTIAL_BYTES: usize = 256;
@@ -60,9 +60,7 @@ impl BlinkCredential {
             return None;
         }
         let path = PathBuf::from(path);
-        if path.to_str().is_none() {
-            return None;
-        }
+        path.to_str()?;
         let pre_open = fs::symlink_metadata(&path).ok()?;
         if pre_open.file_type().is_symlink() {
             return None;
@@ -166,7 +164,7 @@ impl BlinkVictim {
     }
 
     /// Returns the bounded raw transaction bytes.
-    pub fn raw_tx(&self) -> &Bytes {
+    pub const fn raw_tx(&self) -> &Bytes {
         &self.raw_tx
     }
 
@@ -290,6 +288,177 @@ impl BlinkVictim {
             return None;
         }
         u64::from_str_radix(digits, 16).ok()
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn classify_decode_rejection(
+        text: &str,
+        subscription: &str,
+        disposition: A1Outcome,
+    ) -> BlinkRejectReasonV3 {
+        let Ok(value) = serde_json::from_str::<Value>(text) else {
+            return BlinkRejectReasonV3::JsonSyntax;
+        };
+        let Some(root) = value.as_object() else {
+            return BlinkRejectReasonV3::RootWrongType;
+        };
+        if root.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+            return BlinkRejectReasonV3::JsonRpcMismatch;
+        }
+        if root.get("method").and_then(Value::as_str) != Some("eth_subscription") {
+            return BlinkRejectReasonV3::MethodMismatch;
+        }
+        let Some(params) = root.get("params").and_then(Value::as_object) else {
+            return BlinkRejectReasonV3::ParamsInvalid;
+        };
+        if params.get("subscription").and_then(Value::as_str) != Some(subscription) {
+            return BlinkRejectReasonV3::SubscriptionMismatch;
+        }
+        if params
+            .get("timestamp")
+            .and_then(Value::as_u64)
+            .is_none_or(|value| value > MAX_SAFE_JSON_INTEGER)
+        {
+            return BlinkRejectReasonV3::TimestampUnsafe;
+        }
+        if params
+            .get("publishTime")
+            .and_then(Value::as_u64)
+            .is_none_or(|value| value > MAX_SAFE_JSON_INTEGER)
+        {
+            return BlinkRejectReasonV3::PublishTimeUnsafe;
+        }
+        let quantity = |name: &str, reason| {
+            params
+                .get(name)
+                .and_then(Value::as_str)
+                .filter(|value| Self::parse_quantity(value).is_some())
+                .map(|_| ())
+                .ok_or(reason)
+        };
+        if let Err(reason) = quantity("blockNumber", BlinkRejectReasonV3::BlockNumberInvalid) {
+            return reason;
+        }
+        if let Err(reason) =
+            quantity("flashblockIndex", BlinkRejectReasonV3::FlashblockIndexInvalid)
+        {
+            return reason;
+        }
+        let Some(result) = params.get("result").and_then(Value::as_object) else {
+            return BlinkRejectReasonV3::ParamsInvalid;
+        };
+        let result_quantity = |name: &str, reason| {
+            result
+                .get(name)
+                .and_then(Value::as_str)
+                .filter(|value| Self::parse_quantity(value).is_some())
+                .map(|_| ())
+                .ok_or(reason)
+        };
+        if let Err(reason) = result_quantity("chainId", BlinkRejectReasonV3::ChainIdInvalid) {
+            return reason;
+        }
+        let transaction_type =
+            result.get("type").and_then(Value::as_str).and_then(Self::parse_quantity);
+        if transaction_type.and_then(|value| u8::try_from(value).ok()).is_none() {
+            return BlinkRejectReasonV3::TransactionTypeInvalid;
+        }
+        let Some(hash) = result.get("hash").and_then(Value::as_str) else {
+            return BlinkRejectReasonV3::TxHashInvalid;
+        };
+        if hash.len() != 66
+            || !hash.starts_with("0x")
+            || !hash[2..].bytes().all(|byte| byte.is_ascii_hexdigit())
+            || B256::from_str(hash).is_err()
+        {
+            return BlinkRejectReasonV3::TxHashInvalid;
+        }
+        let Some(sender) = result.get("from").and_then(Value::as_str) else {
+            return BlinkRejectReasonV3::SenderInvalid;
+        };
+        if sender.len() != 42
+            || !sender.starts_with("0x")
+            || !sender[2..].bytes().all(|byte| byte.is_ascii_hexdigit())
+            || Address::from_str(sender).is_err()
+        {
+            return BlinkRejectReasonV3::SenderInvalid;
+        }
+        let Some(raw) = result.get("rawTx").and_then(Value::as_str) else {
+            return BlinkRejectReasonV3::RawMissingPrefix;
+        };
+        let Some(raw_hex) = raw.strip_prefix("0x") else {
+            return BlinkRejectReasonV3::RawMissingPrefix;
+        };
+        if raw_hex.is_empty() {
+            return BlinkRejectReasonV3::RawEmpty;
+        }
+        if raw_hex.len() % 2 != 0 {
+            return BlinkRejectReasonV3::RawOddLength;
+        }
+        if raw_hex.len() / 2 > MAX_RAW_TX_BYTES {
+            return BlinkRejectReasonV3::RawOversize;
+        }
+        if !raw_hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return BlinkRejectReasonV3::RawNonHex;
+        }
+        if Bytes::from_str(raw).is_err() {
+            return BlinkRejectReasonV3::RawDecode;
+        }
+        match disposition {
+            A1Outcome::ApplicationDrop => BlinkRejectReasonV3::NotificationApplicationDrop,
+            A1Outcome::ProtocolDisabled => BlinkRejectReasonV3::NotificationProtocolDisabled,
+            _ => BlinkRejectReasonV3::NotificationInternalFailure,
+        }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn classify_decode_rejection_branch(
+        text: &str,
+        subscription: &str,
+        disposition: A1Outcome,
+    ) -> (&'static str, BlinkRejectReasonV3) {
+        let reason = Self::classify_decode_rejection(text, subscription, disposition);
+        let value = serde_json::from_str::<Value>(text).ok();
+        let params = value
+            .as_ref()
+            .and_then(Value::as_object)
+            .and_then(|root| root.get("params"))
+            .and_then(Value::as_object);
+        let result = params.and_then(|params| params.get("result")).and_then(Value::as_object);
+        let branch = match reason {
+            BlinkRejectReasonV3::ParamsInvalid if params.is_some() => "decode-result-invalid",
+            BlinkRejectReasonV3::ParamsInvalid => "decode-params-invalid",
+            BlinkRejectReasonV3::TxHashInvalid
+                if result
+                    .and_then(|result| result.get("hash"))
+                    .and_then(Value::as_str)
+                    .is_some() =>
+            {
+                "decode-transaction-hash-malformed"
+            }
+            BlinkRejectReasonV3::TxHashInvalid => "decode-transaction-hash-invalid",
+            BlinkRejectReasonV3::SenderInvalid
+                if result
+                    .and_then(|result| result.get("from"))
+                    .and_then(Value::as_str)
+                    .is_some() =>
+            {
+                "decode-sender-malformed"
+            }
+            BlinkRejectReasonV3::SenderInvalid => "decode-sender-invalid",
+            BlinkRejectReasonV3::RawMissingPrefix
+                if result
+                    .and_then(|result| result.get("rawTx"))
+                    .and_then(Value::as_str)
+                    .is_some() =>
+            {
+                "decode-raw-prefix-invalid"
+            }
+            BlinkRejectReasonV3::RawMissingPrefix => "decode-raw-missing-prefix",
+            _ => BlinkRejectClassifierV3::branch_id(reason)
+                .expect("one-to-one decode reason must have an inventory branch"),
+        };
+        (branch, reason)
     }
 }
 
@@ -491,7 +660,10 @@ pub struct BlinkFeedClient {
 
 impl BlinkFeedClient {
     /// Loads the credential once and constructs the fixed receive-only client.
-    pub fn new(config: BlinkIngressConfig, runtime: std::sync::Arc<MevTraderRuntime>) -> Option<Self> {
+    pub fn new(
+        config: BlinkIngressConfig,
+        runtime: std::sync::Arc<MevTraderRuntime>,
+    ) -> Option<Self> {
         let credential = BlinkCredential::load(config.credential_file);
         let Some(credential) = credential else {
             runtime.set_a1_status(A1Status::DisabledNoConnect);
@@ -520,10 +692,15 @@ impl BlinkFeedClient {
             uri.push_str(BLINK_ENDPOINT);
             #[cfg(test)]
             uri.push_str(self.endpoint.as_deref().unwrap_or(BLINK_ENDPOINT));
-            uri.push_str(std::str::from_utf8(&self.credential.bytes[..self.credential.len]).unwrap());
+            uri.push_str(
+                std::str::from_utf8(&self.credential.bytes[..self.credential.len]).unwrap(),
+            );
             let request = match uri.into_client_request() {
                 Ok(request) => request,
                 Err(_) => {
+                    #[cfg(feature = "edge-measurement")]
+                    self.runtime
+                        .emit_blink_reject("request-build", BlinkRejectReasonV3::RequestBuild);
                     self.runtime.record_a1(A1Outcome::ProtocolDisabled);
                     self.runtime.set_a1_status(A1Status::DisabledPermanent);
                     self.runtime.shutdown().cancel();
@@ -550,7 +727,8 @@ impl BlinkFeedClient {
             let (mut socket, _) = match connection {
                 Ok(Ok(connection)) => connection,
                 Ok(Err(error)) => {
-                    let (status, outcome, retry, cancel_root) = Self::classify_error(&error);
+                    let (status, outcome, retry, cancel_root) =
+                        self.classify_error_and_emit(&error);
                     if let Some(outcome) = outcome {
                         self.runtime.record_a1(outcome);
                     }
@@ -568,6 +746,11 @@ impl BlinkFeedClient {
                     continue;
                 }
                 Err(_) => {
+                    #[cfg(feature = "edge-measurement")]
+                    self.runtime.emit_blink_reject(
+                        "connect-timeout",
+                        BlinkRejectReasonV3::OperationTimeout,
+                    );
                     self.runtime.record_a1(A1Outcome::TransportFailure);
                     self.runtime.set_a1_status(A1Status::Retrying);
                     if !self.wait_backoff(backoff).await {
@@ -590,6 +773,11 @@ impl BlinkFeedClient {
                     match Self::subscription_from_ack(text.as_str()) {
                         Some(subscription) => subscription,
                         None => {
+                            #[cfg(feature = "edge-measurement")]
+                            self.runtime.emit_blink_reject(
+                                "ack-malformed",
+                                BlinkRejectReasonV3::AckMalformed,
+                            );
                             self.runtime.record_a1(A1Outcome::ProtocolDisabled);
                             self.runtime.set_a1_status(A1Status::DisabledPermanent);
                             self.runtime.shutdown().cancel();
@@ -598,19 +786,35 @@ impl BlinkFeedClient {
                     }
                 }
                 Ok(Ok(Message::Ping(_) | Message::Pong(_))) => {
+                    #[cfg(feature = "edge-measurement")]
+                    self.runtime.emit_blink_reject("ack-control", BlinkRejectReasonV3::AckControl);
                     self.runtime.record_a1(A1Outcome::ProtocolDisabled);
                     self.runtime.set_a1_status(A1Status::DisabledPermanent);
                     self.runtime.shutdown().cancel();
                     return;
                 }
-                Ok(Ok(_)) => {
+                Ok(Ok(message)) => {
+                    let _message_kind = &message;
+                    #[cfg(feature = "edge-measurement")]
+                    {
+                        let (branch_id, reason) = match message {
+                            Message::Text(_) => {
+                                ("ack-text-oversize", BlinkRejectReasonV3::AckTextOversize)
+                            }
+                            Message::Binary(_) => ("ack-binary", BlinkRejectReasonV3::AckBinary),
+                            Message::Close(_) => ("ack-close", BlinkRejectReasonV3::AckClose),
+                            _ => ("ack-unexpected-wire", BlinkRejectReasonV3::AckUnexpectedWire),
+                        };
+                        self.runtime.emit_blink_reject(branch_id, reason);
+                    }
                     self.runtime.record_a1(A1Outcome::ProtocolDisabled);
                     self.runtime.set_a1_status(A1Status::DisabledPermanent);
                     self.runtime.shutdown().cancel();
                     return;
                 }
                 Ok(Err(error)) => {
-                    let (status, outcome, retry, cancel_root) = Self::classify_error(&error);
+                    let (status, outcome, retry, cancel_root) =
+                        self.classify_error_and_emit(&error);
                     if let Some(outcome) = outcome {
                         self.runtime.record_a1(outcome);
                     }
@@ -625,6 +829,9 @@ impl BlinkFeedClient {
                     continue;
                 }
                 Err(_) => {
+                    #[cfg(feature = "edge-measurement")]
+                    self.runtime
+                        .emit_blink_reject("ack-timeout", BlinkRejectReasonV3::OperationTimeout);
                     self.runtime.record_a1(A1Outcome::TransportFailure);
                     self.runtime.set_a1_status(A1Status::Retrying);
                     if !self.wait_backoff(backoff).await {
@@ -653,15 +860,40 @@ impl BlinkFeedClient {
                                 self.runtime.submit_blink_victim(victim);
                             }
                             Err(A1Outcome::ApplicationDrop) => {
+                                #[cfg(feature = "edge-measurement")]
+                                {
+                                    let (branch_id, reason) =
+                                        BlinkVictim::classify_decode_rejection_branch(
+                                            text.as_str(),
+                                            &subscription,
+                                            A1Outcome::ApplicationDrop,
+                                        );
+                                    self.runtime.emit_blink_reject(branch_id, reason);
+                                }
                                 self.runtime.record_a1(A1Outcome::ApplicationDrop);
                             }
                             Err(A1Outcome::ProtocolDisabled) => {
+                                #[cfg(feature = "edge-measurement")]
+                                {
+                                    let (branch_id, reason) =
+                                        BlinkVictim::classify_decode_rejection_branch(
+                                            text.as_str(),
+                                            &subscription,
+                                            A1Outcome::ProtocolDisabled,
+                                        );
+                                    self.runtime.emit_blink_reject(branch_id, reason);
+                                }
                                 self.runtime.record_a1(A1Outcome::ProtocolDisabled);
                                 self.runtime.set_a1_status(A1Status::DisabledPermanent);
                                 self.runtime.shutdown().cancel();
                                 return;
                             }
                             Err(_) => {
+                                #[cfg(feature = "edge-measurement")]
+                                self.runtime.emit_blink_reject(
+                                    "notification-internal-failure",
+                                    BlinkRejectReasonV3::NotificationInternalFailure,
+                                );
                                 self.runtime.record_a1(A1Outcome::InternalFailure);
                                 self.runtime.set_a1_status(A1Status::DisabledPermanent);
                                 self.runtime.shutdown().cancel();
@@ -669,24 +901,55 @@ impl BlinkFeedClient {
                             }
                         }
                     }
-                    Some(Ok(Message::Text(_) | Message::Binary(_))) => {
+                    Some(Ok(message @ (Message::Text(_) | Message::Binary(_)))) => {
+                        let _message_kind = &message;
+                        #[cfg(feature = "edge-measurement")]
+                        {
+                            let (branch_id, reason) = match message {
+                                Message::Text(_) => {
+                                    ("wire-text-oversize", BlinkRejectReasonV3::WireTextOversize)
+                                }
+                                _ => ("wire-binary", BlinkRejectReasonV3::WireBinary),
+                            };
+                            self.runtime.emit_blink_reject(branch_id, reason);
+                        }
                         self.runtime.record_a1(A1Outcome::ApplicationDrop);
                     }
-                    Some(Ok(Message::Ping(_) | Message::Pong(_))) => {
+                    Some(Ok(message @ (Message::Ping(_) | Message::Pong(_)))) => {
+                        let _message_kind = &message;
+                        #[cfg(feature = "edge-measurement")]
+                        {
+                            let (branch_id, reason) = match message {
+                                Message::Ping(_) => {
+                                    ("wire-ping", BlinkRejectReasonV3::WireControlPing)
+                                }
+                                _ => ("wire-pong", BlinkRejectReasonV3::WireControlPong),
+                            };
+                            self.runtime.emit_blink_reject(branch_id, reason);
+                        }
                         self.runtime.record_a1(A1Outcome::ControlObserved);
                     }
                     Some(Ok(Message::Close(_))) => {
+                        #[cfg(feature = "edge-measurement")]
+                        self.runtime
+                            .emit_blink_reject("wire-close", BlinkRejectReasonV3::WireClose);
                         self.runtime.record_a1(A1Outcome::DisconnectObserved);
                         break true;
                     }
                     Some(Ok(Message::Frame(_))) => {
+                        #[cfg(feature = "edge-measurement")]
+                        self.runtime.emit_blink_reject(
+                            "wire-frame",
+                            BlinkRejectReasonV3::WireUnexpectedFrame,
+                        );
                         self.runtime.record_a1(A1Outcome::ProtocolDisabled);
                         self.runtime.set_a1_status(A1Status::DisabledPermanent);
                         self.runtime.shutdown().cancel();
                         return;
                     }
                     Some(Err(error)) => {
-                        let (status, outcome, retry, cancel_root) = Self::classify_error(&error);
+                        let (status, outcome, retry, cancel_root) =
+                            self.classify_error_and_emit(&error);
                         if let Some(outcome) = outcome {
                             self.runtime.record_a1(outcome);
                         }
@@ -700,6 +963,8 @@ impl BlinkFeedClient {
                         break true;
                     }
                     None => {
+                        #[cfg(feature = "edge-measurement")]
+                        self.runtime.emit_blink_reject("wire-end", BlinkRejectReasonV3::WireEnd);
                         self.runtime.record_a1(A1Outcome::DisconnectObserved);
                         break true;
                     }
@@ -747,14 +1012,32 @@ impl BlinkFeedClient {
         .then_some(subscription)
     }
 
-    fn classify_error(
+    fn classify_error_and_emit(
+        &self,
         error: &WebSocketError,
     ) -> (A1Status, Option<A1Outcome>, bool, bool) {
+        #[cfg(feature = "edge-measurement")]
+        {
+            let disposition = BlinkRejectClassifierV3::classify(error);
+            self.emit_classified_reason(disposition.reason);
+        }
+        Self::classify_error(error)
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn emit_classified_reason(&self, reason: BlinkRejectReasonV3) {
+        if let Some(branch_id) = BlinkRejectClassifierV3::branch_id(reason) {
+            self.runtime.emit_blink_reject(branch_id, reason);
+        }
+    }
+
+    fn classify_error(error: &WebSocketError) -> (A1Status, Option<A1Outcome>, bool, bool) {
         match error {
-            WebSocketError::ConnectionClosed => {
+            WebSocketError::ConnectionClosed
+            | WebSocketError::Protocol(ProtocolError::ResetWithoutClosingHandshake) => {
                 (A1Status::Retrying, Some(A1Outcome::DisconnectObserved), true, false)
             }
-            WebSocketError::AlreadyClosed => {
+            WebSocketError::AlreadyClosed | WebSocketError::WriteBufferFull(_) => {
                 (A1Status::DisabledPermanent, Some(A1Outcome::InternalFailure), false, true)
             }
             WebSocketError::Io(error) => match error.kind() {
@@ -770,23 +1053,12 @@ impl BlinkFeedClient {
                 | std::io::ErrorKind::HostUnreachable => {
                     (A1Status::Retrying, Some(A1Outcome::TransportFailure), true, false)
                 }
-                _ => {
-                    (A1Status::DisabledPermanent, Some(A1Outcome::InternalFailure), false, true)
-                }
+                _ => (A1Status::DisabledPermanent, Some(A1Outcome::InternalFailure), false, true),
             },
-            WebSocketError::Tls(_) | WebSocketError::Capacity(_) => {
-                (A1Status::DisabledPermanent, Some(A1Outcome::ProtocolDisabled), false, false)
-            }
-            WebSocketError::Protocol(ProtocolError::ResetWithoutClosingHandshake) => {
-                (A1Status::Retrying, Some(A1Outcome::DisconnectObserved), true, false)
-            }
-            WebSocketError::Protocol(_) => {
-                (A1Status::DisabledPermanent, Some(A1Outcome::ProtocolDisabled), false, false)
-            }
-            WebSocketError::WriteBufferFull(_) => {
-                (A1Status::DisabledPermanent, Some(A1Outcome::InternalFailure), false, true)
-            }
-            WebSocketError::Utf8(_)
+            WebSocketError::Tls(_)
+            | WebSocketError::Capacity(_)
+            | WebSocketError::Protocol(_)
+            | WebSocketError::Utf8(_)
             | WebSocketError::AttackAttempt
             | WebSocketError::Url(_)
             | WebSocketError::HttpFormat(_) => {
@@ -797,9 +1069,7 @@ impl BlinkFeedClient {
                 408 | 429 | 500..=599 => {
                     (A1Status::Retrying, Some(A1Outcome::TransportFailure), true, false)
                 }
-                _ => {
-                    (A1Status::DisabledPermanent, Some(A1Outcome::ProtocolDisabled), false, false)
-                }
+                _ => (A1Status::DisabledPermanent, Some(A1Outcome::ProtocolDisabled), false, false),
             },
         }
     }
@@ -813,14 +1083,14 @@ mod tests {
         sync::Arc,
     };
 
-    use tokio::net::TcpListener;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
     use tokio_tungstenite::{
-        accept_async, accept_hdr_async,
+        accept_async,
         tungstenite::{
             error::{CapacityError, UrlError},
-            handshake::server::{
-                ErrorResponse, Request as ServerRequest, Response as ServerResponse,
-            },
             http::Response,
         },
     };
@@ -877,10 +1147,7 @@ mod tests {
         assert_eq!(victim.raw_tx().as_ref(), &[1]);
         assert_eq!(victim.received_at(), now);
 
-        assert_eq!(
-            BlinkVictim::decode(&valid, "other", now),
-            Err(A1Outcome::ProtocolDisabled)
-        );
+        assert_eq!(BlinkVictim::decode(&valid, "other", now), Err(A1Outcome::ProtocolDisabled));
         assert_eq!(
             BlinkVictim::decode(&notification("sub", "0x00", "0x2", "0x01"), "sub", now),
             Err(A1Outcome::ApplicationDrop)
@@ -891,11 +1158,7 @@ mod tests {
         );
         let too_large = format!("0x{}", "00".repeat(MAX_RAW_TX_BYTES + 1));
         assert_eq!(
-            BlinkVictim::decode(
-                &notification("sub", "0x64", "0x2", &too_large),
-                "sub",
-                now,
-            ),
+            BlinkVictim::decode(&notification("sub", "0x64", "0x2", &too_large), "sub", now,),
             Err(A1Outcome::ApplicationDrop)
         );
     }
@@ -928,10 +1191,12 @@ mod tests {
             std::io::ErrorKind::HostUnreachable,
         ];
         for kind in transient {
-            let policy = BlinkFeedClient::classify_error(&WebSocketError::Io(
-                std::io::Error::from(kind),
-            ));
-            assert_eq!(policy, (A1Status::Retrying, Some(A1Outcome::TransportFailure), true, false));
+            let policy =
+                BlinkFeedClient::classify_error(&WebSocketError::Io(std::io::Error::from(kind)));
+            assert_eq!(
+                policy,
+                (A1Status::Retrying, Some(A1Outcome::TransportFailure), true, false)
+            );
         }
         assert_eq!(
             BlinkFeedClient::classify_error(&WebSocketError::Io(std::io::Error::from(
@@ -949,10 +1214,7 @@ mod tests {
         );
 
         for error in [
-            WebSocketError::Capacity(CapacityError::MessageTooLong {
-                size: 2,
-                max_size: 1,
-            }),
+            WebSocketError::Capacity(CapacityError::MessageTooLong { size: 2, max_size: 1 }),
             WebSocketError::Protocol(ProtocolError::WrongHttpMethod),
             WebSocketError::Utf8("invalid".to_owned()),
             WebSocketError::AttackAttempt,
@@ -979,30 +1241,12 @@ mod tests {
 
         for (status, expected) in [
             (101, (A1Status::AwaitingAck, None, false, false)),
-            (
-                408,
-                (A1Status::Retrying, Some(A1Outcome::TransportFailure), true, false),
-            ),
-            (
-                429,
-                (A1Status::Retrying, Some(A1Outcome::TransportFailure), true, false),
-            ),
-            (
-                500,
-                (A1Status::Retrying, Some(A1Outcome::TransportFailure), true, false),
-            ),
-            (
-                599,
-                (A1Status::Retrying, Some(A1Outcome::TransportFailure), true, false),
-            ),
-            (
-                200,
-                (A1Status::DisabledPermanent, Some(A1Outcome::ProtocolDisabled), false, false),
-            ),
-            (
-                401,
-                (A1Status::DisabledPermanent, Some(A1Outcome::ProtocolDisabled), false, false),
-            ),
+            (408, (A1Status::Retrying, Some(A1Outcome::TransportFailure), true, false)),
+            (429, (A1Status::Retrying, Some(A1Outcome::TransportFailure), true, false)),
+            (500, (A1Status::Retrying, Some(A1Outcome::TransportFailure), true, false)),
+            (599, (A1Status::Retrying, Some(A1Outcome::TransportFailure), true, false)),
+            (200, (A1Status::DisabledPermanent, Some(A1Outcome::ProtocolDisabled), false, false)),
+            (401, (A1Status::DisabledPermanent, Some(A1Outcome::ProtocolDisabled), false, false)),
         ] {
             let response =
                 Response::builder().status(status).body(None).expect("HTTP response fixture");
@@ -1015,10 +1259,8 @@ mod tests {
 
     #[test]
     fn shutdown_waiter_and_counters_are_finite() {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("runtime");
+        let runtime =
+            tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
         runtime.block_on(async {
             let shutdown = Arc::new(RuntimeShutdown::default());
             let waiter = Arc::clone(&shutdown);
@@ -1036,10 +1278,8 @@ mod tests {
 
     #[test]
     fn loopback_101_sends_one_subscribe_and_decodes_without_egress() {
-        let io = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("runtime");
+        let io =
+            tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
         io.block_on(async {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("loopback");
             let endpoint = format!("ws://{}/ws/v1/", listener.local_addr().expect("address"));
@@ -1055,9 +1295,7 @@ mod tests {
                     .await
                     .expect("ack");
                 socket
-                    .send(Message::Text(
-                        notification("loopback-sub", "0x64", "0x2", "0x01").into(),
-                    ))
+                    .send(Message::Text(notification("loopback-sub", "0x64", "0x2", "0x01").into()))
                     .await
                     .expect("notification");
                 socket.send(Message::Binary(vec![1].into())).await.expect("binary");
@@ -1102,25 +1340,21 @@ mod tests {
 
     #[test]
     fn loopback_401_and_tls_failure_disable_permanently() {
-        let io = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("runtime");
+        let io =
+            tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
         io.block_on(async {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("loopback");
             let endpoint = format!("ws://{}/ws/v1/", listener.local_addr().expect("address"));
             let server = tokio::spawn(async move {
-                let (stream, _) = listener.accept().await.expect("accept");
-                let callback =
-                    |_request: &ServerRequest,
-                     _response: ServerResponse|
-                     -> Result<ServerResponse, ErrorResponse> {
-                        Err(Response::builder()
-                            .status(401)
-                            .body(Some(String::new()))
-                            .expect("401 response"))
-                    };
-                let _ = accept_hdr_async(stream, callback).await;
+                let (mut stream, _) = listener.accept().await.expect("accept");
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request).await.expect("read handshake");
+                stream
+                    .write_all(
+                        b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await
+                    .expect("write 401");
             });
             let credential = credential_file("loopback-401", b"synthetic", 0o600);
             let runtime = Arc::new(

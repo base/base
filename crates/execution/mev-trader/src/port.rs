@@ -51,6 +51,9 @@ pub enum PortError {
     /// The single-use snapshot handle factory was already consumed.
     #[error("snapshot handle factory already used")]
     FactoryAlreadyUsed,
+    /// A runtime captured the snapshot before required edge evidence was attached.
+    #[error("MissingRequiredEvidence")]
+    MissingRequiredEvidence,
 }
 
 /// Visits pending payload identifiers without exposing their backing snapshot.
@@ -99,7 +102,7 @@ pub struct PendingAccountNonce {
 
 impl PendingAccountNonce {
     /// Constructs a coherent overlay nonce whose current value has not regressed.
-    pub fn checked(original_nonce: u64, current_nonce: u64) -> Result<Self, PortError> {
+    pub const fn checked(original_nonce: u64, current_nonce: u64) -> Result<Self, PortError> {
         if current_nonce < original_nonce {
             return Err(PortError::Incoherent);
         }
@@ -167,6 +170,29 @@ pub trait PendingSnapshotView: Debug + Send + Sync {
     /// Visits the snapshot's pending bundle.
     fn visit_bundle(&self, visitor: &mut dyn BundleVisitor) -> Result<VisitSummary, PortError>;
 }
+/// Exact source facts attached only after the matching registry terminal exists.
+#[cfg(feature = "edge-measurement")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdgeSnapshotEvidenceV1 {
+    /// Source generation bound by the flash producer.
+    pub source_generation: u64,
+    /// Pending publication sequence.
+    pub pending_snapshot_sequence: u64,
+    /// Independent coverage-queue acceptance sequence.
+    pub coverage_sequence: u64,
+    /// Payload-first ledger sequence.
+    pub payload_first_record_sequence: u64,
+    /// Payload-first authority hash.
+    pub payload_first_record_hash: B256,
+    /// Structural processor terminal hash.
+    pub structural_terminal_hash: B256,
+    /// Connection record sequence current at CLI receipt.
+    pub connection_sequence: u64,
+    /// Connection authority hash current at CLI receipt.
+    pub connection_record_hash: B256,
+    /// Canonical SHA-256 of the complete pending terminal record.
+    pub registry_terminal_record_hash: B256,
+}
 
 /// Single-use issuer for an opaque snapshot handle.
 #[derive(Debug)]
@@ -189,7 +215,25 @@ impl SnapshotHandleFactory {
         if self.issued.replace(true) {
             return Err(PortError::FactoryAlreadyUsed);
         }
-        Ok(SnapshotHandle { view, received_at })
+        Ok(SnapshotHandle {
+            view,
+            received_at,
+            #[cfg(feature = "edge-measurement")]
+            edge_evidence: None,
+        })
+    }
+    /// Issues the sole handle with already-attached exact edge evidence.
+    #[cfg(feature = "edge-measurement")]
+    pub fn issue_with_edge_evidence(
+        &self,
+        view: Arc<dyn PendingSnapshotView + Send + Sync>,
+        received_at: Instant,
+        evidence: EdgeSnapshotEvidenceV1,
+    ) -> Result<SnapshotHandle, PortError> {
+        if self.issued.replace(true) {
+            return Err(PortError::FactoryAlreadyUsed);
+        }
+        Ok(SnapshotHandle { view, received_at, edge_evidence: Some(evidence) })
     }
 }
 
@@ -198,12 +242,19 @@ impl SnapshotHandleFactory {
 pub struct SnapshotHandle {
     view: Arc<dyn PendingSnapshotView + Send + Sync>,
     received_at: Instant,
+    #[cfg(feature = "edge-measurement")]
+    edge_evidence: Option<EdgeSnapshotEvidenceV1>,
 }
 
 impl SnapshotHandle {
     /// Returns when the captured pending record was received.
     pub const fn received_at(&self) -> Instant {
         self.received_at
+    }
+    /// Returns the exact evidence captured at handle issuance, never a later backfill.
+    #[cfg(feature = "edge-measurement")]
+    pub fn edge_evidence(&self) -> Result<EdgeSnapshotEvidenceV1, PortError> {
+        self.edge_evidence.ok_or(PortError::MissingRequiredEvidence)
     }
 
     /// Returns the captured canonical parent hash.
@@ -457,5 +508,39 @@ mod tests {
             current: Mutex::new(false),
         };
         assert!(SnapshotCaptureCoordinator.capture(&port).expect("capture").is_none());
+    }
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn evidence_is_frozen_at_capture_and_missing_is_named() {
+        let view: Arc<dyn PendingSnapshotView + Send + Sync> = Arc::new(EmptyView);
+        let missing =
+            SnapshotHandleFactory::new().issue(Arc::clone(&view), Instant::now()).expect("handle");
+        assert_eq!(missing.edge_evidence(), Err(PortError::MissingRequiredEvidence));
+
+        let present = SnapshotHandleFactory::new()
+            .issue_with_edge_evidence(
+                view,
+                Instant::now(),
+                EdgeSnapshotEvidenceV1 {
+                    source_generation: 1,
+                    pending_snapshot_sequence: 2,
+                    coverage_sequence: 7,
+                    payload_first_record_sequence: 3,
+                    payload_first_record_hash: B256::with_last_byte(4),
+                    structural_terminal_hash: B256::with_last_byte(5),
+                    connection_sequence: 6,
+                    connection_record_hash: B256::with_last_byte(7),
+                    registry_terminal_record_hash: B256::with_last_byte(8),
+                },
+            )
+            .expect("evidence handle")
+            .edge_evidence()
+            .expect("evidence");
+        assert_eq!(present.source_generation, 1);
+        assert_eq!(present.pending_snapshot_sequence, 2);
+        assert_eq!(present.payload_first_record_sequence, 3);
+        assert_eq!(present.connection_sequence, 6);
+        assert_eq!(present.coverage_sequence, 7);
+        assert_eq!(present.registry_terminal_record_hash, B256::with_last_byte(8));
     }
 }

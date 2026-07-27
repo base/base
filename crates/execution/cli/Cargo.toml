@@ -82,6 +82,8 @@ libc = { workspace = true, optional = true }
 rstest.workspace = true
 tempfile.workspace = true
 base-common-flashblocks.workspace = true
+base-flashblocks = { workspace = true, features = ["edge-measurement", "test-utils"] }
+base-mev-trader = { workspace = true, features = ["edge-measurement", "test-utils"] }
 
 [build-dependencies]
 base-execution-chainspec = { workspace = true, features = ["std"] }
@@ -126,6 +128,11 @@ serde = [
 	"secp256k1/serde",
 ]
 
+edge-measurement = [
+	"base-flashblocks/edge-measurement",
+	"base-mev-trader/edge-measurement",
+	"dep:serde_json",
+]
 t4a-shadow = [
 	"base-mev-trader/t4a-shadow",
 	"dep:libc",

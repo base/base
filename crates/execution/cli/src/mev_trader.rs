@@ -1,3 +1,29 @@
+#[cfg(feature = "edge-measurement")]
+use std::fmt;
+#[cfg(all(feature = "edge-measurement", test))]
+use std::os::unix::fs::FileExt;
+#[cfg(feature = "edge-measurement")]
+use std::{
+    collections::BTreeMap,
+    ffi::CString,
+    fs::{self, File, OpenOptions},
+    io::{self, Read, Write},
+    num::NonZeroU64,
+    os::{
+        fd::{AsRawFd, FromRawFd},
+        unix::{
+            ffi::OsStrExt,
+            fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+        },
+    },
+    path::{Component, Path, PathBuf},
+    str::FromStr,
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 use std::{
     collections::BTreeSet,
     ffi::{OsStr, OsString},
@@ -9,12 +35,37 @@ use std::{
 use alloy_consensus::{Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
+#[cfg(feature = "edge-measurement")]
+use base_flashblocks::{
+    ClockAnchorRecordV1, EdgeDurableRegistryAckV1, EdgeEventDrainStatusV1, EdgeMeasurementGlobal,
+    EdgeMeasurementInstallConfigV1, EdgeMeasurementMissingEvidenceSnapshotV1,
+    EdgeMeasurementRecorderV1, EdgeMeasurementRegistryHandleV2, EdgeSourceEventV1, EpochRouteV1,
+    PENDING_TERMINAL_RECORD_CAPACITY_MAX_V2, PayloadFirstObservationV1, PendingCliTerminalV2,
+    PendingRegistrySnapshotV2, PendingTerminalRecordV2, ProcessorLifecycleProductV1,
+    ProducerEpochCutoffV1 as SourceProducerEpochCutoffV1, ProducerExternalBoundsV1,
+    SourceConnectionRecordV1, SourceCoverageRecordV3, SourceTerminalCoverageV3,
+    WireLifecycleTransitionV1,
+};
+#[cfg(all(feature = "edge-measurement", test))]
+use base_flashblocks::{ClockStatusV1, PayloadFirstKeyV1, WireObservationV1};
 use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState, PendingBlocks};
+#[cfg(all(feature = "edge-measurement", test))]
+use base_mev_trader::EdgeCandidateDetailOracleV1;
 use base_mev_trader::{
     A1Status, BlinkFeedClient, BlinkIngressConfig, BundleVisitor, MevTraderRuntime,
     MevTraderRuntimeConfig, PayloadVisitor, PendingAccountNonce, PendingSnapshotView, PortError,
     SnapshotHandle, SnapshotHandleFactory, TraderSnapshotPort, TransactionVisitor, VisitControl,
     VisitSummary,
+};
+#[cfg(feature = "edge-measurement")]
+use base_mev_trader::{
+    AuditedWriteKey, BlinkLedgerSnapshotV1, BlinkMeasurementLedgerV1,
+    BlinkRejectQueueLossCountersV1, CandidateDropQueueLossCountersV1,
+    CandidatePreEnqueueDropCountersV1, CheckedCandidateBoundsV1, EdgeCandidateDetailV1,
+    EdgeMeasurementDurabilityV1, EdgeMeasurementOwnerConfigV1, EdgeMeasurementOwnerV1,
+    EdgeProducerRecordV1, EdgeQueueAccountingSnapshotV1, EdgeSnapshotEvidenceV1, ExactProtocol,
+    MeasurementBindingDeriverV1, PreparedPoolQuote,
+    ProducerEpochCutoffV1 as BlinkProducerEpochCutoffV1,
 };
 #[cfg(feature = "t4b-shadow")]
 use base_mev_trader::{
@@ -34,7 +85,6527 @@ use mev_trader_submit::{
 #[cfg(feature = "t4b-shadow")]
 use reth_provider::{AccountReader, BlockReaderIdExt, BytecodeReader};
 use reth_provider::{HeaderProvider, StateProviderBox, StateProviderFactory};
+#[cfg(feature = "edge-measurement")]
+use serde_json::{Value as JsonValue, json};
+#[cfg(feature = "edge-measurement")]
+use tracing::error;
 use tracing::info;
+#[cfg(feature = "edge-measurement")]
+fn latch_edge_failure(failure: &'static str) {
+    let global = EdgeMeasurementGlobal::installed();
+    if let Some(recorder) = &global {
+        recorder.latch_coordinator_failure(failure);
+    }
+    if let Some(node_result) = edge_node_result_recorder_v1()
+        && global.as_ref().is_none_or(|recorder| !Arc::ptr_eq(recorder, &node_result.recorder))
+    {
+        node_result.recorder.latch_coordinator_failure(failure);
+    }
+    match failure {
+        "CutoffStructuralPoison" => edge_record_oob_failure_v1("cutoff", failure),
+        "ShutdownRegistryDrainTimedOut" => edge_record_oob_failure_v1("shutdown", failure),
+        _ => {}
+    }
+}
+#[cfg(feature = "edge-measurement")]
+unsafe extern "C" {
+    fn flock(fd: std::os::raw::c_int, operation: std::os::raw::c_int) -> std::os::raw::c_int;
+    fn openat(
+        directory_fd: std::os::raw::c_int,
+        path: *const std::os::raw::c_char,
+        flags: std::os::raw::c_int,
+        ...
+    ) -> std::os::raw::c_int;
+}
+#[cfg(all(feature = "edge-measurement", test))]
+unsafe extern "C" {
+    fn renameat2(
+        old_directory_fd: std::os::raw::c_int,
+        old_path: *const std::os::raw::c_char,
+        new_directory_fd: std::os::raw::c_int,
+        new_path: *const std::os::raw::c_char,
+        flags: std::os::raw::c_uint,
+    ) -> std::os::raw::c_int;
+}
+#[cfg(feature = "edge-measurement")]
+fn cleanup_snapshot_task_registry(
+    registry: &EdgeMeasurementRegistryHandleV2,
+    failure: &'static str,
+) {
+    if registry.cli_cancelled().is_err() {
+        latch_edge_failure(failure);
+    }
+}
+#[cfg(feature = "edge-measurement")]
+const EDGE_CUTOFF_DRAIN_DEADLINE_V1: Duration = Duration::from_secs(30);
+#[cfg(feature = "edge-measurement")]
+const EDGE_SHUTDOWN_JOIN_DEADLINE_V1: Duration = Duration::from_millis(500);
+#[cfg(feature = "edge-measurement")]
+const EDGE_SHUTDOWN_REGISTRY_DRAIN_DEADLINE_V1: Duration = Duration::from_secs(30);
+#[cfg(feature = "edge-measurement")]
+const EDGE_SHUTDOWN_CUTOFF_DEADLINE_V1: Duration = Duration::from_secs(65);
+#[cfg(feature = "edge-measurement")]
+const EDGE_SHUTDOWN_WRITER_DEADLINE_V1: Duration = Duration::from_secs(120);
+#[cfg(feature = "edge-measurement")]
+const EDGE_ACCOUNTING_PERIOD_V1: Duration = Duration::from_secs(60);
+#[cfg(feature = "edge-measurement")]
+const EDGE_CANDIDATE_DETAIL_DRAIN_BUDGET_V1: usize = 64;
+
+#[cfg(feature = "edge-measurement")]
+fn await_edge_cutoff_drain(
+    recorder: &EdgeMeasurementRecorderV1,
+    deadline_cancellation: &EdgeShutdownDeadlineCancellationV1,
+    deadline: Instant,
+) -> bool {
+    loop {
+        if deadline_cancellation.is_cancelled() {
+            return false;
+        }
+        if recorder.cutoff_drain_complete() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+#[cfg(feature = "edge-measurement")]
+#[derive(Debug, Default)]
+struct EdgeCutoffLatchV1 {
+    started: AtomicBool,
+    completed: AtomicBool,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeCutoffLatchV1 {
+    fn wait_for_completion(&self, deadline: Instant) -> bool {
+        while self.started.load(Ordering::Acquire) && !self.completed.load(Ordering::Acquire) {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        self.completed.load(Ordering::Acquire)
+    }
+}
+#[cfg(feature = "edge-measurement")]
+/// Linearization boundaries used by the edge shutdown authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EdgeShutdownAuthorityBoundaryV1 {
+    /// Durable publication, tuple commitment, and ordered acknowledgement.
+    Publication,
+    /// Preparation of the recorder cutoff.
+    RecorderCutoffPrepare,
+    /// Preparation of the owner cutoff.
+    OwnerCutoffPrepare,
+    /// Commitment of the coordinated cutoff.
+    CutoffCommit,
+    /// Test-only cancellation boundary.
+    #[cfg(test)]
+    Cancel,
+}
+
+#[cfg(all(feature = "edge-measurement", test))]
+#[derive(Debug)]
+struct EdgeShutdownAuthorityHookV1 {
+    boundary: EdgeShutdownAuthorityBoundaryV1,
+    entered: Arc<std::sync::Barrier>,
+    release: Arc<std::sync::Barrier>,
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Cancellation state that linearizes shutdown-deadline authority.
+#[derive(Debug)]
+pub struct EdgeShutdownDeadlineCancellationV1 {
+    cancelled: AtomicBool,
+    linearization: Mutex<()>,
+    #[cfg(test)]
+    hook: Mutex<Option<EdgeShutdownAuthorityHookV1>>,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl Default for EdgeShutdownDeadlineCancellationV1 {
+    fn default() -> Self {
+        Self {
+            cancelled: AtomicBool::new(false),
+            linearization: Mutex::new(()),
+            #[cfg(test)]
+            hook: Mutex::new(None),
+        }
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Guard holding shutdown authority's linearization lock.
+#[derive(Debug)]
+pub struct EdgeShutdownAuthorityGuardV1<'a> {
+    _linearization: std::sync::MutexGuard<'a, ()>,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeShutdownDeadlineCancellationV1 {
+    fn cancel(&self) {
+        let _linearization =
+            self.linearization.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        #[cfg(test)]
+        self.pause_at_boundary(EdgeShutdownAuthorityBoundaryV1::Cancel);
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    fn authority(
+        &self,
+        boundary: EdgeShutdownAuthorityBoundaryV1,
+    ) -> io::Result<EdgeShutdownAuthorityGuardV1<'_>> {
+        let linearization =
+            self.linearization.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Err(Self::cancelled_error());
+        }
+        #[cfg(test)]
+        self.pause_at_boundary(boundary);
+        #[cfg(not(test))]
+        let _ = boundary;
+        Ok(EdgeShutdownAuthorityGuardV1 { _linearization: linearization })
+    }
+
+    fn check(&self) -> io::Result<()> {
+        if self.cancelled.load(Ordering::SeqCst) { Err(Self::cancelled_error()) } else { Ok(()) }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    fn cancelled_error() -> io::Error {
+        io::Error::new(io::ErrorKind::Interrupted, "edge shutdown deadline cancellation latched")
+    }
+
+    #[cfg(test)]
+    fn install_hook(
+        &self,
+        boundary: EdgeShutdownAuthorityBoundaryV1,
+        entered: Arc<std::sync::Barrier>,
+        release: Arc<std::sync::Barrier>,
+    ) {
+        let mut hook = self.hook.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(hook.is_none(), "deadline authority hook already installed");
+        *hook = Some(EdgeShutdownAuthorityHookV1 { boundary, entered, release });
+    }
+
+    #[cfg(test)]
+    fn pause_at_boundary(&self, boundary: EdgeShutdownAuthorityBoundaryV1) {
+        let hook = {
+            let mut hook = self.hook.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let matches_boundary = hook.as_ref().is_some_and(|hook| hook.boundary == boundary);
+            if matches_boundary { hook.take() } else { None }
+        };
+        if let Some(hook) = hook {
+            hook.entered.wait();
+            hook.release.wait();
+        }
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+fn latch_edge_cutoff_once_with(
+    latched: &EdgeCutoffLatchV1,
+    deadline_cancellation: &EdgeShutdownDeadlineCancellationV1,
+    recorder: &EdgeMeasurementRecorderV1,
+    owner: &EdgeMeasurementOwnerV1,
+    prepare_owner: impl FnOnce(
+        &EdgeMeasurementOwnerV1,
+    ) -> Result<
+        (u64, base_mev_trader::CheckedCandidateBoundsV1),
+        base_mev_trader::EdgeProducerError,
+    >,
+) {
+    loop {
+        if deadline_cancellation.is_cancelled() {
+            return;
+        }
+        if latched
+            .started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            break;
+        }
+        if latched.wait_for_completion(Instant::now() + EDGE_CUTOFF_TASK_JOIN_DEADLINE_V1) {
+            return;
+        }
+        if latched.started.load(Ordering::Acquire) {
+            if !deadline_cancellation.is_cancelled() {
+                latch_edge_failure("CutoffTaskCompletionTimeout");
+            }
+            return;
+        }
+    }
+    let recorder_prepare = match deadline_cancellation
+        .authority(EdgeShutdownAuthorityBoundaryV1::RecorderCutoffPrepare)
+    {
+        Ok(authority) => authority,
+        Err(_) => {
+            latched.completed.store(true, Ordering::Release);
+            return;
+        }
+    };
+    recorder.prepare_cutoff();
+    drop(recorder_prepare);
+    let owner_prepare = match deadline_cancellation
+        .authority(EdgeShutdownAuthorityBoundaryV1::OwnerCutoffPrepare)
+    {
+        Ok(authority) => authority,
+        Err(_) => {
+            latched.completed.store(true, Ordering::Release);
+            return;
+        }
+    };
+    let prepared_owner = prepare_owner(owner);
+    drop(owner_prepare);
+    match prepared_owner {
+        Ok((blink_count, candidate_bounds)) => {
+            let last_blink = blink_count.saturating_sub(1);
+            if deadline_cancellation.is_cancelled() {
+                latched.completed.store(true, Ordering::Release);
+                return;
+            }
+            let drained = await_edge_cutoff_drain(
+                recorder,
+                deadline_cancellation,
+                Instant::now() + EDGE_CUTOFF_DRAIN_DEADLINE_V1,
+            );
+            if deadline_cancellation.is_cancelled() {
+                latched.completed.store(true, Ordering::Release);
+                return;
+            }
+            if !drained {
+                let unresolved = recorder.record_cutoff_drain_deadline();
+                if unresolved.is_empty() {
+                    latch_edge_failure("CutoffDrainDeadlineInsufficientUnresolvedIdentity");
+                } else {
+                    latch_edge_failure("CutoffDrainDeadlineExceeded");
+                }
+            }
+            if deadline_cancellation.is_cancelled() {
+                latched.completed.store(true, Ordering::Release);
+                return;
+            }
+            let last_candidate = candidate_bounds.last_sequence.unwrap_or(0);
+            let last_coverage = recorder.registry().last_coverage_sequence().unwrap_or(0);
+            let cutoff_authority = match deadline_cancellation
+                .authority(EdgeShutdownAuthorityBoundaryV1::CutoffCommit)
+            {
+                Ok(authority) => authority,
+                Err(_) => {
+                    latched.completed.store(true, Ordering::Release);
+                    return;
+                }
+            };
+            let cutoff = recorder.latch_cutoff(ProducerExternalBoundsV1 {
+                last_admitted_blink_generation: last_blink,
+                last_coverage_sequence: last_coverage,
+                last_candidate_sequence: last_candidate,
+            });
+            owner.latch_cutoff(base_mev_trader::ProducerEpochCutoffFieldsV1 {
+                producer_epoch: cutoff.producer_epoch,
+                cutoff_clock_observation_ordinal: cutoff.cutoff_clock_observation_ordinal,
+                last_admitted_wire_ordinal: cutoff.last_admitted_wire_ordinal,
+                last_admitted_source_generation: cutoff.last_admitted_source_generation,
+                last_admitted_blink_generation: cutoff.last_admitted_blink_generation,
+                last_pending_snapshot_sequence: cutoff.last_pending_snapshot_sequence,
+                last_coverage_sequence: cutoff.last_coverage_sequence,
+                last_candidate_sequence: cutoff.last_candidate_sequence,
+                latch_mono_ns: cutoff.latch_mono_ns,
+            });
+            drop(cutoff_authority);
+        }
+        Err(_) => {
+            if !deadline_cancellation.is_cancelled() {
+                latch_edge_failure("CutoffStructuralPoison");
+            }
+        }
+    }
+    latched.completed.store(true, Ordering::Release);
+}
+#[cfg(feature = "edge-measurement")]
+fn latch_edge_cutoff_once(
+    latched: &EdgeCutoffLatchV1,
+    deadline_cancellation: &EdgeShutdownDeadlineCancellationV1,
+    recorder: &EdgeMeasurementRecorderV1,
+    owner: &EdgeMeasurementOwnerV1,
+) {
+    latch_edge_cutoff_once_with(
+        latched,
+        deadline_cancellation,
+        recorder,
+        owner,
+        EdgeMeasurementOwnerV1::prepare_cutoff,
+    );
+}
+#[cfg(feature = "edge-measurement")]
+enum EdgeShutdownTaskOutcome<T> {
+    Completed(T),
+    JoinFailed,
+    TimedOut(tokio::task::JoinHandle<T>),
+}
+
+#[cfg(feature = "edge-measurement")]
+async fn await_edge_shutdown_task<T>(
+    mut handle: tokio::task::JoinHandle<T>,
+    deadline: Duration,
+) -> EdgeShutdownTaskOutcome<T> {
+    match tokio::time::timeout(deadline, &mut handle).await {
+        Ok(Ok(output)) => EdgeShutdownTaskOutcome::Completed(output),
+        Ok(Err(_)) => EdgeShutdownTaskOutcome::JoinFailed,
+        Err(_) => EdgeShutdownTaskOutcome::TimedOut(handle),
+    }
+}
+#[cfg(feature = "edge-measurement")]
+fn handle_snapshot_shutdown_outcome(
+    outcome: EdgeShutdownTaskOutcome<()>,
+    registry: &EdgeMeasurementRegistryHandleV2,
+) {
+    match outcome {
+        EdgeShutdownTaskOutcome::Completed(()) => {}
+        EdgeShutdownTaskOutcome::JoinFailed => {
+            latch_edge_failure("SnapshotTaskJoinFailed");
+            cleanup_snapshot_task_registry(
+                registry,
+                "SnapshotTaskJoinFailedCliCancellationRangeFailed",
+            );
+        }
+        EdgeShutdownTaskOutcome::TimedOut(handle) => {
+            latch_edge_failure("ShutdownRegistryDrainTimedOut");
+            cleanup_snapshot_task_registry(
+                registry,
+                "ShutdownRegistryDrainTimedOutCliCancellationRangeFailed",
+            );
+            handle.abort();
+        }
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Structural failures that make an edge writer operation invalid.
+#[derive(Debug)]
+pub enum EdgeWriterStructuralErrorV1 {
+    /// An immutable destination already contains conflicting bytes.
+    ImmutableConflict,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl fmt::Display for EdgeWriterStructuralErrorV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ImmutableConflict => formatter.write_str("immutable conflict"),
+        }
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+impl std::error::Error for EdgeWriterStructuralErrorV1 {}
+
+#[cfg(feature = "edge-measurement")]
+/// Classification applied to edge writer failures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdgeWriterFailureClassV1 {
+    /// An I/O failure occurred before publication and may be retried.
+    RetryablePrePublicationIo,
+    /// The operation violates an immutable structural constraint.
+    StructuralInvalid,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeWriterFailureClassV1 {
+    fn immutable_conflict() -> io::Error {
+        io::Error::new(io::ErrorKind::AlreadyExists, EdgeWriterStructuralErrorV1::ImmutableConflict)
+    }
+
+    fn classify(error: &io::Error) -> Self {
+        if error.raw_os_error().is_some() {
+            return Self::RetryablePrePublicationIo;
+        }
+        match error.kind() {
+            io::ErrorKind::AlreadyExists
+            | io::ErrorKind::InvalidData
+            | io::ErrorKind::InvalidInput => Self::StructuralInvalid,
+            io::ErrorKind::Other => Self::StructuralInvalid,
+            _ => Self::RetryablePrePublicationIo,
+        }
+    }
+
+    fn retry_delay(attempt: u64, shutdown_barrier: bool) -> Duration {
+        if shutdown_barrier {
+            return Duration::ZERO;
+        }
+        let exponent = u32::try_from(attempt.saturating_sub(1).min(6)).unwrap_or(6);
+        Duration::from_secs((1_u64 << exponent).min(60))
+    }
+
+    fn wait_for_retry_delay_until_cutoff(
+        delay: Duration,
+        mut cutoff_latched: impl FnMut() -> bool,
+    ) {
+        let started = Instant::now();
+        while !cutoff_latched() {
+            let remaining = delay.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return;
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(10)));
+        }
+    }
+}
+#[cfg(feature = "edge-measurement")]
+async fn abort_and_await_edge_cutoff_task(handle: Option<tokio::task::JoinHandle<()>>) {
+    if let Some(mut handle) = handle {
+        handle.abort();
+        match tokio::time::timeout(EDGE_CUTOFF_TASK_JOIN_DEADLINE_V1, &mut handle).await {
+            Ok(Err(error)) if !error.is_cancelled() => {
+                latch_edge_failure("CutoffTaskJoinFailed");
+            }
+            Err(_) => latch_edge_failure("CutoffTaskJoinTimeout"),
+            Ok(_) => {}
+        }
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+const EDGE_SEGMENT_MAX_RECORDS: usize = 1024;
+#[cfg(feature = "edge-measurement")]
+const EDGE_SEGMENT_MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
+#[cfg(feature = "edge-measurement")]
+const EDGE_SEGMENT_MAX_FLUSH_LATENCY: Duration = Duration::from_secs(5);
+#[cfg(feature = "edge-measurement")]
+const EDGE_CUTOFF_TASK_JOIN_DEADLINE_V1: Duration = Duration::from_millis(500);
+#[cfg(feature = "edge-measurement")]
+const EDGE_CANDIDATE_JOIN_CAPACITY: usize = 65_536;
+#[cfg(feature = "edge-measurement")]
+const EDGE_ZERO_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+#[cfg(feature = "edge-measurement")]
+const EDGE_LEDGER_REGISTRY_SHA256_V1: &str =
+    "fdacf9532e9305bcd07ceb4292d82cec91a7e8fd4895d8b23f6b09e52771244d";
+#[cfg(feature = "edge-measurement")]
+const EDGE_SEGMENT_FRAMING_DOMAIN_SHA256_V1: &str =
+    "d0a44be2659cc18024931f09a90e41ffcecc8f21c0d52f83dff82d3087cd6a3d";
+#[cfg(feature = "edge-measurement")]
+const EDGE_PRODUCER_ACCOUNTING_SCHEMA_SHA256_V1: &str =
+    "d52bbb162f7d5a46c0f73949029a2628ece5eb11fcdf8ee16092aa6904dc2e5c";
+#[cfg(all(feature = "edge-measurement", test))]
+const EDGE_MANIFEST16_SAMPLE_SHA256_V1: &str =
+    "09e926edeac3b3fa24353f38de3f4616d29e0d6e4b42172963c0c41dd3b81610";
+
+#[cfg(feature = "edge-measurement")]
+const EDGE_LEDGER_ENDPOINT_ORDER_V1: [&str; 15] = [
+    "payload-first",
+    "connection",
+    "clock",
+    "coverage",
+    "coverage-postcutoff-excluded",
+    "postcutoff-diagnostic",
+    "coverage-detail",
+    "source-detail",
+    "registry-h1",
+    "registry-h2",
+    "blink-reject",
+    "candidate-drop",
+    "candidate",
+    "provenance",
+    "cutoff",
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_EPOCH_OUTPUT_SINGLETON_ARTIFACTS_V1: [&str; 2] =
+    ["accounting", "edge-writer-failures-v1.ndjson"];
+#[cfg(feature = "edge-measurement")]
+const EDGE_CAMPAIGN_CONTROL_ALLOWLIST_V1: [&str; 3] =
+    ["edge-shutdown-margin-v1.json", "fork-driver-capability-v1.json", "replay-pending-v1.json"];
+#[cfg(feature = "edge-measurement")]
+const EDGE_EXTERNAL_ANCHOR_ROLES_V1: [&str; 6] = [
+    "producer-contract-manifest",
+    "coverage-sensitivity-golden",
+    "economic-authority-policy",
+    "evidence-impact-policy",
+    "fork-driver-contract",
+    "registry-drain-fixture",
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_MANIFEST_BOUND_EXTERNAL_ANCHORS_V1: [(&str, &str, &str); 4] = [
+    (
+        "coverage-sensitivity-golden",
+        "BASE_EDGE_COVERAGE_SENSITIVITY_GOLDEN",
+        "coverageSensitivityGoldenVectorSha256",
+    ),
+    (
+        "economic-authority-policy",
+        "BASE_EDGE_ECONOMIC_AUTHORITY_POLICY",
+        "economicAuthorityPolicySha256",
+    ),
+    ("evidence-impact-policy", "BASE_EDGE_EVIDENCE_IMPACT_POLICY", "evidenceImpactPolicySha256"),
+    ("fork-driver-contract", "BASE_EDGE_FORK_DRIVER_CONTRACT", "forkDriverContractSha256"),
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_ACCOUNTING_TOP_LEVEL_ORDER_V1: [&str; 24] = [
+    "schemaVersion",
+    "snapshotKind",
+    "sampledMonoNs",
+    "producerEpoch",
+    "cutoffRecordHash",
+    "sourceMissingEvidenceCounts",
+    "registryTerminalExclusionCounts",
+    "blinkRejectQueueLossCounts",
+    "candidatePreEnqueueDropCounts",
+    "candidateDropQueueLossCounts",
+    "coordinatorMissingEvidenceCounts",
+    "coordinatorFailureCount",
+    "producerVetoReasons",
+    "nonAuthoritySendCount",
+    "sourceCounters",
+    "blinkAccounting",
+    "blinkQueues",
+    "candidateBounds",
+    "cutoffWitnesses",
+    "pendingBreakdown",
+    "poisoned",
+    "drainStatus",
+    "ledgerEndpoints",
+    "operationalIncidentSummary",
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_SOURCE_MISSING_KEYS_V1: [&str; 24] = [
+    "cacheDrainIncomplete",
+    "connectionEventQueueClosedExcluded",
+    "connectionEventQueueFullExcluded",
+    "connectionTransitionAfterQueueLoss",
+    "cutoffBoundMissing",
+    "cutoffDeadlineCacheGeneration",
+    "cutoffDeadlineProcessorGeneration",
+    "decodedGenerationCapacityExcluded",
+    "eventQueueClosed",
+    "eventQueueFull",
+    "lateProcessorCompletion",
+    "missingSourceIdentity",
+    "observerPanicked",
+    "payloadFirstMapCapacityExcluded",
+    "payloadFirstQueueClosedExcluded",
+    "payloadFirstQueueFullExcluded",
+    "payloadGenerationRefCapacityExcluded",
+    "payloadIndexZeroLate",
+    "payloadIndexZeroMissing",
+    "snapshotBindingCapacityExcluded",
+    "snapshotPayloadFirstUnavailable",
+    "terminalRecordAllocationExcluded",
+    "terminalRecordCapacityExcluded",
+    "coordinatorFailure",
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_REGISTRY_EXCLUSION_KEYS_V1: [&str; 3] = [
+    "registrationCapacityMissing",
+    "terminalRecordAllocationMissing",
+    "terminalRecordCapacityMissing",
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_BLINK_REJECT_LOSS_KEYS_V1: [&str; 2] = ["queueClosed", "queueFull"];
+#[cfg(feature = "edge-measurement")]
+const EDGE_CANDIDATE_PRE_ENQUEUE_KEYS_V1: [&str; 9] = [
+    "cancelledAfterDraft",
+    "candidateQueueClosed",
+    "candidateQueueFull",
+    "cutoffDrainDeadline",
+    "evidenceMismatch",
+    "failedAfterDraft",
+    "measurementDerivationRejected",
+    "missingRequiredEvidence",
+    "staleAfterDraft",
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_CANDIDATE_DROP_LOSS_KEYS_V1: [&str; 2] = ["queueClosed", "queueFull"];
+#[cfg(feature = "edge-measurement")]
+const EDGE_SOURCE_COUNTER_KEYS_V1: [&str; 9] = [
+    "wireCount",
+    "sourceGenerationCount",
+    "payloadFirstCount",
+    "connectionCount",
+    "processorTerminalCount",
+    "authorityWireTerminalCount",
+    "eventPendingAck",
+    "poisonCount",
+    "missingEvidenceCount",
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_BLINK_ACCOUNTING_KEYS_V1: [&str; 17] = [
+    "victimIngressObserved",
+    "victimIngressAccepted",
+    "slotAccepted",
+    "slotReplaced",
+    "slotClosed",
+    "generationOverflow",
+    "admittedGenerations",
+    "processedTerminal",
+    "replacedBeforeFrame",
+    "cancelledBeforeFrame",
+    "selectedDtoBuiltPreterminal",
+    "selectedDtoCommitted",
+    "selectedDtoCancelledBeforeTerminal",
+    "selectedDtoPreterminalFailure",
+    "generationPending",
+    "selectedPending",
+    "poisoned",
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_BLINK_QUEUE_KEYS_V1: [&str; 3] = ["pendingRecords", "pendingCandidates", "stagedCount"];
+#[cfg(feature = "edge-measurement")]
+const EDGE_CANDIDATE_BOUND_KEYS_V1: [&str; 2] = ["count", "lastSequence"];
+#[cfg(feature = "edge-measurement")]
+const EDGE_CUTOFF_WITNESS_KEYS_V1: [&str; 2] = ["sourceCutoffRecordHash", "blinkCutoffRecordHash"];
+#[cfg(feature = "edge-measurement")]
+const EDGE_PENDING_BREAKDOWN_KEYS_V1: [&str; 2] = ["registry", "registryTotal"];
+#[cfg(feature = "edge-measurement")]
+const EDGE_PENDING_REGISTRY_KEYS_V1: [&str; 7] = [
+    "coverageAck",
+    "delivery",
+    "primary",
+    "published",
+    "secondary",
+    "unregisteredSendInflight",
+    "sequenceLessRegistrationSendInflight",
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_DRAIN_STATUS_KEYS_V1: [&str; 11] = [
+    "authorityOpenFileCount",
+    "dataSealed",
+    "pendingPeriodicSnapshot",
+    "periodicCadenceClosed",
+    "producerQueuesDrained",
+    "registryClosed",
+    "registryPendingTotal",
+    "schemaVersion",
+    "sourceFenceInstalled",
+    "terminationPhase",
+    "unsealedDataBatchCount",
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_LEDGER_ENDPOINT_KEYS_V1: [&str; 5] =
+    ["recordCount", "lastSequence", "finalRecordHash", "segmentCount", "lastSegmentOrdinal"];
+#[cfg(feature = "edge-measurement")]
+const EDGE_OPERATIONAL_INCIDENT_SUMMARY_KEYS_V1: [&str; 3] = [
+    "AccountingPeriodicWriteFailed",
+    "DataLedgerWriteFailed",
+    "OpenCleanupFailedAfterDurablePublish",
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_OPERATIONAL_INCIDENT_ENTRY_KEYS_V1: [&str; 5] =
+    ["count", "recoveredCount", "firstFailedMonoNs", "lastFailedMonoNs", "singleRecoveryWitness"];
+#[cfg(feature = "edge-measurement")]
+const EDGE_SINGLE_RECOVERY_WITNESS_KEYS_V1: [&str; 11] = [
+    "incidentId",
+    "ledgerPrefix",
+    "scheduledMonoNs",
+    "failedMonoNs",
+    "lastAttemptMonoNs",
+    "recoveredMonoNs",
+    "attemptCount",
+    "preStateSha256",
+    "postStateSha256",
+    "attemptedBytesSha256",
+    "durableBytesSha256",
+];
+
+#[cfg(feature = "edge-measurement")]
+const _: () = assert!(
+    EDGE_SOURCE_MISSING_KEYS_V1.len()
+        + EDGE_REGISTRY_EXCLUSION_KEYS_V1.len()
+        + EDGE_BLINK_REJECT_LOSS_KEYS_V1.len()
+        + EDGE_CANDIDATE_PRE_ENQUEUE_KEYS_V1.len()
+        + EDGE_CANDIDATE_DROP_LOSS_KEYS_V1.len()
+        == 40
+);
+#[cfg(feature = "edge-measurement")]
+const _: () = assert!(
+    EDGE_SOURCE_MISSING_KEYS_V1.len()
+        + EDGE_REGISTRY_EXCLUSION_KEYS_V1.len()
+        + EDGE_BLINK_REJECT_LOSS_KEYS_V1.len()
+        + EDGE_CANDIDATE_PRE_ENQUEUE_KEYS_V1.len()
+        + EDGE_CANDIDATE_DROP_LOSS_KEYS_V1.len()
+        - 1
+        == 39
+);
+
+#[cfg(feature = "edge-measurement")]
+/// Canonical JSON encoder used for edge contract artifacts.
+#[derive(Debug)]
+pub struct EdgeContractCanonicalJsonV1;
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeContractCanonicalJsonV1 {
+    fn key_cmp(left: &str, right: &str) -> std::cmp::Ordering {
+        left.encode_utf16().cmp(right.encode_utf16())
+    }
+
+    fn write_string(value: &str, output: &mut Vec<u8>) {
+        output.push(b'"');
+        for character in value.chars() {
+            match character {
+                '"' => output.extend_from_slice(br#"\""#),
+                '\\' => output.extend_from_slice(br#"\\"#),
+                '\u{0000}'..='\u{001f}' => {
+                    const HEX: &[u8; 16] = b"0123456789abcdef";
+                    let byte = character as u8;
+                    output.extend_from_slice(b"\\u00");
+                    output.push(HEX[usize::from(byte >> 4)]);
+                    output.push(HEX[usize::from(byte & 0x0f)]);
+                }
+                _ => {
+                    let mut encoded = [0_u8; 4];
+                    output.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
+                }
+            }
+        }
+        output.push(b'"');
+    }
+
+    fn write_value(value: &JsonValue, output: &mut Vec<u8>) -> io::Result<()> {
+        match value {
+            JsonValue::Null => output.extend_from_slice(b"null"),
+            JsonValue::Bool(true) => output.extend_from_slice(b"true"),
+            JsonValue::Bool(false) => output.extend_from_slice(b"false"),
+            JsonValue::String(value) => Self::write_string(value, output),
+            JsonValue::Array(values) => {
+                output.push(b'[');
+                for (index, value) in values.iter().enumerate() {
+                    if index != 0 {
+                        output.push(b',');
+                    }
+                    Self::write_value(value, output)?;
+                }
+                output.push(b']');
+            }
+            JsonValue::Object(values) => {
+                output.push(b'{');
+                let mut entries = values.iter().collect::<Vec<_>>();
+                entries.sort_unstable_by(|left, right| Self::key_cmp(left.0, right.0));
+                for (index, (key, value)) in entries.into_iter().enumerate() {
+                    if index != 0 {
+                        output.push(b',');
+                    }
+                    Self::write_string(key, output);
+                    output.push(b':');
+                    Self::write_value(value, output)?;
+                }
+                output.push(b'}');
+            }
+            JsonValue::Number(_) => {
+                return Err(io::Error::other("contract JSON numbers are forbidden"));
+            }
+        }
+        Ok(())
+    }
+
+    fn canonicalize(value: &JsonValue) -> io::Result<Vec<u8>> {
+        let mut output = Vec::new();
+        Self::write_value(value, &mut output)?;
+        Ok(output)
+    }
+
+    #[cfg(test)]
+    fn validate_utf16(input: &[u16]) -> io::Result<String> {
+        let mut output = String::new();
+        for decoded in char::decode_utf16(input.iter().copied()) {
+            output.push(decoded.map_err(|_| io::Error::other("unpaired UTF-16 surrogate"))?);
+        }
+        Ok(output)
+    }
+
+    fn digest(tag: &str, projection: &JsonValue) -> io::Result<String> {
+        let mut preimage = Vec::new();
+        preimage.extend_from_slice(tag.as_bytes());
+        preimage.push(b'\n');
+        preimage.extend_from_slice(&Self::canonicalize(projection)?);
+        Ok(EdgeCanonicalWriterV1::sha256_hex(&preimage))
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Payload discriminator declared by an edge ledger contract row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdgePayloadDiscriminatorV1 {
+    /// The ledger record has no payload discriminator.
+    Absent,
+    /// The ledger record is selected by an exact field value.
+    Field(&'static str, &'static str),
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Contract metadata for one edge rolling ledger.
+#[derive(Clone, Copy, Debug)]
+pub struct EdgeLedgerContractRowV1 {
+    prefix: &'static str,
+    record_hash_domain: &'static str,
+    payload_discriminators: &'static [EdgePayloadDiscriminatorV1],
+}
+
+#[cfg(feature = "edge-measurement")]
+const EDGE_SCHEMA_PAYLOAD_FIRST_V1: [EdgePayloadDiscriminatorV1; 1] =
+    [EdgePayloadDiscriminatorV1::Field("schema", "edge-payload-first-envelope/v1")];
+#[cfg(feature = "edge-measurement")]
+const EDGE_SCHEMA_CONNECTION_V1: [EdgePayloadDiscriminatorV1; 1] =
+    [EdgePayloadDiscriminatorV1::Field("schema", "edge-source-connection/v1")];
+#[cfg(feature = "edge-measurement")]
+const EDGE_SCHEMA_CLOCK_V1: [EdgePayloadDiscriminatorV1; 1] =
+    [EdgePayloadDiscriminatorV1::Field("schema", "edge-clock-anchor/v1")];
+#[cfg(feature = "edge-measurement")]
+const EDGE_SCHEMA_COVERAGE_V1: [EdgePayloadDiscriminatorV1; 1] =
+    [EdgePayloadDiscriminatorV1::Field("schema", "edge-source-coverage/v3")];
+#[cfg(feature = "edge-measurement")]
+const EDGE_SCHEMA_ABSENT_V1: [EdgePayloadDiscriminatorV1; 1] = [EdgePayloadDiscriminatorV1::Absent];
+#[cfg(feature = "edge-measurement")]
+const EDGE_SCHEMA_BLINK_REJECT_V1: [EdgePayloadDiscriminatorV1; 1] =
+    [EdgePayloadDiscriminatorV1::Field("schema", "edge-blink-reject/v3")];
+#[cfg(feature = "edge-measurement")]
+const EDGE_SCHEMA_CANDIDATE_DROP_V1: [EdgePayloadDiscriminatorV1; 1] =
+    [EdgePayloadDiscriminatorV1::Field("schema", "edge-candidate-drop/v3")];
+#[cfg(feature = "edge-measurement")]
+const EDGE_SCHEMA_CANDIDATE_V1: [EdgePayloadDiscriminatorV1; 2] = [
+    EdgePayloadDiscriminatorV1::Field("schema", "edge-candidate-detail/v1"),
+    EdgePayloadDiscriminatorV1::Field("schema", "edge-candidate-detail-exclusion/v1"),
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_SCHEMA_PROVENANCE_V1: [EdgePayloadDiscriminatorV1; 1] =
+    [EdgePayloadDiscriminatorV1::Field("schemaVersion", "edge-producer-provenance/v1")];
+#[cfg(feature = "edge-measurement")]
+const EDGE_SCHEMA_CUTOFF_V1: [EdgePayloadDiscriminatorV1; 1] =
+    [EdgePayloadDiscriminatorV1::Field("schemaVersion", "edge-producer-cutoff-envelope/v1")];
+
+#[cfg(feature = "edge-measurement")]
+const EDGE_LEDGER_REGISTRY_V1: [EdgeLedgerContractRowV1; 15] = [
+    EdgeLedgerContractRowV1 {
+        prefix: "payload-first",
+        record_hash_domain: "edge-payload-first-envelope/v1",
+        payload_discriminators: &EDGE_SCHEMA_PAYLOAD_FIRST_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "connection",
+        record_hash_domain: "edge-source-connection/v1",
+        payload_discriminators: &EDGE_SCHEMA_CONNECTION_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "clock",
+        record_hash_domain: "edge-clock-anchor/v1",
+        payload_discriminators: &EDGE_SCHEMA_CLOCK_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "coverage",
+        record_hash_domain: "edge-source-coverage/v3",
+        payload_discriminators: &EDGE_SCHEMA_COVERAGE_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "coverage-postcutoff-excluded",
+        record_hash_domain: "edge-source-coverage/v3",
+        payload_discriminators: &EDGE_SCHEMA_COVERAGE_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "postcutoff-diagnostic",
+        record_hash_domain: "edge-postcutoff-diagnostic/v1",
+        payload_discriminators: &EDGE_SCHEMA_ABSENT_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "coverage-detail",
+        record_hash_domain: "edge-source-coverage-diagnostic/v1",
+        payload_discriminators: &EDGE_SCHEMA_ABSENT_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "source-detail",
+        record_hash_domain: "edge-source-detail/v1",
+        payload_discriminators: &EDGE_SCHEMA_ABSENT_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "registry-h1",
+        record_hash_domain: "edge-pending-registry-h1/v1",
+        payload_discriminators: &EDGE_SCHEMA_ABSENT_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "registry-h2",
+        record_hash_domain: "edge-pending-registry-h2/v1",
+        payload_discriminators: &EDGE_SCHEMA_ABSENT_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "blink-reject",
+        record_hash_domain: "edge-blink-reject/v3",
+        payload_discriminators: &EDGE_SCHEMA_BLINK_REJECT_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "candidate-drop",
+        record_hash_domain: "edge-writer-diagnostic/v1",
+        payload_discriminators: &EDGE_SCHEMA_CANDIDATE_DROP_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "candidate",
+        record_hash_domain: "edge-candidate-detail/v1",
+        payload_discriminators: &EDGE_SCHEMA_CANDIDATE_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "provenance",
+        record_hash_domain: "edge-producer-provenance/v1",
+        payload_discriminators: &EDGE_SCHEMA_PROVENANCE_V1,
+    },
+    EdgeLedgerContractRowV1 {
+        prefix: "cutoff",
+        record_hash_domain: "edge-producer-cutoff-envelope/v1",
+        payload_discriminators: &EDGE_SCHEMA_CUTOFF_V1,
+    },
+];
+
+#[cfg(feature = "edge-measurement")]
+fn edge_ledger_registry_projection_v1() -> JsonValue {
+    JsonValue::Array(
+        EDGE_LEDGER_REGISTRY_V1
+            .iter()
+            .map(|row| {
+                json!({
+                    "payloadSchemaDiscriminators": row
+                        .payload_discriminators
+                        .iter()
+                        .map(|discriminator| match discriminator {
+                            EdgePayloadDiscriminatorV1::Absent => {
+                                json!({"field": JsonValue::Null, "value": JsonValue::Null})
+                            }
+                            EdgePayloadDiscriminatorV1::Field(field, value) => {
+                                json!({"field": field, "value": value})
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                    "prefix": row.prefix,
+                    "recordHashDomain": row.record_hash_domain,
+                })
+            })
+            .collect(),
+    )
+}
+
+#[cfg(feature = "edge-measurement")]
+fn edge_segment_framing_projection_for_v1(
+    max_records: usize,
+    max_record_bytes: usize,
+    max_flush_latency: Duration,
+) -> io::Result<JsonValue> {
+    let max_records = u64::try_from(max_records)
+        .map_err(|_| io::Error::other("segment maximum record count exceeds u64"))?;
+    let max_record_bytes = u64::try_from(max_record_bytes)
+        .map_err(|_| io::Error::other("segment maximum record bytes exceeds u64"))?;
+    let max_flush_latency_ns = u64::try_from(max_flush_latency.as_nanos())
+        .map_err(|_| io::Error::other("segment maximum flush latency exceeds u64 nanoseconds"))?;
+    Ok(json!({
+        "authorityRecordFramingDomain": "base-edge-authority-record-v1\u{0000}",
+        "canonicalJsonProfile": "edge-contract-canonical-json/v1",
+        "footerHashDomain": "edge-sidecar-segment-footer-v1\u{0000}",
+        "footerSchemaVersion": "edge-sidecar-segment-footer-v1",
+        "maxFlushLatencyNs": max_flush_latency_ns.to_string(),
+        "maxRecordBytes": max_record_bytes.to_string(),
+        "maxRecords": max_records.to_string(),
+        "ndjsonLineTerminator": "LF",
+        "publicationSequence": "open-write-file-fsync-link-or-rename-final-byte-verify-directory-fsync",
+        "segmentSetHashDomain": "edge-sidecar-segment-set-v1\u{0000}",
+    }))
+}
+
+#[cfg(feature = "edge-measurement")]
+fn edge_segment_framing_projection_v1() -> io::Result<JsonValue> {
+    edge_segment_framing_projection_for_v1(
+        EDGE_SEGMENT_MAX_RECORDS,
+        EDGE_SEGMENT_MAX_RECORD_BYTES,
+        EDGE_SEGMENT_MAX_FLUSH_LATENCY,
+    )
+}
+
+#[cfg(feature = "edge-measurement")]
+fn validate_edge_segment_framing_projection_v1(projection: &JsonValue) -> io::Result<String> {
+    let digest =
+        EdgeContractCanonicalJsonV1::digest("edge-producer-segment-framing-domain/v1", projection)?;
+    if digest != EDGE_SEGMENT_FRAMING_DOMAIN_SHA256_V1 {
+        return Err(io::Error::other("compiled segment framing projection digest mismatch"));
+    }
+    Ok(digest)
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Key-domain declaration for an accounting object.
+#[derive(Clone, Copy, Debug)]
+pub enum EdgeAccountingObjectKeysV1 {
+    /// The object has a fixed key set.
+    Static(&'static [&'static str]),
+    /// The object's keys are selected by a named dynamic domain.
+    Dynamic(&'static str),
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Contract metadata for one projected accounting object.
+#[derive(Clone, Copy, Debug)]
+pub struct EdgeAccountingObjectContractRowV1 {
+    cardinality: &'static str,
+    keys: EdgeAccountingObjectKeysV1,
+    order: &'static str,
+    path: &'static str,
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Contract metadata for one projected accounting validation rule.
+#[derive(Clone, Copy, Debug)]
+pub struct EdgeAccountingRuleContractRowV1 {
+    domain: &'static str,
+    json_type: &'static str,
+    nullability: &'static str,
+    paths: &'static [&'static str],
+}
+
+#[cfg(feature = "edge-measurement")]
+const EDGE_ACCOUNTING_CONSTRAINTS_V1: &[&str] = &[
+    "sourceCounters.missingEvidenceCount=checkedSum(sourceMissingEvidenceCounts[24])",
+    "coordinatorFailureCount=checkedSum(coordinatorMissingEvidenceCounts)",
+    "sourceMissingEvidenceCounts.coordinatorFailure=coordinatorFailureCount",
+    "fixedKeyCount=24+3+2+9+2=40",
+    "directEmitterCount=fixedKeyCount-1=39",
+    "blinkAccounting.slotAccepted+blinkAccounting.slotReplaced+blinkAccounting.slotClosed+blinkAccounting.generationOverflow=blinkAccounting.victimIngressObserved",
+    "blinkAccounting.slotAccepted+blinkAccounting.slotReplaced+blinkAccounting.slotClosed+blinkAccounting.generationOverflow=blinkAccounting.victimIngressAccepted",
+    "blinkAccounting.slotAccepted+blinkAccounting.slotReplaced=blinkAccounting.admittedGenerations",
+    "blinkAccounting.processedTerminal+blinkAccounting.replacedBeforeFrame+blinkAccounting.cancelledBeforeFrame=blinkAccounting.admittedGenerations",
+    "blinkAccounting.selectedDtoCommitted+blinkAccounting.selectedDtoCancelledBeforeTerminal+blinkAccounting.selectedDtoPreterminalFailure=blinkAccounting.selectedDtoBuiltPreterminal",
+    "terminal=>blinkQueues.pendingRecords=0&&blinkQueues.pendingCandidates=0&&blinkQueues.stagedCount=0&&blinkAccounting.generationPending=0&&blinkAccounting.selectedPending=0",
+    "candidateBounds.count=ledgerEndpoints.candidate.recordCount",
+    "candidateBounds.lastSequence=ledgerEndpoints.candidate.lastSequence",
+    "terminal=>candidateBounds.lastSequence=cutoff.lastCandidateSequence",
+    "terminal=>cutoffWitnesses.sourceCutoffRecordHash=cutoffRecordHash&&cutoffWitnesses.blinkCutoffRecordHash=cutoffRecordHash",
+    "terminal=>sourceCounters.authorityWireTerminalCount=sourceCounters.wireCount",
+    "pendingBreakdown.registryTotal=checkedSum(pendingBreakdown.registry[coverageAck,delivery,primary,published,secondary,unregisteredSendInflight,sequenceLessRegistrationSendInflight])",
+    "terminal=>pendingBreakdown.registryTotal=0",
+    "terminal=>drainStatus.registryPendingTotal=pendingBreakdown.registryTotal",
+    "terminal=>drainStatus exact constants and all closure booleans",
+    "each ledgerEndpoints[prefix].recordCount=durable.nextSequence",
+    "each ledgerEndpoints[prefix].lastSequence=(durable.nextSequence=0?null:durable.nextSequence-1)",
+    "each ledgerEndpoints[prefix].finalRecordHash=(durable.nextSequence=0?zeroHash:durable.previousRecordHash)",
+    "each ledgerEndpoints[prefix].segmentCount=durable.nextSegment",
+    "each ledgerEndpoints[prefix].lastSegmentOrdinal=(durable.nextSegment=0?null:durable.nextSegment-1)",
+    "each operational incident recoveredCount<=count",
+    "singleRecoveryWitness non-null iff count=1&&recoveredCount=1",
+    "incident count equals same-named coordinatorMissingEvidenceCounts value",
+    "all cumulative decimal values nondecreasing across snapshots",
+    "terminal snapshot is accounting-last and follows dataSealed stable revision recheck",
+    "each non-null operational incident witness has incidentId stable ASCII 1..128 and byte-equal across retries as its required stable opaque identity; no new hash domain",
+    "each non-null operational incident witness has failedMonoNs,lastAttemptMonoNs,recoveredMonoNs,attemptCount as canonical unsigned decimal strings with attemptCount>=1 and failedMonoNs<=lastAttemptMonoNs<=recoveredMonoNs",
+    "AccountingPeriodicWriteFailed incident identity=(scheduledMonoNs,snapshotStateSha256)",
+    "AccountingPeriodicWriteFailed singleRecoveryWitness has ledgerPrefix=null,scheduledMonoNs non-null and scheduledMonoNs<=failedMonoNs,preStateSha256/postStateSha256 lowercase nonzero 64hex,attemptedBytesSha256=null,durableBytesSha256=null",
+    "AccountingPeriodicWriteFailed preStateSha256=SHA256(canonical accounting snapshot state immediately before scheduled attempt)",
+    "AccountingPeriodicWriteFailed postStateSha256=SHA256(first recovered durable accounting snapshot state)",
+    "DataLedgerWriteFailed incident identity=(ledgerPrefix,nextSequence,batchBytesSha256)",
+    "DataLedgerWriteFailed singleRecoveryWitness has ledgerPrefix non-null,scheduledMonoNs=null,preStateSha256=null,postStateSha256=null,attemptedBytesSha256/durableBytesSha256 lowercase nonzero 64hex and attemptedBytesSha256=durableBytesSha256",
+    "DataLedgerWriteFailed attemptedBytesSha256=SHA256(immutable pending batch bytes)",
+    "DataLedgerWriteFailed durableBytesSha256=SHA256(byte-verified directory-fsynced sealed batch bytes)",
+    "OpenCleanupFailedAfterDurablePublish incident identity=(ledgerPrefix,finalFilename,durableBytesSha256)",
+    "OpenCleanupFailedAfterDurablePublish singleRecoveryWitness has ledgerPrefix non-null,scheduledMonoNs=null,preStateSha256=null,postStateSha256=null,attemptedBytesSha256/durableBytesSha256 lowercase nonzero 64hex and attemptedBytesSha256=durableBytesSha256",
+    "OpenCleanupFailedAfterDurablePublish attemptedBytesSha256=SHA256(stale .open bytes presented for cleanup)",
+    "OpenCleanupFailedAfterDurablePublish durableBytesSha256=SHA256(byte-verified directory-fsynced sealed counterpart bytes)",
+];
+
+#[cfg(feature = "edge-measurement")]
+const EDGE_ACCOUNTING_OBJECTS_V1: &[EdgeAccountingObjectContractRowV1] = &[
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "24",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_ACCOUNTING_TOP_LEVEL_ORDER_V1),
+        order: "protocol",
+        path: "$",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "24",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_SOURCE_MISSING_KEYS_V1),
+        order: "protocol",
+        path: "sourceMissingEvidenceCounts",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "3",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_REGISTRY_EXCLUSION_KEYS_V1),
+        order: "protocol",
+        path: "registryTerminalExclusionCounts",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "2",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_BLINK_REJECT_LOSS_KEYS_V1),
+        order: "protocol",
+        path: "blinkRejectQueueLossCounts",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "9",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_CANDIDATE_PRE_ENQUEUE_KEYS_V1),
+        order: "protocol",
+        path: "candidatePreEnqueueDropCounts",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "2",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_CANDIDATE_DROP_LOSS_KEYS_V1),
+        order: "protocol",
+        path: "candidateDropQueueLossCounts",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "0..64",
+        keys: EdgeAccountingObjectKeysV1::Dynamic("dynamic stable-ascii-1-128"),
+        order: "unsigned-utf16-code-unit",
+        path: "coordinatorMissingEvidenceCounts",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "9",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_SOURCE_COUNTER_KEYS_V1),
+        order: "protocol",
+        path: "sourceCounters",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "17",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_BLINK_ACCOUNTING_KEYS_V1),
+        order: "protocol",
+        path: "blinkAccounting",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "3",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_BLINK_QUEUE_KEYS_V1),
+        order: "protocol",
+        path: "blinkQueues",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "2",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_CANDIDATE_BOUND_KEYS_V1),
+        order: "protocol",
+        path: "candidateBounds",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "2",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_CUTOFF_WITNESS_KEYS_V1),
+        order: "protocol",
+        path: "cutoffWitnesses",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "2",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_PENDING_BREAKDOWN_KEYS_V1),
+        order: "protocol",
+        path: "pendingBreakdown",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "7",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_PENDING_REGISTRY_KEYS_V1),
+        order: "protocol",
+        path: "pendingBreakdown.registry",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "11",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_DRAIN_STATUS_KEYS_V1),
+        order: "unsigned-utf16-code-unit",
+        path: "drainStatus",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "15",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_LEDGER_ENDPOINT_ORDER_V1),
+        order: "protocol",
+        path: "ledgerEndpoints",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "5",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_LEDGER_ENDPOINT_KEYS_V1),
+        order: "protocol",
+        path: "ledgerEndpoints.*",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "3",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_OPERATIONAL_INCIDENT_SUMMARY_KEYS_V1),
+        order: "protocol",
+        path: "operationalIncidentSummary",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "5",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_OPERATIONAL_INCIDENT_ENTRY_KEYS_V1),
+        order: "protocol",
+        path: "operationalIncidentSummary.*",
+    },
+    EdgeAccountingObjectContractRowV1 {
+        cardinality: "11",
+        keys: EdgeAccountingObjectKeysV1::Static(&EDGE_SINGLE_RECOVERY_WITNESS_KEYS_V1),
+        order: "protocol",
+        path: "operationalIncidentSummary.*.singleRecoveryWitness",
+    },
+];
+#[cfg(feature = "edge-measurement")]
+const EDGE_ACCOUNTING_RULES_V1: &[EdgeAccountingRuleContractRowV1] = &[
+    EdgeAccountingRuleContractRowV1 {
+        domain: "literal edge-producer-accounting-snapshot/v1",
+        json_type: "string",
+        nullability: "startup:non-null|periodic:non-null|terminal:non-null",
+        paths: &["schemaVersion"],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "enum startup|periodic|terminal",
+        json_type: "string",
+        nullability: "startup:non-null|periodic:non-null|terminal:non-null",
+        paths: &["snapshotKind"],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "canonical-unsigned-decimal",
+        json_type: "string",
+        nullability: "startup:non-null|periodic:non-null|terminal:non-null",
+        paths: &[
+            "sampledMonoNs",
+            "producerEpoch",
+            "coordinatorFailureCount",
+            "nonAuthoritySendCount",
+            "sourceMissingEvidenceCounts.cacheDrainIncomplete",
+            "sourceMissingEvidenceCounts.connectionEventQueueClosedExcluded",
+            "sourceMissingEvidenceCounts.connectionEventQueueFullExcluded",
+            "sourceMissingEvidenceCounts.connectionTransitionAfterQueueLoss",
+            "sourceMissingEvidenceCounts.cutoffBoundMissing",
+            "sourceMissingEvidenceCounts.cutoffDeadlineCacheGeneration",
+            "sourceMissingEvidenceCounts.cutoffDeadlineProcessorGeneration",
+            "sourceMissingEvidenceCounts.decodedGenerationCapacityExcluded",
+            "sourceMissingEvidenceCounts.eventQueueClosed",
+            "sourceMissingEvidenceCounts.eventQueueFull",
+            "sourceMissingEvidenceCounts.lateProcessorCompletion",
+            "sourceMissingEvidenceCounts.missingSourceIdentity",
+            "sourceMissingEvidenceCounts.observerPanicked",
+            "sourceMissingEvidenceCounts.payloadFirstMapCapacityExcluded",
+            "sourceMissingEvidenceCounts.payloadFirstQueueClosedExcluded",
+            "sourceMissingEvidenceCounts.payloadFirstQueueFullExcluded",
+            "sourceMissingEvidenceCounts.payloadGenerationRefCapacityExcluded",
+            "sourceMissingEvidenceCounts.payloadIndexZeroLate",
+            "sourceMissingEvidenceCounts.payloadIndexZeroMissing",
+            "sourceMissingEvidenceCounts.snapshotBindingCapacityExcluded",
+            "sourceMissingEvidenceCounts.snapshotPayloadFirstUnavailable",
+            "sourceMissingEvidenceCounts.terminalRecordAllocationExcluded",
+            "sourceMissingEvidenceCounts.terminalRecordCapacityExcluded",
+            "sourceMissingEvidenceCounts.coordinatorFailure",
+            "registryTerminalExclusionCounts.registrationCapacityMissing",
+            "registryTerminalExclusionCounts.terminalRecordAllocationMissing",
+            "registryTerminalExclusionCounts.terminalRecordCapacityMissing",
+            "blinkRejectQueueLossCounts.queueClosed",
+            "blinkRejectQueueLossCounts.queueFull",
+            "candidatePreEnqueueDropCounts.cancelledAfterDraft",
+            "candidatePreEnqueueDropCounts.candidateQueueClosed",
+            "candidatePreEnqueueDropCounts.candidateQueueFull",
+            "candidatePreEnqueueDropCounts.cutoffDrainDeadline",
+            "candidatePreEnqueueDropCounts.evidenceMismatch",
+            "candidatePreEnqueueDropCounts.failedAfterDraft",
+            "candidatePreEnqueueDropCounts.measurementDerivationRejected",
+            "candidatePreEnqueueDropCounts.missingRequiredEvidence",
+            "candidatePreEnqueueDropCounts.staleAfterDraft",
+            "candidateDropQueueLossCounts.queueClosed",
+            "candidateDropQueueLossCounts.queueFull",
+            "coordinatorMissingEvidenceCounts.*",
+            "sourceCounters.wireCount",
+            "sourceCounters.sourceGenerationCount",
+            "sourceCounters.payloadFirstCount",
+            "sourceCounters.connectionCount",
+            "sourceCounters.processorTerminalCount",
+            "sourceCounters.authorityWireTerminalCount",
+            "sourceCounters.eventPendingAck",
+            "sourceCounters.poisonCount",
+            "sourceCounters.missingEvidenceCount",
+            "blinkAccounting.victimIngressObserved",
+            "blinkAccounting.victimIngressAccepted",
+            "blinkAccounting.slotAccepted",
+            "blinkAccounting.slotReplaced",
+            "blinkAccounting.slotClosed",
+            "blinkAccounting.generationOverflow",
+            "blinkAccounting.admittedGenerations",
+            "blinkAccounting.processedTerminal",
+            "blinkAccounting.replacedBeforeFrame",
+            "blinkAccounting.cancelledBeforeFrame",
+            "blinkAccounting.selectedDtoBuiltPreterminal",
+            "blinkAccounting.selectedDtoCommitted",
+            "blinkAccounting.selectedDtoCancelledBeforeTerminal",
+            "blinkAccounting.selectedDtoPreterminalFailure",
+            "blinkAccounting.generationPending",
+            "blinkAccounting.selectedPending",
+            "blinkQueues.pendingRecords",
+            "blinkQueues.pendingCandidates",
+            "blinkQueues.stagedCount",
+            "candidateBounds.count",
+            "pendingBreakdown.registry.coverageAck",
+            "pendingBreakdown.registry.delivery",
+            "pendingBreakdown.registry.primary",
+            "pendingBreakdown.registry.published",
+            "pendingBreakdown.registry.secondary",
+            "pendingBreakdown.registry.unregisteredSendInflight",
+            "pendingBreakdown.registry.sequenceLessRegistrationSendInflight",
+            "pendingBreakdown.registryTotal",
+            "ledgerEndpoints.*.recordCount",
+            "ledgerEndpoints.*.segmentCount",
+            "operationalIncidentSummary.*.count",
+            "operationalIncidentSummary.*.recoveredCount",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "canonical-unsigned-decimal-or-null",
+        json_type: "string|null",
+        nullability: "startup:nullable|periodic:nullable|terminal:nullable-by-empty-ledger",
+        paths: &[
+            "candidateBounds.lastSequence",
+            "ledgerEndpoints.*.lastSequence",
+            "ledgerEndpoints.*.lastSegmentOrdinal",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "lowercase-nonzero-64hex-or-null",
+        json_type: "string|null",
+        nullability: "startup:null|periodic:nullable|terminal:non-null",
+        paths: &["cutoffRecordHash"],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "lowercase-nonzero-64hex-or-null",
+        json_type: "string|null",
+        nullability: "startup:nullable|periodic:nullable|terminal:non-null",
+        paths: &["cutoffWitnesses.sourceCutoffRecordHash", "cutoffWitnesses.blinkCutoffRecordHash"],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "lowercase-64hex; zero hash iff empty endpoint",
+        json_type: "string",
+        nullability: "parent-null-outside-terminal|terminal:non-null",
+        paths: &["ledgerEndpoints.*.finalRecordHash"],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "stable-ascii-1-128; maxItems=64; duplicate=reject; order=unsigned-utf16-code-unit; legacyNewEpochEmission=forbidden",
+        json_type: "array<string>",
+        nullability: "startup:non-null|periodic:non-null|terminal:non-null",
+        paths: &["producerVetoReasons"],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "boolean",
+        json_type: "boolean",
+        nullability: "startup:non-null|periodic:non-null|terminal:non-null",
+        paths: &["poisoned", "blinkAccounting.poisoned"],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "object|null",
+        json_type: "object|null",
+        nullability: "startup:null|periodic:null|terminal:non-null",
+        paths: &["drainStatus", "ledgerEndpoints"],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "object",
+        json_type: "object",
+        nullability: "startup:non-null|periodic:non-null|terminal:non-null",
+        paths: &[
+            "sourceMissingEvidenceCounts",
+            "registryTerminalExclusionCounts",
+            "blinkRejectQueueLossCounts",
+            "candidatePreEnqueueDropCounts",
+            "candidateDropQueueLossCounts",
+            "coordinatorMissingEvidenceCounts",
+            "sourceCounters",
+            "blinkAccounting",
+            "blinkQueues",
+            "candidateBounds",
+            "cutoffWitnesses",
+            "pendingBreakdown",
+            "pendingBreakdown.registry",
+            "operationalIncidentSummary",
+            "operationalIncidentSummary.*",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "literal 0",
+        json_type: "string",
+        nullability: "parent-null-outside-terminal|terminal:non-null",
+        paths: &[
+            "drainStatus.authorityOpenFileCount",
+            "drainStatus.registryPendingTotal",
+            "drainStatus.unsealedDataBatchCount",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "literal true",
+        json_type: "boolean",
+        nullability: "parent-null-outside-terminal|terminal:non-null",
+        paths: &[
+            "drainStatus.dataSealed",
+            "drainStatus.periodicCadenceClosed",
+            "drainStatus.producerQueuesDrained",
+            "drainStatus.registryClosed",
+            "drainStatus.sourceFenceInstalled",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "literal false",
+        json_type: "boolean",
+        nullability: "parent-null-outside-terminal|terminal:non-null",
+        paths: &["drainStatus.pendingPeriodicSnapshot"],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "literal edge-producer-drain-status/v1",
+        json_type: "string",
+        nullability: "parent-null-outside-terminal|terminal:non-null",
+        paths: &["drainStatus.schemaVersion"],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "literal terminal-accounting-only",
+        json_type: "string",
+        nullability: "parent-null-outside-terminal|terminal:non-null",
+        paths: &["drainStatus.terminationPhase"],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "canonical-unsigned-decimal-or-null",
+        json_type: "string|null",
+        nullability: "startup:nullable|periodic:nullable|terminal:nullable",
+        paths: &[
+            "operationalIncidentSummary.*.firstFailedMonoNs",
+            "operationalIncidentSummary.*.lastFailedMonoNs",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "object|null",
+        json_type: "object|null",
+        nullability: "non-null iff parent count=1&&recoveredCount=1",
+        paths: &["operationalIncidentSummary.*.singleRecoveryWitness"],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "stable-ascii-1-128",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.AccountingPeriodicWriteFailed.singleRecoveryWitness.incidentId",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "null",
+        json_type: "null",
+        nullability: "parent-witness-non-null:null",
+        paths: &[
+            "operationalIncidentSummary.AccountingPeriodicWriteFailed.singleRecoveryWitness.ledgerPrefix",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "canonical-unsigned-decimal",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.AccountingPeriodicWriteFailed.singleRecoveryWitness.scheduledMonoNs",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "canonical-unsigned-decimal",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.AccountingPeriodicWriteFailed.singleRecoveryWitness.failedMonoNs",
+            "operationalIncidentSummary.AccountingPeriodicWriteFailed.singleRecoveryWitness.lastAttemptMonoNs",
+            "operationalIncidentSummary.AccountingPeriodicWriteFailed.singleRecoveryWitness.recoveredMonoNs",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "canonical-unsigned-decimal; value>=1",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.AccountingPeriodicWriteFailed.singleRecoveryWitness.attemptCount",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "lowercase-nonzero-64hex",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.AccountingPeriodicWriteFailed.singleRecoveryWitness.preStateSha256",
+            "operationalIncidentSummary.AccountingPeriodicWriteFailed.singleRecoveryWitness.postStateSha256",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "null",
+        json_type: "null",
+        nullability: "parent-witness-non-null:null",
+        paths: &[
+            "operationalIncidentSummary.AccountingPeriodicWriteFailed.singleRecoveryWitness.attemptedBytesSha256",
+            "operationalIncidentSummary.AccountingPeriodicWriteFailed.singleRecoveryWitness.durableBytesSha256",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "stable-ascii-1-128",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.DataLedgerWriteFailed.singleRecoveryWitness.incidentId",
+            "operationalIncidentSummary.DataLedgerWriteFailed.singleRecoveryWitness.ledgerPrefix",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "null",
+        json_type: "null",
+        nullability: "parent-witness-non-null:null",
+        paths: &[
+            "operationalIncidentSummary.DataLedgerWriteFailed.singleRecoveryWitness.scheduledMonoNs",
+            "operationalIncidentSummary.DataLedgerWriteFailed.singleRecoveryWitness.preStateSha256",
+            "operationalIncidentSummary.DataLedgerWriteFailed.singleRecoveryWitness.postStateSha256",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "canonical-unsigned-decimal",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.DataLedgerWriteFailed.singleRecoveryWitness.failedMonoNs",
+            "operationalIncidentSummary.DataLedgerWriteFailed.singleRecoveryWitness.lastAttemptMonoNs",
+            "operationalIncidentSummary.DataLedgerWriteFailed.singleRecoveryWitness.recoveredMonoNs",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "canonical-unsigned-decimal; value>=1",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.DataLedgerWriteFailed.singleRecoveryWitness.attemptCount",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "lowercase-nonzero-64hex",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.DataLedgerWriteFailed.singleRecoveryWitness.attemptedBytesSha256",
+            "operationalIncidentSummary.DataLedgerWriteFailed.singleRecoveryWitness.durableBytesSha256",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "stable-ascii-1-128",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.OpenCleanupFailedAfterDurablePublish.singleRecoveryWitness.incidentId",
+            "operationalIncidentSummary.OpenCleanupFailedAfterDurablePublish.singleRecoveryWitness.ledgerPrefix",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "null",
+        json_type: "null",
+        nullability: "parent-witness-non-null:null",
+        paths: &[
+            "operationalIncidentSummary.OpenCleanupFailedAfterDurablePublish.singleRecoveryWitness.scheduledMonoNs",
+            "operationalIncidentSummary.OpenCleanupFailedAfterDurablePublish.singleRecoveryWitness.preStateSha256",
+            "operationalIncidentSummary.OpenCleanupFailedAfterDurablePublish.singleRecoveryWitness.postStateSha256",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "canonical-unsigned-decimal",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.OpenCleanupFailedAfterDurablePublish.singleRecoveryWitness.failedMonoNs",
+            "operationalIncidentSummary.OpenCleanupFailedAfterDurablePublish.singleRecoveryWitness.lastAttemptMonoNs",
+            "operationalIncidentSummary.OpenCleanupFailedAfterDurablePublish.singleRecoveryWitness.recoveredMonoNs",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "canonical-unsigned-decimal; value>=1",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.OpenCleanupFailedAfterDurablePublish.singleRecoveryWitness.attemptCount",
+        ],
+    },
+    EdgeAccountingRuleContractRowV1 {
+        domain: "lowercase-nonzero-64hex",
+        json_type: "string",
+        nullability: "parent-witness-non-null:non-null",
+        paths: &[
+            "operationalIncidentSummary.OpenCleanupFailedAfterDurablePublish.singleRecoveryWitness.attemptedBytesSha256",
+            "operationalIncidentSummary.OpenCleanupFailedAfterDurablePublish.singleRecoveryWitness.durableBytesSha256",
+        ],
+    },
+];
+#[cfg(feature = "edge-measurement")]
+/// Projects the canonical edge accounting schema from contract rows.
+#[derive(Debug)]
+pub struct EdgeAccountingSchemaProjectorV1;
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeAccountingSchemaProjectorV1 {
+    fn path_matches(pattern: &str, path: &str) -> bool {
+        let pattern = pattern.split('.').collect::<Vec<_>>();
+        let path = path.split('.').collect::<Vec<_>>();
+        pattern.len() == path.len()
+            && pattern.iter().zip(path).all(|(pattern, value)| *pattern == "*" || *pattern == value)
+    }
+
+    fn object_row<'a>(
+        path: &str,
+        objects: &'a [EdgeAccountingObjectContractRowV1],
+    ) -> Option<&'a EdgeAccountingObjectContractRowV1> {
+        objects
+            .iter()
+            .find(|row| row.path == path)
+            .or_else(|| objects.iter().find(|row| Self::path_matches(row.path, path)))
+    }
+
+    fn collect_paths(
+        path: &str,
+        objects: &[EdgeAccountingObjectContractRowV1],
+        object_paths: &mut BTreeSet<String>,
+        leaf_paths: &mut BTreeSet<String>,
+        depth: usize,
+    ) -> io::Result<()> {
+        if depth > objects.len() {
+            return Err(io::Error::other("accounting object registry is recursive"));
+        }
+        let row = Self::object_row(path, objects)
+            .ok_or_else(|| io::Error::other("accounting object path is unregistered"))?;
+        if path != "$" && !object_paths.insert(path.to_owned()) {
+            return Ok(());
+        }
+        match row.keys {
+            EdgeAccountingObjectKeysV1::Dynamic(_) => {
+                leaf_paths.insert(format!("{path}.*"));
+            }
+            EdgeAccountingObjectKeysV1::Static(keys) => {
+                let mut unique = BTreeSet::new();
+                if keys.iter().any(|key| !unique.insert(*key)) {
+                    return Err(io::Error::other("accounting object contains a duplicate key"));
+                }
+                if row.cardinality.parse::<usize>().ok() != Some(keys.len()) {
+                    return Err(io::Error::other(
+                        "accounting object cardinality differs from its key registry",
+                    ));
+                }
+                for key in keys {
+                    let child =
+                        if path == "$" { (*key).to_owned() } else { format!("{path}.{key}") };
+                    if Self::object_row(&child, objects).is_some() {
+                        Self::collect_paths(&child, objects, object_paths, leaf_paths, depth + 1)?;
+                    } else {
+                        leaf_paths.insert(child);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_exact_cover(
+        objects: &[EdgeAccountingObjectContractRowV1],
+        rules: &[EdgeAccountingRuleContractRowV1],
+        constraints: &[&str],
+    ) -> io::Result<()> {
+        let mut object_registry_paths = BTreeSet::new();
+        for row in objects {
+            if !object_registry_paths.insert(row.path) {
+                return Err(io::Error::other("duplicate accounting object registry path"));
+            }
+        }
+        let mut constraint_registry = BTreeSet::new();
+        if constraints
+            .iter()
+            .any(|constraint| constraint.is_empty() || !constraint_registry.insert(*constraint))
+        {
+            return Err(io::Error::other("duplicate or empty accounting constraint"));
+        }
+        let mut rule_paths = BTreeSet::new();
+        for rule in rules {
+            if rule.domain.is_empty()
+                || rule.json_type.is_empty()
+                || rule.nullability.is_empty()
+                || rule.paths.is_empty()
+                || rule.paths.iter().any(|path| !rule_paths.insert(*path))
+            {
+                return Err(io::Error::other("accounting rule registry is not exact"));
+            }
+        }
+
+        let mut object_paths = BTreeSet::new();
+        let mut leaf_paths = BTreeSet::new();
+        Self::collect_paths("$", objects, &mut object_paths, &mut leaf_paths, 0)?;
+        for path in &leaf_paths {
+            let matches = rules
+                .iter()
+                .flat_map(|rule| rule.paths)
+                .filter(|pattern| Self::path_matches(pattern, path))
+                .count();
+            if matches != 1 {
+                return Err(io::Error::other(
+                    "accounting semantic path is not covered exactly once",
+                ));
+            }
+        }
+        if rules.iter().flat_map(|rule| rule.paths).any(|pattern| {
+            !object_paths
+                .iter()
+                .chain(leaf_paths.iter())
+                .any(|path| Self::path_matches(pattern, path))
+        }) {
+            return Err(io::Error::other("accounting rule does not cover a semantic path"));
+        }
+        Ok(())
+    }
+
+    fn project(
+        objects: &[EdgeAccountingObjectContractRowV1],
+        rules: &[EdgeAccountingRuleContractRowV1],
+        constraints: &[&str],
+    ) -> io::Result<JsonValue> {
+        Self::validate_exact_cover(objects, rules, constraints)?;
+        let objects = objects
+            .iter()
+            .map(|row| {
+                let keys = match row.keys {
+                    EdgeAccountingObjectKeysV1::Static(keys) => json!(keys),
+                    EdgeAccountingObjectKeysV1::Dynamic(domain) => json!(domain),
+                };
+                json!({
+                    "cardinality": row.cardinality,
+                    "keys": keys,
+                    "order": row.order,
+                    "path": row.path,
+                })
+            })
+            .collect::<Vec<_>>();
+        let rules = rules
+            .iter()
+            .map(|row| {
+                json!({
+                    "domain": row.domain,
+                    "jsonType": row.json_type,
+                    "nullability": row.nullability,
+                    "paths": row.paths,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "constraints": constraints,
+            "objects": objects,
+            "rules": rules,
+            "schemaVersion": "edge-producer-accounting-schema-descriptor/v1",
+        }))
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+fn edge_accounting_schema_projection_v1() -> io::Result<JsonValue> {
+    EdgeAccountingSchemaProjectorV1::project(
+        EDGE_ACCOUNTING_OBJECTS_V1,
+        EDGE_ACCOUNTING_RULES_V1,
+        EDGE_ACCOUNTING_CONSTRAINTS_V1,
+    )
+}
+#[cfg(feature = "edge-measurement")]
+/// Parsed canonical producer contract manifest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EdgeProducerContractManifestV1 {
+    values: BTreeMap<String, String>,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeProducerContractManifestV1 {
+    const KEYS: [&'static str; 16] = [
+        "configuredMaxPendingRegistry",
+        "coverageSensitivityGoldenVectorSha256",
+        "economicAuthorityPolicySha256",
+        "evidenceImpactPolicySha256",
+        "forkDriverContractSha256",
+        "gracefulTimeoutNs",
+        "ledgerRegistrySha256",
+        "producerAccountingSchemaSha256",
+        "producerBinarySha256",
+        "registryDrainDeadlineNs",
+        "registryDrainFixtureSha256",
+        "schemaVersion",
+        "segmentFramingDomainSha256",
+        "shutdownMarginReceiptSha256",
+        "targetTriple",
+        "worstCaseShutdownNs",
+    ];
+    const SHA_KEYS: [&'static str; 10] = [
+        "coverageSensitivityGoldenVectorSha256",
+        "economicAuthorityPolicySha256",
+        "evidenceImpactPolicySha256",
+        "forkDriverContractSha256",
+        "ledgerRegistrySha256",
+        "producerAccountingSchemaSha256",
+        "producerBinarySha256",
+        "registryDrainFixtureSha256",
+        "segmentFramingDomainSha256",
+        "shutdownMarginReceiptSha256",
+    ];
+
+    fn parse(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.is_empty() || bytes.starts_with(&[0xef, 0xbb, 0xbf]) || bytes.ends_with(b"\n") {
+            return Err("producer contract manifest has forbidden framing".into());
+        }
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| "producer contract manifest is not UTF-8".to_string())?;
+        let parsed = FlatJsonObjectV1::parse(text)?;
+        if parsed.0.len() != Self::KEYS.len()
+            || parsed.0.keys().any(|key| !Self::KEYS.contains(&key.as_str()))
+            || Self::KEYS.iter().any(|key| !parsed.0.contains_key(*key))
+        {
+            return Err("producer contract manifest keys are not exact".into());
+        }
+        let mut values = BTreeMap::new();
+        for key in Self::KEYS {
+            values.insert(key.to_owned(), parsed.string(key)?);
+        }
+        if values["schemaVersion"] != "edge-producer-contract-manifest/v1"
+            || values["gracefulTimeoutNs"] != "240000000000"
+            || values["registryDrainDeadlineNs"] != "30000000000"
+            || values["worstCaseShutdownNs"] != "217000000000"
+        {
+            return Err("producer contract manifest protocol constants differ".into());
+        }
+        let cap = values["configuredMaxPendingRegistry"]
+            .parse::<u64>()
+            .map_err(|_| "configured pending cap is malformed".to_string())?;
+        if cap == 0 || cap > u64::from(u32::MAX) {
+            return Err("configured pending cap is outside the bounded domain".into());
+        }
+        for key in Self::SHA_KEYS {
+            let value = &values[key];
+            if value.len() != 64
+                || !value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                || value.bytes().all(|byte| byte == b'0')
+            {
+                return Err(format!(
+                    "producer contract manifest {key} is not lowercase nonzero SHA"
+                ));
+            }
+        }
+        let object = JsonValue::Object(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), JsonValue::String(value.clone())))
+                .collect(),
+        );
+        let canonical = EdgeContractCanonicalJsonV1::canonicalize(&object)
+            .map_err(|error| error.to_string())?;
+        if canonical != bytes {
+            return Err("producer contract manifest is not exact canonical bytes".into());
+        }
+        Ok(Self { values })
+    }
+
+    fn value(&self, key: &str) -> &str {
+        &self.values[key]
+    }
+}
+
+#[cfg(all(feature = "edge-measurement", test))]
+/// Exact read-only metadata retained with an OOB sink audit snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EdgeOobFileMetadataAuditV1 {
+    /// File length in bytes.
+    pub len: u64,
+    /// Unix permission and file-type mode.
+    pub mode: u32,
+    /// Owning user ID.
+    pub uid: u32,
+    /// Owning group ID.
+    pub gid: u32,
+    /// Device identity.
+    pub device: u64,
+    /// Inode identity.
+    pub inode: u64,
+    /// Hard-link count.
+    pub hard_links: u64,
+    /// Modification time seconds.
+    pub modified_seconds: i64,
+    /// Modification time nanoseconds.
+    pub modified_nanoseconds: i64,
+    /// Metadata-change time seconds.
+    pub changed_seconds: i64,
+    /// Metadata-change time nanoseconds.
+    pub changed_nanoseconds: i64,
+}
+
+#[cfg(all(feature = "edge-measurement", test))]
+/// Strongly typed OOB authority audit snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EdgeOobFailureSinkAuditSnapshotV1 {
+    /// Stable writer instance identity.
+    pub writer_instance_id: String,
+    /// Producer epoch attached to OOB lines.
+    pub producer_epoch: Option<u64>,
+    /// Next ordinal reserved for the next complete line.
+    pub next_ordinal: u64,
+    /// Exact current file bytes.
+    pub file_bytes: Vec<u8>,
+    /// Exact stable Unix file metadata.
+    pub file_metadata: EdgeOobFileMetadataAuditV1,
+}
+
+#[cfg(all(feature = "edge-measurement", test))]
+impl EdgeOobFailureSinkAuditSnapshotV1 {
+    /// Number of top-level sink fields covered by this schema.
+    pub const COVERED_FIELD_COUNT: usize = 5;
+    /// Number of exact nested file-metadata fields covered by this schema.
+    pub const FILE_METADATA_FIELD_COUNT: usize = 11;
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Durable out-of-band sink for bounded edge writer failures.
+#[derive(Debug)]
+pub struct EdgeOobFailureSinkV1 {
+    file: Mutex<File>,
+    started: Instant,
+    producer_epoch: Option<u64>,
+    writer_instance_id: String,
+    next_ordinal: AtomicU64,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeOobFailureSinkV1 {
+    const STAGES: [&'static str; 7] =
+        ["startup", "lease", "sweep", "cutoff", "shutdown", "writer", "diagnostic"];
+    const REASONS: [&'static str; 10] = [
+        "EpochAllocationFailed",
+        "OutputLeaseAcquireFailed",
+        "StaleOpenSweepFailed",
+        "CutoffStructuralPoison",
+        "RegistryPendingCapacityExceeded",
+        "ShutdownRegistryDrainTimedOut",
+        "NodeCommandErrBeforeGracefulShutdown",
+        "AccountingPeriodicWriteFailed",
+        "DataLedgerWriteFailed",
+        "OpenCleanupFailedAfterDurablePublish",
+    ];
+    const LINUX_O_RDONLY: i32 = 0;
+    const LINUX_O_WRONLY: i32 = 1;
+    const LINUX_O_CREAT: i32 = 0o100;
+    const LINUX_O_APPEND: i32 = 0o2_000;
+    #[cfg(test)]
+    const LINUX_O_DIRECTORY: i32 = 0o200_000;
+    const LINUX_O_NOFOLLOW: i32 = 0o400_000;
+    const LINUX_O_CLOEXEC: i32 = 0o2_000_000;
+
+    fn validate_domain(stage: &str, reason: &str, errno_class: Option<&str>) -> io::Result<()> {
+        if !Self::STAGES.contains(&stage) || !Self::REASONS.contains(&reason) {
+            return Err(io::Error::other("OOB stage or reason is outside the registry"));
+        }
+        if errno_class
+            .is_some_and(|value| value.is_empty() || value.len() > 128 || !value.is_ascii())
+        {
+            return Err(io::Error::other("OOB errno class is outside the bounded domain"));
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn open(epoch_source_root: &Path, producer_epoch: Option<u64>) -> io::Result<Arc<Self>> {
+        EdgeCliProducerConfigV1::validate_components(epoch_source_root)
+            .map_err(io::Error::other)?;
+        let directory_handle = OpenOptions::new()
+            .read(true)
+            .custom_flags(Self::LINUX_O_DIRECTORY | Self::LINUX_O_NOFOLLOW | Self::LINUX_O_CLOEXEC)
+            .open(epoch_source_root)?;
+        Self::open_at(&directory_handle, producer_epoch)
+    }
+
+    fn open_at(directory_handle: &File, producer_epoch: Option<u64>) -> io::Result<Arc<Self>> {
+        static NEXT_WRITER_INSTANCE: AtomicU64 = AtomicU64::new(0);
+        let directory_metadata = directory_handle.metadata()?;
+        if !directory_metadata.is_dir() {
+            return Err(io::Error::other("OOB parent handle is not a directory"));
+        }
+        let basename = CString::new(EDGE_EPOCH_OUTPUT_SINGLETON_ARTIFACTS_V1[1])
+            .map_err(|_| io::Error::other("OOB basename contains NUL"))?;
+        let flags = Self::LINUX_O_CREAT
+            | Self::LINUX_O_APPEND
+            | Self::LINUX_O_WRONLY
+            | Self::LINUX_O_CLOEXEC
+            | Self::LINUX_O_NOFOLLOW;
+        // SAFETY: `directory_handle` remains alive for the call, `basename` is NUL-terminated,
+        // and a nonnegative returned descriptor is immediately transferred to `File`.
+        let descriptor =
+            unsafe { openat(directory_handle.as_raw_fd(), basename.as_ptr(), flags, 0o600) };
+        if descriptor < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `descriptor` was returned uniquely owned by `openat` above.
+        let file = unsafe { File::from_raw_fd(descriptor) };
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(io::Error::other("OOB sink is not a regular file"));
+        }
+
+        // Reopen the directory entry through the same pinned parent and compare identities before
+        // exposing the append descriptor. This rejects final-component substitution and symlinks.
+        // SAFETY: the pinned directory and C string remain alive for the call, and a nonnegative
+        // returned descriptor is immediately transferred to `File`.
+        let verification_descriptor = unsafe {
+            openat(
+                directory_handle.as_raw_fd(),
+                basename.as_ptr(),
+                Self::LINUX_O_RDONLY | Self::LINUX_O_CLOEXEC | Self::LINUX_O_NOFOLLOW,
+            )
+        };
+        if verification_descriptor < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `verification_descriptor` was returned uniquely owned by `openat` above.
+        let verification_file = unsafe { File::from_raw_fd(verification_descriptor) };
+        let verification_metadata = verification_file.metadata()?;
+        if !verification_metadata.is_file()
+            || (metadata.dev(), metadata.ino())
+                != (verification_metadata.dev(), verification_metadata.ino())
+        {
+            return Err(io::Error::other("OOB sink identity changed during pinned open"));
+        }
+
+        let instance = NEXT_WRITER_INSTANCE
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| value.checked_add(1))
+            .map_err(|_| io::Error::other("writer instance ordinal overflow"))?;
+        Ok(Arc::new(Self {
+            file: Mutex::new(file),
+            started: Instant::now(),
+            producer_epoch,
+            writer_instance_id: format!("writer-{}-{instance}", std::process::id()),
+            next_ordinal: AtomicU64::new(0),
+        }))
+    }
+
+    fn line(
+        &self,
+        mono_ns: u64,
+        ordinal: u64,
+        stage: &str,
+        reason: &str,
+        errno_class: Option<&str>,
+    ) -> io::Result<Vec<u8>> {
+        Self::validate_domain(stage, reason, errno_class)?;
+        let producer_epoch =
+            self.producer_epoch.map_or(JsonValue::Null, |value| json!(value.to_string()));
+        let errno_class = errno_class.map_or(JsonValue::Null, |value| json!(value));
+        let preimage = json!({
+            "errnoClass": errno_class,
+            "monoNs": mono_ns.to_string(),
+            "ordinal": ordinal.to_string(),
+            "producerEpoch": producer_epoch,
+            "reason": reason,
+            "schemaVersion": "edge-writer-failure/v1",
+            "stage": stage,
+            "writerInstanceId": self.writer_instance_id,
+        });
+        let mut hash_preimage = b"edge-writer-failure-line/v1\n".to_vec();
+        hash_preimage.extend_from_slice(&EdgeContractCanonicalJsonV1::canonicalize(&preimage)?);
+        let mut outer = preimage
+            .as_object()
+            .cloned()
+            .ok_or_else(|| io::Error::other("OOB preimage must be object"))?;
+        outer.insert(
+            "lineHash".to_owned(),
+            JsonValue::String(EdgeCanonicalWriterV1::sha256_hex(&hash_preimage)),
+        );
+        let mut line = EdgeContractCanonicalJsonV1::canonicalize(&JsonValue::Object(outer))?;
+        line.push(b'\n');
+        if line.len() > 4096 {
+            return Err(io::Error::other("OOB line exceeds 4 KiB"));
+        }
+        Ok(line)
+    }
+    fn validate_line(line: &[u8], expected_ordinal: u64) -> io::Result<JsonValue> {
+        const KEYS: [&str; 9] = [
+            "errnoClass",
+            "lineHash",
+            "monoNs",
+            "ordinal",
+            "producerEpoch",
+            "reason",
+            "schemaVersion",
+            "stage",
+            "writerInstanceId",
+        ];
+        if line.len() > 4096
+            || !line.ends_with(b"\n")
+            || line[..line.len().saturating_sub(1)].contains(&b'\n')
+        {
+            return Err(io::Error::other("OOB line framing is invalid"));
+        }
+        let body = &line[..line.len() - 1];
+        let value: JsonValue = serde_json::from_slice(body).map_err(io::Error::other)?;
+        let object =
+            value.as_object().ok_or_else(|| io::Error::other("OOB line must be an object"))?;
+        if object.len() != KEYS.len() || KEYS.iter().any(|key| !object.contains_key(*key)) {
+            return Err(io::Error::other("OOB line shape is invalid"));
+        }
+        let canonical = EdgeContractCanonicalJsonV1::canonicalize(&value)?;
+        if canonical != body {
+            return Err(io::Error::other("OOB line is not canonical"));
+        }
+        let canonical_u64 = |key: &str| -> io::Result<u64> {
+            let text = object
+                .get(key)
+                .and_then(JsonValue::as_str)
+                .ok_or_else(|| io::Error::other("OOB integer field must be a string"))?;
+            let parsed = text.parse::<u64>().map_err(io::Error::other)?;
+            if parsed.to_string() != text {
+                return Err(io::Error::other("OOB integer field is not canonical"));
+            }
+            Ok(parsed)
+        };
+        let _ = canonical_u64("monoNs")?;
+        if canonical_u64("ordinal")? != expected_ordinal {
+            return Err(io::Error::other("OOB ordinal is not the expected successor"));
+        }
+        match object.get("producerEpoch") {
+            Some(JsonValue::Null) => {}
+            Some(JsonValue::String(_)) => {
+                let _ = canonical_u64("producerEpoch")?;
+            }
+            _ => return Err(io::Error::other("OOB producer epoch has invalid nullability")),
+        }
+        let stage = object
+            .get("stage")
+            .and_then(JsonValue::as_str)
+            .ok_or_else(|| io::Error::other("OOB stage must be a string"))?;
+        let reason = object
+            .get("reason")
+            .and_then(JsonValue::as_str)
+            .ok_or_else(|| io::Error::other("OOB reason must be a string"))?;
+        let errno_class = match object.get("errnoClass") {
+            Some(JsonValue::Null) => None,
+            Some(JsonValue::String(value)) => Some(value.as_str()),
+            _ => return Err(io::Error::other("OOB errno class has invalid nullability")),
+        };
+        Self::validate_domain(stage, reason, errno_class)?;
+        if object.get("schemaVersion").and_then(JsonValue::as_str) != Some("edge-writer-failure/v1")
+        {
+            return Err(io::Error::other("OOB schema version is invalid"));
+        }
+        let writer_instance_id = object
+            .get("writerInstanceId")
+            .and_then(JsonValue::as_str)
+            .ok_or_else(|| io::Error::other("OOB writer instance ID must be a string"))?;
+        if writer_instance_id.is_empty()
+            || writer_instance_id.len() > 128
+            || !writer_instance_id.is_ascii()
+        {
+            return Err(io::Error::other("OOB writer instance ID is outside the bounded domain"));
+        }
+        let line_hash = object
+            .get("lineHash")
+            .and_then(JsonValue::as_str)
+            .ok_or_else(|| io::Error::other("OOB line hash must be a string"))?;
+        if line_hash.len() != 64
+            || !line_hash.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(io::Error::other("OOB line hash is outside the lowercase SHA-256 domain"));
+        }
+        let mut preimage = object.clone();
+        preimage.remove("lineHash");
+        let mut hash_preimage = b"edge-writer-failure-line/v1\n".to_vec();
+        hash_preimage.extend_from_slice(&EdgeContractCanonicalJsonV1::canonicalize(
+            &JsonValue::Object(preimage),
+        )?);
+        if line_hash != EdgeCanonicalWriterV1::sha256_hex(&hash_preimage) {
+            return Err(io::Error::other("OOB line hash does not match its preimage"));
+        }
+        Ok(value)
+    }
+
+    fn write_line(writer: &mut impl Write, line: &[u8]) -> io::Result<()> {
+        let written = writer.write(line)?;
+        if written != line.len() {
+            return Err(io::Error::new(io::ErrorKind::WriteZero, "partial OOB append"));
+        }
+        Ok(())
+    }
+
+    fn record_with_writer<W: Write>(
+        &self,
+        writer: &mut W,
+        stage: &str,
+        reason: &str,
+        errno_class: Option<&str>,
+        sync_data: impl FnOnce(&mut W) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let ordinal = self.next_ordinal.load(Ordering::Acquire);
+        let next_ordinal =
+            ordinal.checked_add(1).ok_or_else(|| io::Error::other("OOB ordinal overflow"))?;
+        let mono_ns = u64::try_from(self.started.elapsed().as_nanos())
+            .map_err(|_| io::Error::other("OOB monotonic time overflow"))?;
+        let line = self.line(mono_ns, ordinal, stage, reason, errno_class)?;
+        Self::validate_line(&line, ordinal)?;
+        Self::write_line(writer, &line)?;
+        self.next_ordinal.store(next_ordinal, Ordering::Release);
+        if let Err(error) = sync_data(writer) {
+            error!(
+                error = %error,
+                ordinal,
+                writer_instance_id = %self.writer_instance_id,
+                "OOB failure line data sync failed after complete append"
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn record(
+        &self,
+        stage: &str,
+        reason: &str,
+        errno_class: Option<&str>,
+    ) -> io::Result<()> {
+        Self::validate_domain(stage, reason, errno_class)?;
+        let mut file = self.file.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.record_with_writer(&mut *file, stage, reason, errno_class, |file| file.sync_data())
+    }
+
+    #[cfg(test)]
+    /// Returns writer identity, epoch, ordinal, exact file bytes, and stable Unix metadata.
+    pub fn audit_snapshot(&self) -> io::Result<EdgeOobFailureSinkAuditSnapshotV1> {
+        let file = self.file.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let metadata = file.metadata()?;
+        let byte_len = usize::try_from(metadata.len())
+            .map_err(|_| io::Error::other("OOB file length exceeds addressable memory"))?;
+        let mut file_bytes = vec![0; byte_len];
+        let audit_path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+        let audit_file = OpenOptions::new().read(true).open(audit_path)?;
+        audit_file.read_exact_at(&mut file_bytes, 0)?;
+        Ok(EdgeOobFailureSinkAuditSnapshotV1 {
+            writer_instance_id: self.writer_instance_id.clone(),
+            producer_epoch: self.producer_epoch,
+            next_ordinal: self.next_ordinal.load(Ordering::Acquire),
+            file_bytes,
+            file_metadata: EdgeOobFileMetadataAuditV1 {
+                len: metadata.len(),
+                mode: metadata.mode(),
+                uid: metadata.uid(),
+                gid: metadata.gid(),
+                device: metadata.dev(),
+                inode: metadata.ino(),
+                hard_links: metadata.nlink(),
+                modified_seconds: metadata.mtime(),
+                modified_nanoseconds: metadata.mtime_nsec(),
+                changed_seconds: metadata.ctime(),
+                changed_nanoseconds: metadata.ctime_nsec(),
+            },
+        })
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Recorder and failure sink retained for final node-result handling.
+#[derive(Debug)]
+pub struct EdgeNodeResultRecorderV1 {
+    pub(crate) recorder: Arc<EdgeMeasurementRecorderV1>,
+    pub(crate) sink: Arc<EdgeOobFailureSinkV1>,
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Installation state for the process-wide edge node-result recorder.
+#[derive(Debug)]
+pub enum EdgeNodeResultSlotV1 {
+    /// Admission has not installed a recorder.
+    VacantBeforeAdmission,
+    /// A recorder is installed and available for one final result.
+    Installed(Arc<EdgeNodeResultRecorderV1>),
+    /// The installed recorder has already been consumed.
+    Consumed,
+}
+
+#[cfg(feature = "edge-measurement")]
+pub(crate) static EDGE_NODE_RESULT_SLOT_V1: OnceLock<Mutex<EdgeNodeResultSlotV1>> = OnceLock::new();
+
+#[cfg(feature = "edge-measurement")]
+fn edge_node_result_slot_v1() -> &'static Mutex<EdgeNodeResultSlotV1> {
+    EDGE_NODE_RESULT_SLOT_V1.get_or_init(|| Mutex::new(EdgeNodeResultSlotV1::VacantBeforeAdmission))
+}
+
+#[cfg(feature = "edge-measurement")]
+fn edge_node_result_recorder_v1() -> Option<Arc<EdgeNodeResultRecorderV1>> {
+    let slot = edge_node_result_slot_v1().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match &*slot {
+        EdgeNodeResultSlotV1::Installed(recorder) => Some(Arc::clone(recorder)),
+        EdgeNodeResultSlotV1::VacantBeforeAdmission | EdgeNodeResultSlotV1::Consumed => None,
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+fn edge_record_oob_failure_v1(stage: &'static str, reason: &'static str) {
+    if let Some(recorder) = edge_node_result_recorder_v1() {
+        let _ = recorder.sink.record(stage, reason, None);
+    }
+}
+#[cfg(feature = "edge-measurement")]
+fn install_edge_node_result_recorder_v1(
+    recorder: Arc<EdgeMeasurementRecorderV1>,
+    sink: Arc<EdgeOobFailureSinkV1>,
+) -> io::Result<()> {
+    if sink.producer_epoch != Some(recorder.registry().producer_epoch()) {
+        return Err(io::Error::other("node result recorder and failure sink epochs differ"));
+    }
+    if recorder.cutoff_latched() {
+        return Err(io::Error::other("node result recorder installation is too late after cutoff"));
+    }
+    let mut slot =
+        edge_node_result_slot_v1().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match &*slot {
+        EdgeNodeResultSlotV1::VacantBeforeAdmission => {
+            *slot = EdgeNodeResultSlotV1::Installed(Arc::new(EdgeNodeResultRecorderV1 {
+                recorder,
+                sink,
+            }));
+            Ok(())
+        }
+        EdgeNodeResultSlotV1::Installed(_) | EdgeNodeResultSlotV1::Consumed => {
+            Err(io::Error::other("node result recorder slot is not vacant"))
+        }
+    }
+}
+#[cfg(all(feature = "edge-measurement", test))]
+static EDGE_NODE_RESULT_TEST_LOCK_V1: Mutex<()> = Mutex::new(());
+
+#[cfg(all(feature = "edge-measurement", test))]
+pub(crate) fn edge_node_result_test_lock_v1() -> std::sync::MutexGuard<'static, ()> {
+    EDGE_NODE_RESULT_TEST_LOCK_V1.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(all(feature = "edge-measurement", test))]
+pub(crate) fn edge_node_result_test_reset_v1() {
+    let mut slot =
+        edge_node_result_slot_v1().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    *slot = EdgeNodeResultSlotV1::VacantBeforeAdmission;
+}
+#[cfg(all(feature = "edge-measurement", test))]
+pub(crate) fn edge_node_result_test_install_v1(
+    root: &Path,
+    producer_epoch: u64,
+) -> Arc<EdgeMeasurementRecorderV1> {
+    let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+        producer_epoch: NonZeroU64::new(producer_epoch).expect("nonzero test epoch"),
+        event_queue_capacity: 64,
+        active_state_capacity: 64,
+        pending_registry_capacity: 64,
+        terminal_record_capacity: 64,
+    })
+    .expect("Linux production recorder");
+    let sink = EdgeOobFailureSinkV1::open(root, Some(producer_epoch)).expect("production OOB sink");
+    install_edge_node_result_recorder_v1(Arc::clone(&recorder), sink)
+        .expect("production node-result slot install");
+    recorder.open_admission().expect("production admission open");
+    recorder
+}
+
+#[cfg(all(feature = "edge-measurement", test))]
+pub(crate) fn edge_node_result_test_oob_sink_v1() -> Arc<EdgeOobFailureSinkV1> {
+    let recorder = edge_node_result_recorder_v1().expect("installed node-result recorder");
+    Arc::clone(&recorder.sink)
+}
+#[cfg(all(feature = "edge-measurement", test))]
+pub(crate) fn edge_node_result_test_consumed_v1() -> bool {
+    let slot = edge_node_result_slot_v1().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    matches!(*slot, EdgeNodeResultSlotV1::Consumed)
+}
+#[cfg(all(feature = "edge-measurement", test))]
+pub(crate) fn edge_node_result_test_poison_v1() {
+    edge_node_result_test_reset_v1();
+    let handle = std::thread::spawn(|| {
+        let _guard = edge_node_result_slot_v1().lock().expect("production slot lock");
+        panic!("poison production node-result slot");
+    });
+    assert!(handle.join().is_err());
+}
+
+#[cfg(feature = "edge-measurement")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EdgeSegmentDescriptorV1 {
+    file_sha256: String,
+}
+
+#[cfg(feature = "edge-measurement")]
+#[derive(Clone, Debug)]
+struct EdgeRollingLedgerV1 {
+    name: &'static str,
+    hash_domain: &'static str,
+    next_sequence: u64,
+    next_segment: u64,
+    previous_record_hash: String,
+    durable_next_sequence: u64,
+    durable_next_segment: u64,
+    durable_previous_record_hash: String,
+    pending_publication: Option<EdgePendingPublicationV1>,
+    records: Vec<JsonValue>,
+    record_bytes: usize,
+    batch_started_at: Option<Instant>,
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Prepared ledger publication awaiting a durable commit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EdgePendingPublicationV1 {
+    filename: String,
+    bytes: Vec<u8>,
+    descriptor: EdgeSegmentDescriptorV1,
+    member_sequences: Vec<u64>,
+    durable_next_sequence: u64,
+    durable_previous_record_hash: String,
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Recovery timing retained for a publication cleanup incident.
+#[derive(Debug)]
+pub struct EdgeCleanupPublicationV1 {
+    attempt_mono_ns: Vec<u64>,
+    recovered_mono_ns: Option<u64>,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeRollingLedgerV1 {
+    fn new(name: &'static str, hash_domain: &'static str) -> Self {
+        Self {
+            name,
+            hash_domain,
+            next_sequence: 0,
+            next_segment: 0,
+            previous_record_hash: EDGE_ZERO_HASH.to_owned(),
+            durable_next_sequence: 0,
+            durable_next_segment: 0,
+            durable_previous_record_hash: EDGE_ZERO_HASH.to_owned(),
+            pending_publication: None,
+            records: Vec::new(),
+            record_bytes: 0,
+            batch_started_at: None,
+        }
+    }
+
+    fn commit_durable_publication(&mut self) -> io::Result<EdgeSealedSegmentV1> {
+        let pending = self
+            .pending_publication
+            .as_ref()
+            .ok_or_else(|| io::Error::other("pending publication disappeared"))?;
+        let next_segment = self
+            .next_segment
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("rolling segment sequence overflow"))?;
+        let expected_next_sequence = pending
+            .member_sequences
+            .last()
+            .copied()
+            .and_then(|sequence| sequence.checked_add(1))
+            .ok_or_else(|| io::Error::other("pending publication member sequence is absent"))?;
+        if pending.member_sequences.first().copied() != Some(self.durable_next_sequence)
+            || pending
+                .member_sequences
+                .windows(2)
+                .any(|pair| pair[0].checked_add(1) != Some(pair[1]))
+            || pending.durable_next_sequence != self.next_sequence
+            || pending.durable_next_sequence != expected_next_sequence
+            || pending.durable_previous_record_hash != self.previous_record_hash
+        {
+            return Err(io::Error::other(
+                "pending publication terminal tuple differs from staged state",
+            ));
+        }
+        let pending = self.pending_publication.take().expect("validated pending publication");
+        self.durable_next_sequence = pending.durable_next_sequence;
+        self.durable_previous_record_hash = pending.durable_previous_record_hash;
+        self.durable_next_segment = next_segment;
+        self.next_segment = next_segment;
+        self.records.clear();
+        self.record_bytes = 0;
+        self.batch_started_at = None;
+        Ok(EdgeSealedSegmentV1 {
+            descriptor: pending.descriptor,
+            member_sequences: pending.member_sequences,
+        })
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+#[derive(Clone, Debug)]
+struct EdgeSealedSegmentV1 {
+    descriptor: EdgeSegmentDescriptorV1,
+    member_sequences: Vec<u64>,
+}
+
+#[cfg(feature = "edge-measurement")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EdgeCandidateJoinV1 {
+    candidate_sequence: u64,
+    coverage_generation: u64,
+    connection_sequence: u64,
+    connection_record_hash: B256,
+    registry_terminal_record_hash: B256,
+}
+
+#[cfg(all(feature = "edge-measurement", test))]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum EdgeSegmentMutationFaultV1 {
+    SourceIdentity,
+    SourceDurableSet,
+    SourceCursor,
+    SourceConnectionDescriptor,
+    SourceBatch,
+    RegistryPending,
+    RegistrySegment,
+    RegistryCursor,
+    RegistryBatch,
+    CandidateDurableSet,
+    CandidateRelease,
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Accounting state for one operational incident class.
+#[derive(Clone, Debug, Default)]
+pub struct EdgeOperationalIncidentV1 {
+    count: u64,
+    recovered_count: u64,
+    first_failed_mono_ns: Option<u64>,
+    last_failed_mono_ns: Option<u64>,
+    attempt_count: u64,
+    active_identity: Option<String>,
+    single_recovery_witness: Option<JsonValue>,
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Aggregate operational incident accounting for the edge writer.
+#[derive(Clone, Debug, Default)]
+pub struct EdgeOperationalIncidentsV1 {
+    accounting_periodic_write_failed: EdgeOperationalIncidentV1,
+    data_ledger_write_failed: EdgeOperationalIncidentV1,
+    open_cleanup_failed_after_durable_publish: EdgeOperationalIncidentV1,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeOperationalIncidentsV1 {
+    fn is_hash(value: &JsonValue) -> bool {
+        value.as_str().is_some_and(|value| {
+            value.len() == 64
+                && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                && value.bytes().any(|byte| byte != b'0')
+        })
+    }
+
+    fn decimal(value: &JsonValue) -> Option<u64> {
+        let value = value.as_str()?;
+        let parsed = value.parse::<u64>().ok()?;
+        (parsed.to_string() == value).then_some(parsed)
+    }
+
+    fn validate_witness(kind: &str, witness: &JsonValue) -> io::Result<()> {
+        let keys = EDGE_SINGLE_RECOVERY_WITNESS_KEYS_V1;
+        let object = witness
+            .as_object()
+            .ok_or_else(|| io::Error::other("incident witness is not an object"))?;
+        if object.len() != keys.len() || keys.iter().any(|key| !object.contains_key(*key)) {
+            return Err(io::Error::other("incident witness key set differs"));
+        }
+        let incident_id = object["incidentId"]
+            .as_str()
+            .filter(|value| !value.is_empty() && value.len() <= 128 && value.is_ascii())
+            .ok_or_else(|| io::Error::other("incident witness identity is malformed"))?;
+        let identity_fields = incident_id.split('|').collect::<Vec<_>>();
+        let failed = Self::decimal(&object["failedMonoNs"])
+            .ok_or_else(|| io::Error::other("incident failed time is malformed"))?;
+        let last = Self::decimal(&object["lastAttemptMonoNs"])
+            .ok_or_else(|| io::Error::other("incident last-attempt time is malformed"))?;
+        let recovered = Self::decimal(&object["recoveredMonoNs"])
+            .ok_or_else(|| io::Error::other("incident recovery time is malformed"))?;
+        Self::decimal(&object["attemptCount"])
+            .filter(|value| *value != 0)
+            .ok_or_else(|| io::Error::other("incident attempt count is malformed"))?;
+        if failed > last || last > recovered {
+            return Err(io::Error::other("incident witness times are out of order"));
+        }
+        match kind {
+            "AccountingPeriodicWriteFailed" => {
+                let scheduled = Self::decimal(&object["scheduledMonoNs"])
+                    .ok_or_else(|| io::Error::other("periodic schedule is malformed"))?;
+                if identity_fields.len() != 3
+                    || identity_fields[0] != "periodic"
+                    || identity_fields[1] != scheduled.to_string()
+                    || object["preStateSha256"].as_str() != Some(identity_fields[2])
+                    || scheduled > failed
+                    || !object["ledgerPrefix"].is_null()
+                    || !Self::is_hash(&object["preStateSha256"])
+                    || !Self::is_hash(&object["postStateSha256"])
+                    || !object["attemptedBytesSha256"].is_null()
+                    || !object["durableBytesSha256"].is_null()
+                {
+                    return Err(io::Error::other("periodic witness kind matrix differs"));
+                }
+            }
+            "DataLedgerWriteFailed" => {
+                let ledger = object["ledgerPrefix"]
+                    .as_str()
+                    .filter(|value| !value.is_empty() && value.len() <= 128 && value.is_ascii())
+                    .ok_or_else(|| io::Error::other("data incident ledger is malformed"))?;
+                let next_sequence = identity_fields
+                    .get(1)
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .filter(|value| value.to_string() == identity_fields[1]);
+                if identity_fields.len() != 3
+                    || identity_fields[0] != ledger
+                    || next_sequence.is_none()
+                    || object["attemptedBytesSha256"].as_str() != identity_fields.get(2).copied()
+                    || !object["scheduledMonoNs"].is_null()
+                    || !object["preStateSha256"].is_null()
+                    || !object["postStateSha256"].is_null()
+                    || !Self::is_hash(&object["attemptedBytesSha256"])
+                    || object["attemptedBytesSha256"] != object["durableBytesSha256"]
+                {
+                    return Err(io::Error::other("data witness identity or kind matrix differs"));
+                }
+            }
+            "OpenCleanupFailedAfterDurablePublish" => {
+                let ledger = object["ledgerPrefix"]
+                    .as_str()
+                    .filter(|value| !value.is_empty() && value.len() <= 128 && value.is_ascii())
+                    .ok_or_else(|| io::Error::other("cleanup incident ledger is malformed"))?;
+                if identity_fields.len() != 3
+                    || identity_fields[0] != ledger
+                    || identity_fields[1].is_empty()
+                    || !identity_fields[1].ends_with(".ndjson")
+                    || object["attemptedBytesSha256"].as_str() != identity_fields.get(2).copied()
+                    || !object["scheduledMonoNs"].is_null()
+                    || !object["preStateSha256"].is_null()
+                    || !object["postStateSha256"].is_null()
+                    || !Self::is_hash(&object["attemptedBytesSha256"])
+                    || object["attemptedBytesSha256"] != object["durableBytesSha256"]
+                {
+                    return Err(io::Error::other(
+                        "cleanup witness identity or kind matrix differs",
+                    ));
+                }
+            }
+            _ => return Err(io::Error::other("unknown operational incident kind")),
+        }
+        Ok(())
+    }
+
+    fn entry(kind: &str, value: &EdgeOperationalIncidentV1) -> io::Result<JsonValue> {
+        if value.recovered_count > value.count
+            || (value.count == 0
+                && (value.first_failed_mono_ns.is_some() || value.last_failed_mono_ns.is_some()))
+            || (value.count != 0
+                && (value.first_failed_mono_ns.is_none() || value.last_failed_mono_ns.is_none()))
+        {
+            return Err(io::Error::other("operational incident cumulative state differs"));
+        }
+        let witness = if value.count == 1 && value.recovered_count == 1 {
+            let witness = value
+                .single_recovery_witness
+                .clone()
+                .ok_or_else(|| io::Error::other("single recovered incident witness is absent"))?;
+            Self::validate_witness(kind, &witness)?;
+            Some(witness)
+        } else {
+            None
+        };
+        EdgeCanonicalWriterV1::exact_object(
+            EDGE_OPERATIONAL_INCIDENT_ENTRY_KEYS_V1,
+            [
+                ("count", JsonValue::String(value.count.to_string())),
+                ("recoveredCount", JsonValue::String(value.recovered_count.to_string())),
+                (
+                    "firstFailedMonoNs",
+                    value
+                        .first_failed_mono_ns
+                        .map(|value| JsonValue::String(value.to_string()))
+                        .unwrap_or(JsonValue::Null),
+                ),
+                (
+                    "lastFailedMonoNs",
+                    value
+                        .last_failed_mono_ns
+                        .map(|value| JsonValue::String(value.to_string()))
+                        .unwrap_or(JsonValue::Null),
+                ),
+                ("singleRecoveryWitness", witness.unwrap_or(JsonValue::Null)),
+            ],
+        )
+    }
+
+    fn value(&self) -> io::Result<JsonValue> {
+        EdgeCanonicalWriterV1::exact_object(
+            EDGE_OPERATIONAL_INCIDENT_SUMMARY_KEYS_V1,
+            [
+                (
+                    "AccountingPeriodicWriteFailed",
+                    Self::entry(
+                        "AccountingPeriodicWriteFailed",
+                        &self.accounting_periodic_write_failed,
+                    )?,
+                ),
+                (
+                    "DataLedgerWriteFailed",
+                    Self::entry("DataLedgerWriteFailed", &self.data_ledger_write_failed)?,
+                ),
+                (
+                    "OpenCleanupFailedAfterDurablePublish",
+                    Self::entry(
+                        "OpenCleanupFailedAfterDurablePublish",
+                        &self.open_cleanup_failed_after_durable_publish,
+                    )?,
+                ),
+            ],
+        )
+    }
+}
+#[cfg(feature = "edge-measurement")]
+/// Stable accounting snapshot of pending registry state.
+#[derive(Clone, Debug)]
+pub struct EdgeRegistryAccountingSnapshotV1 {
+    revision: u64,
+    pending: [u64; 7],
+    pending_total: u64,
+    measurement_closed: bool,
+    non_authority_send_count: u64,
+    registration_capacity_missing: u64,
+    terminal_record_allocation_missing: u64,
+    terminal_record_capacity_missing: u64,
+    poisoned: bool,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeRegistryAccountingSnapshotV1 {
+    fn pending_count(value: usize) -> io::Result<u64> {
+        u64::try_from(value).map_err(|_| io::Error::other("registry pending count overflow"))
+    }
+
+    fn from_raw(snapshot: PendingRegistrySnapshotV2) -> io::Result<Self> {
+        Ok(Self {
+            revision: snapshot.revision,
+            pending: [
+                Self::pending_count(snapshot.coverage_queue_pending_ack)?,
+                Self::pending_count(snapshot.sets.pending_delivery_final.len())?,
+                Self::pending_count(snapshot.primary_pending)?,
+                Self::pending_count(snapshot.published_pending)?,
+                Self::pending_count(snapshot.secondary_pending)?,
+                snapshot.unregistered_send_inflight,
+                snapshot.registration_without_sequence_send_inflight,
+            ],
+            pending_total: snapshot.pending_total,
+            measurement_closed: snapshot.measurement_closed,
+            non_authority_send_count: snapshot.unregistered_send_count,
+            registration_capacity_missing: snapshot.registration_capacity_missing,
+            terminal_record_allocation_missing: snapshot.terminal_record_allocation_missing,
+            terminal_record_capacity_missing: snapshot.terminal_record_capacity_missing,
+            poisoned: snapshot.poisoned,
+        })
+    }
+
+    fn checked_pending_total(&self) -> io::Result<u64> {
+        self.pending.into_iter().try_fold(0_u64, |sum, value| {
+            sum.checked_add(value)
+                .ok_or_else(|| io::Error::other("registry pending total overflow"))
+        })
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Stable accounting snapshot of source measurement state.
+#[derive(Clone, Debug)]
+pub struct EdgeSourceAccountingSnapshotV1 {
+    revision: Option<[u64; 16]>,
+    counters: (u64, u64, u64, u64, u64, u64, u64, usize, u64),
+    missing: EdgeMeasurementMissingEvidenceSnapshotV1,
+    registry: EdgeRegistryAccountingSnapshotV1,
+    cutoff: Option<SourceProducerEpochCutoffV1>,
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Stable accounting snapshot of blink measurement state.
+#[derive(Clone, Debug)]
+pub struct EdgeBlinkAccountingSnapshotV1 {
+    revision: [u64; 36],
+    blink: BlinkLedgerSnapshotV1,
+    queues: EdgeQueueAccountingSnapshotV1,
+    candidate_bounds: CheckedCandidateBoundsV1,
+    candidate_drops: CandidatePreEnqueueDropCountersV1,
+    blink_reject_loss: BlinkRejectQueueLossCountersV1,
+    candidate_drop_loss: CandidateDropQueueLossCountersV1,
+    cutoff: Option<BlinkProducerEpochCutoffV1>,
+    poisoned: bool,
+}
+
+#[cfg(all(feature = "edge-measurement", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum TerminalBlinkSnapshotMutationV1 {
+    IngressRhsVsObserved,
+    IngressRhsVsAccepted,
+    AdmittedSlotEquation,
+    GenerationTerminalEquation,
+    SelectedDtoEquation,
+    CheckedAddOverflow,
+}
+
+#[cfg(all(feature = "edge-measurement", test))]
+impl TerminalBlinkSnapshotMutationV1 {
+    const ALL: [Self; 6] = [
+        Self::IngressRhsVsObserved,
+        Self::IngressRhsVsAccepted,
+        Self::AdmittedSlotEquation,
+        Self::GenerationTerminalEquation,
+        Self::SelectedDtoEquation,
+        Self::CheckedAddOverflow,
+    ];
+
+    fn mutate(self, snapshot: &mut BlinkLedgerSnapshotV1) {
+        match self {
+            Self::IngressRhsVsObserved => snapshot.victim_ingress_observed ^= 1,
+            Self::IngressRhsVsAccepted => snapshot.victim_ingress_accepted ^= 1,
+            Self::AdmittedSlotEquation => {
+                snapshot.admitted_generations = snapshot
+                    .admitted_generations
+                    .checked_add(1)
+                    .expect("terminal mutation admitted generation");
+                snapshot.processed_terminal = snapshot
+                    .processed_terminal
+                    .checked_add(1)
+                    .expect("terminal mutation processed generation");
+            }
+            Self::GenerationTerminalEquation => snapshot.processed_terminal ^= 1,
+            Self::SelectedDtoEquation => snapshot.selected_dto_built_preterminal ^= 1,
+            Self::CheckedAddOverflow => {
+                snapshot.slot_accepted = u64::MAX;
+                snapshot.slot_replaced = 1;
+            }
+        }
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::IngressRhsVsObserved => "ingress-rhs-vs-observed",
+            Self::IngressRhsVsAccepted => "ingress-rhs-vs-accepted",
+            Self::AdmittedSlotEquation => "admitted-slot-equation",
+            Self::GenerationTerminalEquation => "generation-terminal-equation",
+            Self::SelectedDtoEquation => "selected-dto-equation",
+            Self::CheckedAddOverflow => "checked-add-overflow",
+        }
+    }
+
+    const fn expected_error(self) -> base_mev_trader::EdgeMeasurementError {
+        match self {
+            Self::CheckedAddOverflow => base_mev_trader::EdgeMeasurementError::CounterOverflow,
+            _ => base_mev_trader::EdgeMeasurementError::FinalNotClosed,
+        }
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+#[derive(Clone, Debug)]
+struct EdgePendingSourceRecordV1 {
+    ledger: &'static str,
+    domain: &'static str,
+    state: String,
+    record: JsonValue,
+    ledger_sequence: u64,
+    source_file_sequence: u64,
+    connection_identity: Option<(u64, B256)>,
+    is_cutoff: bool,
+    cutoff_ledger_sequence: Option<u64>,
+    cutoff_envelope_published: bool,
+}
+
+#[cfg(feature = "edge-measurement")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EdgeTerminalPublicationPhaseV1 {
+    Data,
+    RetryTerminal,
+    Complete,
+}
+
+#[cfg(feature = "edge-measurement")]
+#[derive(Debug)]
+struct EdgeOutputLeaseV1 {
+    _file: File,
+}
+#[cfg(feature = "edge-measurement")]
+#[derive(Debug)]
+struct EdgeCanonicalWriterV1 {
+    directory: PathBuf,
+    directory_handle: Arc<File>,
+    provenance: EdgeCliProducerConfigV1,
+    recorder: Arc<EdgeMeasurementRecorderV1>,
+    owner: Arc<EdgeMeasurementOwnerV1>,
+    deadline_cancellation: Arc<EdgeShutdownDeadlineCancellationV1>,
+    source_file_sequence: u64,
+    producer_record_sequence: u64,
+    next_registry_terminal: u64,
+    ledgers: BTreeMap<&'static str, EdgeRollingLedgerV1>,
+    registry_segment_sha: Vec<B256>,
+    registry_record_sha: Vec<B256>,
+    connection_segment_sha: Vec<(u64, B256)>,
+    connection_records: Vec<B256>,
+    candidate_joins: BTreeMap<u64, EdgeCandidateJoinV1>,
+    candidate_validated_count: u64,
+    candidate_durable: BTreeSet<u64>,
+    registry_h1_segment_sha: BTreeMap<u64, (u64, B256)>,
+    candidate_join_exclusions: BTreeSet<u64>,
+    source_sequence_by_ledger: BTreeMap<(&'static str, u64), u64>,
+    pending_source_record: Option<EdgePendingSourceRecordV1>,
+    source_durable: BTreeSet<u64>,
+    source_durable_ack_cursor: u64,
+    registry_pending: BTreeMap<u64, PendingTerminalRecordV2>,
+    registry_durable_cursor: u64,
+    cutoff_batches_flushed: bool,
+    finalized: bool,
+    started_at: Instant,
+    next_periodic_at: Instant,
+    periodic_cadence_closed: bool,
+    data_sealed: bool,
+    terminal_publication_phase: EdgeTerminalPublicationPhaseV1,
+    termination_guard: bool,
+    startup_authority_durable: bool,
+    cutoff_inner: Option<JsonValue>,
+    oob_sink: Option<Arc<EdgeOobFailureSinkV1>>,
+    incidents: EdgeOperationalIncidentsV1,
+    #[cfg(test)]
+    segment_mutation_fault: Option<EdgeSegmentMutationFaultV1>,
+    #[cfg(test)]
+    terminal_snapshot_revision_fault: bool,
+    #[cfg(test)]
+    terminal_blink_snapshot_mutation: Option<TerminalBlinkSnapshotMutationV1>,
+    _output_lease: Option<EdgeOutputLeaseV1>,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeCanonicalWriterV1 {
+    fn new(
+        provenance: EdgeCliProducerConfigV1,
+        recorder: Arc<EdgeMeasurementRecorderV1>,
+        owner: Arc<EdgeMeasurementOwnerV1>,
+    ) -> Self {
+        let directory_handle = Arc::clone(&provenance.output_root_handle);
+        let directory = PathBuf::from(format!("/proc/self/fd/{}", directory_handle.as_raw_fd()));
+        Self {
+            directory,
+            directory_handle,
+            provenance,
+            recorder,
+            owner,
+            deadline_cancellation: Arc::new(EdgeShutdownDeadlineCancellationV1::default()),
+            source_file_sequence: 0,
+            producer_record_sequence: 0,
+            next_registry_terminal: 0,
+            ledgers: BTreeMap::new(),
+            registry_segment_sha: Vec::new(),
+            registry_record_sha: Vec::new(),
+            connection_segment_sha: Vec::new(),
+            connection_records: Vec::new(),
+            candidate_joins: BTreeMap::new(),
+            candidate_validated_count: 0,
+            candidate_durable: BTreeSet::new(),
+            registry_h1_segment_sha: BTreeMap::new(),
+            candidate_join_exclusions: BTreeSet::new(),
+            source_sequence_by_ledger: BTreeMap::new(),
+            pending_source_record: None,
+            source_durable: BTreeSet::new(),
+            source_durable_ack_cursor: 0,
+            registry_pending: BTreeMap::new(),
+            registry_durable_cursor: 0,
+            cutoff_batches_flushed: false,
+            finalized: false,
+            started_at: Instant::now(),
+            next_periodic_at: Instant::now() + EDGE_ACCOUNTING_PERIOD_V1,
+            periodic_cadence_closed: false,
+            data_sealed: false,
+            terminal_publication_phase: EdgeTerminalPublicationPhaseV1::Data,
+            termination_guard: false,
+            startup_authority_durable: false,
+            cutoff_inner: None,
+            oob_sink: None,
+            incidents: EdgeOperationalIncidentsV1::default(),
+            #[cfg(test)]
+            segment_mutation_fault: None,
+            #[cfg(test)]
+            terminal_snapshot_revision_fault: false,
+            #[cfg(test)]
+            terminal_blink_snapshot_mutation: None,
+            _output_lease: None,
+        }
+    }
+    fn append_sequence_hash(
+        hashes: &mut Vec<B256>,
+        sequence: u64,
+        hash: B256,
+        mismatch: &'static str,
+    ) -> io::Result<()> {
+        let index = usize::try_from(sequence)
+            .map_err(|_| io::Error::other("sequence does not fit usize"))?;
+        if index != hashes.len() {
+            return Err(io::Error::other(mismatch));
+        }
+        hashes.push(hash);
+        Ok(())
+    }
+
+    fn sequence_hash(hashes: &[B256], sequence: u64) -> Option<B256> {
+        usize::try_from(sequence).ok().and_then(|index| hashes.get(index)).copied()
+    }
+
+    fn acquire_output_lease(&self) -> io::Result<EdgeOutputLeaseV1> {
+        const LOCK_EX: i32 = 2;
+        const LOCK_NB: i32 = 4;
+
+        let file = File::open(&self.directory)?;
+        // SAFETY: `file` owns a valid descriptor for the pinned output directory for the
+        // duration of this call, and `flock` neither retains the pointer nor dereferences memory.
+        let result = unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) };
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(EdgeOutputLeaseV1 { _file: file })
+    }
+
+    fn sweep_stale_open(&self, _lease: &EdgeOutputLeaseV1) -> io::Result<()> {
+        let mut stale_paths = Vec::new();
+        for entry in fs::read_dir(&self.directory)? {
+            let entry = entry?;
+            if !entry.file_name().as_bytes().ends_with(b".open") {
+                continue;
+            }
+            let file_type = entry.file_type()?;
+            if !file_type.is_file() && !file_type.is_symlink() {
+                return Err(io::Error::other("stale .open entry is not a regular file or symlink"));
+            }
+            stale_paths.push(entry.path());
+        }
+        for path in stale_paths {
+            if let Err(error) = fs::remove_file(path) {
+                return match self.directory_handle.sync_all() {
+                    Ok(()) => Err(error),
+                    Err(sync_error) => Err(io::Error::new(
+                        error.kind(),
+                        format!("{error}; stale .open sweep root fsync failed: {sync_error}"),
+                    )),
+                };
+            }
+        }
+        self.directory_handle.sync_all()
+    }
+
+    fn prepare(&mut self) -> io::Result<()> {
+        if self.startup_authority_durable {
+            return Ok(());
+        }
+        let sink = EdgeOobFailureSinkV1::open_at(
+            &self.directory_handle,
+            Some(self.owner.producer_epoch()),
+        )?;
+        install_edge_node_result_recorder_v1(Arc::clone(&self.recorder), Arc::clone(&sink))?;
+        self.oob_sink = Some(Arc::clone(&sink));
+        let lease = self.acquire_output_lease().map_err(|error| {
+            let _ = sink.record("lease", "OutputLeaseAcquireFailed", None);
+            error
+        })?;
+        self.sweep_stale_open(&lease).map_err(|error| {
+            let _ = sink.record("sweep", "StaleOpenSweepFailed", None);
+            error
+        })?;
+        self.bootstrap_authority()?;
+        self._output_lease = Some(lease);
+        self.recorder.open_admission().map_err(|error| {
+            io::Error::other(format!("source admission open failed: {error:?}"))
+        })?;
+        Ok(())
+    }
+
+    fn next_periodic_deadline(now: Instant) -> io::Result<Instant> {
+        now.checked_add(EDGE_ACCOUNTING_PERIOD_V1)
+            .ok_or_else(|| io::Error::other("periodic accounting deadline overflow"))
+    }
+
+    fn advance_periodic_cadence(
+        next_periodic_at: &mut Instant,
+        cadence_closed: bool,
+        attempted_at: Instant,
+    ) -> io::Result<()> {
+        if cadence_closed {
+            return Err(io::Error::other("periodic accounting cadence is closed"));
+        }
+        *next_periodic_at = Self::next_periodic_deadline(attempted_at)?;
+        Ok(())
+    }
+    fn run_due_periodic_accounting(&mut self, now: Instant) -> io::Result<bool> {
+        if self.periodic_cadence_closed
+            || now < self.next_periodic_at
+            || self.recorder.cutoff_sealed()
+        {
+            return Ok(false);
+        }
+        let result = self.write_periodic_accounting();
+        Self::advance_periodic_cadence(
+            &mut self.next_periodic_at,
+            self.periodic_cadence_closed,
+            Instant::now(),
+        )?;
+        if let Err(error) = result {
+            if EdgeWriterFailureClassV1::classify(&error)
+                == EdgeWriterFailureClassV1::StructuralInvalid
+            {
+                return Err(error);
+            }
+            error!(
+                error = %error,
+                "periodic accounting snapshot write failed; retry remains scheduled"
+            );
+        }
+        Ok(true)
+    }
+
+    fn run(mut self) -> io::Result<()> {
+        self.deadline_cancellation.check()?;
+        self.prepare()?;
+        let sink = Arc::clone(
+            self.oob_sink
+                .as_ref()
+                .ok_or_else(|| io::Error::other("writer OOB sink missing after preparation"))?,
+        );
+        let mut terminal_retry_attempt = 0_u64;
+        loop {
+            self.deadline_cancellation.check()?;
+            if let Err(error) = self.retry_open_cleanup_incident() {
+                if EdgeWriterFailureClassV1::classify(&error)
+                    == EdgeWriterFailureClassV1::StructuralInvalid
+                {
+                    return Err(error);
+                }
+                let attempt =
+                    self.incidents.open_cleanup_failed_after_durable_publish.attempt_count.max(1);
+                let delay =
+                    EdgeWriterFailureClassV1::retry_delay(attempt, self.recorder.cutoff_latched());
+                EdgeWriterFailureClassV1::wait_for_retry_delay_until_cutoff(delay, || {
+                    self.recorder.cutoff_latched() || self.deadline_cancellation.is_cancelled()
+                });
+                continue;
+            }
+            if self.terminal_publication_phase == EdgeTerminalPublicationPhaseV1::RetryTerminal {
+                match self.retry_terminal_accounting() {
+                    Ok(()) => return Ok(()),
+                    Err(error)
+                        if EdgeWriterFailureClassV1::classify(&error)
+                            == EdgeWriterFailureClassV1::StructuralInvalid =>
+                    {
+                        return Err(error);
+                    }
+                    Err(_) => {
+                        let retrying_periodic = self.has_pending_non_terminal_accounting();
+                        let attempt = if retrying_periodic {
+                            self.incidents.accounting_periodic_write_failed.attempt_count.max(1)
+                        } else {
+                            terminal_retry_attempt =
+                                terminal_retry_attempt.checked_add(1).ok_or_else(|| {
+                                    io::Error::other("terminal retry attempt count overflow")
+                                })?;
+                            let _ = sink.record("writer", "DataLedgerWriteFailed", None);
+                            terminal_retry_attempt
+                        };
+                        let delay = EdgeWriterFailureClassV1::retry_delay(
+                            attempt,
+                            self.recorder.cutoff_latched(),
+                        );
+                        EdgeWriterFailureClassV1::wait_for_retry_delay_until_cutoff(delay, || {
+                            self.deadline_cancellation.is_cancelled()
+                        });
+                        continue;
+                    }
+                }
+            }
+            let progressed = match self.drain_once() {
+                Ok(progressed) => {
+                    let pending_exists =
+                        self.ledgers.values().any(|ledger| ledger.pending_publication.is_some());
+                    let recovered_ns = self.elapsed_mono_ns()?;
+                    let incident = &mut self.incidents.data_ledger_write_failed;
+                    if incident.recovered_count < incident.count && !pending_exists {
+                        let identity = incident
+                            .active_identity
+                            .as_deref()
+                            .ok_or_else(|| io::Error::other("data incident identity missing"))?;
+                        let mut fields = identity.splitn(3, '|');
+                        let ledger = fields
+                            .next()
+                            .filter(|value| !value.is_empty())
+                            .ok_or_else(|| io::Error::other("data incident ledger missing"))?;
+                        let next_sequence =
+                            fields.next().and_then(|value| value.parse::<u64>().ok()).ok_or_else(
+                                || io::Error::other("data incident next sequence missing"),
+                            )?;
+                        let digest =
+                            fields.next().filter(|value| value.len() == 64).ok_or_else(|| {
+                                io::Error::other("data incident bytes digest missing")
+                            })?;
+                        incident.recovered_count = incident
+                            .recovered_count
+                            .checked_add(1)
+                            .ok_or_else(|| io::Error::other("data recovery count overflow"))?;
+                        if incident.count == 1 {
+                            let failed_ns = incident.first_failed_mono_ns.ok_or_else(|| {
+                                io::Error::other("data incident failure time missing")
+                            })?;
+                            incident.single_recovery_witness =
+                                Some(Self::single_recovery_witness([
+                                    JsonValue::String(format!("{ledger}|{next_sequence}|{digest}")),
+                                    JsonValue::String(ledger.to_owned()),
+                                    JsonValue::Null,
+                                    JsonValue::String(failed_ns.to_string()),
+                                    JsonValue::String(
+                                        incident
+                                            .last_failed_mono_ns
+                                            .ok_or_else(|| {
+                                                io::Error::other(
+                                                    "data incident last-attempt time missing",
+                                                )
+                                            })?
+                                            .to_string(),
+                                    ),
+                                    JsonValue::String(recovered_ns.to_string()),
+                                    JsonValue::String(incident.attempt_count.to_string()),
+                                    JsonValue::Null,
+                                    JsonValue::Null,
+                                    JsonValue::String(digest.to_owned()),
+                                    JsonValue::String(digest.to_owned()),
+                                ])?);
+                        }
+                        incident.active_identity = None;
+                        incident.attempt_count = 0;
+                    }
+                    progressed
+                }
+                Err(error)
+                    if self.ledgers.iter().any(|(name, ledger)| {
+                        *name != "accounting" && ledger.pending_publication.is_some()
+                    }) =>
+                {
+                    if EdgeWriterFailureClassV1::classify(&error)
+                        == EdgeWriterFailureClassV1::StructuralInvalid
+                    {
+                        return Err(error);
+                    }
+                    let now = self.elapsed_mono_ns()?;
+                    let (ledger_prefix, next_sequence, digest) = self
+                        .ledgers
+                        .iter()
+                        .find_map(|(name, ledger)| {
+                            (*name != "accounting")
+                                .then_some(())
+                                .and_then(|()| ledger.pending_publication.as_ref())
+                                .and_then(|pending| {
+                                    pending.member_sequences.first().copied().map(|next_sequence| {
+                                        (
+                                            *name,
+                                            next_sequence,
+                                            EdgeCanonicalWriterV1::sha256_hex(&pending.bytes),
+                                        )
+                                    })
+                                })
+                        })
+                        .ok_or_else(|| io::Error::other("pending publication identity missing"))?;
+                    let identity = format!("{ledger_prefix}|{next_sequence}|{digest}");
+                    let incident = &mut self.incidents.data_ledger_write_failed;
+                    let opened = if incident.recovered_count == incident.count {
+                        incident.count = incident
+                            .count
+                            .checked_add(1)
+                            .ok_or_else(|| io::Error::other("data incident count overflow"))?;
+                        incident.active_identity = Some(identity.clone());
+                        incident.attempt_count = 0;
+                        true
+                    } else if incident.active_identity.as_deref() != Some(identity.as_str()) {
+                        return Err(io::Error::other(
+                            "distinct data incident arrived before active recovery",
+                        ));
+                    } else {
+                        false
+                    };
+                    incident.attempt_count = incident
+                        .attempt_count
+                        .checked_add(1)
+                        .ok_or_else(|| io::Error::other("data attempt count overflow"))?;
+                    let attempt = incident.attempt_count;
+                    incident.first_failed_mono_ns.get_or_insert(now);
+                    incident.last_failed_mono_ns = Some(now);
+                    if opened {
+                        self.recorder.latch_coordinator_failure("DataLedgerWriteFailed");
+                    }
+                    let _ = sink.record("writer", "DataLedgerWriteFailed", None);
+                    let delay = EdgeWriterFailureClassV1::retry_delay(
+                        attempt,
+                        self.recorder.cutoff_latched(),
+                    );
+                    EdgeWriterFailureClassV1::wait_for_retry_delay_until_cutoff(delay, || {
+                        self.recorder.cutoff_latched() || self.deadline_cancellation.is_cancelled()
+                    });
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            if self.termination_guard && !progressed && !self.has_buffered_records() {
+                return Ok(());
+            }
+            let _ = self.run_due_periodic_accounting(Instant::now())?;
+            if self.recorder.cutoff_sealed()
+                && !progressed
+                && !self.termination_guard
+                && !self.has_unsealed_data_records()
+                && self.recorder.cutoff_drain_complete()
+                && self.owner.ledger().snapshot().is_ok_and(|snapshot| {
+                    !snapshot.poisoned
+                        && snapshot.generation_pending == 0
+                        && snapshot.selected_pending == 0
+                })
+                && self.registry_pending.is_empty()
+                && self.source_sequence_by_ledger.is_empty()
+                && self.pending_source_record.is_none()
+            {
+                self.terminal_publication_phase = EdgeTerminalPublicationPhaseV1::RetryTerminal;
+                continue;
+            }
+            if !progressed {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+    fn has_buffered_records(&self) -> bool {
+        self.ledgers
+            .values()
+            .any(|ledger| !ledger.records.is_empty() || ledger.pending_publication.is_some())
+    }
+    fn validate_data_recovery_bytes(
+        attempted: &[u8],
+        durable: &[u8],
+        expected_digest: &str,
+    ) -> io::Result<()> {
+        if attempted != durable || Self::sha256_hex(attempted) != expected_digest {
+            return Err(io::Error::other(
+                "data recovery immutable bytes are unavailable or changed",
+            ));
+        }
+        Ok(())
+    }
+
+    fn retry_open_cleanup_incident(&mut self) -> io::Result<()> {
+        if self.incidents.open_cleanup_failed_after_durable_publish.recovered_count
+            == self.incidents.open_cleanup_failed_after_durable_publish.count
+        {
+            return Ok(());
+        }
+        let observed_ns = self.elapsed_mono_ns()?;
+        let incident = &mut self.incidents.open_cleanup_failed_after_durable_publish;
+        let identity = incident
+            .active_identity
+            .clone()
+            .ok_or_else(|| io::Error::other("cleanup incident identity missing"))?;
+        let mut fields = identity.splitn(3, '|');
+        let ledger =
+            fields.next().ok_or_else(|| io::Error::other("cleanup ledger identity missing"))?;
+        let filename =
+            fields.next().ok_or_else(|| io::Error::other("cleanup filename identity missing"))?;
+        let digest =
+            fields.next().ok_or_else(|| io::Error::other("cleanup digest identity missing"))?;
+        incident.attempt_count = incident
+            .attempt_count
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("cleanup attempt count overflow"))?;
+        incident.last_failed_mono_ns = Some(observed_ns);
+        let open_path = self.directory.join(format!("{filename}.open"));
+        let final_path = self.directory.join(filename);
+        if !final_path.try_exists()? {
+            return Err(io::Error::other("cleanup incident durable final bytes are absent"));
+        }
+        let final_bytes = fs::read(&final_path)?;
+        Self::validate_data_recovery_bytes(&final_bytes, &final_bytes, digest)?;
+        if open_path.try_exists()? {
+            let open_bytes = fs::read(&open_path)?;
+            Self::validate_data_recovery_bytes(&open_bytes, &final_bytes, digest)?;
+            match fs::remove_file(&open_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        self.directory_handle.sync_all()?;
+        let recovered_ns = u64::try_from(self.started_at.elapsed().as_nanos())
+            .map_err(|_| io::Error::other("writer monotonic time overflow"))?;
+        incident.recovered_count = incident
+            .recovered_count
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("cleanup recovery count overflow"))?;
+        if incident.count == 1 {
+            let failed_ns = incident
+                .first_failed_mono_ns
+                .ok_or_else(|| io::Error::other("cleanup incident failure time missing"))?;
+            incident.single_recovery_witness = Some(Self::single_recovery_witness([
+                JsonValue::String(identity.clone()),
+                JsonValue::String(ledger.to_owned()),
+                JsonValue::Null,
+                JsonValue::String(failed_ns.to_string()),
+                JsonValue::String(
+                    incident
+                        .last_failed_mono_ns
+                        .ok_or_else(|| {
+                            io::Error::other("cleanup incident last-attempt time missing")
+                        })?
+                        .to_string(),
+                ),
+                JsonValue::String(recovered_ns.to_string()),
+                JsonValue::String(incident.attempt_count.to_string()),
+                JsonValue::Null,
+                JsonValue::Null,
+                JsonValue::String(digest.to_owned()),
+                JsonValue::String(digest.to_owned()),
+            ])?);
+        }
+        incident.active_identity = None;
+        incident.attempt_count = 0;
+        Ok(())
+    }
+    fn has_unsealed_data_records(&self) -> bool {
+        self.ledgers.iter().any(|(name, ledger)| {
+            *name != "accounting"
+                && (!ledger.records.is_empty() || ledger.pending_publication.is_some())
+        })
+    }
+    fn stage_source_event(&mut self, event: EdgeSourceEventV1) -> io::Result<()> {
+        if self.pending_source_record.is_some() {
+            return Err(io::Error::other("source retry slot is already occupied"));
+        }
+        let is_cutoff = matches!(event, EdgeSourceEventV1::Cutoff(_));
+        let connection_identity = match event {
+            EdgeSourceEventV1::Connection(record) => {
+                Some((record.connection_sequence, record.record_hash))
+            }
+            _ => None,
+        };
+        let terminal_coverage_identity = match event {
+            EdgeSourceEventV1::TerminalCoverage(record) => {
+                Some((record.producer_epoch, record.coverage_sequence))
+            }
+            _ => None,
+        };
+        let ledger = match event {
+            EdgeSourceEventV1::PayloadFirst(_) => "payload-first",
+            EdgeSourceEventV1::Connection(_) => "connection",
+            EdgeSourceEventV1::ClockAnchor(_) => "clock",
+            EdgeSourceEventV1::TerminalCoverage(record)
+                if record.route == EpochRouteV1::Authority =>
+            {
+                "coverage"
+            }
+            EdgeSourceEventV1::TerminalCoverage(_) => "coverage-postcutoff-excluded",
+            EdgeSourceEventV1::Coverage(record)
+                if record.route == EpochRouteV1::PostCutoffNonAuthority =>
+            {
+                "postcutoff-diagnostic"
+            }
+            EdgeSourceEventV1::Coverage(_) => "coverage-detail",
+            _ => "source-detail",
+        };
+        let value = self.source_event_value(event);
+        let state = value
+            .get("terminal")
+            .or_else(|| value.get("transition"))
+            .or_else(|| value.get("schema"))
+            .and_then(JsonValue::as_str)
+            .unwrap_or(ledger)
+            .to_owned();
+        let domain = match ledger {
+            "payload-first" => "edge-payload-first-envelope/v1",
+            "connection" => "edge-source-connection/v1",
+            "clock" => "edge-clock-anchor/v1",
+            "coverage" | "coverage-postcutoff-excluded" => "edge-source-coverage/v3",
+            "postcutoff-diagnostic" => "edge-postcutoff-diagnostic/v1",
+            "coverage-detail" => "edge-source-coverage-diagnostic/v1",
+            _ => "edge-source-detail/v1",
+        };
+        let ledger_sequence = self.ledgers.get(ledger).map_or(0, |ledger| ledger.next_sequence);
+        if let Some((producer_epoch, coverage_sequence)) = terminal_coverage_identity
+            && (producer_epoch != self.owner.producer_epoch()
+                || coverage_sequence != ledger_sequence)
+        {
+            return Err(io::Error::other("strict coverage producer or ledger sequence mismatch"));
+        }
+        let record = if ledger == "payload-first" {
+            let record_hash = value
+                .get("recordHash")
+                .cloned()
+                .ok_or_else(|| io::Error::other("payload-first authority hash missing"))?;
+            json!({
+                "payloadFirst": value,
+                "payloadFirstRecordHash": record_hash,
+                "schema": "edge-payload-first-envelope/v1",
+            })
+        } else {
+            value
+        };
+        self.source_file_sequence
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("source file sequence overflow"))?;
+        self.pending_source_record = Some(EdgePendingSourceRecordV1 {
+            ledger,
+            domain,
+            state,
+            record,
+            ledger_sequence,
+            source_file_sequence: self.source_file_sequence,
+            connection_identity,
+            is_cutoff,
+            cutoff_ledger_sequence: is_cutoff
+                .then(|| self.ledgers.get("cutoff").map_or(0, |ledger| ledger.next_sequence)),
+            cutoff_envelope_published: false,
+        });
+        Ok(())
+    }
+
+    fn publish_pending_source_record(&mut self) -> io::Result<()> {
+        let mut pending = self
+            .pending_source_record
+            .clone()
+            .ok_or_else(|| io::Error::other("source retry slot is empty"))?;
+        if pending.source_file_sequence != self.source_file_sequence {
+            return Err(io::Error::other("source retry file sequence changed"));
+        }
+        if pending.is_cutoff && !pending.cutoff_envelope_published {
+            let cutoff_sequence = pending
+                .cutoff_ledger_sequence
+                .ok_or_else(|| io::Error::other("cutoff retry sequence missing"))?;
+            let cutoff_next_sequence =
+                self.ledgers.get("cutoff").map_or(0, |ledger| ledger.next_sequence);
+            if cutoff_next_sequence < cutoff_sequence
+                || cutoff_next_sequence > cutoff_sequence.saturating_add(1)
+            {
+                return Err(io::Error::other("cutoff retry ledger sequence changed"));
+            }
+            if cutoff_next_sequence == cutoff_sequence.saturating_add(1) {
+                if self
+                    .ledgers
+                    .get("cutoff")
+                    .is_some_and(|ledger| ledger.pending_publication.is_some())
+                {
+                    self.flush_rolling_ledger("cutoff")?;
+                } else if self
+                    .ledgers
+                    .get("cutoff")
+                    .is_none_or(|ledger| ledger.durable_next_sequence <= cutoff_sequence)
+                {
+                    return Err(io::Error::other(
+                        "cutoff retry record is neither pending nor durable",
+                    ));
+                }
+            } else {
+                if self
+                    .ledgers
+                    .get("cutoff")
+                    .is_some_and(|ledger| ledger.pending_publication.is_some())
+                {
+                    self.flush_rolling_ledger("cutoff")?;
+                }
+                let cutoff_record_hash = pending
+                    .record
+                    .get("recordHash")
+                    .cloned()
+                    .ok_or_else(|| io::Error::other("cutoff inner record hash missing"))?;
+                self.push_rolling_record(
+                    "cutoff",
+                    "edge-producer-cutoff-envelope/v1",
+                    "Cutoff",
+                    json!({
+                        "cutoff": pending.record.clone(),
+                        "cutoffRecordHash": cutoff_record_hash,
+                        "schemaVersion": "edge-producer-cutoff-envelope/v1",
+                    }),
+                )?;
+            }
+            pending.cutoff_envelope_published = true;
+            self.pending_source_record = Some(pending.clone());
+        }
+
+        let ledger_next_sequence =
+            self.ledgers.get(pending.ledger).map_or(0, |ledger| ledger.next_sequence);
+        if ledger_next_sequence < pending.ledger_sequence
+            || ledger_next_sequence > pending.ledger_sequence.saturating_add(1)
+        {
+            return Err(io::Error::other("source retry ledger sequence changed"));
+        }
+        if ledger_next_sequence == pending.ledger_sequence.saturating_add(1) {
+            let publication_pending = self
+                .ledgers
+                .get(pending.ledger)
+                .is_some_and(|ledger| ledger.pending_publication.is_some());
+            if publication_pending {
+                self.flush_rolling_ledger(pending.ledger)?;
+            } else if self
+                .ledgers
+                .get(pending.ledger)
+                .is_none_or(|ledger| ledger.durable_next_sequence <= pending.ledger_sequence)
+            {
+                return Err(io::Error::other("source retry record is neither pending nor durable"));
+            }
+        } else {
+            if self
+                .ledgers
+                .get(pending.ledger)
+                .is_some_and(|ledger| ledger.pending_publication.is_some())
+            {
+                self.flush_rolling_ledger(pending.ledger)?;
+            }
+            self.push_rolling_record(
+                pending.ledger,
+                pending.domain,
+                &pending.state,
+                pending.record.clone(),
+            )?;
+        }
+
+        let durable = self
+            .ledgers
+            .get(pending.ledger)
+            .is_some_and(|ledger| ledger.durable_next_sequence > pending.ledger_sequence);
+        if !durable
+            && self
+                .source_sequence_by_ledger
+                .insert((pending.ledger, pending.ledger_sequence), pending.source_file_sequence)
+                .is_some()
+        {
+            return Err(io::Error::other("duplicate source ledger sequence"));
+        }
+        if let Some((connection_sequence, record_hash)) = pending.connection_identity {
+            Self::append_sequence_hash(
+                &mut self.connection_records,
+                connection_sequence,
+                record_hash,
+                "connection record sequence mismatch",
+            )?;
+        }
+        if pending.is_cutoff {
+            self.cutoff_inner = Some(pending.record);
+        }
+        self.source_file_sequence = self
+            .source_file_sequence
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("source file sequence overflow"))?;
+        self.pending_source_record = None;
+        Ok(())
+    }
+
+    fn drain_once(&mut self) -> io::Result<bool> {
+        self.deadline_cancellation.check()?;
+        if self.termination_guard
+            || self.data_sealed
+            || self.terminal_publication_phase != EdgeTerminalPublicationPhaseV1::Data
+        {
+            return Ok(false);
+        }
+        let mut progressed = false;
+        let flush_cutoff = self.recorder.cutoff_sealed() && !self.cutoff_batches_flushed;
+        loop {
+            self.deadline_cancellation.check()?;
+            if self.pending_source_record.is_none() {
+                let EdgeEventDrainStatusV1::Event(event) = self.recorder.try_recv_event() else {
+                    break;
+                };
+                self.stage_source_event(*event)?;
+            }
+            self.publish_pending_source_record()?;
+            self.deadline_cancellation.check()?;
+            progressed = true;
+        }
+        let flush_source = flush_cutoff;
+        for ledger in [
+            "payload-first",
+            "connection",
+            "clock",
+            "coverage",
+            "coverage-postcutoff-excluded",
+            "postcutoff-diagnostic",
+            "coverage-detail",
+            "source-detail",
+        ] {
+            if (flush_source || self.rolling_flush_due(ledger, Instant::now()))
+                && self.flush_rolling_ledger(ledger)?.is_some()
+            {
+                progressed = true;
+            }
+        }
+        if flush_source && self.flush_rolling_ledger("cutoff")?.is_some() {
+            progressed = true;
+        }
+
+        loop {
+            let Some(terminal) =
+                self.recorder.next_terminal_durable_record(self.next_registry_terminal)
+            else {
+                break;
+            };
+            let coverage_sequence = terminal.coverage_sequence;
+            if coverage_sequence != self.next_registry_terminal {
+                return Err(io::Error::other("registry terminal read cursor mismatch"));
+            }
+            let pending_sequence = terminal.metadata.identity.pending_snapshot_sequence;
+            let h2_value = Self::registry_h2_value(terminal);
+            let record_hash =
+                B256::new(EdgeMeasurementDurabilityV1::sha256(&Self::canonical_bytes(&h2_value)?));
+            Self::append_sequence_hash(
+                &mut self.registry_record_sha,
+                coverage_sequence,
+                record_hash,
+                "registry terminal record sequence mismatch",
+            )?;
+            if self.registry_pending.insert(coverage_sequence, terminal).is_some() {
+                return Err(io::Error::other("duplicate registry terminal record"));
+            }
+
+            let h1_value = Self::registry_h1_value(terminal);
+            self.push_rolling_record("registry-h1", "edge-pending-registry-h1/v1", "H1", h1_value)?;
+            self.push_rolling_record("registry-h2", "edge-pending-registry-h2/v1", "H2", h2_value)?;
+            let inserted_pending_sequence = self
+                .registry_pending
+                .get(&coverage_sequence)
+                .ok_or_else(|| io::Error::other("registry terminal insert missing"))?
+                .metadata
+                .identity
+                .pending_snapshot_sequence;
+            if pending_sequence != inserted_pending_sequence {
+                return Err(io::Error::other("registry pending identity changed"));
+            }
+            self.deadline_cancellation.check()?;
+            self.next_registry_terminal = self
+                .next_registry_terminal
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("registry terminal cursor overflow"))?;
+            progressed = true;
+        }
+        let flush_registry = flush_cutoff;
+        for ledger in ["registry-h1", "registry-h2"] {
+            if (flush_registry || self.rolling_flush_due(ledger, Instant::now()))
+                && self.flush_rolling_ledger(ledger)?.is_some()
+            {
+                progressed = true;
+            }
+        }
+
+        self.deadline_cancellation.check()?;
+        for record in
+            self.owner.drain_records().map_err(|_| io::Error::other("Blink record drain failed"))?
+        {
+            self.deadline_cancellation.check()?;
+            let sequence = self.producer_record_sequence;
+            self.producer_record_sequence = sequence
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("producer record sequence overflow"))?;
+            let (ledger, _sequence, value) = match record {
+                EdgeProducerRecordV1::BlinkReject(record) => {
+                    let sequence = record
+                        .sequence
+                        .parse()
+                        .map_err(|_| io::Error::other("Blink reject sequence is not canonical"))?;
+                    (
+                        "blink-reject",
+                        sequence,
+                        json!({
+                            "branchId": record.branch_id,
+                            "previousRecordHash": record.previous_record_hash,
+                            "producerEpoch": record.producer_epoch,
+                            "reason": record.reason,
+                            "recordHash": record.record_hash,
+                            "schema": record.schema,
+                            "sequence": record.sequence,
+                            "state": record.state,
+                        }),
+                    )
+                }
+                EdgeProducerRecordV1::CandidateDrop { generation, reason } => (
+                    "candidate-drop",
+                    sequence,
+                    json!({
+                        "generation": generation.to_string(),
+                        "reason": reason,
+                        "schema": "edge-candidate-drop/v3",
+                        "sequence": sequence.to_string(),
+                    }),
+                ),
+            };
+            let state = value
+                .get("state")
+                .or_else(|| value.get("schema"))
+                .and_then(JsonValue::as_str)
+                .unwrap_or(ledger)
+                .to_owned();
+            let domain = if ledger == "blink-reject" {
+                "edge-blink-reject/v3"
+            } else {
+                "edge-writer-diagnostic/v1"
+            };
+            self.push_rolling_record(ledger, domain, &state, value)?;
+            progressed = true;
+        }
+        for ledger in ["blink-reject", "candidate-drop"] {
+            if (flush_cutoff || self.rolling_flush_due(ledger, Instant::now()))
+                && self.flush_rolling_ledger(ledger)?.is_some()
+            {
+                progressed = true;
+            }
+        }
+        let mut candidate_detail_queue_drained = false;
+        for _ in 0..EDGE_CANDIDATE_DETAIL_DRAIN_BUDGET_V1 {
+            let Some(detail) = self
+                .owner
+                .try_receive_candidate_detail()
+                .map_err(|_| io::Error::other("candidate detail receive failed"))?
+            else {
+                candidate_detail_queue_drained = true;
+                break;
+            };
+            detail
+                .validate_detail()
+                .map_err(|_| io::Error::other("candidate detail validation failed"))?;
+            let sequence = detail.candidate_sequence;
+            if self
+                .ledgers
+                .get("candidate")
+                .map_or(sequence != 0, |ledger| ledger.next_sequence != sequence)
+            {
+                return Err(io::Error::other("candidate detail sequence mismatch"));
+            }
+            let (state, value) = if self.candidate_joins.len() >= EDGE_CANDIDATE_JOIN_CAPACITY {
+                self.recorder.latch_coordinator_failure("CandidateCompactJoinCapacityExcluded");
+                if !self.candidate_join_exclusions.insert(sequence) {
+                    return Err(io::Error::other("duplicate candidate join exclusion"));
+                }
+                (
+                    "CandidateDetailExcluded",
+                    Self::compact_candidate_detail_exclusion(
+                        &Self::candidate_detail_value(detail)?,
+                        "CandidateCompactJoinCapacityExcluded",
+                    )?,
+                )
+            } else {
+                let join = EdgeCandidateJoinV1 {
+                    candidate_sequence: sequence,
+                    coverage_generation: detail.coverage_generation,
+                    connection_sequence: detail.connection_sequence_at_capture,
+                    connection_record_hash: B256::new(detail.connection_record_hash_at_capture),
+                    registry_terminal_record_hash: B256::new(detail.registry_terminal_record_hash),
+                };
+                if self.candidate_joins.insert(sequence, join).is_some() {
+                    return Err(io::Error::other("duplicate candidate detail sequence"));
+                }
+                ("CandidateDetail", Self::candidate_detail_value(detail)?)
+            };
+            for segment in
+                self.push_rolling_record("candidate", "edge-candidate-detail/v1", state, value)?
+            {
+                self.validate_candidate_segment(&segment)?;
+            }
+            progressed = true;
+        }
+        if (flush_cutoff || self.rolling_flush_due("candidate", Instant::now()))
+            && self.flush_rolling_ledger("candidate")?.is_some()
+        {
+            progressed = true;
+        }
+        if self.release_candidate_joins()? {
+            progressed = true;
+        }
+        if flush_cutoff && candidate_detail_queue_drained {
+            self.cutoff_batches_flushed = true;
+        }
+        Ok(progressed)
+    }
+
+    fn source_event_value(&self, event: EdgeSourceEventV1) -> JsonValue {
+        match event {
+            EdgeSourceEventV1::PayloadFirst(record) => Self::payload_first_value(record),
+            EdgeSourceEventV1::Connection(record) => Self::connection_value(record),
+            EdgeSourceEventV1::ClockAnchor(record) => self.clock_anchor_value(record),
+            EdgeSourceEventV1::Processor(record) => Self::processor_value(record),
+            EdgeSourceEventV1::Coverage(record) => Self::coverage_value(record),
+            EdgeSourceEventV1::TerminalCoverage(record) => Self::terminal_coverage_value(record),
+            EdgeSourceEventV1::Cutoff(record) => json!({
+                "cutoffClockObservationOrdinal": record.cutoff_clock_observation_ordinal.to_string(),
+                "lastAdmittedBlinkGeneration": record.last_admitted_blink_generation.to_string(),
+                "lastAdmittedSourceGeneration": record.last_admitted_source_generation.to_string(),
+                "lastAdmittedWireOrdinal": record.last_admitted_wire_ordinal.to_string(),
+                "lastCandidateSequence": record.last_candidate_sequence.to_string(),
+                "lastCoverageSequence": record.last_coverage_sequence.to_string(),
+                "lastPendingSnapshotSequence": record.last_pending_snapshot_sequence.to_string(),
+                "latchMonoNs": record.latch_mono_ns.to_string(),
+                "producerEpoch": record.producer_epoch.to_string(),
+                "recordHash": Self::hex(record.record_hash.as_slice()),
+            }),
+        }
+    }
+    fn terminal_coverage_value(record: SourceTerminalCoverageV3) -> JsonValue {
+        json!({
+            "coverageSequence": record.coverage_sequence.to_string(),
+            "payloadFirstRecordHash": record
+                .payload_first_record_hash
+                .map(|value| JsonValue::String(Self::hex(value.as_slice()))),
+            "pendingSnapshotSequence": record
+                .pending_snapshot_sequence
+                .map(|value| JsonValue::String(value.to_string())),
+            "producerEpoch": record.producer_epoch.to_string(),
+            "schema": "edge-source-coverage/v3",
+            "sourceGeneration": record
+                .source_generation
+                .map(|value| JsonValue::String(value.to_string())),
+            "terminal": record.terminal.wire_name(),
+            "terminalHash": Self::hex(record.terminal_hash.as_slice()),
+        })
+    }
+
+    fn coverage_value(record: SourceCoverageRecordV3) -> JsonValue {
+        let (transition, source_generation, cache_disposition, pending_sequence, terminal) =
+            match record.transition {
+                WireLifecycleTransitionV1::WireObserved => {
+                    ("WireObserved", record.source_generation, None, None, None)
+                }
+                WireLifecycleTransitionV1::DecodeSucceeded { source_generation } => {
+                    ("DecodeSucceeded", Some(source_generation), None, None, None)
+                }
+                WireLifecycleTransitionV1::DecodeRejected => {
+                    ("DecodeRejected", record.source_generation, None, None, None)
+                }
+                WireLifecycleTransitionV1::ActorEnqueueSucceeded => {
+                    ("ActorEnqueueSucceeded", record.source_generation, None, None, None)
+                }
+                WireLifecycleTransitionV1::ActorEnqueueFailed => {
+                    ("ActorEnqueueFailed", record.source_generation, None, None, None)
+                }
+                WireLifecycleTransitionV1::ActorDelivered => {
+                    ("ActorDelivered", record.source_generation, None, None, None)
+                }
+                WireLifecycleTransitionV1::StateHandoffSucceeded => {
+                    ("StateHandoffSucceeded", record.source_generation, None, None, None)
+                }
+                WireLifecycleTransitionV1::StateHandoffFailed => {
+                    ("StateHandoffFailed", record.source_generation, None, None, None)
+                }
+                WireLifecycleTransitionV1::ProcessorTerminal => {
+                    ("ProcessorTerminal", record.source_generation, None, None, None)
+                }
+                WireLifecycleTransitionV1::CacheAwait { disposition } => (
+                    "CacheAwait",
+                    record.source_generation,
+                    Some(disposition.wire_name()),
+                    None,
+                    None,
+                ),
+                WireLifecycleTransitionV1::CacheClaimed => {
+                    ("CacheClaimed", record.source_generation, None, None, None)
+                }
+                WireLifecycleTransitionV1::CliTerminal { pending_snapshot_sequence, terminal } => (
+                    "CliTerminal",
+                    record.source_generation,
+                    None,
+                    Some(pending_snapshot_sequence),
+                    Some(Self::cli_terminal_value(terminal)),
+                ),
+                WireLifecycleTransitionV1::PostCutoffDecoded => {
+                    ("PostCutoffDecoded", None, None, None, None)
+                }
+                WireLifecycleTransitionV1::PostCutoffActorEnqueued => {
+                    ("PostCutoffActorEnqueued", None, None, None, None)
+                }
+                WireLifecycleTransitionV1::PostCutoffActorDelivered => {
+                    ("PostCutoffActorDelivered", None, None, None, None)
+                }
+                WireLifecycleTransitionV1::PostCutoffStateHandedOff => {
+                    ("PostCutoffStateHandedOff", None, None, None, None)
+                }
+                WireLifecycleTransitionV1::PostCutoffProcessorExcluded => {
+                    ("PostCutoffProcessorExcluded", None, None, None, None)
+                }
+                WireLifecycleTransitionV1::PostCutoffNonAuthority => {
+                    ("PostCutoffNonAuthority", None, None, None, None)
+                }
+            };
+        json!({
+            "cacheDisposition": cache_disposition,
+            "coverageSequence": record.coverage_sequence.to_string(),
+            "pendingSnapshotSequence": pending_sequence.map(|value| JsonValue::String(value.to_string())),
+            "previousRecordHash": Self::hex(record.previous_record_hash.as_slice()),
+            "producerEpoch": record.producer_epoch.to_string(),
+            "recordHash": Self::hex(record.record_hash.as_slice()),
+            "route": match record.route {
+                EpochRouteV1::Authority => "Authority",
+                EpochRouteV1::PostCutoffNonAuthority => "PostCutoffNonAuthority",
+            },
+            "sourceGeneration": source_generation.map(|value| JsonValue::String(value.to_string())),
+            "terminal": terminal,
+            "transition": transition,
+            "wireOrdinal": record.wire_ordinal.to_string(),
+        })
+    }
+
+    fn cli_terminal_value(terminal: PendingCliTerminalV2) -> JsonValue {
+        match terminal {
+            PendingCliTerminalV2::CliReceivedLookupSucceeded => {
+                json!({"disposition": "CliReceivedLookupSucceeded"})
+            }
+            PendingCliTerminalV2::CliRegistryLookupFailed(reason) => json!({
+                "disposition": "CliRegistryLookupFailed",
+                "failure": Self::lookup_failure_wire(reason),
+            }),
+            PendingCliTerminalV2::CliLagged => json!({"disposition": "CliLagged"}),
+            PendingCliTerminalV2::CliClosed => json!({"disposition": "CliClosed"}),
+            PendingCliTerminalV2::CliCancelled => json!({"disposition": "CliCancelled"}),
+            PendingCliTerminalV2::NoReceivers => json!({"disposition": "NoReceivers"}),
+            PendingCliTerminalV2::RegistrationFailedNoReceivers => {
+                json!({"disposition": "RegistrationFailedNoReceivers"})
+            }
+        }
+    }
+
+    fn payload_first_value(record: PayloadFirstObservationV1) -> JsonValue {
+        json!({
+            "blockNumber": record.key.block_number.to_string(),
+            "bootId": String::from_utf8_lossy(&record.boot_id),
+            "clockObservationOrdinal": record.observation.clock_observation_ordinal.to_string(),
+            "clockSourceVersion": base_flashblocks::EDGE_CLOCK_SOURCE_VERSION_V1,
+            "index0StructuralIdentity": {
+                "blockNumber": record.key.block_number.to_string(),
+                "canonicalWireDigest": Self::hex(record.observation.wire_digest.as_slice()),
+                "flashblockIndex": "0",
+                "payloadId": format!("0x{}", Self::hex(&record.key.payload_id)),
+                "previousFlashblockId": JsonValue::Null,
+            },
+            "monoNs": record.observation.mono_ns.map(|value| JsonValue::String(value.to_string())),
+            "monoStatus": record.observation.mono_status.wire_name(),
+            "monotonicResolutionNs": record.monotonic_resolution_ns.to_string(),
+            "payloadId": format!("0x{}", Self::hex(&record.key.payload_id)),
+            "previousRecordHash": Self::hex(record.previous_record_hash.as_slice()),
+            "producerEpoch": record.key.producer_epoch.to_string(),
+            "realtimeResolutionNs": record.realtime_resolution_ns.to_string(),
+            "recordHash": Self::hex(record.record_hash.as_slice()),
+            "recordSequence": record.record_sequence.to_string(),
+            "utcNs": record.observation.utc_ns.map(|value| JsonValue::String(value.to_string())),
+            "utcStatus": record.observation.utc_status.wire_name(),
+            "wireDigest": Self::hex(record.observation.wire_digest.as_slice()),
+        })
+    }
+
+    fn connection_value(record: SourceConnectionRecordV1) -> JsonValue {
+        let transition = record.transition.wire_name();
+        json!({
+            "clockObservationOrdinal": record.clock_observation_ordinal.map(|value| JsonValue::String(value.to_string())),
+            "connectionSequence": record.connection_sequence.to_string(),
+            "errorClass": record.error_class.map(|value| JsonValue::String(value.wire_name().to_owned())),
+            "monoNs": record.mono_ns.map(|value| JsonValue::String(value.to_string())),
+            "previousRecordHash": Self::hex(record.previous_record_hash.as_slice()),
+            "producerEpoch": record.producer_epoch.to_string(),
+            "recordHash": Self::hex(record.record_hash.as_slice()),
+            "schema": "edge-source-connection/v1",
+            "sequence": record.connection_sequence.to_string(),
+            "state": transition,
+            "transition": transition,
+        })
+    }
+
+    fn clock_anchor_value(&self, record: ClockAnchorRecordV1) -> JsonValue {
+        let boot_id = self.recorder.boot_id();
+        let (pair_status, disposition, failure) = match (
+            record.observation.utc_status.wire_name(),
+            record.observation.mono_status.wire_name(),
+        ) {
+            ("Ok", "Ok") => ("BothOk", "Sampled", JsonValue::Null),
+            ("Failed", "Ok") => {
+                ("RealtimeFailedMonotonicOk", "Failed", json!("RealtimeSyscallFailed"))
+            }
+            ("Ok", "Failed") => {
+                ("RealtimeOkMonotonicFailed", "Failed", json!("MonotonicSyscallFailed"))
+            }
+            _ => ("BothFailed", "Failed", json!("BothSyscallsFailed")),
+        };
+        let mut value = json!({
+            "anchorKind": if record.startup { "Startup" } else { "Periodic" },
+            "anchorSequence": record.anchor_sequence.to_string(),
+            "bootId": String::from_utf8_lossy(&boot_id),
+            "clockObservationOrdinal": record.observation.clock_observation_ordinal.to_string(),
+            "clockSourceVersion": base_flashblocks::EDGE_CLOCK_SOURCE_VERSION_V1,
+            "disposition": disposition,
+            "dueMonoNs": record.due_mono_ns.to_string(),
+            "failureEvidence": failure,
+            "kind": "Anchor",
+            "monoNs": record.observation.mono_ns.map(|value| JsonValue::String(value.to_string())),
+            "monotonicResolutionNs": self.recorder.monotonic_resolution_ns().to_string(),
+            "pairStatus": pair_status,
+            "persistenceSequence": record.anchor_sequence.to_string(),
+            "previousAnchorHash": Self::hex(record.previous_anchor_hash.as_slice()),
+            "producerEpoch": record.producer_epoch.to_string(),
+            "realtimeResolutionNs": self.recorder.realtime_resolution_ns().to_string(),
+            "recordHash": Self::hex(record.record_hash.as_slice()),
+            "sampledMonoNs": record.sampled_mono_ns.to_string(),
+            "schema": "edge-clock-anchor/v1",
+            "utcNs": record.observation.utc_ns.map(|value| JsonValue::String(value.to_string())),
+        });
+        if let Some(object) = value.as_object_mut() {
+            if record.observation.mono_ns.is_none() {
+                object.remove("monoNs");
+            }
+            if record.observation.utc_ns.is_none() {
+                object.remove("utcNs");
+            }
+        }
+        value
+    }
+
+    fn processor_value(record: ProcessorLifecycleProductV1) -> JsonValue {
+        let (publish, receiver_count) = record.publish_disposition.wire_parts();
+        json!({
+            "baseDisposition": record.base_disposition.wire_name(),
+            "cacheResolvedFinalDisposition": record.cache_resolved_final_disposition.map(|value| JsonValue::String(value.wire_name().to_owned())),
+            "observerDisposition": record.observer_disposition.wire_name(),
+            "payloadFirstRecordHash": record.payload_first_record_hash.map(|value| JsonValue::String(Self::hex(value.as_slice()))),
+            "pendingSnapshotSequence": record.pending_snapshot_sequence.map(|value| JsonValue::String(value.to_string())),
+            "processorErrorReason": record.processor_error_reason,
+            "producerEpoch": record.producer_epoch.to_string(),
+            "publishDisposition": publish,
+            "receiverCount": receiver_count.map(|value| JsonValue::String(value.to_string())),
+            "sourceGeneration": record.source_generation.to_string(),
+            "structuralTerminalHash": Self::hex(record.structural_terminal_hash.as_slice()),
+        })
+    }
+
+    fn registry_h1_value(record: PendingTerminalRecordV2) -> JsonValue {
+        json!({
+            "pendingPublicSubsetDigestV1": Self::hex(record.metadata.pending_public_subset_digest_v1.as_slice()),
+            "pendingSnapshotSequence": record.metadata.identity.pending_snapshot_sequence.to_string(),
+        })
+    }
+
+    const fn accounting_field_wire(
+        field: base_flashblocks::PendingAccountingFieldV2,
+    ) -> &'static str {
+        match field {
+            base_flashblocks::PendingAccountingFieldV2::AdvancedWithSnapshot => {
+                "AdvancedWithSnapshot"
+            }
+            base_flashblocks::PendingAccountingFieldV2::RegistrationSucceeded => {
+                "RegistrationSucceeded"
+            }
+            base_flashblocks::PendingAccountingFieldV2::RegistrationFailed => "RegistrationFailed",
+            base_flashblocks::PendingAccountingFieldV2::SendPublished => "SendPublished",
+            base_flashblocks::PendingAccountingFieldV2::SendNoReceivers => "SendNoReceivers",
+            base_flashblocks::PendingAccountingFieldV2::CliReceivedLookupSucceeded => {
+                "CliReceivedLookupSucceeded"
+            }
+            base_flashblocks::PendingAccountingFieldV2::CliRegistryLookupFailed => {
+                "CliRegistryLookupFailed"
+            }
+            base_flashblocks::PendingAccountingFieldV2::CliLaggedAttributed => {
+                "CliLaggedAttributed"
+            }
+            base_flashblocks::PendingAccountingFieldV2::CliClosedAttributed => {
+                "CliClosedAttributed"
+            }
+            base_flashblocks::PendingAccountingFieldV2::CliCancelledAttributed => {
+                "CliCancelledAttributed"
+            }
+        }
+    }
+
+    fn registration_failure_wire(
+        reason: base_flashblocks::PendingRegistrationFailure,
+    ) -> JsonValue {
+        use base_flashblocks::PendingRegistrationFailure;
+        match reason {
+            PendingRegistrationFailure::PendingSnapshotSequenceOverflow => {
+                json!({"reason": "PendingSnapshotSequenceOverflow"})
+            }
+            PendingRegistrationFailure::PendingAccountingOverflow(field) => json!({
+                "accountingField": Self::accounting_field_wire(field),
+                "reason": "PendingAccountingOverflow",
+            }),
+            PendingRegistrationFailure::PendingRegistryCapacityOverflow => {
+                json!({"reason": "PendingRegistryCapacityOverflow"})
+            }
+            PendingRegistrationFailure::PendingRegistryLockPoisoned => {
+                json!({"reason": "PendingRegistryLockPoisoned"})
+            }
+            PendingRegistrationFailure::PendingPointerBindingConflict => {
+                json!({"reason": "PendingPointerBindingConflict"})
+            }
+            PendingRegistrationFailure::PendingArcIdentityExpired => {
+                json!({"reason": "PendingArcIdentityExpired"})
+            }
+        }
+    }
+
+    fn lookup_failure_wire(reason: base_flashblocks::CliRegistryLookupFailureReason) -> JsonValue {
+        use base_flashblocks::CliRegistryLookupFailureReason;
+        match reason {
+            CliRegistryLookupFailureReason::NoPublishedSequence => {
+                json!({"reason": "NoPublishedSequence"})
+            }
+            CliRegistryLookupFailureReason::RegistrationFailed(reason) => json!({
+                "reason": "RegistrationFailed",
+                "registrationFailure": Self::registration_failure_wire(reason),
+            }),
+            CliRegistryLookupFailureReason::MissingPrimaryEntry => {
+                json!({"reason": "MissingPrimaryEntry"})
+            }
+            CliRegistryLookupFailureReason::PendingPointerBindingConflict => {
+                json!({"reason": "PendingPointerBindingConflict"})
+            }
+            CliRegistryLookupFailureReason::PendingArcIdentityExpired => {
+                json!({"reason": "PendingArcIdentityExpired"})
+            }
+            CliRegistryLookupFailureReason::PendingArcIdentityMismatch => {
+                json!({"reason": "PendingArcIdentityMismatch"})
+            }
+            CliRegistryLookupFailureReason::PendingPublicSubsetCorruption => {
+                json!({"reason": "PendingPublicSubsetCorruption"})
+            }
+            CliRegistryLookupFailureReason::PassthroughNonAdvanced => {
+                json!({"reason": "PassthroughNonAdvanced"})
+            }
+            CliRegistryLookupFailureReason::PostCutoffAdvancedNonAuthority => {
+                json!({"reason": "PostCutoffAdvancedNonAuthority"})
+            }
+            CliRegistryLookupFailureReason::PendingAccountingOverflow(field) => json!({
+                "accountingField": Self::accounting_field_wire(field),
+                "reason": "PendingAccountingOverflow",
+            }),
+        }
+    }
+
+    fn registry_h2_value(record: PendingTerminalRecordV2) -> JsonValue {
+        use base_flashblocks::{PendingRegistrationDispositionV2, PendingSendDispositionV2};
+        let registration = match record.registration {
+            PendingRegistrationDispositionV2::Succeeded => json!({"disposition": "Succeeded"}),
+            PendingRegistrationDispositionV2::Failed(reason) => json!({
+                "disposition": "Failed",
+                "failure": Self::registration_failure_wire(reason),
+            }),
+        };
+        let send = match record.send {
+            PendingSendDispositionV2::Published { receiver_count } => json!({
+                "disposition": "Published",
+                "receiverCount": receiver_count.to_string(),
+            }),
+            PendingSendDispositionV2::NoReceivers => json!({
+                "disposition": "NoReceivers",
+                "receiverCount": "0",
+            }),
+        };
+        let terminal = Self::cli_terminal_value(record.terminal);
+        json!({
+            "coverageSequence": record.coverage_sequence.to_string(),
+            "pendingPublicSubsetDigestV1": Self::hex(record.metadata.pending_public_subset_digest_v1.as_slice()),
+            "pendingSnapshotSequence": record.metadata.identity.pending_snapshot_sequence.to_string(),
+            "producerEpoch": record.metadata.identity.producer_epoch.to_string(),
+            "registration": registration,
+            "send": send,
+            "sourceGeneration": record.metadata.source_generation.map(|value| JsonValue::String(value.to_string())),
+            "terminal": terminal,
+        })
+    }
+
+    const fn protocol_name(protocol: ExactProtocol) -> &'static str {
+        match protocol {
+            ExactProtocol::UniswapV2 => "UniswapV2",
+            ExactProtocol::AerodromeVolatile => "AerodromeVolatile",
+            ExactProtocol::AerodromeStable => "AerodromeStable",
+            ExactProtocol::UniswapV3 => "UniswapV3",
+        }
+    }
+
+    fn prepared_quote_value(quote: &PreparedPoolQuote) -> JsonValue {
+        match quote {
+            PreparedPoolQuote::ConstantProduct { reserve0, reserve1 } => json!({
+                "variant": "ConstantProduct",
+                "reserve0": reserve0.to_string(),
+                "reserve1": reserve1.to_string(),
+            }),
+            PreparedPoolQuote::Stable { reserve0, reserve1 } => json!({
+                "variant": "Stable",
+                "reserve0": reserve0.to_string(),
+                "reserve1": reserve1.to_string(),
+            }),
+            PreparedPoolQuote::V3 { sqrt_price_x96, liquidity, tick, tick_spacing, ticks } => {
+                json!({
+                    "variant": "V3",
+                    "sqrtPriceX96": sqrt_price_x96.to_string(),
+                    "liquidity": liquidity.to_string(),
+                    "tick": tick.to_string(),
+                    "tickSpacing": tick_spacing.to_string(),
+                    "ticks": ticks.iter().map(|initialized| json!({
+                        "tick": initialized.tick.to_string(),
+                        "liquidityNet": initialized.liquidity_net.to_string(),
+                    })).collect::<Vec<_>>(),
+                })
+            }
+        }
+    }
+
+    fn materialized_write_value(write: &base_mev_trader::MaterializedWrite) -> JsonValue {
+        let (variant, address, slot, evidence_digest) = match write.key {
+            AuditedWriteKey::AccountBalance { address, evidence_digest } => {
+                ("AccountBalance", address, JsonValue::String("0".to_owned()), evidence_digest)
+            }
+            AuditedWriteKey::AccountNonce { address, evidence_digest } => {
+                ("AccountNonce", address, JsonValue::String("0".to_owned()), evidence_digest)
+            }
+            AuditedWriteKey::Storage { address, slot, evidence_digest } => {
+                ("Storage", address, JsonValue::String(slot.to_string()), evidence_digest)
+            }
+        };
+        json!({
+            "variant": variant,
+            "address": format!("0x{}", Self::hex(address.as_slice())),
+            "slot": slot,
+            "evidenceDigest": format!("0x{}", Self::hex(evidence_digest.as_slice())),
+            "value": write.value.to_string(),
+        })
+    }
+
+    fn candidate_detail_value(candidate: EdgeCandidateDetailV1) -> io::Result<JsonValue> {
+        let binding = &candidate.backrun_measurement_binding;
+        MeasurementBindingDeriverV1::validate(binding, &candidate.victim_raw)
+            .map_err(io::Error::other)?;
+        let nonce = binding.nonce_witness;
+        let binding_route = binding
+            .plan
+            .route
+            .iter()
+            .map(|hop| {
+                json!({
+                    "feePips": hop.fee_pips.to_string(),
+                    "pool": format!("0x{}", Self::hex(hop.pool.as_slice())),
+                    "protocol": Self::protocol_name(hop.protocol),
+                    "tokenIn": format!("0x{}", Self::hex(hop.token_in.as_slice())),
+                    "tokenOut": format!("0x{}", Self::hex(hop.token_out.as_slice())),
+                })
+            })
+            .collect::<Vec<_>>();
+        let binding_execution_hops = binding
+            .execution_hops
+            .iter()
+            .map(|hop| {
+                json!({
+                    "adapter": format!("0x{}", Self::hex(hop.adapter.as_slice())),
+                    "fundingTarget": format!("0x{}", Self::hex(hop.funding_target.as_slice())),
+                    "minAmountOut": hop.min_amount_out.to_string(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let selected_hops = candidate
+            .selected_plan
+            .route
+            .iter()
+            .zip(candidate.execution_hops)
+            .map(|(hop, execution)| {
+                json!({
+                    "adapter": format!("0x{}", Self::hex(execution.adapter.as_slice())),
+                    "feePips": hop.fee_pips.to_string(),
+                    "fundingTarget": format!("0x{}", Self::hex(execution.funding_target.as_slice())),
+                    "minAmountOut": execution.min_amount_out.to_string(),
+                    "pool": format!("0x{}", Self::hex(hop.pool.as_slice())),
+                    "protocol": Self::protocol_name(hop.protocol),
+                    "tokenIn": format!("0x{}", Self::hex(hop.token_in.as_slice())),
+                    "tokenOut": format!("0x{}", Self::hex(hop.token_out.as_slice())),
+                })
+            })
+            .collect::<Vec<_>>();
+        let prepared_route = candidate
+            .prepared_route
+            .iter()
+            .map(|pool| {
+                json!({
+                    "decimals0": pool.decimals0.to_string(),
+                    "decimals1": pool.decimals1.to_string(),
+                    "feePips": pool.fee_pips.to_string(),
+                    "pool": format!("0x{}", Self::hex(pool.pool.as_slice())),
+                    "protocol": Self::protocol_name(pool.protocol),
+                    "quote": Self::prepared_quote_value(&pool.quote),
+                    "token0": format!("0x{}", Self::hex(pool.token0.as_slice())),
+                    "token1": format!("0x{}", Self::hex(pool.token1.as_slice())),
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(Self::stringify_numbers(json!({
+            "backrunMeasurementBinding": {
+                "bindingDigest": format!("0x{}", Self::hex(binding.binding_digest.as_slice())),
+                "executionHops": binding_execution_hops,
+                "feeSourceEvidence": {
+                    "snapshotBaseFeePerGas": binding.snapshot_base_fee_per_gas.to_string(),
+                    "victimMaxFeePerGas": binding.victim_max_fee_per_gas.to_string(),
+                    "victimMaxPriorityFeePerGas": binding.victim_max_priority_fee_per_gas.to_string(),
+                },
+                "nonceWitness": {
+                    "committed": nonce.committed.to_string(),
+                    "parentBlockHash": format!("0x{}", Self::hex(nonce.parent_block_hash.as_slice())),
+                    "parentBlockNumber": nonce.parent_block_number.to_string(),
+                    "pendingCurrent": nonce.pending_current.map(|value| JsonValue::String(value.to_string())),
+                    "pendingOriginal": nonce.pending_original.map(|value| JsonValue::String(value.to_string())),
+                },
+                "selectedNonce": binding.selected_nonce.to_string(),
+                "selectedPlan": {
+                    "amountIn": binding.plan.amount_in.to_string(),
+                    "amountOut": binding.plan.amount_out.to_string(),
+                    "blockNumber": binding.plan.block_number.to_string(),
+                    "digest": format!("0x{}", Self::hex(binding.plan.digest.0.as_slice())),
+                    "grossProfit": binding.plan.gross_profit.to_string(),
+                    "parentHash": format!("0x{}", Self::hex(binding.plan.parent_hash.as_slice())),
+                    "payloadId": format!("0x{}", Self::hex(binding.plan.payload_id.0.as_slice())),
+                    "predecessorIndex": binding.plan.predecessor_index.to_string(),
+                    "route": binding_route,
+                },
+                "targetTxHash": format!("0x{}", Self::hex(binding.target_tx_hash.as_slice())),
+                "validUntilBlock": binding.valid_until_block.to_string(),
+            },
+            "blockNumber": candidate.block_number.to_string(),
+            "parentHash": format!("0x{}", Self::hex(candidate.parent_hash.as_slice())),
+            "orderedTransactionCount": candidate.ordered_transaction_count.to_string(),
+            "victimAbsentBeforePosition": candidate.victim_absent_before_position,
+            "candidateGeneration": candidate.candidate_generation.to_string(),
+            "candidateSequence": candidate.candidate_sequence.to_string(),
+            "codeWitnessDigest": Self::hex(candidate.code_witness_digest.as_slice()),
+            "configDigest": Self::hex(candidate.config_digest.as_slice()),
+            "connectionRecordHashAtCapture": Self::hex(&candidate.connection_record_hash_at_capture),
+            "connectionSequenceAtCapture": candidate.connection_sequence_at_capture.to_string(),
+            "coverageGeneration": candidate.coverage_generation.to_string(),
+            "orderedTransactionCutoffPosition": candidate.ordered_transaction_cutoff_position.to_string(),
+            "orderedTransactionDigest": Self::hex(candidate.ordered_transaction_digest.as_slice()),
+            "economicsEvidenceDigest": Self::hex(candidate.economics_evidence_digest.as_slice()),
+            "deploymentIdentities": candidate.deployment_identities.iter().map(|(address, hash)| json!({
+                "address": format!("0x{}", Self::hex(address.as_slice())),
+                "runtimeHash": format!("0x{}", Self::hex(hash.as_slice())),
+            })).collect::<Vec<_>>(),
+            "g0CodeIdentityDigest": Self::hex(candidate.g0_code_identity_digest.as_slice()),
+            "ownerApprovalReceiptDigest": Self::hex(candidate.owner_approval_receipt_digest.as_slice()),
+            "payloadFirstRecordHash": Self::hex(&candidate.payload_first_record_hash),
+            "payloadFirstRecordSequence": candidate.payload_first_record_sequence.to_string(),
+            "payloadId": format!("0x{}", Self::hex(&candidate.payload_id)),
+            "pendingSnapshotSequence": candidate.pending_snapshot_sequence.to_string(),
+            "policyDigest": Self::hex(candidate.policy_digest.as_slice()),
+            "predecessorIndex": candidate.predecessor_index.to_string(),
+            "preparedStateDigest": Self::hex(candidate.prepared_state_digest.as_slice()),
+            "preparedRoute": prepared_route,
+            "materializedState": {
+                "writes": candidate.materialized_state.writes.iter()
+                    .map(Self::materialized_write_value)
+                    .collect::<Vec<_>>(),
+            },
+            "preregDigest": Self::hex(candidate.prereg_digest.as_slice()),
+            "producerDigest": Self::hex(candidate.producer_digest.as_slice()),
+            "producerEpoch": candidate.producer_epoch.to_string(),
+            "registryTerminalRecordHash": Self::hex(&candidate.registry_terminal_record_hash),
+            "schema": "edge-candidate-detail/v1",
+            "selectedPlanDigest": Self::hex(candidate.selected_plan_digest.as_slice()),
+            "selectedPlan": {
+                "amountIn": candidate.selected_plan.amount_in.to_string(),
+                "amountOut": candidate.selected_plan.amount_out.to_string(),
+                "grossProfit": candidate.selected_plan.gross_profit.to_string(),
+                "hops": selected_hops,
+            },
+            "slotWitnessDigest": Self::hex(candidate.slot_witness_digest.as_slice()),
+            "sourceGeneration": candidate.source_generation.to_string(),
+            "stateRoot": Self::hex(candidate.state_root.as_slice()),
+            "structuralTerminalHash": Self::hex(&candidate.structural_terminal_hash),
+            "victimHash": format!("0x{}", Self::hex(candidate.victim_hash.as_slice())),
+        })))
+    }
+
+    fn stringify_numbers(value: JsonValue) -> JsonValue {
+        match value {
+            JsonValue::Number(value) => JsonValue::String(value.to_string()),
+            JsonValue::Array(values) => {
+                JsonValue::Array(values.into_iter().map(Self::stringify_numbers).collect())
+            }
+            JsonValue::Object(values) => JsonValue::Object(
+                values
+                    .into_iter()
+                    .map(|(key, value)| (key, Self::stringify_numbers(value)))
+                    .collect(),
+            ),
+            value => value,
+        }
+    }
+
+    fn authority_record_hash(domain: &str, record: &JsonValue) -> io::Result<String> {
+        let mut value = record
+            .as_object()
+            .cloned()
+            .ok_or_else(|| io::Error::other("authority record must be object"))?;
+        value.remove("recordHash");
+        let canonical = Self::canonical_bytes(&JsonValue::Object(value))?;
+        let authority_domain = b"base-edge-authority-record-v1\0";
+        let mut bytes =
+            Vec::with_capacity(authority_domain.len() + domain.len() + canonical.len() + 12);
+        for field in [authority_domain.as_slice(), domain.as_bytes(), canonical.as_slice()] {
+            let length = u32::try_from(field.len())
+                .map_err(|_| io::Error::other("authority hash field exceeds u32"))?;
+            bytes.extend_from_slice(&length.to_be_bytes());
+            bytes.extend_from_slice(field);
+        }
+        Ok(Self::sha256_hex(&bytes))
+    }
+
+    fn compact_candidate_detail_exclusion(
+        record: &JsonValue,
+        reason: &'static str,
+    ) -> io::Result<JsonValue> {
+        let object = record
+            .as_object()
+            .ok_or_else(|| io::Error::other("candidate detail must be an object"))?;
+        let required = |field: &str| {
+            object
+                .get(field)
+                .cloned()
+                .ok_or_else(|| io::Error::other("candidate detail exclusion field missing"))
+        };
+        Ok(json!({
+            "candidateGeneration": required("candidateGeneration")?,
+            "candidateSequence": required("candidateSequence")?,
+            "connectionRecordHashAtCapture": required("connectionRecordHashAtCapture")?,
+            "connectionSequenceAtCapture": required("connectionSequenceAtCapture")?,
+            "coverageGeneration": required("coverageGeneration")?,
+            "payloadFirstRecordHash": required("payloadFirstRecordHash")?,
+            "payloadFirstRecordSequence": required("payloadFirstRecordSequence")?,
+            "pendingSnapshotSequence": required("pendingSnapshotSequence")?,
+            "reason": reason,
+            "registryTerminalRecordHash": required("registryTerminalRecordHash")?,
+            "schema": "edge-candidate-detail-exclusion/v1",
+            "selectedPlanDigest": required("selectedPlanDigest")?,
+            "sourceGeneration": required("sourceGeneration")?,
+            "structuralTerminalHash": required("structuralTerminalHash")?,
+            "victimHash": required("victimHash")?,
+        }))
+    }
+
+    fn ensure_append_allowed(data_sealed: bool, ledger_name: &str) -> io::Result<()> {
+        if data_sealed && ledger_name != "accounting" {
+            return Err(io::Error::other("data ledger append after data seal"));
+        }
+        Ok(())
+    }
+
+    fn push_rolling_record(
+        &mut self,
+        ledger_name: &'static str,
+        hash_domain: &'static str,
+        state: &str,
+        mut record: JsonValue,
+    ) -> io::Result<Vec<EdgeSealedSegmentV1>> {
+        self.deadline_cancellation.check()?;
+        Self::ensure_append_allowed(self.data_sealed, ledger_name)?;
+        let mut ledger = self
+            .ledgers
+            .remove(ledger_name)
+            .unwrap_or_else(|| EdgeRollingLedgerV1::new(ledger_name, hash_domain));
+        if ledger.pending_publication.is_some() {
+            self.ledgers.insert(ledger_name, ledger);
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "ledger publication retry is pending",
+            ));
+        }
+        if ledger.hash_domain != hash_domain {
+            return Err(io::Error::other("ledger hash domain changed"));
+        }
+        let mut sealed = Vec::new();
+        let object = record
+            .as_object_mut()
+            .ok_or_else(|| io::Error::other("rolling record must be object"))?;
+        object.insert(
+            "producerEpoch".to_owned(),
+            JsonValue::String(self.owner.producer_epoch().to_string()),
+        );
+        object.insert("sequence".to_owned(), JsonValue::String(ledger.next_sequence.to_string()));
+        object.insert("state".to_owned(), JsonValue::String(state.to_owned()));
+        object.insert(
+            "previousRecordHash".to_owned(),
+            JsonValue::String(ledger.previous_record_hash.clone()),
+        );
+        object.remove("recordHash");
+        let mut record_hash = Self::authority_record_hash(hash_domain, &record)?;
+        record
+            .as_object_mut()
+            .ok_or_else(|| io::Error::other("rolling record must remain an object"))?
+            .insert("recordHash".to_owned(), JsonValue::String(record_hash.clone()));
+        let mut line_len = Self::canonical_line(&record)?.len();
+        if line_len + 1024 > EDGE_SEGMENT_MAX_RECORD_BYTES && ledger_name == "candidate" {
+            record =
+                Self::compact_candidate_detail_exclusion(&record, "CandidateDetailRecordTooLarge")?;
+            let object = record
+                .as_object_mut()
+                .ok_or_else(|| io::Error::other("candidate exclusion must be an object"))?;
+            object.insert(
+                "producerEpoch".to_owned(),
+                JsonValue::String(self.owner.producer_epoch().to_string()),
+            );
+            object
+                .insert("sequence".to_owned(), JsonValue::String(ledger.next_sequence.to_string()));
+            object.insert(
+                "state".to_owned(),
+                JsonValue::String("CandidateDetailExcluded".to_owned()),
+            );
+            object.insert(
+                "previousRecordHash".to_owned(),
+                JsonValue::String(ledger.previous_record_hash.clone()),
+            );
+            let exclusion_hash = Self::authority_record_hash(hash_domain, &record)?;
+            record
+                .as_object_mut()
+                .ok_or_else(|| io::Error::other("candidate exclusion must be an object"))?
+                .insert("recordHash".to_owned(), JsonValue::String(exclusion_hash.clone()));
+            record_hash = exclusion_hash;
+            line_len = Self::canonical_line(&record)?.len();
+            self.recorder.latch_coordinator_failure("CandidateDetailRecordTooLarge");
+        }
+        if line_len + 1024 > EDGE_SEGMENT_MAX_RECORD_BYTES {
+            return Err(io::Error::other("single edge record exceeds segment bound"));
+        }
+        if !ledger.records.is_empty()
+            && (ledger.records.len() == EDGE_SEGMENT_MAX_RECORDS
+                || ledger.record_bytes + line_len + 1024 > EDGE_SEGMENT_MAX_RECORD_BYTES)
+        {
+            match self.seal_rolling_ledger(&mut ledger) {
+                Ok(segment) => sealed.push(segment),
+                Err(error) => {
+                    self.ledgers.insert(ledger_name, ledger);
+                    return Err(error);
+                }
+            }
+        }
+        if ledger.records.is_empty() {
+            ledger.batch_started_at = Some(Instant::now());
+        }
+        ledger.record_bytes += line_len;
+        ledger.records.push(record);
+        ledger.previous_record_hash = record_hash;
+        ledger.next_sequence = ledger
+            .next_sequence
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("rolling ledger sequence overflow"))?;
+        if ledger.records.len() == EDGE_SEGMENT_MAX_RECORDS {
+            match self.seal_rolling_ledger(&mut ledger) {
+                Ok(segment) => sealed.push(segment),
+                Err(error) => {
+                    self.ledgers.insert(ledger_name, ledger);
+                    return Err(error);
+                }
+            }
+        }
+        self.ledgers.insert(ledger_name, ledger);
+        Ok(sealed)
+    }
+    fn rolling_flush_due(&self, ledger_name: &'static str, now: Instant) -> bool {
+        self.ledgers.get(ledger_name).and_then(|ledger| ledger.batch_started_at).is_some_and(
+            |started| now.saturating_duration_since(started) >= EDGE_SEGMENT_MAX_FLUSH_LATENCY,
+        )
+    }
+
+    fn flush_rolling_ledger(
+        &mut self,
+        ledger_name: &'static str,
+    ) -> io::Result<Option<EdgeSealedSegmentV1>> {
+        self.deadline_cancellation.check()?;
+        let Some(mut ledger) = self.ledgers.remove(ledger_name) else {
+            return Ok(None);
+        };
+        let result = if ledger.records.is_empty() && ledger.pending_publication.is_none() {
+            Ok(None)
+        } else {
+            self.seal_rolling_ledger(&mut ledger).map(Some)
+        };
+        self.ledgers.insert(ledger_name, ledger);
+        result
+    }
+
+    fn seal_rolling_ledger(
+        &mut self,
+        ledger: &mut EdgeRollingLedgerV1,
+    ) -> io::Result<EdgeSealedSegmentV1> {
+        let ledger_before_attempt = ledger.clone();
+        if ledger.pending_publication.is_none() {
+            let first = ledger.records.first().ok_or_else(|| io::Error::other("empty segment"))?;
+            let last = ledger.records.last().ok_or_else(|| io::Error::other("empty segment"))?;
+            let field = |record: &JsonValue, name: &str| -> io::Result<String> {
+                record
+                    .get(name)
+                    .and_then(JsonValue::as_str)
+                    .map(ToOwned::to_owned)
+                    .ok_or_else(|| io::Error::other(format!("segment record missing {name}")))
+            };
+            let first_sequence = field(first, "sequence")?;
+            let last_sequence = field(last, "sequence")?;
+            let first_previous_hash = field(first, "previousRecordHash")?;
+            let last_record_hash = field(last, "recordHash")?;
+            let mut record_bytes = Vec::with_capacity(ledger.record_bytes);
+            let mut member_sequences = Vec::with_capacity(ledger.records.len());
+            for record in &ledger.records {
+                member_sequences.push(
+                    field(record, "sequence")?
+                        .parse()
+                        .map_err(|_| io::Error::other("noncanonical segment sequence"))?,
+                );
+                record_bytes.extend_from_slice(&Self::canonical_line(record)?);
+            }
+            let footer_base = json!({
+                "firstPreviousRecordHash": first_previous_hash,
+                "firstSequence": first_sequence,
+                "lastRecordHash": last_record_hash,
+                "lastSequence": last_sequence,
+                "recordCount": ledger.records.len().to_string(),
+                "recordsSha256": Self::sha256_hex(&record_bytes),
+                "schemaVersion": "edge-sidecar-segment-footer-v1",
+            });
+            let mut footer_domain = b"edge-sidecar-segment-footer-v1\0".to_vec();
+            footer_domain.extend_from_slice(&Self::canonical_bytes(&footer_base)?);
+            let mut footer = footer_base
+                .as_object()
+                .cloned()
+                .ok_or_else(|| io::Error::other("footer must be object"))?;
+            let segment_seal_sha256 = Self::sha256_hex(&footer_domain);
+            footer.insert(
+                "segmentSealSha256".to_owned(),
+                JsonValue::String(segment_seal_sha256.clone()),
+            );
+            let mut bytes = record_bytes;
+            bytes.extend_from_slice(&Self::canonical_line(&JsonValue::Object(footer))?);
+            if bytes.len() > EDGE_SEGMENT_MAX_RECORD_BYTES {
+                return Err(io::Error::other("sealed segment exceeds byte bound"));
+            }
+            let filename = format!("{}-{:020}.ndjson", ledger.name, ledger.next_segment);
+            let descriptor = EdgeSegmentDescriptorV1 { file_sha256: Self::sha256_hex(&bytes) };
+            ledger.pending_publication = Some(EdgePendingPublicationV1 {
+                filename,
+                bytes,
+                descriptor,
+                member_sequences,
+                durable_next_sequence: ledger.next_sequence,
+                durable_previous_record_hash: last_record_hash,
+            });
+        }
+        let mut committed_ledger = ledger.clone();
+        let segment = match committed_ledger.commit_durable_publication() {
+            Ok(segment) => segment,
+            Err(error) => {
+                *ledger = ledger_before_attempt;
+                return Err(error);
+            }
+        };
+        if ledger.name == "candidate"
+            && let Err(error) = self.prevalidate_candidate_segment(&segment)
+        {
+            *ledger = ledger_before_attempt;
+            return Err(error);
+        }
+        let ledger_with_pending_publication = ledger.clone();
+        let pending = ledger
+            .pending_publication
+            .as_ref()
+            .ok_or_else(|| io::Error::other("pending publication disappeared"))?;
+        let pending_digest = Self::sha256_hex(&pending.bytes);
+        let pending_filename = pending.filename.clone();
+        let deadline_cancellation = Arc::clone(&self.deadline_cancellation);
+        let publication_authority =
+            deadline_cancellation.authority(EdgeShutdownAuthorityBoundaryV1::Publication)?;
+        let cleanup = self.persist_immutable_guarded(
+            &pending.filename,
+            &pending.bytes,
+            &publication_authority,
+        )?;
+        if cleanup.attempt_mono_ns.len() > 1 {
+            let first_failed_ns = cleanup.attempt_mono_ns[0];
+            let last_attempt_ns = *cleanup
+                .attempt_mono_ns
+                .last()
+                .ok_or_else(|| io::Error::other("cleanup attempt timeline is empty"))?;
+            let attempt_count = u64::try_from(cleanup.attempt_mono_ns.len())
+                .map_err(|_| io::Error::other("cleanup attempt count overflow"))?;
+            if cleanup.recovered_mono_ns.is_none() {
+                let open_path = self.directory.join(format!("{pending_filename}.open"));
+                let final_path = self.directory.join(&pending_filename);
+                if !Self::immutable_file_matches(&open_path, &pending.bytes)?
+                    || !Self::immutable_file_matches(&final_path, &pending.bytes)?
+                {
+                    return Err(io::Error::other(
+                        "cleanup incident exact stale or final bytes are unavailable",
+                    ));
+                }
+            }
+            let incident = &mut self.incidents.open_cleanup_failed_after_durable_publish;
+            incident.count = incident
+                .count
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("cleanup incident count overflow"))?;
+            incident.first_failed_mono_ns.get_or_insert(first_failed_ns);
+            incident.last_failed_mono_ns = Some(last_attempt_ns);
+            incident.attempt_count = attempt_count;
+            incident.active_identity =
+                Some(format!("{}|{pending_filename}|{pending_digest}", ledger.name));
+            self.recorder.latch_coordinator_failure("OpenCleanupFailedAfterDurablePublish");
+            if let Some(recovered_ns) = cleanup.recovered_mono_ns {
+                incident.recovered_count = incident
+                    .recovered_count
+                    .checked_add(1)
+                    .ok_or_else(|| io::Error::other("cleanup recovery count overflow"))?;
+                if incident.count == 1 {
+                    incident.single_recovery_witness = Some(Self::single_recovery_witness([
+                        JsonValue::String(format!(
+                            "{}|{pending_filename}|{pending_digest}",
+                            ledger.name
+                        )),
+                        JsonValue::String(ledger.name.to_owned()),
+                        JsonValue::Null,
+                        JsonValue::String(first_failed_ns.to_string()),
+                        JsonValue::String(last_attempt_ns.to_string()),
+                        JsonValue::String(recovered_ns.to_string()),
+                        JsonValue::String(attempt_count.to_string()),
+                        JsonValue::Null,
+                        JsonValue::Null,
+                        JsonValue::String(pending_digest.clone()),
+                        JsonValue::String(pending_digest),
+                    ])?);
+                }
+                incident.active_identity = None;
+                incident.attempt_count = 0;
+            }
+        }
+        let source_sequence_by_ledger = self.source_sequence_by_ledger.clone();
+        let source_durable = self.source_durable.clone();
+        let source_durable_ack_cursor = self.source_durable_ack_cursor;
+        let connection_segment_sha = self.connection_segment_sha.clone();
+        let registry_segment_sha = self.registry_segment_sha.clone();
+        let registry_h1_segment_sha = self.registry_h1_segment_sha.clone();
+        let registry_pending = self.registry_pending.clone();
+        let registry_durable_cursor = self.registry_durable_cursor;
+        let candidate_durable = self.candidate_durable.clone();
+        let candidate_joins = self.candidate_joins.clone();
+        let candidate_join_exclusions = self.candidate_join_exclusions.clone();
+        let candidate_validated_count = self.candidate_validated_count;
+        if let Err(error) =
+            self.commit_segment_mutations_guarded(ledger.name, &segment, &publication_authority)
+        {
+            self.source_sequence_by_ledger = source_sequence_by_ledger;
+            self.source_durable = source_durable;
+            self.source_durable_ack_cursor = source_durable_ack_cursor;
+            self.connection_segment_sha = connection_segment_sha;
+            self.registry_segment_sha = registry_segment_sha;
+            self.registry_h1_segment_sha = registry_h1_segment_sha;
+            self.registry_pending = registry_pending;
+            self.registry_durable_cursor = registry_durable_cursor;
+            self.candidate_durable = candidate_durable;
+            self.candidate_joins = candidate_joins;
+            self.candidate_join_exclusions = candidate_join_exclusions;
+            self.candidate_validated_count = candidate_validated_count;
+            *ledger = ledger_with_pending_publication;
+            return Err(error);
+        }
+        *ledger = committed_ledger;
+        drop(publication_authority);
+        Ok(segment)
+    }
+
+    fn commit_segment_mutations_guarded(
+        &mut self,
+        ledger: &'static str,
+        segment: &EdgeSealedSegmentV1,
+        authority: &EdgeShutdownAuthorityGuardV1<'_>,
+    ) -> io::Result<()> {
+        match ledger {
+            "payload-first"
+            | "connection"
+            | "clock"
+            | "coverage"
+            | "coverage-postcutoff-excluded"
+            | "postcutoff-diagnostic"
+            | "coverage-detail"
+            | "source-detail" => self.ack_source_segment_guarded(ledger, segment, authority),
+            "registry-h1" | "registry-h2" => {
+                self.record_registry_segment_guarded(ledger, segment, authority)?;
+                self.ack_registry_segments_guarded(authority)
+            }
+            "candidate" => self.validate_candidate_segment(segment),
+            _ => Ok(()),
+        }
+    }
+
+    #[cfg(test)]
+    fn inject_segment_mutation_fault(
+        &mut self,
+        boundary: EdgeSegmentMutationFaultV1,
+    ) -> io::Result<()> {
+        if self.segment_mutation_fault == Some(boundary) {
+            self.segment_mutation_fault = None;
+            return Err(io::Error::other("injected segment mutation failure"));
+        }
+        Ok(())
+    }
+    fn ack_source_segment_guarded(
+        &mut self,
+        ledger: &'static str,
+        segment: &EdgeSealedSegmentV1,
+        _authority: &EdgeShutdownAuthorityGuardV1<'_>,
+    ) -> io::Result<()> {
+        let segment_hash = B256::from_str(&format!("0x{}", segment.descriptor.file_sha256))
+            .map_err(|_| io::Error::other("source segment SHA malformed"))?;
+        let mut source_sequence_by_ledger = self.source_sequence_by_ledger.clone();
+        let mut source_durable = self.source_durable.clone();
+        let mut source_durable_ack_cursor = self.source_durable_ack_cursor;
+        let mut connection_segment_sha = self.connection_segment_sha.clone();
+        for ledger_sequence in &segment.member_sequences {
+            let source_sequence = source_sequence_by_ledger
+                .remove(&(ledger, *ledger_sequence))
+                .or_else(|| {
+                    self.pending_source_record.as_ref().and_then(|pending| {
+                        (pending.ledger == ledger && pending.ledger_sequence == *ledger_sequence)
+                            .then_some(pending.source_file_sequence)
+                    })
+                })
+                .ok_or_else(|| io::Error::other("source durable identity missing"))?;
+            #[cfg(test)]
+            self.inject_segment_mutation_fault(EdgeSegmentMutationFaultV1::SourceIdentity)?;
+            if !source_durable.insert(source_sequence) {
+                return Err(io::Error::other("duplicate source durable identity"));
+            }
+            #[cfg(test)]
+            self.inject_segment_mutation_fault(EdgeSegmentMutationFaultV1::SourceDurableSet)?;
+            if ledger == "connection" {
+                connection_segment_sha.push((*ledger_sequence, segment_hash));
+                #[cfg(test)]
+                self.inject_segment_mutation_fault(
+                    EdgeSegmentMutationFaultV1::SourceConnectionDescriptor,
+                )?;
+            }
+        }
+        let mut source_ack_count = 0_u64;
+        while source_durable.remove(&source_durable_ack_cursor) {
+            source_durable_ack_cursor = source_durable_ack_cursor
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("source durable ACK cursor overflow"))?;
+            source_ack_count = source_ack_count
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("source durable ACK count overflow"))?;
+            #[cfg(test)]
+            self.inject_segment_mutation_fault(EdgeSegmentMutationFaultV1::SourceCursor)?;
+        }
+        #[cfg(test)]
+        self.inject_segment_mutation_fault(EdgeSegmentMutationFaultV1::SourceBatch)?;
+        self.recorder
+            .ack_durable_publication_batch(source_ack_count, &[])
+            .map_err(|_| io::Error::other("source durable ACK mismatch"))?;
+        self.source_sequence_by_ledger = source_sequence_by_ledger;
+        self.source_durable = source_durable;
+        self.source_durable_ack_cursor = source_durable_ack_cursor;
+        self.connection_segment_sha = connection_segment_sha;
+        Ok(())
+    }
+
+    fn ack_registry_segments_guarded(
+        &mut self,
+        _authority: &EdgeShutdownAuthorityGuardV1<'_>,
+    ) -> io::Result<()> {
+        let mut registry_pending = self.registry_pending.clone();
+        let mut registry_durable_cursor = self.registry_durable_cursor;
+        let mut registry_acks = Vec::new();
+        while let Some(terminal) = registry_pending.get(&registry_durable_cursor).copied() {
+            let coverage_sequence = terminal.coverage_sequence;
+            let pending_sequence = terminal.metadata.identity.pending_snapshot_sequence;
+            if Self::sequence_hash(&self.registry_segment_sha, coverage_sequence).is_none()
+                || self.registry_h1_segment_sha.get(&pending_sequence).is_none_or(
+                    |(stored_coverage_sequence, _)| *stored_coverage_sequence != coverage_sequence,
+                )
+            {
+                break;
+            }
+            let terminal_hash =
+                Self::sequence_hash(&self.registry_record_sha, coverage_sequence)
+                    .ok_or_else(|| io::Error::other("registry H2 record hash missing"))?;
+            registry_acks.push(EdgeDurableRegistryAckV1 { terminal, terminal_hash });
+            registry_pending
+                .remove(&coverage_sequence)
+                .ok_or_else(|| io::Error::other("registry durable identity disappeared"))?;
+            #[cfg(test)]
+            self.inject_segment_mutation_fault(EdgeSegmentMutationFaultV1::RegistryPending)?;
+            registry_durable_cursor = registry_durable_cursor
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("registry durable cursor overflow"))?;
+            #[cfg(test)]
+            self.inject_segment_mutation_fault(EdgeSegmentMutationFaultV1::RegistryCursor)?;
+        }
+        #[cfg(test)]
+        self.inject_segment_mutation_fault(EdgeSegmentMutationFaultV1::RegistryBatch)?;
+        self.recorder
+            .ack_durable_publication_batch(0, &registry_acks)
+            .map_err(|_| io::Error::other("registry durable ACK or cleanup mismatch"))?;
+        self.registry_pending = registry_pending;
+        self.registry_durable_cursor = registry_durable_cursor;
+        Ok(())
+    }
+    fn prevalidate_candidate_segment(&self, segment: &EdgeSealedSegmentV1) -> io::Result<()> {
+        let mut candidate_durable = self.candidate_durable.clone();
+        let mut candidate_joins = self.candidate_joins.clone();
+        let mut candidate_join_exclusions = self.candidate_join_exclusions.clone();
+        let mut candidate_validated_count = self.candidate_validated_count;
+        for sequence in &segment.member_sequences {
+            if !candidate_durable.insert(*sequence) {
+                return Err(io::Error::other("duplicate candidate durable identity"));
+            }
+        }
+        while candidate_durable.contains(&candidate_validated_count) {
+            let sequence = candidate_validated_count;
+            if candidate_join_exclusions.remove(&sequence) {
+                candidate_durable.remove(&sequence);
+            } else {
+                let join = candidate_joins
+                    .get(&sequence)
+                    .ok_or_else(|| io::Error::other("candidate compact join missing"))?;
+                let Some(connection_record_hash) =
+                    Self::sequence_hash(&self.connection_records, join.connection_sequence)
+                else {
+                    break;
+                };
+                if connection_record_hash != join.connection_record_hash {
+                    return Err(io::Error::other("candidate compact join validation failed"));
+                }
+                if self
+                    .connection_segment_sha
+                    .binary_search_by_key(&join.connection_sequence, |(sequence, _)| *sequence)
+                    .is_err()
+                {
+                    break;
+                }
+                let Some(registry_record_hash) =
+                    Self::sequence_hash(&self.registry_record_sha, join.coverage_generation)
+                else {
+                    break;
+                };
+                if registry_record_hash != join.registry_terminal_record_hash
+                    || Self::sequence_hash(&self.registry_segment_sha, join.coverage_generation)
+                        .is_none()
+                    || sequence != join.candidate_sequence
+                {
+                    return Err(io::Error::other("candidate compact join validation failed"));
+                }
+                candidate_joins
+                    .remove(&sequence)
+                    .ok_or_else(|| io::Error::other("candidate compact join release failed"))?;
+                candidate_durable.remove(&sequence);
+            }
+            candidate_validated_count = candidate_validated_count
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("candidate validated count overflow"))?;
+        }
+        Ok(())
+    }
+    fn validate_candidate_segment(&mut self, segment: &EdgeSealedSegmentV1) -> io::Result<()> {
+        self.deadline_cancellation.check()?;
+        for sequence in &segment.member_sequences {
+            self.deadline_cancellation.check()?;
+            if !self.candidate_durable.insert(*sequence) {
+                return Err(io::Error::other("duplicate candidate durable identity"));
+            }
+            #[cfg(test)]
+            self.inject_segment_mutation_fault(EdgeSegmentMutationFaultV1::CandidateDurableSet)?;
+        }
+        #[cfg(test)]
+        self.inject_segment_mutation_fault(EdgeSegmentMutationFaultV1::CandidateRelease)?;
+        self.release_candidate_joins()?;
+        Ok(())
+    }
+
+    fn release_candidate_joins(&mut self) -> io::Result<bool> {
+        let mut progressed = false;
+        loop {
+            self.deadline_cancellation.check()?;
+            let sequence = self.candidate_validated_count;
+            if !self.candidate_durable.contains(&sequence) {
+                break;
+            }
+            if self.candidate_join_exclusions.remove(&sequence) {
+                self.candidate_durable.remove(&sequence);
+                self.candidate_validated_count = self
+                    .candidate_validated_count
+                    .checked_add(1)
+                    .ok_or_else(|| io::Error::other("candidate validated count overflow"))?;
+                progressed = true;
+                continue;
+            }
+            let join = self
+                .candidate_joins
+                .get(&sequence)
+                .ok_or_else(|| io::Error::other("candidate compact join missing"))?;
+            let Some(connection_record_hash) =
+                Self::sequence_hash(&self.connection_records, join.connection_sequence)
+            else {
+                break;
+            };
+            if connection_record_hash != join.connection_record_hash {
+                return Err(io::Error::other("candidate compact join validation failed"));
+            }
+            if self
+                .connection_segment_sha
+                .binary_search_by_key(&join.connection_sequence, |(sequence, _)| *sequence)
+                .is_err()
+            {
+                break;
+            }
+            let Some(registry_record_hash) =
+                Self::sequence_hash(&self.registry_record_sha, join.coverage_generation)
+            else {
+                break;
+            };
+            if registry_record_hash != join.registry_terminal_record_hash {
+                return Err(io::Error::other("candidate compact join validation failed"));
+            }
+            if Self::sequence_hash(&self.registry_segment_sha, join.coverage_generation).is_none() {
+                break;
+            }
+            if sequence != join.candidate_sequence {
+                return Err(io::Error::other("candidate compact join validation failed"));
+            }
+            self.candidate_joins
+                .remove(&sequence)
+                .ok_or_else(|| io::Error::other("candidate compact join release failed"))?;
+            self.candidate_durable.remove(&sequence);
+            self.candidate_validated_count = self
+                .candidate_validated_count
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("candidate validated count overflow"))?;
+            progressed = true;
+        }
+        Ok(progressed)
+    }
+
+    fn record_registry_segment_guarded(
+        &mut self,
+        ledger: &'static str,
+        segment: &EdgeSealedSegmentV1,
+        _authority: &EdgeShutdownAuthorityGuardV1<'_>,
+    ) -> io::Result<()> {
+        self.deadline_cancellation.check()?;
+        let segment_hash = B256::from_str(&format!("0x{}", segment.descriptor.file_sha256))
+            .map_err(|_| io::Error::other("registry segment SHA malformed"))?;
+        for coverage_sequence in &segment.member_sequences {
+            let terminal = self
+                .registry_pending
+                .get(coverage_sequence)
+                .ok_or_else(|| io::Error::other("registry durable identity missing"))?;
+            if ledger == "registry-h1" {
+                let pending_sequence = terminal.metadata.identity.pending_snapshot_sequence;
+                if self
+                    .registry_h1_segment_sha
+                    .insert(pending_sequence, (*coverage_sequence, segment_hash))
+                    .is_some()
+                {
+                    return Err(io::Error::other("duplicate registry H1 pending sequence"));
+                }
+            } else if ledger == "registry-h2" {
+                Self::append_sequence_hash(
+                    &mut self.registry_segment_sha,
+                    *coverage_sequence,
+                    segment_hash,
+                    "registry H2 durable segment sequence mismatch",
+                )?;
+            } else {
+                return Err(io::Error::other("unknown registry ledger"));
+            }
+            #[cfg(test)]
+            self.inject_segment_mutation_fault(EdgeSegmentMutationFaultV1::RegistrySegment)?;
+        }
+        Ok(())
+    }
+
+    fn immutable_file_matches(path: &Path, expected: &[u8]) -> io::Result<bool> {
+        let mut file = File::open(path)?;
+        let mut offset = 0;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                return Ok(offset == expected.len());
+            }
+            let Some(end) = offset.checked_add(read) else {
+                return Ok(false);
+            };
+            if expected.get(offset..end) != Some(&buffer[..read]) {
+                return Ok(false);
+            }
+            offset = end;
+        }
+    }
+
+    fn cleanup_open_after_error(&self, open_path: &Path, primary: io::Error) -> io::Error {
+        match fs::remove_file(open_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => {}
+        }
+        let _ = self.directory_handle.sync_all();
+        primary
+    }
+
+    #[cfg(test)]
+    fn persist_immutable(
+        &self,
+        filename: &str,
+        bytes: &[u8],
+    ) -> io::Result<EdgeCleanupPublicationV1> {
+        let deadline_cancellation = Arc::clone(&self.deadline_cancellation);
+        let authority =
+            deadline_cancellation.authority(EdgeShutdownAuthorityBoundaryV1::Publication)?;
+        self.persist_immutable_guarded(filename, bytes, &authority)
+    }
+
+    fn persist_immutable_guarded(
+        &self,
+        filename: &str,
+        bytes: &[u8],
+        _authority: &EdgeShutdownAuthorityGuardV1<'_>,
+    ) -> io::Result<EdgeCleanupPublicationV1> {
+        Self::validate_canonical_artifact(bytes)?;
+        let final_path = self.directory.join(filename);
+        let open_path = self.directory.join(format!("{filename}.open"));
+        if !final_path.try_exists()? {
+            let (mut file, created) = match OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o600)
+                .open(&open_path)
+            {
+                Ok(file) => (file, true),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    match Self::immutable_file_matches(&open_path, bytes) {
+                        Ok(true) => {
+                            let file =
+                                OpenOptions::new().read(true).write(true).open(&open_path)?;
+                            (file, false)
+                        }
+                        Ok(false) => {
+                            return Err(self.cleanup_open_after_error(&open_path, error));
+                        }
+                        Err(read_error) => {
+                            return Err(self.cleanup_open_after_error(&open_path, read_error));
+                        }
+                    }
+                }
+                Err(error) => return Err(error),
+            };
+            let publication = (|| {
+                if created {
+                    file.write_all(bytes)?;
+                }
+                file.sync_all()?;
+                drop(file);
+                if !Self::immutable_file_matches(&open_path, bytes)? {
+                    return Err(io::Error::other("durable re-read mismatch"));
+                }
+                match fs::hard_link(&open_path, &final_path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        if !Self::immutable_file_matches(&final_path, bytes)? {
+                            return Err(EdgeWriterFailureClassV1::immutable_conflict());
+                        }
+                    }
+                    Err(error) => return Err(error),
+                }
+                if !Self::immutable_file_matches(&final_path, bytes)? {
+                    return Err(io::Error::other("final byte verification mismatch"));
+                }
+                self.directory_handle.sync_all()?;
+                Ok(())
+            })();
+            if let Err(error) = publication {
+                return Err(self.cleanup_open_after_error(&open_path, error));
+            }
+        } else {
+            if !Self::immutable_file_matches(&final_path, bytes)? {
+                return Err(EdgeWriterFailureClassV1::immutable_conflict());
+            }
+            self.directory_handle.sync_all()?;
+        }
+        let durable_bytes = fs::read(&final_path)?;
+        Self::validate_data_recovery_bytes(bytes, &durable_bytes, &Self::sha256_hex(bytes))?;
+
+        let mut attempt_mono_ns = Vec::with_capacity(3);
+        for _attempt in 0..3 {
+            let observed_ns = self.elapsed_mono_ns()?;
+            if attempt_mono_ns.last().is_some_and(|previous| *previous > observed_ns) {
+                return Err(io::Error::other("cleanup attempt timeline moved backwards"));
+            }
+            attempt_mono_ns.push(observed_ns);
+            let unlinked = match fs::remove_file(&open_path) {
+                Ok(()) => true,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => true,
+                Err(_) => false,
+            };
+            let synced = self.directory_handle.sync_all().is_ok();
+            if unlinked && synced {
+                let recovered_mono_ns = Some(self.elapsed_mono_ns()?);
+                return Ok(EdgeCleanupPublicationV1 { attempt_mono_ns, recovered_mono_ns });
+            }
+            if let Some(sink) = &self.oob_sink {
+                let _ = sink.record("writer", "OpenCleanupFailedAfterDurablePublish", None);
+            }
+        }
+        Ok(EdgeCleanupPublicationV1 { attempt_mono_ns, recovered_mono_ns: None })
+    }
+
+    fn elapsed_mono_ns(&self) -> io::Result<u64> {
+        u64::try_from(self.started_at.elapsed().as_nanos())
+            .map_err(|_| io::Error::other("writer monotonic time overflow"))
+    }
+
+    fn provenance_value(&self) -> JsonValue {
+        let provenance = &self.provenance;
+        json!({
+            "aerodromeAdapter": provenance.aerodrome_adapter.to_string(),
+            "aerodromeAdapterRuntimeHash": provenance.aerodrome_adapter_runtime_hash.to_string(),
+            "blinkCandidateCapacity": provenance.blink_candidate_capacity.to_string(),
+            "blinkRecordCapacity": provenance.blink_record_capacity.to_string(),
+            "configDigest": provenance.config_digest.to_string(),
+            "executorRuntimeHash": provenance.executor_runtime_hash.to_string(),
+            "flashActiveCapacity": provenance.flash_active_capacity.to_string(),
+            "flashEventCapacity": provenance.flash_event_capacity.to_string(),
+            "flashRegistryCapacity": provenance.flash_registry_capacity.to_string(),
+            "g0CodeIdentityDigest": provenance.g0_code_identity_digest.to_string(),
+            "measurementSender": provenance.measurement_sender.to_string(),
+            "measurementBindingSourceSha256": provenance.measurement_binding_source_sha256.to_string(),
+            "outputRootOwnerPrivate": true,
+            "outputRootPinnedDescriptor": true,
+            "ownerApprovalReceiptDigest": provenance.owner_approval_receipt_digest.to_string(),
+            "policyDigest": provenance.policy_digest.to_string(),
+            "preregDigest": provenance.prereg_digest.to_string(),
+            "producerDigest": provenance.producer_digest.to_string(),
+            "producerEpoch": provenance.producer_epoch.get().to_string(),
+            "rawRejectInventorySha256": provenance.raw_reject_inventory_sha256.to_string(),
+            "rawRejectSourceSha256": provenance.raw_reject_source_sha256.to_string(),
+            "rejectSchemaDigest": provenance.reject_schema_digest.to_string(),
+            "schemaVersion": "edge-producer-provenance/v1",
+            "v2Adapter": provenance.v2_adapter.to_string(),
+            "v2AdapterRuntimeHash": provenance.v2_adapter_runtime_hash.to_string(),
+            "v3Adapter": provenance.v3_adapter.to_string(),
+            "v3AdapterRuntimeHash": provenance.v3_adapter_runtime_hash.to_string(),
+        })
+    }
+
+    fn startup_authority_ready(ledgers: &BTreeMap<&'static str, EdgeRollingLedgerV1>) -> bool {
+        ["provenance", EDGE_EPOCH_OUTPUT_SINGLETON_ARTIFACTS_V1[0]].into_iter().all(|name| {
+            ledgers.get(name).is_some_and(|ledger| {
+                ledger.durable_next_sequence != 0
+                    && ledger.durable_previous_record_hash != EDGE_ZERO_HASH
+                    && ledger.durable_next_segment != 0
+                    && ledger.pending_publication.is_none()
+            })
+        })
+    }
+
+    fn bootstrap_authority(&mut self) -> io::Result<()> {
+        if self.startup_authority_durable {
+            return Ok(());
+        }
+        let provenance = self.provenance_value();
+        self.push_rolling_record(
+            "provenance",
+            "edge-producer-provenance/v1",
+            "ProducerProvenance",
+            provenance,
+        )?;
+        self.flush_rolling_ledger("provenance")?;
+        self.write_accounting_snapshot("startup", false)?;
+        if !Self::startup_authority_ready(&self.ledgers) {
+            return Err(io::Error::other("startup authority is not durably published"));
+        }
+        self.startup_authority_durable = true;
+        Ok(())
+    }
+
+    fn exact_object<const N: usize>(
+        keys: [&'static str; N],
+        values: impl IntoIterator<Item = (&'static str, JsonValue)>,
+    ) -> io::Result<JsonValue> {
+        let mut exact = BTreeMap::new();
+        for (key, value) in values {
+            if exact.insert(key, value).is_some() {
+                return Err(io::Error::other("object contains a duplicate key"));
+            }
+        }
+        if exact.len() != keys.len()
+            || exact.keys().any(|key| !keys.contains(key))
+            || keys.iter().any(|key| !exact.contains_key(key))
+        {
+            return Err(io::Error::other("object inventory differs"));
+        }
+        Ok(JsonValue::Object(
+            keys.into_iter()
+                .map(|key| (key.to_owned(), exact.remove(key).expect("validated object key")))
+                .collect(),
+        ))
+    }
+    fn single_recovery_witness(values: [JsonValue; 11]) -> io::Result<JsonValue> {
+        Self::exact_object(
+            EDGE_SINGLE_RECOVERY_WITNESS_KEYS_V1,
+            EDGE_SINGLE_RECOVERY_WITNESS_KEYS_V1.into_iter().zip(values),
+        )
+    }
+
+    fn decimal_map<const N: usize>(
+        keys: [&'static str; N],
+        values: impl IntoIterator<Item = (&'static str, u64)>,
+    ) -> io::Result<JsonValue> {
+        Self::exact_object(
+            keys,
+            values.into_iter().map(|(key, value)| (key, JsonValue::String(value.to_string()))),
+        )
+    }
+
+    fn source_missing_counts(
+        snapshot: &EdgeMeasurementMissingEvidenceSnapshotV1,
+    ) -> io::Result<(JsonValue, JsonValue, u64, u64)> {
+        let mut source = snapshot
+            .breakdown
+            .iter()
+            .map(|entry| (entry.artifact_key, entry.count))
+            .collect::<BTreeMap<_, _>>();
+        let fixed_source_keys = &EDGE_SOURCE_MISSING_KEYS_V1;
+        if snapshot.breakdown.len() != fixed_source_keys.len()
+            || source.len() != fixed_source_keys.len()
+            || fixed_source_keys.iter().any(|key| !source.contains_key(*key))
+        {
+            return Err(io::Error::other("source missing evidence fixed inventory differs"));
+        }
+        let fixed_coordinator_total = source
+            .get("coordinatorFailure")
+            .copied()
+            .ok_or_else(|| io::Error::other("coordinator fixed counter is absent"))?;
+        let coordinator =
+            snapshot.coordinator_breakdown.iter().copied().collect::<BTreeMap<_, _>>();
+        if coordinator.len() != snapshot.coordinator_breakdown.len() {
+            return Err(io::Error::other("coordinator reason breakdown contains a duplicate key"));
+        }
+        if coordinator.len() > 64
+            || coordinator.keys().any(|key| key.is_empty() || key.len() > 128 || !key.is_ascii())
+        {
+            return Err(io::Error::other("coordinator reason domain exceeded"));
+        }
+        let coordinator_total = coordinator.values().try_fold(0_u64, |sum, value| {
+            sum.checked_add(*value)
+                .ok_or_else(|| io::Error::other("coordinator reason total overflow"))
+        })?;
+        if fixed_coordinator_total != coordinator_total {
+            return Err(io::Error::other(
+                "coordinator fixed counter differs from dynamic breakdown",
+            ));
+        }
+        source.insert("coordinatorFailure", coordinator_total);
+        let source_total = EDGE_SOURCE_MISSING_KEYS_V1.iter().try_fold(0_u64, |sum, key| {
+            let value = source
+                .get(key)
+                .copied()
+                .ok_or_else(|| io::Error::other("source missing evidence key unavailable"))?;
+            sum.checked_add(value)
+                .ok_or_else(|| io::Error::other("source missing evidence total overflow"))
+        })?;
+        if source_total != snapshot.total {
+            return Err(io::Error::other(
+                "source missing evidence total differs from atomic breakdown",
+            ));
+        }
+        let source_entries = EDGE_SOURCE_MISSING_KEYS_V1
+            .into_iter()
+            .map(|key| {
+                let value = source
+                    .get(key)
+                    .copied()
+                    .ok_or_else(|| io::Error::other("source missing evidence key unavailable"))?;
+                Ok((key.to_owned(), JsonValue::String(value.to_string())))
+            })
+            .collect::<io::Result<_>>()?;
+        let source_value = JsonValue::Object(source_entries);
+        let coordinator_value = JsonValue::Object(
+            coordinator
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), JsonValue::String(value.to_string())))
+                .collect(),
+        );
+        Ok((source_value, coordinator_value, source_total, coordinator_total))
+    }
+
+    fn source_accounting_snapshot(
+        &self,
+        terminal: bool,
+    ) -> io::Result<EdgeSourceAccountingSnapshotV1> {
+        let (revision, counters, missing, registry, cutoff) = if terminal {
+            let (revision, counters, missing, registry, cutoff) =
+                self.recorder.cutoff_drained_snapshot().map_err(|error| {
+                    io::Error::other(format!("source accounting snapshot unavailable: {error:?}"))
+                })?;
+            (revision, counters, missing, registry, Some(cutoff))
+        } else {
+            self.recorder.raw_accounting_snapshot().map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    format!("source accounting snapshot unavailable: {error:?}"),
+                )
+            })?
+        };
+        Ok(EdgeSourceAccountingSnapshotV1 {
+            revision: Some(revision),
+            counters,
+            missing,
+            registry: EdgeRegistryAccountingSnapshotV1::from_raw(registry)?,
+            cutoff,
+        })
+    }
+
+    fn blink_accounting_snapshot(
+        &self,
+        terminal: bool,
+    ) -> io::Result<EdgeBlinkAccountingSnapshotV1> {
+        if terminal {
+            let snapshot = self.owner.cutoff_drained_snapshot().map_err(|error| {
+                io::Error::other(format!("Blink cutoff snapshot unavailable: {error}"))
+            })?;
+            let snapshot = EdgeBlinkAccountingSnapshotV1 {
+                poisoned: snapshot.revision[34] != 0,
+                revision: snapshot.revision,
+                blink: snapshot.blink,
+                queues: snapshot.queues,
+                candidate_bounds: snapshot.candidate_bounds,
+                candidate_drops: snapshot.candidate_drops,
+                blink_reject_loss: snapshot.blink_reject_loss,
+                candidate_drop_loss: snapshot.candidate_drop_loss,
+                cutoff: Some(snapshot.cutoff),
+            };
+            #[cfg(test)]
+            let mut snapshot = snapshot;
+            #[cfg(test)]
+            if let Some(mutation) = self.terminal_blink_snapshot_mutation {
+                mutation.mutate(&mut snapshot.blink);
+            }
+            return Ok(snapshot);
+        }
+
+        let snapshot = self.owner.raw_accounting_snapshot().map_err(|error| {
+            io::Error::other(format!("Blink accounting snapshot unavailable: {error}"))
+        })?;
+        Ok(EdgeBlinkAccountingSnapshotV1 {
+            poisoned: snapshot.revision[34] != 0,
+            revision: snapshot.revision,
+            blink: snapshot.blink,
+            queues: snapshot.queues,
+            candidate_bounds: snapshot.candidate_bounds,
+            candidate_drops: snapshot.candidate_drops,
+            blink_reject_loss: snapshot.blink_reject_loss,
+            candidate_drop_loss: snapshot.candidate_drop_loss,
+            cutoff: snapshot.cutoff,
+        })
+    }
+
+    fn durable_endpoint_value(
+        record_count: u64,
+        previous_hash: &str,
+        segment_count: u64,
+    ) -> io::Result<JsonValue> {
+        let hash_is_canonical = previous_hash.len() == 64
+            && previous_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        if !hash_is_canonical
+            || (record_count == 0) != (previous_hash == EDGE_ZERO_HASH)
+            || (record_count == 0) != (segment_count == 0)
+        {
+            return Err(io::Error::other("durable endpoint tuple is inconsistent"));
+        }
+        Self::exact_object(
+            EDGE_LEDGER_ENDPOINT_KEYS_V1,
+            [
+                ("recordCount", JsonValue::String(record_count.to_string())),
+                (
+                    "lastSequence",
+                    record_count
+                        .checked_sub(1)
+                        .map(|value| JsonValue::String(value.to_string()))
+                        .unwrap_or(JsonValue::Null),
+                ),
+                ("finalRecordHash", JsonValue::String(previous_hash.to_owned())),
+                ("segmentCount", JsonValue::String(segment_count.to_string())),
+                (
+                    "lastSegmentOrdinal",
+                    segment_count
+                        .checked_sub(1)
+                        .map(|value| JsonValue::String(value.to_string()))
+                        .unwrap_or(JsonValue::Null),
+                ),
+            ],
+        )
+    }
+
+    fn ledger_endpoints(&self) -> io::Result<JsonValue> {
+        let endpoints = EDGE_LEDGER_ENDPOINT_ORDER_V1
+            .into_iter()
+            .map(|name| {
+                let (record_count, previous_hash, segment_count) =
+                    self.ledgers.get(name).map_or((0, EDGE_ZERO_HASH, 0), |ledger| {
+                        (
+                            ledger.durable_next_sequence,
+                            ledger.durable_previous_record_hash.as_str(),
+                            ledger.durable_next_segment,
+                        )
+                    });
+                Ok((
+                    name.to_owned(),
+                    Self::durable_endpoint_value(record_count, previous_hash, segment_count)?,
+                ))
+            })
+            .collect::<io::Result<_>>()?;
+        Ok(JsonValue::Object(endpoints))
+    }
+
+    fn validate_terminal_drain_status(status: &JsonValue) -> io::Result<()> {
+        let keys = EDGE_DRAIN_STATUS_KEYS_V1;
+        let object = status
+            .as_object()
+            .ok_or_else(|| io::Error::other("terminal drain status is not an object"))?;
+        let canonical_zero = |key: &str| object.get(key).and_then(JsonValue::as_str) == Some("0");
+        if object.len() != keys.len()
+            || keys.iter().any(|key| !object.contains_key(*key))
+            || !canonical_zero("authorityOpenFileCount")
+            || object.get("dataSealed") != Some(&JsonValue::Bool(true))
+            || object.get("pendingPeriodicSnapshot") != Some(&JsonValue::Bool(false))
+            || object.get("periodicCadenceClosed") != Some(&JsonValue::Bool(true))
+            || object.get("producerQueuesDrained") != Some(&JsonValue::Bool(true))
+            || object.get("registryClosed") != Some(&JsonValue::Bool(true))
+            || !canonical_zero("registryPendingTotal")
+            || object.get("schemaVersion").and_then(JsonValue::as_str)
+                != Some("edge-producer-drain-status/v1")
+            || object.get("sourceFenceInstalled") != Some(&JsonValue::Bool(true))
+            || object.get("terminationPhase").and_then(JsonValue::as_str)
+                != Some("terminal-accounting-only")
+            || !canonical_zero("unsealedDataBatchCount")
+        {
+            return Err(io::Error::other("terminal drain status is not fully closed"));
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn validate_terminal_drain_status_bytes(bytes: &[u8]) -> io::Result<()> {
+        let status: JsonValue = serde_json::from_slice(bytes).map_err(io::Error::other)?;
+        Self::validate_terminal_drain_status(&status)?;
+        if EdgeContractCanonicalJsonV1::canonicalize(&status)? != bytes {
+            return Err(io::Error::other("terminal drain status bytes are not canonical"));
+        }
+        Ok(())
+    }
+
+    fn accounting_value(&self, snapshot_kind: &str, terminal: bool) -> io::Result<JsonValue> {
+        if terminal != (snapshot_kind == "terminal")
+            || !matches!(snapshot_kind, "startup" | "periodic" | "terminal")
+        {
+            return Err(io::Error::other("accounting snapshot kind/terminal mismatch"));
+        }
+        let source = self.source_accounting_snapshot(terminal)?;
+        let owner = self.blink_accounting_snapshot(terminal)?;
+        let source_revision = source
+            .revision
+            .ok_or_else(|| io::Error::other("source accounting revision is absent"))?;
+        let owner_revision = owner.revision;
+        let registry = &source.registry;
+        let (source_missing, coordinator_missing, missing_total, coordinator_total) =
+            Self::source_missing_counts(&source.missing)?;
+        for (name, count) in [
+            (
+                "AccountingPeriodicWriteFailed",
+                self.incidents.accounting_periodic_write_failed.count,
+            ),
+            ("DataLedgerWriteFailed", self.incidents.data_ledger_write_failed.count),
+            (
+                "OpenCleanupFailedAfterDurablePublish",
+                self.incidents.open_cleanup_failed_after_durable_publish.count,
+            ),
+        ] {
+            let durable_count = source
+                .missing
+                .coordinator_breakdown
+                .iter()
+                .find_map(|(key, value)| (*key == name).then_some(*value))
+                .unwrap_or(0);
+            if durable_count != count {
+                return Err(io::Error::other(
+                    "operational incident count differs from coordinator authority",
+                ));
+            }
+        }
+        let (
+            wire_count,
+            source_generation_count,
+            payload_first_count,
+            connection_count,
+            processor_terminal_count,
+            authority_wire_terminal_count,
+            event_pending_ack,
+            poison_count,
+            source_counter_missing_total,
+        ) = source.counters;
+        let poison_count = u64::try_from(poison_count)
+            .map_err(|_| io::Error::other("source poison count exceeds u64"))?;
+        if source_counter_missing_total != missing_total {
+            return Err(io::Error::other(
+                "source counter missing total differs from atomic breakdown",
+            ));
+        }
+        let registry_total = registry.checked_pending_total()?;
+        if registry_total != registry.pending_total {
+            return Err(io::Error::other(
+                "registry pending total differs from seven-component snapshot",
+            ));
+        }
+
+        let source_cutoff_hash =
+            source.cutoff.as_ref().map(|cutoff| Self::hex(cutoff.record_hash.as_slice()));
+        let blink_cutoff_hash = owner.cutoff.as_ref().map(|cutoff| Self::hex(&cutoff.record_hash));
+        let cutoff_hash = self
+            .cutoff_inner
+            .as_ref()
+            .and_then(|value| value.get("recordHash"))
+            .and_then(JsonValue::as_str)
+            .map(ToOwned::to_owned);
+        let open_file_count = terminal.then(|| self.open_file_count()).transpose()?;
+        if terminal {
+            let expected_cutoff = cutoff_hash
+                .as_deref()
+                .ok_or_else(|| io::Error::other("terminal accounting cutoff record is absent"))?;
+            if source_cutoff_hash.as_deref() != Some(expected_cutoff)
+                || blink_cutoff_hash.as_deref() != Some(expected_cutoff)
+            {
+                return Err(io::Error::other("independent source/Blink cutoff witnesses differ"));
+            }
+            let source_cutoff = source.cutoff.as_ref().expect("checked source cutoff");
+            let blink_cutoff = owner.cutoff.as_ref().expect("checked Blink cutoff");
+            let candidate_count =
+                self.ledgers.get("candidate").map_or(0, |ledger| ledger.durable_next_sequence);
+            if !self.data_sealed
+                || !self.periodic_cadence_closed
+                || source.revision.is_none()
+                || !registry.measurement_closed
+                || registry_total != 0
+                || owner.queues != EdgeQueueAccountingSnapshotV1::default()
+                || owner.blink.generation_pending != 0
+                || owner.blink.selected_pending != 0
+                || event_pending_ack != 0
+                || open_file_count != Some(0)
+                || self.has_unsealed_data_records()
+                || !self.registry_pending.is_empty()
+                || !self.source_sequence_by_ledger.is_empty()
+                || !self.source_durable.is_empty()
+                || !self.candidate_durable.is_empty()
+                || !self.candidate_joins.is_empty()
+                || !self.candidate_join_exclusions.is_empty()
+                || self.candidate_validated_count != candidate_count
+                || authority_wire_terminal_count != wire_count
+                || owner.candidate_bounds.count != candidate_count
+                || owner.candidate_bounds.last_sequence != candidate_count.checked_sub(1)
+                || source_cutoff.last_candidate_sequence != blink_cutoff.last_candidate_sequence
+                || owner.candidate_bounds.last_sequence.map_or(
+                    owner.candidate_bounds.count != 0 || source_cutoff.last_candidate_sequence != 0,
+                    |last| last != source_cutoff.last_candidate_sequence,
+                )
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "terminal accounting raw drain/endpoints are not closed",
+                ));
+            }
+        } else if snapshot_kind == "startup"
+            && (source_cutoff_hash.is_some()
+                || blink_cutoff_hash.is_some()
+                || cutoff_hash.is_some())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "startup accounting raced source cutoff",
+            ));
+        } else if snapshot_kind == "periodic" {
+            match (
+                source_cutoff_hash.as_deref(),
+                blink_cutoff_hash.as_deref(),
+                cutoff_hash.as_deref(),
+            ) {
+                (None, None, None) => {}
+                (Some(source), Some(blink), Some(writer))
+                    if source == blink && source == writer => {}
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "periodic accounting cutoff snapshots are not one stable witness",
+                    ));
+                }
+            }
+        }
+
+        let cutoff_witnesses = Self::exact_object(
+            EDGE_CUTOFF_WITNESS_KEYS_V1,
+            [
+                (
+                    "sourceCutoffRecordHash",
+                    source_cutoff_hash.map_or(JsonValue::Null, JsonValue::String),
+                ),
+                (
+                    "blinkCutoffRecordHash",
+                    blink_cutoff_hash.map_or(JsonValue::Null, JsonValue::String),
+                ),
+            ],
+        )?;
+        let drain_status = if terminal {
+            let authority_open_file_count = open_file_count
+                .ok_or_else(|| io::Error::other("terminal open-file count unavailable"))?;
+            Some(Self::exact_object(
+                EDGE_DRAIN_STATUS_KEYS_V1,
+                [
+                    (
+                        "authorityOpenFileCount",
+                        JsonValue::String(authority_open_file_count.to_string()),
+                    ),
+                    ("dataSealed", JsonValue::Bool(self.data_sealed)),
+                    ("pendingPeriodicSnapshot", JsonValue::Bool(false)),
+                    ("periodicCadenceClosed", JsonValue::Bool(self.periodic_cadence_closed)),
+                    (
+                        "producerQueuesDrained",
+                        JsonValue::Bool(owner.queues == EdgeQueueAccountingSnapshotV1::default()),
+                    ),
+                    ("registryClosed", JsonValue::Bool(registry.measurement_closed)),
+                    ("registryPendingTotal", JsonValue::String(registry_total.to_string())),
+                    (
+                        "schemaVersion",
+                        JsonValue::String("edge-producer-drain-status/v1".to_owned()),
+                    ),
+                    ("sourceFenceInstalled", JsonValue::Bool(source.revision.is_some())),
+                    ("terminationPhase", JsonValue::String("terminal-accounting-only".to_owned())),
+                    (
+                        "unsealedDataBatchCount",
+                        JsonValue::String(u64::from(self.has_unsealed_data_records()).to_string()),
+                    ),
+                ],
+            )?)
+        } else {
+            None
+        };
+        if let Some(status) = &drain_status {
+            Self::validate_terminal_drain_status(status)?;
+        }
+        let blink = &owner.blink;
+        let candidate_drop = &owner.candidate_drops;
+        let blink_reject = &owner.blink_reject_loss;
+        let candidate_loss = &owner.candidate_drop_loss;
+        let ledger_endpoints = terminal.then(|| self.ledger_endpoints()).transpose()?;
+        if terminal {
+            BlinkMeasurementLedgerV1::verify_snapshot(&owner.blink).map_err(io::Error::other)?;
+        }
+        let source_counters = Self::decimal_map(
+            EDGE_SOURCE_COUNTER_KEYS_V1,
+            [
+                ("wireCount", wire_count),
+                ("sourceGenerationCount", source_generation_count),
+                ("payloadFirstCount", payload_first_count),
+                ("connectionCount", connection_count),
+                ("processorTerminalCount", processor_terminal_count),
+                ("authorityWireTerminalCount", authority_wire_terminal_count),
+                ("eventPendingAck", event_pending_ack),
+                ("poisonCount", poison_count),
+                ("missingEvidenceCount", missing_total),
+            ],
+        )?;
+        let blink_accounting = Self::exact_object(
+            EDGE_BLINK_ACCOUNTING_KEYS_V1,
+            [
+                (
+                    "victimIngressObserved",
+                    JsonValue::String(blink.victim_ingress_observed.to_string()),
+                ),
+                (
+                    "victimIngressAccepted",
+                    JsonValue::String(blink.victim_ingress_accepted.to_string()),
+                ),
+                ("slotAccepted", JsonValue::String(blink.slot_accepted.to_string())),
+                ("slotReplaced", JsonValue::String(blink.slot_replaced.to_string())),
+                ("slotClosed", JsonValue::String(blink.slot_closed.to_string())),
+                ("generationOverflow", JsonValue::String(blink.generation_overflow.to_string())),
+                ("admittedGenerations", JsonValue::String(blink.admitted_generations.to_string())),
+                ("processedTerminal", JsonValue::String(blink.processed_terminal.to_string())),
+                ("replacedBeforeFrame", JsonValue::String(blink.replaced_before_frame.to_string())),
+                (
+                    "cancelledBeforeFrame",
+                    JsonValue::String(blink.cancelled_before_frame.to_string()),
+                ),
+                (
+                    "selectedDtoBuiltPreterminal",
+                    JsonValue::String(blink.selected_dto_built_preterminal.to_string()),
+                ),
+                (
+                    "selectedDtoCommitted",
+                    JsonValue::String(blink.selected_dto_committed.to_string()),
+                ),
+                (
+                    "selectedDtoCancelledBeforeTerminal",
+                    JsonValue::String(blink.selected_dto_cancelled_before_terminal.to_string()),
+                ),
+                (
+                    "selectedDtoPreterminalFailure",
+                    JsonValue::String(blink.selected_dto_preterminal_failure.to_string()),
+                ),
+                ("generationPending", JsonValue::String(blink.generation_pending.to_string())),
+                ("selectedPending", JsonValue::String(blink.selected_pending.to_string())),
+                ("poisoned", JsonValue::Bool(blink.poisoned)),
+            ],
+        )?;
+        let blink_queues = Self::decimal_map(
+            EDGE_BLINK_QUEUE_KEYS_V1,
+            [
+                ("pendingRecords", owner.queues.pending_records),
+                ("pendingCandidates", owner.queues.pending_candidates),
+                ("stagedCount", owner.queues.staged_count),
+            ],
+        )?;
+        let candidate_bounds = Self::exact_object(
+            EDGE_CANDIDATE_BOUND_KEYS_V1,
+            [
+                ("count", JsonValue::String(owner.candidate_bounds.count.to_string())),
+                (
+                    "lastSequence",
+                    owner
+                        .candidate_bounds
+                        .last_sequence
+                        .map(|value| JsonValue::String(value.to_string()))
+                        .unwrap_or(JsonValue::Null),
+                ),
+            ],
+        )?;
+        let pending_registry = Self::decimal_map(
+            EDGE_PENDING_REGISTRY_KEYS_V1,
+            [
+                ("coverageAck", registry.pending[0]),
+                ("delivery", registry.pending[1]),
+                ("primary", registry.pending[2]),
+                ("published", registry.pending[3]),
+                ("secondary", registry.pending[4]),
+                ("unregisteredSendInflight", registry.pending[5]),
+                ("sequenceLessRegistrationSendInflight", registry.pending[6]),
+            ],
+        )?;
+        let pending_breakdown = Self::exact_object(
+            EDGE_PENDING_BREAKDOWN_KEYS_V1,
+            [
+                ("registry", pending_registry),
+                ("registryTotal", JsonValue::String(registry_total.to_string())),
+            ],
+        )?;
+        let accounting = json!({
+            "schemaVersion": "edge-producer-accounting-snapshot/v1",
+            "snapshotKind": snapshot_kind,
+            "sampledMonoNs": self.elapsed_mono_ns()?.to_string(),
+            "producerEpoch": self.owner.producer_epoch().to_string(),
+            "cutoffRecordHash": cutoff_hash,
+            "sourceMissingEvidenceCounts": source_missing,
+            "registryTerminalExclusionCounts": Self::decimal_map(
+                EDGE_REGISTRY_EXCLUSION_KEYS_V1,
+                [
+                    ("registrationCapacityMissing", registry.registration_capacity_missing),
+                    ("terminalRecordAllocationMissing", registry.terminal_record_allocation_missing),
+                    ("terminalRecordCapacityMissing", registry.terminal_record_capacity_missing),
+                ],
+            )?,
+            "blinkRejectQueueLossCounts": Self::decimal_map(
+                EDGE_BLINK_REJECT_LOSS_KEYS_V1,
+                [
+                    ("queueClosed", blink_reject.queue_closed),
+                    ("queueFull", blink_reject.queue_full),
+                ],
+            )?,
+            "candidatePreEnqueueDropCounts": Self::decimal_map(
+                EDGE_CANDIDATE_PRE_ENQUEUE_KEYS_V1,
+                [
+                    ("cancelledAfterDraft", candidate_drop.cancelled_after_draft),
+                    ("candidateQueueClosed", candidate_drop.candidate_queue_closed),
+                    ("candidateQueueFull", candidate_drop.candidate_queue_full),
+                    ("cutoffDrainDeadline", candidate_drop.cutoff_drain_deadline),
+                    ("evidenceMismatch", candidate_drop.evidence_mismatch),
+                    ("failedAfterDraft", candidate_drop.failed_after_draft),
+                    (
+                        "measurementDerivationRejected",
+                        candidate_drop.measurement_derivation_rejected,
+                    ),
+                    ("missingRequiredEvidence", candidate_drop.missing_required_evidence),
+                    ("staleAfterDraft", candidate_drop.stale_after_draft),
+                ],
+            )?,
+            "candidateDropQueueLossCounts": Self::decimal_map(
+                EDGE_CANDIDATE_DROP_LOSS_KEYS_V1,
+                [
+                    ("queueClosed", candidate_loss.queue_closed),
+                    ("queueFull", candidate_loss.queue_full),
+                ],
+            )?,
+            "coordinatorMissingEvidenceCounts": coordinator_missing,
+            "coordinatorFailureCount": coordinator_total.to_string(),
+            "producerVetoReasons": [],
+            "nonAuthoritySendCount": registry.non_authority_send_count.to_string(),
+            "sourceCounters": source_counters,
+            "blinkAccounting": blink_accounting,
+            "blinkQueues": blink_queues,
+            "candidateBounds": candidate_bounds,
+            "cutoffWitnesses": cutoff_witnesses,
+            "pendingBreakdown": pending_breakdown,
+            "poisoned": poison_count != 0 || registry.poisoned || blink.poisoned || owner.poisoned,
+            "drainStatus": drain_status,
+            "ledgerEndpoints": ledger_endpoints,
+            "operationalIncidentSummary": self.incidents.value()?,
+        });
+        let object = accounting
+            .as_object()
+            .ok_or_else(|| io::Error::other("accounting snapshot must be object"))?;
+        if object.len() != EDGE_ACCOUNTING_TOP_LEVEL_ORDER_V1.len()
+            || EDGE_ACCOUNTING_TOP_LEVEL_ORDER_V1.iter().any(|key| !object.contains_key(*key))
+        {
+            return Err(io::Error::other("accounting top-level inventory mismatch"));
+        }
+        let source_revision_after = self
+            .source_accounting_snapshot(terminal)?
+            .revision
+            .ok_or_else(|| io::Error::other("source accounting recheck revision is absent"))?;
+        let owner_after = self.blink_accounting_snapshot(terminal)?;
+        if terminal {
+            BlinkMeasurementLedgerV1::verify_snapshot(&owner_after.blink)
+                .map_err(io::Error::other)?;
+        }
+        if source_revision != source_revision_after || owner_revision != owner_after.revision {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "accounting authority changed during revision recheck",
+            ));
+        }
+        Ok(accounting)
+    }
+
+    fn write_accounting_value(&mut self, kind: &str, value: JsonValue) -> io::Result<()> {
+        let state = match kind {
+            "startup" => "AccountingStartup",
+            "periodic" => "AccountingPeriodic",
+            "terminal" => "AccountingTerminal",
+            _ => return Err(io::Error::other("unknown accounting snapshot kind")),
+        };
+        self.push_rolling_record(
+            "accounting",
+            "edge-producer-accounting-snapshot/v1",
+            state,
+            value,
+        )?;
+        self.flush_rolling_ledger("accounting")?;
+        Ok(())
+    }
+
+    fn write_accounting_snapshot(&mut self, kind: &str, terminal: bool) -> io::Result<()> {
+        self.deadline_cancellation.check()?;
+        let value = self.accounting_value(kind, terminal)?;
+        self.write_accounting_value(kind, value)
+    }
+
+    fn write_periodic_accounting(&mut self) -> io::Result<()> {
+        let scheduled_ns = self
+            .incidents
+            .accounting_periodic_write_failed
+            .active_identity
+            .as_deref()
+            .and_then(|identity| identity.split('|').nth(1))
+            .and_then(|value| value.parse::<u64>().ok())
+            .map_or_else(
+                || {
+                    u64::try_from(
+                        self.next_periodic_at.saturating_duration_since(self.started_at).as_nanos(),
+                    )
+                    .map_err(|_| io::Error::other("periodic schedule overflow"))
+                },
+                Ok,
+            )?;
+        let snapshot_state = self.accounting_value("periodic", false)?;
+        let snapshot_state_sha =
+            Self::sha256_hex(&EdgeContractCanonicalJsonV1::canonicalize(&snapshot_state)?);
+        let pending_state_sha =
+            self.incidents.accounting_periodic_write_failed.active_identity.as_deref().and_then(
+                |identity| {
+                    let mut fields = identity.split('|');
+                    match (fields.next(), fields.next(), fields.next(), fields.next()) {
+                        (Some("periodic"), Some(_), Some(digest), None) if digest.len() == 64 => {
+                            Some(digest.to_owned())
+                        }
+                        _ => None,
+                    }
+                },
+            );
+        let result = if self
+            .ledgers
+            .get("accounting")
+            .is_some_and(|ledger| ledger.pending_publication.is_some())
+        {
+            self.flush_rolling_ledger("accounting").map(|_| ())
+        } else {
+            self.write_accounting_value("periodic", snapshot_state)
+        };
+        match result {
+            Ok(()) => {
+                let recovered_ns = self.elapsed_mono_ns()?;
+                let incident = &mut self.incidents.accounting_periodic_write_failed;
+                if incident.recovered_count < incident.count {
+                    let outstanding = incident
+                        .count
+                        .checked_sub(incident.recovered_count)
+                        .ok_or_else(|| io::Error::other("periodic recovery count underflow"))?;
+                    incident.recovered_count = incident.count;
+                    if incident.count == 1 && outstanding == 1 {
+                        let failed_ns = incident
+                            .first_failed_mono_ns
+                            .ok_or_else(|| io::Error::other("periodic failure time missing"))?;
+                        let incident_id = incident.active_identity.clone().ok_or_else(|| {
+                            io::Error::other("periodic incident identity missing")
+                        })?;
+                        let mut identity_fields = incident_id.split('|');
+                        let identity_kind = identity_fields.next();
+                        let incident_scheduled_ns = identity_fields
+                            .next()
+                            .and_then(|value| value.parse::<u64>().ok())
+                            .ok_or_else(|| {
+                                io::Error::other("periodic scheduled time missing from identity")
+                            })?;
+                        let incident_pre_state_sha = identity_fields
+                            .next()
+                            .filter(|digest| digest.len() == 64)
+                            .ok_or_else(|| io::Error::other("periodic pre-state digest missing"))?;
+                        if identity_kind != Some("periodic") || identity_fields.next().is_some() {
+                            return Err(io::Error::other("periodic incident identity malformed"));
+                        }
+                        incident.single_recovery_witness = Some(Self::single_recovery_witness([
+                            JsonValue::String(incident_id.clone()),
+                            JsonValue::Null,
+                            JsonValue::String(incident_scheduled_ns.to_string()),
+                            JsonValue::String(failed_ns.to_string()),
+                            JsonValue::String(
+                                incident
+                                    .last_failed_mono_ns
+                                    .ok_or_else(|| {
+                                        io::Error::other("periodic last-attempt time missing")
+                                    })?
+                                    .to_string(),
+                            ),
+                            JsonValue::String(recovered_ns.to_string()),
+                            JsonValue::String(incident.attempt_count.to_string()),
+                            JsonValue::String(incident_pre_state_sha.to_owned()),
+                            JsonValue::String(
+                                pending_state_sha
+                                    .as_deref()
+                                    .unwrap_or(snapshot_state_sha.as_str())
+                                    .to_owned(),
+                            ),
+                            JsonValue::Null,
+                            JsonValue::Null,
+                        ])?);
+                    }
+                    incident.active_identity = None;
+                    incident.attempt_count = 0;
+                }
+                Ok(())
+            }
+            Err(error) => {
+                if EdgeWriterFailureClassV1::classify(&error)
+                    == EdgeWriterFailureClassV1::StructuralInvalid
+                {
+                    return Err(error);
+                }
+                let now = self.elapsed_mono_ns()?;
+                let incident = &mut self.incidents.accounting_periodic_write_failed;
+                let identity = format!(
+                    "periodic|{scheduled_ns}|{}",
+                    pending_state_sha.as_deref().unwrap_or(snapshot_state_sha.as_str())
+                );
+                let opened = if incident.active_identity.as_deref() != Some(identity.as_str()) {
+                    incident.count = incident
+                        .count
+                        .checked_add(1)
+                        .ok_or_else(|| io::Error::other("periodic incident count overflow"))?;
+                    incident.active_identity = Some(identity);
+                    incident.attempt_count = 0;
+                    true
+                } else {
+                    false
+                };
+                incident.attempt_count = incident
+                    .attempt_count
+                    .checked_add(1)
+                    .ok_or_else(|| io::Error::other("periodic attempt count overflow"))?;
+                incident.first_failed_mono_ns.get_or_insert(now);
+                incident.last_failed_mono_ns = Some(now);
+                if opened {
+                    self.recorder.latch_coordinator_failure("AccountingPeriodicWriteFailed");
+                }
+                if let Some(sink) = &self.oob_sink {
+                    let _ = sink.record("writer", "AccountingPeriodicWriteFailed", None);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn open_file_count(&self) -> io::Result<usize> {
+        let mut count = 0_usize;
+        for entry in fs::read_dir(&self.directory)? {
+            if entry?.file_name().as_bytes().ends_with(b".open") {
+                count = count
+                    .checked_add(1)
+                    .ok_or_else(|| io::Error::other("open file count overflow"))?;
+            }
+        }
+        Ok(count)
+    }
+    fn terminal_accounting_revisions(&self) -> io::Result<([u64; 16], [u64; 36])> {
+        let source = self.source_accounting_snapshot(true)?;
+        let source_revision = source
+            .revision
+            .ok_or_else(|| io::Error::other("terminal source revision is absent"))?;
+        if source_revision[11] != source.registry.revision {
+            return Err(io::Error::other(
+                "terminal source and registry revisions are not from one snapshot",
+            ));
+        }
+        let owner = self.blink_accounting_snapshot(true)?;
+        Ok((source_revision, owner.revision))
+    }
+
+    fn terminal_accounting_snapshot_stable(
+        revisions_before: &([u64; 16], [u64; 36]),
+        before: &JsonValue,
+        after: &JsonValue,
+        revisions_after: &([u64; 16], [u64; 36]),
+    ) -> bool {
+        const STABLE_FIELDS: [&str; 12] = [
+            "sourceMissingEvidenceCounts",
+            "registryTerminalExclusionCounts",
+            "blinkRejectQueueLossCounts",
+            "candidatePreEnqueueDropCounts",
+            "candidateDropQueueLossCounts",
+            "coordinatorMissingEvidenceCounts",
+            "sourceCounters",
+            "blinkAccounting",
+            "blinkQueues",
+            "candidateBounds",
+            "pendingBreakdown",
+            "poisoned",
+        ];
+        revisions_before == revisions_after
+            && STABLE_FIELDS.iter().all(|field| before.get(*field) == after.get(*field))
+    }
+    fn has_pending_non_terminal_accounting(&self) -> bool {
+        self.ledgers.get("accounting").is_some_and(|ledger| {
+            (!ledger.records.is_empty() || ledger.pending_publication.is_some())
+                && !Self::accounting_terminal_authority_is_last(ledger)
+        })
+    }
+
+    fn retry_terminal_accounting(&mut self) -> io::Result<()> {
+        if self.terminal_publication_phase != EdgeTerminalPublicationPhaseV1::RetryTerminal {
+            return Err(io::Error::other("terminal publication retry phase is not active"));
+        }
+        if self.has_pending_non_terminal_accounting() {
+            self.write_periodic_accounting()?;
+        }
+        let cadence_closed_before = self.periodic_cadence_closed;
+        let data_sealed_before = self.data_sealed;
+        match self.write_terminal_accounting() {
+            Ok(()) => {
+                self.terminal_publication_phase = EdgeTerminalPublicationPhaseV1::Complete;
+                Ok(())
+            }
+            Err(error) => {
+                if EdgeWriterFailureClassV1::classify(&error)
+                    == EdgeWriterFailureClassV1::RetryablePrePublicationIo
+                {
+                    let pending_terminal = self
+                        .ledgers
+                        .get("accounting")
+                        .is_some_and(Self::accounting_terminal_authority_is_last);
+                    if pending_terminal {
+                        self.periodic_cadence_closed = true;
+                        self.data_sealed = true;
+                    } else {
+                        self.periodic_cadence_closed = cadence_closed_before;
+                        self.data_sealed = data_sealed_before;
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn accounting_terminal_authority_is_last(ledger: &EdgeRollingLedgerV1) -> bool {
+        ledger.records.last().and_then(|record| record.get("state")).and_then(JsonValue::as_str)
+            == Some("AccountingTerminal")
+    }
+
+    fn write_terminal_accounting(&mut self) -> io::Result<()> {
+        self.deadline_cancellation.check()?;
+        if self.finalized {
+            return Ok(());
+        }
+        self.periodic_cadence_closed = true;
+        let pending_terminal =
+            self.ledgers.get("accounting").is_some_and(Self::accounting_terminal_authority_is_last);
+        let accounting_buffered = self.ledgers.get("accounting").is_some_and(|ledger| {
+            !ledger.records.is_empty() || ledger.pending_publication.is_some()
+        });
+        if accounting_buffered && !pending_terminal {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "failed periodic accounting remains pending until its next scheduled cadence",
+            ));
+        }
+        if accounting_buffered {
+            self.deadline_cancellation.check()?;
+            self.flush_rolling_ledger("accounting")?;
+            self.deadline_cancellation.check()?;
+            if pending_terminal {
+                self.finalized = true;
+                self.termination_guard = true;
+                return Ok(());
+            }
+        }
+        let names = self.ledgers.keys().copied().collect::<Vec<_>>();
+        for name in names {
+            if name != "accounting" {
+                self.flush_rolling_ledger(name)?;
+            }
+        }
+        if !self.cutoff_batches_flushed
+            || self.has_unsealed_data_records()
+            || self.open_file_count()? != 0
+            || !self.registry_pending.is_empty()
+            || !self.source_sequence_by_ledger.is_empty()
+            || !self.source_durable.is_empty()
+            || !self.candidate_durable.is_empty()
+            || !self.candidate_joins.is_empty()
+            || !self.candidate_join_exclusions.is_empty()
+            || self.candidate_validated_count
+                != self.ledgers.get("candidate").map_or(0, |ledger| ledger.durable_next_sequence)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "terminal accounting drain predicates are not closed",
+            ));
+        }
+        self.deadline_cancellation.check()?;
+        self.data_sealed = true;
+        let stable_snapshot = (|| {
+            let revisions_before = self.terminal_accounting_revisions()?;
+            let before = self.accounting_value("terminal", true)?;
+            #[cfg(test)]
+            if self.terminal_snapshot_revision_fault {
+                self.terminal_snapshot_revision_fault = false;
+                self.recorder.latch_coordinator_failure("TerminalMixedRevisionRace");
+            }
+            let after = self.accounting_value("terminal", true)?;
+            let revisions_after = self.terminal_accounting_revisions()?;
+            Ok::<_, io::Error>((revisions_before, before, after, revisions_after))
+        })();
+        let (revisions_before, before, after, revisions_after) = match stable_snapshot {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                self.data_sealed = false;
+                return Err(error);
+            }
+        };
+        if !Self::terminal_accounting_snapshot_stable(
+            &revisions_before,
+            &before,
+            &after,
+            &revisions_after,
+        ) {
+            self.data_sealed = false;
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "terminal accounting revision changed during seal",
+            ));
+        }
+        self.write_accounting_snapshot("terminal", true)?;
+        self.deadline_cancellation.check()?;
+        self.finalized = true;
+        self.termination_guard = true;
+        Ok(())
+    }
+    fn validate_canonical_artifact(bytes: &[u8]) -> io::Result<()> {
+        if bytes.is_empty() || !bytes.ends_with(b"\n") {
+            return Err(io::Error::other("canonical artifact trailing bytes"));
+        }
+        let mut start = 0;
+        for end in
+            bytes.iter().enumerate().filter_map(|(index, byte)| (*byte == b'\n').then_some(index))
+        {
+            if end == start {
+                return Err(io::Error::other("canonical artifact empty line"));
+            }
+            let value: JsonValue =
+                serde_json::from_slice(&bytes[start..end]).map_err(io::Error::other)?;
+            if Self::canonical_line(&value)?.as_slice() != &bytes[start..=end] {
+                return Err(io::Error::other("canonical artifact replay drift"));
+            }
+            start = end + 1;
+        }
+        if start != bytes.len() {
+            return Err(io::Error::other("canonical artifact unterminated line"));
+        }
+        Ok(())
+    }
+
+    fn canonical_line(value: &JsonValue) -> io::Result<Vec<u8>> {
+        let mut bytes = Self::canonical_bytes(value)?;
+        bytes.push(b'\n');
+        Ok(bytes)
+    }
+
+    fn canonical_bytes(value: &JsonValue) -> io::Result<Vec<u8>> {
+        fn write_value(value: &JsonValue, output: &mut String) -> io::Result<()> {
+            match value {
+                JsonValue::Null => output.push_str("null"),
+                JsonValue::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
+                JsonValue::String(value) => {
+                    output.push_str(&serde_json::to_string(value).map_err(io::Error::other)?)
+                }
+                JsonValue::Array(values) => {
+                    output.push('[');
+                    for (index, value) in values.iter().enumerate() {
+                        if index != 0 {
+                            output.push(',');
+                        }
+                        write_value(value, output)?;
+                    }
+                    output.push(']');
+                }
+                JsonValue::Object(values) => {
+                    output.push('{');
+                    let mut entries: Vec<_> = values.iter().collect();
+                    entries
+                        .sort_unstable_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+                    for (index, (key, value)) in entries.into_iter().enumerate() {
+                        if index != 0 {
+                            output.push(',');
+                        }
+                        output.push_str(&serde_json::to_string(key).map_err(io::Error::other)?);
+                        output.push(':');
+                        write_value(value, output)?;
+                    }
+                    output.push('}');
+                }
+                JsonValue::Number(_) => {
+                    return Err(io::Error::other("numeric JSON authority value is forbidden"));
+                }
+            }
+            Ok(())
+        }
+        let mut output = String::new();
+        write_value(value, &mut output)?;
+        Ok(output.into_bytes())
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        Self::hex(&EdgeMeasurementDurabilityV1::sha256(bytes))
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut output = String::with_capacity(bytes.len() * 2);
+        for byte in bytes {
+            output.push(char::from(HEX[usize::from(byte >> 4)]));
+            output.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+        output
+    }
+}
 
 // B5-1a dormant-preparation tier: a private default-off child compiled only under
 // `b5-dormant-presign`, never registered or re-exported at the crate root.
@@ -161,6 +6732,8 @@ struct PendingSnapshotRecord {
     view: Arc<dyn PendingSnapshotView + Send + Sync>,
     pending: Arc<PendingBlocks>,
     received_at: Instant,
+    #[cfg(feature = "edge-measurement")]
+    edge_evidence: RwLock<Option<EdgeSnapshotEvidenceV1>>,
 }
 
 #[derive(Debug)]
@@ -182,13 +6755,69 @@ impl<Provider> CliTraderSnapshotPort<Provider> {
     ) {
         let view: Arc<dyn PendingSnapshotView + Send + Sync> =
             Arc::new(PendingSnapshotViewAdapter { pending: Arc::clone(&pending) });
-        let record = Arc::new(PendingSnapshotRecord { view, pending, received_at });
+        let record = Arc::new(PendingSnapshotRecord {
+            view,
+            pending,
+            received_at,
+            #[cfg(feature = "edge-measurement")]
+            edge_evidence: RwLock::new(None),
+        });
         *self.current_record.write().unwrap_or_else(|poisoned| poisoned.into_inner()) =
             Some(record);
     }
 
     fn current_record(&self) -> Option<Arc<PendingSnapshotRecord>> {
         self.current_record.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+    }
+    #[cfg(feature = "edge-measurement")]
+    fn attach_edge_snapshot_evidence(
+        &self,
+        pending: &Arc<PendingBlocks>,
+        evidence: EdgeSnapshotEvidenceV1,
+    ) -> Result<(), &'static str> {
+        let record = self.current_record().ok_or("MissingSnapshotRecord")?;
+        if !Arc::ptr_eq(&record.pending, pending) {
+            return Err("PendingSnapshotBindingConflict");
+        }
+        let mut installed =
+            record.edge_evidence.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if installed.replace(evidence).is_some() {
+            return Err("DuplicateSnapshotEvidence");
+        }
+        Ok(())
+    }
+    #[cfg(feature = "edge-measurement")]
+    fn finish_edge_registry_received(
+        &self,
+        pending: &Arc<PendingBlocks>,
+        metadata: Option<base_flashblocks::PendingSnapshotMetadataV2>,
+    ) -> Result<(), &'static str> {
+        let Some(metadata) = metadata else {
+            return Ok(());
+        };
+        let recorder = EdgeMeasurementGlobal::installed().ok_or("EdgeRecorderUninstalled")?;
+        let (metadata, payload_first, processor, connection, registry_terminal) =
+            recorder.snapshot_evidence(metadata).ok_or("MissingRequiredSnapshotEvidence")?;
+        let registry_terminal_record_hash = B256::new(EdgeMeasurementDurabilityV1::sha256(
+            &EdgeCanonicalWriterV1::canonical_bytes(&EdgeCanonicalWriterV1::registry_h2_value(
+                registry_terminal,
+            ))
+            .map_err(|_| "RegistryTerminalCanonicalizationFailed")?,
+        ));
+        self.attach_edge_snapshot_evidence(
+            pending,
+            EdgeSnapshotEvidenceV1 {
+                source_generation: processor.source_generation,
+                pending_snapshot_sequence: metadata.identity.pending_snapshot_sequence,
+                coverage_sequence: registry_terminal.coverage_sequence,
+                payload_first_record_sequence: payload_first.record_sequence,
+                payload_first_record_hash: payload_first.record_hash,
+                structural_terminal_hash: processor.structural_terminal_hash,
+                connection_sequence: connection.connection_sequence,
+                connection_record_hash: connection.record_hash,
+                registry_terminal_record_hash,
+            },
+        )
     }
 
     fn record_is_current(&self, record: &PendingSnapshotRecord) -> bool {
@@ -215,6 +6844,24 @@ where
         if !self.record_is_current(&record) {
             return Ok(None);
         }
+        #[cfg(feature = "edge-measurement")]
+        {
+            let evidence =
+                *record.edge_evidence.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            evidence.map_or_else(
+                || factory.issue(Arc::clone(&record.view), record.received_at).map(Some),
+                |evidence| {
+                    factory
+                        .issue_with_edge_evidence(
+                            Arc::clone(&record.view),
+                            record.received_at,
+                            evidence,
+                        )
+                        .map(Some)
+                },
+            )
+        }
+        #[cfg(not(feature = "edge-measurement"))]
         factory.issue(Arc::clone(&record.view), record.received_at).map(Some)
     }
 
@@ -236,6 +6883,1497 @@ where
         Ok(Sealed::new_unchecked(header.clone_header(), header.hash()))
     }
 }
+#[cfg(feature = "edge-measurement")]
+/// Stage at which durable producer-epoch allocation failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdgeEpochAllocationStageV1 {
+    /// Existing epoch directories were scanned.
+    Scan,
+    /// The allocation lock was acquired.
+    Lock,
+    /// The epoch directory was created.
+    Mkdir,
+    /// The campaign root directory was synchronized.
+    RootFsync,
+    /// The epoch sequence could not be incremented.
+    Overflow,
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Failure produced while allocating a durable producer epoch.
+#[derive(Debug)]
+pub struct EdgeEpochAllocationErrorV1 {
+    stage: EdgeEpochAllocationStageV1,
+    source: io::Error,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl std::fmt::Display for EdgeEpochAllocationErrorV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "EpochAllocationFailed:{:?}:{}", self.stage, self.source)
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Successfully allocated producer epoch and pinned output root.
+#[derive(Debug)]
+pub struct EdgeEpochAllocationV1 {
+    epoch: NonZeroU64,
+    root: PathBuf,
+    root_handle: Arc<File>,
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Allocates monotonically increasing producer epoch roots.
+#[derive(Debug)]
+pub struct EdgeEpochAllocatorV1;
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeEpochAllocatorV1 {
+    const LOCK_EX: i32 = 2;
+    const LOCK_NB: i32 = 4;
+    const LINUX_O_DIRECTORY: i32 = 0o200_000;
+    const LINUX_O_NOFOLLOW: i32 = 0o400_000;
+    const LINUX_O_CLOEXEC: i32 = 0o2_000_000;
+
+    fn error(stage: EdgeEpochAllocationStageV1, source: io::Error) -> EdgeEpochAllocationErrorV1 {
+        EdgeEpochAllocationErrorV1 { stage, source }
+    }
+
+    fn parse_epoch_basename(name: &OsStr) -> Result<u64, EdgeEpochAllocationErrorV1> {
+        let bytes = name.as_bytes();
+        let decimal = bytes.strip_prefix(b"epoch-").ok_or_else(|| {
+            Self::error(
+                EdgeEpochAllocationStageV1::Scan,
+                io::Error::other("entry is not an epoch directory"),
+            )
+        })?;
+        if decimal.len() != 20 || !decimal.iter().all(u8::is_ascii_digit) {
+            return Err(Self::error(
+                EdgeEpochAllocationStageV1::Scan,
+                io::Error::other("epoch directory must match epoch-[0-9]{20}"),
+            ));
+        }
+        let text = std::str::from_utf8(decimal).map_err(|error| {
+            Self::error(
+                EdgeEpochAllocationStageV1::Scan,
+                io::Error::new(io::ErrorKind::InvalidData, error),
+            )
+        })?;
+        text.parse::<u64>().map_err(|error| {
+            Self::error(
+                EdgeEpochAllocationStageV1::Scan,
+                io::Error::new(io::ErrorKind::InvalidData, error),
+            )
+        })
+    }
+
+    fn scan(root: &Path) -> Result<Option<u64>, EdgeEpochAllocationErrorV1> {
+        let entries = fs::read_dir(root)
+            .map_err(|error| Self::error(EdgeEpochAllocationStageV1::Scan, error))?;
+        let mut maximum = None;
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| Self::error(EdgeEpochAllocationStageV1::Scan, error))?;
+            let epoch = Self::parse_epoch_basename(&entry.file_name())?;
+            let metadata = fs::symlink_metadata(entry.path())
+                .map_err(|error| Self::error(EdgeEpochAllocationStageV1::Scan, error))?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(Self::error(
+                    EdgeEpochAllocationStageV1::Scan,
+                    io::Error::other("epoch entry is not a non-symlink directory"),
+                ));
+            }
+            maximum = Some(maximum.map_or(epoch, |current: u64| current.max(epoch)));
+        }
+        Ok(maximum)
+    }
+
+    fn next_epoch(
+        maximum: Option<u64>,
+        floor: NonZeroU64,
+    ) -> Result<NonZeroU64, EdgeEpochAllocationErrorV1> {
+        let after_maximum = maximum
+            .map(|epoch| {
+                epoch.checked_add(1).ok_or_else(|| {
+                    Self::error(
+                        EdgeEpochAllocationStageV1::Overflow,
+                        io::Error::other("epoch ordinal overflow"),
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(1);
+        NonZeroU64::new(after_maximum.max(floor.get())).ok_or_else(|| {
+            Self::error(
+                EdgeEpochAllocationStageV1::Overflow,
+                io::Error::other("allocated epoch is zero"),
+            )
+        })
+    }
+
+    fn create_epoch_directory(
+        root: &Path,
+        epoch: NonZeroU64,
+    ) -> Result<PathBuf, EdgeEpochAllocationErrorV1> {
+        let path = root.join(format!("epoch-{:020}", epoch.get()));
+        fs::DirBuilder::new()
+            .recursive(false)
+            .mode(0o700)
+            .create(&path)
+            .map_err(|error| Self::error(EdgeEpochAllocationStageV1::Mkdir, error))?;
+        Ok(path)
+    }
+
+    fn sync_root(root_handle: &File) -> Result<(), EdgeEpochAllocationErrorV1> {
+        root_handle
+            .sync_all()
+            .map_err(|error| Self::error(EdgeEpochAllocationStageV1::RootFsync, error))
+    }
+
+    fn allocate(
+        root: &Path,
+        floor: NonZeroU64,
+    ) -> Result<EdgeEpochAllocationV1, EdgeEpochAllocationErrorV1> {
+        let root_handle = OpenOptions::new()
+            .read(true)
+            .custom_flags(Self::LINUX_O_DIRECTORY | Self::LINUX_O_NOFOLLOW | Self::LINUX_O_CLOEXEC)
+            .open(root)
+            .map_err(|error| Self::error(EdgeEpochAllocationStageV1::Scan, error))?;
+        // SAFETY: `root_handle` owns a valid descriptor for the allocation root for this call.
+        if unsafe { flock(root_handle.as_raw_fd(), Self::LOCK_EX | Self::LOCK_NB) } != 0 {
+            return Err(Self::error(EdgeEpochAllocationStageV1::Lock, io::Error::last_os_error()));
+        }
+        let pinned_root = PathBuf::from(format!("/proc/self/fd/{}", root_handle.as_raw_fd()));
+        let maximum = Self::scan(&pinned_root)?;
+        let epoch = Self::next_epoch(maximum, floor)?;
+        let pinned_epoch_root = Self::create_epoch_directory(&pinned_root, epoch)?;
+        Self::sync_root(&root_handle)?;
+        let epoch_root = root.join(format!("epoch-{:020}", epoch.get()));
+        let epoch_handle = OpenOptions::new()
+            .read(true)
+            .custom_flags(Self::LINUX_O_DIRECTORY | Self::LINUX_O_NOFOLLOW | Self::LINUX_O_CLOEXEC)
+            .open(&pinned_epoch_root)
+            .map_err(|error| Self::error(EdgeEpochAllocationStageV1::Mkdir, error))?;
+        let metadata = epoch_handle
+            .metadata()
+            .map_err(|error| Self::error(EdgeEpochAllocationStageV1::Mkdir, error))?;
+        if !metadata.is_dir() || metadata.mode() & 0o077 != 0 {
+            return Err(Self::error(
+                EdgeEpochAllocationStageV1::Mkdir,
+                io::Error::other("allocated epoch directory identity is invalid"),
+            ));
+        }
+        Ok(EdgeEpochAllocationV1 { epoch, root: epoch_root, root_handle: Arc::new(epoch_handle) })
+    }
+}
+#[cfg(feature = "edge-measurement")]
+#[derive(Debug, Clone)]
+struct EdgeCliProducerConfigV1 {
+    output_root: PathBuf,
+    output_root_handle: Arc<File>,
+    producer_epoch: NonZeroU64,
+    _campaign_control_root_handle: Arc<File>,
+    _consumer_output_root_handle: Arc<File>,
+    producer_digest: B256,
+    reject_schema_digest: B256,
+    prereg_digest: B256,
+    policy_digest: B256,
+    config_digest: B256,
+    owner_approval_receipt_digest: B256,
+    flash_event_capacity: usize,
+    flash_active_capacity: usize,
+    flash_registry_capacity: usize,
+    blink_record_capacity: usize,
+    blink_candidate_capacity: usize,
+    measurement_sender: Address,
+    executor_runtime_hash: B256,
+    v2_adapter: Address,
+    v2_adapter_runtime_hash: B256,
+    v3_adapter: Address,
+    v3_adapter_runtime_hash: B256,
+    aerodrome_adapter: Address,
+    aerodrome_adapter_runtime_hash: B256,
+    g0_code_identity_digest: B256,
+    raw_reject_inventory_sha256: B256,
+    raw_reject_source_sha256: B256,
+    measurement_binding_source_sha256: B256,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl EdgeCliProducerConfigV1 {
+    const MAX_CONFIG_BYTES: u64 = 1_048_576;
+    const MAX_EXTERNAL_ANCHOR_BYTES: u64 = 16 * 1024 * 1024;
+    const LINUX_O_DIRECTORY: i32 = 0o200_000;
+    const LINUX_O_NOFOLLOW: i32 = 0o400_000;
+    const LINUX_O_CLOEXEC: i32 = 0o2_000_000;
+    const SHUTDOWN_MARGIN_RECEIPT_KEYS: [&'static str; 13] = [
+        "schemaVersion",
+        "configuredMaxPendingRegistry",
+        "registryDrainFixtureSha256",
+        "producerBinarySha256",
+        "targetTriple",
+        "runCount",
+        "maxObservedDrainNs",
+        "registryDrainDeadlineNs",
+        "minimumMarginNumerator",
+        "minimumMarginDenominator",
+        "worstCaseShutdownNs",
+        "gracefulTimeoutNs",
+        "result",
+    ];
+
+    fn shutdown_margin_receipt_keys_exact(receipt: &FlatJsonObjectV1) -> bool {
+        receipt.0.len() == Self::SHUTDOWN_MARGIN_RECEIPT_KEYS.len()
+            && !receipt
+                .0
+                .keys()
+                .any(|key| !Self::SHUTDOWN_MARGIN_RECEIPT_KEYS.contains(&key.as_str()))
+            && Self::SHUTDOWN_MARGIN_RECEIPT_KEYS.iter().all(|key| receipt.0.contains_key(*key))
+    }
+    fn flat_protocol_bytes(object: &FlatJsonObjectV1, keys: &[&str]) -> Result<Vec<u8>, String> {
+        let mut output = String::from("{");
+        for (index, key) in keys.iter().enumerate() {
+            if index != 0 {
+                output.push(',');
+            }
+            output.push_str(
+                &serde_json::to_string(key)
+                    .map_err(|error| format!("protocol key encoding failed: {error}"))?,
+            );
+            output.push(':');
+            output.push_str(
+                &serde_json::to_string(&object.string(key)?)
+                    .map_err(|error| format!("protocol value encoding failed: {error}"))?,
+            );
+        }
+        output.push('}');
+        Ok(output.into_bytes())
+    }
+    fn target_triple() -> String {
+        let environment = if cfg!(target_env = "gnu") {
+            "gnu"
+        } else if cfg!(target_env = "musl") {
+            "musl"
+        } else {
+            "unknown"
+        };
+        format!("{}-unknown-{}-{environment}", std::env::consts::ARCH, std::env::consts::OS,)
+    }
+    fn stable_read_metadata_matches(
+        before: &fs::Metadata,
+        after: &fs::Metadata,
+        bytes_len: u64,
+        limit: u64,
+    ) -> bool {
+        bytes_len <= limit
+            && bytes_len == before.len()
+            && before.dev() == after.dev()
+            && before.ino() == after.ino()
+            && before.len() == after.len()
+            && before.mtime() == after.mtime()
+            && before.mtime_nsec() == after.mtime_nsec()
+            && before.ctime() == after.ctime()
+            && before.ctime_nsec() == after.ctime_nsec()
+            && before.mode() == after.mode()
+            && before.uid() == after.uid()
+            && before.gid() == after.gid()
+    }
+
+    fn read_stable_bounded(path: &Path, limit: u64, label: &str) -> Result<Vec<u8>, String> {
+        let mut file = Self::open_validated_file(
+            path,
+            limit,
+            &format!("{label} exceeds explicit size limit"),
+        )?;
+        let before =
+            file.metadata().map_err(|error| format!("{label} metadata failed: {error}"))?;
+        if before.len() > limit {
+            return Err(format!("{label} exceeds explicit size limit"));
+        }
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(limit + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("{label} read failed: {error}"))?;
+        let after = file.metadata().map_err(|error| format!("{label} metadata failed: {error}"))?;
+        if !Self::stable_read_metadata_matches(&before, &after, bytes.len() as u64, limit) {
+            return Err(format!("{label} changed during bounded same-FD read"));
+        }
+        Ok(bytes)
+    }
+
+    fn validate_external_anchor(
+        environment: &str,
+        manifest: &EdgeProducerContractManifestV1,
+        manifest_key: &str,
+    ) -> Result<(), String> {
+        let path = std::env::var_os(environment)
+            .map(PathBuf::from)
+            .ok_or_else(|| format!("{environment} is required"))?;
+        let bytes = Self::read_stable_bounded(&path, Self::MAX_EXTERNAL_ANCHOR_BYTES, environment)?;
+        if bytes.starts_with(&[0xef, 0xbb, 0xbf])
+            || serde_json::from_slice::<JsonValue>(&bytes).is_err()
+            || EdgeCanonicalWriterV1::sha256_hex(&bytes) != manifest.value(manifest_key)
+        {
+            return Err(format!("{environment} bytes or manifest-bound SHA mismatch"));
+        }
+        Ok(())
+    }
+    fn validate_registry_drain_fixture(
+        configured_pending: u64,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        const COMPONENTS: [&str; 7] = [
+            "coverageAck",
+            "delivery",
+            "primary",
+            "published",
+            "secondary",
+            "unregisteredSendInflight",
+            "sequenceLessRegistrationSendInflight",
+        ];
+        let fixture: JsonValue = serde_json::from_slice(bytes)
+            .map_err(|_| "registry drain fixture is not JSON".to_string())?;
+        let fixture = fixture
+            .as_object()
+            .ok_or_else(|| "registry drain fixture is not an object".to_string())?;
+        let exact_keys = [
+            "schemaVersion",
+            "configuredMaxPendingRegistry",
+            "componentOrder",
+            "cases",
+            "identityGenerator",
+        ];
+        if fixture.len() != exact_keys.len()
+            || exact_keys.iter().any(|key| !fixture.contains_key(*key))
+            || fixture["schemaVersion"] != "edge-registry-drain-stress/v1"
+            || fixture["configuredMaxPendingRegistry"] != configured_pending.to_string()
+            || fixture["componentOrder"] != json!(COMPONENTS)
+            || fixture["identityGenerator"]
+                != json!({
+                    "algorithm": "sha256-counter/v1",
+                    "seed": "edge-registry-drain-stress/v1",
+                })
+        {
+            return Err("registry drain fixture schema differs".to_string());
+        }
+        let cases = fixture["cases"]
+            .as_array()
+            .filter(|cases| cases.len() == 8)
+            .ok_or_else(|| "registry drain fixture must contain exactly eight cases".to_string())?;
+        for (case_index, case) in cases.iter().enumerate() {
+            let case = case
+                .as_object()
+                .ok_or_else(|| "registry drain case is not an object".to_string())?;
+            if case.len() != 2
+                || !case.contains_key("name")
+                || !case.contains_key("pendingBreakdown")
+                || case["name"].as_str().is_none_or(str::is_empty)
+            {
+                return Err("registry drain case shape differs".to_string());
+            }
+            let pending = case["pendingBreakdown"]
+                .as_object()
+                .ok_or_else(|| "registry drain pending breakdown is not an object".to_string())?;
+            if pending.len() != COMPONENTS.len()
+                || COMPONENTS.iter().any(|component| !pending.contains_key(*component))
+            {
+                return Err("registry drain component inventory differs".to_string());
+            }
+            let values = COMPONENTS
+                .iter()
+                .map(|component| {
+                    let value = pending[*component]
+                        .as_str()
+                        .ok_or_else(|| "registry drain component is not a string".to_string())?;
+                    let parsed = value.parse::<u64>().map_err(|_| {
+                        "registry drain component is not canonical decimal".to_string()
+                    })?;
+                    if parsed.to_string() != value {
+                        return Err("registry drain component is not canonical decimal".to_string());
+                    }
+                    Ok(parsed)
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let total = values.iter().try_fold(0_u64, |sum, value| {
+                sum.checked_add(*value)
+                    .ok_or_else(|| "registry drain component sum overflow".to_string())
+            })?;
+            if total != configured_pending {
+                return Err("registry drain case does not equal configured cap".to_string());
+            }
+            if case_index < COMPONENTS.len() {
+                if values.iter().enumerate().any(|(index, value)| {
+                    *value != if index == case_index { configured_pending } else { 0 }
+                }) {
+                    return Err("registry drain singleton case order differs".to_string());
+                }
+            } else {
+                let quotient = configured_pending / COMPONENTS.len() as u64;
+                let remainder = configured_pending % COMPONENTS.len() as u64;
+                if values.iter().enumerate().any(|(index, value)| {
+                    *value != quotient + u64::from((index as u64) < remainder)
+                }) {
+                    return Err("registry drain round-robin case differs".to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_fork_driver_capability(
+        campaign_control_root: &Path,
+        manifest: &EdgeProducerContractManifestV1,
+        expected_prereg_digest: &str,
+    ) -> Result<(), String> {
+        let bytes = Self::read_stable_bounded(
+            &campaign_control_root.join("fork-driver-capability-v1.json"),
+            Self::MAX_EXTERNAL_ANCHOR_BYTES,
+            "fork driver capability receipt",
+        )?;
+        let admission_utc_ns = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| "admission clock predates Unix epoch".to_string())?
+                .as_nanos(),
+        )
+        .map_err(|_| "admission clock does not fit u64 nanoseconds".to_string())?;
+        Self::validate_fork_driver_capability_bytes(
+            &bytes,
+            manifest,
+            expected_prereg_digest,
+            admission_utc_ns,
+        )
+    }
+
+    fn validate_fork_driver_capability_bytes(
+        bytes: &[u8],
+        manifest: &EdgeProducerContractManifestV1,
+        expected_prereg_digest: &str,
+        admission_utc_ns: u64,
+    ) -> Result<(), String> {
+        const KEYS: [&str; 27] = [
+            "schemaVersion",
+            "campaignId",
+            "preregDigest",
+            "economicAuthorityPolicySha256",
+            "forkDriverContractSha256",
+            "chainId",
+            "genesisHash",
+            "providers",
+            "providerSetSha256",
+            "providerCount",
+            "requiredHistoricalAgeSeconds",
+            "replayStartSlaSeconds",
+            "replayCompletionBudgetSeconds",
+            "probeBlockNumber",
+            "probeBlockHash",
+            "probeStateRoot",
+            "probeAgeSeconds",
+            "requiredRpcMethods",
+            "methodResults",
+            "methodResultsSha256",
+            "driverImplementationSha256",
+            "anvilVersion",
+            "evmRevision",
+            "retentionCommitmentThroughUtcNs",
+            "probedAtUtcNs",
+            "validUntilUtcNs",
+            "result",
+        ];
+        const PROVIDER_KEYS: [&str; 5] = [
+            "providerId",
+            "operatorId",
+            "archiveMode",
+            "pruningMode",
+            "retentionCommitmentThroughUtcNs",
+        ];
+        const METHOD_RESULT_KEYS: [&str; 5] =
+            ["providerId", "method", "requestBlockHash", "responseSha256", "result"];
+        const REQUIRED_METHODS: [&str; 5] = [
+            "eth_chainId",
+            "eth_getBlockByHash",
+            "eth_getProof",
+            "eth_getCode",
+            "eth_getStorageAt",
+        ];
+        const BASE_MAINNET_GENESIS_HASH: &str =
+            "0xf712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd";
+
+        let value = serde_json::from_slice::<JsonValue>(bytes)
+            .map_err(|_| "fork driver capability receipt is not JSON".to_string())?;
+        let canonical = EdgeContractCanonicalJsonV1::canonicalize(&value)
+            .map_err(|error| format!("fork driver capability canonicalization failed: {error}"))?;
+        if canonical != bytes {
+            return Err("fork driver capability receipt bytes are not canonical".to_string());
+        }
+        let object = value
+            .as_object()
+            .ok_or_else(|| "fork driver capability receipt is not an object".to_string())?;
+        let exact_object = |object: &serde_json::Map<String, JsonValue>, keys: &[&str]| {
+            object.len() == keys.len()
+                && object.keys().all(|key| keys.contains(&key.as_str()))
+                && keys.iter().all(|key| object.contains_key(*key))
+        };
+        if !exact_object(object, &KEYS) {
+            return Err("fork driver capability receipt keys are not exact".to_string());
+        }
+        let string = |key: &str| {
+            object
+                .get(key)
+                .and_then(JsonValue::as_str)
+                .ok_or_else(|| format!("fork driver capability {key} is not a string"))
+        };
+        let decimal = |key: &str| -> Result<u64, String> {
+            let value = string(key)?;
+            let parsed = value
+                .parse::<u64>()
+                .map_err(|_| format!("fork driver capability {key} malformed"))?;
+            if parsed.to_string() != value {
+                return Err(format!("fork driver capability {key} is not canonical decimal"));
+            }
+            Ok(parsed)
+        };
+        let sha256 = |key: &str| -> Result<(), String> {
+            let value = string(key)?;
+            if value.len() != 64
+                || !value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                || value.bytes().all(|byte| byte == b'0')
+            {
+                return Err(format!("fork driver capability {key} is not a nonzero SHA-256"));
+            }
+            Ok(())
+        };
+        let b256 = |key: &str| -> Result<(), String> {
+            let value = string(key)?;
+            if value.len() != 66
+                || !value.starts_with("0x")
+                || !value.as_bytes()[2..]
+                    .iter()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+                || value.as_bytes()[2..].iter().all(|byte| *byte == b'0')
+            {
+                return Err(format!("fork driver capability {key} is not a nonzero B256"));
+            }
+            Ok(())
+        };
+
+        let required = decimal("requiredHistoricalAgeSeconds")?;
+        let start = decimal("replayStartSlaSeconds")?;
+        let completion = decimal("replayCompletionBudgetSeconds")?;
+        let probed_at = decimal("probedAtUtcNs")?;
+        let valid_until = decimal("validUntilUtcNs")?;
+        let retention = decimal("retentionCommitmentThroughUtcNs")?;
+        let required_retention = valid_until
+            .checked_add(72 * 60 * 60 * 1_000_000_000)
+            .and_then(|value| value.checked_add(start.checked_mul(1_000_000_000)?))
+            .and_then(|value| value.checked_add(completion.checked_mul(1_000_000_000)?))
+            .ok_or_else(|| "fork driver retention horizon overflow".to_string())?;
+        for key in [
+            "economicAuthorityPolicySha256",
+            "forkDriverContractSha256",
+            "providerSetSha256",
+            "methodResultsSha256",
+            "driverImplementationSha256",
+        ] {
+            sha256(key)?;
+        }
+        for key in ["preregDigest", "genesisHash", "probeBlockHash", "probeStateRoot"] {
+            b256(key)?;
+        }
+        let _ = decimal("probeBlockNumber")?;
+
+        if string("schemaVersion")? != "edge-fork-driver-capability/v1"
+            || string("result")? != "Pass"
+            || string("campaignId")?.is_empty()
+            || string("preregDigest")? != expected_prereg_digest
+            || string("economicAuthorityPolicySha256")?
+                != manifest.value("economicAuthorityPolicySha256")
+            || string("forkDriverContractSha256")? != manifest.value("forkDriverContractSha256")
+            || string("chainId")? != "8453"
+            || string("genesisHash")? != BASE_MAINNET_GENESIS_HASH
+            || string("anvilVersion")?.is_empty()
+            || string("evmRevision")?.is_empty()
+            || required != 799_200
+            || start != 21_600
+            || completion != 518_400
+            || required != 72 * 60 * 60 + start + completion
+            || decimal("probeAgeSeconds")? < required
+            || probed_at > admission_utc_ns
+            || admission_utc_ns > valid_until
+            || retention < required_retention
+        {
+            return Err("fork driver capability scalar or retention contract mismatch".to_string());
+        }
+
+        let required_methods = object["requiredRpcMethods"]
+            .as_array()
+            .ok_or_else(|| "fork driver requiredRpcMethods is not an array".to_string())?;
+        if required_methods
+            != &REQUIRED_METHODS
+                .iter()
+                .map(|method| JsonValue::String((*method).to_string()))
+                .collect::<Vec<_>>()
+        {
+            return Err("fork driver requiredRpcMethods order differs".to_string());
+        }
+
+        let providers = object["providers"]
+            .as_array()
+            .filter(|providers| providers.len() >= 2)
+            .ok_or_else(|| "fork driver providers must contain at least two rows".to_string())?;
+        let mut provider_ids = BTreeSet::new();
+        let mut operator_ids = BTreeSet::new();
+        let mut previous_provider_id: Option<&str> = None;
+        let mut minimum_retention = u64::MAX;
+        for provider in providers {
+            let provider = provider
+                .as_object()
+                .ok_or_else(|| "fork driver provider row is not an object".to_string())?;
+            if !exact_object(provider, &PROVIDER_KEYS) {
+                return Err("fork driver provider row keys are not exact".to_string());
+            }
+            let provider_id = provider["providerId"]
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "fork driver providerId is empty or not a string".to_string())?;
+            let operator_id = provider["operatorId"]
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "fork driver operatorId is empty or not a string".to_string())?;
+            if previous_provider_id.is_some_and(|previous| {
+                EdgeContractCanonicalJsonV1::key_cmp(previous, provider_id).is_ge()
+            }) || !provider_ids.insert(provider_id)
+                || !operator_ids.insert(operator_id)
+                || provider["archiveMode"] != "full-historical"
+                || provider["pruningMode"] != "disabled"
+            {
+                return Err(
+                    "fork driver provider identity, order, or archive contract differs".to_string()
+                );
+            }
+            previous_provider_id = Some(provider_id);
+            let provider_retention_text = provider["retentionCommitmentThroughUtcNs"]
+                .as_str()
+                .ok_or_else(|| "fork driver provider retention is not a string".to_string())?;
+            let provider_retention = provider_retention_text
+                .parse::<u64>()
+                .map_err(|_| "fork driver provider retention is malformed".to_string())?;
+            if provider_retention.to_string() != provider_retention_text {
+                return Err("fork driver provider retention is not canonical decimal".to_string());
+            }
+            minimum_retention = minimum_retention.min(provider_retention);
+        }
+        if decimal("providerCount")?
+            != u64::try_from(providers.len())
+                .map_err(|_| "fork driver provider count does not fit u64".to_string())?
+            || retention != minimum_retention
+        {
+            return Err("fork driver provider count or minimum retention differs".to_string());
+        }
+        let provider_projection = JsonValue::Array(providers.clone());
+        if string("providerSetSha256")?
+            != EdgeContractCanonicalJsonV1::digest(
+                "edge-fork-provider-set/v1",
+                &provider_projection,
+            )
+            .map_err(|error| error.to_string())?
+        {
+            return Err("fork driver provider-set digest differs".to_string());
+        }
+
+        let method_results = object["methodResults"]
+            .as_array()
+            .ok_or_else(|| "fork driver methodResults is not an array".to_string())?;
+        let expected_method_count = providers
+            .len()
+            .checked_mul(REQUIRED_METHODS.len())
+            .ok_or_else(|| "fork driver method result cardinality overflow".to_string())?;
+        if method_results.len() != expected_method_count {
+            return Err("fork driver method result cardinality differs".to_string());
+        }
+        let probe_block_hash = string("probeBlockHash")?;
+        for (index, method_result) in method_results.iter().enumerate() {
+            let method_result = method_result
+                .as_object()
+                .ok_or_else(|| "fork driver method result row is not an object".to_string())?;
+            if !exact_object(method_result, &METHOD_RESULT_KEYS) {
+                return Err("fork driver method result row keys are not exact".to_string());
+            }
+            let provider_index = index / REQUIRED_METHODS.len();
+            let method_index = index % REQUIRED_METHODS.len();
+            if method_result["providerId"] != providers[provider_index]["providerId"]
+                || method_result["method"] != REQUIRED_METHODS[method_index]
+                || method_result["requestBlockHash"] != probe_block_hash
+                || method_result["result"] != "Pass"
+            {
+                return Err(
+                    "fork driver method result pair, order, block, or result differs".to_string()
+                );
+            }
+            let response_sha = method_result["responseSha256"]
+                .as_str()
+                .ok_or_else(|| "fork driver method response SHA is not a string".to_string())?;
+            if response_sha.len() != 64
+                || !response_sha
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                || response_sha.bytes().all(|byte| byte == b'0')
+            {
+                return Err("fork driver method response SHA is malformed".to_string());
+            }
+        }
+        let method_projection = JsonValue::Array(method_results.clone());
+        if string("methodResultsSha256")?
+            != EdgeContractCanonicalJsonV1::digest(
+                "edge-fork-capability-method-results/v1",
+                &method_projection,
+            )
+            .map_err(|error| error.to_string())?
+        {
+            return Err("fork driver method-results digest differs".to_string());
+        }
+        Ok(())
+    }
+    fn validate_manifest_runtime_equalities(
+        manifest: &EdgeProducerContractManifestV1,
+        configured_pending: usize,
+        ledger_digest: &str,
+        segment_digest: &str,
+        accounting_digest: &str,
+        target_triple: &str,
+    ) -> Result<(), String> {
+        if manifest.value("configuredMaxPendingRegistry") != configured_pending.to_string()
+            || manifest.value("ledgerRegistrySha256") != ledger_digest
+            || manifest.value("segmentFramingDomainSha256") != segment_digest
+            || manifest.value("producerAccountingSchemaSha256") != accounting_digest
+            || manifest.value("targetTriple") != target_triple
+        {
+            return Err("producer contract manifest runtime equality mismatch".to_string());
+        }
+        Ok(())
+    }
+
+    fn validate_runtime_manifest(
+        configured_pending: usize,
+        campaign_control_root: &Path,
+        expected_prereg_digest: &str,
+    ) -> Result<(), String> {
+        if EDGE_EXTERNAL_ANCHOR_ROLES_V1[0] != "producer-contract-manifest"
+            || EDGE_EXTERNAL_ANCHOR_ROLES_V1[5] != "registry-drain-fixture"
+            || EDGE_MANIFEST_BOUND_EXTERNAL_ANCHORS_V1
+                .iter()
+                .zip(&EDGE_EXTERNAL_ANCHOR_ROLES_V1[1..5])
+                .any(|((role, _, _), expected)| role != expected)
+        {
+            return Err("compiled external anchor role registry mismatch".to_string());
+        }
+        let path = std::env::var_os("BASE_EDGE_PRODUCER_CONTRACT_MANIFEST")
+            .ok_or_else(|| "BASE_EDGE_PRODUCER_CONTRACT_MANIFEST is required".to_string())?;
+        let expected_sha = std::env::var("BASE_EDGE_PRODUCER_CONTRACT_MANIFEST_SHA256")
+            .map_err(|_| "BASE_EDGE_PRODUCER_CONTRACT_MANIFEST_SHA256 is required".to_string())?;
+        if expected_sha.len() != 64
+            || !expected_sha
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || expected_sha.bytes().all(|byte| byte == b'0')
+        {
+            return Err("producer contract manifest pinned SHA is malformed".to_string());
+        }
+        let bytes = Self::read_stable_bounded(
+            &PathBuf::from(path),
+            Self::MAX_CONFIG_BYTES,
+            "producer contract manifest",
+        )?;
+        let manifest = EdgeProducerContractManifestV1::parse(&bytes)?;
+        if EdgeCanonicalWriterV1::sha256_hex(&bytes) != expected_sha {
+            return Err("producer contract manifest full-file SHA mismatch".to_string());
+        }
+        let ledger_digest = EdgeContractCanonicalJsonV1::digest(
+            "edge-producer-ledger-registry/v1",
+            &edge_ledger_registry_projection_v1(),
+        )
+        .map_err(|error| error.to_string())?;
+        let segment_projection =
+            edge_segment_framing_projection_v1().map_err(|error| error.to_string())?;
+        let segment_digest = validate_edge_segment_framing_projection_v1(&segment_projection)
+            .map_err(|error| error.to_string())?;
+        let accounting_projection =
+            edge_accounting_schema_projection_v1().map_err(|error| error.to_string())?;
+        let accounting_digest = EdgeContractCanonicalJsonV1::digest(
+            "edge-producer-accounting-schema/v1",
+            &accounting_projection,
+        )
+        .map_err(|error| error.to_string())?;
+        if ledger_digest != EDGE_LEDGER_REGISTRY_SHA256_V1
+            || segment_digest != EDGE_SEGMENT_FRAMING_DOMAIN_SHA256_V1
+            || accounting_digest != EDGE_PRODUCER_ACCOUNTING_SCHEMA_SHA256_V1
+        {
+            return Err("compiled producer contract projection digest mismatch".to_string());
+        }
+        Self::validate_manifest_runtime_equalities(
+            &manifest,
+            configured_pending,
+            &ledger_digest,
+            &segment_digest,
+            &accounting_digest,
+            &Self::target_triple(),
+        )?;
+        for (_, environment, manifest_key) in EDGE_MANIFEST_BOUND_EXTERNAL_ANCHORS_V1 {
+            Self::validate_external_anchor(environment, &manifest, manifest_key)?;
+        }
+        let registry_fixture_path = std::env::var_os("BASE_EDGE_REGISTRY_DRAIN_FIXTURE")
+            .map(PathBuf::from)
+            .ok_or_else(|| "BASE_EDGE_REGISTRY_DRAIN_FIXTURE is required".to_string())?;
+        let registry_fixture = Self::read_stable_bounded(
+            &registry_fixture_path,
+            Self::MAX_EXTERNAL_ANCHOR_BYTES,
+            "BASE_EDGE_REGISTRY_DRAIN_FIXTURE",
+        )?;
+        if registry_fixture.starts_with(&[0xef, 0xbb, 0xbf])
+            || EdgeCanonicalWriterV1::sha256_hex(&registry_fixture)
+                != manifest.value("registryDrainFixtureSha256")
+        {
+            return Err(
+                "BASE_EDGE_REGISTRY_DRAIN_FIXTURE bytes or manifest-bound SHA mismatch".to_string()
+            );
+        }
+        Self::validate_registry_drain_fixture(
+            u64::try_from(configured_pending)
+                .map_err(|_| "configured pending cap does not fit u64".to_string())?,
+            &registry_fixture,
+        )?;
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("producer executable path unavailable: {error}"))?;
+        let executable_bytes =
+            Self::read_stable_bounded(&executable, 1024 * 1024 * 1024, "producer executable")?;
+        if manifest.value("producerBinarySha256")
+            != EdgeCanonicalWriterV1::sha256_hex(&executable_bytes)
+        {
+            return Err("producer binary SHA mismatch".to_string());
+        }
+        let receipt_path = campaign_control_root.join("edge-shutdown-margin-v1.json");
+        let receipt_bytes = Self::read_stable_bounded(
+            &receipt_path,
+            Self::MAX_CONFIG_BYTES,
+            "shutdown margin receipt",
+        )?;
+        if EdgeCanonicalWriterV1::sha256_hex(&receipt_bytes)
+            != manifest.value("shutdownMarginReceiptSha256")
+        {
+            return Err("shutdown margin receipt identity or SHA mismatch".to_string());
+        }
+        let receipt_text = std::str::from_utf8(&receipt_bytes)
+            .map_err(|_| "shutdown margin receipt is not UTF-8".to_string())?;
+        let receipt = FlatJsonObjectV1::parse(receipt_text)?;
+        if Self::flat_protocol_bytes(&receipt, &Self::SHUTDOWN_MARGIN_RECEIPT_KEYS)?
+            != receipt_bytes
+        {
+            return Err("shutdown margin receipt bytes or protocol order differ".to_string());
+        }
+        if !Self::shutdown_margin_receipt_keys_exact(&receipt)
+            || receipt.string("schemaVersion")? != "edge-shutdown-margin/v1"
+            || receipt.string("configuredMaxPendingRegistry")? != configured_pending.to_string()
+            || receipt.string("registryDrainFixtureSha256")?
+                != manifest.value("registryDrainFixtureSha256")
+            || receipt.string("producerBinarySha256")? != manifest.value("producerBinarySha256")
+            || receipt.string("targetTriple")? != manifest.value("targetTriple")
+            || receipt.string("registryDrainDeadlineNs")? != "30000000000"
+            || receipt.string("minimumMarginNumerator")? != "4"
+            || receipt.string("minimumMarginDenominator")? != "1"
+            || receipt.string("worstCaseShutdownNs")? != "217000000000"
+            || receipt.string("gracefulTimeoutNs")? != "240000000000"
+            || receipt.string("result")? != "Pass"
+        {
+            return Err("shutdown margin receipt schema or runtime equality mismatch".to_string());
+        }
+        let run_count = receipt
+            .string("runCount")?
+            .parse::<u64>()
+            .map_err(|_| "shutdown margin runCount is malformed".to_string())?;
+        let max_observed = receipt
+            .string("maxObservedDrainNs")?
+            .parse::<u64>()
+            .map_err(|_| "shutdown margin maxObservedDrainNs is malformed".to_string())?;
+        Self::validate_shutdown_margin_predicate(run_count, max_observed)?;
+        Self::validate_fork_driver_capability(
+            campaign_control_root,
+            &manifest,
+            expected_prereg_digest,
+        )
+    }
+
+    fn validate_shutdown_margin_predicate(
+        run_count: u64,
+        max_observed_drain_ns: u64,
+    ) -> Result<(), String> {
+        if run_count < 30
+            || max_observed_drain_ns.checked_mul(4).is_none_or(|value| value > 30_000_000_000)
+        {
+            return Err("shutdown margin receipt predicate failed".to_string());
+        }
+        Ok(())
+    }
+    fn campaign_control_basename_allowed(name: &str) -> bool {
+        EDGE_CAMPAIGN_CONTROL_ALLOWLIST_V1.contains(&name)
+    }
+
+    fn validate_distinct_role_identities(identities: &[(u64, u64); 3]) -> Result<(), String> {
+        if identities[0] == identities[1]
+            || identities[0] == identities[2]
+            || identities[1] == identities[2]
+        {
+            return Err("role roots alias".to_string());
+        }
+        Ok(())
+    }
+    fn validate_campaign_control_inventory(control: &Path) -> Result<(), String> {
+        for entry in fs::read_dir(control)
+            .map_err(|error| format!("campaign-control enumeration failed: {error}"))?
+        {
+            let entry = entry.map_err(|error| format!("campaign-control entry failed: {error}"))?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| "campaign-control basename is not Unicode".to_string())?;
+            let metadata = fs::symlink_metadata(entry.path())
+                .map_err(|error| format!("campaign-control metadata failed: {error}"))?;
+            if !Self::campaign_control_basename_allowed(&name)
+                || metadata.file_type().is_symlink()
+                || !metadata.is_file()
+            {
+                return Err(format!("unknown or invalid campaign-control entry: {name}"));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_role_roots(
+        epoch_source_root: &Path,
+    ) -> Result<(PathBuf, Arc<File>, Arc<File>), String> {
+        let control = std::env::var_os("BASE_EDGE_CAMPAIGN_CONTROL_ROOT")
+            .map(PathBuf::from)
+            .ok_or_else(|| "BASE_EDGE_CAMPAIGN_CONTROL_ROOT is required".to_string())?;
+        let consumer = std::env::var_os("BASE_EDGE_CONSUMER_OUTPUT_ROOT")
+            .map(PathBuf::from)
+            .ok_or_else(|| "BASE_EDGE_CONSUMER_OUTPUT_ROOT is required".to_string())?;
+        let mut identities = BTreeSet::new();
+        let mut handles = BTreeMap::new();
+        for (role, root) in [
+            ("campaign-control", control.as_path()),
+            ("consumer-output", consumer.as_path()),
+            ("epoch-source", epoch_source_root),
+        ] {
+            Self::validate_components(root)?;
+            let directory = OpenOptions::new()
+                .read(true)
+                .custom_flags(
+                    Self::LINUX_O_DIRECTORY | Self::LINUX_O_NOFOLLOW | Self::LINUX_O_CLOEXEC,
+                )
+                .open(root)
+                .map_err(|error| format!("{role} root open failed: {error}"))?;
+            let metadata = directory
+                .metadata()
+                .map_err(|error| format!("{role} root metadata failed: {error}"))?;
+            if !metadata.is_dir()
+                || metadata.uid() != Self::effective_uid()?
+                || metadata.mode() & 0o077 != 0
+                || !identities.insert((metadata.dev(), metadata.ino()))
+            {
+                return Err(format!("{role} root role or identity is invalid"));
+            }
+            handles.insert(role, Arc::new(directory));
+        }
+        Self::validate_campaign_control_inventory(&control)?;
+        let control_handle = handles
+            .remove("campaign-control")
+            .ok_or_else(|| "campaign-control root handle missing".to_string())?;
+        let consumer_handle = handles
+            .remove("consumer-output")
+            .ok_or_else(|| "consumer-output root handle missing".to_string())?;
+        Ok((control, control_handle, consumer_handle))
+    }
+
+    fn from_environment() -> Result<Option<Self>, String> {
+        let Some(path) = std::env::var_os("BASE_EDGE_MEASUREMENT_CONFIG") else {
+            return Ok(None);
+        };
+        let path = path
+            .into_string()
+            .map(PathBuf::from)
+            .map_err(|_| "BASE_EDGE_MEASUREMENT_CONFIG is not Unicode".to_string())?;
+        Self::load(&path).map(Some)
+    }
+
+    fn load(path: &Path) -> Result<Self, String> {
+        let mut file =
+            Self::open_validated_file(path, Self::MAX_CONFIG_BYTES, "edge config exceeds 1 MiB")?;
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(Self::MAX_CONFIG_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("edge config read failed: {error}"))?;
+        if bytes.len() as u64 > Self::MAX_CONFIG_BYTES {
+            return Err("edge config exceeds 1 MiB".to_string());
+        }
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| "edge config contents are not UTF-8".to_string())?;
+        let values = FlatJsonObjectV1::parse(text)?;
+        const KEYS: [&str; 25] = [
+            "outputRoot",
+            "producerEpoch",
+            "producerDigest",
+            "rejectSchemaDigest",
+            "preregDigest",
+            "policyDigest",
+            "configDigest",
+            "ownerApprovalReceiptDigest",
+            "flashEventCapacity",
+            "flashActiveCapacity",
+            "flashRegistryCapacity",
+            "blinkRecordCapacity",
+            "blinkCandidateCapacity",
+            "measurementSender",
+            "executorRuntimeHash",
+            "v2Adapter",
+            "v2AdapterRuntimeHash",
+            "v3Adapter",
+            "v3AdapterRuntimeHash",
+            "aerodromeAdapter",
+            "aerodromeAdapterRuntimeHash",
+            "g0CodeIdentityDigest",
+            "rawRejectInventorySha256",
+            "rawRejectSourceSha256",
+            "measurementBindingSourceSha256",
+        ];
+        if values.0.len() != KEYS.len()
+            || values.0.keys().any(|key| !KEYS.contains(&key.as_str()))
+            || KEYS.iter().any(|key| !values.0.contains_key(*key))
+        {
+            return Err("edge config has missing or unknown keys".to_string());
+        }
+        let campaign_epoch_root = PathBuf::from(values.string("outputRoot")?);
+        if campaign_epoch_root.as_os_str().is_empty() {
+            return Err("edge outputRoot is empty".to_string());
+        }
+        let campaign_root_handle = Self::open_validated_output_root(&campaign_epoch_root)?;
+        let epoch_floor = NonZeroU64::new(values.u64("producerEpoch")?)
+            .ok_or_else(|| "edge producerEpoch floor is zero".to_string())?;
+        let flash_registry_capacity = values.capacity("flashRegistryCapacity")?;
+        let campaign_control_root = std::env::var_os("BASE_EDGE_CAMPAIGN_CONTROL_ROOT")
+            .map(PathBuf::from)
+            .ok_or_else(|| "BASE_EDGE_CAMPAIGN_CONTROL_ROOT is required".to_string())?;
+        let consumer_output_root = std::env::var_os("BASE_EDGE_CONSUMER_OUTPUT_ROOT")
+            .map(PathBuf::from)
+            .ok_or_else(|| "BASE_EDGE_CONSUMER_OUTPUT_ROOT is required".to_string())?;
+        let control_gate_handle = Self::open_validated_output_root(&campaign_control_root)?;
+        let consumer_gate_handle = Self::open_validated_output_root(&consumer_output_root)?;
+        let identities = [
+            {
+                let metadata = campaign_root_handle
+                    .metadata()
+                    .map_err(|error| format!("campaign epoch root metadata failed: {error}"))?;
+                (metadata.dev(), metadata.ino())
+            },
+            {
+                let metadata = control_gate_handle
+                    .metadata()
+                    .map_err(|error| format!("campaign-control root metadata failed: {error}"))?;
+                (metadata.dev(), metadata.ino())
+            },
+            {
+                let metadata = consumer_gate_handle
+                    .metadata()
+                    .map_err(|error| format!("consumer-output root metadata failed: {error}"))?;
+                (metadata.dev(), metadata.ino())
+            },
+        ];
+        Self::validate_distinct_role_identities(&identities)
+            .map_err(|_| "pre-allocation role roots alias".to_string())?;
+        let prereg_digest = values.digest("preregDigest")?.to_string();
+        Self::validate_campaign_control_inventory(&campaign_control_root)?;
+        Self::validate_runtime_manifest(
+            flash_registry_capacity,
+            &campaign_control_root,
+            &prereg_digest,
+        )?;
+
+        let allocation = EdgeEpochAllocatorV1::allocate(&campaign_epoch_root, epoch_floor)
+            .map_err(|error| {
+                error!(
+                    error = %error,
+                    reason = "EpochAllocationFailed",
+                    "edge epoch allocation failed before an epoch-local OOB sink exists"
+                );
+                error.to_string()
+            })?;
+        let output_root = allocation.root;
+        let output_root_handle = allocation.root_handle;
+        let producer_epoch = allocation.epoch;
+        let (
+            validated_campaign_control_root,
+            campaign_control_root_handle,
+            consumer_output_root_handle,
+        ) = Self::validate_role_roots(&output_root)?;
+        let persistent_control_metadata = campaign_control_root_handle
+            .metadata()
+            .map_err(|error| format!("campaign-control persistent metadata failed: {error}"))?;
+        let persistent_consumer_metadata = consumer_output_root_handle
+            .metadata()
+            .map_err(|error| format!("consumer-output persistent metadata failed: {error}"))?;
+        if validated_campaign_control_root != campaign_control_root
+            || identities[1]
+                != (persistent_control_metadata.dev(), persistent_control_metadata.ino())
+            || identities[2]
+                != (persistent_consumer_metadata.dev(), persistent_consumer_metadata.ino())
+        {
+            return Err("persistent role-root identity changed across allocation".to_string());
+        }
+        let allocated_metadata = output_root_handle
+            .metadata()
+            .map_err(|error| format!("allocated epoch metadata failed: {error}"))?;
+        let path_metadata = fs::symlink_metadata(&output_root)
+            .map_err(|error| format!("allocated epoch path metadata failed: {error}"))?;
+        if path_metadata.file_type().is_symlink()
+            || !path_metadata.is_dir()
+            || path_metadata.dev() != allocated_metadata.dev()
+            || path_metadata.ino() != allocated_metadata.ino()
+        {
+            return Err("allocated epoch path/inode identity changed".to_string());
+        }
+        Ok(Self {
+            output_root,
+            output_root_handle,
+            producer_epoch,
+            _campaign_control_root_handle: campaign_control_root_handle,
+            _consumer_output_root_handle: consumer_output_root_handle,
+            producer_digest: values.digest("producerDigest")?,
+            reject_schema_digest: values.digest("rejectSchemaDigest")?,
+            prereg_digest: values.digest("preregDigest")?,
+            policy_digest: values.digest("policyDigest")?,
+            config_digest: values.digest("configDigest")?,
+            owner_approval_receipt_digest: values.digest("ownerApprovalReceiptDigest")?,
+            flash_event_capacity: values.capacity("flashEventCapacity")?,
+            flash_active_capacity: values.capacity("flashActiveCapacity")?,
+            flash_registry_capacity,
+            measurement_sender: values.address("measurementSender")?,
+            executor_runtime_hash: values.digest("executorRuntimeHash")?,
+            v2_adapter: values.address("v2Adapter")?,
+            v2_adapter_runtime_hash: values.digest("v2AdapterRuntimeHash")?,
+            v3_adapter: values.address("v3Adapter")?,
+            v3_adapter_runtime_hash: values.digest("v3AdapterRuntimeHash")?,
+            aerodrome_adapter: values.address("aerodromeAdapter")?,
+            aerodrome_adapter_runtime_hash: values.digest("aerodromeAdapterRuntimeHash")?,
+            g0_code_identity_digest: values.digest("g0CodeIdentityDigest")?,
+            raw_reject_inventory_sha256: values.digest("rawRejectInventorySha256")?,
+            raw_reject_source_sha256: values.digest("rawRejectSourceSha256")?,
+            measurement_binding_source_sha256: values.digest("measurementBindingSourceSha256")?,
+            blink_record_capacity: values.capacity("blinkRecordCapacity")?,
+            blink_candidate_capacity: values.capacity("blinkCandidateCapacity")?,
+        })
+    }
+
+    fn validate_components(path: &Path) -> Result<(), String> {
+        if !path.is_absolute() {
+            return Err("edge authority path is not absolute".to_string());
+        }
+        let mut current = PathBuf::from("/");
+        for component in path.components() {
+            match component {
+                Component::RootDir => {}
+                Component::Normal(value) => current.push(value),
+                Component::Prefix(_) | Component::CurDir | Component::ParentDir => {
+                    return Err("edge authority path contains an unsupported component".to_string());
+                }
+            }
+            let metadata = fs::symlink_metadata(&current)
+                .map_err(|error| format!("edge authority path metadata failed: {error}"))?;
+            if metadata.file_type().is_symlink() {
+                return Err("edge authority path contains a symlink".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    fn effective_uid() -> Result<u32, String> {
+        let status = fs::read_to_string("/proc/self/status")
+            .map_err(|error| format!("effective uid read failed: {error}"))?;
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix("Uid:"))
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse::<u32>().ok())
+            .ok_or_else(|| "effective uid is unavailable".to_string())
+    }
+
+    fn open_validated_file(
+        path: &Path,
+        max_bytes: u64,
+        oversized_error: &str,
+    ) -> Result<File, String> {
+        Self::validate_components(path)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(Self::LINUX_O_NOFOLLOW | Self::LINUX_O_CLOEXEC)
+            .open(path)
+            .map_err(|error| format!("edge config open failed: {error}"))?;
+        let metadata =
+            file.metadata().map_err(|error| format!("edge config metadata failed: {error}"))?;
+        if !metadata.is_file() {
+            return Err("edge config is not a regular file".to_string());
+        }
+        if metadata.len() > max_bytes {
+            return Err(oversized_error.to_string());
+        }
+        if metadata.mode() & 0o022 != 0 {
+            return Err("edge config is group- or world-writable".to_string());
+        }
+        if metadata.uid() != Self::effective_uid()? {
+            return Err("edge config is not owned by the effective uid".to_string());
+        }
+        Ok(file)
+    }
+
+    fn open_validated_output_root(path: &Path) -> Result<Arc<File>, String> {
+        if !path.exists() {
+            let mut builder = fs::DirBuilder::new();
+            builder.recursive(true).mode(0o700);
+            builder
+                .create(path)
+                .map_err(|error| format!("edge outputRoot creation failed: {error}"))?;
+        }
+        Self::validate_components(path)?;
+        let directory = OpenOptions::new()
+            .read(true)
+            .custom_flags(Self::LINUX_O_DIRECTORY | Self::LINUX_O_NOFOLLOW | Self::LINUX_O_CLOEXEC)
+            .open(path)
+            .map_err(|error| format!("edge outputRoot open failed: {error}"))?;
+        let metadata = directory
+            .metadata()
+            .map_err(|error| format!("edge outputRoot metadata failed: {error}"))?;
+        if !metadata.is_dir() {
+            return Err("edge outputRoot is not a directory".to_string());
+        }
+        if metadata.uid() != Self::effective_uid()? {
+            return Err("edge outputRoot is not owned by the effective uid".to_string());
+        }
+        if metadata.mode() & 0o077 != 0 {
+            return Err("edge outputRoot is not owner-private".to_string());
+        }
+
+        let pinned = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()));
+        let probe = pinned.join(format!(".edge-measurement-preflight-{}", std::process::id()));
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&probe)
+            .map_err(|error| format!("edge outputRoot write preflight failed: {error}"))?;
+        file.write_all(b"edge-measurement-preflight\n")
+            .and_then(|_| file.sync_all())
+            .map_err(|error| format!("edge outputRoot fsync preflight failed: {error}"))?;
+        drop(file);
+        fs::remove_file(&probe)
+            .map_err(|error| format!("edge outputRoot cleanup failed: {error}"))?;
+        directory
+            .sync_all()
+            .map_err(|error| format!("edge outputRoot directory fsync failed: {error}"))?;
+        Ok(Arc::new(directory))
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Parsed flat JSON object used by the edge producer configuration.
+#[derive(Clone, Debug)]
+pub struct FlatJsonObjectV1(BTreeMap<String, FlatJsonValueV1>);
+
+#[cfg(feature = "edge-measurement")]
+/// Scalar value accepted by the flat edge configuration parser.
+#[derive(Clone, Debug)]
+pub enum FlatJsonValueV1 {
+    /// A JSON string value.
+    String(String),
+    /// An unsigned JSON number retained in lexical form.
+    Number(String),
+}
+
+#[cfg(feature = "edge-measurement")]
+impl FlatJsonObjectV1 {
+    fn parse(input: &str) -> Result<Self, String> {
+        let mut parser = FlatJsonParserV1 { bytes: input.as_bytes(), offset: 0 };
+        parser.whitespace();
+        parser.expect(b'{')?;
+        let mut values = BTreeMap::new();
+        parser.whitespace();
+        if parser.peek() == Some(b'}') {
+            parser.offset += 1;
+        } else {
+            loop {
+                parser.whitespace();
+                let key = parser.string()?;
+                parser.whitespace();
+                parser.expect(b':')?;
+                parser.whitespace();
+                let value = match parser.peek() {
+                    Some(b'"') => FlatJsonValueV1::String(parser.string()?),
+                    Some(b'0'..=b'9') => FlatJsonValueV1::Number(parser.number()?),
+                    _ => {
+                        return Err("edge config value must be a string or unsigned integer".into());
+                    }
+                };
+                if values.insert(key, value).is_some() {
+                    return Err("edge config contains a duplicate key".into());
+                }
+                parser.whitespace();
+                match parser.peek() {
+                    Some(b',') => parser.offset += 1,
+                    Some(b'}') => {
+                        parser.offset += 1;
+                        break;
+                    }
+                    _ => return Err("edge config object is malformed".into()),
+                }
+            }
+        }
+        parser.whitespace();
+        if parser.offset != parser.bytes.len() {
+            return Err("edge config has trailing bytes".into());
+        }
+        Ok(Self(values))
+    }
+
+    fn string(&self, key: &str) -> Result<String, String> {
+        match self.0.get(key) {
+            Some(FlatJsonValueV1::String(value)) => Ok(value.clone()),
+            _ => Err(format!("edge config {key} must be a string")),
+        }
+    }
+
+    fn u64(&self, key: &str) -> Result<u64, String> {
+        match self.0.get(key) {
+            Some(FlatJsonValueV1::Number(value)) => {
+                value.parse().map_err(|_| format!("edge config {key} is malformed"))
+            }
+            _ => Err(format!("edge config {key} must be an unsigned integer")),
+        }
+    }
+
+    fn capacity(&self, key: &str) -> Result<usize, String> {
+        let value = self.u64(key)?;
+        if value == 0 {
+            return Err(format!("edge config {key} is zero"));
+        }
+        usize::try_from(value).map_err(|_| format!("edge config {key} is too large"))
+    }
+
+    fn digest(&self, key: &str) -> Result<B256, String> {
+        let value = self.string(key)?;
+        if value.len() != 66
+            || !value.starts_with("0x")
+            || !value.as_bytes()[2..].iter().all(u8::is_ascii_hexdigit)
+        {
+            return Err(format!("edge config {key} is not a 32-byte digest"));
+        }
+        let digest =
+            B256::from_str(&value).map_err(|_| format!("edge config {key} is malformed"))?;
+        if digest.is_zero() {
+            return Err(format!("edge config {key} is zero"));
+        }
+        Ok(digest)
+    }
+
+    fn address(&self, key: &str) -> Result<Address, String> {
+        let value = self.string(key)?;
+        let address =
+            Address::from_str(&value).map_err(|_| format!("edge config {key} is malformed"))?;
+        if address.is_zero() {
+            return Err(format!("edge config {key} is zero"));
+        }
+        Ok(address)
+    }
+}
+
+#[cfg(feature = "edge-measurement")]
+/// Bounded parser for the flat edge producer configuration format.
+#[derive(Debug)]
+pub struct FlatJsonParserV1<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+#[cfg(feature = "edge-measurement")]
+impl FlatJsonParserV1<'_> {
+    fn whitespace(&mut self) {
+        while self.peek().is_some_and(|byte| byte.is_ascii_whitespace()) {
+            self.offset += 1;
+        }
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.offset).copied()
+    }
+
+    fn expect(&mut self, expected: u8) -> Result<(), String> {
+        if self.peek() != Some(expected) {
+            return Err("edge config JSON is malformed".into());
+        }
+        self.offset += 1;
+        Ok(())
+    }
+
+    fn number(&mut self) -> Result<String, String> {
+        let start = self.offset;
+        while matches!(self.peek(), Some(b'0'..=b'9')) {
+            self.offset += 1;
+        }
+        let value = std::str::from_utf8(&self.bytes[start..self.offset])
+            .map_err(|_| "edge config number is malformed")?;
+        if value.len() > 1 && value.starts_with('0') {
+            return Err("edge config number has a leading zero".into());
+        }
+        Ok(value.to_string())
+    }
+
+    fn string(&mut self) -> Result<String, String> {
+        self.expect(b'"')?;
+        let mut value = String::new();
+        loop {
+            let byte = self.peek().ok_or_else(|| "unterminated edge config string".to_string())?;
+            self.offset += 1;
+            match byte {
+                b'"' => return Ok(value),
+                b'\\' => {
+                    let escaped =
+                        self.peek().ok_or_else(|| "unterminated edge config escape".to_string())?;
+                    self.offset += 1;
+                    value.push(match escaped {
+                        b'"' => '"',
+                        b'\\' => '\\',
+                        b'/' => '/',
+                        b'b' => '\u{0008}',
+                        b'f' => '\u{000c}',
+                        b'n' => '\n',
+                        b'r' => '\r',
+                        b't' => '\t',
+                        _ => return Err("unsupported edge config string escape".into()),
+                    });
+                }
+                0..=31 => return Err("edge config string contains a control byte".into()),
+                _ if byte.is_ascii() => value.push(char::from(byte)),
+                _ => {
+                    let start = self.offset - 1;
+                    let remaining = std::str::from_utf8(&self.bytes[start..])
+                        .map_err(|_| "edge config string is not UTF-8")?;
+                    let character =
+                        remaining.chars().next().ok_or("edge config string is malformed")?;
+                    self.offset = start + character.len_utf8();
+                    value.push(character);
+                }
+            }
+        }
+    }
+}
 
 /// Exact-1 Phase A extension configuration with post-gate receive credential input.
 #[derive(Debug, Clone)]
@@ -245,6 +8383,8 @@ pub struct BaseNodeTraderConfig {
     t4a_shadow: bool,
     t4b_shadow: bool,
     t4d_shadow: bool,
+    #[cfg(feature = "edge-measurement")]
+    edge_measurement: Result<Option<EdgeCliProducerConfigV1>, String>,
 }
 
 impl BaseNodeTraderConfig {
@@ -253,36 +8393,33 @@ impl BaseNodeTraderConfig {
         env == Some(OsStr::new("1"))
     }
 
+    #[cfg(feature = "t4a-shadow")]
     fn t4a_shadow_enabled() -> bool {
-        #[cfg(feature = "t4a-shadow")]
-        {
-            Self::enabled(std::env::var_os("MEV_TRADER_T4A_SHADOW").as_deref())
-        }
-        #[cfg(not(feature = "t4a-shadow"))]
-        {
-            false
-        }
+        Self::enabled(std::env::var_os("MEV_TRADER_T4A_SHADOW").as_deref())
     }
 
-    fn t4b_shadow_enabled() -> bool {
-        #[cfg(feature = "t4b-shadow")]
-        {
-            Self::enabled(std::env::var_os("MEV_TRADER_T4B_SHADOW").as_deref())
-        }
-        #[cfg(not(feature = "t4b-shadow"))]
-        {
-            false
-        }
+    #[cfg(not(feature = "t4a-shadow"))]
+    const fn t4a_shadow_enabled() -> bool {
+        false
     }
+
+    #[cfg(feature = "t4b-shadow")]
+    fn t4b_shadow_enabled() -> bool {
+        Self::enabled(std::env::var_os("MEV_TRADER_T4B_SHADOW").as_deref())
+    }
+
+    #[cfg(not(feature = "t4b-shadow"))]
+    const fn t4b_shadow_enabled() -> bool {
+        false
+    }
+    #[cfg(feature = "t4d-shadow")]
     fn t4d_shadow_enabled() -> bool {
-        #[cfg(feature = "t4d-shadow")]
-        {
-            Self::enabled(std::env::var_os("MEV_TRADER_T4D_SHADOW").as_deref())
-        }
-        #[cfg(not(feature = "t4d-shadow"))]
-        {
-            false
-        }
+        Self::enabled(std::env::var_os("MEV_TRADER_T4D_SHADOW").as_deref())
+    }
+
+    #[cfg(not(feature = "t4d-shadow"))]
+    const fn t4d_shadow_enabled() -> bool {
+        false
     }
 
     /// Applies exact-1 and flashblocks-present gates before consulting the credential environment.
@@ -301,7 +8438,68 @@ impl BaseNodeTraderConfig {
             t4a_shadow: Self::t4a_shadow_enabled(),
             t4b_shadow: Self::t4b_shadow_enabled(),
             t4d_shadow: Self::t4d_shadow_enabled(),
+            #[cfg(feature = "edge-measurement")]
+            edge_measurement: EdgeCliProducerConfigV1::from_environment(),
         })
+    }
+    #[cfg(feature = "edge-measurement")]
+    fn with_edge_measurement(
+        &self,
+        runtime_config: MevTraderRuntimeConfig,
+    ) -> eyre::Result<(
+        MevTraderRuntimeConfig,
+        Option<Arc<EdgeMeasurementOwnerV1>>,
+        Option<EdgeCanonicalWriterV1>,
+    )> {
+        let Some(config) =
+            self.edge_measurement.as_ref().map_err(|error| eyre::eyre!(error.clone()))?
+        else {
+            return Ok((runtime_config, None, None));
+        };
+        let owner = EdgeMeasurementOwnerV1::new(EdgeMeasurementOwnerConfigV1 {
+            producer_epoch: config.producer_epoch.get(),
+            output_root: config.output_root.clone(),
+            output_root_handle: Arc::clone(&config.output_root_handle),
+            producer_digest: config.producer_digest,
+            reject_schema_digest: config.reject_schema_digest,
+            prereg_digest: config.prereg_digest,
+            policy_digest: config.policy_digest,
+            config_digest: config.config_digest,
+            owner_approval_receipt_digest: config.owner_approval_receipt_digest,
+            record_queue_capacity: config.blink_record_capacity,
+            candidate_queue_capacity: config.blink_candidate_capacity,
+            measurement_sender: config.measurement_sender,
+            executor_runtime_hash: config.executor_runtime_hash,
+            v2_adapter: config.v2_adapter,
+            v2_adapter_runtime_hash: config.v2_adapter_runtime_hash,
+            v3_adapter: config.v3_adapter,
+            v3_adapter_runtime_hash: config.v3_adapter_runtime_hash,
+            aerodrome_adapter: config.aerodrome_adapter,
+            aerodrome_adapter_runtime_hash: config.aerodrome_adapter_runtime_hash,
+            g0_code_identity_digest: config.g0_code_identity_digest,
+            raw_reject_inventory_sha256: config.raw_reject_inventory_sha256,
+            raw_reject_source_sha256: config.raw_reject_source_sha256,
+            measurement_binding_source_sha256: config.measurement_binding_source_sha256,
+        })
+        .map_err(|error| eyre::eyre!("Blink edge owner construction failed: {error}"))?;
+        EdgeMeasurementGlobal::install(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: config.producer_epoch,
+            event_queue_capacity: config.flash_event_capacity,
+            active_state_capacity: config.flash_active_capacity,
+            pending_registry_capacity: config.flash_registry_capacity,
+            terminal_record_capacity: PENDING_TERMINAL_RECORD_CAPACITY_MAX_V2,
+        })
+        .map_err(|error| eyre::eyre!("flash edge owner installation failed: {error:?}"))?;
+        let recorder = EdgeMeasurementGlobal::installed()
+            .ok_or_else(|| eyre::eyre!("flash edge owner missing after installation"))?;
+        let mut writer = EdgeCanonicalWriterV1::new(config.clone(), recorder, Arc::clone(&owner));
+        writer
+            .prepare()
+            .map_err(|error| eyre::eyre!("edge startup authority preparation failed: {error}"))?;
+        let runtime_config = runtime_config
+            .with_edge_measurement_owner(Arc::clone(&owner))
+            .map_err(|error| eyre::eyre!("Blink edge owner installation failed: {error}"))?;
+        Ok((runtime_config, Some(owner), Some(writer)))
     }
 
     /// Creates the sole snapshot subscription and receive-only A1 runtime.
@@ -340,6 +8538,9 @@ impl BaseNodeTraderConfig {
         self,
         runtime_config: MevTraderRuntimeConfig,
     ) -> eyre::Result<BaseNodeTraderStart> {
+        #[cfg(feature = "edge-measurement")]
+        let (runtime_config, edge_owner, edge_writer) =
+            self.with_edge_measurement(runtime_config)?;
         let receiver = self.flashblocks.subscribe_to_flashblocks();
         let runtime = Arc::new(MevTraderRuntime::start(runtime_config)?);
         let client = self.credential_file.and_then(|credential_file| {
@@ -351,7 +8552,15 @@ impl BaseNodeTraderConfig {
         if client.is_none() {
             runtime.set_a1_status(A1Status::DisabledNoConnect);
         }
-        Ok(BaseNodeTraderStart { receiver, runtime, client })
+        Ok(BaseNodeTraderStart {
+            receiver,
+            runtime,
+            client,
+            #[cfg(feature = "edge-measurement")]
+            edge_owner,
+            #[cfg(feature = "edge-measurement")]
+            edge_writer,
+        })
     }
 }
 
@@ -361,6 +8570,10 @@ pub struct BaseNodeTraderStart {
     receiver: tokio::sync::broadcast::Receiver<Arc<PendingBlocks>>,
     runtime: Arc<MevTraderRuntime>,
     client: Option<BlinkFeedClient>,
+    #[cfg(feature = "edge-measurement")]
+    edge_owner: Option<Arc<EdgeMeasurementOwnerV1>>,
+    #[cfg(feature = "edge-measurement")]
+    edge_writer: Option<EdgeCanonicalWriterV1>,
 }
 
 impl BaseNodeTraderStart {
@@ -424,6 +8637,8 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                 Arc::clone(&self.config.flashblocks),
                 node.provider().clone(),
             ));
+            #[cfg(feature = "edge-measurement")]
+            let edge_measurement_registry = self.config.flashblocks.edge_measurement_registry();
             #[cfg(feature = "t4b-shadow")]
             let start = if self.config.t4d_shadow {
                 #[cfg(feature = "t4d-shadow")]
@@ -448,23 +8663,164 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
             };
             #[cfg(not(feature = "t4b-shadow"))]
             let start = self.config.start_idle()?;
-            let BaseNodeTraderStart { mut receiver, runtime, client } = start;
+            let BaseNodeTraderStart {
+                mut receiver,
+                runtime,
+                client,
+                #[cfg(feature = "edge-measurement")]
+                edge_owner,
+                #[cfg(feature = "edge-measurement")]
+                edge_writer,
+            } = start;
             let concrete_consumer_port = Arc::clone(&port);
             let consumer_port: Arc<dyn TraderSnapshotPort> = concrete_consumer_port;
             let executor = node.task_executor;
             let startup_status = runtime.a1_status();
             let registry_empty = runtime.registry_is_empty();
+            #[cfg(feature = "edge-measurement")]
+            let edge_cutoff_owner = edge_owner.clone();
             executor.spawn_with_graceful_shutdown_signal(move |signal| {
                 Box::pin(async move {
+                    #[cfg(feature = "edge-measurement")]
+                    let edge_writer_deadline_cancellation = edge_writer
+                        .as_ref()
+                        .map(|writer| Arc::clone(&writer.deadline_cancellation));
+                    #[cfg(feature = "edge-measurement")]
+                    let edge_writer_handle =
+                        edge_writer.map(|writer| tokio::task::spawn_blocking(move || writer.run()));
+                    #[cfg(feature = "edge-measurement")]
+                    let edge_cutoff_latched = Arc::new(EdgeCutoffLatchV1::default());
+                    #[cfg(feature = "edge-measurement")]
+                    let edge_cutoff_deadline_cancellation =
+                        Arc::new(EdgeShutdownDeadlineCancellationV1::default());
+                    #[cfg(feature = "edge-measurement")]
+                    let edge_cutoff_handle = EdgeMeasurementGlobal::installed()
+                        .zip(edge_cutoff_owner.clone())
+                        .map(|(recorder, owner)| {
+                            let latched = Arc::clone(&edge_cutoff_latched);
+                            let deadline_cancellation =
+                                Arc::clone(&edge_cutoff_deadline_cancellation);
+                            tokio::spawn(async move {
+                                tokio::time::sleep(Duration::from_secs(72 * 60 * 60)).await;
+                                latch_edge_cutoff_once(
+                                    &latched,
+                                    &deadline_cancellation,
+                                    &recorder,
+                                    &owner,
+                                );
+                            })
+                        });
                     let snapshot_runtime = Arc::clone(&runtime);
+                    #[cfg(feature = "edge-measurement")]
+                    let snapshot_cleanup_registry = edge_measurement_registry;
                     let snapshot_handle = tokio::spawn(async move {
                         loop {
                             tokio::select! {
-                                () = snapshot_runtime.shutdown().wait_cancelled() => return,
+                                () = snapshot_runtime.shutdown().wait_cancelled() => {
+                                    loop {
+                                        match receiver.try_recv() {
+                                            Ok(pending) => {
+                                                #[cfg(feature = "edge-measurement")]
+                                                let measurement_pending = Arc::clone(&pending);
+                                                port.record_pending_snapshot(pending, Instant::now());
+                                                #[cfg(feature = "edge-measurement")]
+                                                match tokio::task::block_in_place(|| {
+                                                    edge_measurement_registry
+                                                        .cli_received(&measurement_pending)
+                                                }) {
+                                                    Ok(metadata) => {
+                                                        if port
+                                                            .finish_edge_registry_received(
+                                                                &measurement_pending,
+                                                                metadata,
+                                                            )
+                                                            .is_err()
+                                                        {
+                                                            latch_edge_failure(
+                                                                "MissingRequiredEvidenceDuringCutoffDrain",
+                                                            );
+                                                        }
+                                                    }
+                                                    Err(_) => latch_edge_failure(
+                                                        "CliRegistryLookupFailedDuringCutoffDrain",
+                                                    ),
+                                                }
+                                            }
+                                            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(
+                                                count,
+                                            )) => {
+                                                #[cfg(not(feature = "edge-measurement"))]
+                                                let _ = count;
+                                                #[cfg(feature = "edge-measurement")]
+                                                if edge_measurement_registry.cli_lagged(count).is_err()
+                                                {
+                                                    latch_edge_failure(
+                                                        "CliLagRangeFailedDuringCutoffDrain",
+                                                    );
+                                                }
+                                            }
+                                            Err(
+                                                tokio::sync::broadcast::error::TryRecvError::Empty,
+                                            ) => break,
+                                            Err(
+                                                tokio::sync::broadcast::error::TryRecvError::Closed,
+                                            ) => {
+                                                #[cfg(feature = "edge-measurement")]
+                                                if edge_measurement_registry.cli_closed().is_err() {
+                                                    latch_edge_failure(
+                                                        "CliCloseRangeFailedDuringCutoffDrain",
+                                                    );
+                                                }
+                                                return;
+                                            }
+                                        }
+                                    }
+                                    #[cfg(feature = "edge-measurement")]
+                                    if edge_measurement_registry.cli_cancelled().is_err() {
+                                        latch_edge_failure("CliCancellationRangeFailed");
+                                    }
+                                    return;
+                                },
                                 pending = receiver.recv() => match pending {
-                                    Ok(pending) => port.record_pending_snapshot(pending, Instant::now()),
-                                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                                    Ok(pending) => {
+                                        #[cfg(feature = "edge-measurement")]
+                                        let measurement_pending = Arc::clone(&pending);
+                                        port.record_pending_snapshot(pending, Instant::now());
+                                        #[cfg(feature = "edge-measurement")]
+                                        match tokio::task::block_in_place(|| {
+                                            edge_measurement_registry
+                                                .cli_received(&measurement_pending)
+                                        }) {
+                                            Ok(metadata) => {
+                                                if port
+                                                    .finish_edge_registry_received(
+                                                        &measurement_pending,
+                                                        metadata,
+                                                    )
+                                                    .is_err()
+                                                {
+                                                    latch_edge_failure("MissingRequiredEvidence");
+                                                }
+                                            }
+                                            Err(_) => latch_edge_failure("CliRegistryLookupFailed"),
+                                        }
+                                    },
+                                    Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                                        #[cfg(not(feature = "edge-measurement"))]
+                                        let _ = count;
+                                        #[cfg(feature = "edge-measurement")]
+                                        if edge_measurement_registry.cli_lagged(count).is_err() {
+                                            latch_edge_failure("CliLagRangeFailed");
+                                        }
+                                        continue;
+                                    },
+                                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                        #[cfg(feature = "edge-measurement")]
+                                        if edge_measurement_registry.cli_closed().is_err() {
+                                            latch_edge_failure("CliCloseRangeFailed");
+                                        }
+                                        return;
+                                    },
                                 }
                             }
                         }
@@ -479,12 +8835,127 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                     let ingress_handle = client.map(|client| tokio::spawn(client.run()));
 
                     let _guard = signal.await;
+                    #[cfg(feature = "edge-measurement")]
+                    let edge_shutdown_cutoff_handle =
+                        EdgeMeasurementGlobal::installed().zip(edge_cutoff_owner.clone()).map(
+                            |(recorder, owner)| {
+                                let latched = Arc::clone(&edge_cutoff_latched);
+                                let deadline_cancellation =
+                                    Arc::clone(&edge_cutoff_deadline_cancellation);
+                                tokio::task::spawn_blocking(move || {
+                                    latch_edge_cutoff_once(
+                                        &latched,
+                                        &deadline_cancellation,
+                                        &recorder,
+                                        &owner,
+                                    );
+                                })
+                            },
+                        );
+                    #[cfg(feature = "edge-measurement")]
+                    abort_and_await_edge_cutoff_task(edge_cutoff_handle).await;
                     runtime.close();
+                    #[cfg(feature = "edge-measurement")]
+                    if let Some(handle) = edge_shutdown_cutoff_handle {
+                        match await_edge_shutdown_task(
+                            handle,
+                            EDGE_SHUTDOWN_CUTOFF_DEADLINE_V1,
+                        )
+                        .await
+                        {
+                            EdgeShutdownTaskOutcome::Completed(()) => {}
+                            EdgeShutdownTaskOutcome::JoinFailed => {
+                                latch_edge_failure("ShutdownCutoffTaskJoinFailed");
+                            }
+                            EdgeShutdownTaskOutcome::TimedOut(handle) => {
+                                edge_cutoff_deadline_cancellation.cancel();
+                                error!("cutoff task exceeded cooperative shutdown deadline");
+                                handle.abort();
+                            }
+                        }
+                    }
+                    #[cfg(feature = "edge-measurement")]
+                    handle_snapshot_shutdown_outcome(
+                        await_edge_shutdown_task(
+                            snapshot_handle,
+                            EDGE_SHUTDOWN_REGISTRY_DRAIN_DEADLINE_V1,
+                        )
+                        .await,
+                        &snapshot_cleanup_registry,
+                    );
+                    #[cfg(not(feature = "edge-measurement"))]
                     let _ = snapshot_handle.await;
+                    #[cfg(feature = "edge-measurement")]
+                    match await_edge_shutdown_task(
+                        consumer_handle,
+                        EDGE_SHUTDOWN_JOIN_DEADLINE_V1,
+                    )
+                    .await
+                    {
+                        EdgeShutdownTaskOutcome::Completed(()) => {}
+                        EdgeShutdownTaskOutcome::JoinFailed => {
+                            latch_edge_failure("ConsumerTaskJoinFailed");
+                        }
+                        EdgeShutdownTaskOutcome::TimedOut(handle) => {
+                            latch_edge_failure("ConsumerTaskJoinTimeout");
+                            handle.abort();
+                        }
+                    }
+                    #[cfg(not(feature = "edge-measurement"))]
                     let _ = consumer_handle.await;
+                    #[cfg(feature = "edge-measurement")]
+                    match await_edge_shutdown_task(
+                        control_handle,
+                        EDGE_SHUTDOWN_JOIN_DEADLINE_V1,
+                    )
+                    .await
+                    {
+                        EdgeShutdownTaskOutcome::Completed(()) => {}
+                        EdgeShutdownTaskOutcome::JoinFailed => {
+                            latch_edge_failure("ControlTaskJoinFailed");
+                        }
+                        EdgeShutdownTaskOutcome::TimedOut(handle) => {
+                            latch_edge_failure("ControlTaskJoinTimeout");
+                            handle.abort();
+                        }
+                    }
+                    #[cfg(not(feature = "edge-measurement"))]
                     let _ = control_handle.await;
                     if let Some(handle) = ingress_handle {
+                        #[cfg(feature = "edge-measurement")]
+                        match await_edge_shutdown_task(handle, EDGE_SHUTDOWN_JOIN_DEADLINE_V1).await {
+                            EdgeShutdownTaskOutcome::Completed(()) => {}
+                            EdgeShutdownTaskOutcome::JoinFailed => {
+                                latch_edge_failure("IngressTaskJoinFailed");
+                            }
+                            EdgeShutdownTaskOutcome::TimedOut(handle) => {
+                                latch_edge_failure("IngressTaskJoinTimeout");
+                                handle.abort();
+                            }
+                        }
+                        #[cfg(not(feature = "edge-measurement"))]
                         let _ = handle.await;
+                    }
+                    #[cfg(feature = "edge-measurement")]
+                    if let Some(handle) = edge_writer_handle {
+                        match await_edge_shutdown_task(handle, EDGE_SHUTDOWN_WRITER_DEADLINE_V1).await {
+                            EdgeShutdownTaskOutcome::Completed(Ok(())) => {}
+                            EdgeShutdownTaskOutcome::Completed(Err(_)) => {
+                                latch_edge_failure("CanonicalWriterFinalFailed");
+                            }
+                            EdgeShutdownTaskOutcome::JoinFailed => {
+                                latch_edge_failure("CanonicalWriterJoinFailed");
+                            }
+                            EdgeShutdownTaskOutcome::TimedOut(handle) => {
+                                if let Some(deadline_cancellation) =
+                                    &edge_writer_deadline_cancellation
+                                {
+                                    deadline_cancellation.cancel();
+                                }
+                                error!("canonical writer exceeded cooperative shutdown deadline");
+                                handle.abort();
+                            }
+                        }
                     }
                 })
             });
@@ -1354,13 +9825,323 @@ fn t4a_runtime_config(enabled: bool) -> eyre::Result<MevTraderRuntimeConfig> {
 }
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "edge-measurement")]
+    use std::os::unix::fs::PermissionsExt;
+    #[cfg(feature = "edge-measurement")]
+    use std::{fs, path::PathBuf};
+
     use alloy_primitives::{Address, Bloom, Bytes, U256};
+    #[cfg(feature = "edge-measurement")]
+    use alloy_primitives::{hex, keccak256};
     use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_flashblocks::PendingBlocksBuilder;
+    #[cfg(feature = "edge-measurement")]
+    use base_flashblocks::{DecodedFlashblockKeyV1, SourceConnectionTransitionV1};
+    #[cfg(feature = "edge-measurement")]
+    use base_mev_trader::{BlinkRejectClassifierV3, BlinkRejectReasonV3, SlotSubmit};
 
     use super::*;
+
+    #[cfg(feature = "edge-measurement")]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct RegistryRegistrationReceipt {
+        producer_epoch: u64,
+        pending_pointer_identity: usize,
+        pending_public_subset_digest: B256,
+        source_generation: Option<u64>,
+        returned_attempt: base_flashblocks::PendingRegistrationAttemptV2,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct DeterministicProcessorTerminalInputReceipt {
+        source_generation: u64,
+        base_disposition: base_flashblocks::ProcessorBaseDispositionV1,
+        observer_disposition: base_flashblocks::ProcessorObserverDispositionV1,
+        publish_disposition: base_flashblocks::ProcessorPublishDispositionV1,
+        pending_snapshot_sequence: Option<u64>,
+        processor_error_reason: Option<&'static str>,
+        cache_resolved_final_disposition: Option<base_flashblocks::ProcessorBaseDispositionV1>,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    type SnapshotEvidenceReceipt = (
+        base_flashblocks::PendingSnapshotMetadataV2,
+        PayloadFirstObservationV1,
+        ProcessorLifecycleProductV1,
+        SourceConnectionRecordV1,
+        PendingTerminalRecordV2,
+    );
+
+    #[cfg(feature = "edge-measurement")]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum RegistryBoundaryReceipt {
+        Register(RegistryRegistrationReceipt),
+        RecordSend {
+            attempt: base_flashblocks::PendingRegistrationAttemptV2,
+            receiver_count: Option<usize>,
+            result: Result<(), base_flashblocks::PendingRegistryError>,
+        },
+        CliReceived {
+            metadata: base_flashblocks::PendingSnapshotMetadataV2,
+            result: Result<
+                Result<
+                    base_flashblocks::PendingSnapshotMetadataV2,
+                    base_flashblocks::PendingSendJournalMarkerV2,
+                >,
+                base_flashblocks::CliRegistryLookupFailed,
+            >,
+        },
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum RecorderBoundaryReceipt {
+        ConnectionTransition(SourceConnectionTransitionV1),
+        ObserveWire {
+            bytes: Vec<u8>,
+            result: Option<base_flashblocks::EpochAdmissionTokenV1>,
+        },
+        DecodedFlashblock {
+            admission: base_flashblocks::EpochAdmissionTokenV1,
+            flashblock: Flashblock,
+            result: Option<u64>,
+        },
+        ActorEnqueue {
+            source_generation: u64,
+            succeeded: bool,
+        },
+        ActorDelivered {
+            source_generation: u64,
+        },
+        BeginStateHandoff {
+            key: DecodedFlashblockKeyV1,
+            result: Option<u64>,
+        },
+        TakeSourceGeneration {
+            flashblock: Flashblock,
+            result: Option<u64>,
+        },
+        RecordDeterministicTestProduct {
+            source_generation: u64,
+            pending_snapshot_sequence: u64,
+            input: DeterministicProcessorTerminalInputReceipt,
+            product: ProcessorLifecycleProductV1,
+        },
+        SnapshotEvidence {
+            metadata: base_flashblocks::PendingSnapshotMetadataV2,
+            result: Option<SnapshotEvidenceReceipt>,
+        },
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum TerminalBoundaryReceipt {
+        Registry(RegistryBoundaryReceipt),
+        Recorder(RecorderBoundaryReceipt),
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    type TerminalReceiptLog = std::rc::Rc<std::cell::RefCell<Vec<TerminalBoundaryReceipt>>>;
+
+    #[cfg(feature = "edge-measurement")]
+    struct RegistryRecordingHarness {
+        registry: Arc<base_flashblocks::PendingMetadataRegistryV2>,
+        receipts: TerminalReceiptLog,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    impl RegistryRecordingHarness {
+        fn register(
+            &self,
+            pending: &Arc<PendingBlocks>,
+            source_generation: Option<u64>,
+        ) -> base_flashblocks::PendingRegistrationAttemptV2 {
+            let producer_epoch = self.registry.authority_audit_snapshot().producer_epoch;
+            let receipt = RegistryRegistrationReceipt {
+                producer_epoch,
+                pending_pointer_identity: Arc::as_ptr(pending) as usize,
+                pending_public_subset_digest:
+                    base_flashblocks::PendingMetadataRegistryV2::pending_public_subset_digest_v1(
+                        pending,
+                    ),
+                source_generation,
+                returned_attempt: self.registry.register(pending, source_generation),
+            };
+            let result = receipt.returned_attempt;
+            self.receipts.borrow_mut().push(TerminalBoundaryReceipt::Registry(
+                RegistryBoundaryReceipt::Register(receipt),
+            ));
+            result
+        }
+
+        fn record_send(
+            &self,
+            attempt: base_flashblocks::PendingRegistrationAttemptV2,
+            receiver_count: Option<usize>,
+        ) -> Result<(), base_flashblocks::PendingRegistryError> {
+            let result = self.registry.record_send(attempt, receiver_count);
+            self.receipts.borrow_mut().push(TerminalBoundaryReceipt::Registry(
+                RegistryBoundaryReceipt::RecordSend { attempt, receiver_count, result },
+            ));
+            result
+        }
+
+        fn cli_received(
+            &self,
+            pending: &Arc<PendingBlocks>,
+        ) -> Result<
+            Result<
+                base_flashblocks::PendingSnapshotMetadataV2,
+                base_flashblocks::PendingSendJournalMarkerV2,
+            >,
+            base_flashblocks::CliRegistryLookupFailed,
+        > {
+            let pointer = Arc::as_ptr(pending) as usize;
+            let metadata = self
+                .registry
+                .authority_audit_snapshot()
+                .primary
+                .values()
+                .find(|entry| entry.metadata.identity.arc_pointer_identity == pointer)
+                .expect("recorded CLI metadata")
+                .metadata;
+            let result = self.registry.cli_received(pending);
+            self.receipts.borrow_mut().push(TerminalBoundaryReceipt::Registry(
+                RegistryBoundaryReceipt::CliReceived { metadata, result },
+            ));
+            result
+        }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    struct RecorderRecordingHarness<'a> {
+        recorder: &'a EdgeMeasurementRecorderV1,
+        receipts: TerminalReceiptLog,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    impl RecorderRecordingHarness<'_> {
+        fn registry(&self) -> RegistryRecordingHarness {
+            RegistryRecordingHarness {
+                registry: self.recorder.registry(),
+                receipts: std::rc::Rc::clone(&self.receipts),
+            }
+        }
+
+        fn connection_transition(&self, transition: SourceConnectionTransitionV1) {
+            self.recorder.connection_transition(transition);
+            self.receipts.borrow_mut().push(TerminalBoundaryReceipt::Recorder(
+                RecorderBoundaryReceipt::ConnectionTransition(transition),
+            ));
+        }
+
+        fn observe_wire(&self, bytes: &[u8]) -> Option<base_flashblocks::EpochAdmissionTokenV1> {
+            let result = self.recorder.observe_wire(bytes);
+            self.receipts.borrow_mut().push(TerminalBoundaryReceipt::Recorder(
+                RecorderBoundaryReceipt::ObserveWire { bytes: bytes.to_vec(), result },
+            ));
+            result
+        }
+
+        fn decoded_flashblock(
+            &self,
+            admission: base_flashblocks::EpochAdmissionTokenV1,
+            flashblock: &Flashblock,
+        ) -> Option<u64> {
+            let result = self.recorder.decoded_flashblock(admission, flashblock);
+            self.receipts.borrow_mut().push(TerminalBoundaryReceipt::Recorder(
+                RecorderBoundaryReceipt::DecodedFlashblock {
+                    admission,
+                    flashblock: flashblock.clone(),
+                    result,
+                },
+            ));
+            result
+        }
+
+        fn actor_enqueue(&self, source_generation: u64, succeeded: bool) {
+            self.recorder.actor_enqueue(source_generation, succeeded);
+            self.receipts.borrow_mut().push(TerminalBoundaryReceipt::Recorder(
+                RecorderBoundaryReceipt::ActorEnqueue { source_generation, succeeded },
+            ));
+        }
+
+        fn actor_delivered(&self, source_generation: u64) {
+            self.recorder.actor_delivered(source_generation);
+            self.receipts.borrow_mut().push(TerminalBoundaryReceipt::Recorder(
+                RecorderBoundaryReceipt::ActorDelivered { source_generation },
+            ));
+        }
+
+        fn begin_state_handoff(&self, key: DecodedFlashblockKeyV1) -> Option<u64> {
+            let result = self.recorder.begin_state_handoff(key);
+            self.receipts.borrow_mut().push(TerminalBoundaryReceipt::Recorder(
+                RecorderBoundaryReceipt::BeginStateHandoff { key, result },
+            ));
+            result
+        }
+
+        fn take_source_generation(&self, flashblock: &Flashblock) -> Option<u64> {
+            let result = self.recorder.take_source_generation(flashblock);
+            self.receipts.borrow_mut().push(TerminalBoundaryReceipt::Recorder(
+                RecorderBoundaryReceipt::TakeSourceGeneration {
+                    flashblock: flashblock.clone(),
+                    result,
+                },
+            ));
+            result
+        }
+
+        fn record_deterministic_test_product(
+            &self,
+            source_generation: u64,
+            pending_snapshot_sequence: u64,
+        ) {
+            self.recorder
+                .record_deterministic_test_product(source_generation, pending_snapshot_sequence);
+            let product = self
+                .recorder
+                .authority_audit_snapshot()
+                .recorder_state
+                .snapshot_products
+                .get(&pending_snapshot_sequence)
+                .copied()
+                .expect("recorded deterministic processor product");
+            self.receipts.borrow_mut().push(TerminalBoundaryReceipt::Recorder(
+                RecorderBoundaryReceipt::RecordDeterministicTestProduct {
+                    source_generation,
+                    pending_snapshot_sequence,
+                    input: DeterministicProcessorTerminalInputReceipt {
+                        source_generation,
+                        base_disposition:
+                            base_flashblocks::ProcessorBaseDispositionV1::AdvancedInitialBase,
+                        observer_disposition:
+                            base_flashblocks::ProcessorObserverDispositionV1::Absent,
+                        publish_disposition:
+                            base_flashblocks::ProcessorPublishDispositionV1::Published(1),
+                        pending_snapshot_sequence: Some(pending_snapshot_sequence),
+                        processor_error_reason: None,
+                        cache_resolved_final_disposition: None,
+                    },
+                    product,
+                },
+            ));
+        }
+
+        fn snapshot_evidence(
+            &self,
+            metadata: base_flashblocks::PendingSnapshotMetadataV2,
+        ) -> Option<SnapshotEvidenceReceipt> {
+            let result = self.recorder.snapshot_evidence(metadata);
+            self.receipts.borrow_mut().push(TerminalBoundaryReceipt::Recorder(
+                RecorderBoundaryReceipt::SnapshotEvidence { metadata, result },
+            ));
+            result
+        }
+    }
 
     fn pending_blocks() -> PendingBlocks {
         let parent_hash = B256::with_last_byte(1);
@@ -1457,120 +10238,8831 @@ mod tests {
                 "forbidden T4a provisioning seam: {forbidden}"
             );
         }
-        assert_eq!(CLI_SOURCE.matches(TASK_SPAWN).count(), 4);
+        assert_eq!(CLI_SOURCE.matches(TASK_SPAWN).count(), 5);
         assert_eq!(CLI_SOURCE.matches(FLASHBLOCK_SUBSCRIBE).count(), 1);
+    }
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn node_start_transfers_prepared_writer_and_preserves_task_source_seal() {
+        const CLI_SOURCE: &str = include_str!("mev_trader.rs");
+        const TASK_START: &str = concat!("tokio", "::spawn");
+        const CHILD_MARKER: &str = "BASE_EDGE_NODE_START_TRANSFER_CHILD";
+
+        assert_eq!(CLI_SOURCE.matches(TASK_START).count(), 5);
+        if std::env::var_os(CHILD_MARKER).is_none() {
+            let status = std::process::Command::new(
+                std::env::current_exe().expect("current test executable"),
+            )
+            .arg("node_start_transfers_prepared_writer_and_preserves_task_source_seal")
+            .arg("--test-threads=1")
+            .env(CHILD_MARKER, "1")
+            .status()
+            .expect("isolated node-start regression");
+            assert!(status.success());
+            return;
+        }
+
+        edge_node_result_test_reset_v1();
+        let root = edge_writer_root("node-start-transfer");
+        let (template, _, _) = edge_writer_fixture(&root, 172);
+        let edge_measurement = Ok(Some(template.provenance.clone()));
+        drop(template);
+
+        let config = BaseNodeTraderConfig {
+            flashblocks: Arc::new(FlashblocksState::default()),
+            credential_file: None,
+            t4a_shadow: false,
+            t4b_shadow: false,
+            t4d_shadow: false,
+            edge_measurement,
+        };
+        let mut start = config.start_idle().expect("production node-start payload");
+        assert!(start.edge_owner.is_some());
+        let writer = start.edge_writer.take().expect("prepared writer ownership");
+        assert!(writer.startup_authority_durable);
+        assert!(start.edge_writer.is_none());
+
+        let recorder = EdgeMeasurementGlobal::installed().expect("production source recorder");
+        let admission = recorder
+            .observe_wire(b"node-start-writer-run-path")
+            .expect("open production admission");
+        recorder.decode_rejected(admission);
+        assert!(recorder.raw_accounting_snapshot().expect("pending source accounting").1.6 > 0);
+
+        let cancellation = Arc::clone(&writer.deadline_cancellation);
+        let drain_recorder = Arc::clone(&recorder);
+        let cancellation_thread = std::thread::spawn(move || {
+            let deadline = Instant::now() + EDGE_SEGMENT_MAX_FLUSH_LATENCY + Duration::from_secs(2);
+            while drain_recorder
+                .raw_accounting_snapshot()
+                .expect("production source accounting")
+                .1
+                .6
+                != 0
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            cancellation.cancel();
+        });
+        let run_error = writer.run().expect_err("deadline cancellation stops writer");
+        cancellation_thread.join().expect("writer cancellation worker");
+        assert_eq!(run_error.kind(), io::ErrorKind::Interrupted);
+        assert_eq!(recorder.raw_accounting_snapshot().expect("drained source accounting").1.6, 0);
+        drop(start);
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("node-start regression cleanup");
     }
 
     #[test]
     fn adapter_requires_live_some_and_pointer_identical_capture() {
         let flashblocks = Arc::new(FlashblocksState::default());
         flashblocks.set_pending_blocks_for_testing(Some(pending_blocks()));
-        let current = flashblocks.get_pending_blocks();
-        let captured = Arc::clone(current.as_ref().expect("current pending"));
-        drop(current);
-
+        let captured = flashblocks.get_pending_blocks().clone().expect("current pending");
         let port = CliTraderSnapshotPort::new(Arc::clone(&flashblocks), ());
         port.record_pending_snapshot(captured, Instant::now());
         let record = port.current_record().expect("captured record");
         assert!(port.record_is_current(&record));
-
         flashblocks.set_pending_blocks_for_testing(None);
         assert!(!port.record_is_current(&record));
     }
+
     #[cfg(feature = "t4b-shadow")]
     #[test]
     fn t4b_shadow_slot_is_capacity_one_nonblocking_and_releases_every_guard() {
-        use std::sync::atomic::{AtomicU64, Ordering};
-
-        #[derive(Debug)]
-        struct DropProbe(Arc<AtomicU64>);
-
-        impl Drop for DropProbe {
-            fn drop(&mut self) {
-                self.0.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-
-        let drops = Arc::new(AtomicU64::new(0));
         let slot = ShadowLatestSlot::new();
-        assert_eq!(slot.try_submit(DropProbe(Arc::clone(&drops))), ShadowSubmit::Accepted);
-        assert_eq!(
-            slot.try_submit(DropProbe(Arc::clone(&drops))),
-            ShadowSubmit::ReplacedOldUnobserved
-        );
-        assert_eq!(drops.load(Ordering::Relaxed), 1);
-        drop(slot.try_take().expect("capacity-one detail"));
-        assert_eq!(drops.load(Ordering::Relaxed), 2);
-        assert_eq!(slot.try_submit(DropProbe(Arc::clone(&drops))), ShadowSubmit::Accepted);
+        assert_eq!(slot.try_submit(1_u64), ShadowSubmit::Accepted);
+        assert_eq!(slot.try_submit(2_u64), ShadowSubmit::ReplacedOldUnobserved);
+        assert_eq!(slot.try_take(), Some(2));
         slot.close();
-        assert_eq!(drops.load(Ordering::Relaxed), 3);
-        assert_eq!(slot.try_submit(DropProbe(Arc::clone(&drops))), ShadowSubmit::Closed);
-        assert_eq!(drops.load(Ordering::Relaxed), 4);
+        assert_eq!(slot.try_submit(3_u64), ShadowSubmit::Closed);
     }
+
     #[cfg(feature = "t4d-shadow")]
     #[test]
     fn t4d_shadow_drain_observes_only_bounded_bindings_and_drops_linear_candidate() {
-        use std::sync::atomic::{AtomicU64, Ordering};
+        const SOURCE: &str = include_str!("mev_trader.rs");
+        let bounded = SOURCE.split_once("fn observe_bounded_bindings").expect("observer").1;
+        assert!(bounded.contains("bindings = ?bindings"));
+        for forbidden in ["unsigned_tx", "calldata", "raw_tx"] {
+            assert!(!bounded.contains(forbidden));
+        }
+    }
 
-        #[derive(Debug)]
-        struct LinearCandidate(Arc<AtomicU64>);
+    #[cfg(feature = "edge-measurement")]
+    fn manifest_sample() -> &'static [u8] {
+        include_bytes!(
+            "../testdata/edge-measurement-v1/producer-contract-manifest16-sample-v1.json"
+        )
+    }
+    #[cfg(feature = "edge-measurement")]
+    const EXPECTED_LEDGER_REGISTRY_BYTES_V1: &[u8] = br#"[{"payloadSchemaDiscriminators":[{"field":"schema","value":"edge-payload-first-envelope/v1"}],"prefix":"payload-first","recordHashDomain":"edge-payload-first-envelope/v1"},{"payloadSchemaDiscriminators":[{"field":"schema","value":"edge-source-connection/v1"}],"prefix":"connection","recordHashDomain":"edge-source-connection/v1"},{"payloadSchemaDiscriminators":[{"field":"schema","value":"edge-clock-anchor/v1"}],"prefix":"clock","recordHashDomain":"edge-clock-anchor/v1"},{"payloadSchemaDiscriminators":[{"field":"schema","value":"edge-source-coverage/v3"}],"prefix":"coverage","recordHashDomain":"edge-source-coverage/v3"},{"payloadSchemaDiscriminators":[{"field":"schema","value":"edge-source-coverage/v3"}],"prefix":"coverage-postcutoff-excluded","recordHashDomain":"edge-source-coverage/v3"},{"payloadSchemaDiscriminators":[{"field":null,"value":null}],"prefix":"postcutoff-diagnostic","recordHashDomain":"edge-postcutoff-diagnostic/v1"},{"payloadSchemaDiscriminators":[{"field":null,"value":null}],"prefix":"coverage-detail","recordHashDomain":"edge-source-coverage-diagnostic/v1"},{"payloadSchemaDiscriminators":[{"field":null,"value":null}],"prefix":"source-detail","recordHashDomain":"edge-source-detail/v1"},{"payloadSchemaDiscriminators":[{"field":null,"value":null}],"prefix":"registry-h1","recordHashDomain":"edge-pending-registry-h1/v1"},{"payloadSchemaDiscriminators":[{"field":null,"value":null}],"prefix":"registry-h2","recordHashDomain":"edge-pending-registry-h2/v1"},{"payloadSchemaDiscriminators":[{"field":"schema","value":"edge-blink-reject/v3"}],"prefix":"blink-reject","recordHashDomain":"edge-blink-reject/v3"},{"payloadSchemaDiscriminators":[{"field":"schema","value":"edge-candidate-drop/v3"}],"prefix":"candidate-drop","recordHashDomain":"edge-writer-diagnostic/v1"},{"payloadSchemaDiscriminators":[{"field":"schema","value":"edge-candidate-detail/v1"},{"field":"schema","value":"edge-candidate-detail-exclusion/v1"}],"prefix":"candidate","recordHashDomain":"edge-candidate-detail/v1"},{"payloadSchemaDiscriminators":[{"field":"schemaVersion","value":"edge-producer-provenance/v1"}],"prefix":"provenance","recordHashDomain":"edge-producer-provenance/v1"},{"payloadSchemaDiscriminators":[{"field":"schemaVersion","value":"edge-producer-cutoff-envelope/v1"}],"prefix":"cutoff","recordHashDomain":"edge-producer-cutoff-envelope/v1"}]"#;
+    #[cfg(feature = "edge-measurement")]
+    const EXPECTED_MANIFEST16_BYTES_V1: &[u8] = br#"{"configuredMaxPendingRegistry":"1024","coverageSensitivityGoldenVectorSha256":"0101010101010101010101010101010101010101010101010101010101010101","economicAuthorityPolicySha256":"0202020202020202020202020202020202020202020202020202020202020202","evidenceImpactPolicySha256":"0303030303030303030303030303030303030303030303030303030303030303","forkDriverContractSha256":"0404040404040404040404040404040404040404040404040404040404040404","gracefulTimeoutNs":"240000000000","ledgerRegistrySha256":"0505050505050505050505050505050505050505050505050505050505050505","producerAccountingSchemaSha256":"0606060606060606060606060606060606060606060606060606060606060606","producerBinarySha256":"0707070707070707070707070707070707070707070707070707070707070707","registryDrainDeadlineNs":"30000000000","registryDrainFixtureSha256":"0808080808080808080808080808080808080808080808080808080808080808","schemaVersion":"edge-producer-contract-manifest/v1","segmentFramingDomainSha256":"0909090909090909090909090909090909090909090909090909090909090909","shutdownMarginReceiptSha256":"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a","targetTriple":"x86_64-unknown-linux-gnu","worstCaseShutdownNs":"217000000000"}"#;
 
-        impl Drop for LinearCandidate {
-            fn drop(&mut self) {
-                self.0.fetch_add(1, Ordering::Relaxed);
+    #[cfg(feature = "edge-measurement")]
+    const EXPECTED_SEGMENT_FRAMING_BYTES_V1: &[u8] = br#"{"authorityRecordFramingDomain":"base-edge-authority-record-v1\u0000","canonicalJsonProfile":"edge-contract-canonical-json/v1","footerHashDomain":"edge-sidecar-segment-footer-v1\u0000","footerSchemaVersion":"edge-sidecar-segment-footer-v1","maxFlushLatencyNs":"5000000000","maxRecordBytes":"4194304","maxRecords":"1024","ndjsonLineTerminator":"LF","publicationSequence":"open-write-file-fsync-link-or-rename-final-byte-verify-directory-fsync","segmentSetHashDomain":"edge-sidecar-segment-set-v1\u0000"}"#;
+
+    #[cfg(feature = "edge-measurement")]
+    fn terminal_drain_status() -> JsonValue {
+        json!({
+            "authorityOpenFileCount": "0",
+            "dataSealed": true,
+            "pendingPeriodicSnapshot": false,
+            "periodicCadenceClosed": true,
+            "producerQueuesDrained": true,
+            "registryClosed": true,
+            "registryPendingTotal": "0",
+            "schemaVersion": "edge-producer-drain-status/v1",
+            "sourceFenceInstalled": true,
+            "terminationPhase": "terminal-accounting-only",
+            "unsealedDataBatchCount": "0",
+        })
+    }
+    #[cfg(feature = "edge-measurement")]
+    fn incident_witness(kind: &str) -> JsonValue {
+        let hash_a = "11".repeat(32);
+        let hash_b = "22".repeat(32);
+        match kind {
+            "AccountingPeriodicWriteFailed" => json!({
+                "incidentId": format!("periodic|1|{hash_a}"),
+                "ledgerPrefix": JsonValue::Null,
+                "scheduledMonoNs": "1",
+                "failedMonoNs": "2",
+                "lastAttemptMonoNs": "3",
+                "recoveredMonoNs": "4",
+                "attemptCount": "3",
+                "preStateSha256": hash_a,
+                "postStateSha256": hash_b,
+                "attemptedBytesSha256": JsonValue::Null,
+                "durableBytesSha256": JsonValue::Null,
+            }),
+            "DataLedgerWriteFailed" => json!({
+                "incidentId": format!("candidate|0|{hash_a}"),
+                "ledgerPrefix": "candidate",
+                "scheduledMonoNs": JsonValue::Null,
+                "failedMonoNs": "2",
+                "lastAttemptMonoNs": "3",
+                "recoveredMonoNs": "4",
+                "attemptCount": "3",
+                "preStateSha256": JsonValue::Null,
+                "postStateSha256": JsonValue::Null,
+                "attemptedBytesSha256": hash_a.clone(),
+                "durableBytesSha256": hash_a,
+            }),
+            "OpenCleanupFailedAfterDurablePublish" => json!({
+                "incidentId": format!("candidate|candidate-00000000000000000000.ndjson|{hash_a}"),
+                "ledgerPrefix": "candidate",
+                "scheduledMonoNs": JsonValue::Null,
+                "failedMonoNs": "2",
+                "lastAttemptMonoNs": "3",
+                "recoveredMonoNs": "4",
+                "attemptCount": "3",
+                "preStateSha256": JsonValue::Null,
+                "postStateSha256": JsonValue::Null,
+                "attemptedBytesSha256": hash_a.clone(),
+                "durableBytesSha256": hash_a,
+            }),
+            _ => unreachable!("test incident kind"),
+        }
+    }
+    #[cfg(feature = "edge-measurement")]
+    fn assert_registry_admission_rejects(mutation: &JsonValue, label: &str) {
+        let bytes = EdgeContractCanonicalJsonV1::canonicalize(mutation)
+            .expect("registry mutation projects");
+        assert_ne!(bytes, EXPECTED_LEDGER_REGISTRY_BYTES_V1, "{label}: raw projection");
+        let digest =
+            EdgeContractCanonicalJsonV1::digest("edge-producer-ledger-registry/v1", mutation)
+                .expect("registry mutation digest");
+        assert_ne!(digest, EDGE_LEDGER_REGISTRY_SHA256_V1, "{label}: admission digest");
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn assert_accounting_admission_rejects(
+        objects: &[EdgeAccountingObjectContractRowV1],
+        rules: &[EdgeAccountingRuleContractRowV1],
+        constraints: &[&str],
+        label: &str,
+    ) {
+        match EdgeAccountingSchemaProjectorV1::project(objects, rules, constraints) {
+            Err(_) => {}
+            Ok(projection) => {
+                let digest = EdgeContractCanonicalJsonV1::digest(
+                    "edge-producer-accounting-schema/v1",
+                    &projection,
+                )
+                .expect("accounting mutation digest");
+                assert_ne!(
+                    digest, EDGE_PRODUCER_ACCOUNTING_SCHEMA_SHA256_V1,
+                    "{label}: admission accepted a mutated descriptor"
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn leaked_static_slice(values: Vec<&'static str>) -> &'static [&'static str] {
+        Box::leak(values.into_boxed_slice())
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn assert_witness_rejected(kind: &str, witness: &JsonValue, label: &str) {
+        assert!(
+            EdgeOperationalIncidentsV1::validate_witness(kind, witness).is_err(),
+            "{kind}.{label} reached no witness rejection boundary"
+        );
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    enum EdgeOobWriteFaultV1 {
+        Short(usize),
+        Error,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[derive(Default)]
+    struct EdgeOobFaultWriterV1 {
+        fault: Option<EdgeOobWriteFaultV1>,
+        lines: Vec<Vec<u8>>,
+        partial: Vec<u8>,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    impl Write for EdgeOobFaultWriterV1 {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            match self.fault.take() {
+                Some(EdgeOobWriteFaultV1::Short(limit)) => {
+                    let written = limit.min(bytes.len());
+                    self.partial.extend_from_slice(&bytes[..written]);
+                    Ok(written)
+                }
+                Some(EdgeOobWriteFaultV1::Error) => {
+                    Err(io::Error::other("injected OOB write failure"))
+                }
+                None => {
+                    self.lines.push(bytes.to_vec());
+                    Ok(bytes.len())
+                }
             }
         }
 
-        const CLI_MANIFEST: &str = include_str!("../Cargo.toml");
-        const NODE_MANIFEST: &str = include_str!("../../../../bin/node/Cargo.toml");
-        const CLI_SOURCE: &str = include_str!("mev_trader.rs");
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
-        let cli_feature = CLI_MANIFEST
-            .split_once("t4d-shadow = [")
-            .and_then(|(_, rest)| rest.split_once(']'))
-            .map(|(feature, _)| feature)
-            .expect("CLI t4d-shadow feature");
-        assert_eq!(
-            cli_feature
-                .split(',')
-                .map(|member| member.trim().trim_matches('"'))
-                .filter(|member| !member.is_empty())
-                .collect::<Vec<_>>(),
-            ["t4b-shadow", "mev-trader-submit/t4d-bridge"]
+    #[cfg(feature = "edge-measurement")]
+    macro_rules! edge_test {
+        ($name:ident, $body:block) => {
+            #[test]
+            fn $name() $body
+        };
+    }
+    #[cfg(feature = "edge-measurement")]
+    fn edge_option3_fixture_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/edge-measurement-v1")
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn edge_fixture_segment(prefix: &str, ordinal: u64) -> (Vec<JsonValue>, JsonValue) {
+        let path = edge_option3_fixture_root().join(format!("{prefix}-{ordinal:020}.ndjson"));
+        let bytes = fs::read(path).expect("committed option-3 segment");
+        EdgeCanonicalWriterV1::validate_canonical_artifact(&bytes)
+            .expect("canonical committed segment");
+        let mut lines = bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice::<JsonValue>(line).expect("segment JSON"))
+            .collect::<Vec<_>>();
+        let footer = lines.pop().expect("segment footer");
+        let record_bytes = lines
+            .iter()
+            .try_fold(Vec::new(), |mut bytes, record| {
+                bytes.extend_from_slice(&EdgeCanonicalWriterV1::canonical_line(record)?);
+                Ok::<_, io::Error>(bytes)
+            })
+            .expect("canonical record bytes");
+        assert_eq!(footer["recordsSha256"], EdgeCanonicalWriterV1::sha256_hex(&record_bytes));
+        let mut footer_base = footer.as_object().expect("footer object").clone();
+        let seal = footer_base
+            .remove("segmentSealSha256")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+            .expect("segment seal");
+        let mut seal_preimage = b"edge-sidecar-segment-footer-v1\0".to_vec();
+        seal_preimage.extend_from_slice(
+            &EdgeCanonicalWriterV1::canonical_bytes(&JsonValue::Object(footer_base))
+                .expect("canonical footer"),
         );
-        assert!(NODE_MANIFEST.contains("t4d-shadow = [ \"base-execution-cli/t4d-shadow\" ]"));
+        assert_eq!(seal, EdgeCanonicalWriterV1::sha256_hex(&seal_preimage));
+        let domain = if prefix == "accounting" {
+            "edge-producer-accounting-snapshot/v1"
+        } else {
+            EDGE_LEDGER_REGISTRY_V1
+                .iter()
+                .find(|row| row.prefix == prefix)
+                .map(|row| row.record_hash_domain)
+                .expect("registered fixture ledger")
+        };
+        let mut previous = footer["firstPreviousRecordHash"].as_str().expect("first previous hash");
+        for record in &lines {
+            assert_eq!(record["previousRecordHash"], previous);
+            assert_eq!(
+                record["recordHash"],
+                EdgeCanonicalWriterV1::authority_record_hash(domain, record)
+                    .expect("authority record hash")
+            );
+            previous = record["recordHash"].as_str().expect("record hash");
+        }
+        assert_eq!(footer["lastRecordHash"], previous);
+        (lines, footer)
+    }
 
-        let bounded_observation = CLI_SOURCE
-            .split_once("fn observe_bounded_bindings")
-            .and_then(|(_, rest)| rest.split_once("\n        }\n"))
-            .map(|(source, _)| source)
-            .expect("bounded T4d drain observation");
-        assert!(bounded_observation.contains("bindings = ?bindings"));
-        for forbidden in ["candidate", "unsigned_tx", "calldata", "raw", "input"] {
+    #[cfg(feature = "edge-measurement")]
+    fn edge_fixture_accounting(ordinal: u64) -> JsonValue {
+        let (records, footer) = edge_fixture_segment("accounting", ordinal);
+        assert_eq!(records.len(), 1);
+        assert_eq!(footer["recordCount"], "1");
+        let record = records.into_iter().next().expect("accounting record");
+        let object = record.as_object().expect("accounting object");
+        assert_eq!(
+            object
+                .keys()
+                .filter(|key| {
+                    !["previousRecordHash", "recordHash", "sequence", "state"]
+                        .contains(&key.as_str())
+                })
+                .count(),
+            EDGE_ACCOUNTING_TOP_LEVEL_ORDER_V1.len()
+        );
+        assert!(EDGE_ACCOUNTING_TOP_LEVEL_ORDER_V1.iter().all(|key| object.contains_key(*key)));
+        record
+    }
+    #[cfg(feature = "edge-measurement")]
+    fn edge_writer_root(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "edge-production-writer-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("production writer source root");
+        root
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    struct EdgeExecutablePermissionsGuardV1 {
+        executable: File,
+        original: fs::Permissions,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    impl EdgeExecutablePermissionsGuardV1 {
+        fn install() -> Self {
+            let path = std::env::current_exe().expect("current test executable");
+            let executable = File::open(&path).expect("open current test executable");
+            let original =
+                executable.metadata().expect("current test executable metadata").permissions();
+            let mut production = original.clone();
+            production.set_mode(original.mode() & !0o022);
+            executable
+                .set_permissions(production)
+                .expect("make current test executable production-valid");
+            Self { executable, original }
+        }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    impl Drop for EdgeExecutablePermissionsGuardV1 {
+        fn drop(&mut self) {
+            self.executable
+                .set_permissions(self.original.clone())
+                .expect("restore current test executable permissions");
+        }
+    }
+    #[cfg(feature = "edge-measurement")]
+    struct EdgeEnvironmentGuardV1 {
+        previous: Vec<(String, Option<OsString>)>,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    impl EdgeEnvironmentGuardV1 {
+        fn install(values: &[(&str, OsString)]) -> Self {
+            let previous =
+                values.iter().map(|(key, _)| ((*key).to_owned(), std::env::var_os(key))).collect();
+            for (key, value) in values {
+                // SAFETY: edge boot tests hold the process-global edge test lock for this guard's
+                // entire lifetime, and these variables are restored before the lock is released.
+                unsafe {
+                    std::env::set_var(key, value);
+                }
+            }
+            Self { previous }
+        }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    impl Drop for EdgeEnvironmentGuardV1 {
+        fn drop(&mut self) {
+            for (key, value) in self.previous.iter().rev() {
+                // SAFETY: the same process-global edge test lock still covers guard teardown.
+                unsafe {
+                    if let Some(value) = value {
+                        std::env::set_var(key, value);
+                    } else {
+                        std::env::remove_var(key);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    struct EdgeBootFixtureV1 {
+        base: PathBuf,
+        campaign_root: PathBuf,
+        control_root: PathBuf,
+        config_path: PathBuf,
+        environment: Vec<(&'static str, OsString)>,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    impl EdgeBootFixtureV1 {
+        fn new(label: &str) -> Self {
+            const REQUIRED_METHODS: [&str; 5] = [
+                "eth_chainId",
+                "eth_getBlockByHash",
+                "eth_getProof",
+                "eth_getCode",
+                "eth_getStorageAt",
+            ];
+            let base = edge_writer_root(label);
+            let campaign_root = base.join("campaign");
+            let control_root = base.join("control");
+            let consumer_root = base.join("consumer");
+            for root in [&campaign_root, &control_root, &consumer_root] {
+                fs::create_dir(root).expect("boot role root");
+                fs::set_permissions(root, fs::Permissions::from_mode(0o700))
+                    .expect("private boot role root");
+            }
+
+            let external_bytes = b"{}".to_vec();
+            let external_sha = EdgeCanonicalWriterV1::sha256_hex(&external_bytes);
+            let external_paths = [
+                base.join("coverage.json"),
+                base.join("economic.json"),
+                base.join("impact.json"),
+                base.join("fork.json"),
+            ];
+            for path in &external_paths {
+                fs::write(path, &external_bytes).expect("external boot anchor");
+                fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                    .expect("private external boot anchor");
+            }
+
+            let configured_pending = 8_u64;
+            let components = [
+                "coverageAck",
+                "delivery",
+                "primary",
+                "published",
+                "secondary",
+                "unregisteredSendInflight",
+                "sequenceLessRegistrationSendInflight",
+            ];
+            let mut cases = Vec::new();
+            for (selected, component) in components.iter().enumerate() {
+                let pending = components
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| {
+                        (
+                            (*name).to_owned(),
+                            json!(if index == selected {
+                                configured_pending.to_string()
+                            } else {
+                                "0".to_owned()
+                            }),
+                        )
+                    })
+                    .collect::<serde_json::Map<_, _>>();
+                cases.push(
+                    json!({"name": format!("{component}-full"), "pendingBreakdown": pending}),
+                );
+            }
+            let pending = components
+                .iter()
+                .enumerate()
+                .map(|(index, name)| {
+                    let value = configured_pending / components.len() as u64
+                        + u64::from((index as u64) < configured_pending % components.len() as u64);
+                    ((*name).to_owned(), json!(value.to_string()))
+                })
+                .collect::<serde_json::Map<_, _>>();
+            cases.push(json!({"name": "round-robin", "pendingBreakdown": pending}));
+            let registry_fixture = EdgeContractCanonicalJsonV1::canonicalize(&json!({
+                "schemaVersion": "edge-registry-drain-stress/v1",
+                "configuredMaxPendingRegistry": configured_pending.to_string(),
+                "componentOrder": components,
+                "cases": cases,
+                "identityGenerator": {
+                    "algorithm": "sha256-counter/v1",
+                    "seed": "edge-registry-drain-stress/v1",
+                },
+            }))
+            .expect("canonical registry fixture");
+            let registry_path = base.join("registry.json");
+            fs::write(&registry_path, &registry_fixture).expect("registry fixture");
+            fs::set_permissions(&registry_path, fs::Permissions::from_mode(0o600))
+                .expect("private registry fixture");
+            let registry_sha = EdgeCanonicalWriterV1::sha256_hex(&registry_fixture);
+
+            let executable = std::env::current_exe().expect("test executable");
+            let executable_sha = EdgeCanonicalWriterV1::sha256_hex(
+                &fs::read(&executable).expect("test executable bytes"),
+            );
+            let receipt_bytes = format!(
+                concat!(
+                    "{{\"schemaVersion\":\"edge-shutdown-margin/v1\",",
+                    "\"configuredMaxPendingRegistry\":\"8\",",
+                    "\"registryDrainFixtureSha256\":\"{}\",",
+                    "\"producerBinarySha256\":\"{}\",",
+                    "\"targetTriple\":\"{}\",",
+                    "\"runCount\":\"30\",",
+                    "\"maxObservedDrainNs\":\"1\",",
+                    "\"registryDrainDeadlineNs\":\"30000000000\",",
+                    "\"minimumMarginNumerator\":\"4\",",
+                    "\"minimumMarginDenominator\":\"1\",",
+                    "\"worstCaseShutdownNs\":\"217000000000\",",
+                    "\"gracefulTimeoutNs\":\"240000000000\",",
+                    "\"result\":\"Pass\"}}"
+                ),
+                registry_sha,
+                executable_sha,
+                EdgeCliProducerConfigV1::target_triple(),
+            )
+            .into_bytes();
+            let receipt_path = control_root.join("edge-shutdown-margin-v1.json");
+            fs::write(&receipt_path, &receipt_bytes).expect("shutdown receipt");
+            fs::set_permissions(&receipt_path, fs::Permissions::from_mode(0o600))
+                .expect("private shutdown receipt");
+            let receipt_sha = EdgeCanonicalWriterV1::sha256_hex(&receipt_bytes);
+
+            let now = u64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("boot wall clock")
+                    .as_nanos(),
+            )
+            .expect("boot wall clock u64");
+            let valid_until = now.checked_add(3_600_000_000_000).expect("validity horizon");
+            let retention =
+                valid_until.checked_add(799_200_000_000_000).expect("retention horizon");
+            let providers = vec![
+                json!({
+                    "providerId": "archive-a",
+                    "operatorId": "operator-a",
+                    "archiveMode": "full-historical",
+                    "pruningMode": "disabled",
+                    "retentionCommitmentThroughUtcNs": retention.to_string(),
+                }),
+                json!({
+                    "providerId": "archive-b",
+                    "operatorId": "operator-b",
+                    "archiveMode": "full-historical",
+                    "pruningMode": "disabled",
+                    "retentionCommitmentThroughUtcNs": retention.to_string(),
+                }),
+            ];
+            let probe_block_hash = format!("0x{}", "22".repeat(32));
+            let method_results = providers
+                .iter()
+                .flat_map(|provider| {
+                    REQUIRED_METHODS.iter().enumerate().map(|(index, method)| {
+                        json!({
+                            "providerId": provider["providerId"],
+                            "method": method,
+                            "requestBlockHash": probe_block_hash,
+                            "responseSha256": format!("{:064x}", index + 1),
+                            "result": "Pass",
+                        })
+                    })
+                })
+                .collect::<Vec<_>>();
+            let capability = json!({
+                "schemaVersion": "edge-fork-driver-capability/v1",
+                "campaignId": "boot-wiring",
+                "preregDigest": format!("0x{}", "11".repeat(32)),
+                "economicAuthorityPolicySha256": external_sha,
+                "forkDriverContractSha256": external_sha,
+                "chainId": "8453",
+                "genesisHash": "0xf712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd",
+                "providers": providers,
+                "providerSetSha256": EdgeContractCanonicalJsonV1::digest(
+                    "edge-fork-provider-set/v1",
+                    &JsonValue::Array(providers.clone()),
+                )
+                .expect("provider digest"),
+                "providerCount": "2",
+                "requiredHistoricalAgeSeconds": "799200",
+                "replayStartSlaSeconds": "21600",
+                "replayCompletionBudgetSeconds": "518400",
+                "probeBlockNumber": "1",
+                "probeBlockHash": probe_block_hash,
+                "probeStateRoot": format!("0x{}", "44".repeat(32)),
+                "probeAgeSeconds": "799200",
+                "requiredRpcMethods": REQUIRED_METHODS,
+                "methodResults": method_results,
+                "methodResultsSha256": EdgeContractCanonicalJsonV1::digest(
+                    "edge-fork-capability-method-results/v1",
+                    &JsonValue::Array(method_results),
+                )
+                .expect("method digest"),
+                "driverImplementationSha256": "55".repeat(32),
+                "anvilVersion": "anvil-test",
+                "evmRevision": "cancun",
+                "retentionCommitmentThroughUtcNs": retention.to_string(),
+                "probedAtUtcNs": now.saturating_sub(1).to_string(),
+                "validUntilUtcNs": valid_until.to_string(),
+                "result": "Pass",
+            });
+            let capability_path = control_root.join("fork-driver-capability-v1.json");
+            fs::write(
+                &capability_path,
+                EdgeContractCanonicalJsonV1::canonicalize(&capability)
+                    .expect("canonical capability"),
+            )
+            .expect("capability receipt");
+            fs::set_permissions(&capability_path, fs::Permissions::from_mode(0o600))
+                .expect("private capability receipt");
+
+            let manifest = json!({
+                "configuredMaxPendingRegistry": configured_pending.to_string(),
+                "coverageSensitivityGoldenVectorSha256": external_sha,
+                "economicAuthorityPolicySha256": external_sha,
+                "evidenceImpactPolicySha256": external_sha,
+                "forkDriverContractSha256": external_sha,
+                "gracefulTimeoutNs": "240000000000",
+                "ledgerRegistrySha256": EDGE_LEDGER_REGISTRY_SHA256_V1,
+                "producerAccountingSchemaSha256": EDGE_PRODUCER_ACCOUNTING_SCHEMA_SHA256_V1,
+                "producerBinarySha256": executable_sha,
+                "registryDrainDeadlineNs": "30000000000",
+                "registryDrainFixtureSha256": registry_sha,
+                "schemaVersion": "edge-producer-contract-manifest/v1",
+                "segmentFramingDomainSha256": EDGE_SEGMENT_FRAMING_DOMAIN_SHA256_V1,
+                "shutdownMarginReceiptSha256": receipt_sha,
+                "targetTriple": EdgeCliProducerConfigV1::target_triple(),
+                "worstCaseShutdownNs": "217000000000",
+            });
+            let manifest_bytes =
+                EdgeContractCanonicalJsonV1::canonicalize(&manifest).expect("canonical manifest");
+            let manifest_path = base.join("manifest.json");
+            fs::write(&manifest_path, &manifest_bytes).expect("producer manifest");
+            fs::set_permissions(&manifest_path, fs::Permissions::from_mode(0o600))
+                .expect("private producer manifest");
+            let manifest_sha = EdgeCanonicalWriterV1::sha256_hex(&manifest_bytes);
+
+            let config = json!({
+                "outputRoot": campaign_root,
+                "producerEpoch": 1,
+                "producerDigest": format!("0x{}", "01".repeat(32)),
+                "rejectSchemaDigest": format!("0x{}", "02".repeat(32)),
+                "preregDigest": format!("0x{}", "11".repeat(32)),
+                "policyDigest": format!("0x{}", "03".repeat(32)),
+                "configDigest": format!("0x{}", "04".repeat(32)),
+                "ownerApprovalReceiptDigest": format!("0x{}", "05".repeat(32)),
+                "flashEventCapacity": 8,
+                "flashActiveCapacity": 8,
+                "flashRegistryCapacity": configured_pending,
+                "blinkRecordCapacity": 8,
+                "blinkCandidateCapacity": 8,
+                "measurementSender": format!("0x{}", "06".repeat(20)),
+                "executorRuntimeHash": format!("0x{}", "07".repeat(32)),
+                "v2Adapter": format!("0x{}", "08".repeat(20)),
+                "v2AdapterRuntimeHash": format!("0x{}", "09".repeat(32)),
+                "v3Adapter": format!("0x{}", "0a".repeat(20)),
+                "v3AdapterRuntimeHash": format!("0x{}", "0b".repeat(32)),
+                "aerodromeAdapter": format!("0x{}", "0c".repeat(20)),
+                "aerodromeAdapterRuntimeHash": format!("0x{}", "0d".repeat(32)),
+                "g0CodeIdentityDigest": format!("0x{}", "0e".repeat(32)),
+                "rawRejectInventorySha256": format!("0x{}", "0f".repeat(32)),
+                "rawRejectSourceSha256": format!("0x{}", "10".repeat(32)),
+                "measurementBindingSourceSha256": format!("0x{}", "12".repeat(32)),
+            });
+            let config_path = base.join("config.json");
+            let config_bytes = serde_json::to_vec(&config).expect("config bytes");
             assert!(
-                !bounded_observation.contains(forbidden),
-                "T4d drain observation exposed forbidden detail: {forbidden}"
+                config_bytes.len() as u64 <= EdgeCliProducerConfigV1::MAX_CONFIG_BYTES,
+                "boot fixture config must stay within the production admission bound"
+            );
+            fs::write(&config_path, &config_bytes).expect("boot config");
+            assert_eq!(fs::read(&config_path).expect("boot config bytes"), config_bytes);
+            fs::set_permissions(&config_path, fs::Permissions::from_mode(0o600))
+                .expect("private boot config");
+
+            let environment = vec![
+                ("BASE_EDGE_MEASUREMENT_CONFIG", config_path.clone().into_os_string()),
+                ("BASE_EDGE_CAMPAIGN_CONTROL_ROOT", control_root.clone().into_os_string()),
+                ("BASE_EDGE_CONSUMER_OUTPUT_ROOT", consumer_root.clone().into_os_string()),
+                ("BASE_EDGE_PRODUCER_CONTRACT_MANIFEST", manifest_path.into_os_string()),
+                ("BASE_EDGE_PRODUCER_CONTRACT_MANIFEST_SHA256", manifest_sha.into()),
+                (
+                    "BASE_EDGE_COVERAGE_SENSITIVITY_GOLDEN",
+                    external_paths[0].clone().into_os_string(),
+                ),
+                ("BASE_EDGE_ECONOMIC_AUTHORITY_POLICY", external_paths[1].clone().into_os_string()),
+                ("BASE_EDGE_EVIDENCE_IMPACT_POLICY", external_paths[2].clone().into_os_string()),
+                ("BASE_EDGE_FORK_DRIVER_CONTRACT", external_paths[3].clone().into_os_string()),
+                ("BASE_EDGE_REGISTRY_DRAIN_FIXTURE", registry_path.into_os_string()),
+            ];
+            Self { base, campaign_root, control_root, config_path, environment }
+        }
+
+        fn install_environment(&self) -> EdgeEnvironmentGuardV1 {
+            EdgeEnvironmentGuardV1::install(&self.environment)
+        }
+
+        fn allocated_root(&self, epoch: u64) -> PathBuf {
+            self.campaign_root.join(format!("epoch-{epoch:020}"))
+        }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    impl Drop for EdgeBootFixtureV1 {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.base);
+        }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn edge_writer_fixture(
+        root: &Path,
+        producer_epoch: u64,
+    ) -> (EdgeCanonicalWriterV1, Arc<EdgeMeasurementRecorderV1>, Arc<EdgeMeasurementOwnerV1>) {
+        let root_handle = Arc::new(File::open(root).expect("source-root descriptor"));
+        let sha256 = |bytes: &[u8]| B256::new(EdgeMeasurementDurabilityV1::sha256(bytes));
+        let config = EdgeCliProducerConfigV1 {
+            output_root: root.to_path_buf(),
+            output_root_handle: Arc::clone(&root_handle),
+            producer_epoch: NonZeroU64::new(producer_epoch).expect("nonzero producer epoch"),
+            _campaign_control_root_handle: Arc::clone(&root_handle),
+            _consumer_output_root_handle: Arc::clone(&root_handle),
+            producer_digest: B256::repeat_byte(1),
+            reject_schema_digest: BlinkRejectClassifierV3::reject_schema_digest(),
+            prereg_digest: B256::repeat_byte(2),
+            policy_digest: B256::repeat_byte(3),
+            config_digest: B256::repeat_byte(4),
+            owner_approval_receipt_digest: B256::repeat_byte(5),
+            flash_event_capacity: 64,
+            flash_active_capacity: 64,
+            flash_registry_capacity: 64,
+            blink_record_capacity: 64,
+            blink_candidate_capacity: 64,
+            measurement_sender: Address::repeat_byte(6),
+            executor_runtime_hash: B256::repeat_byte(7),
+            v2_adapter: Address::repeat_byte(8),
+            v2_adapter_runtime_hash: B256::repeat_byte(9),
+            v3_adapter: Address::repeat_byte(10),
+            v3_adapter_runtime_hash: B256::repeat_byte(11),
+            aerodrome_adapter: Address::repeat_byte(12),
+            aerodrome_adapter_runtime_hash: B256::repeat_byte(13),
+            g0_code_identity_digest: B256::repeat_byte(14),
+            raw_reject_inventory_sha256: EdgeMeasurementOwnerConfigV1::raw_reject_inventory_sha256(
+            ),
+            raw_reject_source_sha256: sha256(include_bytes!(
+                "../../mev-trader/src/edge_measurement.rs"
+            )),
+            measurement_binding_source_sha256: sha256(include_bytes!(
+                "../../mev-trader/src/measurement_tx.rs"
+            )),
+        };
+        let owner = EdgeMeasurementOwnerV1::new(EdgeMeasurementOwnerConfigV1 {
+            producer_epoch,
+            output_root: config.output_root.clone(),
+            output_root_handle: Arc::clone(&config.output_root_handle),
+            producer_digest: config.producer_digest,
+            reject_schema_digest: config.reject_schema_digest,
+            prereg_digest: config.prereg_digest,
+            policy_digest: config.policy_digest,
+            config_digest: config.config_digest,
+            owner_approval_receipt_digest: config.owner_approval_receipt_digest,
+            record_queue_capacity: config.blink_record_capacity,
+            candidate_queue_capacity: config.blink_candidate_capacity,
+            measurement_sender: config.measurement_sender,
+            executor_runtime_hash: config.executor_runtime_hash,
+            v2_adapter: config.v2_adapter,
+            v2_adapter_runtime_hash: config.v2_adapter_runtime_hash,
+            v3_adapter: config.v3_adapter,
+            v3_adapter_runtime_hash: config.v3_adapter_runtime_hash,
+            aerodrome_adapter: config.aerodrome_adapter,
+            aerodrome_adapter_runtime_hash: config.aerodrome_adapter_runtime_hash,
+            g0_code_identity_digest: config.g0_code_identity_digest,
+            raw_reject_inventory_sha256: config.raw_reject_inventory_sha256,
+            raw_reject_source_sha256: config.raw_reject_source_sha256,
+            measurement_binding_source_sha256: config.measurement_binding_source_sha256,
+        })
+        .expect("production measurement owner");
+        let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: config.producer_epoch,
+            event_queue_capacity: config.flash_event_capacity,
+            active_state_capacity: config.flash_active_capacity,
+            pending_registry_capacity: config.flash_registry_capacity,
+            terminal_record_capacity: 64,
+        })
+        .expect("production source recorder");
+        (
+            EdgeCanonicalWriterV1::new(config, Arc::clone(&recorder), Arc::clone(&owner)),
+            recorder,
+            owner,
+        )
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn edge_segment_mutation_writer_fixture(
+        root: &Path,
+        producer_epoch: u64,
+    ) -> (EdgeCanonicalWriterV1, Arc<EdgeMeasurementRecorderV1>, Arc<EdgeMeasurementOwnerV1>) {
+        let root_handle = Arc::new(File::open(root).expect("source-root descriptor"));
+        let sha256 = |bytes: &[u8]| B256::new(EdgeMeasurementDurabilityV1::sha256(bytes));
+        let empty_runtime_hash = keccak256([]);
+        let measurement_sender = Address::repeat_byte(1);
+        let v2_adapter = Address::repeat_byte(2);
+        let v3_adapter = Address::repeat_byte(3);
+        let aerodrome_adapter = Address::repeat_byte(4);
+        let g0_code_identity_digest = {
+            let mut canonical = Vec::with_capacity(34 + 4 * 52);
+            canonical.extend_from_slice(b"edge-deployment-identities/v1\0");
+            canonical.extend_from_slice(&4_u32.to_be_bytes());
+            for address in
+                [base_mev_trader::MEASUREMENT_EXECUTOR, v2_adapter, v3_adapter, aerodrome_adapter]
+            {
+                canonical.extend_from_slice(address.as_slice());
+                canonical.extend_from_slice(empty_runtime_hash.as_slice());
+            }
+            sha256(&canonical)
+        };
+        let config = EdgeCliProducerConfigV1 {
+            output_root: root.to_path_buf(),
+            output_root_handle: Arc::clone(&root_handle),
+            producer_epoch: NonZeroU64::new(producer_epoch).expect("nonzero producer epoch"),
+            _campaign_control_root_handle: Arc::clone(&root_handle),
+            _consumer_output_root_handle: Arc::clone(&root_handle),
+            producer_digest: B256::repeat_byte(1),
+            reject_schema_digest: BlinkRejectClassifierV3::reject_schema_digest(),
+            prereg_digest: B256::repeat_byte(3),
+            policy_digest: B256::repeat_byte(4),
+            config_digest: B256::repeat_byte(5),
+            owner_approval_receipt_digest: B256::repeat_byte(6),
+            flash_event_capacity: 64,
+            flash_active_capacity: 64,
+            flash_registry_capacity: 64,
+            blink_record_capacity: 64,
+            blink_candidate_capacity: 64,
+            measurement_sender,
+            executor_runtime_hash: empty_runtime_hash,
+            v2_adapter,
+            v2_adapter_runtime_hash: empty_runtime_hash,
+            v3_adapter,
+            v3_adapter_runtime_hash: empty_runtime_hash,
+            aerodrome_adapter,
+            aerodrome_adapter_runtime_hash: empty_runtime_hash,
+            g0_code_identity_digest,
+            raw_reject_inventory_sha256: EdgeMeasurementOwnerConfigV1::raw_reject_inventory_sha256(
+            ),
+            raw_reject_source_sha256: sha256(include_bytes!(
+                "../../mev-trader/src/edge_measurement.rs"
+            )),
+            measurement_binding_source_sha256: sha256(include_bytes!(
+                "../../mev-trader/src/measurement_tx.rs"
+            )),
+        };
+        let owner = EdgeMeasurementOwnerV1::new(EdgeMeasurementOwnerConfigV1 {
+            producer_epoch,
+            output_root: config.output_root.clone(),
+            output_root_handle: Arc::clone(&config.output_root_handle),
+            producer_digest: config.producer_digest,
+            reject_schema_digest: config.reject_schema_digest,
+            prereg_digest: config.prereg_digest,
+            policy_digest: config.policy_digest,
+            config_digest: config.config_digest,
+            owner_approval_receipt_digest: config.owner_approval_receipt_digest,
+            record_queue_capacity: config.blink_record_capacity,
+            candidate_queue_capacity: config.blink_candidate_capacity,
+            measurement_sender: config.measurement_sender,
+            executor_runtime_hash: empty_runtime_hash,
+            v2_adapter: config.v2_adapter,
+            v2_adapter_runtime_hash: empty_runtime_hash,
+            v3_adapter: config.v3_adapter,
+            v3_adapter_runtime_hash: empty_runtime_hash,
+            aerodrome_adapter: config.aerodrome_adapter,
+            aerodrome_adapter_runtime_hash: empty_runtime_hash,
+            g0_code_identity_digest: config.g0_code_identity_digest,
+            raw_reject_inventory_sha256: config.raw_reject_inventory_sha256,
+            raw_reject_source_sha256: config.raw_reject_source_sha256,
+            measurement_binding_source_sha256: config.measurement_binding_source_sha256,
+        })
+        .expect("production measurement owner");
+        let recorder =
+            EdgeMeasurementRecorderV1::new_deterministic_test(EdgeMeasurementInstallConfigV1 {
+                producer_epoch: config.producer_epoch,
+                event_queue_capacity: config.flash_event_capacity,
+                active_state_capacity: config.flash_active_capacity,
+                pending_registry_capacity: config.flash_registry_capacity,
+                terminal_record_capacity: 64,
+            })
+            .expect("production source recorder");
+        (
+            EdgeCanonicalWriterV1::new(config, Arc::clone(&recorder), Arc::clone(&owner)),
+            recorder,
+            owner,
+        )
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct EdgeLedgerAttemptSnapshotV1 {
+        name: &'static str,
+        hash_domain: &'static str,
+        next_sequence: u64,
+        next_segment: u64,
+        previous_record_hash: String,
+        durable_next_sequence: u64,
+        durable_next_segment: u64,
+        durable_previous_record_hash: String,
+        pending_publication: Option<EdgePendingPublicationV1>,
+        records: Vec<JsonValue>,
+        record_bytes: usize,
+        batch_started: bool,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct EdgeSegmentAttemptSnapshotV1 {
+        ledgers: Vec<EdgeLedgerAttemptSnapshotV1>,
+        source_file_sequence: u64,
+        producer_record_sequence: u64,
+        next_registry_terminal: u64,
+        source_sequence_by_ledger: BTreeMap<(&'static str, u64), u64>,
+        source_durable: BTreeSet<u64>,
+        source_durable_ack_cursor: u64,
+        connection_segment_sha: Vec<(u64, B256)>,
+        connection_records: Vec<B256>,
+        registry_segment_sha: Vec<B256>,
+        registry_record_sha: Vec<B256>,
+        registry_h1_segment_sha: BTreeMap<u64, (u64, B256)>,
+        registry_pending: BTreeMap<u64, PendingTerminalRecordV2>,
+        registry_durable_cursor: u64,
+        candidate_durable: BTreeSet<u64>,
+        candidate_joins: BTreeMap<u64, EdgeCandidateJoinV1>,
+        candidate_join_exclusions: BTreeSet<u64>,
+        candidate_validated_count: u64,
+        source_authority: base_flashblocks::EdgeMeasurementAuthorityAuditSnapshotV1,
+        blink_owner: base_mev_trader::EdgeMeasurementOwnerAuthorityAuditSnapshotV1,
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn edge_segment_attempt_snapshot(
+        writer: &EdgeCanonicalWriterV1,
+    ) -> EdgeSegmentAttemptSnapshotV1 {
+        let ledgers = writer
+            .ledgers
+            .values()
+            .map(|ledger| EdgeLedgerAttemptSnapshotV1 {
+                name: ledger.name,
+                hash_domain: ledger.hash_domain,
+                next_sequence: ledger.next_sequence,
+                next_segment: ledger.next_segment,
+                previous_record_hash: ledger.previous_record_hash.clone(),
+                durable_next_sequence: ledger.durable_next_sequence,
+                durable_next_segment: ledger.durable_next_segment,
+                durable_previous_record_hash: ledger.durable_previous_record_hash.clone(),
+                pending_publication: ledger.pending_publication.clone(),
+                records: ledger.records.clone(),
+                record_bytes: ledger.record_bytes,
+                batch_started: ledger.batch_started_at.is_some(),
+            })
+            .collect();
+        EdgeSegmentAttemptSnapshotV1 {
+            ledgers,
+            source_file_sequence: writer.source_file_sequence,
+            producer_record_sequence: writer.producer_record_sequence,
+            next_registry_terminal: writer.next_registry_terminal,
+            source_sequence_by_ledger: writer.source_sequence_by_ledger.clone(),
+            source_durable: writer.source_durable.clone(),
+            source_durable_ack_cursor: writer.source_durable_ack_cursor,
+            connection_segment_sha: writer.connection_segment_sha.clone(),
+            connection_records: writer.connection_records.clone(),
+            registry_segment_sha: writer.registry_segment_sha.clone(),
+            registry_record_sha: writer.registry_record_sha.clone(),
+            registry_h1_segment_sha: writer.registry_h1_segment_sha.clone(),
+            registry_pending: writer.registry_pending.clone(),
+            registry_durable_cursor: writer.registry_durable_cursor,
+            candidate_durable: writer.candidate_durable.clone(),
+            candidate_joins: writer.candidate_joins.clone(),
+            candidate_join_exclusions: writer.candidate_join_exclusions.clone(),
+            candidate_validated_count: writer.candidate_validated_count,
+            source_authority: writer.recorder.authority_audit_snapshot(),
+            blink_owner: writer.owner.authority_audit_snapshot(),
+        }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn edge_full_segment_fixture(
+        label: &str,
+        producer_epoch: u64,
+        drain: bool,
+    ) -> (PathBuf, EdgeCanonicalWriterV1) {
+        let root = edge_writer_root(label);
+        let (mut writer, recorder, owner) =
+            edge_segment_mutation_writer_fixture(&root, producer_epoch);
+        writer.prepare().expect("startup authority");
+        recorder.connection_transition(SourceConnectionTransitionV1::OwnerStart);
+        recorder.connection_transition(SourceConnectionTransitionV1::InitialConnectAttemptStarted);
+        recorder.connection_transition(SourceConnectionTransitionV1::Established);
+
+        let pending = Arc::new(pending_blocks());
+        let flashblock = pending.get_flashblocks().remove(0);
+        let admission = recorder.observe_wire(label.as_bytes()).expect("wire admission");
+        let generation =
+            recorder.decoded_flashblock(admission, &flashblock).expect("source generation");
+        recorder.actor_enqueue(generation, true);
+        recorder.actor_delivered(generation);
+        assert_eq!(
+            recorder.begin_state_handoff(DecodedFlashblockKeyV1::from_flashblock(&flashblock)),
+            Some(generation)
+        );
+        assert_eq!(recorder.take_source_generation(&flashblock), Some(generation));
+        let registry = recorder.registry();
+        let registration = registry.register(&pending, Some(generation));
+        let pending_sequence =
+            registration.pending_snapshot_sequence.expect("registered pending sequence");
+        registry.record_send(registration, Some(1)).expect("published registry send");
+        let metadata = registry
+            .cli_received(&pending)
+            .expect("registry lookup")
+            .expect("authority registry receipt");
+        recorder.record_deterministic_test_product(generation, pending_sequence);
+        let (metadata, payload_first, processor, connection, registry_terminal) =
+            recorder.snapshot_evidence(metadata).expect("source evidence");
+        let registry_terminal_record_hash = B256::new(EdgeMeasurementDurabilityV1::sha256(
+            &EdgeCanonicalWriterV1::canonical_bytes(&EdgeCanonicalWriterV1::registry_h2_value(
+                registry_terminal,
+            ))
+            .expect("registry terminal bytes"),
+        ));
+        owner
+            .stage_deterministic_test_candidate(EdgeSnapshotEvidenceV1 {
+                source_generation: processor.source_generation,
+                pending_snapshot_sequence: metadata.identity.pending_snapshot_sequence,
+                coverage_sequence: registry_terminal.coverage_sequence,
+                payload_first_record_sequence: payload_first.record_sequence,
+                payload_first_record_hash: payload_first.record_hash,
+                structural_terminal_hash: processor.structural_terminal_hash,
+                connection_sequence: connection.connection_sequence,
+                connection_record_hash: connection.record_hash,
+                registry_terminal_record_hash,
+            })
+            .expect("candidate staging");
+        if drain {
+            assert!(writer.drain_once().expect("production source, registry, and candidate drain"));
+            assert!(
+                writer.ledgers.get("candidate").is_some_and(|ledger| !ledger.records.is_empty())
+            );
+        } else {
+            let snapshot = owner.raw_accounting_snapshot().expect("pending candidate snapshot");
+            assert_eq!(snapshot.queues.pending_candidates, 1);
+        }
+        (root, writer)
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn edge_source_registry_segment_fixture(
+        label: &str,
+        producer_epoch: u64,
+    ) -> (PathBuf, EdgeCanonicalWriterV1) {
+        let root = edge_writer_root(label);
+        let (mut writer, recorder, _owner) =
+            edge_segment_mutation_writer_fixture(&root, producer_epoch);
+        writer.prepare().expect("startup authority");
+        recorder.connection_transition(SourceConnectionTransitionV1::OwnerStart);
+        recorder.connection_transition(SourceConnectionTransitionV1::InitialConnectAttemptStarted);
+        recorder.connection_transition(SourceConnectionTransitionV1::Established);
+
+        let pending = Arc::new(pending_blocks());
+        let flashblock = pending.get_flashblocks().remove(0);
+        let admission = recorder.observe_wire(label.as_bytes()).expect("wire admission");
+        let generation =
+            recorder.decoded_flashblock(admission, &flashblock).expect("source generation");
+        recorder.actor_enqueue(generation, true);
+        recorder.actor_delivered(generation);
+        assert_eq!(
+            recorder.begin_state_handoff(DecodedFlashblockKeyV1::from_flashblock(&flashblock)),
+            Some(generation)
+        );
+        assert_eq!(recorder.take_source_generation(&flashblock), Some(generation));
+        let registry = recorder.registry();
+        let registration = registry.register(&pending, Some(generation));
+        let pending_sequence =
+            registration.pending_snapshot_sequence.expect("registered pending sequence");
+        registry.record_send(registration, Some(1)).expect("published registry send");
+        let metadata = registry
+            .cli_received(&pending)
+            .expect("registry lookup")
+            .expect("authority registry receipt");
+        recorder.record_deterministic_test_product(generation, pending_sequence);
+        recorder.snapshot_evidence(metadata).expect("source evidence");
+        assert!(writer.drain_once().expect("production source and registry drain"));
+        (root, writer)
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn edge_candidate_segment_fixture(
+        label: &str,
+        producer_epoch: u64,
+    ) -> (PathBuf, EdgeCanonicalWriterV1) {
+        const COVERAGE_SEQUENCE: usize = 3;
+        const CONNECTION_SEQUENCE: usize = 7;
+
+        let root = edge_writer_root(label);
+        let (mut writer, _recorder, owner) =
+            edge_segment_mutation_writer_fixture(&root, producer_epoch);
+        writer.prepare().expect("startup authority");
+        owner
+            .stage_deterministic_test_candidate(EdgeSnapshotEvidenceV1 {
+                source_generation: 1,
+                pending_snapshot_sequence: 2,
+                coverage_sequence: u64::try_from(COVERAGE_SEQUENCE).expect("coverage sequence"),
+                payload_first_record_sequence: 4,
+                payload_first_record_hash: B256::repeat_byte(5),
+                structural_terminal_hash: B256::repeat_byte(6),
+                connection_sequence: u64::try_from(CONNECTION_SEQUENCE)
+                    .expect("connection sequence"),
+                connection_record_hash: B256::repeat_byte(8),
+                registry_terminal_record_hash: B256::repeat_byte(9),
+            })
+            .expect("deterministic candidate staging");
+        assert!(writer.drain_once().expect("production candidate drain"));
+
+        writer.connection_records.resize(CONNECTION_SEQUENCE + 1, B256::ZERO);
+        writer.connection_records[CONNECTION_SEQUENCE] = B256::repeat_byte(8);
+        writer.connection_segment_sha.push((
+            u64::try_from(CONNECTION_SEQUENCE).expect("connection sequence"),
+            B256::repeat_byte(10),
+        ));
+        writer.registry_record_sha.resize(COVERAGE_SEQUENCE + 1, B256::ZERO);
+        writer.registry_record_sha[COVERAGE_SEQUENCE] = B256::repeat_byte(9);
+        writer.registry_segment_sha.resize(COVERAGE_SEQUENCE + 1, B256::ZERO);
+        writer.registry_segment_sha[COVERAGE_SEQUENCE] = B256::repeat_byte(11);
+
+        let join = writer.candidate_joins.get(&0).expect("candidate join");
+        assert_eq!(join.candidate_sequence, 0);
+        assert_eq!(
+            join.coverage_generation,
+            u64::try_from(COVERAGE_SEQUENCE).expect("coverage sequence")
+        );
+        assert_eq!(
+            join.connection_sequence,
+            u64::try_from(CONNECTION_SEQUENCE).expect("connection sequence")
+        );
+        assert_eq!(join.connection_record_hash, B256::repeat_byte(8));
+        assert_eq!(join.registry_terminal_record_hash, B256::repeat_byte(9));
+        assert!(writer.candidate_durable.is_empty());
+        assert_eq!(writer.candidate_validated_count, 0);
+        assert!(writer.ledgers.get("candidate").is_some_and(|ledger| ledger.records.len() == 1));
+        (root, writer)
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn edge_flush_source_before_connection(writer: &mut EdgeCanonicalWriterV1) {
+        loop {
+            let ledger = writer
+                .source_sequence_by_ledger
+                .iter()
+                .min_by_key(|(_, source_sequence)| **source_sequence)
+                .map(|((ledger, _), _)| *ledger)
+                .expect("source publication before connection");
+            if ledger == "connection" {
+                break;
+            }
+            writer.flush_rolling_ledger(ledger).expect("ordered source prerequisite");
+        }
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn edge_terminal_ready_fixture(
+        label: &str,
+        producer_epoch: u64,
+    ) -> (PathBuf, EdgeCanonicalWriterV1) {
+        let root = edge_writer_root(label);
+        let (mut writer, recorder, owner) = edge_writer_fixture(&root, producer_epoch);
+        writer.prepare().expect("startup authority");
+        assert!(writer.drain_once().expect("production startup clock drain"));
+        assert!(
+            writer
+                .flush_rolling_ledger("clock")
+                .expect("production startup clock publication")
+                .is_some()
+        );
+        owner.with_blink_admission(|owner, _| {
+            owner.terminalize_shutdown_pending_admitted(None);
+        });
+        let blink = owner.ledger().snapshot().expect("zero-generation Blink drain");
+        assert_eq!(blink.generation_pending, 0);
+        assert_eq!(blink.selected_pending, 0);
+        assert!(
+            recorder.cutoff_drain_complete(),
+            "zero-generation source authority must be drained before cutoff"
+        );
+        let latch = EdgeCutoffLatchV1::default();
+        let cancellation = EdgeShutdownDeadlineCancellationV1::default();
+        latch_edge_cutoff_once(&latch, &cancellation, &recorder, &owner);
+        assert!(latch.completed.load(Ordering::Acquire));
+        for _ in 0..8 {
+            if !writer.drain_once().expect("production cutoff drain") {
+                break;
+            }
+        }
+        assert!(recorder.cutoff_drain_complete());
+        assert!(owner.cutoff_drained_snapshot().is_ok());
+        assert!(writer.cutoff_batches_flushed);
+        (root, writer)
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    fn edge_accounting_file_bytes(root: &Path) -> BTreeMap<String, Vec<u8>> {
+        fs::read_dir(root)
+            .expect("accounting inventory")
+            .filter_map(|entry| {
+                let entry = entry.expect("accounting entry");
+                let name = entry.file_name().into_string().expect("UTF-8 accounting filename");
+                name.starts_with("accounting-")
+                    .then(|| (name, fs::read(entry.path()).expect("accounting artifact bytes")))
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(canonical_json_profile_conformance_vectors, {
+        assert_eq!(
+            EdgeContractCanonicalJsonV1::canonicalize(&json!([null, true, false, "\"\\/\n"]))
+                .expect("canonical vector"),
+            br#"[null,true,false,"\"\\/\u000a"]"#
+        );
+        for (value, expected_bytes, expected_digest) in [
+            (
+                json!({}),
+                b"{}".as_slice(),
+                "7d60946bc5e9377d8a7756a2cc6c7e8ad104815dc92bf9f22be12a6ac1591cf3",
+            ),
+            (
+                json!([]),
+                b"[]".as_slice(),
+                "5fc172c4e9e368164b98b498097eb45f412ba92ded073e46329d1df6b6493506",
+            ),
+        ] {
+            assert_eq!(
+                EdgeContractCanonicalJsonV1::canonicalize(&value).expect("empty container vector"),
+                expected_bytes
+            );
+            assert_eq!(
+                EdgeContractCanonicalJsonV1::digest("edge-contract-canonical-json/v1", &value)
+                    .expect("framed empty container digest"),
+                expected_digest
+            );
+        }
+        assert!(EdgeContractCanonicalJsonV1::canonicalize(&json!(1)).is_err());
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(canonical_json_unsigned_utf16_order_vectors, {
+        let value = json!({"\u{e000}": "bmp", "\u{10000}": "supplementary"});
+        assert_eq!(
+            EdgeContractCanonicalJsonV1::canonicalize(&value).expect("Unicode order"),
+            "{\"𐀀\":\"supplementary\",\"\":\"bmp\"}".as_bytes()
+        );
+        assert_eq!(
+            EdgeContractCanonicalJsonV1::canonicalize(&json!({"a𐀀": "long", "a": "short"}))
+                .expect("prefix order"),
+            "{\"a\":\"short\",\"a𐀀\":\"long\"}".as_bytes()
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(canonical_json_rejects_unpaired_surrogates, {
+        assert!(EdgeContractCanonicalJsonV1::validate_utf16(&[0xd800]).is_err());
+        assert!(EdgeContractCanonicalJsonV1::validate_utf16(&[0xdc00]).is_err());
+        assert_eq!(
+            EdgeContractCanonicalJsonV1::validate_utf16(&[0xd800, 0xdc00]).expect("pair"),
+            "𐀀"
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(ledger_registry_projection_digest_and_mutation_table, {
+        let projection = edge_ledger_registry_projection_v1();
+        let bytes =
+            EdgeContractCanonicalJsonV1::canonicalize(&projection).expect("registry projection");
+        assert_eq!(bytes, EXPECTED_LEDGER_REGISTRY_BYTES_V1);
+        assert_eq!(
+            EdgeContractCanonicalJsonV1::digest("edge-producer-ledger-registry/v1", &projection,)
+                .expect("registry digest"),
+            EDGE_LEDGER_REGISTRY_SHA256_V1
+        );
+
+        let rows = projection.as_array().expect("registry rows");
+        assert_eq!(rows.len(), 15);
+        assert_eq!(rows.len(), EDGE_LEDGER_ENDPOINT_ORDER_V1.len());
+        for (index, expected_prefix) in EDGE_LEDGER_ENDPOINT_ORDER_V1.iter().enumerate() {
+            let row = rows[index].as_object().expect("registry row");
+            assert_eq!(row.len(), 3);
+            assert_eq!(row["prefix"], *expected_prefix);
+            assert!(row["recordHashDomain"].as_str().is_some_and(|domain| !domain.is_empty()));
+            let discriminators =
+                row["payloadSchemaDiscriminators"].as_array().expect("discriminators");
+            assert_eq!(discriminators.len(), if index == 12 { 2 } else { 1 });
+            for discriminator_index in 0..discriminators.len() {
+                let discriminator =
+                    discriminators[discriminator_index].as_object().expect("discriminator");
+                assert_eq!(discriminator.len(), 2);
+                let absent = (5..=9).contains(&index);
+                assert_eq!(discriminator["field"].is_null(), absent);
+                assert_eq!(discriminator["value"].is_null(), absent);
+
+                for field in ["field", "value"] {
+                    let mut mutation = projection.clone();
+                    mutation[index]["payloadSchemaDiscriminators"][discriminator_index][field] =
+                        if absent { json!("invented") } else { JsonValue::Null };
+                    assert_registry_admission_rejects(
+                        &mutation,
+                        &format!("row {index} discriminator {discriminator_index} {field} value"),
+                    );
+
+                    let mut mutation = projection.clone();
+                    let object = mutation[index]["payloadSchemaDiscriminators"]
+                        [discriminator_index]
+                        .as_object_mut()
+                        .expect("mutated discriminator");
+                    let value = object.remove(field).expect("named discriminator field");
+                    object.insert(format!("{field}Mutated"), value);
+                    assert_registry_admission_rejects(
+                        &mutation,
+                        &format!("row {index} discriminator {discriminator_index} {field} name"),
+                    );
+                }
+            }
+
+            for field in ["prefix", "recordHashDomain"] {
+                let mut mutation = projection.clone();
+                mutation[index][field] = json!("mutated");
+                assert_registry_admission_rejects(&mutation, &format!("row {index} {field} value"));
+
+                let mut mutation = projection.clone();
+                let object = mutation[index].as_object_mut().expect("mutated registry row");
+                let value = object.remove(field).expect("named row field");
+                object.insert(format!("{field}Mutated"), value);
+                assert_registry_admission_rejects(&mutation, &format!("row {index} {field} name"));
+            }
+        }
+
+        for (label, mutate) in [("duplicate", 0_u8), ("removal", 1), ("full reorder", 2)] {
+            let mut mutation = projection.clone();
+            let rows = mutation.as_array_mut().expect("mutable rows");
+            match mutate {
+                0 => rows.push(rows[0].clone()),
+                1 => {
+                    rows.remove(7);
+                }
+                2 => rows.reverse(),
+                _ => unreachable!(),
+            }
+            assert_registry_admission_rejects(&mutation, label);
+        }
+
+        let mut candidate_discriminator_reorder = projection.clone();
+        candidate_discriminator_reorder[12]["payloadSchemaDiscriminators"]
+            .as_array_mut()
+            .expect("candidate discriminators")
+            .reverse();
+        assert_registry_admission_rejects(
+            &candidate_discriminator_reorder,
+            "candidate discriminator full reorder",
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(segment_framing_projection_digest_and_mutation_table, {
+        let projection =
+            edge_segment_framing_projection_v1().expect("production framing projection");
+        let bytes =
+            EdgeContractCanonicalJsonV1::canonicalize(&projection).expect("framing projection");
+        assert_eq!(bytes, EXPECTED_SEGMENT_FRAMING_BYTES_V1);
+        let digest = EdgeContractCanonicalJsonV1::digest(
+            "edge-producer-segment-framing-domain/v1",
+            &projection,
+        )
+        .expect("digest");
+        assert_eq!(digest, EDGE_SEGMENT_FRAMING_DOMAIN_SHA256_V1);
+        assert_eq!(
+            validate_edge_segment_framing_projection_v1(&projection)
+                .expect("production framing validation"),
+            EDGE_SEGMENT_FRAMING_DOMAIN_SHA256_V1,
+        );
+        for (label, max_records, max_record_bytes, max_flush_latency) in [
+            (
+                "max records",
+                EDGE_SEGMENT_MAX_RECORDS + 1,
+                EDGE_SEGMENT_MAX_RECORD_BYTES,
+                EDGE_SEGMENT_MAX_FLUSH_LATENCY,
+            ),
+            (
+                "max record bytes",
+                EDGE_SEGMENT_MAX_RECORDS,
+                EDGE_SEGMENT_MAX_RECORD_BYTES + 1,
+                EDGE_SEGMENT_MAX_FLUSH_LATENCY,
+            ),
+            (
+                "max flush latency",
+                EDGE_SEGMENT_MAX_RECORDS,
+                EDGE_SEGMENT_MAX_RECORD_BYTES,
+                EDGE_SEGMENT_MAX_FLUSH_LATENCY + Duration::from_nanos(1),
+            ),
+        ] {
+            let mutation = edge_segment_framing_projection_for_v1(
+                max_records,
+                max_record_bytes,
+                max_flush_latency,
+            )
+            .expect(label);
+            assert_eq!(
+                validate_edge_segment_framing_projection_v1(&mutation)
+                    .expect_err(label)
+                    .to_string(),
+                "compiled segment framing projection digest mismatch",
+            );
+        }
+        for key in [
+            "authorityRecordFramingDomain",
+            "canonicalJsonProfile",
+            "footerHashDomain",
+            "footerSchemaVersion",
+            "maxFlushLatencyNs",
+            "maxRecordBytes",
+            "maxRecords",
+            "ndjsonLineTerminator",
+            "publicationSequence",
+            "segmentSetHashDomain",
+        ] {
+            let mut mutation = projection.clone();
+            mutation[key] = json!("mutated");
+            assert_ne!(
+                EdgeContractCanonicalJsonV1::digest(
+                    "edge-producer-segment-framing-domain/v1",
+                    &mutation,
+                )
+                .expect("mutation digest"),
+                digest
+            );
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(manifest16_corrected_raw_oracle, {
+        let manifest = EdgeProducerContractManifestV1::parse(manifest_sample()).expect("manifest");
+        assert_eq!(manifest_sample(), EXPECTED_MANIFEST16_BYTES_V1);
+        assert_eq!(manifest.values.len(), 16);
+        assert_eq!(
+            EdgeCanonicalWriterV1::sha256_hex(EXPECTED_MANIFEST16_BYTES_V1),
+            "09e926edeac3b3fa24353f38de3f4616d29e0d6e4b42172963c0c41dd3b81610"
+        );
+        assert_eq!(
+            EdgeCanonicalWriterV1::sha256_hex(manifest_sample()),
+            EDGE_MANIFEST16_SAMPLE_SHA256_V1
+        );
+        assert_eq!(
+            include_str!(
+                "../testdata/edge-measurement-v1/producer-contract-manifest16-sample-v1.sha256"
+            ),
+            EDGE_MANIFEST16_SAMPLE_SHA256_V1
+        );
+
+        let text = std::str::from_utf8(manifest_sample()).expect("UTF-8 sample");
+        let first_comma = text.find(',').expect("first field");
+        let second_comma = text[first_comma + 1..]
+            .find(',')
+            .map(|offset| first_comma + 1 + offset)
+            .expect("second field");
+        let reordered = format!(
+            "{{{},{},{}}}",
+            &text[first_comma + 1..second_comma],
+            &text[1..first_comma],
+            &text[second_comma + 1..text.len() - 1],
+        );
+        let escaped = text.replacen("x86_64", r"x86\u005f64", 1);
+        let mut bom = vec![0xef, 0xbb, 0xbf];
+        bom.extend_from_slice(manifest_sample());
+        let mut trailing_lf = manifest_sample().to_vec();
+        trailing_lf.push(b'\n');
+        for (label, mutation) in [
+            ("leading whitespace", format!(" {text}").into_bytes()),
+            ("trailing whitespace", format!("{text} ").into_bytes()),
+            ("inter-field whitespace", text.replacen(',', ", ", 1).into_bytes()),
+            ("field order", reordered.into_bytes()),
+            ("equivalent escape", escaped.into_bytes()),
+            ("BOM", bom),
+            ("trailing LF", trailing_lf),
+        ] {
+            assert!(
+                EdgeProducerContractManifestV1::parse(&mutation).is_err(),
+                "{label} must fail exact-byte parsing"
             );
         }
 
-        assert!(matches!(
-            t4d_shadow::T4dShadowAuthority::bridge_error(BridgeError::Assembly(
-                TxAuthorityError::ObservationBusy
-            )),
-            (T4bOutcome::ObservationBusy, t4d_shadow::T4dTerminal::ShadowBusy)
+        let path = edge_option3_fixture_root().join("producer-contract-manifest16-sample-v1.json");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .expect("set owner-only manifest permissions");
+        assert_eq!(
+            EdgeCliProducerConfigV1::read_stable_bounded(
+                &path,
+                EdgeCliProducerConfigV1::MAX_CONFIG_BYTES,
+                "manifest16 stable descriptor",
+            )
+            .expect("same-FD stable read"),
+            EXPECTED_MANIFEST16_BYTES_V1
+        );
+        assert!(
+            EdgeCliProducerConfigV1::read_stable_bounded(
+                Path::new("producer-contract-manifest16-sample-v1.json"),
+                EdgeCliProducerConfigV1::MAX_CONFIG_BYTES,
+                "manifest16 relative path",
+            )
+            .is_err()
+        );
+
+        let root = edge_writer_root("manifest16-path-identity");
+        let original_path = root.join("manifest.json");
+        let old_path = root.join("manifest.old.json");
+        fs::write(&original_path, manifest_sample()).expect("write stable manifest");
+        fs::set_permissions(&original_path, fs::Permissions::from_mode(0o600))
+            .expect("set owner-only stable manifest permissions");
+        let descriptor = File::open(&original_path).expect("open stable manifest descriptor");
+        let before = descriptor.metadata().expect("before metadata");
+        fs::rename(&original_path, &old_path).expect("replace manifest path");
+        let mut replacement = vec![0xef, 0xbb, 0xbf];
+        replacement.extend_from_slice(manifest_sample());
+        fs::write(&original_path, &replacement).expect("write path replacement");
+        fs::set_permissions(&original_path, fs::Permissions::from_mode(0o600))
+            .expect("set owner-only replacement manifest permissions");
+        let after_path_replacement = descriptor.metadata().expect("same descriptor metadata");
+        assert!(
+            EdgeCliProducerConfigV1::stable_read_metadata_matches(
+                &before,
+                &after_path_replacement,
+                EXPECTED_MANIFEST16_BYTES_V1.len() as u64,
+                EdgeCliProducerConfigV1::MAX_CONFIG_BYTES,
+            ),
+            "path replacement must not change the already-open descriptor identity"
+        );
+        let replacement_bytes = EdgeCliProducerConfigV1::read_stable_bounded(
+            &original_path,
+            EdgeCliProducerConfigV1::MAX_CONFIG_BYTES,
+            "replacement manifest path",
+        )
+        .expect("stable replacement path");
+        assert!(EdgeProducerContractManifestV1::parse(&replacement_bytes).is_err());
+
+        let writable_path = root.join("manifest-writable.json");
+        fs::write(&writable_path, manifest_sample()).expect("write writable manifest");
+        fs::set_permissions(&writable_path, fs::Permissions::from_mode(0o622))
+            .expect("set deliberately writable manifest permissions");
+        assert_eq!(
+            EdgeCliProducerConfigV1::read_stable_bounded(
+                &writable_path,
+                EdgeCliProducerConfigV1::MAX_CONFIG_BYTES,
+                "writable manifest path",
+            )
+            .expect_err("writable manifest must fail admission"),
+            "edge config is group- or world-writable"
+        );
+
+        let symlink_path = root.join("manifest-link.json");
+        std::os::unix::fs::symlink(&old_path, &symlink_path).expect("manifest symlink");
+        assert!(
+            EdgeCliProducerConfigV1::read_stable_bounded(
+                &symlink_path,
+                EdgeCliProducerConfigV1::MAX_CONFIG_BYTES,
+                "symlink manifest path",
+            )
+            .is_err()
+        );
+
+        fs::set_permissions(&old_path, fs::Permissions::from_mode(0o400))
+            .expect("mutate descriptor metadata");
+        let after_metadata_mutation = descriptor.metadata().expect("changed descriptor metadata");
+        assert!(
+            !EdgeCliProducerConfigV1::stable_read_metadata_matches(
+                &before,
+                &after_metadata_mutation,
+                EXPECTED_MANIFEST16_BYTES_V1.len() as u64,
+                EdgeCliProducerConfigV1::MAX_CONFIG_BYTES,
+            ),
+            "same-FD metadata mutation must fail admission"
+        );
+        drop(descriptor);
+        fs::remove_dir_all(root).expect("manifest identity cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(manifest16_exact_keys_and_alias_rejection, {
+        let manifest = EdgeProducerContractManifestV1::parse(manifest_sample()).expect("manifest");
+        assert_eq!(
+            manifest.values.keys().map(String::as_str).collect::<Vec<_>>(),
+            EdgeProducerContractManifestV1::KEYS
+        );
+
+        let sample_value: JsonValue =
+            serde_json::from_slice(manifest_sample()).expect("manifest JSON");
+        for key in EdgeProducerContractManifestV1::KEYS {
+            let mut missing = sample_value.clone();
+            missing.as_object_mut().expect("manifest object").remove(key);
+            let bytes =
+                EdgeContractCanonicalJsonV1::canonicalize(&missing).expect("missing-key mutation");
+            assert!(EdgeProducerContractManifestV1::parse(&bytes).is_err(), "{key}: missing");
+
+            let mut extra = sample_value.clone();
+            extra
+                .as_object_mut()
+                .expect("manifest object")
+                .insert(format!("{key}Extra"), json!("unexpected"));
+            let bytes =
+                EdgeContractCanonicalJsonV1::canonicalize(&extra).expect("extra-key mutation");
+            assert!(EdgeProducerContractManifestV1::parse(&bytes).is_err(), "{key}: extra");
+
+            let mut wrong_type = sample_value.clone();
+            wrong_type[key] = json!(true);
+            let bytes =
+                EdgeContractCanonicalJsonV1::canonicalize(&wrong_type).expect("type mutation");
+            assert!(EdgeProducerContractManifestV1::parse(&bytes).is_err(), "{key}: type");
+
+            let mut wrong_value = sample_value.clone();
+            wrong_value[key] = if EdgeProducerContractManifestV1::SHA_KEYS.contains(&key) {
+                json!("0".repeat(64))
+            } else {
+                match key {
+                    "configuredMaxPendingRegistry" => json!("0"),
+                    "schemaVersion" => json!("edge-producer-contract-manifest/v2"),
+                    "targetTriple" => json!("mutated-target"),
+                    _ => json!("1"),
+                }
+            };
+            let bytes =
+                EdgeContractCanonicalJsonV1::canonicalize(&wrong_value).expect("value mutation");
+            if key == "targetTriple" {
+                let parsed = EdgeProducerContractManifestV1::parse(&bytes)
+                    .expect("target is an admission-time equality");
+                assert!(
+                    EdgeCliProducerConfigV1::validate_manifest_runtime_equalities(
+                        &parsed,
+                        1024,
+                        "0505050505050505050505050505050505050505050505050505050505050505",
+                        "0909090909090909090909090909090909090909090909090909090909090909",
+                        "0606060606060606060606060606060606060606060606060606060606060606",
+                        "x86_64-unknown-linux-gnu",
+                    )
+                    .is_err(),
+                    "{key}: runtime equality"
+                );
+            } else {
+                assert!(EdgeProducerContractManifestV1::parse(&bytes).is_err(), "{key}: value");
+            }
+        }
+
+        for alias in ["reasonPolicySha256", "producerImpactPolicySha256"] {
+            let mutation = std::str::from_utf8(manifest_sample()).expect("UTF-8").replacen(
+                "evidenceImpactPolicySha256",
+                alias,
+                1,
+            );
+            assert!(EdgeProducerContractManifestV1::parse(mutation.as_bytes()).is_err());
+        }
+
+        let mut runtime_manifest = manifest;
+        runtime_manifest
+            .values
+            .insert("ledgerRegistrySha256".to_owned(), EDGE_LEDGER_REGISTRY_SHA256_V1.to_owned());
+        runtime_manifest.values.insert(
+            "segmentFramingDomainSha256".to_owned(),
+            EDGE_SEGMENT_FRAMING_DOMAIN_SHA256_V1.to_owned(),
+        );
+        runtime_manifest.values.insert(
+            "producerAccountingSchemaSha256".to_owned(),
+            EDGE_PRODUCER_ACCOUNTING_SCHEMA_SHA256_V1.to_owned(),
+        );
+        assert_eq!(EdgeCliProducerConfigV1::target_triple(), "x86_64-unknown-linux-gnu");
+        runtime_manifest
+            .values
+            .insert("targetTriple".to_owned(), "x86_64-unknown-linux-gnu".to_owned());
+        EdgeCliProducerConfigV1::validate_manifest_runtime_equalities(
+            &runtime_manifest,
+            1024,
+            EDGE_LEDGER_REGISTRY_SHA256_V1,
+            EDGE_SEGMENT_FRAMING_DOMAIN_SHA256_V1,
+            EDGE_PRODUCER_ACCOUNTING_SCHEMA_SHA256_V1,
+            "x86_64-unknown-linux-gnu",
+        )
+        .expect("runtime equalities");
+        for key in [
+            "configuredMaxPendingRegistry",
+            "ledgerRegistrySha256",
+            "segmentFramingDomainSha256",
+            "producerAccountingSchemaSha256",
+            "targetTriple",
+        ] {
+            let mut mutation = runtime_manifest.clone();
+            mutation.values.insert(key.to_owned(), "mutated".to_owned());
+            assert!(
+                EdgeCliProducerConfigV1::validate_manifest_runtime_equalities(
+                    &mutation,
+                    1024,
+                    EDGE_LEDGER_REGISTRY_SHA256_V1,
+                    EDGE_SEGMENT_FRAMING_DOMAIN_SHA256_V1,
+                    EDGE_PRODUCER_ACCOUNTING_SCHEMA_SHA256_V1,
+                    "x86_64-unknown-linux-gnu",
+                )
+                .is_err(),
+                "{key}: admission runtime equality mutation"
+            );
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(manifest16_ten_sha_domain_mutation_table, {
+        let manifest = EdgeProducerContractManifestV1::parse(manifest_sample()).expect("manifest");
+        assert_eq!(EdgeProducerContractManifestV1::SHA_KEYS.len(), 10);
+        for key in EdgeProducerContractManifestV1::SHA_KEYS {
+            let value = manifest.value(key);
+            assert_eq!(value.len(), 64);
+            assert!(
+                value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            );
+            assert!(value.bytes().any(|byte| byte != b'0'));
+            for invalid in [
+                String::new(),
+                "0".repeat(64),
+                "a".repeat(63),
+                "a".repeat(65),
+                "A".repeat(64),
+                format!("{}g", "a".repeat(63)),
+            ] {
+                let needle = format!("\"{key}\":\"{value}\"");
+                let replacement = format!("\"{key}\":\"{invalid}\"");
+                let mutation = std::str::from_utf8(manifest_sample()).expect("UTF-8").replacen(
+                    &needle,
+                    &replacement,
+                    1,
+                );
+                assert!(
+                    EdgeProducerContractManifestV1::parse(mutation.as_bytes()).is_err(),
+                    "{key}: invalid SHA {invalid:?}"
+                );
+            }
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(accounting_exact_cover_reports_structural_failures_directly, {
+        let mut uncovered_rules = EDGE_ACCOUNTING_RULES_V1.to_vec();
+        uncovered_rules.remove(0);
+        assert_eq!(
+            EdgeAccountingSchemaProjectorV1::validate_exact_cover(
+                EDGE_ACCOUNTING_OBJECTS_V1,
+                &uncovered_rules,
+                EDGE_ACCOUNTING_CONSTRAINTS_V1,
+            )
+            .expect_err("uncovered semantic leaf")
+            .to_string(),
+            "accounting semantic path is not covered exactly once",
+        );
+
+        let mut doubly_covered_rules = EDGE_ACCOUNTING_RULES_V1.to_vec();
+        let mut overlapping_paths = doubly_covered_rules[0].paths.to_vec();
+        overlapping_paths.push("sourceCounters.*");
+        doubly_covered_rules[0].paths = leaked_static_slice(overlapping_paths);
+        assert_eq!(
+            EdgeAccountingSchemaProjectorV1::project(
+                EDGE_ACCOUNTING_OBJECTS_V1,
+                &doubly_covered_rules,
+                EDGE_ACCOUNTING_CONSTRAINTS_V1,
+            )
+            .expect_err("doubly-covered semantic leaf")
+            .to_string(),
+            "accounting semantic path is not covered exactly once",
+        );
+
+        let mut unregistered_objects = EDGE_ACCOUNTING_OBJECTS_V1.to_vec();
+        unregistered_objects.remove(0);
+        assert_eq!(
+            EdgeAccountingSchemaProjectorV1::validate_exact_cover(
+                &unregistered_objects,
+                EDGE_ACCOUNTING_RULES_V1,
+                EDGE_ACCOUNTING_CONSTRAINTS_V1,
+            )
+            .expect_err("unregistered object path")
+            .to_string(),
+            "accounting object path is unregistered",
+        );
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(accounting_descriptor_semantic_leaf_exact_cover, {
+        let projection = edge_accounting_schema_projection_v1().expect("exact-cover projection");
+        assert_eq!(
+            EdgeContractCanonicalJsonV1::digest("edge-producer-accounting-schema/v1", &projection,)
+                .expect("descriptor digest"),
+            EDGE_PRODUCER_ACCOUNTING_SCHEMA_SHA256_V1
+        );
+        assert_eq!(projection["constraints"].as_array().expect("constraints").len(), 44);
+        assert_eq!(projection["objects"].as_array().expect("objects").len(), 20);
+        assert_eq!(projection["rules"].as_array().expect("rules").len(), 35);
+
+        for (object_index, object) in EDGE_ACCOUNTING_OBJECTS_V1.iter().enumerate() {
+            let mut removed = EDGE_ACCOUNTING_OBJECTS_V1.to_vec();
+            removed.remove(object_index);
+            assert_accounting_admission_rejects(
+                &removed,
+                EDGE_ACCOUNTING_RULES_V1,
+                EDGE_ACCOUNTING_CONSTRAINTS_V1,
+                &format!("object {object_index} removal"),
+            );
+
+            for (field, mutate) in [("cardinality", 0_u8), ("order", 1), ("path", 2)] {
+                let mut objects = EDGE_ACCOUNTING_OBJECTS_V1.to_vec();
+                match mutate {
+                    0 => objects[object_index].cardinality = "mutation",
+                    1 => objects[object_index].order = "mutation",
+                    2 => objects[object_index].path = "__mutation__",
+                    _ => unreachable!(),
+                }
+                assert_accounting_admission_rejects(
+                    &objects,
+                    EDGE_ACCOUNTING_RULES_V1,
+                    EDGE_ACCOUNTING_CONSTRAINTS_V1,
+                    &format!("object {object_index} {field}"),
+                );
+            }
+
+            match object.keys {
+                EdgeAccountingObjectKeysV1::Dynamic(_) => {
+                    let mut objects = EDGE_ACCOUNTING_OBJECTS_V1.to_vec();
+                    objects[object_index].keys =
+                        EdgeAccountingObjectKeysV1::Dynamic("mutated-dynamic-domain");
+                    assert_accounting_admission_rejects(
+                        &objects,
+                        EDGE_ACCOUNTING_RULES_V1,
+                        EDGE_ACCOUNTING_CONSTRAINTS_V1,
+                        &format!("object {object_index} dynamic key domain"),
+                    );
+                }
+                EdgeAccountingObjectKeysV1::Static(keys) => {
+                    for key_index in 0..keys.len() {
+                        let mut reduced = keys.to_vec();
+                        let removed_key = reduced.remove(key_index);
+                        let cardinality: &'static str =
+                            Box::leak(reduced.len().to_string().into_boxed_str());
+                        let mut objects = EDGE_ACCOUNTING_OBJECTS_V1.to_vec();
+                        objects[object_index].keys =
+                            EdgeAccountingObjectKeysV1::Static(leaked_static_slice(reduced));
+                        objects[object_index].cardinality = cardinality;
+                        assert_accounting_admission_rejects(
+                            &objects,
+                            EDGE_ACCOUNTING_RULES_V1,
+                            EDGE_ACCOUNTING_CONSTRAINTS_V1,
+                            &format!("object {object_index} semantic key {removed_key}"),
+                        );
+                    }
+                    let mut reordered = keys.to_vec();
+                    reordered.reverse();
+                    let mut objects = EDGE_ACCOUNTING_OBJECTS_V1.to_vec();
+                    objects[object_index].keys =
+                        EdgeAccountingObjectKeysV1::Static(leaked_static_slice(reordered));
+                    assert_accounting_admission_rejects(
+                        &objects,
+                        EDGE_ACCOUNTING_RULES_V1,
+                        EDGE_ACCOUNTING_CONSTRAINTS_V1,
+                        &format!("object {object_index} protocol key order"),
+                    );
+                }
+            }
+        }
+
+        let mut duplicate_object = EDGE_ACCOUNTING_OBJECTS_V1.to_vec();
+        duplicate_object.push(duplicate_object[0]);
+        assert_accounting_admission_rejects(
+            &duplicate_object,
+            EDGE_ACCOUNTING_RULES_V1,
+            EDGE_ACCOUNTING_CONSTRAINTS_V1,
+            "duplicate object row",
+        );
+        let mut reordered_objects = EDGE_ACCOUNTING_OBJECTS_V1.to_vec();
+        reordered_objects.reverse();
+        assert_accounting_admission_rejects(
+            &reordered_objects,
+            EDGE_ACCOUNTING_RULES_V1,
+            EDGE_ACCOUNTING_CONSTRAINTS_V1,
+            "object row order",
+        );
+
+        for (rule_index, rule) in EDGE_ACCOUNTING_RULES_V1.iter().enumerate() {
+            let mut removed = EDGE_ACCOUNTING_RULES_V1.to_vec();
+            removed.remove(rule_index);
+            assert_accounting_admission_rejects(
+                EDGE_ACCOUNTING_OBJECTS_V1,
+                &removed,
+                EDGE_ACCOUNTING_CONSTRAINTS_V1,
+                &format!("rule {rule_index} removal"),
+            );
+
+            for (field, mutate) in [("domain", 0_u8), ("jsonType", 1), ("nullability", 2)] {
+                let mut rules = EDGE_ACCOUNTING_RULES_V1.to_vec();
+                match mutate {
+                    0 => rules[rule_index].domain = "mutated-domain",
+                    1 => rules[rule_index].json_type = "mutated-type",
+                    2 => rules[rule_index].nullability = "mutated-nullability",
+                    _ => unreachable!(),
+                }
+                assert_accounting_admission_rejects(
+                    EDGE_ACCOUNTING_OBJECTS_V1,
+                    &rules,
+                    EDGE_ACCOUNTING_CONSTRAINTS_V1,
+                    &format!("rule {rule_index} {field}"),
+                );
+            }
+
+            for path_index in 0..rule.paths.len() {
+                let path = rule.paths[path_index];
+                let mut reduced = rule.paths.to_vec();
+                reduced.remove(path_index);
+                let mut rules = EDGE_ACCOUNTING_RULES_V1.to_vec();
+                rules[rule_index].paths = leaked_static_slice(reduced);
+                assert_accounting_admission_rejects(
+                    EDGE_ACCOUNTING_OBJECTS_V1,
+                    &rules,
+                    EDGE_ACCOUNTING_CONSTRAINTS_V1,
+                    &format!("rule {rule_index} semantic path {path} removal"),
+                );
+
+                let mut replaced = rule.paths.to_vec();
+                replaced[path_index] = "__mutation__";
+                let mut rules = EDGE_ACCOUNTING_RULES_V1.to_vec();
+                rules[rule_index].paths = leaked_static_slice(replaced);
+                assert_accounting_admission_rejects(
+                    EDGE_ACCOUNTING_OBJECTS_V1,
+                    &rules,
+                    EDGE_ACCOUNTING_CONSTRAINTS_V1,
+                    &format!("rule {rule_index} semantic path {path} value"),
+                );
+            }
+            if rule.paths.len() > 1 {
+                let mut reordered = rule.paths.to_vec();
+                reordered.reverse();
+                let mut rules = EDGE_ACCOUNTING_RULES_V1.to_vec();
+                rules[rule_index].paths = leaked_static_slice(reordered);
+                assert_accounting_admission_rejects(
+                    EDGE_ACCOUNTING_OBJECTS_V1,
+                    &rules,
+                    EDGE_ACCOUNTING_CONSTRAINTS_V1,
+                    &format!("rule {rule_index} path order"),
+                );
+            }
+        }
+
+        let mut duplicate_rule_path = EDGE_ACCOUNTING_RULES_V1.to_vec();
+        duplicate_rule_path[1].paths = duplicate_rule_path[0].paths;
+        assert_accounting_admission_rejects(
+            EDGE_ACCOUNTING_OBJECTS_V1,
+            &duplicate_rule_path,
+            EDGE_ACCOUNTING_CONSTRAINTS_V1,
+            "duplicate rule path",
+        );
+        let mut reordered_rules = EDGE_ACCOUNTING_RULES_V1.to_vec();
+        reordered_rules.reverse();
+        assert_accounting_admission_rejects(
+            EDGE_ACCOUNTING_OBJECTS_V1,
+            &reordered_rules,
+            EDGE_ACCOUNTING_CONSTRAINTS_V1,
+            "rule row order",
+        );
+
+        for constraint_index in 0..EDGE_ACCOUNTING_CONSTRAINTS_V1.len() {
+            let mut removed = EDGE_ACCOUNTING_CONSTRAINTS_V1.to_vec();
+            let predicate = removed.remove(constraint_index);
+            assert_accounting_admission_rejects(
+                EDGE_ACCOUNTING_OBJECTS_V1,
+                EDGE_ACCOUNTING_RULES_V1,
+                &removed,
+                &format!("constraint {constraint_index} predicate {predicate} removal"),
+            );
+
+            let mut mutated = EDGE_ACCOUNTING_CONSTRAINTS_V1.to_vec();
+            mutated[constraint_index] = "mutated predicate";
+            assert_accounting_admission_rejects(
+                EDGE_ACCOUNTING_OBJECTS_V1,
+                EDGE_ACCOUNTING_RULES_V1,
+                &mutated,
+                &format!("constraint {constraint_index} predicate value"),
+            );
+        }
+        let mut duplicate_constraint = EDGE_ACCOUNTING_CONSTRAINTS_V1.to_vec();
+        duplicate_constraint.push(duplicate_constraint[0]);
+        assert_accounting_admission_rejects(
+            EDGE_ACCOUNTING_OBJECTS_V1,
+            EDGE_ACCOUNTING_RULES_V1,
+            &duplicate_constraint,
+            "duplicate predicate",
+        );
+        let mut reordered_constraints = EDGE_ACCOUNTING_CONSTRAINTS_V1.to_vec();
+        reordered_constraints.reverse();
+        assert_accounting_admission_rejects(
+            EDGE_ACCOUNTING_OBJECTS_V1,
+            EDGE_ACCOUNTING_RULES_V1,
+            &reordered_constraints,
+            "predicate order",
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(incident_witness_three_by_eleven_mutation_matrix, {
+        let keys = EDGE_SINGLE_RECOVERY_WITNESS_KEYS_V1;
+        for kind in [
+            "AccountingPeriodicWriteFailed",
+            "DataLedgerWriteFailed",
+            "OpenCleanupFailedAfterDurablePublish",
+        ] {
+            let witness = incident_witness(kind);
+            EdgeOperationalIncidentsV1::validate_witness(kind, &witness).expect("valid witness");
+            let object = witness.as_object().expect("witness");
+            assert_eq!(object.len(), keys.len());
+            assert!(keys.iter().all(|key| object.contains_key(*key)));
+
+            for key in keys {
+                let mut missing = witness.clone();
+                missing.as_object_mut().expect("witness").remove(key);
+                assert_witness_rejected(kind, &missing, &format!("{key}.missing"));
+
+                let mut wrong_type = witness.clone();
+                wrong_type[key] = json!([]);
+                assert_witness_rejected(kind, &wrong_type, &format!("{key}.type"));
+
+                let mut wrong_nullability = witness.clone();
+                wrong_nullability[key] =
+                    if witness[key].is_null() { json!("unexpected") } else { JsonValue::Null };
+                assert_witness_rejected(kind, &wrong_nullability, &format!("{key}.nullability"));
+
+                let mut wrong_domain = witness.clone();
+                wrong_domain[key] = match key {
+                    "incidentId" => match kind {
+                        "AccountingPeriodicWriteFailed" => {
+                            json!(format!("periodic|1|{}", "22".repeat(32)))
+                        }
+                        "DataLedgerWriteFailed" => {
+                            json!(format!("candidate|0|{}", "22".repeat(32)))
+                        }
+                        "OpenCleanupFailedAfterDurablePublish" => {
+                            json!(format!(
+                                "candidate|candidate-00000000000000000000.open|{}",
+                                "11".repeat(32)
+                            ))
+                        }
+                        _ => unreachable!(),
+                    },
+                    "ledgerPrefix" => {
+                        if kind == "AccountingPeriodicWriteFailed" {
+                            json!("candidate")
+                        } else {
+                            json!("")
+                        }
+                    }
+                    "scheduledMonoNs" => {
+                        if kind == "AccountingPeriodicWriteFailed" {
+                            json!("01")
+                        } else {
+                            json!("1")
+                        }
+                    }
+                    "failedMonoNs" => json!("4"),
+                    "lastAttemptMonoNs" => json!("1"),
+                    "recoveredMonoNs" => json!("2"),
+                    "attemptCount" => json!("0"),
+                    "preStateSha256" => {
+                        if kind == "AccountingPeriodicWriteFailed" {
+                            json!("0".repeat(64))
+                        } else {
+                            json!("11".repeat(32))
+                        }
+                    }
+                    "postStateSha256" => {
+                        if kind == "AccountingPeriodicWriteFailed" {
+                            json!("AA".repeat(32))
+                        } else {
+                            json!("22".repeat(32))
+                        }
+                    }
+                    "attemptedBytesSha256" => {
+                        if kind == "AccountingPeriodicWriteFailed" {
+                            json!("11".repeat(32))
+                        } else {
+                            json!("22".repeat(32))
+                        }
+                    }
+                    "durableBytesSha256" => {
+                        if kind == "AccountingPeriodicWriteFailed" {
+                            json!("11".repeat(32))
+                        } else {
+                            json!("22".repeat(32))
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                assert_witness_rejected(kind, &wrong_domain, &format!("{key}.domain"));
+            }
+
+            for (field, value) in [
+                ("failedMonoNs", "04"),
+                ("lastAttemptMonoNs", "03"),
+                ("recoveredMonoNs", "04"),
+                ("attemptCount", "03"),
+            ] {
+                let mut noncanonical_attempt = witness.clone();
+                noncanonical_attempt[field] = json!(value);
+                assert_witness_rejected(
+                    kind,
+                    &noncanonical_attempt,
+                    &format!("{field}.canonical-attempt-semantics"),
+                );
+            }
+        }
+
+        let mut periodic_hash_source = incident_witness("AccountingPeriodicWriteFailed");
+        periodic_hash_source["preStateSha256"] = json!("33".repeat(32));
+        assert_witness_rejected(
+            "AccountingPeriodicWriteFailed",
+            &periodic_hash_source,
+            "incidentId.preStateSha256 source equality",
+        );
+
+        for kind in ["DataLedgerWriteFailed", "OpenCleanupFailedAfterDurablePublish"] {
+            let mut durable_equality = incident_witness(kind);
+            durable_equality["durableBytesSha256"] = json!("33".repeat(32));
+            assert_witness_rejected(
+                kind,
+                &durable_equality,
+                "attemptedBytesSha256.durableBytesSha256 equality",
+            );
+
+            let mut identity_hash_source = incident_witness(kind);
+            identity_hash_source["attemptedBytesSha256"] = json!("33".repeat(32));
+            identity_hash_source["durableBytesSha256"] = json!("33".repeat(32));
+            assert_witness_rejected(
+                kind,
+                &identity_hash_source,
+                "incidentId.attemptedBytesSha256 source equality",
+            );
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(terminal_drain_status_exact_shape_and_mutation_table, {
+        let status = terminal_drain_status();
+        let reject = |mutation: &JsonValue, label: &str| {
+            assert!(
+                EdgeCanonicalWriterV1::validate_terminal_drain_status(mutation).is_err(),
+                "{label} must fail the production terminal drain validator"
+            );
+        };
+        EdgeCanonicalWriterV1::validate_terminal_drain_status(&status)
+            .expect("production terminal drain validator");
+
+        for (key, expected) in status.as_object().expect("drain") {
+            let mut missing = status.clone();
+            missing.as_object_mut().expect("drain").remove(key);
+            reject(&missing, &format!("{key}: missing"));
+
+            let mut null = status.clone();
+            null[key] = JsonValue::Null;
+            reject(&null, &format!("{key}: null"));
+
+            let mut wrong_type = status.clone();
+            wrong_type[key] =
+                if expected.is_boolean() { json!("true") } else { JsonValue::Bool(true) };
+            reject(&wrong_type, &format!("{key}: wrong type"));
+
+            let mut wrong_value = status.clone();
+            wrong_value[key] = match expected {
+                JsonValue::Bool(value) => JsonValue::Bool(!value),
+                JsonValue::String(_) => json!("outside-domain"),
+                _ => unreachable!("terminal fixture contains only booleans and strings"),
+            };
+            reject(&wrong_value, &format!("{key}: wrong value or domain"));
+        }
+
+        for key in ["authorityOpenFileCount", "registryPendingTotal", "unsealedDataBatchCount"] {
+            for invalid in [json!(0), json!(""), json!("00"), json!("-1"), json!("1")] {
+                let mut mutation = status.clone();
+                mutation[key] = invalid;
+                reject(&mutation, &format!("{key}: non-canonical zero domain"));
+            }
+        }
+
+        let mut extra = status.clone();
+        extra["unexpected"] = JsonValue::Null;
+        reject(&extra, "extra key");
+
+        for (left, right, left_value, right_value) in [
+            ("dataSealed", "unsealedDataBatchCount", json!(true), json!("1")),
+            ("registryClosed", "registryPendingTotal", json!(true), json!("1")),
+            ("periodicCadenceClosed", "pendingPeriodicSnapshot", json!(true), json!(true)),
+            ("sourceFenceInstalled", "producerQueuesDrained", json!(false), json!(true)),
+        ] {
+            let mut inconsistent = status.clone();
+            inconsistent[left] = left_value;
+            inconsistent[right] = right_value;
+            reject(&inconsistent, &format!("{left}/{right}: inconsistent composite"));
+        }
+
+        let canonical =
+            EdgeContractCanonicalJsonV1::canonicalize(&status).expect("canonical drain bytes");
+        EdgeCanonicalWriterV1::validate_terminal_drain_status_bytes(&canonical)
+            .expect("canonical serialized terminal drain status");
+        let disturbed_order = br#"{"unsealedDataBatchCount":"0","terminationPhase":"terminal-accounting-only","sourceFenceInstalled":true,"schemaVersion":"edge-producer-drain-status/v1","registryPendingTotal":"0","registryClosed":true,"producerQueuesDrained":true,"periodicCadenceClosed":true,"pendingPeriodicSnapshot":false,"dataSealed":true,"authorityOpenFileCount":"0"}"#;
+        assert!(
+            EdgeCanonicalWriterV1::validate_terminal_drain_status_bytes(disturbed_order).is_err(),
+            "non-canonical terminal key order must fail"
+        );
+        let duplicate = br#"{"authorityOpenFileCount":"0","authorityOpenFileCount":"0","dataSealed":true,"pendingPeriodicSnapshot":false,"periodicCadenceClosed":true,"producerQueuesDrained":true,"registryClosed":true,"registryPendingTotal":"0","schemaVersion":"edge-producer-drain-status/v1","sourceFenceInstalled":true,"terminationPhase":"terminal-accounting-only","unsealedDataBatchCount":"0"}"#;
+        assert!(
+            EdgeCanonicalWriterV1::validate_terminal_drain_status_bytes(duplicate).is_err(),
+            "duplicate terminal key must fail"
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(durable_endpoint_equations_table, {
+        let durable_hash = "11".repeat(32);
+        for (records, hash, segments, expected_last, expected_segment) in [
+            (0_u64, EDGE_ZERO_HASH, 0_u64, None, None),
+            (1, durable_hash.as_str(), 1, Some("0"), Some("0")),
+            (2, durable_hash.as_str(), 1, Some("1"), Some("0")),
+            (2049, durable_hash.as_str(), 3, Some("2048"), Some("2")),
+        ] {
+            let endpoint = EdgeCanonicalWriterV1::durable_endpoint_value(records, hash, segments)
+                .expect("valid endpoint");
+            assert_eq!(endpoint["recordCount"], records.to_string());
+            assert_eq!(endpoint["lastSequence"].as_str(), expected_last);
+            assert_eq!(endpoint["finalRecordHash"], hash);
+            assert_eq!(endpoint["segmentCount"], segments.to_string());
+            assert_eq!(endpoint["lastSegmentOrdinal"].as_str(), expected_segment);
+        }
+        for invalid in [
+            (0_u64, durable_hash.as_str(), 0_u64),
+            (1, EDGE_ZERO_HASH, 1),
+            (1, durable_hash.as_str(), 0),
+            (0, EDGE_ZERO_HASH, 1),
+        ] {
+            assert!(
+                EdgeCanonicalWriterV1::durable_endpoint_value(invalid.0, invalid.1, invalid.2,)
+                    .is_err()
+            );
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(pending_publication_fault_matrix_commits_tuple_and_ack_once, {
+        let ledger = || {
+            let mut ledger = EdgeRollingLedgerV1::new("fixture", "fixture/v1");
+            ledger.next_sequence = 1;
+            ledger.previous_record_hash = "11".repeat(32);
+            ledger.pending_publication = Some(EdgePendingPublicationV1 {
+                filename: "fixture-00000000000000000000.ndjson".to_owned(),
+                bytes: b"{\"durable\":\"bytes\"}\n".to_vec(),
+                descriptor: EdgeSegmentDescriptorV1 { file_sha256: "22".repeat(32) },
+                member_sequences: vec![0],
+                durable_next_sequence: 1,
+                durable_previous_record_hash: "11".repeat(32),
+            });
+            ledger
+        };
+
+        for fault in 0..5 {
+            let mut rejected = ledger();
+            match fault {
+                0 => rejected.pending_publication.as_mut().unwrap().member_sequences.clear(),
+                1 => rejected.pending_publication.as_mut().unwrap().member_sequences = vec![1],
+                2 => rejected.pending_publication.as_mut().unwrap().durable_next_sequence = 2,
+                3 => {
+                    rejected.pending_publication.as_mut().unwrap().durable_previous_record_hash =
+                        "33".repeat(32);
+                }
+                4 => rejected.next_segment = u64::MAX,
+                _ => unreachable!(),
+            }
+            let durable_bytes =
+                rejected.pending_publication.as_ref().expect("pending publication").bytes.clone();
+            let error =
+                rejected.commit_durable_publication().expect_err("invalid publication tuple");
+            assert_eq!(
+                EdgeWriterFailureClassV1::classify(&error),
+                EdgeWriterFailureClassV1::StructuralInvalid
+            );
+            if fault == 0 {
+                assert_eq!(error.to_string(), "pending publication member sequence is absent");
+            }
+            assert_eq!(
+                rejected
+                    .pending_publication
+                    .as_ref()
+                    .expect("fault retains pending publication")
+                    .bytes,
+                durable_bytes
+            );
+            assert_eq!(rejected.durable_next_sequence, 0);
+            assert_eq!(rejected.durable_previous_record_hash, EDGE_ZERO_HASH);
+            assert_eq!(rejected.durable_next_segment, 0);
+        }
+
+        let mut committed = ledger();
+        let durable_bytes =
+            committed.pending_publication.as_ref().expect("pending publication").bytes.clone();
+        EdgeCanonicalWriterV1::validate_canonical_artifact(&durable_bytes)
+            .expect("durable pending bytes");
+        let segment = committed.commit_durable_publication().expect("directory-fsynced commit");
+        assert_eq!(segment.member_sequences, [0]);
+        assert_eq!(
+            (
+                committed.durable_next_sequence,
+                committed.durable_previous_record_hash.as_str(),
+                committed.durable_next_segment,
+            ),
+            (1, "1111111111111111111111111111111111111111111111111111111111111111", 1)
+        );
+        assert!(committed.commit_durable_publication().is_err());
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(edge_connection_tail_shortening_fixture, {
+        let mut ledger =
+            EdgeRollingLedgerV1::new("connection", "edge-source-connection-envelope/v1");
+        ledger.durable_next_sequence = 1_024;
+        ledger.next_sequence = 1_026;
+        ledger.next_segment = 1;
+        ledger.durable_next_segment = 1;
+        ledger.previous_record_hash = "44".repeat(32);
+        ledger.durable_previous_record_hash = "33".repeat(32);
+        ledger.pending_publication = Some(EdgePendingPublicationV1 {
+            filename: "connection-00000000000000000001.ndjson".to_owned(),
+            bytes: b"{\"tail\":\"short\"}\n".to_vec(),
+            descriptor: EdgeSegmentDescriptorV1 { file_sha256: "55".repeat(32) },
+            member_sequences: vec![1_024, 1_025],
+            durable_next_sequence: 1_026,
+            durable_previous_record_hash: "44".repeat(32),
+        });
+        let sealed = ledger.commit_durable_publication().expect("short connection tail");
+        assert_eq!(sealed.member_sequences, [1_024, 1_025]);
+        assert_eq!(ledger.durable_next_sequence, 1_026);
+        assert_eq!(ledger.durable_next_segment, 2);
+        assert_eq!(ledger.durable_previous_record_hash, "44".repeat(32));
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(data_ledger_recovery_falsification_table, {
+        let root = std::env::temp_dir().join(format!(
+            "edge-data-recovery-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("recovery root");
+        let attempted = b"{\"a\":\"b\"}\n";
+        let durable_path = root.join("candidate-00000000000000000000.ndjson");
+        let mut durable = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&durable_path)
+            .expect("durable file");
+        durable.write_all(attempted).expect("durable write");
+        durable.sync_all().expect("durable file fsync");
+        drop(durable);
+        File::open(&root).expect("recovery root handle").sync_all().expect("root fsync");
+        let durable_bytes = fs::read(&durable_path).expect("durable re-read");
+        let digest = EdgeCanonicalWriterV1::sha256_hex(attempted);
+        EdgeCanonicalWriterV1::validate_data_recovery_bytes(attempted, &durable_bytes, &digest)
+            .expect("production recovery validator");
+        assert!(
+            EdgeCanonicalWriterV1::validate_data_recovery_bytes(
+                b"{\"a\":\"c\"}\n",
+                &durable_bytes,
+                &digest,
+            )
+            .is_err()
+        );
+        fs::remove_dir_all(root).expect("recovery cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(operational_incident_identity_table, {
+        for kind in [
+            "AccountingPeriodicWriteFailed",
+            "DataLedgerWriteFailed",
+            "OpenCleanupFailedAfterDurablePublish",
+        ] {
+            EdgeOperationalIncidentsV1::validate_witness(kind, &incident_witness(kind))
+                .expect("exact production incident identity");
+        }
+
+        let mut missing_next_sequence = incident_witness("DataLedgerWriteFailed");
+        missing_next_sequence["incidentId"] = json!(format!("candidate|{}", "11".repeat(32)));
+        assert!(
+            EdgeOperationalIncidentsV1::validate_witness(
+                "DataLedgerWriteFailed",
+                &missing_next_sequence,
+            )
+            .is_err()
+        );
+
+        let mut changed_next_sequence = incident_witness("DataLedgerWriteFailed");
+        changed_next_sequence["incidentId"] = json!(format!("candidate|01|{}", "11".repeat(32)));
+        assert!(
+            EdgeOperationalIncidentsV1::validate_witness(
+                "DataLedgerWriteFailed",
+                &changed_next_sequence,
+            )
+            .is_err()
+        );
+
+        let mut changed_cleanup_bytes = incident_witness("OpenCleanupFailedAfterDurablePublish");
+        changed_cleanup_bytes["incidentId"] =
+            json!(format!("candidate|candidate-00000000000000000000.ndjson|{}", "22".repeat(32)));
+        assert!(
+            EdgeOperationalIncidentsV1::validate_witness(
+                "OpenCleanupFailedAfterDurablePublish",
+                &changed_cleanup_bytes,
+            )
+            .is_err()
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(operational_incident_witness_kind_matrix, {
+        let mut periodic = incident_witness("AccountingPeriodicWriteFailed");
+        periodic["ledgerPrefix"] = json!("candidate");
+        assert!(
+            EdgeOperationalIncidentsV1::validate_witness(
+                "AccountingPeriodicWriteFailed",
+                &periodic,
+            )
+            .is_err()
+        );
+
+        for kind in ["DataLedgerWriteFailed", "OpenCleanupFailedAfterDurablePublish"] {
+            let mut scheduled = incident_witness(kind);
+            scheduled["scheduledMonoNs"] = json!("1");
+            assert!(EdgeOperationalIncidentsV1::validate_witness(kind, &scheduled).is_err());
+
+            let mut mismatched_hash = incident_witness(kind);
+            mismatched_hash["durableBytesSha256"] = json!("22".repeat(32));
+            assert!(EdgeOperationalIncidentsV1::validate_witness(kind, &mismatched_hash).is_err());
+        }
+
+        let mut reversed_time = incident_witness("DataLedgerWriteFailed");
+        reversed_time["lastAttemptMonoNs"] = json!("1");
+        assert!(
+            EdgeOperationalIncidentsV1::validate_witness("DataLedgerWriteFailed", &reversed_time,)
+                .is_err()
+        );
+        let mut zero_attempts = incident_witness("DataLedgerWriteFailed");
+        zero_attempts["attemptCount"] = json!("0");
+        assert!(
+            EdgeOperationalIncidentsV1::validate_witness("DataLedgerWriteFailed", &zero_attempts,)
+                .is_err()
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(terminal_publication_retry_requires_terminal_authority_last, {
+        let mut ledger =
+            EdgeRollingLedgerV1::new("accounting", "edge-producer-accounting-snapshot/v1");
+        assert!(!EdgeCanonicalWriterV1::accounting_terminal_authority_is_last(&ledger));
+
+        ledger.records.push(json!({"state": "AccountingPeriodic"}));
+        ledger.records.push(json!({"state": "AccountingTerminal"}));
+        assert!(EdgeCanonicalWriterV1::accounting_terminal_authority_is_last(&ledger));
+
+        ledger.records.push(json!({"state": "AccountingPeriodic"}));
+        assert!(!EdgeCanonicalWriterV1::accounting_terminal_authority_is_last(&ledger));
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(periodic_cadence_runs_through_production_state_transition, {
+        let attempted_at = Instant::now();
+        let mut next_periodic_at = attempted_at;
+        EdgeCanonicalWriterV1::advance_periodic_cadence(&mut next_periodic_at, false, attempted_at)
+            .expect("production periodic transition");
+        assert_eq!(
+            next_periodic_at.saturating_duration_since(attempted_at),
+            EDGE_ACCOUNTING_PERIOD_V1
+        );
+        assert!(
+            EdgeCanonicalWriterV1::advance_periodic_cadence(
+                &mut next_periodic_at,
+                true,
+                attempted_at,
+            )
+            .is_err()
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(periodic_schedule_advances_only_one_full_interval_after_failure, {
+        let failed_attempt = Instant::now();
+        let mut next_retry = failed_attempt;
+        EdgeCanonicalWriterV1::advance_periodic_cadence(&mut next_retry, false, failed_attempt)
+            .expect("failed-attempt cadence transition");
+        assert_eq!(next_retry.saturating_duration_since(failed_attempt), EDGE_ACCOUNTING_PERIOD_V1);
+        let mut recovered_schedule = next_retry;
+        EdgeCanonicalWriterV1::advance_periodic_cadence(&mut recovered_schedule, false, next_retry)
+            .expect("recovered cadence transition");
+        assert_eq!(
+            recovered_schedule.saturating_duration_since(next_retry),
+            EDGE_ACCOUNTING_PERIOD_V1
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(periodic_writer_fault_recovers_on_next_schedule_and_keeps_draining_data, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let root = edge_writer_root("periodic-recovery");
+        let (mut writer, recorder, _owner) = edge_writer_fixture(&root, 151);
+        writer.prepare().expect("production writer startup");
+
+        let durable_directory = writer.directory.clone();
+        writer.directory = PathBuf::from("/proc");
+        writer.next_periodic_at = Instant::now();
+        let failed_deadline = writer.next_periodic_at;
+        let error = writer.write_periodic_accounting().expect_err("injected periodic write fault");
+        assert_eq!(
+            EdgeWriterFailureClassV1::classify(&error),
+            EdgeWriterFailureClassV1::RetryablePrePublicationIo
+        );
+        let attempted_at = Instant::now();
+        EdgeCanonicalWriterV1::advance_periodic_cadence(
+            &mut writer.next_periodic_at,
+            writer.periodic_cadence_closed,
+            attempted_at,
+        )
+        .expect("next periodic schedule");
+        assert_eq!(
+            writer.next_periodic_at.saturating_duration_since(attempted_at),
+            EDGE_ACCOUNTING_PERIOD_V1
+        );
+        assert!(attempted_at >= failed_deadline);
+        assert_eq!(writer.incidents.accounting_periodic_write_failed.count, 1);
+        assert_eq!(writer.incidents.accounting_periodic_write_failed.recovered_count, 0);
+
+        let oob =
+            fs::read(root.join("edge-writer-failures-v1.ndjson")).expect("writer OOB evidence");
+        let occurrences = oob
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice::<JsonValue>(line).expect("canonical OOB line"))
+            .filter(|line| line["reason"] == "AccountingPeriodicWriteFailed")
+            .count();
+        assert_eq!(occurrences, 1);
+
+        writer.directory = durable_directory;
+        let admission =
+            recorder.observe_wire(b"data-after-periodic-fault").expect("wire admission");
+        recorder.decode_rejected(admission);
+        assert!(writer.drain_once().expect("production data drain after periodic fault"));
+        assert!(writer.ledgers.get("coverage").is_some_and(|ledger| !ledger.records.is_empty()));
+
+        writer.write_periodic_accounting().expect("scheduled periodic recovery");
+        let incident = &writer.incidents.accounting_periodic_write_failed;
+        assert_eq!((incident.count, incident.recovered_count), (1, 1));
+        let witness = incident.single_recovery_witness.as_ref().expect("single recovery witness");
+        let recovered_bytes = fs::read(root.join("accounting-00000000000000000001.ndjson"))
+            .expect("durable recovered periodic segment");
+        let mut recovered_state: JsonValue = serde_json::from_slice(
+            recovered_bytes.split(|byte| *byte == b'\n').next().expect("periodic record"),
+        )
+        .expect("recovered periodic record");
+        let recovered_object = recovered_state.as_object_mut().expect("periodic state object");
+        for field in ["previousRecordHash", "recordHash", "sequence", "state"] {
+            recovered_object.remove(field);
+        }
+        let recovered_state_hash = EdgeCanonicalWriterV1::sha256_hex(
+            &EdgeContractCanonicalJsonV1::canonicalize(&recovered_state)
+                .expect("recovered periodic state"),
+        );
+        assert_eq!(witness["postStateSha256"], recovered_state_hash);
+
+        writer.write_periodic_accounting().expect("durable incident evidence snapshot");
+        let evidence_bytes = fs::read(root.join("accounting-00000000000000000002.ndjson"))
+            .expect("incident evidence periodic segment");
+        assert!(
+            String::from_utf8(evidence_bytes)
+                .expect("UTF-8 accounting evidence")
+                .contains(&recovered_state_hash)
+        );
+
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("periodic recovery cleanup");
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(run_loop_drains_data_during_periodic_fault_without_early_retry, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let root = edge_writer_root("periodic-run-loop");
+        let (mut writer, recorder, _owner) = edge_writer_fixture(&root, 152);
+        writer.prepare().expect("production writer startup");
+        let accounting_ordinal =
+            writer.ledgers.get("accounting").expect("accounting ledger").next_segment;
+        let faulting_open = root.join(format!("accounting-{accounting_ordinal:020}.ndjson.open"));
+        fs::create_dir(&faulting_open).expect("faulting periodic open path");
+        writer.next_periodic_at = Instant::now();
+
+        let cancellation = Arc::clone(&writer.deadline_cancellation);
+        let writer_thread = std::thread::spawn(move || writer.run());
+        let failure_path = root.join("edge-writer-failures-v1.ndjson");
+        let periodic_failure_count = || {
+            fs::read(&failure_path)
+                .unwrap_or_default()
+                .split(|byte| *byte == b'\n')
+                .filter(|line| !line.is_empty())
+                .filter_map(|line| serde_json::from_slice::<JsonValue>(line).ok())
+                .filter(|line| line["reason"] == "AccountingPeriodicWriteFailed")
+                .count()
+        };
+        let first_failure_deadline = Instant::now() + Duration::from_secs(2);
+        while periodic_failure_count() == 0 && Instant::now() < first_failure_deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(periodic_failure_count(), 1);
+
+        let admission =
+            recorder.observe_wire(b"run-loop-data-after-periodic-fault").expect("wire admission");
+        recorder.decode_rejected(admission);
+        assert!(
+            recorder.raw_accounting_snapshot().expect("pending source accounting").1.6 > 0,
+            "source event must be pending before the writer drains it"
+        );
+        let drain_deadline =
+            Instant::now() + EDGE_SEGMENT_MAX_FLUSH_LATENCY + Duration::from_secs(2);
+        while recorder.raw_accounting_snapshot().expect("source accounting").1.6 != 0
+            && Instant::now() < drain_deadline
+        {
+            assert_eq!(
+                periodic_failure_count(),
+                1,
+                "periodic retry must wait for the next sixty-second cadence"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(recorder.raw_accounting_snapshot().expect("drained source accounting").1.6, 0);
+        assert_eq!(
+            periodic_failure_count(),
+            1,
+            "periodic retry must wait for the next sixty-second cadence"
+        );
+
+        cancellation.cancel();
+        let run_error = writer_thread
+            .join()
+            .expect("writer thread join")
+            .expect_err("deadline cancellation stops writer");
+        assert_eq!(run_error.kind(), io::ErrorKind::Interrupted);
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("periodic run-loop cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(coordinator_reason_capacity_boundary, {
+        let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: NonZeroU64::new(99).expect("test epoch"),
+            event_queue_capacity: 64,
+            active_state_capacity: 64,
+            pending_registry_capacity: 64,
+            terminal_record_capacity: 64,
+        })
+        .expect("production recorder");
+        for index in 0..64 {
+            let reason: &'static str =
+                Box::leak(format!("coordinator-reason-{index}").into_boxed_str());
+            recorder.latch_coordinator_failure(reason);
+        }
+        assert_eq!(recorder.coordinator_missing_evidence_counts().snapshot().len(), 64);
+        assert_eq!(recorder.producer_failure_counts(), (0, 64));
+
+        recorder.latch_coordinator_failure("coordinator-reason-overflow");
+        assert_eq!(recorder.coordinator_missing_evidence_counts().snapshot().len(), 64);
+        assert_eq!(recorder.producer_failure_counts(), (1, 65));
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(data_sealed_forbids_data_append, {
+        assert!(EdgeCanonicalWriterV1::ensure_append_allowed(false, "candidate").is_ok());
+        assert!(EdgeCanonicalWriterV1::ensure_append_allowed(true, "accounting").is_ok());
+        for ledger in ["candidate", "source-detail", "cutoff", "provenance"] {
+            let error = EdgeCanonicalWriterV1::ensure_append_allowed(true, ledger)
+                .expect_err("sealed data append must fail");
+            assert_eq!(error.kind(), io::ErrorKind::Other);
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(terminal_snapshot_rejects_revision_race, {
+        let revisions = ([0_u64; 16], [0_u64; 36]);
+        let before = json!({
+            "blinkAccounting": {"selectedDtoCommitted": "1"},
+            "blinkQueues": {"candidateQueuePending": "0"},
+            "blinkRejectQueueLossCounts": {"blinkRejectQueueClosed": "0"},
+            "candidateBounds": {"count": "1", "lastSequence": "0"},
+            "candidateDropQueueLossCounts": {"candidateDropQueueClosed": "0"},
+            "candidatePreEnqueueDropCounts": {"candidateQueueClosed": "0"},
+            "coordinatorMissingEvidenceCounts": {},
+            "pendingBreakdown": {"coverageQueuePendingAck": "0"},
+            "poisoned": false,
+            "registryTerminalExclusionCounts": {"nonAuthoritySend": "0"},
+            "sourceCounters": {"wireCount": "1"},
+            "sourceMissingEvidenceCounts": {"coordinatorFailure": "0"},
+        });
+        assert!(EdgeCanonicalWriterV1::terminal_accounting_snapshot_stable(
+            &revisions, &before, &before, &revisions,
         ));
 
-        let drops = Arc::new(AtomicU64::new(0));
-        let slot = ShadowLatestSlot::new();
-        assert_eq!(slot.try_submit(LinearCandidate(Arc::clone(&drops))), ShadowSubmit::Accepted);
-        let candidate = slot.try_take().expect("linear sealed candidate");
-        assert_eq!(drops.load(Ordering::Relaxed), 0);
-        drop(candidate);
-        assert_eq!(drops.load(Ordering::Relaxed), 1);
-        assert!(slot.try_take().is_none());
+        let mut changed_revision = revisions;
+        changed_revision.1[35] = 1;
+        assert!(!EdgeCanonicalWriterV1::terminal_accounting_snapshot_stable(
+            &revisions,
+            &before,
+            &before,
+            &changed_revision,
+        ));
 
-        assert_eq!(slot.try_submit(LinearCandidate(Arc::clone(&drops))), ShadowSubmit::Accepted);
-        slot.close();
-        assert_eq!(drops.load(Ordering::Relaxed), 2);
-    }
+        for field in [
+            "sourceMissingEvidenceCounts",
+            "registryTerminalExclusionCounts",
+            "blinkRejectQueueLossCounts",
+            "candidatePreEnqueueDropCounts",
+            "candidateDropQueueLossCounts",
+            "coordinatorMissingEvidenceCounts",
+            "sourceCounters",
+            "blinkAccounting",
+            "blinkQueues",
+            "candidateBounds",
+            "pendingBreakdown",
+            "poisoned",
+        ] {
+            let mut after = before.clone();
+            after
+                .as_object_mut()
+                .expect("accounting object")
+                .insert(field.to_owned(), json!("mutated"));
+            assert!(!EdgeCanonicalWriterV1::terminal_accounting_snapshot_stable(
+                &revisions, &before, &after, &revisions,
+            ));
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(startup_authority_must_be_durable_before_admission, {
+        let durable_ledger = |name: &'static str, domain: &'static str| {
+            let mut ledger = EdgeRollingLedgerV1::new(name, domain);
+            ledger.durable_next_sequence = 1;
+            ledger.durable_previous_record_hash = "11".repeat(32);
+            ledger.durable_next_segment = 1;
+            ledger
+        };
+        let mut ledgers = BTreeMap::from([
+            ("provenance", durable_ledger("provenance", "edge-producer-provenance/v1")),
+            ("accounting", durable_ledger("accounting", "edge-producer-accounting-snapshot/v1")),
+        ]);
+        assert!(EdgeCanonicalWriterV1::startup_authority_ready(&ledgers));
+
+        for missing in ["provenance", "accounting"] {
+            let removed = ledgers.remove(missing).expect("ledger");
+            assert!(!EdgeCanonicalWriterV1::startup_authority_ready(&ledgers));
+            ledgers.insert(missing, removed);
+        }
+        for name in ["provenance", "accounting"] {
+            let previous = ledgers[name].durable_next_sequence;
+            ledgers.get_mut(name).expect("ledger").durable_next_sequence = 0;
+            assert!(!EdgeCanonicalWriterV1::startup_authority_ready(&ledgers));
+            ledgers.get_mut(name).expect("ledger").durable_next_sequence = previous;
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(cutoff_publication_gate_has_no_interleaving, {
+        let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: NonZeroU64::new(141).expect("nonzero epoch"),
+            event_queue_capacity: 64,
+            active_state_capacity: 64,
+            pending_registry_capacity: 64,
+            terminal_record_capacity: 64,
+        })
+        .expect("production recorder");
+        recorder.open_admission().expect("production admission");
+        let pending = Arc::new(pending_blocks());
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let publication_recorder = Arc::clone(&recorder);
+        let publication_pending = Arc::clone(&pending);
+        let publication_barrier = Arc::clone(&barrier);
+        let publication = std::thread::spawn(move || {
+            publication_barrier.wait();
+            publication_recorder.prepare_pending_publication(&publication_pending, true, None)
+        });
+        let cutoff_recorder = Arc::clone(&recorder);
+        let cutoff_barrier = Arc::clone(&barrier);
+        let cutoff = std::thread::spawn(move || {
+            cutoff_barrier.wait();
+            cutoff_recorder.prepare_cutoff();
+        });
+
+        barrier.wait();
+        cutoff.join().expect("production cutoff");
+        let disposition = publication.join().expect("production publication");
+        let snapshot = recorder.registry().snapshot().expect("checked pending total");
+        assert!(snapshot.measurement_closed);
+        match disposition {
+            base_flashblocks::PendingPublicationDispositionV2::PreCutoffRegisteredAuthority(
+                attempt,
+            ) => {
+                assert_eq!(attempt.pending_snapshot_sequence, Some(0));
+                assert_eq!(snapshot.primary_pending, 1);
+                recorder
+                    .registry()
+                    .record_send(attempt, None)
+                    .expect("authority publication closure");
+            }
+            base_flashblocks::PendingPublicationDispositionV2::PostCutoffAdvancedNonAuthority(
+                marker,
+            ) => {
+                assert_eq!(
+                    marker,
+                    base_flashblocks::PendingSendJournalMarkerV2::PostCutoffAdvancedNonAuthority
+                );
+                assert_eq!(snapshot.unregistered_send_inflight, 1);
+                recorder
+                    .registry()
+                    .record_unregistered_send(marker, None)
+                    .expect("non-authority publication closure");
+            }
+            disposition => panic!("unexpected cutoff publication disposition: {disposition:?}"),
+        }
+        assert_eq!(
+            recorder
+                .registry()
+                .snapshot()
+                .expect("closed publication snapshot")
+                .unregistered_send_inflight,
+            0
+        );
+        let late_pending = Arc::new(pending_blocks());
+        let late_disposition = recorder.prepare_pending_publication(&late_pending, true, None);
+        assert_eq!(
+            late_disposition,
+            base_flashblocks::PendingPublicationDispositionV2::PostCutoffAdvancedNonAuthority(
+                base_flashblocks::PendingSendJournalMarkerV2::PostCutoffAdvancedNonAuthority
+            )
+        );
+        let late_reserved = recorder.registry().snapshot().expect("late reservation");
+        assert_eq!(late_reserved.unregistered_send_inflight, 1);
+        assert!(late_reserved.send_journal.is_empty());
+        let base_flashblocks::PendingPublicationDispositionV2::PostCutoffAdvancedNonAuthority(
+            marker,
+        ) = late_disposition
+        else {
+            unreachable!("asserted post-cutoff disposition");
+        };
+        recorder
+            .registry()
+            .record_unregistered_send(marker, Some(1))
+            .expect("late publication journal");
+        let late_journaled = recorder.registry().snapshot().expect("late journal");
+        assert_eq!(late_journaled.unregistered_send_inflight, 0);
+        assert_eq!(
+            late_journaled.send_journal,
+            vec![base_flashblocks::PendingSendJournalEntryV2::NonAuthority(marker)]
+        );
+        recorder.registry().cli_closed().expect("late journal closure");
+        let closed = recorder.registry().snapshot().expect("closed late journal");
+        assert_eq!(closed.unregistered_send_inflight, 0);
+        assert!(closed.send_journal.is_empty());
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(cutoff_structural_poison_is_single_attempt, {
+        let latch = EdgeCutoffLatchV1::default();
+        assert!(
+            latch
+                .started
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        );
+        assert!(
+            latch
+                .started
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        );
+        assert!(!latch.completed.load(Ordering::Acquire));
+        latch.completed.store(true, Ordering::Release);
+        assert!(latch.wait_for_completion(Instant::now() + Duration::from_millis(1)));
+        assert!(latch.started.load(Ordering::Acquire));
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(cutoff_structural_poison_is_known_invalid, {
+        assert!(
+            EdgeOobFailureSinkV1::validate_domain("cutoff", "CutoffStructuralPoison", None,)
+                .is_ok()
+        );
+        assert!(
+            EdgeOobFailureSinkV1::validate_domain("cutoff", "CutoffTaskJoinTimeout", None,)
+                .is_err()
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(oob_line_hash_mutation_table, {
+        const GOLDEN_HASH: &str =
+            "d5c58e9e3971ddeee267b6da2ae3cf592a6f08a7f3fd4dd04d007dd724e53a85";
+        const GOLDEN_LINE: &[u8] = br#"{"errnoClass":null,"lineHash":"d5c58e9e3971ddeee267b6da2ae3cf592a6f08a7f3fd4dd04d007dd724e53a85","monoNs":"123","ordinal":"0","producerEpoch":"7","reason":"NodeCommandErrBeforeGracefulShutdown","schemaVersion":"edge-writer-failure/v1","stage":"shutdown","writerInstanceId":"writer-1"}
+"#;
+
+        let file = OpenOptions::new().write(true).open("/dev/null").expect("sink");
+        let sink = EdgeOobFailureSinkV1 {
+            file: Mutex::new(file),
+            started: Instant::now(),
+            producer_epoch: Some(7),
+            writer_instance_id: "writer-1".to_owned(),
+            next_ordinal: AtomicU64::new(0),
+        };
+        let line = sink
+            .line(123, 0, "shutdown", "NodeCommandErrBeforeGracefulShutdown", None)
+            .expect("line");
+        assert_eq!(line, GOLDEN_LINE, "frozen OOB bytes");
+        assert_eq!(
+            EdgeOobFailureSinkV1::validate_line(&line, 0).expect("production OOB parser")["lineHash"],
+            GOLDEN_HASH
+        );
+
+        let value: JsonValue =
+            serde_json::from_slice(&line[..line.len() - 1]).expect("golden OOB object");
+        let encode = |value: &JsonValue| {
+            let mut bytes =
+                EdgeContractCanonicalJsonV1::canonicalize(value).expect("encodable OOB mutation");
+            bytes.push(b'\n');
+            bytes
+        };
+        let rehash = |mut value: JsonValue| {
+            let object = value.as_object_mut().expect("OOB object");
+            object.remove("lineHash");
+            let mut preimage = b"edge-writer-failure-line/v1\n".to_vec();
+            preimage.extend_from_slice(
+                &EdgeContractCanonicalJsonV1::canonicalize(&JsonValue::Object(object.clone()))
+                    .expect("OOB mutation preimage"),
+            );
+            object
+                .insert("lineHash".to_owned(), json!(EdgeCanonicalWriterV1::sha256_hex(&preimage)));
+            encode(&value)
+        };
+        let reject = |bytes: &[u8], expected_ordinal: u64, label: &str| {
+            assert!(
+                EdgeOobFailureSinkV1::validate_line(bytes, expected_ordinal).is_err(),
+                "{label} must fail the production OOB parser/hash boundary"
+            );
+        };
+
+        for key in [
+            "errnoClass",
+            "lineHash",
+            "monoNs",
+            "ordinal",
+            "producerEpoch",
+            "reason",
+            "schemaVersion",
+            "stage",
+            "writerInstanceId",
+        ] {
+            let mut missing = value.clone();
+            missing.as_object_mut().expect("OOB object").remove(key);
+            reject(&encode(&missing), 0, &format!("{key}: missing"));
+        }
+        let mut extra = value.clone();
+        extra["extra"] = json!(true);
+        reject(&rehash(extra), 0, "extra field");
+        let mut chain_state = value.clone();
+        chain_state["previousLineHash"] = json!("00".repeat(32));
+        reject(&rehash(chain_state), 0, "forbidden previousLineHash chain state");
+
+        for (field, invalid) in [
+            ("errnoClass", json!(false)),
+            ("lineHash", JsonValue::Null),
+            ("monoNs", json!(false)),
+            ("ordinal", json!([])),
+            ("producerEpoch", json!(false)),
+            ("reason", JsonValue::Null),
+            ("schemaVersion", json!(false)),
+            ("stage", json!([])),
+            ("writerInstanceId", JsonValue::Null),
+        ] {
+            let mut mutation = value.clone();
+            mutation[field] = invalid;
+            let bytes = if field == "lineHash" { encode(&mutation) } else { rehash(mutation) };
+            reject(&bytes, 0, &format!("{field}: wrong type/nullability"));
+        }
+
+        for (field, invalid) in [
+            ("errnoClass", json!("")),
+            ("errnoClass", json!("\u{80}")),
+            ("errnoClass", json!("x".repeat(129))),
+            ("monoNs", json!("")),
+            ("monoNs", json!("01")),
+            ("monoNs", json!("18446744073709551616")),
+            ("ordinal", json!("")),
+            ("ordinal", json!("00")),
+            ("ordinal", json!("18446744073709551616")),
+            ("producerEpoch", json!("")),
+            ("producerEpoch", json!("01")),
+            ("producerEpoch", json!("18446744073709551616")),
+            ("reason", json!("UnknownReason")),
+            ("schemaVersion", json!("edge-writer-failure/v2")),
+            ("stage", json!("unknown")),
+            ("writerInstanceId", json!("")),
+            ("writerInstanceId", json!("\u{80}")),
+            ("writerInstanceId", json!("x".repeat(129))),
+        ] {
+            let mut mutation = value.clone();
+            mutation[field] = invalid;
+            reject(&rehash(mutation), 0, &format!("{field}: value/domain"));
+        }
+
+        for invalid_hash in [
+            json!("00".repeat(32)),
+            json!("D5C58E9E3971DDEEE267B6DA2AE3CF592A6F08A7F3FD4DD04D007DD724E53A85"),
+            json!("abc"),
+        ] {
+            let mut mutation = value.clone();
+            mutation["lineHash"] = invalid_hash;
+            reject(&encode(&mutation), 0, "lineHash mismatch/domain");
+        }
+        reject(&line, 1, "non-monotonic ordinal");
+        let mut next = value.clone();
+        next["ordinal"] = json!("1");
+        EdgeOobFailureSinkV1::validate_line(&rehash(next), 1).expect("ordinal successor");
+
+        let nullable_file =
+            OpenOptions::new().write(true).open("/dev/null").expect("nullable sink");
+        let nullable_sink = EdgeOobFailureSinkV1 {
+            file: Mutex::new(nullable_file),
+            started: Instant::now(),
+            producer_epoch: None,
+            writer_instance_id: "writer-nullable".to_owned(),
+            next_ordinal: AtomicU64::new(0),
+        };
+        let nullable_line = nullable_sink
+            .line(0, 0, "writer", "DataLedgerWriteFailed", Some("EIO"))
+            .expect("nullable-domain line");
+        EdgeOobFailureSinkV1::validate_line(&nullable_line, 0)
+            .expect("producerEpoch null and errnoClass string");
+
+        let disturbed_order = br#"{"lineHash":"d5c58e9e3971ddeee267b6da2ae3cf592a6f08a7f3fd4dd04d007dd724e53a85","errnoClass":null,"monoNs":"123","ordinal":"0","producerEpoch":"7","reason":"NodeCommandErrBeforeGracefulShutdown","schemaVersion":"edge-writer-failure/v1","stage":"shutdown","writerInstanceId":"writer-1"}
+"#;
+        reject(disturbed_order, 0, "field order");
+        let duplicate = br#"{"errnoClass":null,"errnoClass":null,"lineHash":"d5c58e9e3971ddeee267b6da2ae3cf592a6f08a7f3fd4dd04d007dd724e53a85","monoNs":"123","ordinal":"0","producerEpoch":"7","reason":"NodeCommandErrBeforeGracefulShutdown","schemaVersion":"edge-writer-failure/v1","stage":"shutdown","writerInstanceId":"writer-1"}
+"#;
+        reject(duplicate, 0, "duplicate field");
+
+        reject(&line[..line.len() - 1], 0, "missing LF");
+        let mut extra_lf = line.clone();
+        extra_lf.push(b'\n');
+        reject(&extra_lf, 0, "extra LF");
+        let mut invalid_utf8 = line.clone();
+        invalid_utf8[0] = 0xff;
+        reject(&invalid_utf8, 0, "invalid UTF-8");
+        let oversized = vec![b'x'; 4097];
+        reject(&oversized, 0, "line over 4 KiB");
+
+        let oversized_file =
+            OpenOptions::new().write(true).open("/dev/null").expect("oversized sink");
+        let oversized_sink = EdgeOobFailureSinkV1 {
+            file: Mutex::new(oversized_file),
+            started: Instant::now(),
+            producer_epoch: Some(7),
+            writer_instance_id: "x".repeat(4096),
+            next_ordinal: AtomicU64::new(0),
+        };
+        assert!(
+            oversized_sink
+                .line(123, 0, "shutdown", "NodeCommandErrBeforeGracefulShutdown", None)
+                .is_err(),
+            "production line builder must reject lines over 4 KiB"
+        );
+        for (stage, reason, errno_class) in [
+            ("unknown", "NodeCommandErrBeforeGracefulShutdown", None),
+            ("shutdown", "unknown", None),
+            ("shutdown", "NodeCommandErrBeforeGracefulShutdown", Some("")),
+            ("shutdown", "NodeCommandErrBeforeGracefulShutdown", Some("\u{80}")),
+        ] {
+            assert!(
+                sink.line(123, 0, stage, reason, errno_class).is_err(),
+                "production line builder domain rejection"
+            );
+        }
+
+        struct BoundedWriter {
+            limit: usize,
+            bytes: Vec<u8>,
+        }
+        impl std::io::Write for BoundedWriter {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                let written = self.limit.min(bytes.len());
+                self.bytes.extend_from_slice(&bytes[..written]);
+                Ok(written)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut complete = Vec::new();
+        EdgeOobFailureSinkV1::write_line(&mut complete, &line).expect("complete OOB append");
+        assert_eq!(complete, line);
+        for limit in [0, 1, line.len() - 1] {
+            let mut writer = BoundedWriter { limit, bytes: Vec::new() };
+            assert!(
+                EdgeOobFailureSinkV1::write_line(&mut writer, &line).is_err(),
+                "short write of {limit} bytes must fail"
+            );
+        }
+
+        let overflow_file =
+            OpenOptions::new().write(true).open("/dev/null").expect("overflow sink");
+        let overflow_sink = EdgeOobFailureSinkV1 {
+            file: Mutex::new(overflow_file),
+            started: Instant::now(),
+            producer_epoch: Some(7),
+            writer_instance_id: "writer-overflow".to_owned(),
+            next_ordinal: AtomicU64::new(u64::MAX),
+        };
+        assert!(
+            overflow_sink.record("shutdown", "NodeCommandErrBeforeGracefulShutdown", None).is_err(),
+            "production record boundary must reject ordinal overflow"
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(oob_full_write_sync_failure_is_accepted, {
+        let file = OpenOptions::new().write(true).open("/dev/null").expect("sink");
+        let sink = EdgeOobFailureSinkV1 {
+            file: Mutex::new(file),
+            started: Instant::now(),
+            producer_epoch: Some(7),
+            writer_instance_id: "writer-fault-full".to_owned(),
+            next_ordinal: AtomicU64::new(0),
+        };
+        let mut writer = EdgeOobFaultWriterV1::default();
+
+        sink.record_with_writer(&mut writer, "writer", "DataLedgerWriteFailed", None, |_| {
+            Err(io::Error::other("injected sync failure"))
+        })
+        .expect("complete append is accepted despite sync failure");
+
+        assert_eq!(sink.next_ordinal.load(Ordering::Acquire), 1);
+        assert_eq!(writer.lines.len(), 1);
+        EdgeOobFailureSinkV1::validate_line(&writer.lines[0], 0).expect("accepted ordinal zero");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(oob_short_write_does_not_advance_ordinal, {
+        let file = OpenOptions::new().write(true).open("/dev/null").expect("sink");
+        let sink = EdgeOobFailureSinkV1 {
+            file: Mutex::new(file),
+            started: Instant::now(),
+            producer_epoch: Some(7),
+            writer_instance_id: "writer-fault-short".to_owned(),
+            next_ordinal: AtomicU64::new(0),
+        };
+        let mut writer = EdgeOobFaultWriterV1 {
+            fault: Some(EdgeOobWriteFaultV1::Short(1)),
+            ..Default::default()
+        };
+
+        assert!(
+            sink.record_with_writer(&mut writer, "writer", "DataLedgerWriteFailed", None, |_| Ok(
+                ()
+            ),)
+                .is_err()
+        );
+        assert_eq!(sink.next_ordinal.load(Ordering::Acquire), 0);
+        assert!(writer.lines.is_empty());
+        assert_eq!(writer.partial.len(), 1);
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(oob_write_error_does_not_advance_ordinal, {
+        let file = OpenOptions::new().write(true).open("/dev/null").expect("sink");
+        let sink = EdgeOobFailureSinkV1 {
+            file: Mutex::new(file),
+            started: Instant::now(),
+            producer_epoch: Some(7),
+            writer_instance_id: "writer-fault-error".to_owned(),
+            next_ordinal: AtomicU64::new(0),
+        };
+        let mut writer =
+            EdgeOobFaultWriterV1 { fault: Some(EdgeOobWriteFaultV1::Error), ..Default::default() };
+
+        assert!(
+            sink.record_with_writer(&mut writer, "writer", "DataLedgerWriteFailed", None, |_| Ok(
+                ()
+            ),)
+                .is_err()
+        );
+        assert_eq!(sink.next_ordinal.load(Ordering::Acquire), 0);
+        assert!(writer.lines.is_empty());
+        assert!(writer.partial.is_empty());
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(oob_failed_write_retry_emits_one_next_ordinal, {
+        let file = OpenOptions::new().write(true).open("/dev/null").expect("sink");
+        let sink = EdgeOobFailureSinkV1 {
+            file: Mutex::new(file),
+            started: Instant::now(),
+            producer_epoch: Some(7),
+            writer_instance_id: "writer-fault-retry".to_owned(),
+            next_ordinal: AtomicU64::new(0),
+        };
+        let mut writer = EdgeOobFaultWriterV1::default();
+        sink.record_with_writer(&mut writer, "writer", "DataLedgerWriteFailed", None, |_| Ok(()))
+            .expect("ordinal zero");
+
+        writer.fault = Some(EdgeOobWriteFaultV1::Error);
+        assert!(
+            sink.record_with_writer(&mut writer, "writer", "DataLedgerWriteFailed", None, |_| Ok(
+                ()
+            ),)
+                .is_err()
+        );
+        assert_eq!(sink.next_ordinal.load(Ordering::Acquire), 1);
+
+        sink.record_with_writer(&mut writer, "writer", "DataLedgerWriteFailed", None, |_| Ok(()))
+            .expect("retry ordinal one");
+
+        assert_eq!(sink.next_ordinal.load(Ordering::Acquire), 2);
+        assert_eq!(writer.lines.len(), 2);
+        EdgeOobFailureSinkV1::validate_line(&writer.lines[0], 0).expect("accepted ordinal zero");
+        EdgeOobFailureSinkV1::validate_line(&writer.lines[1], 1)
+            .expect("exactly one accepted ordinal one");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(oob_audit_snapshot_exact_field_mutation_cover, {
+        let root = edge_writer_root("oob-audit-cover");
+        let sink = EdgeOobFailureSinkV1::open(&root, Some(7)).expect("OOB sink");
+        let snapshot = sink.audit_snapshot().expect("OOB audit");
+
+        macro_rules! assert_oob_mutation {
+            ($label:literal, $mutation:expr) => {{
+                let mut changed = snapshot.clone();
+                $mutation(&mut changed);
+                assert_ne!(changed, snapshot, "{} escaped OOB audit equality", $label);
+            }};
+        }
+        assert_eq!(EdgeOobFailureSinkAuditSnapshotV1::COVERED_FIELD_COUNT, 5);
+        assert_eq!(EdgeOobFailureSinkAuditSnapshotV1::FILE_METADATA_FIELD_COUNT, 11);
+        assert_oob_mutation!(
+            "writer_instance_id",
+            |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+                value.writer_instance_id.push('x');
+            }
+        );
+        assert_oob_mutation!("producer_epoch", |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+            value.producer_epoch = Some(8);
+        });
+        assert_oob_mutation!("next_ordinal", |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+            value.next_ordinal ^= 1;
+        });
+        assert_oob_mutation!("file_bytes", |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+            value.file_bytes.push(0);
+        });
+        assert_oob_mutation!("metadata.len", |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+            value.file_metadata.len ^= 1;
+        });
+        assert_oob_mutation!("metadata.mode", |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+            value.file_metadata.mode ^= 1;
+        });
+        assert_oob_mutation!("metadata.uid", |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+            value.file_metadata.uid ^= 1;
+        });
+        assert_oob_mutation!("metadata.gid", |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+            value.file_metadata.gid ^= 1;
+        });
+        assert_oob_mutation!("metadata.device", |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+            value.file_metadata.device ^= 1;
+        });
+        assert_oob_mutation!("metadata.inode", |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+            value.file_metadata.inode ^= 1;
+        });
+        assert_oob_mutation!(
+            "metadata.hard_links",
+            |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+                value.file_metadata.hard_links ^= 1;
+            }
+        );
+        assert_oob_mutation!(
+            "metadata.modified_seconds",
+            |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+                value.file_metadata.modified_seconds ^= 1;
+            }
+        );
+        assert_oob_mutation!(
+            "metadata.modified_nanoseconds",
+            |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+                value.file_metadata.modified_nanoseconds ^= 1;
+            }
+        );
+        assert_oob_mutation!(
+            "metadata.changed_seconds",
+            |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+                value.file_metadata.changed_seconds ^= 1;
+            }
+        );
+        assert_oob_mutation!(
+            "metadata.changed_nanoseconds",
+            |value: &mut EdgeOobFailureSinkAuditSnapshotV1| {
+                value.file_metadata.changed_nanoseconds ^= 1;
+            }
+        );
+        drop(sink);
+        fs::remove_dir_all(root).expect("OOB audit root cleanup");
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(oob_failure_sink_open_at_survives_atomic_role_path_swap, {
+        let base = edge_writer_root("oob-three-root");
+        let roots = [base.join("control"), base.join("source"), base.join("consumer")];
+        for root in &roots {
+            fs::create_dir(root).expect("OOB role root");
+            fs::set_permissions(root, fs::Permissions::from_mode(0o700))
+                .expect("private OOB role root");
+        }
+        let source_handle = File::open(&roots[1]).expect("epoch-source directory handle");
+        let source_identity = {
+            let metadata = source_handle.metadata().expect("epoch-source metadata");
+            (metadata.dev(), metadata.ino())
+        };
+        let control_identity = {
+            let metadata = fs::metadata(&roots[0]).expect("campaign-control metadata");
+            (metadata.dev(), metadata.ino())
+        };
+        assert_ne!(source_identity, control_identity);
+
+        let control = CString::new(roots[0].as_os_str().as_bytes()).expect("control path");
+        let source = CString::new(roots[1].as_os_str().as_bytes()).expect("source path");
+        // SAFETY: both C strings remain alive for the call and name existing directories; the
+        // exchange is atomic, so the pinned source handle remains valid throughout.
+        assert_eq!(unsafe { renameat2(-100, control.as_ptr(), -100, source.as_ptr(), 2) }, 0);
+        assert_eq!(
+            {
+                let metadata = fs::metadata(&roots[0]).expect("source inode after exchange");
+                (metadata.dev(), metadata.ino())
+            },
+            source_identity
+        );
+        assert_eq!(
+            {
+                let metadata = fs::metadata(&roots[1]).expect("control inode after exchange");
+                (metadata.dev(), metadata.ino())
+            },
+            control_identity
+        );
+
+        let sink = EdgeOobFailureSinkV1::open_at(&source_handle, Some(9))
+            .expect("pinned source-root sink");
+        sink.record("writer", "DataLedgerWriteFailed", None).expect("source-root record");
+        let audit = sink.audit_snapshot().expect("source-root OOB audit");
+        let original_source_oob = roots[0].join("edge-writer-failures-v1.ndjson");
+        let original_control_oob = roots[1].join("edge-writer-failures-v1.ndjson");
+        let oob_metadata =
+            fs::metadata(&original_source_oob).expect("OOB under original source inode");
+        assert_eq!(
+            (audit.file_metadata.device, audit.file_metadata.inode),
+            (oob_metadata.dev(), oob_metadata.ino())
+        );
+        assert!(!original_control_oob.exists(), "OOB bytes must never enter control inode");
+        assert_eq!(
+            fs::read(&original_source_oob).expect("pinned source OOB bytes"),
+            audit.file_bytes
+        );
+
+        let source_alias = base.join("source-alias");
+        std::os::unix::fs::symlink(&roots[0], &source_alias).expect("source sibling symlink");
+        assert!(EdgeOobFailureSinkV1::open(&source_alias, Some(9)).is_err());
+        fs::remove_file(source_alias).expect("source sibling symlink cleanup");
+        drop(sink);
+        fs::remove_dir_all(base).expect("OOB three-root cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(lease_and_sweep_emit_named_oob_once, {
+        let root = std::env::temp_dir().join(format!(
+            "edge-startup-oob-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("root");
+        let sink = EdgeOobFailureSinkV1::open(&root, None).expect("sink");
+        sink.record("lease", "OutputLeaseAcquireFailed", None).expect("lease OOB");
+        sink.record("sweep", "StaleOpenSweepFailed", None).expect("sweep OOB");
+        drop(sink);
+
+        let bytes = fs::read(root.join("edge-writer-failures-v1.ndjson")).expect("OOB bytes");
+        let lines = bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice::<JsonValue>(line).expect("OOB line"))
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["stage"], "lease");
+        assert_eq!(lines[0]["reason"], "OutputLeaseAcquireFailed");
+        assert_eq!(lines[0]["ordinal"], "0");
+        assert_eq!(lines[1]["stage"], "sweep");
+        assert_eq!(lines[1]["reason"], "StaleOpenSweepFailed");
+        assert_eq!(lines[1]["ordinal"], "1");
+        fs::remove_dir_all(root).expect("cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(edge_option3_inventory_classifies_all_26_artifacts, {
+        let mut classified = BTreeSet::new();
+        for row in EDGE_LEDGER_REGISTRY_V1 {
+            assert!(classified.insert(("epoch-output", row.prefix)));
+        }
+        for singleton in EDGE_EPOCH_OUTPUT_SINGLETON_ARTIFACTS_V1 {
+            assert!(classified.insert(("epoch-output", singleton)));
+        }
+        for basename in EDGE_CAMPAIGN_CONTROL_ALLOWLIST_V1 {
+            assert!(EdgeCliProducerConfigV1::campaign_control_basename_allowed(basename));
+            assert!(classified.insert(("campaign-control", basename)));
+        }
+        for anchor in EDGE_EXTERNAL_ANCHOR_ROLES_V1 {
+            assert!(classified.insert(("external-anchor", anchor)));
+        }
+        assert_eq!(classified.len(), 26);
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(three_root_role_and_basename_matrix, {
+        for accepted in [
+            "edge-shutdown-margin-v1.json",
+            "fork-driver-capability-v1.json",
+            "replay-pending-v1.json",
+        ] {
+            assert!(EdgeCliProducerConfigV1::campaign_control_basename_allowed(accepted));
+        }
+        for rejected in [
+            "manifest.json",
+            ".open",
+            "edge-writer-failures-v1.ndjson",
+            "EDGE-SHUTDOWN-MARGIN-V1.JSON",
+            "replay-pending-v1.json/",
+        ] {
+            assert!(!EdgeCliProducerConfigV1::campaign_control_basename_allowed(rejected));
+        }
+        let root = std::env::temp_dir().join(format!(
+            "edge-control-inventory-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos(),
+        ));
+        fs::create_dir(&root).expect("control root");
+        for basename in [
+            "edge-shutdown-margin-v1.json",
+            "fork-driver-capability-v1.json",
+            "replay-pending-v1.json",
+        ] {
+            fs::write(root.join(basename), b"{}").expect("allowed control artifact");
+        }
+        EdgeCliProducerConfigV1::validate_campaign_control_inventory(&root)
+            .expect("production control inventory");
+
+        let unknown = root.join("manifest.json");
+        fs::write(&unknown, b"{}").expect("unknown control artifact");
+        assert!(EdgeCliProducerConfigV1::validate_campaign_control_inventory(&root).is_err());
+        fs::remove_file(unknown).expect("unknown cleanup");
+
+        let replay = root.join("replay-pending-v1.json");
+        fs::remove_file(&replay).expect("replay removal");
+        std::os::unix::fs::symlink(root.join("edge-shutdown-margin-v1.json"), &replay)
+            .expect("control symlink");
+        assert!(EdgeCliProducerConfigV1::validate_campaign_control_inventory(&root).is_err());
+        fs::remove_dir_all(root).expect("control root cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(three_root_path_inode_symlink_table, {
+        let base = std::env::temp_dir().join(format!(
+            "edge-roots-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let roots = [base.join("control"), base.join("source"), base.join("consumer")];
+        for root in &roots {
+            fs::create_dir_all(root).expect("root");
+        }
+        let identities = roots.each_ref().map(|root| {
+            EdgeCliProducerConfigV1::validate_components(&root)
+                .expect("production root validation");
+            let metadata = fs::metadata(root).expect("metadata");
+            (metadata.dev(), metadata.ino())
+        });
+        EdgeCliProducerConfigV1::validate_distinct_role_identities(&identities)
+            .expect("distinct production roots");
+        let aliased = [identities[0], identities[0], identities[2]];
+        assert!(EdgeCliProducerConfigV1::validate_distinct_role_identities(&aliased).is_err());
+
+        let symlink = base.join("source-alias");
+        std::os::unix::fs::symlink(&roots[1], &symlink).expect("source-root symlink");
+        assert!(EdgeCliProducerConfigV1::validate_components(&symlink).is_err());
+        fs::remove_file(symlink).expect("symlink cleanup");
+        fs::remove_dir_all(base).expect("cleanup");
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(edge_cli_producer_config_load_boot_wiring_and_final_role_identity_recheck, {
+        const CHILD_MARKER: &str = "BASE_EDGE_BOOT_GATE_CHILD";
+
+        let _serial = edge_node_result_test_lock_v1();
+        if std::env::var_os(CHILD_MARKER).is_none() {
+            let _permissions = EdgeExecutablePermissionsGuardV1::install();
+            let status = std::process::Command::new(
+                std::env::current_exe().expect("current test executable"),
+            )
+            .arg("edge_cli_producer_config_load_boot_wiring_and_final_role_identity_recheck")
+            .arg("--test-threads=1")
+            .env(CHILD_MARKER, "1")
+            .status()
+            .expect("isolated production boot-gate regression");
+            assert!(status.success());
+            return;
+        }
+        edge_node_result_test_reset_v1();
+        let success = EdgeBootFixtureV1::new("boot-load-success");
+        {
+            let _environment = success.install_environment();
+            let config = EdgeCliProducerConfigV1::load(&success.config_path)
+                .expect("complete production boot gate");
+            assert_eq!(config.producer_epoch.get(), 1);
+            assert_eq!(config.output_root, success.allocated_root(1));
+            assert!(config.output_root.is_dir());
+            assert!(edge_node_result_recorder_v1().is_none());
+            assert_eq!(
+                fs::read_dir(&config.output_root).expect("empty pre-provenance epoch").count(),
+                0
+            );
+        }
+
+        let mutation = EdgeBootFixtureV1::new("boot-load-role-mutation");
+        {
+            let _environment = mutation.install_environment();
+            let allocated_root = mutation.allocated_root(1);
+            let control_root = mutation.control_root.clone();
+            let replacement_control = mutation.base.join("control-replacement");
+            fs::create_dir(&replacement_control).expect("replacement control root");
+            fs::set_permissions(&replacement_control, fs::Permissions::from_mode(0o700))
+                .expect("private replacement control root");
+            let mutator = std::thread::spawn(move || {
+                while !allocated_root.exists() {
+                    std::hint::spin_loop();
+                }
+                let control = std::ffi::CString::new(control_root.as_os_str().as_bytes())
+                    .expect("control path has no NUL");
+                let replacement =
+                    std::ffi::CString::new(replacement_control.as_os_str().as_bytes())
+                        .expect("replacement path has no NUL");
+                // SAFETY: both C strings remain alive for the call and name existing directories;
+                // the exchange is atomic, so validation cannot observe a missing path.
+                assert_eq!(
+                    unsafe { renameat2(-100, control.as_ptr(), -100, replacement.as_ptr(), 2,) },
+                    0
+                );
+            });
+            let error = EdgeCliProducerConfigV1::load(&mutation.config_path)
+                .expect_err("role-root mutation must fail closed");
+            mutator.join().expect("role-root mutation thread");
+            assert_eq!(error, "persistent role-root identity changed across allocation");
+            assert!(edge_node_result_recorder_v1().is_none());
+            assert_eq!(
+                fs::read_dir(mutation.allocated_root(1))
+                    .expect("failed epoch remains provenance-free")
+                    .count(),
+                0
+            );
+        }
+
+        let allocation_failure = EdgeBootFixtureV1::new("boot-load-allocation-failure");
+        {
+            let _environment = allocation_failure.install_environment();
+            let root_handle =
+                File::open(&allocation_failure.campaign_root).expect("campaign root lock handle");
+            // SAFETY: the handle remains alive through the load attempt and this test owns the
+            // process-global edge test lock.
+            assert_eq!(
+                unsafe {
+                    flock(
+                        root_handle.as_raw_fd(),
+                        EdgeEpochAllocatorV1::LOCK_EX | EdgeEpochAllocatorV1::LOCK_NB,
+                    )
+                },
+                0
+            );
+            let error = EdgeCliProducerConfigV1::load(&allocation_failure.config_path)
+                .expect_err("allocation lock failure");
+            assert!(error.starts_with("EpochAllocationFailed:Lock:"));
+            assert!(edge_node_result_recorder_v1().is_none());
+            assert!(!allocation_failure.allocated_root(1).exists());
+            assert!(
+                !allocation_failure.campaign_root.join("edge-writer-failures-v1.ndjson").exists()
+            );
+            EdgeOobFailureSinkV1::validate_domain("startup", "EpochAllocationFailed", None)
+                .expect("normative forward reason remains registry-valid when a sink exists");
+        }
+
+        edge_node_result_test_reset_v1();
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(shutdown_margin_receipt_exact_thirteen_fields_and_eight_cases, {
+        let exact = FlatJsonObjectV1(BTreeMap::from_iter(
+            EdgeCliProducerConfigV1::SHUTDOWN_MARGIN_RECEIPT_KEYS
+                .into_iter()
+                .map(|key| (key.to_owned(), FlatJsonValueV1::String("x".to_owned()))),
+        ));
+        assert!(EdgeCliProducerConfigV1::shutdown_margin_receipt_keys_exact(&exact));
+
+        for key in EdgeCliProducerConfigV1::SHUTDOWN_MARGIN_RECEIPT_KEYS {
+            let mut missing = FlatJsonObjectV1(exact.0.clone());
+            missing.0.remove(key);
+            assert!(!EdgeCliProducerConfigV1::shutdown_margin_receipt_keys_exact(&missing));
+        }
+        let mut extra = FlatJsonObjectV1(exact.0.clone());
+        extra.0.insert("unknown".to_owned(), FlatJsonValueV1::String("x".to_owned()));
+        assert!(!EdgeCliProducerConfigV1::shutdown_margin_receipt_keys_exact(&extra));
+        let components = [
+            "coverageAck",
+            "delivery",
+            "primary",
+            "published",
+            "secondary",
+            "unregisteredSendInflight",
+            "sequenceLessRegistrationSendInflight",
+        ];
+        let mut cases = Vec::new();
+        for (case_index, component) in components.iter().enumerate() {
+            let pending = components
+                .iter()
+                .enumerate()
+                .map(|(index, key)| {
+                    (
+                        (*key).to_owned(),
+                        JsonValue::String(if index == case_index { "10" } else { "0" }.to_owned()),
+                    )
+                })
+                .collect::<serde_json::Map<String, JsonValue>>();
+            cases.push(json!({"name": format!("{component}-only"), "pendingBreakdown": pending}));
+        }
+        cases.push(json!({
+            "name": "round-robin",
+            "pendingBreakdown": {
+                "coverageAck": "2",
+                "delivery": "2",
+                "primary": "2",
+                "published": "1",
+                "secondary": "1",
+                "unregisteredSendInflight": "1",
+                "sequenceLessRegistrationSendInflight": "1",
+            },
+        }));
+        let fixture = json!({
+            "schemaVersion": "edge-registry-drain-stress/v1",
+            "configuredMaxPendingRegistry": "10",
+            "componentOrder": components,
+            "cases": cases,
+            "identityGenerator": {
+                "algorithm": "sha256-counter/v1",
+                "seed": "edge-registry-drain-stress/v1",
+            },
+        });
+        let bytes = serde_json::to_vec(&fixture).expect("fixture bytes");
+        EdgeCliProducerConfigV1::validate_registry_drain_fixture(10, &bytes)
+            .expect("exact eight-case fixture");
+        let mut ninth = fixture;
+        ninth["cases"]
+            .as_array_mut()
+            .expect("cases")
+            .push(json!({"name": "extra", "pendingBreakdown": {}}));
+        assert!(
+            EdgeCliProducerConfigV1::validate_registry_drain_fixture(
+                10,
+                &serde_json::to_vec(&ninth).expect("mutation bytes"),
+            )
+            .is_err()
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(shutdown_margin_receipt_parser_mutation_table, {
+        for (runs, maximum, pass) in [
+            (30_u64, 7_500_000_000_u64, true),
+            (29, 7_500_000_000, false),
+            (30, 7_500_000_001, false),
+            (31, 1, true),
+            (30, u64::MAX, false),
+        ] {
+            assert_eq!(
+                EdgeCliProducerConfigV1::validate_shutdown_margin_predicate(runs, maximum).is_ok(),
+                pass,
+            );
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(configured_pending_cap_below_equal_above, {
+        let sample = std::str::from_utf8(manifest_sample()).expect("UTF-8");
+        for (cap, accepted) in [
+            ("0", false),
+            ("1023", true),
+            ("1024", true),
+            ("1025", true),
+            ("4294967295", true),
+            ("4294967296", false),
+        ] {
+            let mutation = sample.replacen(
+                "\"configuredMaxPendingRegistry\":\"1024\"",
+                &format!("\"configuredMaxPendingRegistry\":\"{cap}\""),
+                1,
+            );
+            assert_eq!(
+                EdgeProducerContractManifestV1::parse(mutation.as_bytes()).is_ok(),
+                accepted,
+            );
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(epoch_allocator_restart_residue_matrix, {
+        let root = std::env::temp_dir().join(format!(
+            "edge-epoch-restart-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos(),
+        ));
+        fs::create_dir(&root).expect("campaign root");
+        for epoch in [1_u64, 2, 4, 7] {
+            fs::create_dir(root.join(format!("epoch-{epoch:020}"))).expect("residue");
+        }
+
+        let first = EdgeEpochAllocatorV1::allocate(&root, NonZeroU64::new(3).expect("floor"))
+            .expect("first allocation");
+        assert_eq!(first.epoch.get(), 8);
+        assert!(first.root.is_dir());
+        drop(first);
+
+        let second = EdgeEpochAllocatorV1::allocate(&root, NonZeroU64::new(12).expect("floor"))
+            .expect("restart allocation");
+        assert_eq!(second.epoch.get(), 12);
+        assert!(root.join("epoch-00000000000000000008").is_dir());
+        assert!(second.root.is_dir());
+        drop(second);
+        fs::remove_dir_all(root).expect("cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(epoch_allocator_fault_matrix, {
+        let root = std::env::temp_dir().join(format!(
+            "edge-epoch-fault-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos(),
+        ));
+        fs::create_dir(&root).expect("campaign root");
+
+        fs::write(root.join("epoch-00000000000000000001"), b"not a directory")
+            .expect("invalid entry");
+        let scan = EdgeEpochAllocatorV1::scan(&root).expect_err("regular epoch entry");
+        assert_eq!(scan.stage, EdgeEpochAllocationStageV1::Scan);
+        fs::remove_file(root.join("epoch-00000000000000000001")).expect("remove invalid entry");
+
+        std::os::unix::fs::symlink(&root, root.join("epoch-00000000000000000002"))
+            .expect("symlink residue");
+        let symlink = EdgeEpochAllocatorV1::scan(&root).expect_err("symlink epoch entry");
+        assert_eq!(symlink.stage, EdgeEpochAllocationStageV1::Scan);
+        fs::remove_file(root.join("epoch-00000000000000000002")).expect("remove symlink");
+
+        fs::create_dir(root.join("epoch-01")).expect("noncanonical epoch");
+        let canonical = EdgeEpochAllocatorV1::scan(&root).expect_err("noncanonical epoch");
+        assert_eq!(canonical.stage, EdgeEpochAllocationStageV1::Scan);
+        fs::remove_dir(root.join("epoch-01")).expect("remove noncanonical epoch");
+
+        fs::create_dir(root.join("epoch-00000000000000000000")).expect("zero-padded epoch");
+        assert_eq!(EdgeEpochAllocatorV1::scan(&root).expect("exact epoch scan"), Some(0));
+        fs::remove_dir(root.join("epoch-00000000000000000000")).expect("remove zero epoch");
+
+        let epoch = NonZeroU64::new(3).expect("epoch");
+        EdgeEpochAllocatorV1::create_epoch_directory(&root, epoch).expect("exclusive mkdir");
+        let mkdir = EdgeEpochAllocatorV1::create_epoch_directory(&root, epoch)
+            .expect_err("exclusive conflict");
+        assert_eq!(mkdir.stage, EdgeEpochAllocationStageV1::Mkdir);
+
+        let root_handle = File::open(&root).expect("root handle");
+        // SAFETY: `root_handle` remains open while the test owns the advisory lock.
+        assert_eq!(
+            unsafe {
+                flock(
+                    root_handle.as_raw_fd(),
+                    EdgeEpochAllocatorV1::LOCK_EX | EdgeEpochAllocatorV1::LOCK_NB,
+                )
+            },
+            0,
+        );
+        let lock = EdgeEpochAllocatorV1::allocate(&root, NonZeroU64::new(1).expect("floor"))
+            .expect_err("campaign lock contention");
+        assert_eq!(lock.stage, EdgeEpochAllocationStageV1::Lock);
+        drop(root_handle);
+
+        let overflow =
+            EdgeEpochAllocatorV1::next_epoch(Some(u64::MAX), NonZeroU64::new(1).expect("floor"))
+                .expect_err("overflow");
+        assert_eq!(overflow.stage, EdgeEpochAllocationStageV1::Overflow);
+
+        let proc_root = File::open("/proc").expect("proc root");
+        let fsync = EdgeEpochAllocatorV1::sync_root(&proc_root).expect_err("proc fsync");
+        assert_eq!(fsync.stage, EdgeEpochAllocationStageV1::RootFsync);
+        assert!(fsync.to_string().starts_with("EpochAllocationFailed:"));
+        let restart = EdgeEpochAllocatorV1::allocate(&root, NonZeroU64::new(1).expect("floor"))
+            .expect("restart skips pre-fsync residue");
+        assert_eq!(restart.epoch.get(), 4);
+        drop(restart);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(capability_receipt_and_retention_horizon_parser_table, {
+        const ADMISSION_UTC_NS: u64 = 1_000_000_000_000_000_000;
+        const REQUIRED_METHODS: [&str; 5] = [
+            "eth_chainId",
+            "eth_getBlockByHash",
+            "eth_getProof",
+            "eth_getCode",
+            "eth_getStorageAt",
+        ];
+        let manifest =
+            EdgeProducerContractManifestV1::parse(manifest_sample()).expect("sample manifest");
+        let valid_until = ADMISSION_UTC_NS + 1_000_000_000_000;
+        let retention = valid_until + (72 * 60 * 60 + 21_600 + 518_400) * 1_000_000_000;
+        let providers = vec![
+            json!({
+                "providerId": "archive-a",
+                "operatorId": "operator-a",
+                "archiveMode": "full-historical",
+                "pruningMode": "disabled",
+                "retentionCommitmentThroughUtcNs": retention.to_string(),
+            }),
+            json!({
+                "providerId": "archive-b",
+                "operatorId": "operator-b",
+                "archiveMode": "full-historical",
+                "pruningMode": "disabled",
+                "retentionCommitmentThroughUtcNs": retention.to_string(),
+            }),
+        ];
+        let probe_block_hash = format!("0x{}", "22".repeat(32));
+        let mut method_results = Vec::new();
+        for provider in &providers {
+            for (method_index, method) in REQUIRED_METHODS.iter().enumerate() {
+                method_results.push(json!({
+                    "providerId": provider["providerId"],
+                    "method": method,
+                    "requestBlockHash": probe_block_hash,
+                    "responseSha256": format!("{:064x}", method_index + 1),
+                    "result": "Pass",
+                }));
+            }
+        }
+        let provider_set_sha256 = EdgeContractCanonicalJsonV1::digest(
+            "edge-fork-provider-set/v1",
+            &JsonValue::Array(providers.clone()),
+        )
+        .expect("provider digest");
+        let method_results_sha256 = EdgeContractCanonicalJsonV1::digest(
+            "edge-fork-capability-method-results/v1",
+            &JsonValue::Array(method_results.clone()),
+        )
+        .expect("method-results digest");
+        let mut receipt = json!({
+            "schemaVersion": "edge-fork-driver-capability/v1",
+            "campaignId": "campaign-24",
+            "preregDigest": format!("0x{}", "11".repeat(32)),
+            "economicAuthorityPolicySha256": manifest.value("economicAuthorityPolicySha256"),
+            "forkDriverContractSha256": manifest.value("forkDriverContractSha256"),
+            "chainId": "8453",
+            "genesisHash": "0xf712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd",
+            "providers": providers,
+            "providerSetSha256": provider_set_sha256,
+            "providerCount": "2",
+            "requiredHistoricalAgeSeconds": "799200",
+            "replayStartSlaSeconds": "21600",
+            "replayCompletionBudgetSeconds": "518400",
+            "probeBlockNumber": "1",
+            "probeBlockHash": probe_block_hash,
+            "probeStateRoot": format!("0x{}", "44".repeat(32)),
+            "probeAgeSeconds": "799200",
+            "requiredRpcMethods": REQUIRED_METHODS,
+            "methodResults": method_results,
+            "methodResultsSha256": method_results_sha256,
+            "driverImplementationSha256": "55".repeat(32),
+            "anvilVersion": "anvil-test",
+            "evmRevision": "cancun",
+            "retentionCommitmentThroughUtcNs": retention.to_string(),
+            "probedAtUtcNs": (ADMISSION_UTC_NS - 1).to_string(),
+            "validUntilUtcNs": valid_until.to_string(),
+            "result": "Pass",
+        });
+        let validate = |value: &JsonValue| {
+            let bytes =
+                EdgeContractCanonicalJsonV1::canonicalize(value).expect("canonical capability");
+            EdgeCliProducerConfigV1::validate_fork_driver_capability_bytes(
+                &bytes,
+                &manifest,
+                "0x1111111111111111111111111111111111111111111111111111111111111111",
+                ADMISSION_UTC_NS,
+            )
+        };
+        validate(&receipt).expect("exact production capability path");
+
+        let pretty = serde_json::to_vec_pretty(&receipt).expect("pretty receipt");
+        assert!(
+            EdgeCliProducerConfigV1::validate_fork_driver_capability_bytes(
+                &pretty,
+                &manifest,
+                "0x1111111111111111111111111111111111111111111111111111111111111111",
+                ADMISSION_UTC_NS,
+            )
+            .is_err()
+        );
+
+        let mut mutations = Vec::new();
+        let mut mutation = receipt.clone();
+        mutation["providerCount"] = json!("1");
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        mutation["providers"].as_array_mut().expect("providers").reverse();
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        let duplicate_operator = mutation["providers"][1]["operatorId"].clone();
+        mutation["providers"][0]["operatorId"] = duplicate_operator;
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        mutation["requiredRpcMethods"].as_array_mut().expect("methods").swap(0, 1);
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        mutation["methodResults"].as_array_mut().expect("method results").swap(0, 1);
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        mutation["providerSetSha256"] = json!("00".repeat(32));
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        mutation["methodResultsSha256"] = json!("00".repeat(32));
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        mutation["probeAgeSeconds"] = json!("799199");
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        mutation["validUntilUtcNs"] = (ADMISSION_UTC_NS - 1).to_string().into();
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        mutation["retentionCommitmentThroughUtcNs"] = valid_until.to_string().into();
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        mutation["preregDigest"] = json!(format!("0x{}", "77".repeat(32)));
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        mutation["genesisHash"] = json!(format!("0x{}", "88".repeat(32)));
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        mutation["economicAuthorityPolicySha256"] = json!("66".repeat(32));
+        mutations.push(mutation);
+        mutation = receipt.clone();
+        mutation["unexpected"] = JsonValue::Null;
+        mutations.push(mutation);
+
+        for mutation in mutations {
+            assert!(validate(&mutation).is_err());
+        }
+
+        receipt["result"] = json!("Fail");
+        assert!(validate(&receipt).is_err());
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(segment_mutation_faults_are_exact_atomic_and_same_byte_retryable, {
+        fn fault_name(fault: EdgeSegmentMutationFaultV1) -> &'static str {
+            match fault {
+                EdgeSegmentMutationFaultV1::SourceIdentity => "SourceIdentity",
+                EdgeSegmentMutationFaultV1::SourceDurableSet => "SourceDurableSet",
+                EdgeSegmentMutationFaultV1::SourceCursor => "SourceCursor",
+                EdgeSegmentMutationFaultV1::SourceConnectionDescriptor => {
+                    "SourceConnectionDescriptor"
+                }
+                EdgeSegmentMutationFaultV1::SourceBatch => "SourceBatch",
+                EdgeSegmentMutationFaultV1::RegistryPending => "RegistryPending",
+                EdgeSegmentMutationFaultV1::RegistrySegment => "RegistrySegment",
+                EdgeSegmentMutationFaultV1::RegistryCursor => "RegistryCursor",
+                EdgeSegmentMutationFaultV1::RegistryBatch => "RegistryBatch",
+                EdgeSegmentMutationFaultV1::CandidateDurableSet => "CandidateDurableSet",
+                EdgeSegmentMutationFaultV1::CandidateRelease => "CandidateRelease",
+            }
+        }
+
+        fn target_ledger(
+            writer: &mut EdgeCanonicalWriterV1,
+            fault: EdgeSegmentMutationFaultV1,
+        ) -> &'static str {
+            match fault {
+                EdgeSegmentMutationFaultV1::SourceConnectionDescriptor => {
+                    edge_flush_source_before_connection(writer);
+                    "connection"
+                }
+                EdgeSegmentMutationFaultV1::SourceIdentity
+                | EdgeSegmentMutationFaultV1::SourceDurableSet
+                | EdgeSegmentMutationFaultV1::SourceCursor
+                | EdgeSegmentMutationFaultV1::SourceBatch => writer
+                    .source_sequence_by_ledger
+                    .iter()
+                    .min_by_key(|(_, source_sequence)| **source_sequence)
+                    .map(|((ledger, _), _)| *ledger)
+                    .expect("first ordered source ledger"),
+                EdgeSegmentMutationFaultV1::RegistrySegment => "registry-h1",
+                EdgeSegmentMutationFaultV1::RegistryPending
+                | EdgeSegmentMutationFaultV1::RegistryCursor
+                | EdgeSegmentMutationFaultV1::RegistryBatch => {
+                    writer.flush_rolling_ledger("registry-h1").expect("registry H1 prerequisite");
+                    "registry-h2"
+                }
+                EdgeSegmentMutationFaultV1::CandidateDurableSet
+                | EdgeSegmentMutationFaultV1::CandidateRelease => "candidate",
+            }
+        }
+
+        const ALL_FAULTS: [EdgeSegmentMutationFaultV1; 11] = [
+            EdgeSegmentMutationFaultV1::SourceIdentity,
+            EdgeSegmentMutationFaultV1::SourceDurableSet,
+            EdgeSegmentMutationFaultV1::SourceCursor,
+            EdgeSegmentMutationFaultV1::SourceConnectionDescriptor,
+            EdgeSegmentMutationFaultV1::SourceBatch,
+            EdgeSegmentMutationFaultV1::RegistryPending,
+            EdgeSegmentMutationFaultV1::RegistrySegment,
+            EdgeSegmentMutationFaultV1::RegistryCursor,
+            EdgeSegmentMutationFaultV1::RegistryBatch,
+            EdgeSegmentMutationFaultV1::CandidateDurableSet,
+            EdgeSegmentMutationFaultV1::CandidateRelease,
+        ];
+        assert_eq!(
+            ALL_FAULTS.into_iter().map(fault_name).collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "CandidateDurableSet",
+                "CandidateRelease",
+                "RegistryBatch",
+                "RegistryCursor",
+                "RegistryPending",
+                "RegistrySegment",
+                "SourceBatch",
+                "SourceConnectionDescriptor",
+                "SourceCursor",
+                "SourceDurableSet",
+                "SourceIdentity",
+            ]),
+            "the explicit fault set must change with the production enum"
+        );
+
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+
+        for (index, fault) in ALL_FAULTS.into_iter().enumerate() {
+            let label = format!("segment-fault-{}", fault_name(fault));
+            let (root, mut writer) = match fault {
+                EdgeSegmentMutationFaultV1::CandidateDurableSet
+                | EdgeSegmentMutationFaultV1::CandidateRelease => edge_candidate_segment_fixture(
+                    &label,
+                    300_u64
+                        .checked_add(u64::try_from(index).expect("fault index"))
+                        .expect("test epoch"),
+                ),
+                _ => edge_source_registry_segment_fixture(
+                    &label,
+                    300_u64
+                        .checked_add(u64::try_from(index).expect("fault index"))
+                        .expect("test epoch"),
+                ),
+            };
+            let ledger_name = target_ledger(&mut writer, fault);
+            let ledger_before = writer.ledgers.get(ledger_name).expect("target ledger");
+            assert!(!ledger_before.records.is_empty(), "fault target must use staged records");
+            let durable_segment_before = ledger_before.durable_next_segment;
+            let durable_sequence_before = ledger_before.durable_next_sequence;
+            let filename = format!("{ledger_name}-{durable_segment_before:020}.ndjson");
+            let durable_path = root.join(filename);
+
+            writer.segment_mutation_fault = Some(fault);
+            let before_staging = edge_segment_attempt_snapshot(&writer);
+            writer
+                .flush_rolling_ledger(ledger_name)
+                .expect_err("armed production mutation boundary");
+            let staged = edge_segment_attempt_snapshot(&writer);
+            assert_eq!(
+                staged.source_authority,
+                before_staging.source_authority,
+                "{} changed live source queue or ACK authority",
+                fault_name(fault)
+            );
+            assert_eq!(
+                staged.blink_owner,
+                before_staging.blink_owner,
+                "{} changed live Blink queue authority",
+                fault_name(fault)
+            );
+            let pending = writer
+                .ledgers
+                .get(ledger_name)
+                .and_then(|ledger| ledger.pending_publication.as_ref())
+                .expect("failed attempt retains exact pending publication")
+                .clone();
+            assert!(!pending.bytes.is_empty(), "failed attempt retains pending bytes");
+            assert!(!pending.member_sequences.is_empty(), "failed attempt retains pending tuple");
+            assert_eq!(writer.segment_mutation_fault, None, "one-shot hook must disarm");
+
+            writer.segment_mutation_fault = Some(fault);
+            let exact_before = edge_segment_attempt_snapshot(&writer);
+            writer
+                .flush_rolling_ledger(ledger_name)
+                .expect_err("rearmed production mutation boundary");
+            assert_eq!(
+                edge_segment_attempt_snapshot(&writer),
+                exact_before,
+                "{} changed exact ledger, CLI, owner, recorder, registry, queue, cursor, or ACK state",
+                fault_name(fault)
+            );
+            assert_eq!(
+                writer.ledgers.get(ledger_name).expect("target ledger").pending_publication,
+                Some(pending.clone()),
+                "{} did not retain exact pending bytes and tuple",
+                fault_name(fault)
+            );
+            let attempted_bytes =
+                fs::read(&durable_path).expect("durable pre-ACK bytes from failed attempt");
+            EdgeCanonicalWriterV1::validate_canonical_artifact(&attempted_bytes)
+                .expect("failed-attempt durable bytes remain canonical");
+            assert_eq!(attempted_bytes, pending.bytes);
+            assert_eq!(writer.segment_mutation_fault, None, "rearmed hook must disarm");
+
+            let segment = writer
+                .flush_rolling_ledger(ledger_name)
+                .expect("same-byte retry")
+                .expect("retry commits one segment");
+            assert_eq!(segment.member_sequences, pending.member_sequences);
+            assert_eq!(u64::try_from(segment.member_sequences.len()).expect("member count"), {
+                let ledger = writer.ledgers.get(ledger_name).expect("committed ledger");
+                ledger.durable_next_sequence - durable_sequence_before
+            });
+            assert_eq!(fs::read(&durable_path).expect("retried durable bytes"), pending.bytes);
+            let committed = writer.ledgers.get(ledger_name).expect("committed target ledger");
+            assert_eq!(committed.durable_next_segment, durable_segment_before + 1);
+            let equal_final = edge_segment_attempt_snapshot(&writer);
+            assert!(
+                writer.flush_rolling_ledger(ledger_name).expect("post-commit no-op").is_none(),
+                "equal-final retry must commit exactly once"
+            );
+            assert_eq!(
+                edge_segment_attempt_snapshot(&writer),
+                equal_final,
+                "post-commit no-op changed the equal-final state"
+            );
+            fs::remove_dir_all(root).expect("segment fault cleanup");
+            edge_node_result_test_reset_v1();
+        }
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(segment_structural_faults_remain_fail_closed_without_ack, {
+        #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+        enum StructuralFault {
+            SourceIdentityMissing,
+            SourceDuplicate,
+            SourceCursorOverflow,
+            SourceDescriptorMismatch,
+            SourceBatchMismatch,
+            RegistryCleanupMismatch,
+            RegistryDescriptorMismatch,
+            RegistryTerminalHashMissing,
+            RegistryBatchMismatch,
+            CandidateDuplicate,
+            CandidateReleaseMismatch,
+        }
+
+        fn first_source_identity(writer: &EdgeCanonicalWriterV1) -> ((&'static str, u64), u64) {
+            writer
+                .source_sequence_by_ledger
+                .iter()
+                .min_by_key(|(_, source_sequence)| **source_sequence)
+                .map(|(identity, sequence)| (*identity, *sequence))
+                .expect("first source identity")
+        }
+
+        fn retain_pending_with_injected_fault(
+            writer: &mut EdgeCanonicalWriterV1,
+            ledger: &'static str,
+            fault: EdgeSegmentMutationFaultV1,
+        ) {
+            writer.segment_mutation_fault = Some(fault);
+            writer.flush_rolling_ledger(ledger).expect_err("pending-publication setup fault");
+            assert_eq!(writer.segment_mutation_fault, None);
+            assert!(
+                writer
+                    .ledgers
+                    .get(ledger)
+                    .is_some_and(|ledger| ledger.pending_publication.is_some())
+            );
+        }
+
+        const COVERAGE: [(EdgeSegmentMutationFaultV1, StructuralFault); 11] = [
+            (EdgeSegmentMutationFaultV1::SourceIdentity, StructuralFault::SourceIdentityMissing),
+            (EdgeSegmentMutationFaultV1::SourceDurableSet, StructuralFault::SourceDuplicate),
+            (EdgeSegmentMutationFaultV1::SourceCursor, StructuralFault::SourceCursorOverflow),
+            (
+                EdgeSegmentMutationFaultV1::SourceConnectionDescriptor,
+                StructuralFault::SourceDescriptorMismatch,
+            ),
+            (EdgeSegmentMutationFaultV1::SourceBatch, StructuralFault::SourceBatchMismatch),
+            (EdgeSegmentMutationFaultV1::RegistryPending, StructuralFault::RegistryCleanupMismatch),
+            (
+                EdgeSegmentMutationFaultV1::RegistrySegment,
+                StructuralFault::RegistryDescriptorMismatch,
+            ),
+            (
+                EdgeSegmentMutationFaultV1::RegistryCursor,
+                StructuralFault::RegistryTerminalHashMissing,
+            ),
+            (EdgeSegmentMutationFaultV1::RegistryBatch, StructuralFault::RegistryBatchMismatch),
+            (EdgeSegmentMutationFaultV1::CandidateDurableSet, StructuralFault::CandidateDuplicate),
+            (
+                EdgeSegmentMutationFaultV1::CandidateRelease,
+                StructuralFault::CandidateReleaseMismatch,
+            ),
+        ];
+        assert_eq!(
+            COVERAGE.into_iter().collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                (
+                    EdgeSegmentMutationFaultV1::SourceIdentity,
+                    StructuralFault::SourceIdentityMissing,
+                ),
+                (EdgeSegmentMutationFaultV1::SourceDurableSet, StructuralFault::SourceDuplicate,),
+                (EdgeSegmentMutationFaultV1::SourceCursor, StructuralFault::SourceCursorOverflow,),
+                (
+                    EdgeSegmentMutationFaultV1::SourceConnectionDescriptor,
+                    StructuralFault::SourceDescriptorMismatch,
+                ),
+                (EdgeSegmentMutationFaultV1::SourceBatch, StructuralFault::SourceBatchMismatch,),
+                (
+                    EdgeSegmentMutationFaultV1::RegistryPending,
+                    StructuralFault::RegistryCleanupMismatch,
+                ),
+                (
+                    EdgeSegmentMutationFaultV1::RegistrySegment,
+                    StructuralFault::RegistryDescriptorMismatch,
+                ),
+                (
+                    EdgeSegmentMutationFaultV1::RegistryCursor,
+                    StructuralFault::RegistryTerminalHashMissing,
+                ),
+                (EdgeSegmentMutationFaultV1::RegistryBatch, StructuralFault::RegistryBatchMismatch,),
+                (
+                    EdgeSegmentMutationFaultV1::CandidateDurableSet,
+                    StructuralFault::CandidateDuplicate,
+                ),
+                (
+                    EdgeSegmentMutationFaultV1::CandidateRelease,
+                    StructuralFault::CandidateReleaseMismatch,
+                ),
+            ]),
+            "variant-to-structural-case coverage must be exact"
+        );
+        assert_eq!(
+            COVERAGE.into_iter().map(|(variant, _)| variant).collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                EdgeSegmentMutationFaultV1::SourceIdentity,
+                EdgeSegmentMutationFaultV1::SourceDurableSet,
+                EdgeSegmentMutationFaultV1::SourceCursor,
+                EdgeSegmentMutationFaultV1::SourceConnectionDescriptor,
+                EdgeSegmentMutationFaultV1::SourceBatch,
+                EdgeSegmentMutationFaultV1::RegistryPending,
+                EdgeSegmentMutationFaultV1::RegistrySegment,
+                EdgeSegmentMutationFaultV1::RegistryCursor,
+                EdgeSegmentMutationFaultV1::RegistryBatch,
+                EdgeSegmentMutationFaultV1::CandidateDurableSet,
+                EdgeSegmentMutationFaultV1::CandidateRelease,
+            ]),
+            "every injected variant must have exactly one real structural case"
+        );
+        assert_eq!(
+            COVERAGE.into_iter().map(|(_, fault)| fault).collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                StructuralFault::SourceIdentityMissing,
+                StructuralFault::SourceDuplicate,
+                StructuralFault::SourceCursorOverflow,
+                StructuralFault::SourceDescriptorMismatch,
+                StructuralFault::SourceBatchMismatch,
+                StructuralFault::RegistryCleanupMismatch,
+                StructuralFault::RegistryDescriptorMismatch,
+                StructuralFault::RegistryTerminalHashMissing,
+                StructuralFault::RegistryBatchMismatch,
+                StructuralFault::CandidateDuplicate,
+                StructuralFault::CandidateReleaseMismatch,
+            ]),
+            "every structural boundary class must be represented exactly once"
+        );
+
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+
+        for (index, (_, fault)) in COVERAGE.into_iter().enumerate() {
+            let label = format!("segment-structural-{fault:?}");
+            let (root, mut writer) = edge_full_segment_fixture(
+                &label,
+                330 + u64::try_from(index).expect("test index"),
+                true,
+            );
+            let ledger_name = match fault {
+                StructuralFault::SourceIdentityMissing
+                | StructuralFault::SourceDuplicate
+                | StructuralFault::SourceCursorOverflow
+                | StructuralFault::SourceBatchMismatch => {
+                    let ((ledger, ledger_sequence), source_sequence) =
+                        first_source_identity(&writer);
+                    retain_pending_with_injected_fault(
+                        &mut writer,
+                        ledger,
+                        EdgeSegmentMutationFaultV1::SourceIdentity,
+                    );
+                    match fault {
+                        StructuralFault::SourceIdentityMissing => {
+                            writer.source_sequence_by_ledger.remove(&(ledger, ledger_sequence));
+                        }
+                        StructuralFault::SourceDuplicate => {
+                            assert!(writer.source_durable.insert(source_sequence));
+                        }
+                        StructuralFault::SourceCursorOverflow => {
+                            writer
+                                .source_sequence_by_ledger
+                                .insert((ledger, ledger_sequence), u64::MAX);
+                            writer.source_durable_ack_cursor = u64::MAX;
+                        }
+                        StructuralFault::SourceBatchMismatch => {
+                            let outstanding = u64::try_from(writer.source_sequence_by_ledger.len())
+                                .expect("source ACK count");
+                            writer
+                                .recorder
+                                .ack_durable_publication_batch(outstanding, &[])
+                                .expect("consume all source ACKs before CLI commit");
+                        }
+                        _ => unreachable!("source structural case"),
+                    }
+                    ledger
+                }
+                StructuralFault::SourceDescriptorMismatch => {
+                    edge_flush_source_before_connection(&mut writer);
+                    retain_pending_with_injected_fault(
+                        &mut writer,
+                        "connection",
+                        EdgeSegmentMutationFaultV1::SourceConnectionDescriptor,
+                    );
+                    writer
+                        .ledgers
+                        .get_mut("connection")
+                        .and_then(|ledger| ledger.pending_publication.as_mut())
+                        .expect("connection pending publication")
+                        .descriptor
+                        .file_sha256 = "not-a-sha256".to_owned();
+                    "connection"
+                }
+                StructuralFault::RegistryCleanupMismatch => {
+                    writer.flush_rolling_ledger("registry-h1").expect("registry H1 prerequisite");
+                    retain_pending_with_injected_fault(
+                        &mut writer,
+                        "registry-h2",
+                        EdgeSegmentMutationFaultV1::RegistryPending,
+                    );
+                    let terminal =
+                        writer.registry_pending.remove(&0).expect("registry terminal zero");
+                    assert!(writer.registry_pending.insert(1, terminal).is_none());
+                    writer.registry_durable_cursor = 1;
+                    "registry-h2"
+                }
+                StructuralFault::RegistryDescriptorMismatch => {
+                    retain_pending_with_injected_fault(
+                        &mut writer,
+                        "registry-h1",
+                        EdgeSegmentMutationFaultV1::RegistrySegment,
+                    );
+                    writer
+                        .ledgers
+                        .get_mut("registry-h1")
+                        .and_then(|ledger| ledger.pending_publication.as_mut())
+                        .expect("registry H1 pending publication")
+                        .descriptor
+                        .file_sha256 = "not-a-sha256".to_owned();
+                    "registry-h1"
+                }
+                StructuralFault::RegistryTerminalHashMissing => {
+                    writer.flush_rolling_ledger("registry-h1").expect("registry H1 prerequisite");
+                    retain_pending_with_injected_fault(
+                        &mut writer,
+                        "registry-h2",
+                        EdgeSegmentMutationFaultV1::RegistryCursor,
+                    );
+                    writer.registry_record_sha.clear();
+                    "registry-h2"
+                }
+                StructuralFault::RegistryBatchMismatch => {
+                    writer.flush_rolling_ledger("registry-h1").expect("registry H1 prerequisite");
+                    retain_pending_with_injected_fault(
+                        &mut writer,
+                        "registry-h2",
+                        EdgeSegmentMutationFaultV1::RegistryBatch,
+                    );
+                    let terminal =
+                        *writer.registry_pending.get(&0).expect("registry terminal zero");
+                    let terminal_hash = writer.registry_record_sha[0];
+                    writer
+                        .recorder
+                        .ack_durable_publication_batch(
+                            0,
+                            &[EdgeDurableRegistryAckV1 { terminal, terminal_hash }],
+                        )
+                        .expect("consume registry ACK before CLI commit");
+                    "registry-h2"
+                }
+                StructuralFault::CandidateDuplicate => {
+                    retain_pending_with_injected_fault(
+                        &mut writer,
+                        "candidate",
+                        EdgeSegmentMutationFaultV1::CandidateDurableSet,
+                    );
+                    assert!(writer.candidate_durable.insert(0));
+                    "candidate"
+                }
+                StructuralFault::CandidateReleaseMismatch => {
+                    retain_pending_with_injected_fault(
+                        &mut writer,
+                        "candidate",
+                        EdgeSegmentMutationFaultV1::CandidateRelease,
+                    );
+                    writer.candidate_joins.remove(&0).expect("candidate join zero");
+                    "candidate"
+                }
+            };
+            assert_eq!(writer.segment_mutation_fault, None, "structural case cannot claim retry");
+            assert!(
+                writer
+                    .ledgers
+                    .get(ledger_name)
+                    .is_some_and(|ledger| ledger.pending_publication.is_some()),
+                "structural assertion starts from an exact retained pending tuple"
+            );
+            let durable_segment_before =
+                writer.ledgers.get(ledger_name).expect("failed-closed ledger").durable_next_segment;
+            let before = edge_segment_attempt_snapshot(&writer);
+            for attempt in 0..2 {
+                assert!(
+                    writer.flush_rolling_ledger(ledger_name).is_err(),
+                    "structural mutation {fault:?} must remain fail-closed"
+                );
+                assert_eq!(
+                    edge_segment_attempt_snapshot(&writer),
+                    before,
+                    "structural case {fault:?} attempt {attempt} changed exact state or ACK authority"
+                );
+                assert_eq!(
+                    writer.segment_mutation_fault, None,
+                    "structural case cannot disarm or claim an injected retry"
+                );
+            }
+            assert_eq!(
+                writer.ledgers.get(ledger_name).expect("failed-closed ledger").durable_next_segment,
+                durable_segment_before,
+                "structural failure must not commit the ledger tuple"
+            );
+            fs::remove_dir_all(root).expect("structural segment cleanup");
+            edge_node_result_test_reset_v1();
+        }
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(edge_s2_consumer_fixture_regenerates_committed_production_bytes, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let root = edge_writer_root("s2-consumer");
+        let (mut writer, recorder, owner) = edge_writer_fixture(&root, 152);
+        writer.prepare().expect("provenance and startup publication");
+
+        let admission = recorder.observe_wire(b"s2-production-data").expect("wire admission");
+        recorder.decode_rejected(admission);
+        assert!(writer.drain_once().expect("production source data drain"));
+        for ledger_name in ["clock", "coverage", "source-detail"] {
+            writer
+                .flush_rolling_ledger(ledger_name)
+                .expect("pre-cutoff durable source publication");
+        }
+        assert!(!recorder.cutoff_drain_complete());
+
+        let latch = EdgeCutoffLatchV1::default();
+        let deadline_cancellation = EdgeShutdownDeadlineCancellationV1::default();
+        latch_edge_cutoff_once(&latch, &deadline_cancellation, &recorder, &owner);
+        assert!(latch.completed.load(Ordering::Acquire));
+        for _ in 0..8 {
+            if !writer.drain_once().expect("cutoff production drain") {
+                break;
+            }
+        }
+        assert!(recorder.cutoff_drain_complete());
+        assert!(writer.cutoff_batches_flushed);
+        assert!(writer.cutoff_inner.is_some());
+
+        let retained = fs::read_dir(&root)
+            .expect("pre-terminal inventory")
+            .map(|entry| {
+                let entry = entry.expect("pre-terminal entry");
+                let name = entry.file_name().into_string().expect("UTF-8 fixture filename");
+                let bytes = fs::read(entry.path()).expect("pre-terminal retained bytes");
+                let digest = EdgeCanonicalWriterV1::sha256_hex(&bytes);
+                (name, (bytes, digest))
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        writer.write_terminal_accounting().expect("terminal production publication");
+        assert!(writer.finalized);
+        assert!(writer.termination_guard);
+
+        let inventory = fs::read_dir(&root)
+            .expect("terminal inventory")
+            .map(|entry| {
+                entry
+                    .expect("terminal entry")
+                    .file_name()
+                    .into_string()
+                    .expect("UTF-8 terminal filename")
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            inventory,
+            BTreeSet::from([
+                "accounting-00000000000000000000.ndjson".to_owned(),
+                "accounting-00000000000000000001.ndjson".to_owned(),
+                "clock-00000000000000000000.ndjson".to_owned(),
+                "connection-00000000000000000000.ndjson".to_owned(),
+                "coverage-00000000000000000000.ndjson".to_owned(),
+                "coverage-detail-00000000000000000000.ndjson".to_owned(),
+                "cutoff-00000000000000000000.ndjson".to_owned(),
+                "edge-writer-failures-v1.ndjson".to_owned(),
+                "provenance-00000000000000000000.ndjson".to_owned(),
+                "source-detail-00000000000000000000.ndjson".to_owned(),
+            ])
+        );
+        assert!(inventory.iter().all(|name| !name.contains("-final") && !name.ends_with(".open")));
+        let retained_inventory = retained.keys().cloned().collect::<BTreeSet<_>>();
+        assert_eq!(
+            inventory.difference(&retained_inventory).cloned().collect::<Vec<_>>(),
+            ["accounting-00000000000000000001.ndjson".to_owned()]
+        );
+        for (name, (expected_bytes, expected_digest)) in retained {
+            let durable_bytes = fs::read(root.join(name)).expect("retained durable bytes");
+            assert_eq!(durable_bytes, expected_bytes);
+            assert_eq!(EdgeCanonicalWriterV1::sha256_hex(&durable_bytes), expected_digest);
+        }
+
+        let terminal_bytes = fs::read(root.join("accounting-00000000000000000001.ndjson"))
+            .expect("terminal accounting bytes");
+        let terminal: JsonValue = serde_json::from_slice(
+            terminal_bytes.split(|byte| *byte == b'\n').next().expect("terminal record"),
+        )
+        .expect("terminal accounting record");
+        assert_eq!(terminal["state"], "AccountingTerminal");
+        assert_eq!(terminal["snapshotKind"], "terminal");
+        assert_eq!(terminal["drainStatus"]["dataSealed"], true);
+        EdgeCanonicalWriterV1::validate_canonical_artifact(&terminal_bytes)
+            .expect("committed terminal byte oracle");
+
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("S2 production fixture cleanup");
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(terminal_zero_byte_rejection_matrix_uses_production_boundary, {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+        enum TerminalOutstanding {
+            SourceEventPendingAckQueue,
+            RegistryRegistrationMaps,
+            RegistryPublished,
+            RegistryUnregisteredInflight,
+            RegistryTerminal,
+            RegistryCoverage,
+            BlinkPendingRecords,
+            BlinkPendingCandidates,
+            BlinkGenerationPending,
+            BlinkSelectedPending,
+            CandidateLedgerRecords,
+            CandidatePendingPublication,
+            OpenPublication,
+            OpenCleanup,
+            SourceIdentityGap,
+            SourceCursorGap,
+            ProducerClosureFalse,
+            ClosurePredicateFalse,
+            EndpointUnsealed,
+            DataUnsealed,
+            MixedRevisionRace,
+        }
+
+        impl TerminalOutstanding {
+            fn name(self) -> &'static str {
+                match self {
+                    Self::SourceEventPendingAckQueue => "source-event-pending-ack-queue",
+                    Self::RegistryRegistrationMaps => "registry-registration-maps",
+                    Self::RegistryPublished => "registry-published",
+                    Self::RegistryUnregisteredInflight => "registry-unregistered-inflight",
+                    Self::RegistryTerminal => "registry-terminal",
+                    Self::RegistryCoverage => "registry-coverage",
+                    Self::BlinkPendingRecords => "blink-pending-records",
+                    Self::BlinkPendingCandidates => "blink-pending-candidates",
+                    Self::BlinkGenerationPending => "blink-generation-pending",
+                    Self::BlinkSelectedPending => "blink-selected-pending",
+                    Self::CandidateLedgerRecords => "candidate-ledger-records",
+                    Self::CandidatePendingPublication => "candidate-pending-publication",
+                    Self::OpenPublication => "open-publication",
+                    Self::OpenCleanup => "open-cleanup",
+                    Self::SourceIdentityGap => "source-identity-gap",
+                    Self::SourceCursorGap => "source-cursor-gap",
+                    Self::ProducerClosureFalse => "producer-closure-false",
+                    Self::ClosurePredicateFalse => "closure-predicate-false",
+                    Self::EndpointUnsealed => "endpoint-unsealed",
+                    Self::DataUnsealed => "data-unsealed",
+                    Self::MixedRevisionRace => "mixed-revision-race",
+                }
+            }
+        }
+
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        struct TerminalAuditSnapshot {
+            exact_authority_and_ledgers: EdgeSegmentAttemptSnapshotV1,
+            cutoff_batches_flushed: bool,
+            cutoff_inner: Option<JsonValue>,
+            data_sealed: bool,
+            finalized: bool,
+            periodic_cadence_closed: bool,
+            termination_guard: bool,
+            terminal_snapshot_revision_fault: bool,
+            open_identities: BTreeSet<String>,
+            incident_identities: [Option<String>; 3],
+        }
+
+        fn audit(writer: &EdgeCanonicalWriterV1, root: &Path) -> TerminalAuditSnapshot {
+            let open_identities = fs::read_dir(root)
+                .expect("terminal audit inventory")
+                .filter_map(|entry| {
+                    let name = entry
+                        .expect("terminal audit entry")
+                        .file_name()
+                        .into_string()
+                        .expect("UTF-8 terminal audit identity");
+                    name.ends_with(".open").then_some(name)
+                })
+                .collect();
+            TerminalAuditSnapshot {
+                exact_authority_and_ledgers: edge_segment_attempt_snapshot(writer),
+                cutoff_batches_flushed: writer.cutoff_batches_flushed,
+                cutoff_inner: writer.cutoff_inner.clone(),
+                data_sealed: writer.data_sealed,
+                finalized: writer.finalized,
+                periodic_cadence_closed: writer.periodic_cadence_closed,
+                termination_guard: writer.termination_guard,
+                terminal_snapshot_revision_fault: writer.terminal_snapshot_revision_fault,
+                open_identities,
+                incident_identities: [
+                    writer.incidents.accounting_periodic_write_failed.active_identity.clone(),
+                    writer.incidents.data_ledger_write_failed.active_identity.clone(),
+                    writer
+                        .incidents
+                        .open_cleanup_failed_after_durable_publish
+                        .active_identity
+                        .clone(),
+                ],
+            }
+        }
+
+        fn prepared_writer(label: &str, epoch: u64) -> (PathBuf, EdgeCanonicalWriterV1) {
+            let root = edge_writer_root(label);
+            let (mut writer, _, _) = edge_writer_fixture(&root, epoch);
+            writer.prepare().expect("startup publication");
+            (root, writer)
+        }
+
+        const CASES: [TerminalOutstanding; 21] = [
+            TerminalOutstanding::SourceEventPendingAckQueue,
+            TerminalOutstanding::RegistryRegistrationMaps,
+            TerminalOutstanding::RegistryPublished,
+            TerminalOutstanding::RegistryUnregisteredInflight,
+            TerminalOutstanding::RegistryTerminal,
+            TerminalOutstanding::RegistryCoverage,
+            TerminalOutstanding::BlinkPendingRecords,
+            TerminalOutstanding::BlinkPendingCandidates,
+            TerminalOutstanding::BlinkGenerationPending,
+            TerminalOutstanding::BlinkSelectedPending,
+            TerminalOutstanding::CandidateLedgerRecords,
+            TerminalOutstanding::CandidatePendingPublication,
+            TerminalOutstanding::OpenPublication,
+            TerminalOutstanding::OpenCleanup,
+            TerminalOutstanding::SourceIdentityGap,
+            TerminalOutstanding::SourceCursorGap,
+            TerminalOutstanding::ProducerClosureFalse,
+            TerminalOutstanding::ClosurePredicateFalse,
+            TerminalOutstanding::EndpointUnsealed,
+            TerminalOutstanding::DataUnsealed,
+            TerminalOutstanding::MixedRevisionRace,
+        ];
+        let expected_names = BTreeSet::from([
+            "source-event-pending-ack-queue",
+            "registry-registration-maps",
+            "registry-published",
+            "registry-unregistered-inflight",
+            "registry-terminal",
+            "registry-coverage",
+            "blink-pending-records",
+            "blink-pending-candidates",
+            "blink-generation-pending",
+            "blink-selected-pending",
+            "candidate-ledger-records",
+            "candidate-pending-publication",
+            "open-publication",
+            "open-cleanup",
+            "source-identity-gap",
+            "source-cursor-gap",
+            "producer-closure-false",
+            "closure-predicate-false",
+            "endpoint-unsealed",
+            "data-unsealed",
+            "mixed-revision-race",
+        ]);
+        assert_eq!(
+            CASES.len(),
+            expected_names.len(),
+            "terminal rejection rows must not contain duplicate claims"
+        );
+        assert_eq!(
+            CASES.into_iter().map(TerminalOutstanding::name).collect::<BTreeSet<_>>(),
+            expected_names,
+            "terminal rejection rows must be an exact, duplicate-free claim set"
+        );
+
+        const EXACT_DELTA_INVENTORY: [(TerminalOutstanding, &[&str]); 21] = [
+            (
+                TerminalOutstanding::SourceEventPendingAckQueue,
+                &[
+                    "source.recorder_state.next_clock_ordinal",
+                    "source.recorder_state.next_wire_ordinal",
+                    "source.recorder_state.authority_wire_terminals",
+                    "source.recorder_state.authority_decode_rejected",
+                    "source.recorder_state.next_coverage_sequence",
+                    "source.recorder_state.last_coverage_hash",
+                    "source.recorder_state.coverage_record_count",
+                    "source.recorder_state.next_terminal_coverage_sequence",
+                    "source.recorder_state.event_pending_ack",
+                    "source.event_messages",
+                ],
+            ),
+            (
+                TerminalOutstanding::RegistryRegistrationMaps,
+                &[
+                    "source.registry.revision",
+                    "source.registry.next_sequence",
+                    "source.registry.primary",
+                    "source.registry.secondary",
+                    "source.registry.send_capacity_reserved",
+                    "source.registry.counters.advanced_with_snapshot",
+                    "source.registry.counters.registration_succeeded",
+                    "source.registry.sets.advanced_with_snapshot",
+                    "source.registry.sets.registration_succeeded",
+                ],
+            ),
+            (
+                TerminalOutstanding::RegistryPublished,
+                &[
+                    "source.registry.revision",
+                    "source.registry.next_sequence",
+                    "source.registry.primary",
+                    "source.registry.secondary",
+                    "source.registry.published",
+                    "source.registry.send_journal",
+                    "source.registry.counters.advanced_with_snapshot",
+                    "source.registry.counters.registration_succeeded",
+                    "source.registry.counters.send_published",
+                    "source.registry.sets.advanced_with_snapshot",
+                    "source.registry.sets.registration_succeeded",
+                    "source.registry.sets.registered_published",
+                    "source.registry.sets.send_published",
+                    "source.registry.sets.pending_delivery_final",
+                ],
+            ),
+            (
+                TerminalOutstanding::RegistryUnregisteredInflight,
+                &["source.registry.revision", "source.registry.unregistered_send_inflight"],
+            ),
+            (
+                TerminalOutstanding::RegistryTerminal,
+                &[
+                    "source.registry.revision",
+                    "source.registry.next_sequence",
+                    "source.registry.next_coverage_sequence",
+                    "source.registry.primary",
+                    "source.registry.secondary",
+                    "source.registry.terminal_records",
+                    "source.registry.terminal_record_index",
+                    "source.registry.durability_pending",
+                    "source.registry.cleanup_events",
+                    "source.registry.counters.advanced_with_snapshot",
+                    "source.registry.counters.registration_succeeded",
+                    "source.registry.counters.send_no_receivers",
+                    "source.registry.sets.advanced_with_snapshot",
+                    "source.registry.sets.registration_succeeded",
+                    "source.registry.sets.registered_no_receivers",
+                    "source.registry.sets.send_no_receivers",
+                ],
+            ),
+            (
+                TerminalOutstanding::RegistryCoverage,
+                &[
+                    "source.recorder_state.next_clock_ordinal",
+                    "source.recorder_state.next_wire_ordinal",
+                    "source.recorder_state.next_source_generation",
+                    "source.recorder_state.next_payload_first_sequence",
+                    "source.recorder_state.last_payload_first_hash",
+                    "source.recorder_state.next_connection_sequence",
+                    "source.recorder_state.payload_first",
+                    "source.recorder_state.processor_terminal_count",
+                    "source.recorder_state.snapshot_products",
+                    "source.recorder_state.payload_first_by_generation",
+                    "source.recorder_state.snapshot_wire_ordinals",
+                    "source.recorder_state.snapshot_evidence_captured",
+                    "source.recorder_state.authority_wire_terminals",
+                    "source.recorder_state.next_coverage_sequence",
+                    "source.recorder_state.last_coverage_hash",
+                    "source.recorder_state.coverage_record_count",
+                    "source.recorder_state.next_terminal_coverage_sequence",
+                    "source.recorder_state.connection_phase",
+                    "source.recorder_state.connection_recorded_phase",
+                    "source.recorder_state.connection_record_count",
+                    "source.recorder_state.connection_established_count",
+                    "source.recorder_state.last_connection_record",
+                    "source.recorder_state.previous_connection_record",
+                    "source.recorder_state.last_connection_hash",
+                    "source.recorder_state.event_pending_ack",
+                    "source.event_messages",
+                    "source.registry.revision",
+                    "source.registry.next_sequence",
+                    "source.registry.next_coverage_sequence",
+                    "source.registry.primary",
+                    "source.registry.secondary",
+                    "source.registry.terminal_records",
+                    "source.registry.terminal_record_index",
+                    "source.registry.durability_pending",
+                    "source.registry.cleanup_events",
+                    "source.registry.counters.advanced_with_snapshot",
+                    "source.registry.counters.registration_succeeded",
+                    "source.registry.counters.send_published",
+                    "source.registry.counters.cli_received_lookup_succeeded",
+                    "source.registry.sets.advanced_with_snapshot",
+                    "source.registry.sets.registration_succeeded",
+                    "source.registry.sets.registered_published",
+                    "source.registry.sets.send_published",
+                    "source.registry.sets.cli_received_lookup_succeeded",
+                    "source.registry.sets.cli_ok_received",
+                    "source.registry.sets.snapshot_records_installed",
+                ],
+            ),
+            (
+                TerminalOutstanding::BlinkPendingRecords,
+                &[
+                    "blink.record_queue",
+                    "blink.reject_sequence",
+                    "blink.pending_records",
+                    "blink.reject_previous_hash",
+                ],
+            ),
+            (
+                TerminalOutstanding::BlinkPendingCandidates,
+                &[
+                    "blink.ledger.observed",
+                    "blink.ledger.accepted",
+                    "blink.ledger.slot_accepted",
+                    "blink.ledger.admitted_generations",
+                    "blink.ledger.processed_terminal",
+                    "blink.ledger.selected_dto_built_preterminal",
+                    "blink.ledger.selected_dto_committed",
+                    "blink.candidate_queue",
+                    "blink.candidate_sequence",
+                    "blink.pending_candidates",
+                ],
+            ),
+            (
+                TerminalOutstanding::BlinkGenerationPending,
+                &[
+                    "blink.ledger.observed",
+                    "blink.ledger.accepted",
+                    "blink.ledger.slot_accepted",
+                    "blink.ledger.admitted_generations",
+                    "blink.ledger.generations",
+                ],
+            ),
+            (
+                TerminalOutstanding::BlinkSelectedPending,
+                &[
+                    "blink.ledger.observed",
+                    "blink.ledger.accepted",
+                    "blink.ledger.slot_accepted",
+                    "blink.ledger.admitted_generations",
+                    "blink.ledger.selected_dto_built_preterminal",
+                    "blink.ledger.generations",
+                    "blink.ledger.selected",
+                ],
+            ),
+            (TerminalOutstanding::CandidateLedgerRecords, &["ledgers[candidate]"]),
+            (
+                TerminalOutstanding::CandidatePendingPublication,
+                &["ledgers[candidate].pending_publication"],
+            ),
+            (
+                TerminalOutstanding::OpenPublication,
+                &["ledgers[candidate].pending_publication", "open_identities"],
+            ),
+            (
+                TerminalOutstanding::OpenCleanup,
+                &[
+                    "open_identities",
+                    "incident_identities[open_cleanup_failed_after_durable_publish]",
+                ],
+            ),
+            (TerminalOutstanding::SourceIdentityGap, &["source_sequence_by_ledger"]),
+            (TerminalOutstanding::SourceCursorGap, &["source_durable"]),
+            (TerminalOutstanding::ProducerClosureFalse, &["cutoff_batches_flushed"]),
+            (TerminalOutstanding::ClosurePredicateFalse, &["cutoff_inner"]),
+            (TerminalOutstanding::EndpointUnsealed, &["ledgers[candidate-drop]"]),
+            (TerminalOutstanding::DataUnsealed, &["ledgers[candidate-drop]"]),
+            (TerminalOutstanding::MixedRevisionRace, &["terminal_snapshot_revision_fault"]),
+        ];
+        let inventory_rows =
+            EXACT_DELTA_INVENTORY.iter().map(|(case, _)| case.name()).collect::<BTreeSet<_>>();
+        assert!(
+            inventory_rows.len() == EXACT_DELTA_INVENTORY.len() && inventory_rows == expected_names,
+            "exact-delta inventory must cover all 21 terminal rows exactly once"
+        );
+
+        fn mark_expected_path(
+            case: TerminalOutstanding,
+            path: &'static str,
+            used_paths: &mut BTreeSet<&'static str>,
+        ) {
+            assert!(used_paths.insert(path), "{} reused allowed field {}", case.name(), path);
+        }
+
+        fn checked_expected_increment(
+            case: TerminalOutstanding,
+            path: &'static str,
+            value: &mut u64,
+            delta: u64,
+            used_paths: &mut BTreeSet<&'static str>,
+        ) {
+            *value = value.checked_add(delta).unwrap_or_else(|| {
+                panic!("{} field {} overflowed its expected checked delta", case.name(), path)
+            });
+            mark_expected_path(case, path, used_paths);
+        }
+
+        fn assert_exact_expected_delta(
+            case: TerminalOutstanding,
+            expected: &TerminalAuditSnapshot,
+            after: &TerminalAuditSnapshot,
+            used_paths: &BTreeSet<&'static str>,
+        ) {
+            let inventory = EXACT_DELTA_INVENTORY
+                .iter()
+                .find_map(|(inventory_case, paths)| (*inventory_case == case).then_some(*paths))
+                .expect("terminal row exact-delta inventory");
+            let inventory_paths = inventory.iter().copied().collect::<BTreeSet<_>>();
+            assert!(
+                !inventory.is_empty() && inventory_paths.len() == inventory.len(),
+                "{} must have nonempty unique exact-delta paths",
+                case.name()
+            );
+            assert_eq!(
+                used_paths,
+                &inventory_paths,
+                "{} exact expected-state paths differ from its inventory",
+                case.name()
+            );
+            let mut expected = expected.clone();
+            let mut after = after.clone();
+            expected.exact_authority_and_ledgers.source_authority.registry.sets =
+                Default::default();
+            after.exact_authority_and_ledgers.source_authority.registry.sets = Default::default();
+            assert_eq!(
+                expected,
+                after,
+                "{} production state differs from its independently constructed typed expectation",
+                case.name()
+            );
+        }
+
+        fn assert_literal_registry_sets(
+            case: TerminalOutstanding,
+            registry: &base_flashblocks::PendingRegistryAuthorityAuditSnapshotV1,
+            expected_registry: &base_flashblocks::PendingRegistryAuthorityAuditSnapshotV1,
+        ) {
+            if !matches!(
+                case,
+                TerminalOutstanding::RegistryRegistrationMaps
+                    | TerminalOutstanding::RegistryPublished
+                    | TerminalOutstanding::RegistryTerminal
+                    | TerminalOutstanding::RegistryCoverage
+            ) {
+                assert_eq!(
+                    &registry.sets,
+                    &expected_registry.sets,
+                    "{} changed registry sequence sets outside its target mutation",
+                    case.name(),
+                );
+                return;
+            }
+            let singleton_names = match case {
+                TerminalOutstanding::RegistryRegistrationMaps => {
+                    ["advanced_with_snapshot", "registration_succeeded"].as_slice()
+                }
+                TerminalOutstanding::RegistryPublished => [
+                    "advanced_with_snapshot",
+                    "registration_succeeded",
+                    "registered_published",
+                    "send_published",
+                    "pending_delivery_final",
+                ]
+                .as_slice(),
+                TerminalOutstanding::RegistryTerminal => [
+                    "advanced_with_snapshot",
+                    "registration_succeeded",
+                    "registered_no_receivers",
+                    "send_no_receivers",
+                ]
+                .as_slice(),
+                TerminalOutstanding::RegistryCoverage => [
+                    "advanced_with_snapshot",
+                    "registration_succeeded",
+                    "registered_published",
+                    "send_published",
+                    "cli_received_lookup_succeeded",
+                    "cli_ok_received",
+                    "snapshot_records_installed",
+                ]
+                .as_slice(),
+                _ => [].as_slice(),
+            };
+            let expected_singleton = BTreeSet::from([0_u64]);
+            let expected_empty = BTreeSet::<u64>::new();
+            let sets = &registry.sets;
+            for (name, actual) in [
+                ("advanced_with_snapshot", &sets.advanced_with_snapshot),
+                ("registration_succeeded", &sets.registration_succeeded),
+                ("registration_failed", &sets.registration_failed),
+                ("registered_published", &sets.registered_published),
+                ("registered_no_receivers", &sets.registered_no_receivers),
+                ("failed_registration_published", &sets.failed_registration_published),
+                ("failed_registration_no_receivers", &sets.failed_registration_no_receivers),
+                ("send_published", &sets.send_published),
+                ("send_no_receivers", &sets.send_no_receivers),
+                ("cli_received_lookup_succeeded", &sets.cli_received_lookup_succeeded),
+                ("cli_registry_lookup_failed", &sets.cli_registry_lookup_failed),
+                ("cli_lagged_attributed", &sets.cli_lagged_attributed),
+                ("cli_closed_attributed", &sets.cli_closed_attributed),
+                ("cli_cancelled_attributed", &sets.cli_cancelled_attributed),
+                ("pending_delivery_final", &sets.pending_delivery_final),
+                ("cli_ok_received", &sets.cli_ok_received),
+                ("snapshot_records_installed", &sets.snapshot_records_installed),
+                (
+                    "failed_reg_cli_registry_lookup_failed",
+                    &sets.failed_reg_cli_registry_lookup_failed,
+                ),
+                ("failed_reg_cli_lagged_attributed", &sets.failed_reg_cli_lagged_attributed),
+                ("failed_reg_cli_closed_attributed", &sets.failed_reg_cli_closed_attributed),
+                ("failed_reg_cli_cancelled_attributed", &sets.failed_reg_cli_cancelled_attributed),
+                ("failed_reg_pending_final", &sets.failed_reg_pending_final),
+                ("registration_failed_no_receivers", &sets.registration_failed_no_receivers),
+                (
+                    "failed_reg_cli_received_lookup_succeeded",
+                    &sets.failed_reg_cli_received_lookup_succeeded,
+                ),
+            ] {
+                let expected = if singleton_names.contains(&name) {
+                    &expected_singleton
+                } else {
+                    &expected_empty
+                };
+                assert_eq!(
+                    actual.len(),
+                    expected.len(),
+                    "{} registry set {name} differs from literal sequence set {expected:?}",
+                    case.name(),
+                );
+            }
+            assert!(
+                registry.next_sequence <= 1,
+                "{} registry sequence domain exceeded literal sequence zero",
+                case.name(),
+            );
+        }
+
+        fn expected_single_record_ledger(
+            name: &'static str,
+            hash_domain: &'static str,
+            state: &'static str,
+            producer_epoch: u64,
+            mut body: JsonValue,
+        ) -> EdgeLedgerAttemptSnapshotV1 {
+            {
+                let object = body.as_object_mut().expect("expected rolling record object");
+                object.insert(
+                    "producerEpoch".to_owned(),
+                    JsonValue::String(producer_epoch.to_string()),
+                );
+                object.insert("sequence".to_owned(), JsonValue::String("0".to_owned()));
+                object.insert("state".to_owned(), JsonValue::String(state.to_owned()));
+                object.insert(
+                    "previousRecordHash".to_owned(),
+                    JsonValue::String(EDGE_ZERO_HASH.to_owned()),
+                );
+            }
+            let record_hash = EdgeCanonicalWriterV1::authority_record_hash(hash_domain, &body)
+                .expect("expected rolling record hash");
+            body.as_object_mut()
+                .expect("expected rolling record object")
+                .insert("recordHash".to_owned(), JsonValue::String(record_hash.clone()));
+            let record_bytes = EdgeCanonicalWriterV1::canonical_line(&body)
+                .expect("expected rolling record")
+                .len();
+            EdgeLedgerAttemptSnapshotV1 {
+                name,
+                hash_domain,
+                next_sequence: 1,
+                next_segment: 0,
+                previous_record_hash: record_hash,
+                durable_next_sequence: 0,
+                durable_next_segment: 0,
+                durable_previous_record_hash: EDGE_ZERO_HASH.to_owned(),
+                pending_publication: None,
+                records: vec![body],
+                record_bytes,
+                batch_started: true,
+            }
+        }
+
+        fn insert_expected_ledger(
+            ledgers: &mut Vec<EdgeLedgerAttemptSnapshotV1>,
+            ledger: EdgeLedgerAttemptSnapshotV1,
+        ) {
+            let index = ledgers
+                .iter()
+                .position(|existing| existing.name > ledger.name)
+                .unwrap_or(ledgers.len());
+            ledgers.insert(index, ledger);
+        }
+
+        fn expected_pending_publication(
+            ledger: &EdgeLedgerAttemptSnapshotV1,
+        ) -> EdgePendingPublicationV1 {
+            let first = ledger.records.first().expect("expected pending first record");
+            let last = ledger.records.last().expect("expected pending last record");
+            let field = |record: &JsonValue, name: &str| {
+                record[name].as_str().expect("expected pending record field").to_owned()
+            };
+            let mut record_bytes = Vec::with_capacity(ledger.record_bytes);
+            let mut member_sequences = Vec::with_capacity(ledger.records.len());
+            for record in &ledger.records {
+                member_sequences
+                    .push(field(record, "sequence").parse().expect("expected member sequence"));
+                record_bytes.extend_from_slice(
+                    &EdgeCanonicalWriterV1::canonical_line(record)
+                        .expect("expected canonical member"),
+                );
+            }
+            let last_record_hash = field(last, "recordHash");
+            let footer_base = json!({
+                "firstPreviousRecordHash": field(first, "previousRecordHash"),
+                "firstSequence": field(first, "sequence"),
+                "lastRecordHash": last_record_hash,
+                "lastSequence": field(last, "sequence"),
+                "recordCount": ledger.records.len().to_string(),
+                "recordsSha256": EdgeCanonicalWriterV1::sha256_hex(&record_bytes),
+                "schemaVersion": "edge-sidecar-segment-footer-v1",
+            });
+            let mut footer_domain = b"edge-sidecar-segment-footer-v1\0".to_vec();
+            footer_domain.extend_from_slice(
+                &EdgeCanonicalWriterV1::canonical_bytes(&footer_base)
+                    .expect("expected canonical footer"),
+            );
+            let mut footer = footer_base.as_object().expect("expected footer object").clone();
+            footer.insert(
+                "segmentSealSha256".to_owned(),
+                JsonValue::String(EdgeCanonicalWriterV1::sha256_hex(&footer_domain)),
+            );
+            let mut bytes = record_bytes;
+            bytes.extend_from_slice(
+                &EdgeCanonicalWriterV1::canonical_line(&JsonValue::Object(footer))
+                    .expect("expected footer line"),
+            );
+            let filename = format!("{}-{:020}.ndjson", ledger.name, ledger.next_segment);
+            EdgePendingPublicationV1 {
+                filename,
+                descriptor: EdgeSegmentDescriptorV1 {
+                    file_sha256: EdgeCanonicalWriterV1::sha256_hex(&bytes),
+                },
+                bytes,
+                member_sequences,
+                durable_next_sequence: ledger.next_sequence,
+                durable_previous_record_hash: field(last, "recordHash"),
+            }
+        }
+
+        fn expected_authority_record_hash(domain: &str, canonical: &str) -> B256 {
+            let mut bytes = Vec::new();
+            for field in [
+                b"base-edge-authority-record-v1\0".as_slice(),
+                domain.as_bytes(),
+                canonical.as_bytes(),
+            ] {
+                bytes.extend_from_slice(
+                    &u32::try_from(field.len())
+                        .expect("expected authority field length")
+                        .to_be_bytes(),
+                );
+                bytes.extend_from_slice(field);
+            }
+            B256::new(EdgeMeasurementDurabilityV1::sha256(&bytes))
+        }
+
+        fn expected_connection_record_hash(record: &SourceConnectionRecordV1) -> B256 {
+            let optional = |value: Option<u64>| {
+                value.map_or_else(|| "null".to_owned(), |value| format!("\"{value}\""))
+            };
+            let error = record
+                .error_class
+                .map_or_else(|| "null".to_owned(), |value| format!("\"{value:?}\""));
+            let transition = format!("{:?}", record.transition);
+            let canonical = format!(
+                "{{\"clockObservationOrdinal\":{},\"connectionSequence\":\"{}\",\"errorClass\":{},\"monoNs\":{},\"previousRecordHash\":\"{}\",\"producerEpoch\":\"{}\",\"schema\":\"edge-source-connection/v1\",\"sequence\":\"{}\",\"state\":\"{}\",\"transition\":\"{}\"}}",
+                optional(record.clock_observation_ordinal),
+                record.connection_sequence,
+                error,
+                optional(record.mono_ns),
+                hex::encode(record.previous_record_hash),
+                record.producer_epoch,
+                record.connection_sequence,
+                transition,
+                transition,
+            );
+            expected_authority_record_hash("edge-source-connection/v1", &canonical)
+        }
+
+        fn expected_payload_first_record_hash(record: &PayloadFirstObservationV1) -> B256 {
+            let payload_id = hex::encode(record.key.payload_id);
+            let wire_digest = hex::encode(record.observation.wire_digest);
+            let previous_record_hash = hex::encode(record.previous_record_hash);
+            let boot_id = String::from_utf8_lossy(&record.boot_id);
+            let canonical = format!(
+                "{{\"blockNumber\":\"{}\",\"bootId\":\"{}\",\"clockObservationOrdinal\":\"{}\",\"clockSourceVersion\":\"linux-clock-gettime-realtime-monotonic/v1\",\"index0StructuralIdentity\":{{\"blockNumber\":\"{}\",\"canonicalWireDigest\":\"{}\",\"flashblockIndex\":\"0\",\"payloadId\":\"0x{}\",\"previousFlashblockId\":null}},\"monoNs\":\"{}\",\"monoStatus\":\"Ok\",\"monotonicResolutionNs\":\"{}\",\"payloadId\":\"0x{}\",\"previousRecordHash\":\"{}\",\"producerEpoch\":\"{}\",\"realtimeResolutionNs\":\"{}\",\"recordSequence\":\"{}\",\"utcNs\":\"{}\",\"utcStatus\":\"Ok\",\"wireDigest\":\"{}\"}}",
+                record.key.block_number,
+                boot_id,
+                record.observation.clock_observation_ordinal,
+                record.key.block_number,
+                wire_digest,
+                payload_id,
+                record.observation.mono_ns.expect("frozen monotonic timestamp"),
+                record.monotonic_resolution_ns,
+                payload_id,
+                previous_record_hash,
+                record.key.producer_epoch,
+                record.realtime_resolution_ns,
+                record.record_sequence,
+                record.observation.utc_ns.expect("frozen realtime timestamp"),
+                wire_digest,
+            );
+            expected_authority_record_hash("edge-payload-first-observation/v1", &canonical)
+        }
+
+        fn expected_processor_terminal_hash(source_generation: u64) -> B256 {
+            let mut bytes = b"base-edge-processor-terminal-v1\0".to_vec();
+            bytes.extend_from_slice(&source_generation.to_be_bytes());
+            bytes.extend_from_slice(&100_u64.to_be_bytes());
+            bytes.extend_from_slice(&[0; 8]);
+            bytes.extend_from_slice(&0_u64.to_be_bytes());
+            bytes.extend_from_slice(b"AdvancedInitialBase");
+            B256::new(EdgeMeasurementDurabilityV1::sha256(&bytes))
+        }
+        fn expected_source_coverage_record(
+            producer_epoch: u64,
+            coverage_sequence: u64,
+            wire_ordinal: u64,
+            source_generation: Option<u64>,
+            transition: WireLifecycleTransitionV1,
+            previous_record_hash: B256,
+        ) -> SourceCoverageRecordV3 {
+            let tag = match transition {
+                WireLifecycleTransitionV1::WireObserved => 0,
+                WireLifecycleTransitionV1::DecodeSucceeded { .. } => 1,
+                WireLifecycleTransitionV1::DecodeRejected => 2,
+                WireLifecycleTransitionV1::ActorEnqueueSucceeded => 3,
+                WireLifecycleTransitionV1::ActorDelivered => 5,
+                WireLifecycleTransitionV1::StateHandoffSucceeded => 6,
+                WireLifecycleTransitionV1::ProcessorTerminal => 8,
+                _ => panic!("unexpected terminal matrix source transition"),
+            };
+            let mut bytes = Vec::with_capacity(96);
+            bytes.extend_from_slice(b"base-edge-source-coverage-v3\0");
+            bytes.extend_from_slice(&producer_epoch.to_be_bytes());
+            bytes.extend_from_slice(&coverage_sequence.to_be_bytes());
+            bytes.extend_from_slice(&wire_ordinal.to_be_bytes());
+            bytes.extend_from_slice(&source_generation.unwrap_or(u64::MAX).to_be_bytes());
+            bytes.push(0);
+            bytes.push(tag);
+            bytes.extend_from_slice(previous_record_hash.as_slice());
+            SourceCoverageRecordV3 {
+                producer_epoch,
+                coverage_sequence,
+                wire_ordinal,
+                source_generation,
+                route: EpochRouteV1::Authority,
+                transition,
+                previous_record_hash,
+                record_hash: B256::new(EdgeMeasurementDurabilityV1::sha256(&bytes)),
+            }
+        }
+
+        fn expected_decode_terminal_hash(producer_epoch: u64, wire_ordinal: u64) -> B256 {
+            let canonical = format!(
+                "{{\"producerEpoch\":\"{producer_epoch}\",\"sourceGeneration\":null,\"terminal\":\"DecodeRejected\",\"wireOrdinal\":\"{wire_ordinal}\"}}"
+            );
+            let mut bytes = Vec::new();
+            for field in [
+                b"base-edge-authority-record-v1\0".as_slice(),
+                b"edge-source-terminal-evidence/v1".as_slice(),
+                canonical.as_bytes(),
+            ] {
+                bytes.extend_from_slice(
+                    &u32::try_from(field.len())
+                        .expect("expected authority field length")
+                        .to_be_bytes(),
+                );
+                bytes.extend_from_slice(field);
+            }
+            B256::new(EdgeMeasurementDurabilityV1::sha256(&bytes))
+        }
+
+        fn apply_expected_registry_registration(
+            case: TerminalOutstanding,
+            expected: &mut base_flashblocks::PendingRegistryAuthorityAuditSnapshotV1,
+            pending: &Arc<PendingBlocks>,
+            revision_delta: u64,
+            used_paths: &mut BTreeSet<&'static str>,
+        ) -> u64 {
+            let sequence = 0;
+            assert_eq!(expected.next_sequence, sequence);
+            let pointer = Arc::as_ptr(pending) as usize;
+            let metadata = base_flashblocks::PendingSnapshotMetadataV2 {
+                identity: base_flashblocks::PendingSnapshotIdentityV2 {
+                    producer_epoch: expected.producer_epoch,
+                    pending_snapshot_sequence: sequence,
+                    arc_pointer_identity: pointer,
+                },
+                source_generation: None,
+                pending_public_subset_digest_v1: B256::from_str(
+                    "0x3f38313a19b13df16b2bf05034cda2455bb69889badfdf5c8f3bdf0431537b21",
+                )
+                .expect("frozen pending public subset digest"),
+            };
+            expected.revision =
+                expected.revision.checked_add(revision_delta).expect("registry revision");
+            expected.next_sequence =
+                expected.next_sequence.checked_add(1).expect("registry sequence");
+            assert_eq!(
+                expected.primary.insert(
+                    sequence,
+                    base_flashblocks::PendingRegistryEntryAuditV2 {
+                        metadata,
+                        retained_weak_pointer_identity: pointer,
+                        retained_allocation_alive: false,
+                        registration: base_flashblocks::PendingRegistrationDispositionV2::Succeeded,
+                        send: None,
+                        terminal: None,
+                    },
+                ),
+                None
+            );
+            assert_eq!(
+                expected.secondary.insert(pointer, std::collections::VecDeque::from([sequence])),
+                None
+            );
+            let expected_send_capacity = if revision_delta == 1 { 2 } else { 0 };
+            expected.send_capacity_reserved = expected_send_capacity;
+            expected.counters.advanced_with_snapshot = expected
+                .counters
+                .advanced_with_snapshot
+                .checked_add(1)
+                .expect("expected advanced registration count");
+            expected.counters.registration_succeeded = expected
+                .counters
+                .registration_succeeded
+                .checked_add(1)
+                .expect("expected registration success count");
+            for path in [
+                "source.registry.revision",
+                "source.registry.next_sequence",
+                "source.registry.primary",
+                "source.registry.secondary",
+                "source.registry.counters.advanced_with_snapshot",
+                "source.registry.counters.registration_succeeded",
+                "source.registry.sets.advanced_with_snapshot",
+                "source.registry.sets.registration_succeeded",
+            ] {
+                mark_expected_path(case, path, used_paths);
+            }
+            if revision_delta == 1 {
+                mark_expected_path(case, "source.registry.send_capacity_reserved", used_paths);
+            }
+            sequence
+        }
+
+        fn apply_expected_registry_coverage(
+            case: TerminalOutstanding,
+            expected: &mut TerminalAuditSnapshot,
+            label: &str,
+            pending: &Arc<PendingBlocks>,
+            used_paths: &mut BTreeSet<&'static str>,
+        ) {
+            let source = &mut expected.exact_authority_and_ledgers.source_authority;
+            let epoch = source.config.producer_epoch.get();
+            assert_eq!(epoch, 400);
+            let hash = |value: &str| B256::from_str(value).expect("frozen registry coverage hash");
+            let state = &mut source.recorder_state;
+            assert_eq!(
+                (
+                    state.next_clock_ordinal,
+                    state.next_wire_ordinal,
+                    state.next_source_generation,
+                    state.next_payload_first_sequence,
+                    state.next_connection_sequence,
+                    state.next_coverage_sequence,
+                    state.next_terminal_coverage_sequence,
+                    state.event_pending_ack,
+                ),
+                (1, 0, 0, 0, 0, 0, 0, 1),
+            );
+
+            let connection_records = [
+                SourceConnectionRecordV1 {
+                    producer_epoch: epoch,
+                    connection_sequence: 0,
+                    clock_observation_ordinal: Some(1),
+                    mono_ns: Some(1_000_001_000),
+                    transition: SourceConnectionTransitionV1::OwnerStart,
+                    error_class: None,
+                    previous_record_hash: B256::ZERO,
+                    record_hash: hash(
+                        "0x77cda27306898476af1b0eb52f3fea3f0443545ae44f3e151f40d82f6b200531",
+                    ),
+                },
+                SourceConnectionRecordV1 {
+                    producer_epoch: epoch,
+                    connection_sequence: 1,
+                    clock_observation_ordinal: Some(2),
+                    mono_ns: Some(1_000_002_000),
+                    transition: SourceConnectionTransitionV1::InitialConnectAttemptStarted,
+                    error_class: None,
+                    previous_record_hash: hash(
+                        "0x77cda27306898476af1b0eb52f3fea3f0443545ae44f3e151f40d82f6b200531",
+                    ),
+                    record_hash: hash(
+                        "0xd71a8ecc97a154a3078f820857111f2e28bd9ffeceabba32e72fa2f966bc754d",
+                    ),
+                },
+                SourceConnectionRecordV1 {
+                    producer_epoch: epoch,
+                    connection_sequence: 2,
+                    clock_observation_ordinal: Some(3),
+                    mono_ns: Some(1_000_003_000),
+                    transition: SourceConnectionTransitionV1::Established,
+                    error_class: None,
+                    previous_record_hash: hash(
+                        "0xd71a8ecc97a154a3078f820857111f2e28bd9ffeceabba32e72fa2f966bc754d",
+                    ),
+                    record_hash: hash(
+                        "0x5a4093f91a46cdd1129688b5221757341c10a201b927d5281d31d3c53d7cd871",
+                    ),
+                },
+            ];
+            for record in &connection_records {
+                assert_eq!(
+                    record.record_hash,
+                    expected_connection_record_hash(record),
+                    "frozen connection hash must match the independent authority equation",
+                );
+            }
+            let payload_key =
+                PayloadFirstKeyV1 { producer_epoch: epoch, block_number: 100, payload_id: [0; 8] };
+            let payload_first = PayloadFirstObservationV1 {
+                key: payload_key,
+                source_generation: 0,
+                observation: WireObservationV1 {
+                    clock_observation_ordinal: 4,
+                    utc_status: ClockStatusV1::Ok,
+                    utc_ns: Some(1_700_000_000_000_004_000),
+                    mono_status: ClockStatusV1::Ok,
+                    mono_ns: Some(1_000_004_000),
+                    wire_digest: B256::new(EdgeMeasurementDurabilityV1::sha256(label.as_bytes())),
+                },
+                boot_id: source.boot_id,
+                realtime_resolution_ns: 1,
+                monotonic_resolution_ns: 1,
+                record_sequence: 0,
+                previous_record_hash: B256::ZERO,
+                record_hash: hash(
+                    "0xda2b07a11df34517a1137e315e91675cbec2385cd206aee328f91b5737782c95",
+                ),
+            };
+            assert_eq!(
+                payload_first.record_hash,
+                expected_payload_first_record_hash(&payload_first),
+                "frozen payload-first hash must match the independent authority equation",
+            );
+            let wire_observed = expected_source_coverage_record(
+                epoch,
+                0,
+                0,
+                None,
+                WireLifecycleTransitionV1::WireObserved,
+                B256::ZERO,
+            );
+            let decode_succeeded = expected_source_coverage_record(
+                epoch,
+                1,
+                0,
+                Some(0),
+                WireLifecycleTransitionV1::DecodeSucceeded { source_generation: 0 },
+                wire_observed.record_hash,
+            );
+            let actor_enqueued = expected_source_coverage_record(
+                epoch,
+                2,
+                0,
+                Some(0),
+                WireLifecycleTransitionV1::ActorEnqueueSucceeded,
+                decode_succeeded.record_hash,
+            );
+            let actor_delivered = expected_source_coverage_record(
+                epoch,
+                3,
+                0,
+                Some(0),
+                WireLifecycleTransitionV1::ActorDelivered,
+                actor_enqueued.record_hash,
+            );
+            let state_handoff = expected_source_coverage_record(
+                epoch,
+                4,
+                0,
+                Some(0),
+                WireLifecycleTransitionV1::StateHandoffSucceeded,
+                actor_delivered.record_hash,
+            );
+            let processor_terminal = expected_source_coverage_record(
+                epoch,
+                5,
+                0,
+                Some(0),
+                WireLifecycleTransitionV1::ProcessorTerminal,
+                state_handoff.record_hash,
+            );
+            let coverage = [
+                wire_observed,
+                decode_succeeded,
+                actor_enqueued,
+                actor_delivered,
+                state_handoff,
+                processor_terminal,
+            ];
+            let structural_terminal_hash = expected_processor_terminal_hash(0);
+            assert_eq!(
+                structural_terminal_hash,
+                hash("0xd09ad4cb57ea9fcb101b5c8f34a128aace25a8521fc81bc409c6c641aae05b5e"),
+                "processor terminal hash must match the frozen golden",
+            );
+            let product = ProcessorLifecycleProductV1 {
+                producer_epoch: epoch,
+                source_generation: 0,
+                base_disposition: base_flashblocks::ProcessorBaseDispositionV1::AdvancedInitialBase,
+                observer_disposition: base_flashblocks::ProcessorObserverDispositionV1::Absent,
+                publish_disposition: base_flashblocks::ProcessorPublishDispositionV1::Published(1),
+                pending_snapshot_sequence: Some(0),
+                payload_first_record_hash: Some(payload_first.record_hash),
+                structural_terminal_hash,
+                processor_error_reason: None,
+                cache_resolved_final_disposition: None,
+            };
+            let terminal_coverage = SourceTerminalCoverageV3 {
+                producer_epoch: epoch,
+                coverage_sequence: 0,
+                route: EpochRouteV1::Authority,
+                source_generation: Some(0),
+                terminal: base_flashblocks::SourceCoverageTerminalV3::ProcessorProduct,
+                terminal_hash: structural_terminal_hash,
+                payload_first_record_hash: Some(payload_first.record_hash),
+                pending_snapshot_sequence: Some(0),
+            };
+
+            state.next_clock_ordinal = 5;
+            state.next_wire_ordinal = 1;
+            state.next_source_generation = 1;
+            state.next_payload_first_sequence = 1;
+            state.last_payload_first_hash = payload_first.record_hash;
+            state.next_connection_sequence = 3;
+            assert_eq!(state.payload_first.insert(payload_key, payload_first), None);
+            state.processor_terminal_count = 1;
+            assert_eq!(state.snapshot_products.insert(0, product), None);
+            assert_eq!(state.payload_first_by_generation.insert(0, payload_first), None);
+            assert_eq!(state.snapshot_wire_ordinals.insert(0, (0, 0)), None);
+            assert!(state.snapshot_evidence_captured.insert(0));
+            state.authority_wire_terminals = 1;
+            state.next_coverage_sequence = 6;
+            state.last_coverage_hash = coverage[5].record_hash;
+            state.coverage_record_count = 6;
+            state.next_terminal_coverage_sequence = 1;
+            state.connection_phase = base_flashblocks::ConnectionPhaseV1::Established {
+                read_half_closed: false,
+                ping_due: false,
+                ping_written: false,
+                control_pong_seen: false,
+            };
+            state.connection_recorded_phase = state.connection_phase;
+            state.connection_record_count = 3;
+            state.connection_established_count = 1;
+            state.last_connection_record = Some(connection_records[2]);
+            state.previous_connection_record = Some(connection_records[1]);
+            state.last_connection_hash = connection_records[2].record_hash;
+            state.event_pending_ack = 13;
+
+            assert_eq!(source.event_messages.len(), 1);
+            source.event_messages.extend([
+                base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                    EdgeSourceEventV1::Connection(connection_records[0]),
+                )),
+                base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                    EdgeSourceEventV1::Connection(connection_records[1]),
+                )),
+                base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                    EdgeSourceEventV1::Connection(connection_records[2]),
+                )),
+                base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                    EdgeSourceEventV1::Coverage(coverage[0]),
+                )),
+                base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                    EdgeSourceEventV1::Coverage(coverage[1]),
+                )),
+                base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                    EdgeSourceEventV1::PayloadFirst(payload_first),
+                )),
+                base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                    EdgeSourceEventV1::Coverage(coverage[2]),
+                )),
+                base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                    EdgeSourceEventV1::Coverage(coverage[3]),
+                )),
+                base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                    EdgeSourceEventV1::Coverage(coverage[4]),
+                )),
+                base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                    EdgeSourceEventV1::TerminalCoverage(terminal_coverage),
+                )),
+                base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                    EdgeSourceEventV1::Processor(product),
+                )),
+                base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                    EdgeSourceEventV1::Coverage(coverage[5]),
+                )),
+            ]);
+
+            let pointer = Arc::as_ptr(pending) as usize;
+            let metadata = base_flashblocks::PendingSnapshotMetadataV2 {
+                identity: base_flashblocks::PendingSnapshotIdentityV2 {
+                    producer_epoch: epoch,
+                    pending_snapshot_sequence: 0,
+                    arc_pointer_identity: pointer,
+                },
+                source_generation: Some(0),
+                pending_public_subset_digest_v1: hash(
+                    "0x3f38313a19b13df16b2bf05034cda2455bb69889badfdf5c8f3bdf0431537b21",
+                ),
+            };
+            let registry = &mut source.registry;
+            assert_eq!((registry.revision, registry.next_sequence), (0, 0));
+            registry.revision = 3;
+            registry.next_sequence = 1;
+            registry.next_coverage_sequence = 1;
+            assert_eq!(
+                registry.primary.insert(
+                    0,
+                    base_flashblocks::PendingRegistryEntryAuditV2 {
+                        metadata,
+                        retained_weak_pointer_identity: pointer,
+                        retained_allocation_alive: false,
+                        registration: base_flashblocks::PendingRegistrationDispositionV2::Succeeded,
+                        send: Some(base_flashblocks::PendingSendDispositionV2::Published {
+                            receiver_count: 1,
+                        }),
+                        terminal: Some(PendingCliTerminalV2::CliReceivedLookupSucceeded),
+                    },
+                ),
+                None,
+            );
+            assert_eq!(
+                registry.secondary.insert(pointer, std::collections::VecDeque::from([0])),
+                None,
+            );
+            registry.terminal_records.push(PendingTerminalRecordV2 {
+                coverage_sequence: 0,
+                metadata,
+                registration: base_flashblocks::PendingRegistrationDispositionV2::Succeeded,
+                send: base_flashblocks::PendingSendDispositionV2::Published { receiver_count: 1 },
+                terminal: PendingCliTerminalV2::CliReceivedLookupSucceeded,
+            });
+            assert_eq!(registry.terminal_record_index.insert(0, 0), None);
+            registry.durability_pending.push_back((0, 0));
+            registry.cleanup_events.extend([
+                base_flashblocks::PendingCleanupEventV2::TerminalAppended(0),
+                base_flashblocks::PendingCleanupEventV2::CoverageQueueAccepted(0),
+            ]);
+            registry.counters.advanced_with_snapshot = 1;
+            registry.counters.registration_succeeded = 1;
+            registry.counters.send_published = 1;
+            registry.counters.cli_received_lookup_succeeded = 1;
+
+            for path in [
+                "source.recorder_state.next_clock_ordinal",
+                "source.recorder_state.next_wire_ordinal",
+                "source.recorder_state.next_source_generation",
+                "source.recorder_state.next_payload_first_sequence",
+                "source.recorder_state.last_payload_first_hash",
+                "source.recorder_state.next_connection_sequence",
+                "source.recorder_state.payload_first",
+                "source.recorder_state.processor_terminal_count",
+                "source.recorder_state.snapshot_products",
+                "source.recorder_state.payload_first_by_generation",
+                "source.recorder_state.snapshot_wire_ordinals",
+                "source.recorder_state.snapshot_evidence_captured",
+                "source.recorder_state.authority_wire_terminals",
+                "source.recorder_state.next_coverage_sequence",
+                "source.recorder_state.last_coverage_hash",
+                "source.recorder_state.coverage_record_count",
+                "source.recorder_state.next_terminal_coverage_sequence",
+                "source.recorder_state.connection_phase",
+                "source.recorder_state.connection_recorded_phase",
+                "source.recorder_state.connection_record_count",
+                "source.recorder_state.connection_established_count",
+                "source.recorder_state.last_connection_record",
+                "source.recorder_state.previous_connection_record",
+                "source.recorder_state.last_connection_hash",
+                "source.recorder_state.event_pending_ack",
+                "source.event_messages",
+                "source.registry.revision",
+                "source.registry.next_sequence",
+                "source.registry.next_coverage_sequence",
+                "source.registry.primary",
+                "source.registry.secondary",
+                "source.registry.terminal_records",
+                "source.registry.terminal_record_index",
+                "source.registry.durability_pending",
+                "source.registry.cleanup_events",
+                "source.registry.counters.advanced_with_snapshot",
+                "source.registry.counters.registration_succeeded",
+                "source.registry.counters.send_published",
+                "source.registry.counters.cli_received_lookup_succeeded",
+                "source.registry.sets.advanced_with_snapshot",
+                "source.registry.sets.registration_succeeded",
+                "source.registry.sets.registered_published",
+                "source.registry.sets.send_published",
+                "source.registry.sets.cli_received_lookup_succeeded",
+                "source.registry.sets.cli_ok_received",
+                "source.registry.sets.snapshot_records_installed",
+            ] {
+                mark_expected_path(case, path, used_paths);
+            }
+        }
+
+        fn expected_blink_reject(
+            producer_epoch: u64,
+            sequence: u64,
+            previous_hash: [u8; 32],
+        ) -> EdgeProducerRecordV1 {
+            let previous_record_hash = hex::encode(previous_hash);
+            let canonical = format!(
+                "{{\"branchId\":\"wire-end\",\"previousRecordHash\":\"{previous_record_hash}\",\"producerEpoch\":\"{producer_epoch}\",\"reason\":\"WireEnd\",\"schema\":\"edge-blink-reject/v3\",\"sequence\":\"{sequence}\",\"state\":\"Rejected\"}}"
+            );
+            let mut bytes = Vec::new();
+            for field in [
+                b"base-edge-authority-record-v1\0".as_slice(),
+                b"edge-blink-reject/v3".as_slice(),
+                canonical.as_bytes(),
+            ] {
+                bytes.extend_from_slice(
+                    &u32::try_from(field.len())
+                        .expect("expected Blink authority field length")
+                        .to_be_bytes(),
+                );
+                bytes.extend_from_slice(field);
+            }
+            EdgeProducerRecordV1::BlinkReject(base_mev_trader::BlinkRejectRecordV3 {
+                schema: "edge-blink-reject/v3",
+                producer_epoch: producer_epoch.to_string(),
+                sequence: sequence.to_string(),
+                state: "Rejected",
+                branch_id: "wire-end",
+                reason: BlinkRejectReasonV3::WireEnd,
+                previous_record_hash,
+                record_hash: hex::encode(EdgeMeasurementDurabilityV1::sha256(&bytes)),
+            })
+        }
+
+        let _serial = edge_node_result_test_lock_v1();
+        let started_at = Instant::now();
+        edge_node_result_test_reset_v1();
+        for (index, case) in CASES.into_iter().enumerate() {
+            let row_started_at = Instant::now();
+            let epoch = 400;
+            let label = format!("terminal-matrix-{index}-{}", case.name());
+            let (root, mut writer) = match case {
+                TerminalOutstanding::RegistryCoverage
+                | TerminalOutstanding::BlinkPendingCandidates => {
+                    let root = edge_writer_root(&label);
+                    let (mut writer, _, _) = edge_segment_mutation_writer_fixture(&root, epoch);
+                    writer.prepare().expect("startup publication");
+                    (root, writer)
+                }
+                TerminalOutstanding::CandidatePendingPublication
+                | TerminalOutstanding::OpenPublication => {
+                    edge_full_segment_fixture(&label, epoch, true)
+                }
+                TerminalOutstanding::OpenCleanup
+                | TerminalOutstanding::SourceIdentityGap
+                | TerminalOutstanding::SourceCursorGap
+                | TerminalOutstanding::ProducerClosureFalse
+                | TerminalOutstanding::ClosurePredicateFalse
+                | TerminalOutstanding::EndpointUnsealed
+                | TerminalOutstanding::DataUnsealed
+                | TerminalOutstanding::MixedRevisionRace => {
+                    edge_terminal_ready_fixture(&label, epoch)
+                }
+                _ => prepared_writer(&label, epoch),
+            };
+            let before = audit(&writer, &root);
+            let mut expected = before.clone();
+            let mut used_paths = BTreeSet::new();
+            let mut expected_candidate_detail = None;
+            let receipts = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+
+            match case {
+                TerminalOutstanding::SourceEventPendingAckQueue => {
+                    let admission =
+                        writer.recorder.observe_wire(label.as_bytes()).expect("pending wire");
+                    assert_eq!(admission.wire_ordinal, 0);
+                    writer.recorder.decode_rejected(admission);
+                    let source = &mut expected.exact_authority_and_ledgers.source_authority;
+                    let state = &mut source.recorder_state;
+                    let first_coverage_sequence = state.next_coverage_sequence;
+                    let wire_observed = expected_source_coverage_record(
+                        epoch,
+                        first_coverage_sequence,
+                        0,
+                        None,
+                        WireLifecycleTransitionV1::WireObserved,
+                        state.last_coverage_hash,
+                    );
+                    let decode_rejected = expected_source_coverage_record(
+                        epoch,
+                        first_coverage_sequence.checked_add(1).expect("expected coverage sequence"),
+                        0,
+                        None,
+                        WireLifecycleTransitionV1::DecodeRejected,
+                        wire_observed.record_hash,
+                    );
+                    let terminal_coverage = SourceTerminalCoverageV3 {
+                        producer_epoch: epoch,
+                        coverage_sequence: state.next_terminal_coverage_sequence,
+                        route: EpochRouteV1::Authority,
+                        source_generation: None,
+                        terminal: base_flashblocks::SourceCoverageTerminalV3::DecodeRejected,
+                        terminal_hash: expected_decode_terminal_hash(epoch, 0),
+                        payload_first_record_hash: None,
+                        pending_snapshot_sequence: None,
+                    };
+                    for (path, value, delta) in [
+                        (
+                            "source.recorder_state.next_clock_ordinal",
+                            &mut state.next_clock_ordinal,
+                            1,
+                        ),
+                        (
+                            "source.recorder_state.next_wire_ordinal",
+                            &mut state.next_wire_ordinal,
+                            1,
+                        ),
+                        (
+                            "source.recorder_state.authority_wire_terminals",
+                            &mut state.authority_wire_terminals,
+                            1,
+                        ),
+                        (
+                            "source.recorder_state.authority_decode_rejected",
+                            &mut state.authority_decode_rejected,
+                            1,
+                        ),
+                        (
+                            "source.recorder_state.next_coverage_sequence",
+                            &mut state.next_coverage_sequence,
+                            2,
+                        ),
+                        (
+                            "source.recorder_state.coverage_record_count",
+                            &mut state.coverage_record_count,
+                            2,
+                        ),
+                        (
+                            "source.recorder_state.next_terminal_coverage_sequence",
+                            &mut state.next_terminal_coverage_sequence,
+                            1,
+                        ),
+                        (
+                            "source.recorder_state.event_pending_ack",
+                            &mut state.event_pending_ack,
+                            3,
+                        ),
+                    ] {
+                        checked_expected_increment(case, path, value, delta, &mut used_paths);
+                    }
+                    state.last_coverage_hash = decode_rejected.record_hash;
+                    mark_expected_path(
+                        case,
+                        "source.recorder_state.last_coverage_hash",
+                        &mut used_paths,
+                    );
+                    source.event_messages.extend([
+                        base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                            EdgeSourceEventV1::Coverage(wire_observed),
+                        )),
+                        base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                            EdgeSourceEventV1::TerminalCoverage(terminal_coverage),
+                        )),
+                        base_flashblocks::EdgeSourceQueueMessageV1::Event(Box::new(
+                            EdgeSourceEventV1::Coverage(decode_rejected),
+                        )),
+                    ]);
+                    mark_expected_path(case, "source.event_messages", &mut used_paths);
+                }
+                TerminalOutstanding::RegistryRegistrationMaps => {
+                    let pending = Arc::new(pending_blocks());
+                    let registry = RegistryRecordingHarness {
+                        registry: writer.recorder.registry(),
+                        receipts: std::rc::Rc::clone(&receipts),
+                    };
+                    let registration = registry.register(&pending, None);
+                    assert_eq!(
+                        (registration.pending_snapshot_sequence, registration.disposition,),
+                        (Some(0), base_flashblocks::PendingRegistrationDispositionV2::Succeeded,),
+                    );
+                    let snapshot =
+                        writer.recorder.registry().snapshot().expect("checked pending total");
+                    assert_eq!(snapshot.primary_pending, 1);
+                    assert_eq!(snapshot.secondary_pending, 1);
+                    assert_eq!(snapshot.send_capacity_reserved, 2);
+                    assert_eq!(snapshot.published_pending, 0);
+                    assert!(snapshot.send_journal.is_empty());
+                    let sequence = apply_expected_registry_registration(
+                        case,
+                        &mut expected.exact_authority_and_ledgers.source_authority.registry,
+                        &pending,
+                        1,
+                        &mut used_paths,
+                    );
+                    let metadata = expected
+                        .exact_authority_and_ledgers
+                        .source_authority
+                        .registry
+                        .primary
+                        .get(&sequence)
+                        .expect("literal registration metadata")
+                        .metadata;
+                    assert_eq!(
+                        *receipts.borrow(),
+                        vec![TerminalBoundaryReceipt::Registry(RegistryBoundaryReceipt::Register(
+                            RegistryRegistrationReceipt {
+                                producer_epoch: epoch,
+                                pending_pointer_identity: Arc::as_ptr(&pending) as usize,
+                                pending_public_subset_digest: metadata
+                                    .pending_public_subset_digest_v1,
+                                source_generation: None,
+                                returned_attempt: registration,
+                            }
+                        ),)],
+                        "registration-maps boundary receipts differ from the literal vector",
+                    );
+                }
+                TerminalOutstanding::RegistryPublished => {
+                    let pending = Arc::new(pending_blocks());
+                    let registry = RegistryRecordingHarness {
+                        registry: writer.recorder.registry(),
+                        receipts: std::rc::Rc::clone(&receipts),
+                    };
+                    let registration = registry.register(&pending, None);
+                    assert_eq!(
+                        (registration.pending_snapshot_sequence, registration.disposition,),
+                        (Some(0), base_flashblocks::PendingRegistrationDispositionV2::Succeeded,),
+                    );
+                    registry.record_send(registration, Some(1)).expect("published send");
+                    let snapshot =
+                        writer.recorder.registry().snapshot().expect("checked pending total");
+                    assert_eq!(snapshot.published_pending, 1);
+                    assert_eq!(snapshot.send_journal.len(), 1);
+                    let sequence = apply_expected_registry_registration(
+                        case,
+                        &mut expected.exact_authority_and_ledgers.source_authority.registry,
+                        &pending,
+                        2,
+                        &mut used_paths,
+                    );
+                    let registry_expected =
+                        &mut expected.exact_authority_and_ledgers.source_authority.registry;
+                    let send =
+                        base_flashblocks::PendingSendDispositionV2::Published { receiver_count: 1 };
+                    registry_expected
+                        .primary
+                        .get_mut(&sequence)
+                        .expect("expected published primary")
+                        .send = Some(send);
+                    registry_expected.published.push_back(sequence);
+                    registry_expected.send_journal.push_back(
+                        base_flashblocks::PendingSendJournalEntryV2::AdvancedRegistration(sequence),
+                    );
+                    registry_expected.counters.send_published = registry_expected
+                        .counters
+                        .send_published
+                        .checked_add(1)
+                        .expect("expected published send count");
+                    for path in [
+                        "source.registry.published",
+                        "source.registry.send_journal",
+                        "source.registry.counters.send_published",
+                        "source.registry.sets.registered_published",
+                        "source.registry.sets.send_published",
+                        "source.registry.sets.pending_delivery_final",
+                    ] {
+                        mark_expected_path(case, path, &mut used_paths);
+                    }
+                    let metadata = registry_expected
+                        .primary
+                        .get(&sequence)
+                        .expect("literal published metadata")
+                        .metadata;
+                    assert_eq!(
+                        *receipts.borrow(),
+                        vec![
+                            TerminalBoundaryReceipt::Registry(RegistryBoundaryReceipt::Register(
+                                RegistryRegistrationReceipt {
+                                    producer_epoch: epoch,
+                                    pending_pointer_identity: Arc::as_ptr(&pending) as usize,
+                                    pending_public_subset_digest: metadata
+                                        .pending_public_subset_digest_v1,
+                                    source_generation: None,
+                                    returned_attempt: registration,
+                                }
+                            ),),
+                            TerminalBoundaryReceipt::Registry(
+                                RegistryBoundaryReceipt::RecordSend {
+                                    attempt: registration,
+                                    receiver_count: Some(1),
+                                    result: Ok(()),
+                                },
+                            ),
+                        ],
+                        "published boundary receipts differ from the literal vector",
+                    );
+                }
+                TerminalOutstanding::RegistryUnregisteredInflight => {
+                    assert!(writer.recorder.registry().begin_unregistered_send());
+                    assert_eq!(
+                        writer
+                            .recorder
+                            .registry()
+                            .snapshot()
+                            .expect("checked pending total")
+                            .unregistered_send_inflight,
+                        1
+                    );
+                    let registry_expected =
+                        &mut expected.exact_authority_and_ledgers.source_authority.registry;
+                    checked_expected_increment(
+                        case,
+                        "source.registry.revision",
+                        &mut registry_expected.revision,
+                        1,
+                        &mut used_paths,
+                    );
+                    checked_expected_increment(
+                        case,
+                        "source.registry.unregistered_send_inflight",
+                        &mut registry_expected.unregistered_send_inflight,
+                        1,
+                        &mut used_paths,
+                    );
+                }
+                TerminalOutstanding::RegistryTerminal => {
+                    let pending = Arc::new(pending_blocks());
+                    let registry = RegistryRecordingHarness {
+                        registry: writer.recorder.registry(),
+                        receipts: std::rc::Rc::clone(&receipts),
+                    };
+                    let registration = registry.register(&pending, None);
+                    assert_eq!(
+                        (registration.pending_snapshot_sequence, registration.disposition,),
+                        (Some(0), base_flashblocks::PendingRegistrationDispositionV2::Succeeded,),
+                    );
+                    registry.record_send(registration, None).expect("registry terminal");
+                    assert_eq!(
+                        writer
+                            .recorder
+                            .registry()
+                            .snapshot()
+                            .expect("checked pending total")
+                            .terminal_records,
+                        1
+                    );
+                    let sequence = apply_expected_registry_registration(
+                        case,
+                        &mut expected.exact_authority_and_ledgers.source_authority.registry,
+                        &pending,
+                        2,
+                        &mut used_paths,
+                    );
+                    let registry_expected =
+                        &mut expected.exact_authority_and_ledgers.source_authority.registry;
+                    let metadata = registry_expected
+                        .primary
+                        .get(&sequence)
+                        .expect("expected terminal primary")
+                        .metadata;
+                    let terminal_record = PendingTerminalRecordV2 {
+                        coverage_sequence: registry_expected.next_coverage_sequence,
+                        metadata,
+                        registration: base_flashblocks::PendingRegistrationDispositionV2::Succeeded,
+                        send: base_flashblocks::PendingSendDispositionV2::NoReceivers,
+                        terminal: PendingCliTerminalV2::NoReceivers,
+                    };
+                    let primary = registry_expected
+                        .primary
+                        .get_mut(&sequence)
+                        .expect("expected terminal primary");
+                    primary.send = Some(base_flashblocks::PendingSendDispositionV2::NoReceivers);
+                    primary.terminal = Some(PendingCliTerminalV2::NoReceivers);
+                    registry_expected.next_coverage_sequence = registry_expected
+                        .next_coverage_sequence
+                        .checked_add(1)
+                        .expect("expected registry coverage sequence");
+                    registry_expected.terminal_records.push(terminal_record);
+                    assert_eq!(registry_expected.terminal_record_index.insert(sequence, 0), None);
+                    registry_expected.durability_pending.push_back((0, sequence));
+                    registry_expected.cleanup_events.extend([
+                        base_flashblocks::PendingCleanupEventV2::TerminalAppended(sequence),
+                        base_flashblocks::PendingCleanupEventV2::CoverageQueueAccepted(0),
+                    ]);
+                    registry_expected.counters.send_no_receivers = registry_expected
+                        .counters
+                        .send_no_receivers
+                        .checked_add(1)
+                        .expect("expected no-receiver count");
+                    for path in [
+                        "source.registry.next_coverage_sequence",
+                        "source.registry.terminal_records",
+                        "source.registry.terminal_record_index",
+                        "source.registry.durability_pending",
+                        "source.registry.cleanup_events",
+                        "source.registry.counters.send_no_receivers",
+                        "source.registry.sets.registered_no_receivers",
+                        "source.registry.sets.send_no_receivers",
+                    ] {
+                        mark_expected_path(case, path, &mut used_paths);
+                    }
+                    assert_eq!(
+                        *receipts.borrow(),
+                        vec![
+                            TerminalBoundaryReceipt::Registry(RegistryBoundaryReceipt::Register(
+                                RegistryRegistrationReceipt {
+                                    producer_epoch: epoch,
+                                    pending_pointer_identity: Arc::as_ptr(&pending) as usize,
+                                    pending_public_subset_digest: metadata
+                                        .pending_public_subset_digest_v1,
+                                    source_generation: None,
+                                    returned_attempt: registration,
+                                }
+                            ),),
+                            TerminalBoundaryReceipt::Registry(
+                                RegistryBoundaryReceipt::RecordSend {
+                                    attempt: registration,
+                                    receiver_count: None,
+                                    result: Ok(()),
+                                },
+                            ),
+                        ],
+                        "terminal boundary receipts differ from the literal vector",
+                    );
+                }
+                TerminalOutstanding::RegistryCoverage => {
+                    let pending = Arc::new(pending_blocks());
+                    let flashblock = pending.get_flashblocks().remove(0);
+                    let recorder = RecorderRecordingHarness {
+                        recorder: &writer.recorder,
+                        receipts: std::rc::Rc::clone(&receipts),
+                    };
+                    recorder.connection_transition(SourceConnectionTransitionV1::OwnerStart);
+                    recorder.connection_transition(
+                        SourceConnectionTransitionV1::InitialConnectAttemptStarted,
+                    );
+                    recorder.connection_transition(SourceConnectionTransitionV1::Established);
+                    let admission =
+                        recorder.observe_wire(label.as_bytes()).expect("wire admission");
+                    let generation = recorder
+                        .decoded_flashblock(admission, &flashblock)
+                        .expect("source generation");
+                    recorder.actor_enqueue(generation, true);
+                    recorder.actor_delivered(generation);
+                    assert_eq!(
+                        recorder.begin_state_handoff(DecodedFlashblockKeyV1::from_flashblock(
+                            &flashblock,
+                        )),
+                        Some(generation)
+                    );
+                    assert_eq!(recorder.take_source_generation(&flashblock), Some(generation));
+                    let registry = recorder.registry();
+                    let registration = registry.register(&pending, Some(generation));
+                    assert_eq!(generation, 0);
+                    assert_eq!(
+                        (registration.pending_snapshot_sequence, registration.disposition,),
+                        (Some(0), base_flashblocks::PendingRegistrationDispositionV2::Succeeded,),
+                    );
+                    let pending_sequence = registration
+                        .pending_snapshot_sequence
+                        .expect("registered pending sequence");
+                    registry.record_send(registration, Some(1)).expect("published registry send");
+                    let metadata = registry
+                        .cli_received(&pending)
+                        .expect("registry lookup")
+                        .expect("authority registry receipt");
+                    recorder.record_deterministic_test_product(generation, pending_sequence);
+                    recorder.snapshot_evidence(metadata).expect("source evidence");
+                    let snapshot =
+                        writer.recorder.registry().snapshot().expect("checked pending total");
+                    assert_eq!(snapshot.coverage_queue_pending_ack, 1);
+                    assert_eq!(snapshot.primary_pending, 1);
+                    assert_eq!(snapshot.secondary_pending, 1);
+                    assert_eq!(snapshot.published_pending, 0);
+                    apply_expected_registry_coverage(
+                        case,
+                        &mut expected,
+                        &label,
+                        &pending,
+                        &mut used_paths,
+                    );
+
+                    let source = &expected.exact_authority_and_ledgers.source_authority;
+                    let expected_metadata = source
+                        .registry
+                        .primary
+                        .get(&0)
+                        .expect("literal coverage metadata")
+                        .metadata;
+                    let expected_payload = source
+                        .recorder_state
+                        .payload_first_by_generation
+                        .get(&0)
+                        .copied()
+                        .expect("literal payload-first receipt");
+                    let expected_product = source
+                        .recorder_state
+                        .snapshot_products
+                        .get(&0)
+                        .copied()
+                        .expect("literal processor receipt");
+                    let expected_connection = source
+                        .recorder_state
+                        .last_connection_record
+                        .expect("literal connection receipt");
+                    let expected_terminal = source.registry.terminal_records[0];
+                    let expected_admission = base_flashblocks::EpochAdmissionTokenV1 {
+                        producer_epoch: epoch,
+                        wire_ordinal: 0,
+                        observation: expected_payload.observation,
+                        route: EpochRouteV1::Authority,
+                    };
+                    assert_eq!(
+                        *receipts.borrow(),
+                        vec![
+                            TerminalBoundaryReceipt::Recorder(
+                                RecorderBoundaryReceipt::ConnectionTransition(
+                                    SourceConnectionTransitionV1::OwnerStart,
+                                ),
+                            ),
+                            TerminalBoundaryReceipt::Recorder(
+                                RecorderBoundaryReceipt::ConnectionTransition(
+                                    SourceConnectionTransitionV1::InitialConnectAttemptStarted,
+                                ),
+                            ),
+                            TerminalBoundaryReceipt::Recorder(
+                                RecorderBoundaryReceipt::ConnectionTransition(
+                                    SourceConnectionTransitionV1::Established,
+                                ),
+                            ),
+                            TerminalBoundaryReceipt::Recorder(
+                                RecorderBoundaryReceipt::ObserveWire {
+                                    bytes: label.as_bytes().to_vec(),
+                                    result: Some(expected_admission),
+                                },
+                            ),
+                            TerminalBoundaryReceipt::Recorder(
+                                RecorderBoundaryReceipt::DecodedFlashblock {
+                                    admission: expected_admission,
+                                    flashblock: flashblock.clone(),
+                                    result: Some(0),
+                                },
+                            ),
+                            TerminalBoundaryReceipt::Recorder(
+                                RecorderBoundaryReceipt::ActorEnqueue {
+                                    source_generation: 0,
+                                    succeeded: true,
+                                },
+                            ),
+                            TerminalBoundaryReceipt::Recorder(
+                                RecorderBoundaryReceipt::ActorDelivered {
+                                    source_generation: 0,
+                                },
+                            ),
+                            TerminalBoundaryReceipt::Recorder(
+                                RecorderBoundaryReceipt::BeginStateHandoff {
+                                    key: DecodedFlashblockKeyV1::from_flashblock(&flashblock),
+                                    result: Some(0),
+                                },
+                            ),
+                            TerminalBoundaryReceipt::Recorder(
+                                RecorderBoundaryReceipt::TakeSourceGeneration {
+                                    flashblock: flashblock.clone(),
+                                    result: Some(0),
+                                },
+                            ),
+                            TerminalBoundaryReceipt::Registry(
+                                RegistryBoundaryReceipt::Register(RegistryRegistrationReceipt {
+                                    producer_epoch: epoch,
+                                    pending_pointer_identity: Arc::as_ptr(&pending) as usize,
+                                    pending_public_subset_digest:
+                                        expected_metadata.pending_public_subset_digest_v1,
+                                    source_generation: Some(0),
+                                    returned_attempt: registration,
+                                }),
+                            ),
+                            TerminalBoundaryReceipt::Registry(
+                                RegistryBoundaryReceipt::RecordSend {
+                                    attempt: registration,
+                                    receiver_count: Some(1),
+                                    result: Ok(()),
+                                },
+                            ),
+                            TerminalBoundaryReceipt::Registry(
+                                RegistryBoundaryReceipt::CliReceived {
+                                    metadata: expected_metadata,
+                                    result: Ok(Ok(expected_metadata)),
+                                },
+                            ),
+                            TerminalBoundaryReceipt::Recorder(
+                                RecorderBoundaryReceipt::RecordDeterministicTestProduct {
+                                    source_generation: 0,
+                                    pending_snapshot_sequence: 0,
+                                    input: DeterministicProcessorTerminalInputReceipt {
+                                        source_generation: 0,
+                                        base_disposition: base_flashblocks::
+                                            ProcessorBaseDispositionV1::AdvancedInitialBase,
+                                        observer_disposition: base_flashblocks::
+                                            ProcessorObserverDispositionV1::Absent,
+                                        publish_disposition: base_flashblocks::
+                                            ProcessorPublishDispositionV1::Published(1),
+                                        pending_snapshot_sequence: Some(0),
+                                        processor_error_reason: None,
+                                        cache_resolved_final_disposition: None,
+                                    },
+                                    product: expected_product,
+                                },
+                            ),
+                            TerminalBoundaryReceipt::Recorder(
+                                RecorderBoundaryReceipt::SnapshotEvidence {
+                                    metadata: expected_metadata,
+                                    result: Some((
+                                        expected_metadata,
+                                        expected_payload,
+                                        expected_product,
+                                        expected_connection,
+                                        expected_terminal,
+                                    )),
+                                },
+                            ),
+                        ],
+                        "coverage boundary receipts differ from the literal vector",
+                    );
+                }
+                TerminalOutstanding::BlinkPendingRecords => {
+                    writer.owner.emit_blink_reject("wire-end", BlinkRejectReasonV3::WireEnd);
+                    let snapshot =
+                        writer.owner.raw_accounting_snapshot().expect("Blink record queue");
+                    assert_eq!(snapshot.queues.pending_records, 1);
+                    assert_eq!(snapshot.queues.pending_candidates, 0);
+                    let owner = &mut expected.exact_authority_and_ledgers.blink_owner;
+                    let reject = expected_blink_reject(
+                        epoch,
+                        owner.reject_sequence,
+                        owner.reject_previous_hash,
+                    );
+                    let EdgeProducerRecordV1::BlinkReject(record) = &reject else {
+                        unreachable!("expected Blink reject")
+                    };
+                    let expected_hash =
+                        hex::decode(&record.record_hash).expect("expected Blink reject hash");
+                    assert_eq!(expected_hash.len(), 32);
+                    owner.record_queue.push(reject);
+                    owner.reject_sequence = owner
+                        .reject_sequence
+                        .checked_add(1)
+                        .expect("expected Blink reject sequence");
+                    owner.pending_records = owner
+                        .pending_records
+                        .checked_add(1)
+                        .expect("expected Blink pending records");
+                    owner.reject_previous_hash.copy_from_slice(&expected_hash);
+                    for path in [
+                        "blink.record_queue",
+                        "blink.reject_sequence",
+                        "blink.pending_records",
+                        "blink.reject_previous_hash",
+                    ] {
+                        mark_expected_path(case, path, &mut used_paths);
+                    }
+                }
+                TerminalOutstanding::BlinkPendingCandidates => {
+                    let raw_before = writer
+                        .owner
+                        .raw_accounting_snapshot()
+                        .expect("Blink candidate queue before");
+                    let evidence = EdgeSnapshotEvidenceV1 {
+                        source_generation: 1,
+                        pending_snapshot_sequence: 2,
+                        coverage_sequence: 3,
+                        payload_first_record_sequence: 4,
+                        payload_first_record_hash: B256::repeat_byte(5),
+                        structural_terminal_hash: B256::repeat_byte(6),
+                        connection_sequence: 7,
+                        connection_record_hash: B256::repeat_byte(8),
+                        registry_terminal_record_hash: B256::repeat_byte(9),
+                    };
+                    let expected_detail = EdgeCandidateDetailOracleV1::frozen(epoch, evidence);
+                    expected_detail
+                        .validate_detail()
+                        .expect("validated deterministic candidate fixture");
+                    expected_candidate_detail = Some(expected_detail.clone());
+                    writer
+                        .owner
+                        .stage_deterministic_test_candidate(evidence)
+                        .expect("production candidate staging");
+                    let raw_after = writer
+                        .owner
+                        .raw_accounting_snapshot()
+                        .expect("Blink candidate queue after");
+                    assert_eq!(
+                        raw_before.queues.pending_candidates.checked_add(1),
+                        Some(raw_after.queues.pending_candidates)
+                    );
+                    assert_eq!(raw_after.queues.pending_records, raw_before.queues.pending_records);
+                    assert_eq!(raw_after.queues.staged_count, raw_before.queues.staged_count);
+                    assert_eq!(raw_after.blink.selected_pending, raw_before.blink.selected_pending);
+                    let owner = &mut expected.exact_authority_and_ledgers.blink_owner;
+                    owner.candidate_queue.push(expected_detail.clone());
+                    for (path, value) in [
+                        ("blink.ledger.observed", &mut owner.ledger.observed),
+                        ("blink.ledger.accepted", &mut owner.ledger.accepted),
+                        ("blink.ledger.slot_accepted", &mut owner.ledger.slot_accepted),
+                        (
+                            "blink.ledger.admitted_generations",
+                            &mut owner.ledger.admitted_generations,
+                        ),
+                        ("blink.ledger.processed_terminal", &mut owner.ledger.processed_terminal),
+                        (
+                            "blink.ledger.selected_dto_built_preterminal",
+                            &mut owner.ledger.selected_dto_built_preterminal,
+                        ),
+                        (
+                            "blink.ledger.selected_dto_committed",
+                            &mut owner.ledger.selected_dto_committed,
+                        ),
+                        ("blink.candidate_sequence", &mut owner.candidate_sequence),
+                        ("blink.pending_candidates", &mut owner.pending_candidates),
+                    ] {
+                        checked_expected_increment(case, path, value, 1, &mut used_paths);
+                    }
+                    mark_expected_path(case, "blink.candidate_queue", &mut used_paths);
+                }
+                TerminalOutstanding::BlinkGenerationPending => {
+                    writer.owner.ledger().record_observed().expect("generation pending");
+                    writer
+                        .owner
+                        .ledger()
+                        .record_submission(0, SlotSubmit::Accepted)
+                        .expect("generation admitted");
+                    let snapshot = writer.owner.ledger().snapshot().expect("generation snapshot");
+                    assert_eq!(snapshot.generation_pending, 1);
+                    assert_eq!(snapshot.selected_pending, 0);
+                    let ledger = &mut expected.exact_authority_and_ledgers.blink_owner.ledger;
+                    for (path, value) in [
+                        ("blink.ledger.observed", &mut ledger.observed),
+                        ("blink.ledger.accepted", &mut ledger.accepted),
+                        ("blink.ledger.slot_accepted", &mut ledger.slot_accepted),
+                        ("blink.ledger.admitted_generations", &mut ledger.admitted_generations),
+                    ] {
+                        checked_expected_increment(case, path, value, 1, &mut used_paths);
+                    }
+                    assert_eq!(ledger.generations.insert(0, None), None);
+                    mark_expected_path(case, "blink.ledger.generations", &mut used_paths);
+                }
+                TerminalOutstanding::BlinkSelectedPending => {
+                    writer.owner.ledger().record_observed().expect("generation observed");
+                    writer
+                        .owner
+                        .ledger()
+                        .record_submission(0, SlotSubmit::Accepted)
+                        .expect("generation admitted");
+                    writer
+                        .owner
+                        .ledger()
+                        .record_selected_preterminal(0)
+                        .expect("selection pending");
+                    let snapshot = writer.owner.ledger().snapshot().expect("selection snapshot");
+                    assert_eq!(snapshot.generation_pending, 1);
+                    assert_eq!(snapshot.selected_pending, 1);
+                    let ledger = &mut expected.exact_authority_and_ledgers.blink_owner.ledger;
+                    for (path, value) in [
+                        ("blink.ledger.observed", &mut ledger.observed),
+                        ("blink.ledger.accepted", &mut ledger.accepted),
+                        ("blink.ledger.slot_accepted", &mut ledger.slot_accepted),
+                        ("blink.ledger.admitted_generations", &mut ledger.admitted_generations),
+                        (
+                            "blink.ledger.selected_dto_built_preterminal",
+                            &mut ledger.selected_dto_built_preterminal,
+                        ),
+                    ] {
+                        checked_expected_increment(case, path, value, 1, &mut used_paths);
+                    }
+                    assert_eq!(ledger.generations.insert(0, None), None);
+                    assert_eq!(ledger.selected.insert(0, None), None);
+                    mark_expected_path(case, "blink.ledger.generations", &mut used_paths);
+                    mark_expected_path(case, "blink.ledger.selected", &mut used_paths);
+                }
+                TerminalOutstanding::CandidateLedgerRecords => {
+                    assert!(writer.ledgers.get("candidate").is_none());
+                    writer
+                        .push_rolling_record(
+                            "candidate",
+                            "edge-candidate/v1",
+                            "Candidate",
+                            json!({"case": case.name()}),
+                        )
+                        .expect("production candidate record");
+                    let ledger = writer.ledgers.get("candidate").expect("candidate records");
+                    assert_eq!(ledger.records.len(), 1);
+                    assert!(ledger.pending_publication.is_none());
+                    insert_expected_ledger(
+                        &mut expected.exact_authority_and_ledgers.ledgers,
+                        expected_single_record_ledger(
+                            "candidate",
+                            "edge-candidate/v1",
+                            "Candidate",
+                            epoch,
+                            json!({"case": case.name()}),
+                        ),
+                    );
+                    mark_expected_path(case, "ledgers[candidate]", &mut used_paths);
+                }
+                TerminalOutstanding::CandidatePendingPublication => {
+                    let filename = "candidate-00000000000000000000.ndjson";
+                    fs::write(root.join(filename), b"conflicting durable candidate")
+                        .expect("candidate publication conflict");
+                    writer
+                        .flush_rolling_ledger("candidate")
+                        .expect_err("real candidate publication must remain prepared");
+                    let ledger = writer.ledgers.get("candidate").expect("candidate publication");
+                    let pending = ledger
+                        .pending_publication
+                        .as_ref()
+                        .expect("prepared candidate publication");
+                    assert_eq!(pending.filename, filename);
+                    assert!(!pending.bytes.is_empty());
+                    assert_eq!(
+                        pending.descriptor.file_sha256,
+                        EdgeCanonicalWriterV1::sha256_hex(&pending.bytes)
+                    );
+                    let expected_ledger = expected
+                        .exact_authority_and_ledgers
+                        .ledgers
+                        .iter_mut()
+                        .find(|ledger| ledger.name == "candidate")
+                        .expect("expected candidate ledger");
+                    expected_ledger.pending_publication =
+                        Some(expected_pending_publication(expected_ledger));
+                    mark_expected_path(
+                        case,
+                        "ledgers[candidate].pending_publication",
+                        &mut used_paths,
+                    );
+                }
+                TerminalOutstanding::OpenPublication => {
+                    let filename = "candidate-00000000000000000000.ndjson";
+                    let open_identity = format!("{filename}.open");
+                    fs::create_dir(root.join(&open_identity))
+                        .expect("faulting real candidate open identity");
+                    writer
+                        .flush_rolling_ledger("candidate")
+                        .expect_err("real candidate open publication must remain pending");
+                    let pending = writer
+                        .ledgers
+                        .get("candidate")
+                        .and_then(|ledger| ledger.pending_publication.as_ref())
+                        .expect("candidate open publication tuple");
+                    assert_eq!(pending.filename, filename);
+                    assert!(root.join(format!("{}.open", pending.filename)).is_dir());
+                    let expected_ledger = expected
+                        .exact_authority_and_ledgers
+                        .ledgers
+                        .iter_mut()
+                        .find(|ledger| ledger.name == "candidate")
+                        .expect("expected candidate ledger");
+                    expected_ledger.pending_publication =
+                        Some(expected_pending_publication(expected_ledger));
+                    assert!(expected.open_identities.insert(open_identity));
+                    mark_expected_path(
+                        case,
+                        "ledgers[candidate].pending_publication",
+                        &mut used_paths,
+                    );
+                    mark_expected_path(case, "open_identities", &mut used_paths);
+                }
+                TerminalOutstanding::OpenCleanup => {
+                    let filename = "provenance-00000000000000000000.ndjson";
+                    let bytes = fs::read(root.join(filename)).expect("durable cleanup counterpart");
+                    let digest = EdgeCanonicalWriterV1::sha256_hex(&bytes);
+                    let identity = format!("provenance|{filename}|{digest}");
+                    let open_path = root.join(format!("{filename}.open"));
+                    fs::create_dir(&open_path).expect("failed cleanup residue");
+                    writer.incidents.open_cleanup_failed_after_durable_publish =
+                        EdgeOperationalIncidentV1 {
+                            count: 1,
+                            first_failed_mono_ns: Some(0),
+                            active_identity: Some(identity.clone()),
+                            ..EdgeOperationalIncidentV1::default()
+                        };
+                    writer
+                        .retry_open_cleanup_incident()
+                        .expect_err("real cleanup residue must remain failed");
+                    assert!(open_path.is_dir());
+                    assert_eq!(
+                        writer
+                            .incidents
+                            .open_cleanup_failed_after_durable_publish
+                            .active_identity
+                            .as_deref(),
+                        Some(identity.as_str())
+                    );
+                    assert!(expected.open_identities.insert(format!("{filename}.open")));
+                    expected.incident_identities[2] = Some(identity);
+                    mark_expected_path(case, "open_identities", &mut used_paths);
+                    mark_expected_path(
+                        case,
+                        "incident_identities[open_cleanup_failed_after_durable_publish]",
+                        &mut used_paths,
+                    );
+                }
+                TerminalOutstanding::SourceIdentityGap => {
+                    assert_eq!(writer.source_sequence_by_ledger.insert(("coverage", 99), 99), None);
+                    assert_eq!(
+                        writer.source_sequence_by_ledger,
+                        BTreeMap::from([(("coverage", 99), 99)])
+                    );
+                    assert!(writer.source_durable.is_empty());
+                    assert_eq!(
+                        expected
+                            .exact_authority_and_ledgers
+                            .source_sequence_by_ledger
+                            .insert(("coverage", 99), 99),
+                        None
+                    );
+                    mark_expected_path(case, "source_sequence_by_ledger", &mut used_paths);
+                }
+                TerminalOutstanding::SourceCursorGap => {
+                    assert!(writer.source_durable.insert(writer.source_durable_ack_cursor + 1));
+                    assert!(writer.source_sequence_by_ledger.is_empty());
+                    assert_eq!(writer.source_durable.len(), 1);
+                    assert!(expected.exact_authority_and_ledgers.source_durable.insert(
+                        expected.exact_authority_and_ledgers.source_durable_ack_cursor + 1
+                    ));
+                    mark_expected_path(case, "source_durable", &mut used_paths);
+                }
+                TerminalOutstanding::ProducerClosureFalse => {
+                    assert!(writer.cutoff_batches_flushed);
+                    writer.cutoff_batches_flushed = false;
+                    assert!(writer.cutoff_inner.is_some());
+                    expected.cutoff_batches_flushed = false;
+                    mark_expected_path(case, "cutoff_batches_flushed", &mut used_paths);
+                }
+                TerminalOutstanding::ClosurePredicateFalse => {
+                    assert!(writer.cutoff_inner.take().is_some());
+                    assert!(writer.cutoff_batches_flushed);
+                    expected.cutoff_inner = None;
+                    mark_expected_path(case, "cutoff_inner", &mut used_paths);
+                }
+                TerminalOutstanding::EndpointUnsealed => {
+                    let mut ledger =
+                        EdgeRollingLedgerV1::new("candidate-drop", "edge-writer-diagnostic/v1");
+                    ledger.durable_next_sequence = 1;
+                    writer.ledgers.insert("candidate-drop", ledger);
+                    let endpoint =
+                        writer.ledgers.get("candidate-drop").expect("incomplete endpoint");
+                    assert_eq!(endpoint.durable_next_sequence, 1);
+                    assert_eq!(endpoint.durable_previous_record_hash, EDGE_ZERO_HASH);
+                    assert_eq!(endpoint.durable_next_segment, 0);
+                    assert!(endpoint.records.is_empty());
+                    insert_expected_ledger(
+                        &mut expected.exact_authority_and_ledgers.ledgers,
+                        EdgeLedgerAttemptSnapshotV1 {
+                            name: "candidate-drop",
+                            hash_domain: "edge-writer-diagnostic/v1",
+                            next_sequence: 0,
+                            next_segment: 0,
+                            previous_record_hash: EDGE_ZERO_HASH.to_owned(),
+                            durable_next_sequence: 1,
+                            durable_next_segment: 0,
+                            durable_previous_record_hash: EDGE_ZERO_HASH.to_owned(),
+                            pending_publication: None,
+                            records: Vec::new(),
+                            record_bytes: 0,
+                            batch_started: false,
+                        },
+                    );
+                    mark_expected_path(case, "ledgers[candidate-drop]", &mut used_paths);
+                }
+                TerminalOutstanding::DataUnsealed => {
+                    writer
+                        .push_rolling_record(
+                            "candidate-drop",
+                            "edge-writer-diagnostic/v1",
+                            "CandidateDrop",
+                            json!({"case": case.name()}),
+                        )
+                        .expect("unsealed production data record");
+                    let ledger =
+                        writer.ledgers.get("candidate-drop").expect("unsealed data ledger");
+                    assert_eq!(ledger.records.len(), 1);
+                    assert!(ledger.pending_publication.is_none());
+                    assert_eq!(ledger.durable_next_sequence, 0);
+                    writer
+                        .ledgers
+                        .get_mut("candidate-drop")
+                        .expect("unsealed data ledger")
+                        .next_sequence = u64::MAX;
+                    let mut expected_ledger = expected_single_record_ledger(
+                        "candidate-drop",
+                        "edge-writer-diagnostic/v1",
+                        "CandidateDrop",
+                        epoch,
+                        json!({"case": case.name()}),
+                    );
+                    expected_ledger.next_sequence = u64::MAX;
+                    insert_expected_ledger(
+                        &mut expected.exact_authority_and_ledgers.ledgers,
+                        expected_ledger,
+                    );
+                    mark_expected_path(case, "ledgers[candidate-drop]", &mut used_paths);
+                }
+                TerminalOutstanding::MixedRevisionRace => {
+                    writer.terminal_snapshot_revision_fault = true;
+                    assert!(writer.terminal_snapshot_revision_fault);
+                    expected.terminal_snapshot_revision_fault = true;
+                    mark_expected_path(case, "terminal_snapshot_revision_fault", &mut used_paths);
+                }
+            }
+
+            let after = audit(&writer, &root);
+            assert!(after != before, "{} did not arm a structural authority delta", case.name());
+            assert_literal_registry_sets(
+                case,
+                &after.exact_authority_and_ledgers.source_authority.registry,
+                &expected.exact_authority_and_ledgers.source_authority.registry,
+            );
+            assert_exact_expected_delta(case, &expected, &after, &used_paths);
+            if let Some(expected_detail) = expected_candidate_detail {
+                assert_eq!(
+                    after.exact_authority_and_ledgers.blink_owner.candidate_queue.last(),
+                    Some(&expected_detail),
+                    "production candidate must equal the independent literal detail",
+                );
+            }
+
+            let accounting_before = edge_accounting_file_bytes(&root);
+            let result = writer.write_terminal_accounting();
+            assert!(result.is_err(), "{} unexpectedly reached terminal completion", case.name());
+            assert!(!writer.finalized, "{} finalized after an incomplete boundary", case.name());
+            assert!(
+                edge_accounting_file_bytes(&root) == accounting_before,
+                "{} wrote terminal accounting bytes before complete closure",
+                case.name()
+            );
+            fs::remove_dir_all(root).expect("terminal matrix cleanup");
+            edge_node_result_test_reset_v1();
+            let row_elapsed = row_started_at.elapsed();
+            assert!(
+                row_elapsed < Duration::from_secs(10),
+                "{} terminal rejection row exceeded 10s ({} ms)",
+                case.name(),
+                row_elapsed.as_millis()
+            );
+        }
+
+        let (positive_root, mut positive) =
+            edge_terminal_ready_fixture("terminal-matrix-positive-terminal-last", 400);
+        let accounting_before = edge_accounting_file_bytes(&positive_root);
+        positive.write_terminal_accounting().expect("terminal-last production publication");
+        assert!(positive.finalized);
+        assert!(positive.termination_guard);
+        let accounting_after = edge_accounting_file_bytes(&positive_root);
+        assert_eq!(accounting_after.len(), accounting_before.len() + 1);
+        assert_eq!(
+            accounting_after
+                .keys()
+                .filter(|name| !accounting_before.contains_key(*name))
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["accounting-00000000000000000001.ndjson".to_owned()]
+        );
+        let terminal = positive.ledgers.get("accounting").expect("terminal accounting ledger");
+        assert!(terminal.records.is_empty());
+        assert!(terminal.pending_publication.is_none());
+        assert_eq!(terminal.durable_next_sequence, 2);
+        fs::remove_dir_all(positive_root).expect("positive terminal-last cleanup");
+        edge_node_result_test_reset_v1();
+        assert!(
+            started_at.elapsed() < Duration::from_secs(120),
+            "terminal rejection matrix exceeded its bounded fast-fixture runtime"
+        );
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(terminal_blink_snapshot_conservation_rejection_matrix, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let rows = [
+            TerminalBlinkSnapshotMutationV1::IngressRhsVsObserved,
+            TerminalBlinkSnapshotMutationV1::IngressRhsVsAccepted,
+            TerminalBlinkSnapshotMutationV1::AdmittedSlotEquation,
+            TerminalBlinkSnapshotMutationV1::GenerationTerminalEquation,
+            TerminalBlinkSnapshotMutationV1::SelectedDtoEquation,
+            TerminalBlinkSnapshotMutationV1::CheckedAddOverflow,
+        ];
+        assert_eq!(
+            rows.into_iter().collect::<BTreeSet<_>>(),
+            TerminalBlinkSnapshotMutationV1::ALL.into_iter().collect::<BTreeSet<_>>(),
+            "terminal Blink mutation matrix must cover the exact enum case set"
+        );
+
+        for (index, case) in rows.into_iter().enumerate() {
+            let epoch = 500_u64
+                .checked_add(u64::try_from(index).expect("terminal Blink mutation row"))
+                .expect("terminal Blink mutation epoch");
+            let (root, mut writer) = edge_terminal_ready_fixture(case.name(), epoch);
+            writer.terminal_blink_snapshot_mutation = Some(case);
+            let accounting_before = edge_accounting_file_bytes(&root);
+
+            let error = writer
+                .write_terminal_accounting()
+                .expect_err("contradictory terminal Blink snapshot must fail");
+            assert_eq!(
+                EdgeWriterFailureClassV1::classify(&error),
+                EdgeWriterFailureClassV1::StructuralInvalid,
+                "{} must return a structural error",
+                case.name()
+            );
+            assert_eq!(
+                error
+                    .get_ref()
+                    .and_then(|source| {
+                        source.downcast_ref::<base_mev_trader::EdgeMeasurementError>()
+                    })
+                    .copied(),
+                Some(case.expected_error()),
+                "{} must preserve the typed Blink validation error",
+                case.name()
+            );
+            assert!(!writer.finalized, "{} finalized contradictory accounting", case.name());
+            assert!(
+                writer.owner.cutoff_drained_snapshot().is_ok(),
+                "{} mutated owner authority instead of the local terminal copy",
+                case.name()
+            );
+            let accounting_after = edge_accounting_file_bytes(&root);
+            let new_terminal_bytes = accounting_after
+                .iter()
+                .filter(|(name, _)| !accounting_before.contains_key(*name))
+                .try_fold(0_usize, |total, (_, bytes)| total.checked_add(bytes.len()))
+                .expect("new terminal accounting byte count");
+            assert_eq!(
+                new_terminal_bytes,
+                0,
+                "{} wrote new terminal accounting bytes",
+                case.name()
+            );
+            assert_eq!(
+                accounting_after,
+                accounting_before,
+                "{} changed terminal accounting bytes",
+                case.name()
+            );
+            fs::remove_dir_all(root).expect("terminal Blink mutation cleanup");
+            edge_node_result_test_reset_v1();
+        }
+
+        let (positive_root, mut positive) =
+            edge_terminal_ready_fixture("terminal-blink-positive-terminal-last", 506);
+        let accounting_before = edge_accounting_file_bytes(&positive_root);
+        positive
+            .write_terminal_accounting()
+            .expect("positive terminal Blink production publication");
+        assert!(positive.finalized);
+        assert!(positive.termination_guard);
+        let accounting_after = edge_accounting_file_bytes(&positive_root);
+        assert_eq!(accounting_after.len(), accounting_before.len() + 1);
+        assert_eq!(
+            accounting_after
+                .keys()
+                .filter(|name| !accounting_before.contains_key(*name))
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["accounting-00000000000000000001.ndjson".to_owned()]
+        );
+        let terminal = positive.ledgers.get("accounting").expect("terminal accounting ledger");
+        assert!(terminal.records.is_empty());
+        assert!(terminal.pending_publication.is_none());
+        assert_eq!(terminal.durable_next_sequence, 2);
+        fs::remove_dir_all(positive_root).expect("positive terminal Blink cleanup");
+        edge_node_result_test_reset_v1();
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(edge_terminal_accounting_preserves_nontrivial_raw_authority, {
+        let terminal = edge_fixture_accounting(2);
+        assert_eq!(terminal["snapshotKind"], "terminal");
+        assert_eq!(terminal["state"], "AccountingTerminal");
+        assert_eq!(terminal["blinkAccounting"].as_object().expect("Blink accounting").len(), 17);
+        assert_eq!(terminal["blinkAccounting"]["victimIngressObserved"], "4");
+        assert_eq!(terminal["blinkAccounting"]["victimIngressAccepted"], "4");
+        assert_eq!(terminal["blinkAccounting"]["admittedGenerations"], "3");
+        assert_eq!(terminal["blinkAccounting"]["processedTerminal"], "1");
+        assert_eq!(terminal["blinkAccounting"]["replacedBeforeFrame"], "1");
+        assert_eq!(terminal["blinkAccounting"]["cancelledBeforeFrame"], "1");
+        assert_eq!(
+            terminal["blinkQueues"],
+            json!({
+                "pendingCandidates": "0",
+                "pendingRecords": "0",
+                "stagedCount": "0",
+            })
+        );
+        assert_eq!(terminal["candidateBounds"], json!({"count": "1", "lastSequence": "0"}));
+        assert_eq!(
+            terminal["cutoffWitnesses"]["sourceCutoffRecordHash"],
+            terminal["cutoffRecordHash"]
+        );
+        assert_eq!(
+            terminal["cutoffWitnesses"]["blinkCutoffRecordHash"],
+            terminal["cutoffRecordHash"]
+        );
+        EdgeCanonicalWriterV1::validate_terminal_drain_status(&terminal["drainStatus"])
+            .expect("terminal drain status");
+        let endpoints = terminal["ledgerEndpoints"].as_object().expect("terminal endpoints");
+        assert_eq!(endpoints.len(), 15);
+        for endpoint in endpoints.values() {
+            let records = endpoint["recordCount"]
+                .as_str()
+                .and_then(|value| value.parse::<u64>().ok())
+                .expect("endpoint record count");
+            let segments = endpoint["segmentCount"]
+                .as_str()
+                .and_then(|value| value.parse::<u64>().ok())
+                .expect("endpoint segment count");
+            let hash = endpoint["finalRecordHash"].as_str().expect("endpoint hash");
+            assert_eq!(
+                EdgeCanonicalWriterV1::durable_endpoint_value(records, hash, segments)
+                    .expect("durable endpoint equations"),
+                *endpoint
+            );
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(edge_raw_authority_nontrivial_axes_fixture, {
+        let periodic = edge_fixture_accounting(1);
+        assert_eq!(periodic["snapshotKind"], "periodic");
+        assert_eq!(periodic["nonAuthoritySendCount"], "2");
+        assert_eq!(periodic["candidateDropQueueLossCounts"]["queueClosed"], "1");
+        assert_eq!(periodic["candidateDropQueueLossCounts"]["queueFull"], "1");
+        assert_eq!(
+            periodic["coordinatorMissingEvidenceCounts"],
+            json!({"RegistryDrainSlow": "1", "SnapshotLag": "1"})
+        );
+        assert_eq!(periodic["coordinatorFailureCount"], "2");
+        assert_eq!(periodic["sourceMissingEvidenceCounts"]["missingSourceIdentity"], "1");
+        assert_eq!(periodic["sourceMissingEvidenceCounts"]["coordinatorFailure"], "2");
+        assert_eq!(periodic["sourceCounters"]["missingEvidenceCount"], "3");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(edge_legacy_veto_lineage_and_option3_no_active_veto, {
+        let terminal = edge_fixture_accounting(2);
+        assert_eq!(terminal["producerVetoReasons"], json!([]));
+        assert!(terminal.get("candidateReconcileVeto").is_none());
+        let mut legacy = terminal;
+        legacy.as_object_mut().expect("accounting object").insert(
+            "candidateReconcileVeto".to_owned(),
+            json!("CandidateFreezeV5InputUnavailable"),
+        );
+        let object = legacy.as_object().expect("legacy accounting mutation");
+        assert_ne!(
+            object
+                .keys()
+                .filter(|key| {
+                    !["previousRecordHash", "recordHash", "sequence", "state"]
+                        .contains(&key.as_str())
+                })
+                .count(),
+            EDGE_ACCOUNTING_TOP_LEVEL_ORDER_V1.len()
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(periodic_schedule_retry_counts_once, {
+        let root = edge_writer_root("periodic-identity");
+        let (mut writer, _, _) = edge_writer_fixture(&root, 160);
+        let durable_directory = writer.directory.clone();
+        writer.directory = PathBuf::from("/proc");
+        writer.next_periodic_at = Instant::now();
+        let first = writer.write_periodic_accounting().expect_err("read-only publication fault");
+        assert_eq!(
+            EdgeWriterFailureClassV1::classify(&first),
+            EdgeWriterFailureClassV1::RetryablePrePublicationIo
+        );
+        let identity = writer
+            .incidents
+            .accounting_periodic_write_failed
+            .active_identity
+            .clone()
+            .expect("periodic incident identity");
+        let second = writer.write_periodic_accounting().expect_err("same publication fault");
+        assert_eq!(
+            EdgeWriterFailureClassV1::classify(&second),
+            EdgeWriterFailureClassV1::RetryablePrePublicationIo
+        );
+        let incident = &writer.incidents.accounting_periodic_write_failed;
+        assert_eq!(incident.count, 1);
+        assert_eq!(incident.attempt_count, 2);
+        assert_eq!(incident.active_identity.as_deref(), Some(identity.as_str()));
+        writer.directory = durable_directory;
+        writer.write_periodic_accounting().expect("same-byte recovery");
+        assert_eq!(writer.incidents.accounting_periodic_write_failed.recovered_count, 1);
+        fs::remove_dir_all(root).expect("periodic identity cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(data_write_recovery_impact_table, {
+        let root = edge_writer_root("data-impact");
+        let (mut writer, _, _) = edge_writer_fixture(&root, 161);
+        writer
+            .push_rolling_record(
+                "candidate-drop",
+                "edge-writer-diagnostic/v1",
+                "CandidateDrop",
+                json!({"schema": "edge-candidate-drop/v3", "reason": "fixture"}),
+            )
+            .expect("staged data record");
+        let durable_directory = writer.directory.clone();
+        writer.directory = PathBuf::from("/proc");
+        let error = writer.flush_rolling_ledger("candidate-drop").expect_err("data write fault");
+        assert_eq!(
+            EdgeWriterFailureClassV1::classify(&error),
+            EdgeWriterFailureClassV1::RetryablePrePublicationIo
+        );
+        let attempted = writer.ledgers["candidate-drop"]
+            .pending_publication
+            .as_ref()
+            .expect("immutable pending publication")
+            .bytes
+            .clone();
+        writer.directory = durable_directory;
+        writer.flush_rolling_ledger("candidate-drop").expect("data recovery");
+        let durable = fs::read(root.join("candidate-drop-00000000000000000000.ndjson"))
+            .expect("durable recovered bytes");
+        assert_eq!(attempted, durable);
+        assert_eq!(writer.ledgers["candidate-drop"].durable_next_sequence, 1);
+        assert_eq!(writer.ledgers["candidate-drop"].durable_next_segment, 1);
+        fs::remove_dir_all(root).expect("data impact cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(data_write_recovery_falsification_table, {
+        let attempted = b"immutable pending bytes";
+        let digest = EdgeCanonicalWriterV1::sha256_hex(attempted);
+        EdgeCanonicalWriterV1::validate_data_recovery_bytes(attempted, attempted, &digest)
+            .expect("same bytes and digest");
+        assert!(
+            EdgeCanonicalWriterV1::validate_data_recovery_bytes(
+                attempted,
+                b"changed durable bytes",
+                &digest,
+            )
+            .is_err()
+        );
+        assert!(
+            EdgeCanonicalWriterV1::validate_data_recovery_bytes(
+                attempted,
+                attempted,
+                &"00".repeat(32),
+            )
+            .is_err()
+        );
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(edge_option3_production_fixture_has_no_legacy_finals, {
+        let names = fs::read_dir(edge_option3_fixture_root())
+            .expect("option-3 fixture")
+            .map(|entry| {
+                entry.expect("fixture entry").file_name().into_string().expect("UTF-8 fixture name")
+            })
+            .collect::<BTreeSet<_>>();
+        for legacy in [
+            "artifact-index-v1.json",
+            "blink-final-v1.json",
+            "candidate-detail-final-v1.json",
+            "clock-observations-v1.json",
+            "connection-final-v1.json",
+            "missing-evidence-final.json",
+            "producer-health-final-v1.json",
+            "producer-manifest-v1.json",
+            "producer-provenance-final-v1.json",
+            "registry-final-v1.json",
+            "segment-descriptors-v1.json",
+            "sha256-manifest-v1.json",
+            "source-coverage-final-v1.json",
+            "source-final-v1.json",
+        ] {
+            assert!(!names.contains(legacy), "legacy fixture remains: {legacy}");
+        }
+        assert!(names.iter().all(|name| !name.contains("-final")));
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(edge_option3_allowed_source_set_is_exact, {
+        let actual = fs::read_dir(edge_option3_fixture_root())
+            .expect("option-3 fixture")
+            .map(|entry| {
+                entry.expect("fixture entry").file_name().into_string().expect("UTF-8 fixture name")
+            })
+            .collect::<BTreeSet<_>>();
+        let expected = BTreeSet::from([
+            "accounting-00000000000000000000.ndjson".to_owned(),
+            "accounting-00000000000000000001.ndjson".to_owned(),
+            "accounting-00000000000000000002.ndjson".to_owned(),
+            "candidate-00000000000000000000.ndjson".to_owned(),
+            "clock-00000000000000000000.ndjson".to_owned(),
+            "connection-00000000000000000000.ndjson".to_owned(),
+            "connection-00000000000000000001.ndjson".to_owned(),
+            "coverage-00000000000000000000.ndjson".to_owned(),
+            "coverage-00000000000000000001.ndjson".to_owned(),
+            "coverage-detail-00000000000000000000.ndjson".to_owned(),
+            "coverage-detail-00000000000000000001.ndjson".to_owned(),
+            "cutoff-00000000000000000000.ndjson".to_owned(),
+            "feature-off-frozen-tip-baselines-v1.json".to_owned(),
+            "payload-first-00000000000000000000.ndjson".to_owned(),
+            "producer-contract-manifest16-sample-v1.json".to_owned(),
+            "producer-contract-manifest16-sample-v1.sha256".to_owned(),
+            "provenance-00000000000000000000.ndjson".to_owned(),
+            "registry-h1-00000000000000000000.ndjson".to_owned(),
+            "registry-h2-00000000000000000000.ndjson".to_owned(),
+            "source-detail-00000000000000000000.ndjson".to_owned(),
+            "source-detail-00000000000000000001.ndjson".to_owned(),
+        ]);
+        assert_eq!(actual, expected);
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(edge_retained_authority_bytes_match_frozen_oracle, {
+        for (name, expected) in [
+            (
+                "candidate-00000000000000000000.ndjson",
+                "ad9639ec63262cd25172a46e0f5a7b366fac93b2c27c2dd71530960c2ac7ce72",
+            ),
+            (
+                "clock-00000000000000000000.ndjson",
+                "3c59c5c7071d0a549f2b2e5ff9d7321aec7040c5af9b090994804f0a1c57e3ed",
+            ),
+            (
+                "connection-00000000000000000000.ndjson",
+                "c55a56322a502044b3b183b41196b8c3de68e16058d5a5f3f82265e011462409",
+            ),
+            (
+                "connection-00000000000000000001.ndjson",
+                "71aafab01b9680bcb8b3ed5f2f88c12963c5a53507c9a68f87eaba938e516f8b",
+            ),
+            (
+                "coverage-00000000000000000000.ndjson",
+                "217cae480d0e042faa65d89e74a724753f1f4feff6f637fac53144a89eea216c",
+            ),
+            (
+                "coverage-00000000000000000001.ndjson",
+                "45b6a2ebde6e0eaadd3a862799aebff6224adcf49d4ded65a44a8c558fca3f03",
+            ),
+            (
+                "coverage-detail-00000000000000000000.ndjson",
+                "c3f3c120de82e035f6bab2b156e7b77f5952dfb838c2a483dfc07fa5fe2a584e",
+            ),
+            (
+                "coverage-detail-00000000000000000001.ndjson",
+                "3d83405140e1dfb71ecc8e6d8eba87eede435ea237bf72a29adb65be1109ecd1",
+            ),
+            (
+                "payload-first-00000000000000000000.ndjson",
+                "b91fe04b1309cb1a8bce3b30ddbe828d35fd5a4fbddd1fc301f864a30a3cafd1",
+            ),
+            (
+                "registry-h1-00000000000000000000.ndjson",
+                "4a543f9d6766c5efa5196f6902f736c3c58cae89b984cd2b98255fceb3e7c0cc",
+            ),
+            (
+                "registry-h2-00000000000000000000.ndjson",
+                "707311f84a9eb3b8ff8c7047e25bc36ab87a69f607cf106b503723d812e4c127",
+            ),
+            (
+                "source-detail-00000000000000000000.ndjson",
+                "ac9ca919d6a4b39231fb6db20c15b0c08754ca48645b00b42b0f585791ba73d4",
+            ),
+            (
+                "source-detail-00000000000000000001.ndjson",
+                "4b837ef380d915f6318c45d7ddbfc99134edb6d16e573bbbc2b1933bf474bc4a",
+            ),
+        ] {
+            let bytes = fs::read(edge_option3_fixture_root().join(name)).expect("retained bytes");
+            assert_eq!(EdgeCanonicalWriterV1::sha256_hex(&bytes), expected);
+            let prefix = name
+                .strip_suffix("-00000000000000000000.ndjson")
+                .or_else(|| name.strip_suffix("-00000000000000000001.ndjson"))
+                .expect("retained segment filename");
+            let ordinal = name
+                .strip_suffix(".ndjson")
+                .and_then(|name| name.rsplit_once('-'))
+                .and_then(|(_, ordinal)| ordinal.parse::<u64>().ok())
+                .expect("retained segment ordinal");
+            edge_fixture_segment(prefix, ordinal);
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(pending_publication_fault_matrix_link_success_directory_fsync_failure_retry, {
+        let root = edge_writer_root("immutable-directory-fsync-retry");
+        let (mut writer, _, _) = edge_writer_fixture(&root, 163);
+        let bytes =
+            fs::read(edge_option3_fixture_root().join("candidate-00000000000000000000.ndjson"))
+                .expect("canonical publication bytes");
+        let filename = "fixture-00000000000000000000.ndjson";
+        let durable_hash = "11".repeat(32);
+        let mut ledger = EdgeRollingLedgerV1::new("fixture", "fixture/v1");
+        ledger.next_sequence = 1;
+        ledger.previous_record_hash = durable_hash.clone();
+        ledger.pending_publication = Some(EdgePendingPublicationV1 {
+            filename: filename.to_owned(),
+            bytes: bytes.clone(),
+            descriptor: EdgeSegmentDescriptorV1 {
+                file_sha256: EdgeCanonicalWriterV1::sha256_hex(&bytes),
+            },
+            member_sequences: vec![0],
+            durable_next_sequence: 1,
+            durable_previous_record_hash: durable_hash.clone(),
+        });
+        let pending_bytes =
+            ledger.pending_publication.as_ref().expect("pending publication").bytes.clone();
+
+        writer.directory_handle = Arc::new(File::open("/proc").expect("faulting directory handle"));
+        let fsync_fault =
+            writer.seal_rolling_ledger(&mut ledger).expect_err("publication directory fsync fault");
+        assert_eq!(
+            EdgeWriterFailureClassV1::classify(&fsync_fault),
+            EdgeWriterFailureClassV1::RetryablePrePublicationIo
+        );
+        assert_eq!(fs::read(root.join(filename)).expect("linked final bytes"), pending_bytes);
+        assert_eq!(
+            ledger.pending_publication.as_ref().expect("retryable pending bytes").bytes,
+            pending_bytes
+        );
+        assert_eq!(
+            (
+                ledger.durable_next_sequence,
+                ledger.durable_previous_record_hash.as_str(),
+                ledger.durable_next_segment,
+            ),
+            (0, EDGE_ZERO_HASH, 0)
+        );
+
+        writer.directory_handle =
+            Arc::new(File::open(&root).expect("restored publication directory handle"));
+        let segment = writer
+            .seal_rolling_ledger(&mut ledger)
+            .expect("equal-final retry re-fsyncs publication directory");
+        assert_eq!(segment.member_sequences, [0]);
+        assert!(ledger.pending_publication.is_none());
+        assert_eq!(
+            (
+                ledger.durable_next_sequence,
+                ledger.durable_previous_record_hash.as_str(),
+                ledger.durable_next_segment,
+            ),
+            (1, durable_hash.as_str(), 1)
+        );
+        fs::remove_dir_all(root).expect("directory fsync retry cleanup");
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(post_publication_source_identity_failure_rolls_back_and_equal_retry_commits, {
+        let root = edge_writer_root("post-publication-source-rollback");
+        let (mut writer, recorder, _) = edge_writer_fixture(&root, 164);
+        let bytes =
+            fs::read(edge_option3_fixture_root().join("candidate-00000000000000000000.ndjson"))
+                .expect("canonical publication bytes");
+        let filename = "source-detail-00000000000000000000.ndjson";
+        let durable_hash = "22".repeat(32);
+        let mut ledger = EdgeRollingLedgerV1::new("source-detail", "edge-source-detail/v1");
+        ledger.next_sequence = 1;
+        ledger.previous_record_hash = durable_hash.clone();
+        ledger.pending_publication = Some(EdgePendingPublicationV1 {
+            filename: filename.to_owned(),
+            bytes: bytes.clone(),
+            descriptor: EdgeSegmentDescriptorV1 {
+                file_sha256: EdgeCanonicalWriterV1::sha256_hex(&bytes),
+            },
+            member_sequences: vec![0],
+            durable_next_sequence: 1,
+            durable_previous_record_hash: durable_hash.clone(),
+        });
+        let pending_before =
+            ledger.pending_publication.as_ref().expect("pending publication").bytes.clone();
+        let source_maps_before = writer.source_sequence_by_ledger.clone();
+        let source_set_before = writer.source_durable.clone();
+        let source_cursor_before = writer.source_durable_ack_cursor;
+        let source_counters_before = recorder.source_final_counters();
+
+        let error = writer
+            .seal_rolling_ledger(&mut ledger)
+            .expect_err("missing source identity after durable final");
+        assert_eq!(error.to_string(), "source durable identity missing");
+        assert_eq!(fs::read(root.join(filename)).expect("durable final bytes"), bytes);
+        assert_eq!(
+            ledger.pending_publication.as_ref().expect("restored pending bytes").bytes,
+            pending_before
+        );
+        assert_eq!(ledger.durable_next_sequence, 0);
+        assert_eq!(ledger.durable_previous_record_hash, EDGE_ZERO_HASH);
+        assert_eq!(ledger.durable_next_segment, 0);
+        assert_eq!(writer.source_sequence_by_ledger, source_maps_before);
+        assert_eq!(writer.source_durable, source_set_before);
+        assert_eq!(writer.source_durable_ack_cursor, source_cursor_before);
+        assert_eq!(recorder.source_final_counters(), source_counters_before);
+
+        assert!(
+            writer.source_sequence_by_ledger.insert(("source-detail", 0), 0).is_none(),
+            "retry identity must be unique"
+        );
+        let segment = writer
+            .seal_rolling_ledger(&mut ledger)
+            .expect("equal-final structurally repaired retry");
+        assert_eq!(segment.member_sequences, [0]);
+        assert!(ledger.pending_publication.is_none());
+        assert_eq!(ledger.durable_next_sequence, 1);
+        assert_eq!(ledger.durable_previous_record_hash, durable_hash);
+        assert_eq!(ledger.durable_next_segment, 1);
+        assert_eq!(writer.source_durable_ack_cursor, 1);
+        fs::remove_dir_all(root).expect("source rollback cleanup");
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(immutable_publication_adopts_equal_open_and_cleans_mismatched_open, {
+        let root = edge_writer_root("immutable-open-retry");
+        let (writer, _, _) = edge_writer_fixture(&root, 163);
+        let bytes =
+            fs::read(edge_option3_fixture_root().join("candidate-00000000000000000000.ndjson"))
+                .expect("canonical publication bytes");
+
+        let adopted_filename = "adopted-00000000000000000000.ndjson";
+        let adopted_open = root.join(format!("{adopted_filename}.open"));
+        let mut adopted = File::create(&adopted_open).expect("equal open file");
+        adopted.write_all(&bytes).expect("equal open bytes");
+        adopted.sync_all().expect("equal open fsync");
+        drop(adopted);
+        writer.persist_immutable(adopted_filename, &bytes).expect("equal open adoption");
+        assert_eq!(fs::read(root.join(adopted_filename)).expect("adopted final bytes"), bytes);
+        assert!(!adopted_open.try_exists().expect("adopted open absence"));
+
+        let retried_filename = "retried-00000000000000000000.ndjson";
+        let retried_open = root.join(format!("{retried_filename}.open"));
+        fs::write(&retried_open, b"partial stale bytes").expect("mismatched open bytes");
+        let collision = writer
+            .persist_immutable(retried_filename, &bytes)
+            .expect_err("mismatched open must retry");
+        assert_eq!(
+            EdgeWriterFailureClassV1::classify(&collision),
+            EdgeWriterFailureClassV1::RetryablePrePublicationIo
+        );
+        assert!(!retried_open.try_exists().expect("mismatched open cleanup"));
+        writer
+            .persist_immutable(retried_filename, &bytes)
+            .expect("publication after mismatched open cleanup");
+        assert_eq!(fs::read(root.join(retried_filename)).expect("retried final bytes"), bytes);
+
+        let conflict_filename = "conflict-00000000000000000000.ndjson";
+        fs::write(root.join(conflict_filename), b"different immutable bytes")
+            .expect("conflicting final bytes");
+        let conflict = writer
+            .persist_immutable(conflict_filename, &bytes)
+            .expect_err("different final bytes must conflict");
+        assert_eq!(
+            EdgeWriterFailureClassV1::classify(&conflict),
+            EdgeWriterFailureClassV1::StructuralInvalid
+        );
+        assert!(conflict.get_ref().is_some_and(|error| error.is::<EdgeWriterStructuralErrorV1>()));
+        fs::remove_dir_all(root).expect("immutable open retry cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(open_cleanup_filesystem_fault_is_retryable_and_preserves_identity, {
+        let root = edge_writer_root("open-cleanup-retry");
+        let (mut writer, _, _) = edge_writer_fixture(&root, 164);
+        let filename = "candidate-00000000000000000000.ndjson";
+        let bytes = b"durable cleanup bytes";
+        let digest = EdgeCanonicalWriterV1::sha256_hex(bytes);
+        let identity = format!("candidate|{filename}|{digest}");
+        fs::write(root.join(filename), bytes).expect("cleanup final bytes");
+        let open_path = root.join(format!("{filename}.open"));
+        fs::create_dir(&open_path).expect("faulting open path");
+        writer.incidents.open_cleanup_failed_after_durable_publish = EdgeOperationalIncidentV1 {
+            count: 1,
+            first_failed_mono_ns: Some(0),
+            active_identity: Some(identity.clone()),
+            ..EdgeOperationalIncidentV1::default()
+        };
+
+        let fault =
+            writer.retry_open_cleanup_incident().expect_err("open cleanup filesystem fault");
+        assert_eq!(
+            EdgeWriterFailureClassV1::classify(&fault),
+            EdgeWriterFailureClassV1::RetryablePrePublicationIo
+        );
+        assert_eq!(
+            writer.incidents.open_cleanup_failed_after_durable_publish.active_identity.as_deref(),
+            Some(identity.as_str())
+        );
+
+        fs::remove_dir(&open_path).expect("remove faulting open path");
+        fs::write(&open_path, bytes).expect("recoverable open bytes");
+        writer.retry_open_cleanup_incident().expect("same-byte cleanup recovery");
+        let incident = &writer.incidents.open_cleanup_failed_after_durable_publish;
+        assert_eq!(incident.recovered_count, 1);
+        assert!(incident.active_identity.is_none());
+        assert!(!open_path.try_exists().expect("recovered open absence"));
+        fs::remove_dir_all(root).expect("open cleanup retry cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(periodic_cadence_runs_inside_writer_task_and_spawn_seal_remains_five, {
+        const CLI_SOURCE: &str = include_str!("mev_trader.rs");
+        const TASK_SPAWN: &str = concat!("tokio", "::spawn");
+        assert_eq!(CLI_SOURCE.matches(TASK_SPAWN).count(), 5);
+
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let root = edge_writer_root("periodic-cadence-seal");
+        let (mut writer, _, _) = edge_writer_fixture(&root, 405);
+        writer.prepare().expect("writer startup");
+        let durable_directory = writer.directory.clone();
+        writer.directory = PathBuf::from("/proc");
+        writer.next_periodic_at = Instant::now();
+        assert!(
+            writer.run_due_periodic_accounting(Instant::now()).expect("retryable cadence tick")
+        );
+        assert_eq!(writer.incidents.accounting_periodic_write_failed.count, 1);
+        assert_eq!(writer.incidents.accounting_periodic_write_failed.recovered_count, 0);
+        assert!(writer.next_periodic_at > Instant::now());
+
+        writer.directory = durable_directory;
+        writer.next_periodic_at = Instant::now();
+        assert!(writer.run_due_periodic_accounting(Instant::now()).expect("recovery cadence tick"));
+        assert_eq!(writer.incidents.accounting_periodic_write_failed.count, 1);
+        assert_eq!(writer.incidents.accounting_periodic_write_failed.recovered_count, 1);
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("periodic cadence cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(writer_failure_classification_is_structural_and_not_message_based, {
+        for error in [
+            EdgeWriterFailureClassV1::immutable_conflict(),
+            io::Error::other("durable re-read mismatch"),
+            io::Error::other("final byte verification mismatch"),
+            io::Error::other("pending publication member sequence is absent"),
+            io::Error::other("pending publication terminal tuple differs from staged state"),
+            io::Error::other("rolling ledger sequence overflow"),
+            io::Error::other("record hash contradiction"),
+            io::Error::other("opaque producer invariant"),
+            io::Error::new(io::ErrorKind::InvalidData, "canonical form rejected"),
+            io::Error::new(io::ErrorKind::InvalidInput, "invalid producer tuple"),
+        ] {
+            assert_eq!(
+                EdgeWriterFailureClassV1::classify(&error),
+                EdgeWriterFailureClassV1::StructuralInvalid
+            );
+        }
+        for kind in [
+            io::ErrorKind::ReadOnlyFilesystem,
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::StorageFull,
+        ] {
+            assert_eq!(
+                EdgeWriterFailureClassV1::classify(&io::Error::from(kind)),
+                EdgeWriterFailureClassV1::RetryablePrePublicationIo
+            );
+        }
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(writer_retry_delay_is_preempted_when_cutoff_latches, {
+        let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: NonZeroU64::new(165).expect("nonzero epoch"),
+            event_queue_capacity: 64,
+            active_state_capacity: 64,
+            pending_registry_capacity: 64,
+            terminal_record_capacity: 64,
+        })
+        .expect("production recorder");
+        assert!(!recorder.cutoff_latched());
+        let worker_recorder = Arc::clone(&recorder);
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(0);
+        let (completed_tx, completed_rx) = std::sync::mpsc::sync_channel(0);
+        let handle = std::thread::spawn(move || {
+            let mut announced = false;
+            EdgeWriterFailureClassV1::wait_for_retry_delay_until_cutoff(
+                Duration::from_secs(60),
+                || {
+                    if !announced {
+                        started_tx.send(()).expect("announce retry delay");
+                        announced = true;
+                    }
+                    worker_recorder.cutoff_latched()
+                },
+            );
+            completed_tx.send(()).expect("announce retry completion");
+        });
+
+        started_rx.recv().expect("retry delay started");
+        recorder.prepare_cutoff();
+        assert!(recorder.cutoff_latched());
+        completed_rx
+            .recv_timeout(Duration::from_millis(250))
+            .expect("latched cutoff must preempt the long retry delay");
+        handle.join().expect("retry-delay worker");
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(writer_deadline_latch_blocks_publication_and_durable_tuple_advance, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let root = edge_writer_root("writer-deadline-latch");
+        let (mut writer, recorder, _) = edge_writer_fixture(&root, 166);
+        assert!(recorder.observe_wire(b"before-prepare").is_none());
+        writer.prepare().expect("startup authority");
+        let admission = recorder.observe_wire(b"after-prepare").expect("post-prepare admission");
+        recorder.decode_rejected(admission);
+        writer
+            .push_rolling_record(
+                "candidate-drop",
+                "edge-writer-diagnostic/v1",
+                "CandidateDrop",
+                json!({"schema": "edge-candidate-drop/v3", "reason": "deadline-fixture"}),
+            )
+            .expect("pre-deadline staged record");
+        let before = (
+            writer.ledgers["candidate-drop"].durable_next_sequence,
+            writer.ledgers["candidate-drop"].durable_next_segment,
+            writer.ledgers["candidate-drop"].durable_previous_record_hash.clone(),
+        );
+
+        writer.deadline_cancellation.cancel();
+        let error = writer
+            .flush_rolling_ledger("candidate-drop")
+            .expect_err("deadline latch rejects publication");
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert_eq!(
+            (
+                writer.ledgers["candidate-drop"].durable_next_sequence,
+                writer.ledgers["candidate-drop"].durable_next_segment,
+                writer.ledgers["candidate-drop"].durable_previous_record_hash.clone(),
+            ),
+            before
+        );
+        assert!(
+            !root
+                .join("candidate-drop-00000000000000000000.ndjson")
+                .try_exists()
+                .expect("candidate artifact absence")
+        );
+        assert!(
+            writer
+                .push_rolling_record(
+                    "candidate-drop",
+                    "edge-writer-diagnostic/v1",
+                    "CandidateDrop",
+                    json!({"schema": "edge-candidate-drop/v3", "reason": "post-deadline"}),
+                )
+                .is_err()
+        );
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("writer deadline cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(cutoff_deadline_latch_blocks_every_cutoff_authority_boundary, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let root = edge_writer_root("cutoff-deadline-latch");
+        let (mut writer, recorder, owner) = edge_writer_fixture(&root, 167);
+        writer.prepare().expect("startup authority");
+        let latched = EdgeCutoffLatchV1::default();
+        let deadline_cancellation = EdgeShutdownDeadlineCancellationV1::default();
+        deadline_cancellation.cancel();
+
+        latch_edge_cutoff_once(&latched, &deadline_cancellation, &recorder, &owner);
+
+        assert!(!latched.started.load(Ordering::Acquire));
+        assert!(!latched.completed.load(Ordering::Acquire));
+        assert!(!recorder.cutoff_latched());
+        assert!(!recorder.cutoff_sealed());
+        assert!(recorder.raw_accounting_snapshot().expect("source authority snapshot").4.is_none());
+        assert!(
+            owner.raw_accounting_snapshot().expect("Blink authority snapshot").cutoff.is_none()
+        );
+        assert!(writer.cutoff_inner.is_none());
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("cutoff deadline cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(deadline_gate_publication_race_has_total_order, {
+        let bytes =
+            fs::read(edge_option3_fixture_root().join("candidate-00000000000000000000.ndjson"))
+                .expect("canonical publication bytes");
+
+        let committed_root = edge_writer_root("deadline-publication-committed");
+        let (committed_writer, _, _) = edge_writer_fixture(&committed_root, 168);
+        let committed_cancellation = Arc::clone(&committed_writer.deadline_cancellation);
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        committed_cancellation.install_hook(
+            EdgeShutdownAuthorityBoundaryV1::Publication,
+            Arc::clone(&entered),
+            Arc::clone(&release),
+        );
+        let committed_bytes = bytes.clone();
+        let publication = std::thread::spawn(move || {
+            committed_writer.persist_immutable(
+                "publication-committed-00000000000000000000.ndjson",
+                &committed_bytes,
+            )
+        });
+        entered.wait();
+        let (cancel_started_tx, cancel_started_rx) = std::sync::mpsc::sync_channel(0);
+        let cancel_cancellation = Arc::clone(&committed_cancellation);
+        let cancel = std::thread::spawn(move || {
+            cancel_started_tx.send(()).expect("publication cancel attempt");
+            cancel_cancellation.cancel();
+        });
+        cancel_started_rx.recv().expect("publication cancel contends");
+        release.wait();
+        publication.join().expect("publication worker").expect("publication wins gate");
+        cancel.join().expect("publication cancellation worker");
+        assert!(committed_cancellation.is_cancelled());
+        assert_eq!(
+            fs::read(committed_root.join("publication-committed-00000000000000000000.ndjson"))
+                .expect("committed publication"),
+            bytes
+        );
+
+        let cancelled_root = edge_writer_root("deadline-publication-cancelled");
+        let (cancelled_writer, _, _) = edge_writer_fixture(&cancelled_root, 169);
+        let cancelled_cancellation = Arc::clone(&cancelled_writer.deadline_cancellation);
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        cancelled_cancellation.install_hook(
+            EdgeShutdownAuthorityBoundaryV1::Cancel,
+            Arc::clone(&entered),
+            Arc::clone(&release),
+        );
+        let cancel_cancellation = Arc::clone(&cancelled_cancellation);
+        let cancel = std::thread::spawn(move || cancel_cancellation.cancel());
+        entered.wait();
+        let cancelled_bytes = bytes.clone();
+        let publication = std::thread::spawn(move || {
+            cancelled_writer.persist_immutable(
+                "publication-cancelled-00000000000000000000.ndjson",
+                &cancelled_bytes,
+            )
+        });
+        release.wait();
+        cancel.join().expect("winning cancellation worker");
+        let error = publication
+            .join()
+            .expect("cancelled publication worker")
+            .expect_err("cancellation wins publication gate");
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert!(
+            !cancelled_root
+                .join("publication-cancelled-00000000000000000000.ndjson")
+                .try_exists()
+                .expect("cancelled publication absence")
+        );
+
+        fs::remove_dir_all(committed_root).expect("committed publication cleanup");
+        fs::remove_dir_all(cancelled_root).expect("cancelled publication cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(deadline_gate_tuple_and_ordered_ack_races_have_total_order, {
+        #[derive(Clone, Copy)]
+        enum OrderedAckPath {
+            Source,
+            Registry,
+        }
+
+        fn pending_publication(
+            label: &str,
+            producer_epoch: u64,
+            path: OrderedAckPath,
+        ) -> (PathBuf, EdgeCanonicalWriterV1, &'static str, u64, u64) {
+            let root = edge_writer_root(label);
+            let (mut writer, recorder, _) = edge_writer_fixture(&root, producer_epoch);
+            writer.prepare().expect("startup authority");
+
+            let pending = Arc::new(pending_blocks());
+            let registry = recorder.registry();
+            match path {
+                OrderedAckPath::Source => {
+                    let registration = registry.register(&pending, None);
+                    assert_eq!(registration.pending_snapshot_sequence, Some(0));
+                    registry
+                        .record_send(registration, None)
+                        .expect("terminalize no-receiver registry publication");
+
+                    let admission =
+                        recorder.observe_wire(label.as_bytes()).expect("wire admission");
+                    recorder.decode_rejected(admission);
+                }
+                OrderedAckPath::Registry => {
+                    let flashblock = pending.get_flashblocks().remove(0);
+                    let admission =
+                        recorder.observe_wire(label.as_bytes()).expect("wire admission");
+                    let generation = recorder
+                        .decoded_flashblock(admission, &flashblock)
+                        .expect("decoded source generation");
+                    assert_eq!(recorder.take_source_generation(&flashblock), Some(generation));
+
+                    let registration = registry.register(&pending, Some(generation));
+                    let pending_sequence = registration
+                        .pending_snapshot_sequence
+                        .expect("registered pending snapshot");
+                    registry
+                        .record_send(registration, None)
+                        .expect("terminalize no-receiver registry publication");
+                    recorder.record_deterministic_test_product(generation, pending_sequence);
+                }
+            }
+            assert!(writer.drain_once().expect("production source and registry drain"));
+            let ledger = match path {
+                OrderedAckPath::Source => {
+                    writer.flush_rolling_ledger("clock").expect("ordered source clock publication");
+                    writer
+                        .flush_rolling_ledger("coverage")
+                        .expect("ordered source coverage publication");
+                    "coverage-detail"
+                }
+                OrderedAckPath::Registry => {
+                    writer.flush_rolling_ledger("registry-h1").expect("registry H1 publication");
+                    "registry-h2"
+                }
+            };
+            let pending_ledger = writer.ledgers.get(ledger).expect("pending production ledger");
+            assert!(
+                !pending_ledger.records.is_empty(),
+                "race ledger must contain a real staged publication"
+            );
+            match path {
+                OrderedAckPath::Source => assert!(
+                    writer
+                        .source_sequence_by_ledger
+                        .keys()
+                        .any(|(pending_ledger, _)| *pending_ledger == ledger),
+                    "source publication must carry ordered ACK work"
+                ),
+                OrderedAckPath::Registry => assert!(
+                    writer.registry_pending.contains_key(&writer.registry_durable_cursor),
+                    "registry publication must carry ordered ACK work"
+                ),
+            }
+            let durable_before = pending_ledger.durable_next_sequence;
+            let ack_before = match path {
+                OrderedAckPath::Source => writer.source_durable_ack_cursor,
+                OrderedAckPath::Registry => writer.registry_durable_cursor,
+            };
+            (root, writer, ledger, durable_before, ack_before)
+        }
+
+        fn race(path: OrderedAckPath, authority_wins: bool, label: &str, producer_epoch: u64) {
+            let (root, mut writer, ledger, durable_before, ack_before) =
+                pending_publication(label, producer_epoch, path);
+            let cancellation = Arc::clone(&writer.deadline_cancellation);
+            let entered = Arc::new(std::sync::Barrier::new(2));
+            let release = Arc::new(std::sync::Barrier::new(2));
+            let boundary = if authority_wins {
+                EdgeShutdownAuthorityBoundaryV1::Publication
+            } else {
+                EdgeShutdownAuthorityBoundaryV1::Cancel
+            };
+            cancellation.install_hook(boundary, Arc::clone(&entered), Arc::clone(&release));
+
+            if authority_wins {
+                let publication = std::thread::spawn(move || {
+                    let result = writer.flush_rolling_ledger(ledger);
+                    (result, writer)
+                });
+                entered.wait();
+                let (cancel_started_tx, cancel_started_rx) = std::sync::mpsc::sync_channel(0);
+                let cancel_cancellation = Arc::clone(&cancellation);
+                let cancel = std::thread::spawn(move || {
+                    cancel_started_tx.send(()).expect("group cancellation attempt");
+                    cancel_cancellation.cancel();
+                });
+                cancel_started_rx.recv().expect("group cancellation contends");
+                release.wait();
+                let (result, writer) = publication.join().expect("publication worker");
+                result.expect("publication tuple and ordered ACK win");
+                cancel.join().expect("group-losing cancellation");
+                assert!(
+                    writer
+                        .ledgers
+                        .get(ledger)
+                        .expect("committed production ledger")
+                        .durable_next_sequence
+                        > durable_before
+                );
+                let ack_after = match path {
+                    OrderedAckPath::Source => writer.source_durable_ack_cursor,
+                    OrderedAckPath::Registry => writer.registry_durable_cursor,
+                };
+                assert!(ack_after > ack_before);
+                if let OrderedAckPath::Registry = path {
+                    assert!(!writer.registry_pending.contains_key(&ack_before));
+                    let registry =
+                        writer.recorder.registry().snapshot().expect("checked pending total");
+                    assert_eq!(registry.coverage_queue_pending_ack, 0);
+                    assert_eq!(registry.durability_acked, 1);
+                    assert_eq!(registry.primary_pending, 0);
+                }
+                assert!(cancellation.is_cancelled());
+            } else {
+                let cancel_cancellation = Arc::clone(&cancellation);
+                let cancel = std::thread::spawn(move || cancel_cancellation.cancel());
+                entered.wait();
+                let publication = std::thread::spawn(move || {
+                    let result = writer.flush_rolling_ledger(ledger);
+                    (result, writer)
+                });
+                release.wait();
+                cancel.join().expect("winning cancellation");
+                let (result, writer) = publication.join().expect("cancelled publication worker");
+                let error =
+                    result.expect_err("cancellation wins publication tuple and ordered ACK");
+                assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+                assert_eq!(
+                    writer
+                        .ledgers
+                        .get(ledger)
+                        .expect("uncommitted production ledger")
+                        .durable_next_sequence,
+                    durable_before
+                );
+                let ack_after = match path {
+                    OrderedAckPath::Source => writer.source_durable_ack_cursor,
+                    OrderedAckPath::Registry => writer.registry_durable_cursor,
+                };
+                assert_eq!(ack_after, ack_before);
+                if let OrderedAckPath::Registry = path {
+                    assert!(writer.registry_pending.contains_key(&ack_before));
+                    let registry =
+                        writer.recorder.registry().snapshot().expect("checked pending total");
+                    assert_eq!(registry.coverage_queue_pending_ack, 1);
+                    assert_eq!(registry.durability_acked, 0);
+                    assert_eq!(registry.primary_pending, 1);
+                }
+            }
+            fs::remove_dir_all(root).expect("tuple and ordered ACK race cleanup");
+        }
+
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        race(OrderedAckPath::Source, true, "source-group-committed", 168);
+        edge_node_result_test_reset_v1();
+        race(OrderedAckPath::Source, false, "source-group-cancelled", 169);
+        edge_node_result_test_reset_v1();
+        race(OrderedAckPath::Registry, true, "registry-group-committed", 170);
+        edge_node_result_test_reset_v1();
+        race(OrderedAckPath::Registry, false, "registry-group-cancelled", 171);
+        edge_node_result_test_reset_v1();
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(deadline_gate_cutoff_race_has_total_order, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let committed_root = edge_writer_root("deadline-cutoff-committed");
+        let (mut writer, recorder, owner) = edge_writer_fixture(&committed_root, 170);
+        writer.prepare().expect("startup authority");
+        let cancellation = Arc::clone(&writer.deadline_cancellation);
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        cancellation.install_hook(
+            EdgeShutdownAuthorityBoundaryV1::CutoffCommit,
+            Arc::clone(&entered),
+            Arc::clone(&release),
+        );
+        let latched = Arc::new(EdgeCutoffLatchV1::default());
+        let cutoff_latched = Arc::clone(&latched);
+        let cutoff_cancellation = Arc::clone(&cancellation);
+        let cutoff_recorder = Arc::clone(&recorder);
+        let cutoff_owner = Arc::clone(&owner);
+        let cutoff = std::thread::spawn(move || {
+            latch_edge_cutoff_once(
+                &cutoff_latched,
+                &cutoff_cancellation,
+                &cutoff_recorder,
+                &cutoff_owner,
+            );
+        });
+        entered.wait();
+        let cancel_cancellation = Arc::clone(&cancellation);
+        let cancel = std::thread::spawn(move || cancel_cancellation.cancel());
+        release.wait();
+        cutoff.join().expect("cutoff authority worker");
+        cancel.join().expect("cutoff-losing cancellation");
+        assert!(latched.completed.load(Ordering::Acquire));
+        assert!(recorder.raw_accounting_snapshot().expect("source cutoff authority").4.is_some());
+        assert!(owner.raw_accounting_snapshot().expect("owner cutoff authority").cutoff.is_some());
+
+        edge_node_result_test_reset_v1();
+        let cancelled_root = edge_writer_root("deadline-cutoff-cancelled");
+        let (mut writer, recorder, owner) = edge_writer_fixture(&cancelled_root, 171);
+        writer.prepare().expect("startup authority");
+        let cancellation = Arc::clone(&writer.deadline_cancellation);
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        cancellation.install_hook(
+            EdgeShutdownAuthorityBoundaryV1::Cancel,
+            Arc::clone(&entered),
+            Arc::clone(&release),
+        );
+        let cancel_cancellation = Arc::clone(&cancellation);
+        let cancel = std::thread::spawn(move || cancel_cancellation.cancel());
+        entered.wait();
+        let latched = Arc::new(EdgeCutoffLatchV1::default());
+        let cutoff_latched = Arc::clone(&latched);
+        let cutoff_cancellation = Arc::clone(&cancellation);
+        let cutoff_recorder = Arc::clone(&recorder);
+        let cutoff_owner = Arc::clone(&owner);
+        let cutoff = std::thread::spawn(move || {
+            latch_edge_cutoff_once(
+                &cutoff_latched,
+                &cutoff_cancellation,
+                &cutoff_recorder,
+                &cutoff_owner,
+            );
+        });
+        release.wait();
+        cancel.join().expect("winning cutoff cancellation");
+        cutoff.join().expect("cancelled cutoff worker");
+        assert!(recorder.raw_accounting_snapshot().expect("source cutoff absence").4.is_none());
+        assert!(owner.raw_accounting_snapshot().expect("owner cutoff absence").cutoff.is_none());
+
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(committed_root).expect("committed cutoff cleanup");
+        fs::remove_dir_all(cancelled_root).expect("cancelled cutoff cleanup");
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(shutdown_registry_drain_timeout_records_dynamic_reason_and_oob_before_abort, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let root = edge_writer_root("registry-timeout");
+        let recorder = edge_node_result_test_install_v1(&root, 162);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("test runtime");
+        runtime.block_on(async {
+            let handle = tokio::task::spawn(async {
+                std::future::pending::<()>().await;
+            });
+            handle_snapshot_shutdown_outcome(
+                EdgeShutdownTaskOutcome::TimedOut(handle),
+                &EdgeMeasurementGlobal::registry_handle(),
+            );
+        });
+        assert_eq!(
+            recorder
+                .coordinator_missing_evidence_counts()
+                .snapshot()
+                .iter()
+                .find(|(reason, _)| *reason == "ShutdownRegistryDrainTimedOut")
+                .map(|(_, count)| *count),
+            Some(1)
+        );
+        let lines = fs::read_to_string(root.join("edge-writer-failures-v1.ndjson"))
+            .expect("timeout OOB line");
+        let line: JsonValue =
+            serde_json::from_str(lines.lines().next().expect("timeout line")).expect("OOB JSON");
+        assert_eq!(line["stage"], "shutdown");
+        assert_eq!(line["reason"], "ShutdownRegistryDrainTimedOut");
+        assert!(!lines.contains("SnapshotTaskJoinTimeout"));
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("registry timeout cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(node_result_shutdown_outcome_table, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let root = edge_writer_root("node-outcome-table");
+        let recorder = edge_node_result_test_install_v1(&root, 163);
+        handle_snapshot_shutdown_outcome(
+            EdgeShutdownTaskOutcome::Completed(()),
+            &EdgeMeasurementGlobal::registry_handle(),
+        );
+        assert!(recorder.coordinator_missing_evidence_counts().snapshot().is_empty());
+        handle_snapshot_shutdown_outcome(
+            EdgeShutdownTaskOutcome::JoinFailed,
+            &EdgeMeasurementGlobal::registry_handle(),
+        );
+        assert_eq!(
+            recorder
+                .coordinator_missing_evidence_counts()
+                .snapshot()
+                .iter()
+                .find(|(reason, _)| *reason == "SnapshotTaskJoinFailed")
+                .map(|(_, count)| *count),
+            Some(1)
+        );
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("node outcome cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(same_ledger_1024_rollover_retry_retains_1024th_admission_exactly_once, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let root = edge_writer_root("same-ledger-source-drain-retry");
+        let (mut writer, _, _) = edge_writer_fixture(&root, 401);
+        let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: NonZeroU64::new(401).expect("nonzero producer epoch"),
+            event_queue_capacity: base_flashblocks::EDGE_EVENT_QUEUE_CAPACITY_MAX_V1,
+            active_state_capacity: 64,
+            pending_registry_capacity: 64,
+            terminal_record_capacity: 64,
+        })
+        .expect("production source recorder with reviewed queue bound");
+        writer.recorder = Arc::clone(&recorder);
+        writer.prepare().expect("startup authority");
+        assert!(writer.drain_once().expect("startup clock drain"));
+        writer
+            .flush_rolling_ledger("clock")
+            .expect("startup clock publication")
+            .expect("startup clock segment");
+        assert_eq!(writer.source_durable_ack_cursor, 1);
+        let healthy_directory_handle = Arc::clone(&writer.directory_handle);
+
+        let prefill_count = EDGE_SEGMENT_MAX_RECORDS - 1;
+        for ordinal in 0..prefill_count {
+            let bytes = format!("same-ledger-coverage-{ordinal}");
+            let admission = recorder.observe_wire(bytes.as_bytes()).expect("coverage admission");
+            recorder.decode_rejected(admission);
+            assert!(writer.drain_once().expect("coverage admission drain"), "ordinal {ordinal}");
+
+            let coverage = writer.ledgers.get("coverage").expect("coverage ledger");
+            assert_eq!(coverage.next_sequence, (ordinal + 1) as u64, "ordinal {ordinal}");
+            assert_eq!(coverage.records.len(), ordinal + 1, "ordinal {ordinal}");
+
+            let expected_detail_sequence = 2 * (ordinal + 1);
+            let detail = writer.ledgers.get("coverage-detail").expect("coverage-detail ledger");
+            assert_eq!(detail.next_sequence, expected_detail_sequence as u64, "ordinal {ordinal}");
+            assert_eq!(
+                detail.records.len(),
+                expected_detail_sequence % EDGE_SEGMENT_MAX_RECORDS,
+                "two-detail-record auto-seal boundary, ordinal {ordinal}"
+            );
+
+            if writer.ledgers.get("clock").is_some_and(|ledger| !ledger.records.is_empty()) {
+                writer
+                    .flush_rolling_ledger("clock")
+                    .expect("optional periodic anchor publication")
+                    .expect("optional periodic anchor segment");
+            }
+        }
+
+        writer
+            .flush_rolling_ledger("coverage-detail")
+            .expect("prefill detail-tail publication")
+            .expect("prefill detail-tail segment");
+        assert_eq!(
+            writer.ledgers.get("coverage").expect("prefilled coverage ledger").records.len(),
+            prefill_count
+        );
+        assert_eq!(
+            writer.ledgers.get("coverage").expect("prefilled coverage ledger").next_sequence,
+            prefill_count as u64
+        );
+        assert_eq!(writer.source_sequence_by_ledger.len(), prefill_count);
+        assert!(
+            writer
+                .source_sequence_by_ledger
+                .keys()
+                .all(|(ledger, sequence)| *ledger == "coverage" && *sequence < prefill_count as u64)
+        );
+
+        let boundary_ordinal = prefill_count;
+        let boundary_bytes = format!("same-ledger-coverage-{boundary_ordinal}");
+        let boundary_admission =
+            recorder.observe_wire(boundary_bytes.as_bytes()).expect("1024th coverage admission");
+        assert!(writer.drain_once().expect("1024th preceding sibling drain"));
+        writer
+            .flush_rolling_ledger("coverage-detail")
+            .expect("1024th preceding detail publication")
+            .expect("1024th preceding detail segment");
+        if writer.ledgers.get("clock").is_some_and(|ledger| !ledger.records.is_empty()) {
+            writer
+                .flush_rolling_ledger("clock")
+                .expect("1024th optional anchor publication")
+                .expect("1024th optional anchor segment");
+        }
+        assert_eq!(writer.source_sequence_by_ledger.len(), prefill_count);
+        assert!(
+            writer
+                .source_sequence_by_ledger
+                .keys()
+                .all(|(ledger, sequence)| *ledger == "coverage" && *sequence < prefill_count as u64)
+        );
+
+        let source_file_sequence_before_coverage = writer.source_file_sequence;
+        let source_identities_before_fault = writer.source_sequence_by_ledger.clone();
+        let source_durable_before_fault = writer.source_durable.clone();
+        let ack_cursor_before_fault = writer.source_durable_ack_cursor;
+        let pending_ack_before_coverage = recorder.source_final_counters().6;
+        recorder.decode_rejected(boundary_admission);
+        let pending_ack_after_coverage = pending_ack_before_coverage + 2;
+        assert_eq!(recorder.source_final_counters().6, pending_ack_after_coverage);
+
+        writer.directory_handle = Arc::new(File::open("/proc").expect("faulting directory handle"));
+        let error =
+            writer.drain_once().expect_err("real post-append 1024-record seal publication failure");
+        assert_eq!(
+            EdgeWriterFailureClassV1::classify(&error),
+            EdgeWriterFailureClassV1::RetryablePrePublicationIo
+        );
+        assert_eq!(writer.source_file_sequence, source_file_sequence_before_coverage);
+        assert_eq!(writer.source_sequence_by_ledger, source_identities_before_fault);
+        assert_eq!(writer.source_durable, source_durable_before_fault);
+        assert_eq!(writer.source_durable_ack_cursor, ack_cursor_before_fault);
+        assert_eq!(recorder.source_final_counters().6, pending_ack_after_coverage);
+        assert!(
+            !writer.source_sequence_by_ledger.contains_key(&("coverage", prefill_count as u64))
+        );
+
+        let retained = writer.pending_source_record.as_ref().expect("retained 1024th record");
+        assert_eq!(
+            (retained.ledger, retained.ledger_sequence, retained.source_file_sequence),
+            ("coverage", prefill_count as u64, source_file_sequence_before_coverage)
+        );
+        let coverage = writer.ledgers.get("coverage").expect("full coverage ledger");
+        assert_eq!(coverage.next_sequence, EDGE_SEGMENT_MAX_RECORDS as u64);
+        assert_eq!(coverage.records.len(), EDGE_SEGMENT_MAX_RECORDS);
+        let attempted_bytes = coverage
+            .pending_publication
+            .as_ref()
+            .expect("pending full coverage publication")
+            .bytes
+            .clone();
+        let attempted_values = attempted_bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice::<JsonValue>(line).expect("pending segment line"))
+            .collect::<Vec<_>>();
+        let attempted_records = attempted_values
+            .iter()
+            .filter(|value| value.get("sequence").is_some())
+            .collect::<Vec<_>>();
+        assert_eq!(attempted_records.len(), EDGE_SEGMENT_MAX_RECORDS);
+        assert_eq!(
+            attempted_values
+                .iter()
+                .find(|value| value.get("schemaVersion").and_then(JsonValue::as_str)
+                    == Some("edge-sidecar-segment-footer-v1"))
+                .and_then(|footer| footer.get("recordCount"))
+                .and_then(JsonValue::as_str),
+            Some("1024")
+        );
+
+        writer.directory_handle = healthy_directory_handle;
+        assert!(writer.drain_once().expect("same-byte full segment retry"));
+        assert!(writer.pending_source_record.is_none());
+        assert_eq!(writer.source_file_sequence, source_file_sequence_before_coverage + 2);
+        assert_eq!(writer.source_durable_ack_cursor, source_file_sequence_before_coverage + 1);
+        assert_eq!(recorder.source_final_counters().6, 1);
+        assert_eq!(
+            writer.source_sequence_by_ledger,
+            BTreeMap::from([(
+                ("coverage-detail", (2 * EDGE_SEGMENT_MAX_RECORDS - 1) as u64),
+                source_file_sequence_before_coverage + 1,
+            )])
+        );
+        assert!(writer.source_durable.is_empty());
+        let coverage = writer.ledgers.get("coverage").expect("durable coverage ledger");
+        assert!(coverage.records.is_empty());
+        assert!(coverage.pending_publication.is_none());
+        assert_eq!(coverage.durable_next_sequence, EDGE_SEGMENT_MAX_RECORDS as u64);
+        assert!(
+            writer.flush_rolling_ledger("coverage").expect("no duplicate coverage tail").is_none()
+        );
+
+        let detail_tail = writer
+            .flush_rolling_ledger("coverage-detail")
+            .expect("1024th trailing detail publication")
+            .expect("1024th trailing detail segment");
+        assert_eq!(detail_tail.member_sequences, vec![(2 * EDGE_SEGMENT_MAX_RECORDS - 1) as u64]);
+        assert!(writer.source_sequence_by_ledger.is_empty());
+        assert!(writer.source_durable.is_empty());
+        assert_eq!(writer.source_durable_ack_cursor, writer.source_file_sequence);
+        assert_eq!(recorder.source_final_counters().6, 0);
+
+        let durable_bytes = fs::read(root.join("coverage-00000000000000000000.ndjson"))
+            .expect("durable full coverage segment");
+        assert_eq!(durable_bytes, attempted_bytes);
+        assert!(!root.join("coverage-00000000000000000001.ndjson").exists());
+        let mut coverage_sequences = BTreeSet::new();
+        let mut retained_sequence_count = 0;
+        for record in attempted_records {
+            let sequence = record["sequence"]
+                .as_str()
+                .expect("coverage sequence")
+                .parse::<u64>()
+                .expect("decimal coverage sequence");
+            assert!(coverage_sequences.insert(sequence), "duplicate coverage sequence {sequence}");
+            if sequence == prefill_count as u64 {
+                retained_sequence_count += 1;
+            }
+        }
+        assert_eq!(retained_sequence_count, 1);
+        assert_eq!(coverage_sequences, BTreeSet::from_iter(0..EDGE_SEGMENT_MAX_RECORDS as u64));
+        assert!(!writer.drain_once().expect("source queue exhausted"));
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("same-ledger source retry cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(terminal_retries_periodic_pending_until_durable_then_publishes_terminal_in_order, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let (root, mut writer) = edge_terminal_ready_fixture("terminal-periodic-retry", 405);
+        writer.next_periodic_at = Instant::now();
+        writer.directory_handle = Arc::new(File::open("/proc").expect("faulting directory handle"));
+        writer.write_periodic_accounting().expect_err("scheduled periodic publication failure");
+        writer.terminal_publication_phase = EdgeTerminalPublicationPhaseV1::RetryTerminal;
+
+        let pending_tuple = {
+            let ledger = writer.ledgers.get("accounting").expect("accounting ledger");
+            let pending =
+                ledger.pending_publication.as_ref().expect("pending periodic publication");
+            (
+                ledger.next_segment,
+                pending.member_sequences.clone(),
+                EdgeCanonicalWriterV1::sha256_hex(&pending.bytes),
+                pending.bytes.clone(),
+            )
+        };
+        let error = writer
+            .retry_terminal_accounting()
+            .expect_err("first forced-shutdown periodic retry remains failed");
+        assert_eq!(
+            EdgeWriterFailureClassV1::classify(&error),
+            EdgeWriterFailureClassV1::RetryablePrePublicationIo
+        );
+        let retained_tuple = {
+            let ledger = writer.ledgers.get("accounting").expect("accounting ledger");
+            let pending =
+                ledger.pending_publication.as_ref().expect("retained periodic publication");
+            (
+                ledger.next_segment,
+                pending.member_sequences.clone(),
+                EdgeCanonicalWriterV1::sha256_hex(&pending.bytes),
+                pending.bytes.clone(),
+            )
+        };
+        assert_eq!(retained_tuple, pending_tuple);
+        assert_eq!(
+            writer.incidents.accounting_periodic_write_failed.attempt_count, 2,
+            "one scheduled attempt and one forced retry"
+        );
+        assert!(writer.recorder.cutoff_latched());
+        let retry_delay = EdgeWriterFailureClassV1::retry_delay(
+            writer.incidents.accounting_periodic_write_failed.attempt_count,
+            writer.recorder.cutoff_latched(),
+        );
+        assert_eq!(retry_delay, Duration::ZERO);
+        let cumulative_retry_delay = (1..=7).fold(Duration::ZERO, |total, attempt| {
+            total + EdgeWriterFailureClassV1::retry_delay(attempt, writer.recorder.cutoff_latched())
+        });
+        assert_eq!(cumulative_retry_delay, Duration::ZERO);
+        assert!(cumulative_retry_delay < EDGE_SHUTDOWN_WRITER_DEADLINE_V1);
+        let wait_started = Instant::now();
+        EdgeWriterFailureClassV1::wait_for_retry_delay_until_cutoff(
+            Duration::from_millis(20),
+            || false,
+        );
+        assert!(wait_started.elapsed() >= Duration::from_millis(20));
+        assert!(wait_started.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            writer.terminal_publication_phase,
+            EdgeTerminalPublicationPhaseV1::RetryTerminal
+        );
+        assert!(!writer.periodic_cadence_closed);
+        assert!(!writer.data_sealed);
+        assert!(!writer.finalized);
+
+        writer.directory_handle =
+            Arc::new(File::open(&root).expect("restored publication directory handle"));
+        writer
+            .retry_terminal_accounting()
+            .expect("periodic recovery precedes terminal publication");
+        assert_eq!(writer.terminal_publication_phase, EdgeTerminalPublicationPhaseV1::Complete);
+        assert!(writer.periodic_cadence_closed);
+        assert!(writer.data_sealed);
+        assert!(writer.finalized);
+        assert!(writer.termination_guard);
+        assert_eq!(writer.incidents.accounting_periodic_write_failed.attempt_count, 0);
+        assert_eq!(
+            (
+                writer.incidents.accounting_periodic_write_failed.count,
+                writer.incidents.accounting_periodic_write_failed.recovered_count,
+            ),
+            (1, 1)
+        );
+
+        let accounting = edge_accounting_file_bytes(&root);
+        let states = accounting
+            .values()
+            .flat_map(|bytes| bytes.split(|byte| *byte == b'\n'))
+            .filter(|line| !line.is_empty())
+            .filter_map(|line| {
+                serde_json::from_slice::<JsonValue>(line)
+                    .expect("accounting record")
+                    .get("state")
+                    .and_then(JsonValue::as_str)
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &states[states.len() - 2..],
+            ["AccountingPeriodic".to_owned(), "AccountingTerminal".to_owned()]
+        );
+        assert_eq!(states.iter().filter(|state| state.as_str() == "AccountingPeriodic").count(), 1);
+        assert_eq!(states.iter().filter(|state| state.as_str() == "AccountingTerminal").count(), 1);
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("terminal periodic retry cleanup");
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(terminal_pending_publication_retries_without_data_drain_reentry, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let (root, mut writer) = edge_terminal_ready_fixture("terminal-pending-retry", 402);
+        writer.terminal_publication_phase = EdgeTerminalPublicationPhaseV1::RetryTerminal;
+        writer.directory_handle = Arc::new(File::open("/proc").expect("faulting directory handle"));
+
+        let error =
+            writer.retry_terminal_accounting().expect_err("terminal directory fsync failure");
+        assert_eq!(
+            EdgeWriterFailureClassV1::classify(&error),
+            EdgeWriterFailureClassV1::RetryablePrePublicationIo
+        );
+        assert_eq!(
+            writer.terminal_publication_phase,
+            EdgeTerminalPublicationPhaseV1::RetryTerminal
+        );
+        assert!(writer.periodic_cadence_closed);
+        assert!(writer.data_sealed);
+        assert!(!writer.finalized);
+        let attempted_bytes = writer
+            .ledgers
+            .get("accounting")
+            .and_then(|ledger| ledger.pending_publication.as_ref())
+            .expect("pending terminal publication")
+            .bytes
+            .clone();
+        let ledgers_before_drain = edge_segment_attempt_snapshot(&writer);
+        assert!(!writer.drain_once().expect("sealed terminal phase is drain-inert"));
+        assert_eq!(edge_segment_attempt_snapshot(&writer), ledgers_before_drain);
+
+        writer.directory_handle =
+            Arc::new(File::open(&root).expect("restored publication directory handle"));
+        writer.retry_terminal_accounting().expect("equal-byte terminal retry");
+        assert_eq!(writer.terminal_publication_phase, EdgeTerminalPublicationPhaseV1::Complete);
+        assert!(writer.finalized);
+        assert!(writer.termination_guard);
+        assert!(writer.data_sealed);
+        let terminal_path = fs::read_dir(&root)
+            .expect("terminal inventory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("accounting-"))
+                    && fs::read(path).is_ok_and(|bytes| bytes == attempted_bytes)
+            })
+            .expect("exact terminal publication");
+        assert_eq!(fs::read(terminal_path).expect("terminal bytes"), attempted_bytes);
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("terminal pending retry cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(terminal_prepublication_retry_restores_cadence_and_eventually_completes, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let (root, mut writer) = edge_terminal_ready_fixture("terminal-prepublication-retry", 403);
+        writer.terminal_publication_phase = EdgeTerminalPublicationPhaseV1::RetryTerminal;
+        assert!(!writer.periodic_cadence_closed);
+        assert!(!writer.data_sealed);
+        writer.terminal_snapshot_revision_fault = true;
+
+        let error = writer.retry_terminal_accounting().expect_err("terminal revision race retry");
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(
+            EdgeWriterFailureClassV1::classify(&error),
+            EdgeWriterFailureClassV1::RetryablePrePublicationIo
+        );
+        assert_eq!(
+            writer.terminal_publication_phase,
+            EdgeTerminalPublicationPhaseV1::RetryTerminal
+        );
+        assert!(!writer.periodic_cadence_closed);
+        assert!(!writer.data_sealed);
+        assert!(writer.ledgers.get("accounting").is_none_or(|ledger| {
+            !EdgeCanonicalWriterV1::accounting_terminal_authority_is_last(ledger)
+        }));
+
+        writer.retry_terminal_accounting().expect("terminal retry completion");
+        assert_eq!(writer.terminal_publication_phase, EdgeTerminalPublicationPhaseV1::Complete);
+        assert!(writer.periodic_cadence_closed);
+        assert!(writer.data_sealed);
+        assert!(writer.finalized);
+        assert!(writer.termination_guard);
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("terminal prepublication retry cleanup");
+    });
+
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(terminal_retry_phase_does_not_append_retained_post_cutoff_source, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let root = edge_writer_root("terminal-retry-no-source-drain");
+        let (mut writer, recorder, _) = edge_writer_fixture(&root, 404);
+        writer.prepare().expect("startup authority");
+        let EdgeEventDrainStatusV1::Event(event) = recorder.try_recv_event() else {
+            panic!("startup source event");
+        };
+        writer.stage_source_event(*event).expect("retained source event");
+        let pending_before = writer.pending_source_record.clone();
+        writer.data_sealed = true;
+        writer.terminal_publication_phase = EdgeTerminalPublicationPhaseV1::RetryTerminal;
+
+        assert!(!writer.drain_once().expect("terminal retry source drain is inert"));
+        assert_eq!(
+            writer.pending_source_record.as_ref().map(|pending| (
+                pending.ledger,
+                pending.ledger_sequence,
+                pending.source_file_sequence,
+                pending.record.clone(),
+            )),
+            pending_before.as_ref().map(|pending| (
+                pending.ledger,
+                pending.ledger_sequence,
+                pending.source_file_sequence,
+                pending.record.clone(),
+            ))
+        );
+        assert!(writer.source_sequence_by_ledger.is_empty());
+        assert_eq!(writer.source_file_sequence, 0);
+        assert!(writer.ledgers.get("clock").is_none());
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("terminal source drain cleanup");
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(node_result_global_installation_is_one_shot_epoch_bound_and_startup_ordered, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_reset_v1();
+        let root = edge_writer_root("node-result-installation");
+
+        let recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: NonZeroU64::new(501).expect("nonzero epoch"),
+            event_queue_capacity: 64,
+            active_state_capacity: 64,
+            pending_registry_capacity: 64,
+            terminal_record_capacity: 64,
+        })
+        .expect("production recorder");
+        assert_eq!(
+            recorder.authority_audit_snapshot().admission_state(),
+            base_flashblocks::EdgeMeasurementAdmissionStateV1::InitialClosed
+        );
+        let sink = EdgeOobFailureSinkV1::open(&root, Some(501)).expect("epoch-matched sink");
+        install_edge_node_result_recorder_v1(Arc::clone(&recorder), Arc::clone(&sink))
+            .expect("initial production-slot install");
+        assert_eq!(
+            recorder.authority_audit_snapshot().admission_state(),
+            base_flashblocks::EdgeMeasurementAdmissionStateV1::InitialClosed
+        );
+        let duplicate =
+            install_edge_node_result_recorder_v1(Arc::clone(&recorder), Arc::clone(&sink))
+                .expect_err("duplicate production-slot install");
+        assert_eq!(duplicate.to_string(), "node result recorder slot is not vacant");
+
+        recorder.open_admission().expect("admission opens after install");
+        let late_after_admission =
+            install_edge_node_result_recorder_v1(Arc::clone(&recorder), Arc::clone(&sink))
+                .expect_err("late install after admission");
+        assert_eq!(late_after_admission.to_string(), "node result recorder slot is not vacant");
+        recorder.prepare_cutoff();
+        let late_after_cutoff =
+            install_edge_node_result_recorder_v1(Arc::clone(&recorder), Arc::clone(&sink))
+                .expect_err("late install after cutoff");
+        assert_eq!(
+            late_after_cutoff.to_string(),
+            "node result recorder installation is too late after cutoff"
+        );
+
+        edge_node_result_test_reset_v1();
+        let stale_recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: NonZeroU64::new(502).expect("nonzero stale epoch"),
+            event_queue_capacity: 64,
+            active_state_capacity: 64,
+            pending_registry_capacity: 64,
+            terminal_record_capacity: 64,
+        })
+        .expect("stale production recorder");
+        let stale_sink =
+            EdgeOobFailureSinkV1::open(&root, Some(503)).expect("mismatched epoch sink");
+        let stale = install_edge_node_result_recorder_v1(stale_recorder, stale_sink)
+            .expect_err("stale epoch install");
+        assert_eq!(stale.to_string(), "node result recorder and failure sink epochs differ");
+        assert!(edge_node_result_recorder_v1().is_none());
+
+        {
+            let mut slot =
+                edge_node_result_slot_v1().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            *slot = EdgeNodeResultSlotV1::Consumed;
+        }
+        let consumed_recorder = EdgeMeasurementRecorderV1::new(EdgeMeasurementInstallConfigV1 {
+            producer_epoch: NonZeroU64::new(504).expect("nonzero consumed epoch"),
+            event_queue_capacity: 64,
+            active_state_capacity: 64,
+            pending_registry_capacity: 64,
+            terminal_record_capacity: 64,
+        })
+        .expect("consumed-state recorder");
+        let consumed_sink =
+            EdgeOobFailureSinkV1::open(&root, Some(504)).expect("consumed-state sink");
+        let consumed = install_edge_node_result_recorder_v1(consumed_recorder, consumed_sink)
+            .expect_err("consumed slot cannot be reinstalled");
+        assert_eq!(consumed.to_string(), "node result recorder slot is not vacant");
+
+        edge_node_result_test_reset_v1();
+        let startup_root = edge_writer_root("node-result-durable-startup");
+        let (mut writer, startup_recorder, _) = edge_writer_fixture(&startup_root, 505);
+        assert_eq!(
+            startup_recorder.authority_audit_snapshot().admission_state(),
+            base_flashblocks::EdgeMeasurementAdmissionStateV1::InitialClosed
+        );
+        writer.prepare().expect("durable production startup");
+        assert!(EdgeCanonicalWriterV1::startup_authority_ready(&writer.ledgers));
+        assert_eq!(
+            startup_recorder.authority_audit_snapshot().admission_state(),
+            base_flashblocks::EdgeMeasurementAdmissionStateV1::Open
+        );
+
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("installation cleanup");
+        fs::remove_dir_all(startup_root).expect("startup cleanup");
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(real_static_poison_recovers_inner_state, {
+        let _serial = edge_node_result_test_lock_v1();
+        edge_node_result_test_poison_v1();
+        let root = edge_writer_root("real-static-poison");
+        let recorder = edge_node_result_test_install_v1(&root, 163);
+        latch_edge_failure("ShutdownRegistryDrainTimedOut");
+        assert_eq!(
+            recorder
+                .coordinator_missing_evidence_counts()
+                .snapshot()
+                .iter()
+                .find(|(reason, _)| *reason == "ShutdownRegistryDrainTimedOut")
+                .map(|(_, count)| *count),
+            Some(1)
+        );
+        edge_node_result_test_reset_v1();
+        fs::remove_dir_all(root).expect("real static cleanup");
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(app_result_arm_mapping_names_the_test_that_executes_the_production_arm, {
+        const APP_SOURCE: &str = include_str!("app.rs");
+        assert!(
+            APP_SOURCE
+                .contains("fn app_outer_result_arm_uses_real_static_once_and_preserves_identity()")
+        );
+        assert!(APP_SOURCE.contains("fn real_static_poison_recovers_through_production_app_arm()"));
+        assert!(
+            include_str!("mev_trader.rs")
+                .contains("edge_test!(real_static_poison_recovers_inner_state")
+        );
+    });
+    #[cfg(feature = "edge-measurement")]
+    edge_test!(feature_off_baseline_receipt_fixture_shape_and_provenance, {
+        let fixture: JsonValue = serde_json::from_slice(include_bytes!(
+            "../testdata/edge-measurement-v1/feature-off-frozen-tip-baselines-v1.json"
+        ))
+        .expect("committed feature-off baseline receipt");
+        assert_eq!(fixture.as_object().expect("baseline receipt object").len(), 7);
+        assert_eq!(fixture["schemaVersion"], "edge-feature-off-frozen-tip-baselines/v1");
+        assert_eq!(fixture["repository"], "simjaemun2/base");
+        assert_eq!(fixture["frozenHead"], "281e4dfeafbaf25405cf729927ae44d911aa430e");
+        assert_eq!(
+            fixture["toolchain"],
+            json!({
+                "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+                "rustcCommitHash": "e408947bfd200af42db322daf0fadfe7e26d3bd1e",
+                "host": "x86_64-unknown-linux-gnu",
+                "llvm": "21.1.8",
+                "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)",
+            })
+        );
+        assert_eq!(
+            fixture["normalization"],
+            "valid UTF-8; CRLF to LF only; no trimming, sorting, filtering, or path replacement; final LF preserved"
+        );
+        let frozen_receipts = fixture["receipts"].as_array().expect("frozen package receipts");
+        let recorded_receipts =
+            fixture["postChangeReceipts"].as_array().expect("recorded package receipt provenance");
+        assert_eq!(frozen_receipts.len(), 3);
+        assert_eq!(recorded_receipts.len(), 3);
+        for (receipt, recorded, package, command, count, sha256, byte_length, captured_at) in [
+            (
+                &frozen_receipts[0],
+                &recorded_receipts[0],
+                "base-execution-cli",
+                "cargo test -p base-execution-cli --no-default-features -- --list",
+                19_u64,
+                "2a22e32e7381084707c667fc370ceb9365ffc0dfebc2e177269cd27b6d479de8",
+                1687_u64,
+                "2026-07-26T02:11:28.949164+00:00",
+            ),
+            (
+                &frozen_receipts[1],
+                &recorded_receipts[1],
+                "base-flashblocks",
+                "cargo test -p base-flashblocks --no-default-features -- --list",
+                118,
+                "c327fddfbd5781b024b956cc396f20faf2a5fba78f4bcd11ae269a6db9b6b7d2",
+                7903,
+                "2026-07-26T02:12:54.368643+00:00",
+            ),
+            (
+                &frozen_receipts[2],
+                &recorded_receipts[2],
+                "base-mev-trader",
+                "cargo test -p base-mev-trader --no-default-features -- --list",
+                199,
+                "fe7b59c062cb0cc8be54b8143d5d7bd3625958bcd0934435314a2aa791466ab2",
+                14866,
+                "2026-07-26T02:14:12.615082+00:00",
+            ),
+        ] {
+            assert_eq!(receipt.as_object().expect("receipt object").len(), 8);
+            assert_eq!(recorded.as_object().expect("recorded receipt object").len(), 8);
+            for key in [
+                "package",
+                "command",
+                "environment",
+                "count",
+                "sha256",
+                "normalizedByteLength",
+                "finalLfPreserved",
+            ] {
+                assert_eq!(recorded[key], receipt[key], "recorded provenance mismatch for {key}");
+            }
+            assert_ne!(recorded["capturedAtUtc"], receipt["capturedAtUtc"]);
+            assert_eq!(receipt["package"], package);
+            assert_eq!(receipt["command"], command);
+            assert_eq!(receipt["count"], count);
+            assert_eq!(receipt["sha256"], sha256);
+            assert_eq!(receipt["normalizedByteLength"], byte_length);
+            assert_eq!(receipt["capturedAtUtc"], captured_at);
+            assert_eq!(receipt["environment"].as_object().expect("environment").len(), 3);
+            assert_eq!(receipt["environment"]["LC_ALL"], "C");
+            assert_eq!(receipt["environment"]["CARGO_TERM_COLOR"], "never");
+            assert_eq!(
+                receipt["environment"]["CARGO_TARGET_DIR"],
+                "/home/ubuntu/.cache/cargo-target/n1-option3-frozen-tip"
+            );
+            assert_eq!(receipt["finalLfPreserved"], true);
+        }
+    });
 }

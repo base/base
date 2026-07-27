@@ -34,12 +34,14 @@ const NORMAL_DEPENDENCIES: [&str; 24] = [
     "tokio-tungstenite",
     "tracing",
 ];
-const SOURCE_FILES: [&str; 13] = [
+const SOURCE_FILES: [&str; 15] = [
     "blink_ingress.rs",
+    "edge_measurement.rs",
     "frame.rs",
     "latency.rs",
     "lib.rs",
     "lifecycle.rs",
+    "measurement_tx.rs",
     "oracle.rs",
     "pairwise.rs",
     "port.rs",
@@ -77,8 +79,11 @@ const FORBIDDEN_DEPENDENCY_PREFIXES: [&str; 25] = [
     "tungstenite",
     "url",
 ];
-const FORBIDDEN_IDENTIFIERS: [&str; 35] = [
+const FORBIDDEN_IDENTIFIERS: [&str; 39] = [
     "AwsSigner",
+    "SignableTransaction",
+    "TxEip1559",
+    "TxEnvelope",
     "Encodable2718",
     "GcpSigner",
     "LedgerSigner",
@@ -91,6 +96,7 @@ const FORBIDDEN_IDENTIFIERS: [&str; 35] = [
     "encode_2718",
     "encode_enveloped",
     "encoded_2718",
+    "encoded_for_signing",
     "eth_sendBundle",
     "eth_sendRawTransaction",
     "forward_transaction",
@@ -201,7 +207,18 @@ fn metadata_has_exact_target_and_dependency_shape() {
         .filter(|dependency| dependency["kind"] == "dev")
         .map(|dependency| dependency["name"].as_str().expect("dependency name"))
         .collect();
-    assert!(development.is_empty());
+    assert_eq!(development, BTreeSet::from(["reth-revm"]));
+    let reth_revm_test = dependencies
+        .iter()
+        .find(|dependency| {
+            dependency["kind"] == "dev" && dependency["name"].as_str() == Some("reth-revm")
+        })
+        .expect("exact dev-only reth-revm test support");
+    assert_eq!(
+        reth_revm_test["features"].as_array().expect("dev features"),
+        &[Value::String("test-utils".into())]
+    );
+    assert!(reth_revm_test["uses_default_features"].as_bool().expect("dev defaults"));
     assert!(!dependencies.iter().any(|dependency| dependency["kind"] == "build"));
 
     let expected = dependency_features();
@@ -456,6 +473,34 @@ fn production_source_has_exact_files_and_no_forbidden_identifiers() {
             }
         }
     }
+}
+
+#[cfg(feature = "edge-measurement")]
+#[test]
+fn edge_measurement_retains_binding_evidence_without_transaction_build_capability() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let binding = fs::read_to_string(root.join("measurement_tx.rs")).expect("binding source");
+    let candidate = fs::read_to_string(root.join("edge_measurement.rs")).expect("candidate source");
+    let binding_identifiers = identifiers(&binding).expect("well-formed binding source");
+    let candidate_identifiers = identifiers(&candidate).expect("well-formed candidate source");
+
+    for forbidden in [
+        "TxEip1559",
+        "TxEnvelope",
+        "SignableTransaction",
+        "encoded_for_signing",
+        "unsigned_envelope_bytes",
+        "unsigned_envelope_hash",
+        "MEASUREMENT_GAS_LIMIT",
+        "BackrunMeasurementTxV1",
+        "MeasurementTxDeriverV1",
+    ] {
+        assert!(!binding_identifiers.contains(forbidden), "binding source retains {forbidden}");
+        assert!(!candidate_identifiers.contains(forbidden), "candidate source retains {forbidden}");
+    }
+    assert!(binding.contains("pub struct BackrunMeasurementBindingV1"));
+    assert!(binding.contains("base-edge-measurement-binding-v1\\0"));
+    assert!(candidate.contains("backrun_measurement_binding"));
 }
 
 #[test]
@@ -831,6 +876,109 @@ fn p0a_killstate_anchor_negative_fixtures_fail_the_seal() {
         "pub fn open_anchored_killstate() -> Result<AnchoredKillStateStore, StartupError> {}"
     ));
 }
+#[cfg(feature = "edge-measurement")]
+#[test]
+fn edge_oob_audit_surface_is_test_only() {
+    let root = workspace_root();
+    let adapter = fs::read_to_string(root.join("crates/execution/cli/src/mev_trader.rs"))
+        .expect("CLI adapter");
+    let crate_root =
+        fs::read_to_string(root.join("crates/execution/cli/src/lib.rs")).expect("CLI crate root");
+
+    for marker in [
+        "#[cfg(all(feature = \"edge-measurement\", test))]\n/// Exact read-only metadata retained with an OOB sink audit snapshot.",
+        "#[cfg(all(feature = \"edge-measurement\", test))]\n/// Strongly typed OOB authority audit snapshot.",
+        "#[cfg(all(feature = \"edge-measurement\", test))]\nimpl EdgeOobFailureSinkAuditSnapshotV1 {",
+        "    #[cfg(test)]\n    /// Returns writer identity, epoch, ordinal, exact file bytes, and stable Unix metadata.\n    pub fn audit_snapshot(",
+        "        let audit_file = OpenOptions::new().read(true).open(audit_path)?;",
+    ] {
+        assert_eq!(adapter.matches(marker).count(), 1, "audit item lost direct test cfg: {marker}");
+    }
+    assert_eq!(
+        adapter
+            .matches(
+                "#[cfg(all(feature = \"edge-measurement\", test))]\nuse std::os::unix::fs::FileExt;",
+            )
+            .count(),
+        1,
+        "audit-only random-access file helper must be test-gated"
+    );
+    assert_eq!(
+        crate_root
+            .matches(
+                "#[cfg(all(feature = \"edge-measurement\", test))]\npub use mev_trader::{EdgeOobFailureSinkAuditSnapshotV1, EdgeOobFileMetadataAuditV1};",
+            )
+            .count(),
+        1,
+        "audit re-exports must be directly test-gated"
+    );
+
+    let probe_root =
+        std::env::temp_dir().join(format!("base-edge-oob-capability-seal-{}", std::process::id()));
+    if probe_root.exists() {
+        fs::remove_dir_all(&probe_root).expect("remove stale capability probe");
+    }
+    fs::create_dir_all(&probe_root).expect("create capability probe root");
+    let target_dir = probe_root.join("target");
+    let cli_path = root.join("crates/execution/cli");
+
+    let run_probe = |name: &str, source: &str| {
+        let package = probe_root.join(name);
+        fs::create_dir_all(package.join("src")).expect("create capability probe package");
+        fs::write(
+            package.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n\n[dependencies]\nbase-execution-cli = {{ path = \"{}\", features = [\"edge-measurement\"] }}\n",
+                cli_path.display()
+            ),
+        )
+        .expect("write capability probe manifest");
+        fs::copy(root.join("Cargo.lock"), package.join("Cargo.lock"))
+            .expect("copy workspace lockfile into capability probe");
+        fs::write(package.join("src/main.rs"), source).expect("write capability probe source");
+        Command::new(env!("CARGO"))
+            .args(["check", "--quiet", "--offline", "--target-dir"])
+            .arg(&target_dir)
+            .current_dir(package)
+            .output()
+            .expect("run production-surface capability probe")
+    };
+
+    let production = run_probe(
+        "edge-oob-production-surface",
+        "use base_execution_cli::EdgeOobFailureSinkV1;\nfn main() { let _ = core::mem::size_of::<EdgeOobFailureSinkV1>(); }\n",
+    );
+    assert!(
+        production.status.success(),
+        "production sink surface failed to compile: {}",
+        String::from_utf8_lossy(&production.stderr)
+    );
+
+    let audit_types = run_probe(
+        "edge-oob-audit-types",
+        "use base_execution_cli::{EdgeOobFailureSinkAuditSnapshotV1, EdgeOobFileMetadataAuditV1};\nfn main() {}\n",
+    );
+    let audit_types_stderr = String::from_utf8_lossy(&audit_types.stderr);
+    assert!(!audit_types.status.success(), "production unexpectedly exports OOB audit types");
+    assert!(
+        audit_types_stderr.contains("EdgeOobFailureSinkAuditSnapshotV1")
+            && audit_types_stderr.contains("EdgeOobFileMetadataAuditV1"),
+        "audit-type probe failed for an unrelated reason: {audit_types_stderr}"
+    );
+
+    let audit_method = run_probe(
+        "edge-oob-audit-method",
+        "use base_execution_cli::EdgeOobFailureSinkV1;\nfn inspect(sink: &EdgeOobFailureSinkV1) { let _ = sink.audit_snapshot(); }\nfn main() {}\n",
+    );
+    let audit_method_stderr = String::from_utf8_lossy(&audit_method.stderr);
+    assert!(!audit_method.status.success(), "production unexpectedly exposes OOB file audit");
+    assert!(
+        audit_method_stderr.contains("no method named `audit_snapshot`"),
+        "audit-method probe failed for an unrelated reason: {audit_method_stderr}"
+    );
+
+    fs::remove_dir_all(probe_root).expect("remove capability probe");
+}
 #[test]
 fn runtime_wiring_is_receive_only_and_preserves_forwarding_semantics() {
     let root = workspace_root();
@@ -855,7 +1003,7 @@ fn runtime_wiring_is_receive_only_and_preserves_forwarding_semantics() {
         );
     }
 
-    assert_eq!(adapter.matches("tokio::spawn").count(), 4);
+    assert_eq!(adapter.matches("tokio::spawn").count(), 5);
     assert_eq!(adapter.matches("spawn_critical_task").count(), 0);
     assert_eq!(adapter.matches("spawn_with_graceful_shutdown_signal").count(), 1);
     assert_eq!(adapter.matches("subscribe_to_flashblocks").count(), 1);

@@ -1,0 +1,101 @@
+{
+  "schemaVersion": "edge-feature-off-frozen-tip-baselines/v1",
+  "repository": "simjaemun2/base",
+  "frozenHead": "281e4dfeafbaf25405cf729927ae44d911aa430e",
+  "toolchain": {
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+    "rustcCommitHash": "e408947bfd200af42db322daf0fadfe7e26d3bd1e",
+    "host": "x86_64-unknown-linux-gnu",
+    "llvm": "21.1.8",
+    "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)"
+  },
+  "normalization": "valid UTF-8; CRLF to LF only; no trimming, sorting, filtering, or path replacement; final LF preserved",
+  "receipts": [
+    {
+      "package": "base-execution-cli",
+      "command": "cargo test -p base-execution-cli --no-default-features -- --list",
+      "environment": {
+        "LC_ALL": "C",
+        "CARGO_TERM_COLOR": "never",
+        "CARGO_TARGET_DIR": "/home/ubuntu/.cache/cargo-target/n1-option3-frozen-tip"
+      },
+      "count": 19,
+      "sha256": "2a22e32e7381084707c667fc370ceb9365ffc0dfebc2e177269cd27b6d479de8",
+      "normalizedByteLength": 1687,
+      "finalLfPreserved": true,
+      "capturedAtUtc": "2026-07-26T02:11:28.949164+00:00"
+    },
+    {
+      "package": "base-flashblocks",
+      "command": "cargo test -p base-flashblocks --no-default-features -- --list",
+      "environment": {
+        "LC_ALL": "C",
+        "CARGO_TERM_COLOR": "never",
+        "CARGO_TARGET_DIR": "/home/ubuntu/.cache/cargo-target/n1-option3-frozen-tip"
+      },
+      "count": 118,
+      "sha256": "c327fddfbd5781b024b956cc396f20faf2a5fba78f4bcd11ae269a6db9b6b7d2",
+      "normalizedByteLength": 7903,
+      "finalLfPreserved": true,
+      "capturedAtUtc": "2026-07-26T02:12:54.368643+00:00"
+    },
+    {
+      "package": "base-mev-trader",
+      "command": "cargo test -p base-mev-trader --no-default-features -- --list",
+      "environment": {
+        "LC_ALL": "C",
+        "CARGO_TERM_COLOR": "never",
+        "CARGO_TARGET_DIR": "/home/ubuntu/.cache/cargo-target/n1-option3-frozen-tip"
+      },
+      "count": 199,
+      "sha256": "fe7b59c062cb0cc8be54b8143d5d7bd3625958bcd0934435314a2aa791466ab2",
+      "normalizedByteLength": 14866,
+      "finalLfPreserved": true,
+      "capturedAtUtc": "2026-07-26T02:14:12.615082+00:00"
+    }
+  ],
+  "postChangeReceipts": [
+    {
+      "package": "base-execution-cli",
+      "command": "cargo test -p base-execution-cli --no-default-features -- --list",
+      "environment": {
+        "LC_ALL": "C",
+        "CARGO_TERM_COLOR": "never",
+        "CARGO_TARGET_DIR": "/home/ubuntu/.cache/cargo-target/n1-option3-frozen-tip"
+      },
+      "count": 19,
+      "sha256": "2a22e32e7381084707c667fc370ceb9365ffc0dfebc2e177269cd27b6d479de8",
+      "normalizedByteLength": 1687,
+      "finalLfPreserved": true,
+      "capturedAtUtc": "2026-07-26T04:44:39.210711+00:00"
+    },
+    {
+      "package": "base-flashblocks",
+      "command": "cargo test -p base-flashblocks --no-default-features -- --list",
+      "environment": {
+        "LC_ALL": "C",
+        "CARGO_TERM_COLOR": "never",
+        "CARGO_TARGET_DIR": "/home/ubuntu/.cache/cargo-target/n1-option3-frozen-tip"
+      },
+      "count": 118,
+      "sha256": "c327fddfbd5781b024b956cc396f20faf2a5fba78f4bcd11ae269a6db9b6b7d2",
+      "normalizedByteLength": 7903,
+      "finalLfPreserved": true,
+      "capturedAtUtc": "2026-07-26T04:44:47.641753+00:00"
+    },
+    {
+      "package": "base-mev-trader",
+      "command": "cargo test -p base-mev-trader --no-default-features -- --list",
+      "environment": {
+        "LC_ALL": "C",
+        "CARGO_TERM_COLOR": "never",
+        "CARGO_TARGET_DIR": "/home/ubuntu/.cache/cargo-target/n1-option3-frozen-tip"
+      },
+      "count": 199,
+      "sha256": "fe7b59c062cb0cc8be54b8143d5d7bd3625958bcd0934435314a2aa791466ab2",
+      "normalizedByteLength": 14866,
+      "finalLfPreserved": true,
+      "capturedAtUtc": "2026-07-26T04:44:59.442812+00:00"
+    }
+  ]
+}
