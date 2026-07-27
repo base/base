@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BASE_ANVIL_REF: ${{ github.event.inputs.base_anvil_ref || '0ef004d2653f2bce87293ab399846a3720b9ceb7' }}
+  BASE_ANVIL_REF: ${{ github.event.inputs.base_anvil_ref || 'ae7557c4f8602caa1da0be33143bb2504c85b0c8' }}
   BASE_STD_REF: ${{ github.event.inputs.base_std_ref || 'main' }}
   CARGO_TERM_COLOR: always
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/base-anvil
