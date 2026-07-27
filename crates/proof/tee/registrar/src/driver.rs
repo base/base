@@ -312,81 +312,58 @@ where
         last_known_active: &mut HashMap<String, (Vec<Address>, u32)>,
         unhealthy_instance_ids_with_grace: &mut HashSet<String>,
     ) -> Result<DiscoveryResolution> {
-        let mut instances = self.discovery.discover_instances().await?;
+        let instances = self.discovery.discover_instances().await?;
         RegistrarMetrics::discovery_success_total().increment(1);
-
-        // Overlay ALB target health with a direct `readyz` probe. ALB `/healthz`
-        // is registration-gated on nitro-host, so trusting it alone deadlocks
-        // bootstrap. Preserve `Draining` so lifecycle teardown still skips
-        // registration while protecting active signers.
-        let max_concurrency = self.config.max_concurrency.max(1);
-        let readiness = futures::stream::iter(
-            instances
-                .iter_mut()
-                .filter(|instance| instance.health_status != InstanceHealthStatus::Draining),
-        )
-        .for_each_concurrent(max_concurrency, |instance| async {
-            instance.health_status = match self.signer_client.readyz(&instance.endpoint).await {
-                Ok(()) => InstanceHealthStatus::Healthy,
-                Err(e) => {
-                    debug!(
-                        error = %e,
-                        instance = %instance.instance_id,
-                        endpoint = %instance.endpoint,
-                        "readyz probe failed"
-                    );
-                    InstanceHealthStatus::Unhealthy
-                }
-            };
-        });
-        tokio::select! {
-            biased;
-            () = self.config.cancel.cancelled() => return Ok(DiscoveryResolution::default()),
-            () = readiness => {}
-        }
 
         let discovered_instance_ids: HashSet<String> =
             instances.iter().map(|instance| instance.instance_id.clone()).collect();
-        let unhealthy_instance_ids: HashSet<String> = instances
-            .iter()
-            .filter(|instance| instance.health_status == InstanceHealthStatus::Unhealthy)
-            .map(|instance| instance.instance_id.clone())
-            .collect();
-        unhealthy_instance_ids_with_grace
-            .retain(|instance_id| unhealthy_instance_ids.contains(instance_id));
-        for instance_id in &unhealthy_instance_ids {
-            // A process restart has no signer addresses to cache. Keep an
-            // empty cache entry for one unhealthy period so the global orphan
-            // cleanup pass is deferred by the configured grace TTL.
-            if unhealthy_instance_ids_with_grace.insert(instance_id.clone())
-                && !last_known_active.contains_key(instance_id)
-            {
-                last_known_active.insert(instance_id.clone(), (Vec::new(), 0));
-            }
-        }
-        RegistrarMetrics::discovered_instances_count().set(discovered_instance_ids.len() as f64);
+        let max_concurrency = self.config.max_concurrency.max(1);
         let mut resolution = DiscoveryResolution::default();
+        let mut unhealthy_instance_ids = HashSet::new();
 
-        let mut futs = futures::stream::iter(instances.into_iter().map(|instance| {
-            let span = tracing::info_span!(
-                "resolve_instance",
-                instance_id = %instance.instance_id,
-                endpoint = %instance.endpoint,
-                health = ?instance.health_status,
-            );
-            async move {
-                let result = self.resolve_instance(&instance).await;
-                (instance, result)
-            }
-            .instrument(span)
-        }))
-        .buffer_unordered(max_concurrency);
+        // Probe each non-draining target immediately before resolving it. ALB
+        // `/healthz` is registration-gated on nitro-host, so trusting it alone
+        // deadlocks bootstrap. Pairing the probe with resolution lets healthy
+        // targets progress while an unrelated probe waits for its timeout.
+        let mut futs =
+            futures::stream::iter(instances.into_iter().map(|mut instance| async move {
+                if instance.health_status != InstanceHealthStatus::Draining {
+                    let readyz = tokio::select! {
+                        biased;
+                        () = self.config.cancel.cancelled() => return (instance, None),
+                        result = self.signer_client.readyz(&instance.endpoint) => result,
+                    };
+                    instance.health_status = match readyz {
+                        Ok(()) => InstanceHealthStatus::Healthy,
+                        Err(e) => {
+                            debug!(
+                                error = %e,
+                                instance = %instance.instance_id,
+                                endpoint = %instance.endpoint,
+                                "readyz probe failed"
+                            );
+                            InstanceHealthStatus::Unhealthy
+                        }
+                    };
+                }
+                let span = tracing::info_span!(
+                    "resolve_instance",
+                    instance_id = %instance.instance_id,
+                    endpoint = %instance.endpoint,
+                    health = ?instance.health_status,
+                );
+                let result = self.resolve_instance(&instance).instrument(span).await;
+                (instance, Some(result))
+            }))
+            .buffer_unordered(max_concurrency);
 
-        // No cancel-select around `futs.next()`: each future checks
-        // cancellation cooperatively between awaits, so new work is
-        // short-circuited while already-started resolution work reaches a
-        // natural boundary.
         while let Some((instance, result)) = futs.next().await {
+            let Some(result) = result else {
+                continue;
+            };
+            if instance.health_status == InstanceHealthStatus::Unhealthy {
+                unhealthy_instance_ids.insert(instance.instance_id.clone());
+            }
             match result {
                 Ok(outcome) => {
                     let active_signers = outcome.active_signers.iter().copied().collect::<Vec<_>>();
@@ -413,6 +390,24 @@ where
                 }
             }
         }
+
+        if self.config.cancel.is_cancelled() {
+            return Ok(DiscoveryResolution::default());
+        }
+
+        unhealthy_instance_ids_with_grace
+            .retain(|instance_id| unhealthy_instance_ids.contains(instance_id));
+        for instance_id in &unhealthy_instance_ids {
+            // A process restart has no signer addresses to cache. Keep an
+            // empty cache entry for one unhealthy period so the global orphan
+            // cleanup pass is deferred by the configured grace TTL.
+            if unhealthy_instance_ids_with_grace.insert(instance_id.clone())
+                && !last_known_active.contains_key(instance_id)
+            {
+                last_known_active.insert(instance_id.clone(), (Vec::new(), 0));
+            }
+        }
+        RegistrarMetrics::discovered_instances_count().set(discovered_instance_ids.len() as f64);
 
         last_known_active.retain(|instance_id, (addresses, ttl_cycles)| {
             if discovered_instance_ids.contains(instance_id)
@@ -463,11 +458,16 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! Driver tests use a hand-rolled endpoint client because they coordinate
+    //! scripted responses and a shared cross-method call log across concurrent
+    //! readiness, signer-key, and attestation requests.
+
     use std::{
         collections::{HashMap, HashSet},
         sync::{Arc, Mutex},
     };
 
+    use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
     use url::Url;
 
@@ -494,6 +494,8 @@ mod tests {
         attestations: HashMap<Url, Vec<Vec<u8>>>,
         fail_attestation: HashSet<Url>,
         fail_readyz: HashSet<Url>,
+        block_readyz: HashMap<Url, Arc<Notify>>,
+        public_key_requested: Arc<Notify>,
         requested_public_keys: RequestedPublicKeys,
         requested_nonces: RequestedNonces,
         requested_readyz: RequestedReadyz,
@@ -521,6 +523,9 @@ mod tests {
     impl EnclaveEndpointClient for MockEnclaveEndpointClient {
         async fn readyz(&self, endpoint: &Url) -> Result<()> {
             self.requested_readyz.lock().unwrap().push(endpoint.clone());
+            if let Some(blocker) = self.block_readyz.get(endpoint) {
+                blocker.notified().await;
+            }
             if self.fail_readyz.contains(endpoint) {
                 return Err(RegistrarError::ProverClient {
                     instance: endpoint.to_string(),
@@ -532,6 +537,7 @@ mod tests {
 
         async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
             self.requested_public_keys.lock().unwrap().push(endpoint.clone());
+            self.public_key_requested.notify_one();
             self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
                 instance: endpoint.to_string(),
                 source: "unreachable".into(),
@@ -730,6 +736,37 @@ mod tests {
         assert!(resolution.active_signers.is_empty());
         assert!(resolution.unresolved_instance_ids.is_empty());
         assert!(requested_readyz.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_pipelines_readyz_with_instance_resolution() {
+        let cancel = CancellationToken::new();
+        let mut signer_client =
+            MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
+        signer_client.block_readyz.insert(endpoint_url(EP1), Arc::new(Notify::new()));
+        let public_key_requested = Arc::clone(&signer_client.public_key_requested);
+        let driver = cycle_driver(
+            vec![healthy_prover_instance(EP1), healthy_prover_instance(EP2)],
+            signer_client,
+            cancel.clone(),
+        );
+        let discovery = discover_once(&driver);
+        tokio::pin!(discovery);
+
+        tokio::select! {
+            resolution = &mut discovery => panic!("discovery completed before cancellation: {resolution:?}"),
+            result = tokio::time::timeout(Duration::from_secs(1), public_key_requested.notified()) => {
+                result.expect("healthy instance should resolve while another readyz probe blocks");
+            }
+        }
+
+        cancel.cancel();
+        let resolution = tokio::time::timeout(Duration::from_secs(1), &mut discovery)
+            .await
+            .expect("discovery should stop after cancellation");
+        assert!(resolution.registerable.is_empty());
+        assert!(resolution.active_signers.is_empty());
+        assert!(resolution.unresolved_instance_ids.is_empty());
     }
 
     #[tokio::test]
