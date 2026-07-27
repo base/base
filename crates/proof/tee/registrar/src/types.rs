@@ -7,12 +7,7 @@ pub struct ProverInstance {
     pub instance_id: String,
     /// HTTP endpoint URL for the prover (e.g. `http://10.0.1.5:8000/`).
     pub endpoint: Url,
-    /// Current health status of the instance.
-    ///
-    /// Discovery seeds this from ALB target health. The registration driver then
-    /// overlays non-[`Draining`](InstanceHealthStatus::Draining) instances with
-    /// the result of a direct `readyz` probe so bootstrap does not depend on
-    /// registration-gated ALB `/healthz` checks.
+    /// Current health status from discovery or direct readiness probing.
     pub health_status: InstanceHealthStatus,
 }
 

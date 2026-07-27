@@ -22,7 +22,7 @@ longer TTLs protect against flakes but delay real cleanup.
 
 - **`service`** — [`RegistrarConfig`] runtime config and lifecycle runner.
 - **`error`** — [`RegistrarError`] enum covering all failure modes.
-- **`prover`** — [`ProverClient`] JSON-RPC client for polling prover signer endpoints.
+- **`prover`** — [`ProverClient`] JSON-RPC client for polling prover readiness and signer endpoints.
 - **`signer_manager`** — [`SignerManager`] lifecycle management for signer proof tasks and registration execution.
 - **`traits`** — [`InstanceDiscovery`] and attestation proof provider trait usage.
 - **`types`** — Core domain types: [`ProverInstance`].

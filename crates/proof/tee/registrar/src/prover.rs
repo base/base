@@ -1,4 +1,4 @@
-//! JSON-RPC client for polling prover instance signer endpoints.
+//! JSON-RPC client for polling prover instance readiness and signer endpoints.
 
 use std::time::Duration;
 
@@ -58,7 +58,6 @@ impl ProverClient {
 
 impl EnclaveEndpointClient for ProverClient {
     async fn readyz(&self, endpoint: &Url) -> Result<()> {
-        debug!(endpoint = %endpoint, "probing prover readyz");
         let client = self.build_client(endpoint)?;
         client.request::<(), _>("readyz", rpc_params![]).await.map_err(|e| {
             RegistrarError::ProverClient { instance: endpoint.to_string(), source: Box::new(e) }

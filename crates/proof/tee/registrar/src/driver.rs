@@ -221,10 +221,7 @@ where
             return Ok(outcome);
         }
 
-        if !matches!(
-            instance.health_status,
-            InstanceHealthStatus::Initial | InstanceHealthStatus::Healthy
-        ) {
+        if instance.health_status != InstanceHealthStatus::Healthy {
             debug!(
                 status = ?instance.health_status,
                 instance = %instance.instance_id,
@@ -323,26 +320,25 @@ where
         // bootstrap. Preserve `Draining` so lifecycle teardown still skips
         // registration while protecting active signers.
         let max_concurrency = self.config.max_concurrency.max(1);
-        let readiness = futures::stream::iter(instances.iter_mut()).for_each_concurrent(
-            max_concurrency,
-            |instance| async {
-                if instance.health_status == InstanceHealthStatus::Draining {
-                    return;
+        let readiness = futures::stream::iter(
+            instances
+                .iter_mut()
+                .filter(|instance| instance.health_status != InstanceHealthStatus::Draining),
+        )
+        .for_each_concurrent(max_concurrency, |instance| async {
+            instance.health_status = match self.signer_client.readyz(&instance.endpoint).await {
+                Ok(()) => InstanceHealthStatus::Healthy,
+                Err(e) => {
+                    debug!(
+                        error = %e,
+                        instance = %instance.instance_id,
+                        endpoint = %instance.endpoint,
+                        "readyz probe failed"
+                    );
+                    InstanceHealthStatus::Unhealthy
                 }
-                instance.health_status = match self.signer_client.readyz(&instance.endpoint).await {
-                    Ok(()) => InstanceHealthStatus::Healthy,
-                    Err(e) => {
-                        debug!(
-                            error = %e,
-                            instance = %instance.instance_id,
-                            endpoint = %instance.endpoint,
-                            "readyz probe failed"
-                        );
-                        InstanceHealthStatus::Unhealthy
-                    }
-                };
-            },
-        );
+            };
+        });
         tokio::select! {
             biased;
             () = self.config.cancel.cancelled() => return Ok(DiscoveryResolution::default()),
