@@ -19,7 +19,7 @@ use crate::{PolicyAccounting, Stablecoin, StablecoinAccounting, StablecoinV1, St
 pub enum StablecoinVersion {
     /// Introduced at Beryl, the stablecoin's activation fork.
     V1,
-    /// Introduced at Cobalt. Behavior-identical to V1 (scaffold seam for future changes).
+    /// Introduced at Cobalt.
     V2,
 }
 
@@ -52,10 +52,6 @@ impl StablecoinVersions {
     ///
     /// V1 is active from Beryl; V2 supersedes it from Cobalt.
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<StablecoinVersion> {
-        // Ordered thresholds rather than per-variant arms: a fork newer than Cobalt must inherit the
-        // latest version (V2) until one supersedes it, and `BaseUpgrade` is `#[non_exhaustive]`, so
-        // an explicit-variant match would need a wildcard that would wrongly send future forks to
-        // `None`.
         match upgrade {
             u if u >= BaseUpgrade::Cobalt => Some(StablecoinVersion::V2),
             u if u >= BaseUpgrade::Beryl => Some(StablecoinVersion::V1),

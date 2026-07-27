@@ -95,7 +95,7 @@ impl StablecoinV2 {
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
     /// authorized [`grant_role`](Stablecoin::grant_role) path is not reachable. Bumps the
-    /// `DefaultAdmin` member count and emits `RoleGranted`. Kept inherent to V1 (off the `Stablecoin`
+    /// `DefaultAdmin` member count and emits `RoleGranted`. Kept inherent to V2 (off the `Stablecoin`
     /// trait) so it stays frozen with this version and off `&dyn Stablecoin`.
     pub(crate) fn grant_role_unchecked<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
