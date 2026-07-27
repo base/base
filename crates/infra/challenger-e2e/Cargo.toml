@@ -1,0 +1,24 @@
+[package]
+name = "base-challenger-e2e"
+description = "Challenger E2E observation logic for FORT execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+base-proof-contracts.workspace = true
+
+alloy-primitives.workspace = true
+alloy-provider.workspace = true
+
+url.workspace = true
+eyre.workspace = true
+tracing.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["full"] }

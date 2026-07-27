@@ -226,6 +226,7 @@ base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
 # Infra
 basectl-cli = { path = "crates/infra/basectl" }
 base-sidecrush = { path = "crates/infra/sidecrush" }
+base-challenger-e2e = { path = "crates/infra/challenger-e2e" }
 audit-archiver-lib = { path = "crates/infra/audit" }
 base-load-tests = { path = "crates/infra/load-tests" }
 ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
