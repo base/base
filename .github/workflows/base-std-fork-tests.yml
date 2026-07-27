@@ -30,10 +30,22 @@ jobs:
         include:
           # Refs may be release tags or commit SHAs. The resolved commit SHA is
           # recorded in the result artifact and PR comment.
+          #
+          # Each row must pair a base-anvil that installs that fork's precompile
+          # set with a base-std reference that encodes the same expectations.
+          # base-anvil selects the fork per branch, not via a runtime flag:
+          # release/v1.1.x is Beryl (V1), base-anvil-fork main is Cobalt (V2).
           - fork: Beryl
             key: beryl
             base_anvil_ref: 6d744e03224977edd42a36699ba9ff42be25e8cb
             base_std_ref: v1.0.0
+          # base-std has no Cobalt tag yet; this pins base-std#173 (ERC-8056 /
+          # AssetV2), the head of the Cobalt reference. Repoint at the release
+          # tag once #173 merges and is tagged.
+          - fork: Cobalt
+            key: cobalt
+            base_anvil_ref: ae7557c4f8602caa1da0be33143bb2504c85b0c8
+            base_std_ref: 6908650c9c96c0f56254a6cf4c5ddc81c849f4bd
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
