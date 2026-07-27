@@ -315,8 +315,39 @@ where
         last_known_active: &mut HashMap<String, (Vec<Address>, u32)>,
         unhealthy_instance_ids_with_grace: &mut HashSet<String>,
     ) -> Result<DiscoveryResolution> {
-        let instances = self.discovery.discover_instances().await?;
+        let mut instances = self.discovery.discover_instances().await?;
         RegistrarMetrics::discovery_success_total().increment(1);
+
+        // Overlay ALB target health with a direct `readyz` probe. ALB `/healthz`
+        // is registration-gated on nitro-host, so trusting it alone deadlocks
+        // bootstrap. Preserve `Draining` so lifecycle teardown still skips
+        // registration while protecting active signers.
+        let readiness = futures::stream::iter(instances.iter().enumerate().map(
+            |(index, instance)| async move {
+                if instance.health_status == InstanceHealthStatus::Draining {
+                    return (index, InstanceHealthStatus::Draining);
+                }
+                let status = match self.signer_client.readyz(&instance.endpoint).await {
+                    Ok(()) => InstanceHealthStatus::Healthy,
+                    Err(e) => {
+                        debug!(
+                            error = %e,
+                            instance = %instance.instance_id,
+                            endpoint = %instance.endpoint,
+                            "readyz probe failed"
+                        );
+                        InstanceHealthStatus::Unhealthy
+                    }
+                };
+                (index, status)
+            },
+        ))
+        .buffer_unordered(self.config.max_concurrency.max(1))
+        .collect::<Vec<_>>()
+        .await;
+        for (index, status) in readiness {
+            instances[index].health_status = status;
+        }
 
         let discovered_instance_ids: HashSet<String> =
             instances.iter().map(|instance| instance.instance_id.clone()).collect();
@@ -466,12 +497,15 @@ mod tests {
         keys: HashMap<Url, Vec<Vec<u8>>>,
         attestations: HashMap<Url, Vec<Vec<u8>>>,
         fail_attestation: HashSet<Url>,
+        fail_readyz: HashSet<Url>,
         requested_public_keys: RequestedPublicKeys,
         requested_nonces: RequestedNonces,
+        requested_readyz: RequestedReadyz,
     }
 
     type RequestedPublicKeys = Arc<Mutex<Vec<Url>>>;
     type RequestedNonces = Arc<Mutex<Vec<Option<Vec<Vec<u8>>>>>>;
+    type RequestedReadyz = Arc<Mutex<Vec<Url>>>;
 
     impl MockEnclaveEndpointClient {
         fn from_keys(entries: &[(&str, &[u8; 32])]) -> Self {
@@ -489,6 +523,17 @@ mod tests {
     }
 
     impl EnclaveEndpointClient for MockEnclaveEndpointClient {
+        async fn readyz(&self, endpoint: &Url) -> Result<()> {
+            self.requested_readyz.lock().unwrap().push(endpoint.clone());
+            if self.fail_readyz.contains(endpoint) {
+                return Err(RegistrarError::ProverClient {
+                    instance: endpoint.to_string(),
+                    source: "readyz unavailable".into(),
+                });
+            }
+            Ok(())
+        }
+
         async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
             self.requested_public_keys.lock().unwrap().push(endpoint.clone());
             self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
@@ -674,7 +719,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discover_and_resolve_skips_unhealthy_instances_before_resolving() {
+    async fn discover_and_resolve_skips_instances_that_fail_readyz() {
         let addr_healthy = signer_from_private_key(&HARDHAT_KEY_1);
 
         let instances = vec![
@@ -682,9 +727,11 @@ mod tests {
             healthy_prover_instance(EP2),
         ];
 
-        let signer_client =
+        let mut signer_client =
             MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
+        signer_client.fail_readyz.insert(endpoint_url(EP1));
         let requested_public_keys = Arc::clone(&signer_client.requested_public_keys);
+        let requested_readyz = Arc::clone(&signer_client.requested_readyz);
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
@@ -694,6 +741,26 @@ mod tests {
         assert!(!resolution.active_signers.contains(&signer_from_private_key(&HARDHAT_KEY_0)));
         assert_eq!(resolution.unresolved_instance_ids, HashSet::from([format!("i-{EP1}")]));
         assert_eq!(*requested_public_keys.lock().unwrap(), vec![endpoint_url(EP2)]);
+        let mut probed = requested_readyz.lock().unwrap().clone();
+        probed.sort();
+        assert_eq!(probed, vec![endpoint_url(EP1), endpoint_url(EP2)]);
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_registers_alb_unhealthy_instance_when_readyz_passes() {
+        let addr = signer_from_private_key(&HARDHAT_KEY_0);
+        let instances = vec![prover_instance(EP1, InstanceHealthStatus::Unhealthy)];
+        let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let requested_readyz = Arc::clone(&signer_client.requested_readyz);
+
+        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
+
+        let resolution = discover_once(&driver).await;
+        assert_eq!(resolution.registerable.len(), 1);
+        assert_eq!(resolution.registerable[0].signer, addr);
+        assert!(resolution.active_signers.contains(&addr));
+        assert!(resolution.unresolved_instance_ids.is_empty());
+        assert_eq!(*requested_readyz.lock().unwrap(), vec![endpoint_url(EP1)]);
     }
 
     #[tokio::test]
@@ -701,7 +768,8 @@ mod tests {
         const TEST_TTL_CYCLES: u32 = 2;
 
         let instance = prover_instance(EP1, InstanceHealthStatus::Unhealthy);
-        let signer_client = MockEnclaveEndpointClient::default();
+        let mut signer_client = MockEnclaveEndpointClient::default();
+        signer_client.fail_readyz.insert(endpoint_url(EP1));
         let requested_public_keys = Arc::clone(&signer_client.requested_public_keys);
         let driver = cycle_driver_with_instance_cache_ttl(
             vec![instance.clone()],
@@ -755,7 +823,8 @@ mod tests {
 
         let signer = signer_from_private_key(&HARDHAT_KEY_0);
         let instance = prover_instance(EP1, InstanceHealthStatus::Unhealthy);
-        let signer_client = MockEnclaveEndpointClient::default();
+        let mut signer_client = MockEnclaveEndpointClient::default();
+        signer_client.fail_readyz.insert(endpoint_url(EP1));
         let requested_public_keys = Arc::clone(&signer_client.requested_public_keys);
         let driver = cycle_driver_with_instance_cache_ttl(
             vec![instance.clone()],

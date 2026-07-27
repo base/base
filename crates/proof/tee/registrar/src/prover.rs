@@ -5,7 +5,11 @@ use std::time::Duration;
 use alloy_primitives::Address;
 use alloy_signer::utils::public_key_to_address;
 use base_proof_primitives::EnclaveApiClient;
-use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
+use jsonrpsee::{
+    core::client::ClientT,
+    http_client::{HttpClient, HttpClientBuilder},
+    rpc_params,
+};
 use k256::ecdsa::VerifyingKey;
 use tracing::debug;
 use url::Url;
@@ -53,6 +57,14 @@ impl ProverClient {
 }
 
 impl EnclaveEndpointClient for ProverClient {
+    async fn readyz(&self, endpoint: &Url) -> Result<()> {
+        debug!(endpoint = %endpoint, "probing prover readyz");
+        let client = self.build_client(endpoint)?;
+        client.request::<(), _>("readyz", rpc_params![]).await.map_err(|e| {
+            RegistrarError::ProverClient { instance: endpoint.to_string(), source: Box::new(e) }
+        })
+    }
+
     async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
         debug!(endpoint = %endpoint, "fetching signer public keys");
         let client = self.build_client(endpoint)?;

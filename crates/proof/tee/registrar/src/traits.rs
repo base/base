@@ -30,6 +30,12 @@ pub trait InstanceDiscovery: Send + Sync {
 ///
 /// The `endpoint` parameter is a [`Url`] (e.g. `http://10.0.1.5:8000/`).
 pub trait EnclaveEndpointClient: Send + Sync {
+    /// Probes whether the host is accepting requests (`readyz`).
+    ///
+    /// Unlike `healthz`, readiness does not require onchain registration, so the
+    /// registrar can bootstrap new instances without a circular dependency.
+    fn readyz<'a>(&'a self, endpoint: &'a Url) -> impl Future<Output = Result<()>> + Send + 'a;
+
     /// Fetches the SEC1-encoded public key for each enclave signer at the given endpoint.
     fn signer_public_key<'a>(
         &'a self,

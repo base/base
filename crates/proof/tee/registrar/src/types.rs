@@ -8,6 +8,11 @@ pub struct ProverInstance {
     /// HTTP endpoint URL for the prover (e.g. `http://10.0.1.5:8000/`).
     pub endpoint: Url,
     /// Current health status of the instance.
+    ///
+    /// Discovery seeds this from ALB target health. The registration driver then
+    /// overlays non-[`Draining`](InstanceHealthStatus::Draining) instances with
+    /// the result of a direct `readyz` probe so bootstrap does not depend on
+    /// registration-gated ALB `/healthz` checks.
     pub health_status: InstanceHealthStatus,
 }
 
@@ -16,9 +21,9 @@ pub struct ProverInstance {
 pub enum InstanceHealthStatus {
     /// ALB health checks are in progress — instance just started.
     Initial,
-    /// Instance is reachable and passing health checks.
+    /// Instance is reachable and passing readiness checks.
     Healthy,
-    /// Instance did not respond to the poll or is failing health checks.
+    /// Instance did not respond to `readyz` or is failing health checks.
     Unhealthy,
     /// ALB is draining connections from this instance.
     Draining,

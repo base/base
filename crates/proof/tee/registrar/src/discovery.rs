@@ -13,8 +13,9 @@ use crate::{InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarEr
 ///
 /// Queries `describe_target_health` to enumerate registered targets, then
 /// resolves each EC2 instance's private IP address via `describe_instances`.
-/// Health state is mapped from the ALB target health state, supporting the
-/// `Initial` warm-up window during which new instances should be registered.
+/// Health state is mapped from the ALB target health state. The registration
+/// driver later overlays non-draining instances with a direct `readyz` probe so
+/// bootstrap does not depend on registration-gated ALB `/healthz` checks.
 #[derive(Debug)]
 pub struct AwsTargetGroupDiscovery {
     elb_client: ElbClient,

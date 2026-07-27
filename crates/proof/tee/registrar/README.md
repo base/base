@@ -4,9 +4,10 @@ Library crate for the prover registrar service.
 
 Implements automated discovery and onchain registration of TEE prover signer
 keys for the Base multi-proof system. The registrar polls AWS ALB target groups
-to detect new Nitro enclave instances, fetches their attestation documents via
-`enclave_signerAttestation`, generates ZK proofs via the Boundless Network
-(RISC Zero / Automata SDK), and submits registration transactions to
+to detect new Nitro enclave instances, probes each instance's `readyz` endpoint
+(independent of registration-gated `healthz`), fetches their attestation
+documents via `enclave_signerAttestation`, generates ZK proofs via the Boundless
+Network (RISC Zero / Automata SDK), and submits registration transactions to
 `TEEProverRegistry` on L1.
 
 ## Discovery Cache TTL
