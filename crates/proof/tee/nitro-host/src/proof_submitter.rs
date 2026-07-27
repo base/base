@@ -46,6 +46,11 @@ impl ProofSubmitterRequest {
     /// originating proof request to reconstruct the signed journal. This is the
     /// exact key that signed the proof, so it cannot drift from a concurrent
     /// enclave restart the way a separate signer query could.
+    ///
+    /// Relies on the invariant that a TEE proof always carries at least one
+    /// per-block proposal (the enclave rejects empty proposal sets); an empty
+    /// set yields [`ProofSubmitterError::MissingProposals`] rather than falling
+    /// back to the aggregate.
     pub fn from_tee_proof(
         session_id: String,
         lock_id: String,

@@ -285,13 +285,18 @@ impl ProofRequestRepo {
     }
 
     /// Delete completed TEE proof requests produced by one reported signer.
+    ///
+    /// The `tee_signer` column is stored as lowercase `0x`-prefixed hex (via
+    /// `format!("{addr:#x}")`). The lookup lowercases its argument to match that
+    /// contract, so a differently-cased caller string still matches stored rows.
     pub async fn delete_proof_requests_by_tee_signer(&self, tee_signer: &str) -> Result<u64> {
+        let tee_signer = tee_signer.to_lowercase();
         let mut tx = self.pool.begin().await?;
         let ids = sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM proof_requests \
              WHERE tee_signer = $1 AND status = 'SUCCEEDED' FOR UPDATE",
         )
-        .bind(tee_signer)
+        .bind(&tee_signer)
         .fetch_all(&mut *tx)
         .await?;
 

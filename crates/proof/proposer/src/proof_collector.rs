@@ -352,6 +352,20 @@ where
                                 ProposerError::Submission(ProofSubmissionError::InvalidSigner),
                                 Some(tee_signer),
                             ) => self.delete_proofs_by_tee_signer(tee_signer, target_block).await,
+                            (
+                                ProposerError::Submission(ProofSubmissionError::InvalidSigner),
+                                None,
+                            ) => {
+                                // Legacy proof without signer metadata: only the current
+                                // session can be deleted, so InvalidSigner will recur for
+                                // each remaining proof from this signer until they drain.
+                                warn!(
+                                    target_block,
+                                    "Invalid signer with no recorded TEE signer; \
+                                     falling back to single-session delete (legacy proof)"
+                                );
+                                self.delete_proof_request(session_id, target_block).await
+                            }
                             _ => self.delete_proof_request(session_id, target_block).await,
                         }
                     })
