@@ -32,7 +32,7 @@ use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 #[cfg(feature = "edge-measurement")]
 use crate::cache::CacheInsertObservation;
 #[cfg(feature = "edge-measurement")]
-use crate::edge_measurement::{PendingSendJournalMarkerV2, ProcessorTerminalInputV1};
+use crate::edge_measurement::{PendingPublicationDispositionV2, ProcessorTerminalInputV1};
 use crate::{
     AssembledBlock, BlockAssembler, ExecutionError, FlashblockCache, PendingBlocks,
     PendingBlocksBuilder, PendingFrameObserver, PendingStateBuilder, ProviderError, Result,
@@ -45,7 +45,7 @@ use crate::{
 };
 #[cfg(feature = "edge-measurement")]
 use crate::{
-    BuildError, EdgeMeasurementGlobal, PendingRegistrationAttemptV2, ProcessorBaseDispositionV1,
+    BuildError, EdgeMeasurementGlobal, EdgeMeasurementRecorderV1, ProcessorBaseDispositionV1,
     ProcessorObserverDispositionV1, ProcessorPublishDispositionV1, ProtocolError,
 };
 
@@ -107,9 +107,7 @@ struct ProcessedFlashblock {
     pending_blocks: Option<Arc<PendingBlocks>>,
     advanced: bool,
     #[cfg(feature = "edge-measurement")]
-    measurement_registration: Option<PendingRegistrationAttemptV2>,
-    #[cfg(feature = "edge-measurement")]
-    measurement_send_marker: Option<PendingSendJournalMarkerV2>,
+    measurement_publication: PendingPublicationDispositionV2,
     #[cfg(feature = "edge-measurement")]
     measurement_base_disposition: ProcessorBaseDispositionV1,
     #[cfg(feature = "edge-measurement")]
@@ -122,9 +120,8 @@ impl ProcessedFlashblock {
             pending_blocks,
             advanced: true,
             #[cfg(feature = "edge-measurement")]
-            measurement_registration: None,
-            #[cfg(feature = "edge-measurement")]
-            measurement_send_marker: None,
+            measurement_publication:
+                PendingPublicationDispositionV2::PreOpenMeasurementUnavailablePassthrough,
             #[cfg(feature = "edge-measurement")]
             measurement_base_disposition: ProcessorBaseDispositionV1::UnknownProcessorBranch,
             #[cfg(feature = "edge-measurement")]
@@ -137,9 +134,8 @@ impl ProcessedFlashblock {
             pending_blocks,
             advanced: false,
             #[cfg(feature = "edge-measurement")]
-            measurement_registration: None,
-            #[cfg(feature = "edge-measurement")]
-            measurement_send_marker: None,
+            measurement_publication:
+                PendingPublicationDispositionV2::PreOpenMeasurementUnavailablePassthrough,
             #[cfg(feature = "edge-measurement")]
             measurement_base_disposition: ProcessorBaseDispositionV1::UnknownProcessorBranch,
             #[cfg(feature = "edge-measurement")]
@@ -155,6 +151,49 @@ impl ProcessedFlashblock {
         self.measurement_base_disposition = disposition;
         self
     }
+}
+
+#[cfg(feature = "edge-measurement")]
+fn broadcast_pending_with_measurement<E>(
+    pending: &Arc<PendingBlocks>,
+    disposition: PendingPublicationDispositionV2,
+    recorder: Option<&Arc<EdgeMeasurementRecorderV1>>,
+    send: impl FnOnce(Arc<PendingBlocks>) -> std::result::Result<usize, E>,
+) -> Option<std::result::Result<usize, E>> {
+    if disposition == PendingPublicationDispositionV2::ReservationFailedFailClosed {
+        return None;
+    }
+
+    let accounted = matches!(
+        disposition,
+        PendingPublicationDispositionV2::PreCutoffRegisteredAuthority(_)
+            | PendingPublicationDispositionV2::NonAdvancedPassthrough(_)
+            | PendingPublicationDispositionV2::PostCutoffAdvancedNonAuthority(_)
+    );
+    let registry = if accounted { Some(recorder?.registry()) } else { None };
+    let send_result = send(Arc::clone(pending));
+    let receiver_count = send_result.as_ref().ok().copied();
+
+    match disposition {
+        PendingPublicationDispositionV2::PreOpenMeasurementUnavailablePassthrough => {}
+        PendingPublicationDispositionV2::PreCutoffRegisteredAuthority(registration) => {
+            if registry
+                .expect("accounted publication has registry")
+                .record_send(registration, receiver_count)
+                .is_err()
+            {
+                warn!(message = "edge measurement send disposition could not be recorded");
+            }
+        }
+        PendingPublicationDispositionV2::NonAdvancedPassthrough(marker)
+        | PendingPublicationDispositionV2::PostCutoffAdvancedNonAuthority(marker) => registry
+            .expect("accounted publication has registry")
+            .record_unregistered_send(marker, receiver_count)
+            .expect("reserved non-authority send disposition must be recorded"),
+        PendingPublicationDispositionV2::ReservationFailedFailClosed => unreachable!(),
+    };
+
+    Some(send_result)
 }
 
 fn notify_pending_frame_observer(
@@ -538,8 +577,19 @@ where
             if let Some(ref pending) = processed.pending_blocks
                 && let Some(installed) = EdgeMeasurementGlobal::installed()
             {
-                (processed.measurement_registration, processed.measurement_send_marker) = installed
-                    .prepare_pending_publication(pending, processed.advanced, source_generation);
+                processed.measurement_publication = installed.prepare_pending_publication(
+                    pending,
+                    processed.advanced,
+                    source_generation,
+                );
+                if processed.measurement_publication
+                    == PendingPublicationDispositionV2::ReservationFailedFailClosed
+                {
+                    return Err(ProviderError::StateProvider(
+                        "edge measurement publication reservation failed".to_owned(),
+                    )
+                    .into());
+                }
             }
             Ok(processed)
         }) {
@@ -552,9 +602,12 @@ where
                         processed.measurement_base_disposition
                     };
                 #[cfg(feature = "edge-measurement")]
-                let pending_snapshot_sequence = processed
-                    .measurement_registration
-                    .and_then(|registration| registration.pending_snapshot_sequence);
+                let pending_snapshot_sequence = match processed.measurement_publication {
+                    PendingPublicationDispositionV2::PreCutoffRegisteredAuthority(registration) => {
+                        registration.pending_snapshot_sequence
+                    }
+                    _ => None,
+                };
                 #[cfg(feature = "edge-measurement")]
                 let mut publish_disposition = ProcessorPublishDispositionV1::NotApplicable;
                 #[cfg(feature = "edge-measurement")]
@@ -563,7 +616,14 @@ where
                 if let Some(ref pb) = new_pending_blocks {
                     #[cfg(feature = "edge-measurement")]
                     {
-                        let send_result = self.sender.send(Arc::clone(pb));
+                        let recorder = EdgeMeasurementGlobal::installed();
+                        let send_result = broadcast_pending_with_measurement(
+                            pb,
+                            processed.measurement_publication,
+                            recorder.as_ref(),
+                            |pending| self.sender.send(pending),
+                        )
+                        .expect("fail-closed publication was rejected before broadcast");
                         if processed.advanced {
                             publish_disposition = send_result.as_ref().ok().map_or(
                                 ProcessorPublishDispositionV1::NoReceivers,
@@ -575,9 +635,7 @@ where
                                 },
                             );
                         }
-                        if let (Some(recorder), Some(generation)) =
-                            (EdgeMeasurementGlobal::installed(), source_generation)
-                        {
+                        if let (Some(recorder), Some(generation)) = (recorder, source_generation) {
                             recorder.record_generation_product(ProcessorTerminalInputV1 {
                                 source_generation: generation,
                                 base_disposition: if cache_resolved {
@@ -593,35 +651,6 @@ where
                                     .then_some(actual_base_disposition),
                             });
                             generation_product_recorded = true;
-                        }
-                        if let Some(registration) = processed.measurement_registration {
-                            let receiver_count = send_result.as_ref().ok().copied();
-                            if EdgeMeasurementGlobal::installed().is_some_and(|recorder| {
-                                recorder
-                                    .registry()
-                                    .record_send(registration, receiver_count)
-                                    .is_err()
-                            }) {
-                                warn!(
-                                    message =
-                                        "edge measurement send disposition could not be recorded"
-                                );
-                            }
-                        }
-                        if let Some(marker) = processed.measurement_send_marker
-                            && EdgeMeasurementGlobal::installed().is_some_and(|recorder| {
-                                recorder
-                                    .registry()
-                                    .record_unregistered_send(
-                                        marker,
-                                        send_result.as_ref().ok().copied(),
-                                    )
-                                    .is_err()
-                            })
-                        {
-                            warn!(
-                                message = "edge measurement non-authority send disposition could not be recorded"
-                            );
                         }
                         _ = send_result;
                     }
@@ -1476,7 +1505,7 @@ mod tests {
         }
     }
 
-    fn test_pending_blocks() -> PendingBlocks {
+    pub(super) fn test_pending_blocks() -> PendingBlocks {
         let flashblock = Flashblock {
             payload_id: PayloadId::default(),
             index: 0,
@@ -1642,5 +1671,126 @@ mod measurement_tests {
                 "MissingHeaders",
             ]
         );
+    }
+
+    #[test]
+    fn reservation_failure_skips_broadcast() {
+        let pending = Arc::new(tests::test_pending_blocks());
+        let send_calls = std::sync::atomic::AtomicUsize::new(0);
+
+        let result = broadcast_pending_with_measurement(
+            &pending,
+            PendingPublicationDispositionV2::ReservationFailedFailClosed,
+            None,
+            |_| {
+                send_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Ok::<usize, ()>(1)
+            },
+        );
+
+        assert!(result.is_none());
+        assert_eq!(send_calls.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn non_advanced_post_cutoff_exhausted_count_or_capacity_never_broadcasts() {
+        for (pending_registry_capacity, exhaust_capacity) in [(64, false), (1, true)] {
+            let recorder = EdgeMeasurementRecorderV1::new(crate::EdgeMeasurementInstallConfigV1 {
+                producer_epoch: std::num::NonZeroU64::new(1).expect("nonzero epoch"),
+                event_queue_capacity: 64,
+                active_state_capacity: 64,
+                pending_registry_capacity,
+                terminal_record_capacity: 64,
+            })
+            .expect("measurement recorder");
+            recorder.open_admission().expect("measurement admission");
+            recorder.prepare_cutoff();
+            let registry = recorder.registry();
+            if exhaust_capacity {
+                assert!(registry.begin_unregistered_send());
+            } else {
+                let (mut state, _) = registry.lock_state();
+                state.unregistered_send_count = u64::MAX;
+            }
+            let before = registry.snapshot().expect("before failed reservation");
+            let pending = Arc::new(tests::test_pending_blocks());
+            let disposition = recorder.prepare_pending_publication(&pending, false, None);
+            let send_calls = std::sync::atomic::AtomicUsize::new(0);
+
+            let result =
+                broadcast_pending_with_measurement(&pending, disposition, Some(&recorder), |_| {
+                    send_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    Ok::<usize, ()>(1)
+                });
+
+            assert_eq!(disposition, PendingPublicationDispositionV2::ReservationFailedFailClosed);
+            assert!(result.is_none());
+            assert_eq!(send_calls.load(std::sync::atomic::Ordering::Relaxed), 0);
+            let after = registry.snapshot().expect("after failed reservation");
+            assert_eq!(after.unregistered_send_count, before.unregistered_send_count);
+            assert_eq!(after.unregistered_send_inflight, before.unregistered_send_inflight);
+            assert_eq!(after.send_journal, before.send_journal);
+            assert_eq!(after.unregistered_send_records, before.unregistered_send_records);
+            assert_eq!(
+                recorder.coordinator_missing_evidence_counts().snapshot(),
+                vec![("RegistryPendingCapacityExceeded", 1)]
+            );
+        }
+    }
+
+    #[test]
+    fn post_cutoff_reserved_publication_broadcasts_and_journals_once() {
+        let recorder = EdgeMeasurementRecorderV1::new(crate::EdgeMeasurementInstallConfigV1 {
+            producer_epoch: std::num::NonZeroU64::new(1).expect("nonzero epoch"),
+            event_queue_capacity: 64,
+            active_state_capacity: 64,
+            pending_registry_capacity: 64,
+            terminal_record_capacity: 64,
+        })
+        .expect("measurement recorder");
+        recorder.open_admission().expect("measurement admission");
+        recorder.prepare_cutoff();
+        let pending = Arc::new(tests::test_pending_blocks());
+        let disposition = recorder.prepare_pending_publication(&pending, true, None);
+        assert_eq!(
+            disposition,
+            PendingPublicationDispositionV2::PostCutoffAdvancedNonAuthority(
+                crate::PendingSendJournalMarkerV2::PostCutoffAdvancedNonAuthority
+            )
+        );
+        let send_calls = std::sync::atomic::AtomicUsize::new(0);
+        let reserved = recorder.registry().snapshot().expect("reserved publication");
+        assert_eq!(reserved.unregistered_send_inflight, 1);
+        assert_eq!(reserved.unregistered_send_count, 0);
+        assert!(reserved.send_journal.is_empty());
+        assert!(reserved.unregistered_send_records.is_empty());
+
+        let send_result =
+            broadcast_pending_with_measurement(&pending, disposition, Some(&recorder), |_| {
+                send_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Ok::<usize, ()>(1)
+            })
+            .expect("reserved publication must send");
+
+        assert_eq!(send_result, Ok(1));
+        assert_eq!(send_calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        let snapshot = recorder.registry().snapshot().expect("journaled publication");
+        assert_eq!(snapshot.unregistered_send_inflight, 0);
+        assert_eq!(snapshot.unregistered_send_count, 1);
+        assert_eq!(
+            snapshot.unregistered_send_records,
+            vec![(
+                crate::PendingSendJournalMarkerV2::PostCutoffAdvancedNonAuthority,
+                crate::PendingSendDispositionV2::Published { receiver_count: 1 },
+            )]
+        );
+        assert_eq!(
+            snapshot.send_journal,
+            vec![crate::PendingSendJournalEntryV2::NonAuthority(
+                crate::PendingSendJournalMarkerV2::PostCutoffAdvancedNonAuthority
+            )]
+        );
+        recorder.registry().cli_closed().expect("journal closure");
+        assert!(recorder.registry().snapshot().expect("closed journal").send_journal.is_empty());
     }
 }

@@ -1,5 +1,9 @@
 //! Receive-only A1 runtime ownership, latest-wins isolation, and terminal accounting.
 
+#[cfg(feature = "t4b-shadow")]
+use std::fmt::Debug;
+#[cfg(feature = "t4b-shadow")]
+use std::sync::atomic::AtomicBool;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -8,8 +12,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-#[cfg(feature = "t4b-shadow")]
-use std::{fmt::Debug, sync::atomic::AtomicBool};
 
 #[cfg(feature = "t4b-shadow")]
 use alloy_primitives::Bytes;
@@ -570,12 +572,20 @@ impl MevTraderRuntime {
         self.edge_measurement.as_ref().map(|owner| owner.drain_candidate_details())
     }
 
-    /// Returns the exact drained final to the later CLI checkpoint coordinator.
+    /// Returns the current raw producer accounting authority without deriving a final.
     #[cfg(feature = "edge-measurement")]
-    pub fn edge_final_record(
+    pub fn edge_raw_accounting_snapshot(
         &self,
-    ) -> Option<Result<crate::EdgeMeasurementFinalV1, EdgeProducerError>> {
-        self.edge_measurement.as_ref().map(|owner| owner.final_record())
+    ) -> Option<Result<crate::EdgeRawAccountingSnapshotV1, EdgeProducerError>> {
+        self.edge_measurement.as_ref().map(|owner| owner.raw_accounting_snapshot())
+    }
+
+    /// Returns producer accounting authority only after cutoff and complete queue drainage.
+    #[cfg(feature = "edge-measurement")]
+    pub fn edge_cutoff_drained_snapshot(
+        &self,
+    ) -> Option<Result<crate::EdgeCutoffDrainedSnapshotV1, EdgeProducerError>> {
+        self.edge_measurement.as_ref().map(|owner| owner.cutoff_drained_snapshot())
     }
 
     /// Records one closed A1 outcome without retaining source data.
@@ -1636,16 +1646,32 @@ mod tests {
             raw_reject_source_sha256: B256::new(crate::EdgeMeasurementDurabilityV1::sha256(
                 include_bytes!("edge_measurement.rs"),
             )),
-            measurement_tx_source_sha256: B256::new(crate::EdgeMeasurementDurabilityV1::sha256(
-                include_bytes!("measurement_tx.rs"),
-            )),
+            measurement_binding_source_sha256: B256::new(
+                crate::EdgeMeasurementDurabilityV1::sha256(include_bytes!("measurement_tx.rs")),
+            ),
         })
         .expect("owner");
+        assert_eq!(
+            owner
+                .raw_accounting_snapshot()
+                .expect("pre-construction accounting")
+                .blink
+                .victim_ingress_observed,
+            0
+        );
         let config = MevTraderRuntimeConfig::empty()
             .expect("empty config")
             .with_edge_measurement_owner(Arc::clone(&owner))
             .expect("install owner");
         let runtime = MevTraderRuntime::start(config).expect("runtime");
+        assert_eq!(
+            owner
+                .raw_accounting_snapshot()
+                .expect("post-construction accounting")
+                .blink
+                .victim_ingress_observed,
+            0
+        );
         let chain_spec = Arc::new(BaseChainSpec::mainnet());
         runtime.submit_blink_victim(victim());
         runtime.submit_blink_victim(victim());
@@ -1819,9 +1845,9 @@ mod tests {
             raw_reject_source_sha256: B256::new(crate::EdgeMeasurementDurabilityV1::sha256(
                 include_bytes!("edge_measurement.rs"),
             )),
-            measurement_tx_source_sha256: B256::new(crate::EdgeMeasurementDurabilityV1::sha256(
-                include_bytes!("measurement_tx.rs"),
-            )),
+            measurement_binding_source_sha256: B256::new(
+                crate::EdgeMeasurementDurabilityV1::sha256(include_bytes!("measurement_tx.rs")),
+            ),
         })
         .expect("owner");
         let config = MevTraderRuntimeConfig::shadow(universe)
@@ -1857,7 +1883,8 @@ mod tests {
             last_candidate_sequence: 0,
             latch_mono_ns: 1,
         });
-        assert_eq!(owner.finalization_ready(), Ok(true));
+        assert!(matches!(runtime.edge_raw_accounting_snapshot(), Some(Ok(_))));
+        assert!(matches!(runtime.edge_cutoff_drained_snapshot(), Some(Ok(_))));
         assert!(runtime.consume_once(&port, Arc::new(BaseChainSpec::mainnet())));
         assert_eq!(runtime.counters().count(A1Outcome::FrameBound), 1);
         assert_eq!(runtime.shadow_outcome_counters().count(ShadowOutcome::Selected), 1);
@@ -1875,7 +1902,7 @@ mod tests {
             crate::CandidatePreEnqueueDropCountersV1::default()
         );
         assert!(owner.drain_records().expect("candidate terminal channel").is_empty());
-        assert_eq!(owner.finalization_ready(), Ok(true));
+        assert!(matches!(runtime.edge_cutoff_drained_snapshot(), Some(Ok(_))));
         let ledger = owner.ledger().verify_final().expect("terminal ledger");
         assert_eq!(ledger.cancelled_before_frame, 1);
     }

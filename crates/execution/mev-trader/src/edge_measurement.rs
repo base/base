@@ -1,5 +1,7 @@
 //! Feature-private Blink accounting, cutoff, candidate, and durability records.
 
+#[cfg(feature = "test-utils")]
+use std::str::FromStr;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::File,
@@ -14,6 +16,8 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256};
+#[cfg(feature = "test-utils")]
+use alloy_rpc_types_engine::PayloadId;
 use base_common_consensus::BaseTxEnvelope;
 use reth_provider::AccountReader;
 use revm::precompile::{Crypto, DefaultCrypto};
@@ -25,12 +29,13 @@ use tokio_tungstenite::tungstenite::error::{
 
 use crate::{
     A1Outcome, A1Status, AuditedWriteKey, BackrunPlan, CancellationProbe, ExactProtocol,
-    MAX_ACCOUNTS, MAX_STORAGE_SLOTS, MaterializedState, MeasurementEncoder,
-    MeasurementExecutionHopV1, MeasurementNonceWitnessV1, MeasurementTxDeriverV1,
-    MeasurementTxInputV1, PortError, PreparedPoolQuote, PreparedPoolState, ProcessedFrame,
-    ShadowOutcome, SlotSubmit, SnapshotHandle, TraderSnapshotPort, TransactionVisitor,
-    VisitControl,
+    MAX_ACCOUNTS, MAX_STORAGE_SLOTS, MaterializedState, MeasurementBindingDeriverV1,
+    MeasurementBindingInputV1, MeasurementEncoder, MeasurementExecutionHopV1, PortError,
+    PreparedPoolQuote, PreparedPoolState, ProcessedFrame, ShadowOutcome, SlotSubmit,
+    SnapshotHandle, SnapshotNonceWitnessV1, TraderSnapshotPort, TransactionVisitor, VisitControl,
 };
+#[cfg(feature = "test-utils")]
+use crate::{BackrunHop, BackrunPlanDigest, MaterializedWrite};
 
 const BLINK_CUTOFF_DRAIN_DEADLINE_V1: Duration = Duration::from_secs(30);
 /// Fixed maximum number of simultaneously retained Blink generations.
@@ -648,12 +653,15 @@ pub enum EdgeProducerError {
     /// Supplied evidence did not match the live same-frame selection.
     #[error("selected candidate evidence does not match the live frame")]
     CandidateEvidenceMismatch,
-    /// Pure unsigned derivation rejected the exact local evidence.
-    #[error("unsigned measurement transaction derivation failed")]
-    MeasurementTxDerivation,
+    /// Pure evidence binding rejected the exact local inputs.
+    #[error("measurement evidence binding failed")]
+    MeasurementBindingDerivation,
     /// Measurement accounting failed.
     #[error("edge measurement ledger failed")]
     Ledger,
+    /// A staged candidate count could not be represented in the stable accounting revision.
+    #[error("edge measurement staged candidate count overflow")]
+    StagedCountOverflow,
     /// Pre-cutoff generation authority did not drain before the finite deadline.
     #[error("Blink generation authority cutoff drain deadline exceeded")]
     CutoffDrainDeadline,
@@ -709,8 +717,8 @@ pub struct EdgeMeasurementOwnerConfigV1 {
     pub raw_reject_inventory_sha256: B256,
     /// SHA-256 of the compiled reject-classifier source.
     pub raw_reject_source_sha256: B256,
-    /// SHA-256 of the compiled measurement transaction source.
-    pub measurement_tx_source_sha256: B256,
+    /// SHA-256 of the compiled measurement binding source.
+    pub measurement_binding_source_sha256: B256,
 }
 
 impl EdgeMeasurementOwnerConfigV1 {
@@ -739,7 +747,7 @@ impl EdgeMeasurementOwnerConfigV1 {
             || self.raw_reject_inventory_sha256 != Self::raw_reject_inventory_sha256()
             || self.raw_reject_source_sha256
                 != B256::new(DefaultCrypto.sha256(include_bytes!("edge_measurement.rs")))
-            || self.measurement_tx_source_sha256
+            || self.measurement_binding_source_sha256
                 != B256::new(DefaultCrypto.sha256(include_bytes!("measurement_tx.rs")))
         {
             return Err(EdgeProducerError::InvalidConfig);
@@ -789,7 +797,7 @@ pub enum CandidatePreEnqueueDropReasonV3 {
     MissingRequiredEvidence,
     /// Same-frame evidence did not match the selected plan.
     EvidenceMismatch,
-    /// Unsigned local derivation rejected nonce, victim, fee, ABI, or envelope bytes.
+    /// Non-envelope binding rejected nonce, victim, fee, plan, or execution-hop evidence.
     MeasurementDerivationRejected,
     /// The selected generation was cancelled after its draft was staged.
     CancelledAfterDraft,
@@ -830,7 +838,7 @@ pub struct CandidatePreEnqueueDropCountersV1 {
     pub missing_required_evidence: u64,
     /// Same-frame staging failures caused by evidence mismatch.
     pub evidence_mismatch: u64,
-    /// Unsigned measurement transaction derivation rejections.
+    /// Measurement evidence binding rejections.
     pub measurement_derivation_rejected: u64,
     /// Staged candidates cancelled before enqueue.
     pub cancelled_after_draft: u64,
@@ -959,7 +967,7 @@ pub struct EdgeCandidateEvidenceV3 {
     economics_evidence_digest: B256,
     execution_hops: [MeasurementExecutionHopV1; 2],
     deployment_identities: [(Address, B256); 4],
-    backrun_measurement_tx: crate::BackrunMeasurementTxV1,
+    backrun_measurement_binding: crate::BackrunMeasurementBindingV1,
 }
 
 /// Queue item from the live selected-plan producer.
@@ -984,8 +992,227 @@ pub struct CheckedCandidateBoundsV1 {
     /// Last allocated candidate sequence, absent when `count` is zero.
     pub last_sequence: Option<u64>,
 }
+/// Bounded producer queue depths captured with an accounting snapshot.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct EdgeQueueAccountingSnapshotV1 {
+    /// Producer records awaiting the canonical writer.
+    pub pending_records: u64,
+    /// Candidate details awaiting the canonical writer.
+    pub pending_candidates: u64,
+    /// Candidate drafts staged before terminal resolution.
+    pub staged_count: u64,
+}
+
+/// Stable raw producer accounting snapshot across startup, periodic, and terminal phases.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EdgeRawAccountingSnapshotV1 {
+    /// Stable revision vector used to reject mixed accounting snapshots.
+    pub revision: [u64; 36],
+    /// Raw Blink conservation counters.
+    pub blink: BlinkLedgerSnapshotV1,
+    /// Bounded producer queue depths.
+    pub queues: EdgeQueueAccountingSnapshotV1,
+    /// Checked candidate count and optional inclusive last sequence.
+    pub candidate_bounds: CheckedCandidateBoundsV1,
+    /// Candidate drops recorded before enqueue.
+    pub candidate_drops: CandidatePreEnqueueDropCountersV1,
+    /// Blink reject records lost at the bounded queue.
+    pub blink_reject_loss: BlinkRejectQueueLossCountersV1,
+    /// Candidate drop records lost at the bounded queue.
+    pub candidate_drop_loss: CandidateDropQueueLossCountersV1,
+    /// Cutoff witness when cutoff has been latched.
+    pub cutoff: Option<ProducerEpochCutoffV1>,
+}
+#[cfg(any(test, feature = "test-utils"))]
+/// Strongly typed read-only audit view of the validated owner configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EdgeMeasurementOwnerConfigAuditSnapshotV1 {
+    /// Producer epoch owned by this measurement instance.
+    pub producer_epoch: u64,
+    /// Canonical output root.
+    pub output_root: PathBuf,
+    /// Stable identity of the validated output-root handle.
+    pub output_root_handle_identity: usize,
+    /// Producer implementation digest.
+    pub producer_digest: B256,
+    /// Reject schema digest.
+    pub reject_schema_digest: B256,
+    /// Preregistration contract digest.
+    pub prereg_digest: B256,
+    /// Runtime policy digest.
+    pub policy_digest: B256,
+    /// Complete configuration digest.
+    pub config_digest: B256,
+    /// Owner approval receipt digest.
+    pub owner_approval_receipt_digest: B256,
+    /// Bounded producer-record queue capacity.
+    pub record_queue_capacity: usize,
+    /// Bounded candidate-detail queue capacity.
+    pub candidate_queue_capacity: usize,
+    /// Measurement transaction sender.
+    pub measurement_sender: Address,
+    /// Executor runtime code hash.
+    pub executor_runtime_hash: B256,
+    /// V2 adapter address.
+    pub v2_adapter: Address,
+    /// V2 adapter runtime code hash.
+    pub v2_adapter_runtime_hash: B256,
+    /// V3 adapter address.
+    pub v3_adapter: Address,
+    /// V3 adapter runtime code hash.
+    pub v3_adapter_runtime_hash: B256,
+    /// Aerodrome adapter address.
+    pub aerodrome_adapter: Address,
+    /// Aerodrome adapter runtime code hash.
+    pub aerodrome_adapter_runtime_hash: B256,
+    /// G0 code identity digest.
+    pub g0_code_identity_digest: B256,
+    /// Raw reject inventory source digest.
+    pub raw_reject_inventory_sha256: B256,
+    /// Raw reject implementation source digest.
+    pub raw_reject_source_sha256: B256,
+    /// Measurement binding implementation source digest.
+    pub measurement_binding_source_sha256: B256,
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+/// Strongly typed read-only audit view of every Blink ledger counter, flag, and map entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlinkMeasurementLedgerAuthorityAuditSnapshotV1 {
+    /// Victims observed at runtime ingress.
+    pub observed: u64,
+    /// Victims accepted for slot submission.
+    pub accepted: u64,
+    /// Slot submissions accepted.
+    pub slot_accepted: u64,
+    /// Slot submissions replaced.
+    pub slot_replaced: u64,
+    /// Slot submissions rejected after closure.
+    pub slot_closed: u64,
+    /// Checked generation allocation overflows.
+    pub generation_overflow: u64,
+    /// Generations admitted to processing.
+    pub admitted_generations: u64,
+    /// Generations reaching processed terminal state.
+    pub processed_terminal: u64,
+    /// Generations replaced before frame processing.
+    pub replaced_before_frame: u64,
+    /// Generations cancelled before frame processing.
+    pub cancelled_before_frame: u64,
+    /// Selected DTOs built before terminal resolution.
+    pub selected_dto_built_preterminal: u64,
+    /// Selected DTOs committed.
+    pub selected_dto_committed: u64,
+    /// Selected DTOs cancelled before terminal resolution.
+    pub selected_dto_cancelled_before_terminal: u64,
+    /// Selected DTOs ending in a preterminal failure.
+    pub selected_dto_preterminal_failure: u64,
+    /// Whether ledger admission is closed.
+    pub admission_closed: bool,
+    /// Whether the ledger is poisoned.
+    pub poisoned: bool,
+    /// Generation terminal authority keyed by generation.
+    pub generations: BTreeMap<u64, Option<BlinkGenerationTerminalV1>>,
+    /// Selected DTO terminal authority keyed by generation.
+    pub selected: BTreeMap<u64, Option<SelectedDtoTerminalV1>>,
+    /// Whether the generation map mutex is poisoned.
+    pub generations_mutex_poisoned: bool,
+    /// Whether the selected DTO map mutex is poisoned.
+    pub selected_mutex_poisoned: bool,
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+/// Complete strongly typed read-only audit snapshot of Blink owner authority.
+///
+/// Equality includes configuration identity, complete ledger authority, cutoff witness, every live
+/// FIFO payload, generation/staging collections, sequences, losses, pending counts, hash-chain
+/// cursor, poison/install/cutoff flags, and all authority lock-poison observations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EdgeMeasurementOwnerAuthorityAuditSnapshotV1 {
+    /// Validated owner configuration.
+    pub config: EdgeMeasurementOwnerConfigAuditSnapshotV1,
+    /// Complete Blink conservation ledger authority.
+    pub ledger: BlinkMeasurementLedgerAuthorityAuditSnapshotV1,
+    /// Latched producer cutoff witness.
+    pub cutoff: Option<ProducerEpochCutoffV1>,
+    /// Live generation authority.
+    pub generation_authority: BTreeSet<u64>,
+    /// Producer records awaiting canonical persistence.
+    pub record_queue: Vec<EdgeProducerRecordV1>,
+    /// Candidate details awaiting canonical persistence.
+    pub candidate_queue: Vec<EdgeCandidateDetailV1>,
+    /// Candidate evidence staged before terminal resolution.
+    pub staged: BTreeMap<u64, EdgeCandidateEvidenceV3>,
+    /// Candidate sequences whose staging failed.
+    pub staging_failures: BTreeSet<u64>,
+    /// Next reject-record sequence.
+    pub reject_sequence: u64,
+    /// Next candidate sequence.
+    pub candidate_sequence: u64,
+    /// Candidate drops recorded before enqueue.
+    pub candidate_drop_counts: CandidatePreEnqueueDropCountersV1,
+    /// Blink reject records lost at the bounded queue.
+    pub blink_reject_queue_loss: BlinkRejectQueueLossCountersV1,
+    /// Candidate drop records lost at the bounded queue.
+    pub candidate_drop_queue_loss: CandidateDropQueueLossCountersV1,
+    /// Producer records pending canonical persistence.
+    pub pending_records: u64,
+    /// Candidate details pending canonical persistence.
+    pub pending_candidates: u64,
+    /// Previous canonical Blink reject record hash.
+    pub reject_previous_hash: [u8; 32],
+    /// Whether owner authority is poisoned.
+    pub poisoned: bool,
+    /// Whether the global owner is installed.
+    pub installed: bool,
+    /// Whether producer cutoff is latched.
+    pub cutoff_latched: bool,
+    /// Whether the admission mutex is poisoned.
+    pub admission_mutex_poisoned: bool,
+    /// Whether the generation-authority mutex is poisoned.
+    pub generation_authority_mutex_poisoned: bool,
+    /// Whether the producer-record receiver mutex is poisoned.
+    pub record_receiver_mutex_poisoned: bool,
+    /// Whether the candidate receiver mutex is poisoned.
+    pub candidate_receiver_mutex_poisoned: bool,
+    /// Whether the staged-candidate mutex is poisoned.
+    pub staged_mutex_poisoned: bool,
+    /// Whether the staging-failures mutex is poisoned.
+    pub staging_failures_mutex_poisoned: bool,
+    /// Whether the reject hash-chain mutex is poisoned.
+    pub reject_previous_hash_mutex_poisoned: bool,
+    /// Whether the cutoff mutex is poisoned.
+    pub cutoff_mutex_poisoned: bool,
+}
+
+/// Cutoff-closed raw producer accounting snapshot with a mandatory witness.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EdgeCutoffDrainedSnapshotV1 {
+    /// Stable revision vector used to reject mixed accounting snapshots.
+    pub revision: [u64; 36],
+    /// Raw Blink conservation counters.
+    pub blink: BlinkLedgerSnapshotV1,
+    /// Drained bounded producer queue depths.
+    pub queues: EdgeQueueAccountingSnapshotV1,
+    /// Checked candidate count and optional inclusive last sequence.
+    pub candidate_bounds: CheckedCandidateBoundsV1,
+    /// Candidate drops recorded before enqueue.
+    pub candidate_drops: CandidatePreEnqueueDropCountersV1,
+    /// Blink reject records lost at the bounded queue.
+    pub blink_reject_loss: BlinkRejectQueueLossCountersV1,
+    /// Candidate drop records lost at the bounded queue.
+    pub candidate_drop_loss: CandidateDropQueueLossCountersV1,
+    /// Mandatory cutoff witness.
+    pub cutoff: ProducerEpochCutoffV1,
+}
 
 /// Once-only optional edge-only producer owner.
+///
+/// Production authority lock order is admission → record receiver → candidate receiver →
+/// generation authority → staged candidates → staging failures → reject previous hash → ledger
+/// generations → ledger selected DTOs → cutoff latch. Authority audits hold this complete chain
+/// while logically draining and restoring both FIFOs, so no producer or consumer can observe the
+/// transient drain.
 #[derive(Debug)]
 pub struct EdgeMeasurementOwnerV1 {
     config: EdgeMeasurementOwnerConfigV1,
@@ -1104,6 +1331,281 @@ impl EdgeMeasurementOwnerV1 {
     pub fn checked_candidate_bounds(&self) -> CheckedCandidateBoundsV1 {
         let count = self.candidate_sequence.load(Ordering::Acquire);
         CheckedCandidateBoundsV1 { count, last_sequence: count.checked_sub(1) }
+    }
+    #[cfg(any(test, feature = "test-utils"))]
+    /// Returns a complete strongly typed clone-and-equality audit snapshot of owner authority.
+    ///
+    /// Lock order is admission → record receiver → candidate receiver → generation authority →
+    /// staged candidates → staging failures → reject previous hash → ledger generations → ledger
+    /// selected DTOs → cutoff latch. Both queues are drained and restored in exact FIFO order while
+    /// all producer and consumer locks are held. Any restore mismatch panics while holding the lock
+    /// chain, poisoning authority rather than exposing a partial snapshot.
+    pub fn authority_audit_snapshot(&self) -> EdgeMeasurementOwnerAuthorityAuditSnapshotV1 {
+        let admission_mutex_poisoned = self.admission.is_poisoned();
+        let _admission = self.admission.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let record_receiver_mutex_poisoned = self.record_receiver.is_poisoned();
+        let record_receiver =
+            self.record_receiver.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let candidate_receiver_mutex_poisoned = self.candidate_receiver.is_poisoned();
+        let candidate_receiver =
+            self.candidate_receiver.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let generation_authority_mutex_poisoned = self.generation_authority.is_poisoned();
+        let generation_authority =
+            self.generation_authority.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let staged_mutex_poisoned = self.staged.is_poisoned();
+        let staged = self.staged.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let staging_failures_mutex_poisoned = self.staging_failures.is_poisoned();
+        let staging_failures =
+            self.staging_failures.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let reject_previous_hash_mutex_poisoned = self.reject_previous_hash.is_poisoned();
+        let reject_previous_hash =
+            self.reject_previous_hash.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let generations_mutex_poisoned = self.ledger.generations.is_poisoned();
+        let generations =
+            self.ledger.generations.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let selected_mutex_poisoned = self.ledger.selected.is_poisoned();
+        let selected = self.ledger.selected.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let cutoff_mutex_poisoned = self.cutoff.value.is_poisoned();
+        let cutoff = self.cutoff.value.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let mut record_queue = Vec::new();
+        loop {
+            match record_receiver.try_recv() {
+                Ok(record) => record_queue.push(record),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    panic!("Blink record authority queue disconnected during audit")
+                }
+            }
+        }
+        let mut candidate_queue = Vec::new();
+        loop {
+            match candidate_receiver.try_recv() {
+                Ok(candidate) => candidate_queue.push(candidate),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    panic!("Blink candidate authority queue disconnected during audit")
+                }
+            }
+        }
+        for record in &record_queue {
+            match self.record_sender.try_send(record.clone()) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    panic!("Blink record authority queue restore capacity mismatch")
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    panic!("Blink record authority queue disconnected during restore")
+                }
+            }
+        }
+        for candidate in &candidate_queue {
+            match self.candidate_sender.try_send(candidate.clone()) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    panic!("Blink candidate authority queue restore capacity mismatch")
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    panic!("Blink candidate authority queue disconnected during restore")
+                }
+            }
+        }
+
+        EdgeMeasurementOwnerAuthorityAuditSnapshotV1 {
+            config: EdgeMeasurementOwnerConfigAuditSnapshotV1 {
+                producer_epoch: self.config.producer_epoch,
+                output_root: self.config.output_root.clone(),
+                output_root_handle_identity: Arc::as_ptr(&self.config.output_root_handle) as usize,
+                producer_digest: self.config.producer_digest,
+                reject_schema_digest: self.config.reject_schema_digest,
+                prereg_digest: self.config.prereg_digest,
+                policy_digest: self.config.policy_digest,
+                config_digest: self.config.config_digest,
+                owner_approval_receipt_digest: self.config.owner_approval_receipt_digest,
+                record_queue_capacity: self.config.record_queue_capacity,
+                candidate_queue_capacity: self.config.candidate_queue_capacity,
+                measurement_sender: self.config.measurement_sender,
+                executor_runtime_hash: self.config.executor_runtime_hash,
+                v2_adapter: self.config.v2_adapter,
+                v2_adapter_runtime_hash: self.config.v2_adapter_runtime_hash,
+                v3_adapter: self.config.v3_adapter,
+                v3_adapter_runtime_hash: self.config.v3_adapter_runtime_hash,
+                aerodrome_adapter: self.config.aerodrome_adapter,
+                aerodrome_adapter_runtime_hash: self.config.aerodrome_adapter_runtime_hash,
+                g0_code_identity_digest: self.config.g0_code_identity_digest,
+                raw_reject_inventory_sha256: self.config.raw_reject_inventory_sha256,
+                raw_reject_source_sha256: self.config.raw_reject_source_sha256,
+                measurement_binding_source_sha256: self.config.measurement_binding_source_sha256,
+            },
+            ledger: BlinkMeasurementLedgerAuthorityAuditSnapshotV1 {
+                observed: self.ledger.observed.load(Ordering::Acquire),
+                accepted: self.ledger.accepted.load(Ordering::Acquire),
+                slot_accepted: self.ledger.slot_accepted.load(Ordering::Acquire),
+                slot_replaced: self.ledger.slot_replaced.load(Ordering::Acquire),
+                slot_closed: self.ledger.slot_closed.load(Ordering::Acquire),
+                generation_overflow: self.ledger.generation_overflow.load(Ordering::Acquire),
+                admitted_generations: self.ledger.admitted_generations.load(Ordering::Acquire),
+                processed_terminal: self.ledger.processed_terminal.load(Ordering::Acquire),
+                replaced_before_frame: self.ledger.replaced_before_frame.load(Ordering::Acquire),
+                cancelled_before_frame: self.ledger.cancelled_before_frame.load(Ordering::Acquire),
+                selected_dto_built_preterminal: self
+                    .ledger
+                    .selected_dto_built_preterminal
+                    .load(Ordering::Acquire),
+                selected_dto_committed: self.ledger.selected_dto_committed.load(Ordering::Acquire),
+                selected_dto_cancelled_before_terminal: self
+                    .ledger
+                    .selected_dto_cancelled_before_terminal
+                    .load(Ordering::Acquire),
+                selected_dto_preterminal_failure: self
+                    .ledger
+                    .selected_dto_preterminal_failure
+                    .load(Ordering::Acquire),
+                admission_closed: self.ledger.admission_closed.load(Ordering::Acquire),
+                poisoned: self.ledger.poisoned.load(Ordering::Acquire),
+                generations: generations.clone(),
+                selected: selected.clone(),
+                generations_mutex_poisoned,
+                selected_mutex_poisoned,
+            },
+            cutoff: cutoff.clone(),
+            generation_authority: generation_authority.clone(),
+            record_queue,
+            candidate_queue,
+            staged: staged.clone(),
+            staging_failures: staging_failures.clone(),
+            reject_sequence: self.reject_sequence.load(Ordering::Acquire),
+            candidate_sequence: self.candidate_sequence.load(Ordering::Acquire),
+            candidate_drop_counts: self.candidate_pre_enqueue_drop_counters(),
+            blink_reject_queue_loss: self.blink_reject_queue_loss_counters(),
+            candidate_drop_queue_loss: self.candidate_drop_queue_loss_counters(),
+            pending_records: self.pending_records.load(Ordering::Acquire),
+            pending_candidates: self.pending_candidates.load(Ordering::Acquire),
+            reject_previous_hash: *reject_previous_hash,
+            poisoned: self.poisoned.load(Ordering::Acquire),
+            installed: self.installed.load(Ordering::Acquire),
+            cutoff_latched: self.cutoff_latched.load(Ordering::Acquire),
+            admission_mutex_poisoned,
+            generation_authority_mutex_poisoned,
+            record_receiver_mutex_poisoned,
+            candidate_receiver_mutex_poisoned,
+            staged_mutex_poisoned,
+            staging_failures_mutex_poisoned,
+            reject_previous_hash_mutex_poisoned,
+            cutoff_mutex_poisoned,
+        }
+    }
+
+    /// Atomically snapshots all raw Blink, queue, candidate, drop, and cutoff-witness authority.
+    pub fn raw_accounting_snapshot(
+        &self,
+    ) -> Result<EdgeRawAccountingSnapshotV1, EdgeProducerError> {
+        let _admission =
+            self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
+        let blink = self.ledger.snapshot().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
+        let staged_count =
+            self.staged.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?.len();
+        let staged_count = u64::try_from(staged_count)
+            .map_err(|_| self.poison(EdgeProducerError::StagedCountOverflow))?;
+        let queues = EdgeQueueAccountingSnapshotV1 {
+            pending_records: self.pending_records.load(Ordering::Acquire),
+            pending_candidates: self.pending_candidates.load(Ordering::Acquire),
+            staged_count,
+        };
+        let candidate_bounds = self.checked_candidate_bounds();
+        let candidate_drops = self.candidate_pre_enqueue_drop_counters();
+        let blink_reject_loss = self.blink_reject_queue_loss_counters();
+        let candidate_drop_loss = self.candidate_drop_queue_loss_counters();
+        let cutoff = self.cutoff.get().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
+        let revision = [
+            blink.victim_ingress_observed,
+            blink.victim_ingress_accepted,
+            blink.slot_accepted,
+            blink.slot_replaced,
+            blink.slot_closed,
+            blink.generation_overflow,
+            blink.admitted_generations,
+            blink.processed_terminal,
+            blink.replaced_before_frame,
+            blink.cancelled_before_frame,
+            blink.selected_dto_built_preterminal,
+            blink.selected_dto_committed,
+            blink.selected_dto_cancelled_before_terminal,
+            blink.selected_dto_preterminal_failure,
+            blink.generation_pending,
+            blink.selected_pending,
+            u64::from(blink.poisoned),
+            queues.pending_records,
+            queues.pending_candidates,
+            queues.staged_count,
+            candidate_bounds.count,
+            candidate_drops.cancelled_after_draft,
+            candidate_drops.candidate_queue_closed,
+            candidate_drops.candidate_queue_full,
+            candidate_drops.cutoff_drain_deadline,
+            candidate_drops.evidence_mismatch,
+            candidate_drops.failed_after_draft,
+            candidate_drops.measurement_derivation_rejected,
+            candidate_drops.missing_required_evidence,
+            candidate_drops.stale_after_draft,
+            blink_reject_loss.queue_closed,
+            blink_reject_loss.queue_full,
+            candidate_drop_loss.queue_closed,
+            candidate_drop_loss.queue_full,
+            u64::from(self.poisoned.load(Ordering::Acquire)),
+            u64::from(self.cutoff_latched.load(Ordering::Acquire)),
+        ];
+        Ok(EdgeRawAccountingSnapshotV1 {
+            revision,
+            blink,
+            queues,
+            candidate_bounds,
+            candidate_drops,
+            blink_reject_loss,
+            candidate_drop_loss,
+            cutoff,
+        })
+    }
+
+    /// Returns the same raw snapshot only after cutoff, queues, and witnesses are closed.
+    pub fn cutoff_drained_snapshot(
+        &self,
+    ) -> Result<EdgeCutoffDrainedSnapshotV1, EdgeProducerError> {
+        let EdgeRawAccountingSnapshotV1 {
+            revision,
+            blink,
+            queues,
+            candidate_bounds,
+            candidate_drops,
+            blink_reject_loss,
+            candidate_drop_loss,
+            cutoff,
+        } = self.raw_accounting_snapshot()?;
+        let cutoff = cutoff.ok_or(EdgeProducerError::CutoffMissing)?;
+        let last_candidate_matches = candidate_bounds
+            .last_sequence
+            .map_or(candidate_bounds.count == 0 && cutoff.last_candidate_sequence == 0, |last| {
+                last == cutoff.last_candidate_sequence
+            });
+        if self.is_accepting()
+            || queues != EdgeQueueAccountingSnapshotV1::default()
+            || !last_candidate_matches
+            || !cutoff.has_valid_record_hash()
+        {
+            return Err(EdgeProducerError::Ledger);
+        }
+        BlinkMeasurementLedgerV1::verify_snapshot(&blink)
+            .map_err(|_| self.poison(EdgeProducerError::Ledger))?;
+        Ok(EdgeCutoffDrainedSnapshotV1 {
+            revision,
+            blink,
+            queues,
+            candidate_bounds,
+            candidate_drops,
+            blink_reject_loss,
+            candidate_drop_loss,
+            cutoff,
+        })
     }
 
     /// Returns an immutable exact cumulative snapshot of every candidate pre-enqueue drop reason.
@@ -1261,7 +1763,7 @@ impl EdgeMeasurementOwnerV1 {
                 EdgeProducerError::MissingCandidateEvidence => {
                     CandidatePreEnqueueDropReasonV3::MissingRequiredEvidence
                 }
-                EdgeProducerError::MeasurementTxDerivation => {
+                EdgeProducerError::MeasurementBindingDerivation => {
                     CandidatePreEnqueueDropReasonV3::MeasurementDerivationRejected
                 }
                 _ => CandidatePreEnqueueDropReasonV3::EvidenceMismatch,
@@ -1592,14 +2094,14 @@ impl EdgeMeasurementOwnerV1 {
             .map_err(|_| EdgeProducerError::MissingCandidateEvidence)?;
         let nonce = overlay.map_or_else(
             || {
-                MeasurementNonceWitnessV1::committed(
+                SnapshotNonceWitnessV1::committed(
                     plan.parent_hash,
                     snapshot.canonical_block_number(),
                     sender.nonce,
                 )
             },
             |overlay| {
-                MeasurementNonceWitnessV1::pending(
+                SnapshotNonceWitnessV1::pending(
                     plan.parent_hash,
                     snapshot.canonical_block_number(),
                     sender.nonce,
@@ -1632,14 +2134,14 @@ impl EdgeMeasurementOwnerV1 {
             .map(u128::from)
             .filter(|fee| *fee != 0)
             .ok_or(EdgeProducerError::CandidateEvidenceMismatch)?;
-        let transaction = MeasurementTxDeriverV1::derive(MeasurementTxInputV1 {
+        let binding = MeasurementBindingDeriverV1::bind(MeasurementBindingInputV1 {
             nonce,
             snapshot_base_fee_per_gas,
             plan: plan.clone(),
             execution_hops,
-            victim_raw_tx: victim_raw.clone(),
+            victim_raw: victim_raw.clone(),
         })
-        .map_err(|_| EdgeProducerError::MeasurementTxDerivation)?;
+        .map_err(|_| EdgeProducerError::MeasurementBindingDerivation)?;
 
         let materialized_state = processed.materialized_state().clone();
         let prepared_state_digest = Self::prepared_route_digest(&prepared_route)?;
@@ -1673,7 +2175,7 @@ impl EdgeMeasurementOwnerV1 {
             economics_evidence_digest,
             execution_hops,
             deployment_identities: identities,
-            backrun_measurement_tx: transaction,
+            backrun_measurement_binding: binding,
         })
     }
 
@@ -1902,53 +2404,6 @@ impl EdgeMeasurementOwnerV1 {
         self.release_generation_authority(generation);
     }
 
-    /// Exactly joins one campaign-time detail to durable post-cutoff receipts.
-    pub fn finalize_candidate(
-        &self,
-        detail: EdgeCandidateDetailV1,
-        cutoff_record_hash: B256,
-        connection_final_receipt_hash: B256,
-        connection_records: &BTreeMap<u64, B256>,
-        registry_segment_sha: B256,
-        registry_record_sha: B256,
-    ) -> Result<EdgeCandidateV3, EdgeProducerError> {
-        let _admission =
-            self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
-        if self.is_accepting() {
-            return Err(EdgeProducerError::CutoffMissing);
-        }
-        detail
-            .validate_detail()
-            .map_err(|_| self.poison(EdgeProducerError::CandidateEvidenceMismatch))?;
-        if cutoff_record_hash.is_zero()
-            || connection_final_receipt_hash.is_zero()
-            || registry_segment_sha.is_zero()
-            || registry_record_sha.is_zero()
-            || detail.producer_epoch != self.config.producer_epoch
-            || detail.candidate_sequence >= self.candidate_sequence.load(Ordering::Acquire)
-            || detail.g0_code_identity_digest != self.config.g0_code_identity_digest
-            || detail.prereg_digest != self.config.prereg_digest
-            || detail.policy_digest != self.config.policy_digest
-            || detail.config_digest != self.config.config_digest
-            || detail.producer_digest != self.config.producer_digest
-            || detail.owner_approval_receipt_digest != self.config.owner_approval_receipt_digest
-            || connection_records.get(&detail.connection_sequence_at_capture).copied()
-                != Some(B256::new(detail.connection_record_hash_at_capture))
-            || registry_record_sha != B256::new(detail.registry_terminal_record_hash)
-        {
-            return Err(self.poison(EdgeProducerError::CandidateEvidenceMismatch));
-        }
-        let candidate = detail.into_candidate(
-            cutoff_record_hash,
-            connection_final_receipt_hash,
-            registry_segment_sha,
-        );
-        candidate
-            .validate()
-            .map_err(|_| self.poison(EdgeProducerError::CandidateEvidenceMismatch))?;
-        Ok(candidate)
-    }
-
     /// Fences new measurement admission, drains every pre-cutoff generation authority, and then
     /// returns stable Blink and candidate bounds.
     pub fn prepare_cutoff(&self) -> Result<(u64, CheckedCandidateBoundsV1), EdgeProducerError> {
@@ -2097,61 +2552,6 @@ impl EdgeMeasurementOwnerV1 {
             }
         }
     }
-
-    /// Returns whether every pre-cutoff terminal and bounded producer queue has drained.
-    pub fn finalization_ready(&self) -> Result<bool, EdgeProducerError> {
-        let _admission =
-            self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
-        if self.poisoned.load(Ordering::SeqCst) {
-            return Err(EdgeProducerError::Ledger);
-        }
-        if self.cutoff.get().map_err(|_| self.poison(EdgeProducerError::Ledger))?.is_none() {
-            return Ok(false);
-        }
-        let blink = self.ledger.snapshot().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
-        if blink.generation_pending != 0 || blink.selected_pending != 0 {
-            return Ok(false);
-        }
-        if self.pending_records.load(Ordering::Acquire) != 0
-            || self.pending_candidates.load(Ordering::Acquire) != 0
-        {
-            return Ok(false);
-        }
-        Ok(self.staged.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?.is_empty())
-    }
-
-    /// Seals only the Blink final and returns it to the later CLI checkpoint coordinator.
-    pub fn final_record(&self) -> Result<EdgeMeasurementFinalV1, EdgeProducerError> {
-        let _admission =
-            self.admission.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?;
-        if self.poisoned.load(Ordering::SeqCst) {
-            return Err(EdgeProducerError::Ledger);
-        }
-        let cutoff = self
-            .cutoff
-            .get()
-            .map_err(|_| self.poison(EdgeProducerError::Ledger))?
-            .ok_or(EdgeProducerError::CutoffMissing)?;
-        if !self.queues_drained()? {
-            return Err(EdgeProducerError::Ledger);
-        }
-        let blink = self.ledger.verify_final().map_err(|_| EdgeProducerError::Ledger)?;
-        Ok(EdgeMeasurementFinalV1 {
-            blink,
-            cutoff,
-            candidate_bounds: self.checked_candidate_bounds(),
-        })
-    }
-
-    fn queues_drained(&self) -> Result<bool, EdgeProducerError> {
-        if self.pending_records.load(Ordering::Acquire) != 0
-            || self.pending_candidates.load(Ordering::Acquire) != 0
-        {
-            return Ok(false);
-        }
-        Ok(self.staged.lock().map_err(|_| self.poison(EdgeProducerError::Ledger))?.is_empty())
-    }
-
     fn poison(&self, error: EdgeProducerError) -> EdgeProducerError {
         self.poisoned.store(true, Ordering::SeqCst);
         self.cutoff_latched.store(true, Ordering::Release);
@@ -2465,34 +2865,49 @@ impl BlinkMeasurementLedgerV1 {
         })
     }
 
-    /// Verifies both exact conservation equations and zero final pending sets.
-    pub fn verify_final(&self) -> Result<BlinkLedgerSnapshotV1, EdgeMeasurementError> {
-        let snapshot = self.snapshot()?;
+    /// Purely verifies all five exact conservation equations and final closure invariants.
+    ///
+    /// Every equation's right-hand side is formed with checked addition. Arithmetic overflow,
+    /// poison, either pending set, or any unequal conservation term rejects the snapshot.
+    pub fn verify_snapshot(snapshot: &BlinkLedgerSnapshotV1) -> Result<(), EdgeMeasurementError> {
         let ingress_rhs = snapshot
             .slot_accepted
             .checked_add(snapshot.slot_replaced)
             .and_then(|value| value.checked_add(snapshot.slot_closed))
-            .and_then(|value| value.checked_add(snapshot.generation_overflow));
+            .and_then(|value| value.checked_add(snapshot.generation_overflow))
+            .ok_or(EdgeMeasurementError::CounterOverflow)?;
         let generation_rhs = snapshot
             .processed_terminal
             .checked_add(snapshot.replaced_before_frame)
-            .and_then(|value| value.checked_add(snapshot.cancelled_before_frame));
+            .and_then(|value| value.checked_add(snapshot.cancelled_before_frame))
+            .ok_or(EdgeMeasurementError::CounterOverflow)?;
         let selected_rhs = snapshot
             .selected_dto_committed
             .checked_add(snapshot.selected_dto_cancelled_before_terminal)
-            .and_then(|value| value.checked_add(snapshot.selected_dto_preterminal_failure));
-        let admitted_rhs = snapshot.slot_accepted.checked_add(snapshot.slot_replaced);
+            .and_then(|value| value.checked_add(snapshot.selected_dto_preterminal_failure))
+            .ok_or(EdgeMeasurementError::CounterOverflow)?;
+        let admitted_rhs = snapshot
+            .slot_accepted
+            .checked_add(snapshot.slot_replaced)
+            .ok_or(EdgeMeasurementError::CounterOverflow)?;
         if snapshot.poisoned
             || snapshot.generation_pending != 0
             || snapshot.selected_pending != 0
-            || ingress_rhs != Some(snapshot.victim_ingress_observed)
-            || ingress_rhs != Some(snapshot.victim_ingress_accepted)
-            || admitted_rhs != Some(snapshot.admitted_generations)
-            || generation_rhs != Some(snapshot.admitted_generations)
-            || selected_rhs != Some(snapshot.selected_dto_built_preterminal)
+            || ingress_rhs != snapshot.victim_ingress_observed
+            || ingress_rhs != snapshot.victim_ingress_accepted
+            || admitted_rhs != snapshot.admitted_generations
+            || generation_rhs != snapshot.admitted_generations
+            || selected_rhs != snapshot.selected_dto_built_preterminal
         {
             return Err(EdgeMeasurementError::FinalNotClosed);
         }
+        Ok(())
+    }
+
+    /// Verifies all exact conservation equations and zero final pending sets.
+    pub fn verify_final(&self) -> Result<BlinkLedgerSnapshotV1, EdgeMeasurementError> {
+        let snapshot = self.snapshot()?;
+        Self::verify_snapshot(&snapshot)?;
         Ok(snapshot)
     }
 
@@ -2646,6 +3061,52 @@ impl ProducerEpochCutoffV1 {
     }
 }
 
+impl ProducerEpochCutoffV1 {
+    /// Returns exact canonical ten-field cutoff bytes without framing or trailing bytes.
+    pub fn canonical_inner_bytes(&self) -> Vec<u8> {
+        format!(
+            concat!(
+                "{{\"cutoffClockObservationOrdinal\":\"{}\",",
+                "\"lastAdmittedBlinkGeneration\":\"{}\",",
+                "\"lastAdmittedSourceGeneration\":\"{}\",",
+                "\"lastAdmittedWireOrdinal\":\"{}\",",
+                "\"lastCandidateSequence\":\"{}\",",
+                "\"lastCoverageSequence\":\"{}\",",
+                "\"lastPendingSnapshotSequence\":\"{}\",",
+                "\"latchMonoNs\":\"{}\",",
+                "\"producerEpoch\":\"{}\",",
+                "\"recordHash\":\"{}\"}}"
+            ),
+            self.cutoff_clock_observation_ordinal,
+            self.last_admitted_blink_generation,
+            self.last_admitted_source_generation,
+            self.last_admitted_wire_ordinal,
+            self.last_candidate_sequence,
+            self.last_coverage_sequence,
+            self.last_pending_snapshot_sequence,
+            self.latch_mono_ns,
+            self.producer_epoch,
+            hex::encode(self.record_hash),
+        )
+        .into_bytes()
+    }
+
+    /// Verifies the byte-preserved inner authority hash.
+    pub fn has_valid_record_hash(&self) -> bool {
+        self == &Self::new(ProducerEpochCutoffFieldsV1 {
+            producer_epoch: self.producer_epoch,
+            cutoff_clock_observation_ordinal: self.cutoff_clock_observation_ordinal,
+            last_admitted_wire_ordinal: self.last_admitted_wire_ordinal,
+            last_admitted_source_generation: self.last_admitted_source_generation,
+            last_admitted_blink_generation: self.last_admitted_blink_generation,
+            last_pending_snapshot_sequence: self.last_pending_snapshot_sequence,
+            last_coverage_sequence: self.last_coverage_sequence,
+            last_candidate_sequence: self.last_candidate_sequence,
+            latch_mono_ns: self.latch_mono_ns,
+        })
+    }
+}
+
 /// Exact-once cutoff latch.
 #[derive(Debug, Default)]
 pub struct ProducerEpochCutoffLatchV1 {
@@ -2754,8 +3215,8 @@ pub struct EdgeCandidateDetailV1 {
     pub producer_digest: B256,
     /// Owner approval receipt digest.
     pub owner_approval_receipt_digest: B256,
-    /// Resolved unsigned measurement transaction.
-    pub backrun_measurement_tx: crate::BackrunMeasurementTxV1,
+    /// Deterministic non-envelope measurement binding.
+    pub backrun_measurement_binding: crate::BackrunMeasurementBindingV1,
 }
 
 impl EdgeCandidateDetailV1 {
@@ -2804,7 +3265,7 @@ impl EdgeCandidateDetailV1 {
             config_digest: config.config_digest,
             producer_digest: config.producer_digest,
             owner_approval_receipt_digest: config.owner_approval_receipt_digest,
-            backrun_measurement_tx: draft.backrun_measurement_tx,
+            backrun_measurement_binding: draft.backrun_measurement_binding,
         }
     }
 
@@ -2837,14 +3298,9 @@ impl EdgeCandidateDetailV1 {
                 != Some(self.ordered_transaction_count)
             || self.ordered_transaction_digest.is_zero()
             || keccak256(&self.victim_raw) != self.victim_hash
-            || self.backrun_measurement_tx.target_tx_hash != self.victim_hash
-            || self.backrun_measurement_tx.victim_raw_tx != self.victim_raw
-            || !EdgeCandidateV3::retained_transaction_binding_matches(
-                &self.backrun_measurement_tx.plan,
-                &self.backrun_measurement_tx.execution_hops,
-                &self.selected_plan,
-                &self.execution_hops,
-            )
+            || self.backrun_measurement_binding.target_tx_hash != self.victim_hash
+            || self.backrun_measurement_binding.plan != self.selected_plan
+            || self.backrun_measurement_binding.execution_hops != self.execution_hops
             || self.connection_record_hash_at_capture == [0; 32]
             || self.registry_terminal_record_hash == [0; 32]
             || self.prepared_state_digest != prepared_state_digest
@@ -2856,224 +3312,10 @@ impl EdgeCandidateDetailV1 {
         {
             return Err(EdgeMeasurementError::GenerationConflict);
         }
-        MeasurementTxDeriverV1::validate(&self.backrun_measurement_tx)
+        MeasurementBindingDeriverV1::validate(&self.backrun_measurement_binding, &self.victim_raw)
             .map_err(|_| EdgeMeasurementError::GenerationConflict)?;
         Ok(())
     }
-
-    fn into_candidate(
-        self,
-        cutoff_record_hash: B256,
-        connection_coverage_receipt_hash: B256,
-        registry_terminal_receipt_hash: B256,
-    ) -> EdgeCandidateV3 {
-        EdgeCandidateV3 {
-            producer_epoch: self.producer_epoch,
-            candidate_sequence: self.candidate_sequence,
-            source_generation: self.source_generation,
-            candidate_generation: self.candidate_generation,
-            coverage_generation: self.coverage_generation,
-            pending_snapshot_sequence: self.pending_snapshot_sequence,
-            payload_first_record_sequence: self.payload_first_record_sequence,
-            payload_first_record_hash: self.payload_first_record_hash,
-            parent_hash: self.parent_hash,
-            block_number: self.block_number,
-            payload_id: self.payload_id,
-            predecessor_index: self.predecessor_index,
-            ordered_transaction_count: self.ordered_transaction_count,
-            ordered_transaction_cutoff_position: self.ordered_transaction_cutoff_position,
-            ordered_transaction_digest: self.ordered_transaction_digest,
-            victim_absent_before_position: self.victim_absent_before_position,
-            victim_hash: self.victim_hash,
-            victim_raw: self.victim_raw,
-            selected_plan_digest: self.selected_plan_digest,
-            selected_plan: self.selected_plan,
-            prepared_route: self.prepared_route,
-            materialized_state: self.materialized_state,
-            structural_terminal_hash: self.structural_terminal_hash,
-            connection_coverage_receipt_hash: connection_coverage_receipt_hash.0,
-            registry_terminal_receipt_hash: registry_terminal_receipt_hash.0,
-            registry_terminal_record_hash: self.registry_terminal_record_hash,
-            cutoff_record_hash: cutoff_record_hash.0,
-            state_root: self.state_root,
-            prepared_state_digest: self.prepared_state_digest,
-            code_witness_digest: self.code_witness_digest,
-            g0_code_identity_digest: self.g0_code_identity_digest,
-            slot_witness_digest: self.slot_witness_digest,
-            economics_evidence_digest: self.economics_evidence_digest,
-            execution_hops: self.execution_hops,
-            deployment_identities: self.deployment_identities,
-            prereg_digest: self.prereg_digest,
-            policy_digest: self.policy_digest,
-            config_digest: self.config_digest,
-            producer_digest: self.producer_digest,
-            owner_approval_receipt_digest: self.owner_approval_receipt_digest,
-            backrun_measurement_tx: self.backrun_measurement_tx,
-        }
-    }
-}
-/// Bounded future-query-free candidate measurement row.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EdgeCandidateV3 {
-    /// Producer epoch.
-    pub producer_epoch: u64,
-    /// Checked candidate queue sequence.
-    pub candidate_sequence: u64,
-    /// Blink source generation.
-    pub source_generation: u64,
-    /// Independent Blink runtime generation.
-    pub candidate_generation: u64,
-    /// Independent pending-registry coverage generation.
-    pub coverage_generation: u64,
-    /// Pending snapshot sequence joined through the side registry.
-    pub pending_snapshot_sequence: u64,
-    /// Exact payload-first record sequence.
-    pub payload_first_record_sequence: u64,
-    /// Exact payload-first record hash.
-    pub payload_first_record_hash: [u8; 32],
-    /// Canonical parent hash for all provider evidence.
-    pub parent_hash: B256,
-    /// Candidate block.
-    pub block_number: u64,
-    /// Payload identifier.
-    pub payload_id: [u8; 8],
-    /// Predecessor flashblock index.
-    pub predecessor_index: u64,
-    /// Total ordered transaction count including the victim at its exact insertion position.
-    pub ordered_transaction_count: u64,
-    /// Exact victim insertion position and exclusive predecessor prefix cutoff.
-    pub ordered_transaction_cutoff_position: u64,
-    /// Canonical digest of every `(position, transactionHash)` before the cutoff.
-    pub ordered_transaction_digest: B256,
-    /// Exact victim-absence proof at the predecessor cutoff.
-    pub victim_absent_before_position: bool,
-    /// Victim hash.
-    pub victim_hash: B256,
-    /// Exact bounded victim envelope.
-    pub victim_raw: Bytes,
-    /// Selected plan digest.
-    pub selected_plan_digest: B256,
-    /// Exact selected plan retained for digest recomputation.
-    pub selected_plan: BackrunPlan,
-    /// Exact selected prepared route retained for witness recomputation.
-    pub prepared_route: [PreparedPoolState; 2],
-    /// Exact canonical materialized writes retained for slot-witness recomputation.
-    pub materialized_state: MaterializedState,
-    /// Structural terminal hash.
-    pub structural_terminal_hash: [u8; 32],
-    /// Connection coverage receipt hash.
-    pub connection_coverage_receipt_hash: [u8; 32],
-    /// Durable H2 terminal segment receipt hash.
-    pub registry_terminal_receipt_hash: [u8; 32],
-    /// Canonical SHA-256 of the replayable H2 terminal full record.
-    pub registry_terminal_record_hash: [u8; 32],
-    /// Cutoff record hash.
-    pub cutoff_record_hash: [u8; 32],
-    /// State-root witness.
-    pub state_root: B256,
-    /// Prepared-state witness digest.
-    pub prepared_state_digest: B256,
-    /// Code witness digest.
-    pub code_witness_digest: B256,
-    /// G0 executor identity digest.
-    pub g0_code_identity_digest: B256,
-    /// Slot witness digest.
-    pub slot_witness_digest: B256,
-    /// Economics evidence digest.
-    pub economics_evidence_digest: B256,
-    /// Exact two-hop requote, adapter, minimum-output, and funding witnesses.
-    pub execution_hops: [MeasurementExecutionHopV1; 2],
-    /// Exact same-parent runtime identity witnesses.
-    pub deployment_identities: [(Address, B256); 4],
-    /// Canonical preregistration digest.
-    pub prereg_digest: B256,
-    /// Owner policy digest.
-    pub policy_digest: B256,
-    /// Owner configuration digest.
-    pub config_digest: B256,
-    /// Producer manifest digest.
-    pub producer_digest: B256,
-    /// Owner approval receipt digest.
-    pub owner_approval_receipt_digest: B256,
-    /// Resolved unsigned measurement transaction.
-    pub backrun_measurement_tx: crate::BackrunMeasurementTxV1,
-}
-
-impl EdgeCandidateV3 {
-    /// Validates boundedness, same-generation lineage, and victim-envelope binding.
-    pub fn validate(&self) -> Result<(), EdgeMeasurementError> {
-        MeasurementEncoder::validate(&self.selected_plan)
-            .map_err(|_| EdgeMeasurementError::GenerationConflict)?;
-        self.prepared_route
-            .iter()
-            .try_for_each(PreparedPoolState::validate)
-            .map_err(|_| EdgeMeasurementError::GenerationConflict)?;
-        let prepared_state_digest =
-            EdgeMeasurementOwnerV1::prepared_route_digest(&self.prepared_route)
-                .map_err(|_| EdgeMeasurementError::GenerationConflict)?;
-        let slot_witness_digest =
-            EdgeMeasurementOwnerV1::materialized_state_digest(&self.materialized_state)
-                .map_err(|_| EdgeMeasurementError::GenerationConflict)?;
-        let economics_evidence_digest =
-            EdgeMeasurementOwnerV1::economics_digest(&self.selected_plan, &self.execution_hops)
-                .map_err(|_| EdgeMeasurementError::GenerationConflict)?;
-        if self.victim_raw.len() > EDGE_MAX_VICTIM_RAW_BYTES
-            || self.parent_hash != self.selected_plan.parent_hash
-            || self.block_number != self.selected_plan.block_number
-            || self.predecessor_index != self.selected_plan.predecessor_index
-            || self.victim_hash != self.selected_plan.victim
-            || self.selected_plan_digest != self.selected_plan.digest.0
-            || !self.victim_absent_before_position
-            || self.ordered_transaction_cutoff_position >= self.ordered_transaction_count
-            || self.ordered_transaction_cutoff_position.checked_add(1)
-                != Some(self.ordered_transaction_count)
-            || self.ordered_transaction_digest.is_zero()
-            || keccak256(&self.victim_raw) != self.victim_hash
-            || self.backrun_measurement_tx.target_tx_hash != self.victim_hash
-            || self.backrun_measurement_tx.victim_raw_tx != self.victim_raw
-            || !Self::retained_transaction_binding_matches(
-                &self.backrun_measurement_tx.plan,
-                &self.backrun_measurement_tx.execution_hops,
-                &self.selected_plan,
-                &self.execution_hops,
-            )
-            || self.cutoff_record_hash == [0; 32]
-            || self.connection_coverage_receipt_hash == [0; 32]
-            || self.registry_terminal_receipt_hash == [0; 32]
-            || self.registry_terminal_record_hash == [0; 32]
-            || self.prepared_state_digest != prepared_state_digest
-            || self.code_witness_digest
-                != EdgeMeasurementOwnerV1::deployment_identity_digest(&self.deployment_identities)
-            || self.g0_code_identity_digest != self.code_witness_digest
-            || self.slot_witness_digest != slot_witness_digest
-            || self.economics_evidence_digest != economics_evidence_digest
-        {
-            return Err(EdgeMeasurementError::GenerationConflict);
-        }
-        MeasurementTxDeriverV1::validate(&self.backrun_measurement_tx)
-            .map_err(|_| EdgeMeasurementError::GenerationConflict)?;
-        Ok(())
-    }
-
-    fn retained_transaction_binding_matches(
-        transaction_plan: &BackrunPlan,
-        transaction_hops: &[MeasurementExecutionHopV1; 2],
-        selected_plan: &BackrunPlan,
-        candidate_hops: &[MeasurementExecutionHopV1; 2],
-    ) -> bool {
-        transaction_plan == selected_plan && transaction_hops == candidate_hops
-    }
-}
-
-/// Complete final record persisted after all Blink domains drain.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct EdgeMeasurementFinalV1 {
-    /// Frozen Blink conservation snapshot.
-    pub blink: BlinkLedgerSnapshotV1,
-    /// Exactly-once cutoff record.
-    pub cutoff: ProducerEpochCutoffV1,
-    /// Explicit candidate count and optional inclusive last sequence.
-    pub candidate_bounds: CheckedCandidateBoundsV1,
 }
 
 /// SHA-256 helper shared with the sole canonical CLI durability coordinator.
@@ -3119,10 +3361,10 @@ mod candidate_fixture {
         TraderSnapshotPort, TransactionVisitor, VisitControl, VisitSummary, WETH,
     };
 
-    const RAW_VICTIM: &str = "02f86c8221058034839a4ae283021528942f16386bb37709016023232523ff6d9daf444be380841249c58bc080a001b927eda2af9b00b52a57be0885e0303c39dd2831732e14051c2336470fd468a0681bf120baf562915841a48601c2b54a6742511e535cf8f71c95115af7ff63bd";
-    const BLOCK_NUMBER: u64 = 100;
-    const PREDECESSOR_INDEX: u64 = 1;
-    fn payload_id() -> PayloadId {
+    pub(super) const RAW_VICTIM: &str = "02f86c8221058034839a4ae283021528942f16386bb37709016023232523ff6d9daf444be380841249c58bc080a001b927eda2af9b00b52a57be0885e0303c39dd2831732e14051c2336470fd468a0681bf120baf562915841a48601c2b54a6742511e535cf8f71c95115af7ff63bd";
+    pub(super) const BLOCK_NUMBER: u64 = 100;
+    pub(super) const PREDECESSOR_INDEX: u64 = 1;
+    pub(super) fn payload_id() -> PayloadId {
         PayloadId::new([2; 8])
     }
 
@@ -3431,16 +3673,18 @@ mod candidate_fixture {
         plan.digest = MeasurementEncoder::digest(&plan)
             .map_err(|_| EdgeProducerError::CandidateEvidenceMismatch)?;
 
+        let generation =
+            owner.ledger().snapshot().map_err(|_| EdgeProducerError::Ledger)?.admitted_generations;
         if admit_generation {
             owner.with_blink_admission(|owner, authoritative| {
                 if authoritative {
                     owner.observe_ledger_result_admitted(owner.ledger().record_observed());
-                    owner.record_submission_admitted(0, SlotSubmit::Accepted);
+                    owner.record_submission_admitted(generation, SlotSubmit::Accepted);
                 }
             });
         }
         owner.stage_selected_candidate(EdgeCandidateStageInputV3 {
-            generation: 0,
+            generation,
             port: &port,
             snapshot: &snapshot,
             processed: &processed,
@@ -3451,12 +3695,214 @@ mod candidate_fixture {
         })?;
         if terminalize {
             owner.record_terminal_and_resolve(
-                0,
+                generation,
                 BlinkGenerationTerminalV1::Processed,
                 Some(ShadowOutcome::Selected),
             );
         }
         Ok(())
+    }
+}
+#[cfg(feature = "test-utils")]
+/// Independent literal oracle for the deterministic selected-candidate test fixture.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct EdgeCandidateDetailOracleV1;
+
+#[cfg(feature = "test-utils")]
+impl EdgeCandidateDetailOracleV1 {
+    /// Constructs the frozen candidate fixture without invoking producer staging or owner queues.
+    pub fn frozen(
+        producer_epoch: u64,
+        evidence: crate::EdgeSnapshotEvidenceV1,
+    ) -> EdgeCandidateDetailV1 {
+        const RAW_VICTIM: &str = "02f86c8221058034839a4ae283021528942f16386bb37709016023232523ff6d9daf444be380841249c58bc080a001b927eda2af9b00b52a57be0885e0303c39dd2831732e14051c2336470fd468a0681bf120baf562915841a48601c2b54a6742511e535cf8f71c95115af7ff63bd";
+        let hash = |value: &str| B256::from_str(value).expect("frozen candidate hash");
+        let address = |value: &str| Address::from_str(value).expect("frozen candidate address");
+        let parent_hash =
+            hash("0x0bfe528775a427e6cce7190e73c1c66249b7d1106783ff645717544168109674");
+        let victim_hash =
+            hash("0xf9420cbaf66a2dda75a015488d37262cbfd4abd0aad7bb2be8a63e14b1fa7a94");
+        let plan_digest =
+            hash("0x3c8361180a40e4c56bca76ae3a3d36df160e903c4d6d15ed8d68e48415433fa1");
+        let token = Address::repeat_byte(0x51);
+        let prepared_route = [
+            PreparedPoolState {
+                pool: Address::repeat_byte(0x52),
+                protocol: ExactProtocol::UniswapV2,
+                token0: crate::WETH,
+                token1: token,
+                decimals0: 18,
+                decimals1: 18,
+                fee_pips: 3_000,
+                quote: PreparedPoolQuote::ConstantProduct {
+                    reserve0: U256::from(1_000_000),
+                    reserve1: U256::from(2_000_000),
+                },
+            },
+            PreparedPoolState {
+                pool: Address::repeat_byte(0x53),
+                protocol: ExactProtocol::UniswapV2,
+                token0: token,
+                token1: crate::WETH,
+                decimals0: 18,
+                decimals1: 18,
+                fee_pips: 3_000,
+                quote: PreparedPoolQuote::ConstantProduct {
+                    reserve0: U256::from(1_000_000),
+                    reserve1: U256::from(1_000_000),
+                },
+            },
+        ];
+        let selected_plan = BackrunPlan {
+            parent_hash,
+            block_number: 100,
+            predecessor_index: 1,
+            payload_id: PayloadId::new([2; 8]),
+            victim: victim_hash,
+            route: [
+                BackrunHop {
+                    pool: Address::repeat_byte(0x52),
+                    protocol: ExactProtocol::UniswapV2,
+                    token_in: crate::WETH,
+                    token_out: token,
+                    fee_pips: 3_000,
+                },
+                BackrunHop {
+                    pool: Address::repeat_byte(0x53),
+                    protocol: ExactProtocol::UniswapV2,
+                    token_in: token,
+                    token_out: crate::WETH,
+                    fee_pips: 3_000,
+                },
+            ],
+            amount_in: U256::from(1_000),
+            amount_out: U256::from(1_982),
+            gross_profit: U256::from(982),
+            digest: BackrunPlanDigest(plan_digest),
+        };
+        let execution_hops = [
+            MeasurementExecutionHopV1 {
+                adapter: Address::repeat_byte(2),
+                min_amount_out: U256::from(1_992),
+                funding_target: Address::repeat_byte(0x52),
+            },
+            MeasurementExecutionHopV1 {
+                adapter: Address::repeat_byte(2),
+                min_amount_out: U256::from(1_982),
+                funding_target: Address::repeat_byte(0x53),
+            },
+        ];
+        let empty_runtime_hash =
+            hash("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+        let deployment_identities = [
+            (crate::MEASUREMENT_EXECUTOR, empty_runtime_hash),
+            (Address::repeat_byte(2), empty_runtime_hash),
+            (Address::repeat_byte(3), empty_runtime_hash),
+            (Address::repeat_byte(4), empty_runtime_hash),
+        ];
+        let materialized_state = MaterializedState {
+            writes: vec![
+                MaterializedWrite {
+                    key: AuditedWriteKey::AccountBalance {
+                        address: Address::ZERO,
+                        evidence_digest: B256::repeat_byte(0x47),
+                    },
+                    value: U256::from(1_095_328),
+                },
+                MaterializedWrite {
+                    key: AuditedWriteKey::AccountBalance {
+                        address: address("0xd5ea3c0ccc172d4022af3fd39a7ef8a0a2f3a54a"),
+                        evidence_digest: B256::repeat_byte(0x45),
+                    },
+                    value: U256::from_str(
+                        "115792089237316195423570985008687907853269984665640564039457584007913128544607",
+                    )
+                    .expect("frozen victim balance"),
+                },
+                MaterializedWrite {
+                    key: AuditedWriteKey::AccountNonce {
+                        address: address("0xd5ea3c0ccc172d4022af3fd39a7ef8a0a2f3a54a"),
+                        evidence_digest: B256::repeat_byte(0x46),
+                    },
+                    value: U256::from(1),
+                },
+            ],
+        };
+        let binding = crate::BackrunMeasurementBindingV1 {
+            nonce_witness: SnapshotNonceWitnessV1 {
+                parent_block_hash: parent_hash,
+                parent_block_number: 99,
+                committed: 0,
+                pending_original: None,
+                pending_current: None,
+            },
+            selected_nonce: 0,
+            snapshot_base_fee_per_gas: 1,
+            victim_max_priority_fee_per_gas: 52,
+            victim_max_fee_per_gas: 10_111_714,
+            valid_until_block: 100,
+            target_tx_hash: victim_hash,
+            plan: selected_plan.clone(),
+            execution_hops,
+            binding_digest: hash(
+                "0xae28a70c8d20da583fd18740264e7810a1c4a30402f6ad2bbf6b68f7d4839ba5",
+            ),
+        };
+        EdgeCandidateDetailV1 {
+            producer_epoch,
+            candidate_sequence: 0,
+            source_generation: evidence.source_generation,
+            candidate_generation: 0,
+            coverage_generation: evidence.coverage_sequence,
+            pending_snapshot_sequence: evidence.pending_snapshot_sequence,
+            payload_first_record_sequence: evidence.payload_first_record_sequence,
+            payload_first_record_hash: evidence.payload_first_record_hash.0,
+            connection_sequence_at_capture: evidence.connection_sequence,
+            connection_record_hash_at_capture: evidence.connection_record_hash.0,
+            parent_hash,
+            block_number: 100,
+            payload_id: [2; 8],
+            predecessor_index: 1,
+            ordered_transaction_count: 1,
+            ordered_transaction_cutoff_position: 0,
+            ordered_transaction_digest: hash(
+                "0x4d368b57941b28576df0e1b763bbd1009b695d621dfaf77ccb53ce245221acf6",
+            ),
+            victim_absent_before_position: true,
+            victim_hash,
+            victim_raw: Bytes::from_str(&format!("0x{RAW_VICTIM}"))
+                .expect("frozen victim envelope"),
+            selected_plan_digest: plan_digest,
+            selected_plan,
+            prepared_route,
+            materialized_state,
+            structural_terminal_hash: evidence.structural_terminal_hash.0,
+            registry_terminal_record_hash: evidence.registry_terminal_record_hash.0,
+            state_root: B256::repeat_byte(0x44),
+            prepared_state_digest: hash(
+                "0x089f56de59cf153e82b21ca8f0c857c4677ed199c93aad7062534c82c0d5894e",
+            ),
+            code_witness_digest: hash(
+                "0x751ca0280889070d84e6eaef855b8816276c4ef6e53b6c7ff6bfedf8277491a7",
+            ),
+            g0_code_identity_digest: hash(
+                "0x751ca0280889070d84e6eaef855b8816276c4ef6e53b6c7ff6bfedf8277491a7",
+            ),
+            slot_witness_digest: hash(
+                "0x2e72d480bd703496773d077fafcfc4671fe06ea919979a6b7f5f4f1c12ab120c",
+            ),
+            economics_evidence_digest: hash(
+                "0x72e3b8338c43dafd5f94c119816872bb76f2ac80dce7aa46d29621875fb05beb",
+            ),
+            execution_hops,
+            deployment_identities,
+            prereg_digest: B256::repeat_byte(3),
+            policy_digest: B256::repeat_byte(4),
+            config_digest: B256::repeat_byte(5),
+            producer_digest: B256::repeat_byte(1),
+            owner_approval_receipt_digest: B256::repeat_byte(6),
+            backrun_measurement_binding: binding,
+        }
     }
 }
 
@@ -3469,11 +3915,28 @@ impl EdgeMeasurementOwnerV1 {
     ) -> Result<(), EdgeProducerError> {
         candidate_fixture::stage(self, evidence, true, true)
     }
+
+    /// Stages one deterministic candidate without terminalizing its generation.
+    ///
+    /// This test-only surface exercises the production staging path without exposing an authority
+    /// capability in production builds.
+    pub fn stage_deterministic_test_candidate_without_terminal(
+        &self,
+        evidence: crate::EdgeSnapshotEvidenceV1,
+    ) -> Result<(), EdgeProducerError> {
+        candidate_fixture::stage(self, evidence, true, false)
+    }
 }
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "test-utils")]
+    use std::str::FromStr;
     use std::{sync::mpsc, thread, time::Duration};
 
+    #[cfg(feature = "test-utils")]
+    use alloy_consensus::{Header, Sealed, transaction::SignerRecoverable};
+    #[cfg(feature = "test-utils")]
+    use alloy_eips::Decodable2718;
     use alloy_primitives::I256;
     use alloy_rpc_types_engine::PayloadId;
 
@@ -3763,7 +4226,7 @@ mod tests {
             raw_reject_source_sha256: B256::new(
                 DefaultCrypto.sha256(include_bytes!("edge_measurement.rs")),
             ),
-            measurement_tx_source_sha256: B256::new(
+            measurement_binding_source_sha256: B256::new(
                 DefaultCrypto.sha256(include_bytes!("measurement_tx.rs")),
             ),
         }
@@ -3849,12 +4312,14 @@ mod tests {
         let owner = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
         owner.latch_cutoff(cutoff_fields(10));
         owner.latch_cutoff(cutoff_fields(10));
-        assert!(owner.final_record().is_ok());
+        assert!(owner.cutoff_drained_snapshot().is_ok());
 
         let conflicting_owner = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
         conflicting_owner.latch_cutoff(cutoff_fields(10));
         conflicting_owner.latch_cutoff(cutoff_fields(11));
-        assert_eq!(conflicting_owner.final_record(), Err(EdgeProducerError::Ledger));
+        let conflicting = conflicting_owner.raw_accounting_snapshot().unwrap();
+        assert_eq!(conflicting.cutoff.as_ref().unwrap().latch_mono_ns, 10);
+        assert_eq!(conflicting.revision[34], 1);
     }
 
     #[test]
@@ -3869,12 +4334,11 @@ mod tests {
         assert!(owner.generation_authority.lock().expect("authority").is_empty());
         assert!(!owner.poisoned.load(Ordering::Acquire));
         owner.latch_cutoff(cutoff_fields(10));
-        assert_eq!(owner.finalization_ready(), Ok(true));
-        assert!(owner.final_record().is_ok());
+        assert!(owner.cutoff_drained_snapshot().is_ok());
     }
 
     #[test]
-    fn cutoff_deadline_sweeps_staged_production_draft_without_poisoning_final() {
+    fn cutoff_deadline_sweeps_staged_production_draft_without_poisoning_snapshot() {
         let owner = EdgeMeasurementOwnerV1::new(candidate_fixture_owner_config()).unwrap();
         candidate_fixture::stage(&owner, candidate_fixture_evidence(), true, false)
             .expect("production candidate staging");
@@ -3898,12 +4362,11 @@ mod tests {
         );
 
         owner.latch_cutoff(cutoff_fields(10));
-        assert_eq!(owner.finalization_ready(), Ok(true));
-        let final_record = owner.final_record().expect("recordable final");
-        assert_eq!(final_record.blink.cancelled_before_frame, 1);
-        assert_eq!(final_record.blink.selected_dto_built_preterminal, 1);
-        assert_eq!(final_record.blink.selected_dto_preterminal_failure, 1);
-        assert!(!final_record.blink.poisoned);
+        let snapshot = owner.cutoff_drained_snapshot().expect("cutoff-drained snapshot");
+        assert_eq!(snapshot.blink.cancelled_before_frame, 1);
+        assert_eq!(snapshot.blink.selected_dto_built_preterminal, 1);
+        assert_eq!(snapshot.blink.selected_dto_preterminal_failure, 1);
+        assert!(!snapshot.blink.poisoned);
     }
     #[test]
     fn late_post_cutoff_terminal_without_authority_is_an_inert_noop() {
@@ -3924,7 +4387,7 @@ mod tests {
             owner.checked_candidate_bounds(),
             CheckedCandidateBoundsV1 { count: 0, last_sequence: None }
         );
-        assert!(owner.final_record().is_ok());
+        assert!(owner.cutoff_drained_snapshot().is_ok());
     }
     #[test]
     fn cutoff_cannot_split_observed_from_slot_accounting() {
@@ -4055,7 +4518,7 @@ mod tests {
     }
 
     #[test]
-    fn staging_failure_drop_is_counted_and_finalizable() {
+    fn staging_failure_drop_is_counted_in_cutoff_snapshot() {
         let owner = EdgeMeasurementOwnerV1::new(candidate_fixture_owner_config()).unwrap();
         let mut evidence = candidate_fixture_evidence();
         evidence.structural_terminal_hash = B256::ZERO;
@@ -4085,11 +4548,11 @@ mod tests {
             CheckedCandidateBoundsV1 { count: 0, last_sequence: None }
         );
         owner.latch_cutoff(cutoff_fields(10));
-        let final_record = owner.final_record().unwrap();
-        assert_eq!(final_record.blink.processed_terminal, 1);
-        assert_eq!(final_record.blink.selected_dto_built_preterminal, 0);
-        assert_eq!(final_record.blink.selected_dto_committed, 0);
-        assert!(!final_record.blink.poisoned);
+        let snapshot = owner.cutoff_drained_snapshot().unwrap();
+        assert_eq!(snapshot.blink.processed_terminal, 1);
+        assert_eq!(snapshot.blink.selected_dto_built_preterminal, 0);
+        assert_eq!(snapshot.blink.selected_dto_committed, 0);
+        assert!(!snapshot.blink.poisoned);
     }
 
     #[test]
@@ -4137,7 +4600,7 @@ mod tests {
         assert!(owner.staged.lock().unwrap().is_empty());
         assert!(owner.staging_failures.lock().unwrap().is_empty());
         assert!(owner.drain_records().unwrap().is_empty());
-        assert_eq!(owner.finalization_ready(), Ok(true));
+        assert!(owner.cutoff_drained_snapshot().is_ok());
     }
 
     #[test]
@@ -4165,6 +4628,374 @@ mod tests {
         assert_eq!(owner.pending_candidates.load(Ordering::Acquire), 0);
         assert_eq!(owner.try_receive_candidate_detail().unwrap(), None);
     }
+    #[cfg(feature = "test-utils")]
+    #[test]
+    fn owner_authority_audit_round_trips_exact_queue_and_staged_payloads_without_state_change() {
+        let config = candidate_fixture_owner_config();
+        let owner = EdgeMeasurementOwnerV1::new(config.clone()).unwrap();
+        let first_record_hash = EdgeMeasurementOwnerV1::authority_record_hash(
+            "edge-blink-reject/v3",
+            "{\"branchId\":\"wire-end\",\"previousRecordHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"producerEpoch\":\"1\",\"reason\":\"WireEnd\",\"schema\":\"edge-blink-reject/v3\",\"sequence\":\"0\",\"state\":\"Rejected\"}",
+        )
+        .unwrap();
+        let second_record_hash = EdgeMeasurementOwnerV1::authority_record_hash(
+            "edge-blink-reject/v3",
+            &format!(
+                "{{\"branchId\":\"decode-json-syntax\",\"previousRecordHash\":\"{}\",\"producerEpoch\":\"1\",\"reason\":\"JsonSyntax\",\"schema\":\"edge-blink-reject/v3\",\"sequence\":\"1\",\"state\":\"Rejected\"}}",
+                hex::encode(first_record_hash)
+            ),
+        )
+        .unwrap();
+        let expected_records = vec![
+            EdgeProducerRecordV1::BlinkReject(BlinkRejectRecordV3 {
+                schema: "edge-blink-reject/v3",
+                producer_epoch: "1".to_owned(),
+                sequence: "0".to_owned(),
+                state: "Rejected",
+                branch_id: "wire-end",
+                reason: BlinkRejectReasonV3::WireEnd,
+                previous_record_hash: hex::encode([0; 32]),
+                record_hash: hex::encode(first_record_hash),
+            }),
+            EdgeProducerRecordV1::BlinkReject(BlinkRejectRecordV3 {
+                schema: "edge-blink-reject/v3",
+                producer_epoch: "1".to_owned(),
+                sequence: "1".to_owned(),
+                state: "Rejected",
+                branch_id: "decode-json-syntax",
+                reason: BlinkRejectReasonV3::JsonSyntax,
+                previous_record_hash: hex::encode(first_record_hash),
+                record_hash: hex::encode(second_record_hash),
+            }),
+        ];
+        let victim_raw = Bytes::from_str(&format!("0x{}", candidate_fixture::RAW_VICTIM)).unwrap();
+        let victim_hash = keccak256(&victim_raw);
+        let victim_transaction = BaseTxEnvelope::decode_2718_exact(victim_raw.as_ref()).unwrap();
+        let victim_sender = victim_transaction.recover_signer().unwrap();
+        let parent_header = Sealed::new(Header {
+            number: candidate_fixture::BLOCK_NUMBER - 1,
+            gas_limit: 30_000_000,
+            state_root: B256::repeat_byte(0x44),
+            ..Default::default()
+        });
+        let parent_hash = parent_header.hash();
+        let token = Address::repeat_byte(0x51);
+        let expected_route = [
+            PreparedPoolState {
+                pool: Address::repeat_byte(0x52),
+                protocol: ExactProtocol::UniswapV2,
+                token0: WETH,
+                token1: token,
+                decimals0: 18,
+                decimals1: 18,
+                fee_pips: 3_000,
+                quote: PreparedPoolQuote::ConstantProduct {
+                    reserve0: U256::from(1_000_000),
+                    reserve1: U256::from(2_000_000),
+                },
+            },
+            PreparedPoolState {
+                pool: Address::repeat_byte(0x53),
+                protocol: ExactProtocol::UniswapV2,
+                token0: token,
+                token1: WETH,
+                decimals0: 18,
+                decimals1: 18,
+                fee_pips: 3_000,
+                quote: PreparedPoolQuote::ConstantProduct {
+                    reserve0: U256::from(1_000_000),
+                    reserve1: U256::from(1_000_000),
+                },
+            },
+        ];
+        let quote_v2 = |amount_in: U256, reserve_in: U256, reserve_out: U256| {
+            let amount_in_with_fee = amount_in * U256::from(997_000);
+            amount_in_with_fee * reserve_out
+                / (reserve_in * U256::from(1_000_000) + amount_in_with_fee)
+        };
+        let amount_in = U256::from(1_000);
+        let first_out = quote_v2(amount_in, U256::from(1_000_000), U256::from(2_000_000));
+        let amount_out = quote_v2(first_out, U256::from(1_000_000), U256::from(1_000_000));
+        let mut expected_plan = BackrunPlan {
+            parent_hash,
+            block_number: candidate_fixture::BLOCK_NUMBER,
+            predecessor_index: candidate_fixture::PREDECESSOR_INDEX,
+            payload_id: candidate_fixture::payload_id(),
+            victim: victim_hash,
+            route: [
+                BackrunHop {
+                    pool: Address::repeat_byte(0x52),
+                    protocol: ExactProtocol::UniswapV2,
+                    token_in: WETH,
+                    token_out: token,
+                    fee_pips: 3_000,
+                },
+                BackrunHop {
+                    pool: Address::repeat_byte(0x53),
+                    protocol: ExactProtocol::UniswapV2,
+                    token_in: token,
+                    token_out: WETH,
+                    fee_pips: 3_000,
+                },
+            ],
+            amount_in,
+            amount_out,
+            gross_profit: amount_out.checked_sub(amount_in).unwrap(),
+            digest: BackrunPlanDigest(B256::ZERO),
+        };
+        expected_plan.digest = MeasurementEncoder::digest(&expected_plan).unwrap();
+        let expected_execution_hops = [
+            MeasurementExecutionHopV1 {
+                adapter: config.v2_adapter,
+                min_amount_out: first_out,
+                funding_target: Address::repeat_byte(0x52),
+            },
+            MeasurementExecutionHopV1 {
+                adapter: config.v2_adapter,
+                min_amount_out: amount_out,
+                funding_target: Address::repeat_byte(0x53),
+            },
+        ];
+        let empty_runtime_hash = keccak256([]);
+        let expected_deployment_identities = [
+            (crate::MEASUREMENT_EXECUTOR, empty_runtime_hash),
+            (config.v2_adapter, empty_runtime_hash),
+            (config.v3_adapter, empty_runtime_hash),
+            (config.aerodrome_adapter, empty_runtime_hash),
+        ];
+        let expected_binding = MeasurementBindingDeriverV1::bind(MeasurementBindingInputV1 {
+            nonce: SnapshotNonceWitnessV1::committed(
+                parent_hash,
+                candidate_fixture::BLOCK_NUMBER - 1,
+                0,
+            ),
+            snapshot_base_fee_per_gas: 1,
+            plan: expected_plan.clone(),
+            execution_hops: expected_execution_hops,
+            victim_raw: victim_raw.clone(),
+        })
+        .unwrap();
+        let mut ordered_transaction_canonical = b"edge-ordered-transaction-cutoff/v1\0".to_vec();
+        ordered_transaction_canonical
+            .extend_from_slice(&candidate_fixture::BLOCK_NUMBER.to_be_bytes());
+        ordered_transaction_canonical.extend_from_slice(&0_u64.to_be_bytes());
+        let expected_ordered_transaction_digest =
+            B256::new(DefaultCrypto.sha256(&ordered_transaction_canonical));
+        let fixture_evidence = candidate_fixture_evidence();
+        let expected_materialized_keys = BTreeSet::from([
+            AuditedWriteKey::AccountBalance {
+                address: victim_sender,
+                evidence_digest: B256::repeat_byte(0x45),
+            },
+            AuditedWriteKey::AccountNonce {
+                address: victim_sender,
+                evidence_digest: B256::repeat_byte(0x46),
+            },
+            AuditedWriteKey::AccountBalance {
+                address: Address::ZERO,
+                evidence_digest: B256::repeat_byte(0x47),
+            },
+        ]);
+        let materialized_golden = |materialized: &MaterializedState| {
+            assert_eq!(
+                materialized.writes.iter().map(|write| write.key).collect::<BTreeSet<_>>(),
+                expected_materialized_keys
+            );
+            let mut canonical = b"edge-materialized-state/v1\0".to_vec();
+            canonical.extend_from_slice(
+                &u32::try_from(materialized.writes.len()).unwrap().to_be_bytes(),
+            );
+            for write in &materialized.writes {
+                let (variant, address, slot, evidence_digest) = match write.key {
+                    AuditedWriteKey::AccountBalance { address, evidence_digest } => {
+                        (0, address, U256::ZERO, evidence_digest)
+                    }
+                    AuditedWriteKey::AccountNonce { address, evidence_digest } => {
+                        (1, address, U256::ZERO, evidence_digest)
+                    }
+                    AuditedWriteKey::Storage { address, slot, evidence_digest } => {
+                        (2, address, slot, evidence_digest)
+                    }
+                };
+                canonical.push(variant);
+                canonical.extend_from_slice(address.as_slice());
+                canonical.extend_from_slice(&slot.to_be_bytes::<32>());
+                canonical.extend_from_slice(evidence_digest.as_slice());
+                canonical.extend_from_slice(&write.value.to_be_bytes::<32>());
+            }
+            B256::new(DefaultCrypto.sha256(&canonical))
+        };
+        let assert_candidate_oracle = |candidate: &EdgeCandidateDetailV1, generation, sequence| {
+            assert_eq!(candidate.producer_epoch, config.producer_epoch);
+            assert_eq!(candidate.candidate_sequence, sequence);
+            assert_eq!(candidate.candidate_generation, generation);
+            assert_eq!(candidate.source_generation, fixture_evidence.source_generation);
+            assert_eq!(candidate.coverage_generation, fixture_evidence.coverage_sequence);
+            assert_eq!(
+                candidate.pending_snapshot_sequence,
+                fixture_evidence.pending_snapshot_sequence
+            );
+            assert_eq!(
+                candidate.payload_first_record_sequence,
+                fixture_evidence.payload_first_record_sequence
+            );
+            assert_eq!(
+                candidate.payload_first_record_hash,
+                fixture_evidence.payload_first_record_hash.0
+            );
+            assert_eq!(
+                candidate.structural_terminal_hash,
+                fixture_evidence.structural_terminal_hash.0
+            );
+            assert_eq!(
+                candidate.connection_sequence_at_capture,
+                fixture_evidence.connection_sequence
+            );
+            assert_eq!(
+                candidate.connection_record_hash_at_capture,
+                fixture_evidence.connection_record_hash.0
+            );
+            assert_eq!(
+                candidate.registry_terminal_record_hash,
+                fixture_evidence.registry_terminal_record_hash.0
+            );
+            assert_eq!(candidate.parent_hash, parent_hash);
+            assert_eq!(candidate.block_number, candidate_fixture::BLOCK_NUMBER);
+            assert_eq!(candidate.payload_id, candidate_fixture::payload_id().0.0);
+            assert_eq!(candidate.predecessor_index, candidate_fixture::PREDECESSOR_INDEX);
+            assert_eq!(candidate.state_root, B256::repeat_byte(0x44));
+            assert_eq!(candidate.ordered_transaction_count, 1);
+            assert_eq!(candidate.ordered_transaction_cutoff_position, 0);
+            assert!(candidate.victim_absent_before_position);
+            assert_eq!(candidate.ordered_transaction_digest, expected_ordered_transaction_digest);
+            assert_eq!(candidate.victim_hash, victim_hash);
+            assert_eq!(candidate.victim_raw, victim_raw);
+            assert_eq!(candidate.selected_plan, expected_plan);
+            assert_eq!(candidate.selected_plan_digest, expected_plan.digest.0);
+            assert_eq!(candidate.prepared_route, expected_route);
+            assert_eq!(candidate.execution_hops, expected_execution_hops);
+            assert_eq!(candidate.deployment_identities, expected_deployment_identities);
+            assert_eq!(
+                candidate.code_witness_digest,
+                EdgeMeasurementOwnerV1::deployment_identity_digest(&expected_deployment_identities)
+            );
+            assert_eq!(candidate.g0_code_identity_digest, config.g0_code_identity_digest);
+            assert_eq!(candidate.prereg_digest, config.prereg_digest);
+            assert_eq!(candidate.policy_digest, config.policy_digest);
+            assert_eq!(candidate.config_digest, config.config_digest);
+            assert_eq!(candidate.producer_digest, config.producer_digest);
+            assert_eq!(
+                candidate.owner_approval_receipt_digest,
+                config.owner_approval_receipt_digest
+            );
+            assert_eq!(candidate.backrun_measurement_binding, expected_binding);
+            assert_eq!(
+                EdgeMeasurementOwnerV1::prepared_route_digest(&candidate.prepared_route).unwrap(),
+                candidate.prepared_state_digest
+            );
+            assert_eq!(
+                materialized_golden(&candidate.materialized_state),
+                candidate.slot_witness_digest
+            );
+            assert_eq!(
+                EdgeMeasurementOwnerV1::economics_digest(
+                    &candidate.selected_plan,
+                    &candidate.execution_hops
+                )
+                .unwrap(),
+                candidate.economics_evidence_digest
+            );
+            candidate.validate_detail().unwrap();
+        };
+        owner.emit_blink_reject("wire-end", BlinkRejectReasonV3::WireEnd);
+        owner.emit_blink_reject("decode-json-syntax", BlinkRejectReasonV3::JsonSyntax);
+
+        owner
+            .stage_deterministic_test_candidate(candidate_fixture_evidence())
+            .expect("production terminalized candidate");
+        owner
+            .stage_deterministic_test_candidate_without_terminal(candidate_fixture_evidence())
+            .expect("production staged candidate");
+
+        let before = owner.authority_audit_snapshot();
+        assert_eq!(before.record_queue, expected_records);
+        assert_eq!(before.candidate_queue.len(), 1);
+        assert_candidate_oracle(&before.candidate_queue[0], 0, 0);
+
+        assert_eq!(before.staged.keys().copied().collect::<Vec<_>>(), vec![1]);
+        let staged = before.staged.get(&1).unwrap();
+        assert_eq!(staged.generation, 1);
+        assert_eq!(staged.source_generation, fixture_evidence.source_generation);
+        assert_eq!(staged.coverage_generation, fixture_evidence.coverage_sequence);
+        assert_eq!(staged.pending_snapshot_sequence, fixture_evidence.pending_snapshot_sequence);
+        assert_eq!(
+            staged.payload_first_record_sequence,
+            fixture_evidence.payload_first_record_sequence
+        );
+        assert_eq!(staged.payload_first_record_hash, fixture_evidence.payload_first_record_hash.0);
+        assert_eq!(staged.structural_terminal_hash, fixture_evidence.structural_terminal_hash.0);
+        assert_eq!(staged.connection_sequence_at_capture, fixture_evidence.connection_sequence);
+        assert_eq!(
+            staged.connection_record_hash_at_capture,
+            fixture_evidence.connection_record_hash.0
+        );
+        assert_eq!(
+            staged.registry_terminal_record_hash,
+            fixture_evidence.registry_terminal_record_hash.0
+        );
+        assert_eq!(staged.parent_hash, parent_hash);
+        assert_eq!(staged.state_root, B256::repeat_byte(0x44));
+        assert_eq!(staged.ordered_transaction_count, 1);
+        assert_eq!(staged.ordered_transaction_cutoff_position, 0);
+        assert!(staged.victim_absent_before_position);
+        assert_eq!(staged.ordered_transaction_digest, expected_ordered_transaction_digest);
+        assert_eq!(staged.victim_raw, victim_raw);
+        assert_eq!(staged.selected_plan, expected_plan);
+        assert_eq!(staged.prepared_route, expected_route);
+        assert_eq!(staged.execution_hops, expected_execution_hops);
+        assert_eq!(staged.deployment_identities, expected_deployment_identities);
+        assert_eq!(staged.backrun_measurement_binding, expected_binding);
+        assert_eq!(
+            EdgeMeasurementOwnerV1::prepared_route_digest(&staged.prepared_route).unwrap(),
+            staged.prepared_state_digest
+        );
+        assert_eq!(
+            staged.code_witness_digest,
+            EdgeMeasurementOwnerV1::deployment_identity_digest(&expected_deployment_identities)
+        );
+        assert_eq!(materialized_golden(&staged.materialized_state), staged.slot_witness_digest);
+        assert_eq!(
+            EdgeMeasurementOwnerV1::economics_digest(&staged.selected_plan, &staged.execution_hops)
+                .unwrap(),
+            staged.economics_evidence_digest
+        );
+        assert_eq!(before.staged.len(), 1);
+        assert_eq!(before.pending_records, 2);
+        assert_eq!(before.pending_candidates, 1);
+        assert_eq!(before.reject_sequence, 2);
+        assert_eq!(before.candidate_sequence, 1);
+
+        let after_first_audit = owner.authority_audit_snapshot();
+        let after_second_audit = owner.authority_audit_snapshot();
+        assert_eq!(after_first_audit, before);
+        assert_eq!(after_second_audit, before);
+
+        assert_eq!(owner.drain_records().unwrap(), expected_records);
+        let first_candidates = owner.drain_candidate_details().unwrap();
+        assert_eq!(first_candidates.len(), 1);
+        assert_candidate_oracle(&first_candidates[0], 0, 0);
+        owner.record_terminal_and_resolve(
+            1,
+            BlinkGenerationTerminalV1::Processed,
+            Some(ShadowOutcome::Selected),
+        );
+        let staged_candidates = owner.drain_candidate_details().unwrap();
+        assert_eq!(staged_candidates.len(), 1);
+        assert_candidate_oracle(&staged_candidates[0], 1, 1);
+        assert!(owner.drain_records().unwrap().is_empty());
+        assert!(owner.drain_candidate_details().unwrap().is_empty());
+        assert!(owner.staged.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn blink_reject_full_and_closed_losses_are_counted_without_advancing_or_poisoning() {
@@ -4184,8 +5015,7 @@ mod tests {
         assert!(!full.poisoned.load(Ordering::Acquire));
         assert_eq!(full.drain_records().unwrap().len(), 1);
         full.latch_cutoff(cutoff_fields(10));
-        assert_eq!(full.finalization_ready(), Ok(true));
-        assert!(full.final_record().is_ok());
+        assert!(full.cutoff_drained_snapshot().is_ok());
 
         let closed = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
         let (_replacement_sender, replacement_receiver) = sync_channel(1);
@@ -4201,8 +5031,7 @@ mod tests {
         assert_eq!(*closed.reject_previous_hash.lock().unwrap(), [0; 32]);
         assert!(!closed.poisoned.load(Ordering::Acquire));
         closed.latch_cutoff(cutoff_fields(10));
-        assert_eq!(closed.finalization_ready(), Ok(true));
-        assert!(closed.final_record().is_ok());
+        assert!(closed.cutoff_drained_snapshot().is_ok());
     }
 
     #[test]
@@ -4246,7 +5075,7 @@ mod tests {
         assert!(!closed.poisoned.load(Ordering::Acquire));
     }
     #[test]
-    fn full_candidate_and_record_queues_preserve_exact_drop_count_and_final_readiness() {
+    fn full_candidate_and_record_queues_preserve_exact_drop_count_at_cutoff() {
         let mut config = owner_config();
         config.record_queue_capacity = 1;
         let owner = EdgeMeasurementOwnerV1::new(config).unwrap();
@@ -4288,12 +5117,11 @@ mod tests {
             CheckedCandidateBoundsV1 { count: 0, last_sequence: None }
         );
         owner.latch_cutoff(cutoff_fields(10));
-        assert_eq!(owner.finalization_ready(), Ok(true));
-        let final_record = owner.final_record().unwrap();
-        assert_eq!(final_record.blink.processed_terminal, 1);
-        assert_eq!(final_record.blink.selected_dto_built_preterminal, 1);
-        assert_eq!(final_record.blink.selected_dto_committed, 1);
-        assert!(!final_record.blink.poisoned);
+        let snapshot = owner.cutoff_drained_snapshot().unwrap();
+        assert_eq!(snapshot.blink.processed_terminal, 1);
+        assert_eq!(snapshot.blink.selected_dto_built_preterminal, 1);
+        assert_eq!(snapshot.blink.selected_dto_committed, 1);
+        assert!(!snapshot.blink.poisoned);
     }
     #[test]
     fn cutoff_closes_reject_and_draft_admission() {
@@ -4319,13 +5147,13 @@ mod tests {
     }
 
     #[test]
-    fn finalization_readiness_waits_for_pre_cutoff_terminal_without_poisoning() {
+    fn cutoff_snapshot_waits_for_pre_cutoff_terminal_without_poisoning() {
         let owner = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
         owner.ledger.record_observed().unwrap();
         owner.ledger.record_submission(1, SlotSubmit::Accepted).unwrap();
         owner.latch_cutoff(cutoff_fields(10));
 
-        assert_eq!(owner.finalization_ready(), Ok(false));
+        assert_eq!(owner.cutoff_drained_snapshot(), Err(EdgeProducerError::Ledger));
         owner
             .ledger
             .record_terminal(
@@ -4334,30 +5162,29 @@ mod tests {
                 Some(ShadowOutcome::NoCandidate),
             )
             .unwrap();
-        assert_eq!(owner.finalization_ready(), Ok(true));
-        assert!(owner.final_record().is_ok());
+        assert!(owner.cutoff_drained_snapshot().is_ok());
     }
     #[test]
-    fn final_requires_cutoff_drained_queues_and_zero_pending_ledgers() {
+    fn cutoff_snapshot_requires_cutoff_drained_queues_and_zero_pending_ledgers() {
         let missing_cutoff = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
-        assert_eq!(missing_cutoff.final_record(), Err(EdgeProducerError::CutoffMissing));
+        assert_eq!(missing_cutoff.cutoff_drained_snapshot(), Err(EdgeProducerError::CutoffMissing));
 
         let queued = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
         queued.emit_blink_reject("wire-end", BlinkRejectReasonV3::WireEnd);
         queued.latch_cutoff(cutoff_fields(10));
-        assert_eq!(queued.final_record(), Err(EdgeProducerError::Ledger));
+        assert_eq!(queued.cutoff_drained_snapshot(), Err(EdgeProducerError::Ledger));
 
         let drained = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
         drained.emit_blink_reject("wire-end", BlinkRejectReasonV3::WireEnd);
         drained.latch_cutoff(cutoff_fields(10));
         assert_eq!(drained.drain_records().unwrap().len(), 1);
-        assert!(drained.final_record().is_ok());
+        assert!(drained.cutoff_drained_snapshot().is_ok());
 
         let generation_pending = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
         generation_pending.ledger.record_observed().unwrap();
         generation_pending.ledger.record_submission(1, SlotSubmit::Accepted).unwrap();
         generation_pending.latch_cutoff(cutoff_fields(10));
-        assert_eq!(generation_pending.final_record(), Err(EdgeProducerError::Ledger));
+        assert_eq!(generation_pending.cutoff_drained_snapshot(), Err(EdgeProducerError::Ledger));
 
         let terminal_drain = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
         terminal_drain.ledger.record_observed().unwrap();
@@ -4367,12 +5194,12 @@ mod tests {
             .ledger
             .record_terminal(1, BlinkGenerationTerminalV1::Processed, None)
             .unwrap();
-        assert!(terminal_drain.final_record().is_ok());
+        assert!(terminal_drain.cutoff_drained_snapshot().is_ok());
 
         let candidate_pending = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
         candidate_pending.pending_candidates.store(1, Ordering::Release);
         candidate_pending.latch_cutoff(cutoff_fields(10));
-        assert_eq!(candidate_pending.final_record(), Err(EdgeProducerError::Ledger));
+        assert_eq!(candidate_pending.cutoff_drained_snapshot(), Err(EdgeProducerError::Ledger));
     }
     #[test]
     fn cutoff_hash_and_sha256_match_shared_ts_contract() {
@@ -4391,10 +5218,81 @@ mod tests {
             hex::encode(cutoff.record_hash),
             "ffdf47790035f3460cd4f16a70950718d255194411c98079729e0ae9716c6bd0"
         );
+        assert!(cutoff.has_valid_record_hash());
+        assert_eq!(
+            cutoff.canonical_inner_bytes(),
+            br#"{"cutoffClockObservationOrdinal":"2","lastAdmittedBlinkGeneration":"5","lastAdmittedSourceGeneration":"4","lastAdmittedWireOrdinal":"3","lastCandidateSequence":"8","lastCoverageSequence":"7","lastPendingSnapshotSequence":"6","latchMonoNs":"9","producerEpoch":"1","recordHash":"ffdf47790035f3460cd4f16a70950718d255194411c98079729e0ae9716c6bd0"}"#
+                .to_vec()
+        );
         assert_eq!(
             hex::encode(EdgeMeasurementDurabilityV1::sha256(b"abc")),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn edge_measurement_raw_cutoff_snapshot_preserves_blink_queues_drops_and_witness() {
+        let owner = EdgeMeasurementOwnerV1::new(owner_config()).unwrap();
+        owner.ledger.record_observed().unwrap();
+        owner.ledger.record_submission(0, SlotSubmit::Accepted).unwrap();
+        owner.ledger.record_terminal(0, BlinkGenerationTerminalV1::Processed, None).unwrap();
+        owner.pending_records.store(3, Ordering::Release);
+        owner.pending_candidates.store(2, Ordering::Release);
+        owner.candidate_sequence.store(3, Ordering::Release);
+        owner.candidate_drop_counts
+            [CandidatePreEnqueueDropReasonV3::CandidateQueueFull.counter_index()]
+        .store(5, Ordering::Release);
+        owner.blink_reject_queue_full.store(7, Ordering::Release);
+        owner.blink_reject_queue_closed.store(11, Ordering::Release);
+        owner.candidate_drop_queue_full.store(13, Ordering::Release);
+        owner.candidate_drop_queue_closed.store(17, Ordering::Release);
+
+        let periodic = owner.raw_accounting_snapshot().expect("raw periodic snapshot");
+        assert_eq!(periodic.blink.victim_ingress_observed, 1);
+        assert_eq!(periodic.blink.admitted_generations, 1);
+        assert_eq!(periodic.blink.processed_terminal, 1);
+        assert_eq!(
+            periodic.queues,
+            EdgeQueueAccountingSnapshotV1 {
+                pending_records: 3,
+                pending_candidates: 2,
+                staged_count: 0,
+            }
+        );
+        assert_eq!(
+            periodic.candidate_bounds,
+            CheckedCandidateBoundsV1 { count: 3, last_sequence: Some(2) }
+        );
+        assert_eq!(periodic.candidate_drops.candidate_queue_full, 5);
+        assert_eq!(
+            periodic.blink_reject_loss,
+            BlinkRejectQueueLossCountersV1 { queue_full: 7, queue_closed: 11 }
+        );
+        assert_eq!(
+            periodic.candidate_drop_loss,
+            CandidateDropQueueLossCountersV1 { queue_full: 13, queue_closed: 17 }
+        );
+        assert_eq!(periodic.cutoff, None);
+
+        owner.pending_records.store(0, Ordering::Release);
+        owner.pending_candidates.store(0, Ordering::Release);
+        let mut fields = cutoff_fields(10);
+        fields.last_candidate_sequence = 2;
+        owner.latch_cutoff(fields);
+        let after = owner.cutoff_drained_snapshot().expect("cutoff-drained snapshot");
+        assert!(after.cutoff.has_valid_record_hash());
+        assert_eq!(after.revision[14], after.blink.generation_pending);
+        assert_eq!(after.revision[15], after.blink.selected_pending);
+        assert_eq!(after.revision[17], after.queues.pending_records);
+        assert_eq!(after.revision[18], after.queues.pending_candidates);
+        assert_eq!(after.revision[19], 0);
+        assert_eq!(after.revision[20], after.candidate_bounds.count);
+        assert_eq!(after.revision[23], 5);
+        assert_eq!(after.revision[30], 11);
+        assert_eq!(after.revision[31], 7);
+        assert_eq!(after.revision[32], 17);
+        assert_eq!(after.revision[33], 13);
+        assert_eq!(after.revision[35], 1);
     }
     #[test]
     fn ordered_victim_witness_rejects_victim_anywhere_and_matches_prefix_digest() {
@@ -4427,7 +5325,7 @@ mod tests {
         assert_eq!(2_u64.checked_add(1), Some(3));
     }
     #[test]
-    fn fixed_candidate_codecs_match_explicit_big_endian_vectors_and_bind_mutations() {
+    fn edge_retained_authority_bytes_match_frozen_oracle() {
         let identities = [
             (Address::repeat_byte(1), B256::repeat_byte(11)),
             (Address::repeat_byte(2), B256::repeat_byte(12)),
@@ -4611,18 +5509,5 @@ mod tests {
             EdgeMeasurementOwnerV1::economics_digest(&plan, &hops).unwrap(),
             EdgeMeasurementOwnerV1::economics_digest(&changed_plan, &hops).unwrap()
         );
-        assert!(EdgeCandidateV3::retained_transaction_binding_matches(&plan, &hops, &plan, &hops,));
-        assert!(!EdgeCandidateV3::retained_transaction_binding_matches(
-            &plan,
-            &hops,
-            &changed_plan,
-            &hops,
-        ));
-        assert!(!EdgeCandidateV3::retained_transaction_binding_matches(
-            &plan,
-            &hops,
-            &plan,
-            &changed_hops,
-        ));
     }
 }

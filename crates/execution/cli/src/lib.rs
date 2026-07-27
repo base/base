@@ -17,13 +17,26 @@ mod mev_trader;
 pub use mev_trader::{
     BaseNodeTraderConfig, BaseNodeTraderExtension, BaseNodeTraderStart, MevTraderPhaseAInstaller,
 };
+#[cfg(feature = "edge-measurement")]
+pub use mev_trader::{
+    EdgeAccountingObjectContractRowV1, EdgeAccountingObjectKeysV1, EdgeAccountingRuleContractRowV1,
+    EdgeAccountingSchemaProjectorV1, EdgeBlinkAccountingSnapshotV1, EdgeCleanupPublicationV1,
+    EdgeContractCanonicalJsonV1, EdgeEpochAllocationErrorV1, EdgeEpochAllocationStageV1,
+    EdgeEpochAllocationV1, EdgeEpochAllocatorV1, EdgeLedgerContractRowV1, EdgeNodeResultRecorderV1,
+    EdgeNodeResultSlotV1, EdgeOobFailureSinkV1, EdgeOperationalIncidentV1,
+    EdgeOperationalIncidentsV1, EdgePayloadDiscriminatorV1, EdgePendingPublicationV1,
+    EdgeProducerContractManifestV1, EdgeRegistryAccountingSnapshotV1,
+    EdgeShutdownAuthorityBoundaryV1, EdgeShutdownAuthorityGuardV1,
+    EdgeShutdownDeadlineCancellationV1, EdgeSourceAccountingSnapshotV1, EdgeWriterFailureClassV1,
+    EdgeWriterStructuralErrorV1, FlatJsonObjectV1, FlatJsonParserV1, FlatJsonValueV1,
+};
+#[cfg(all(feature = "edge-measurement", test))]
+pub use mev_trader::{EdgeOobFailureSinkAuditSnapshotV1, EdgeOobFileMetadataAuditV1};
 mod node;
 pub use node::{ExecutionNodeArgs, ExecutionNodeLaunchConfig};
 /// Standard Base execution-node runner wiring.
 pub mod standard_node;
 
-#[cfg(feature = "edge-measurement")]
-use std::time::Duration;
 use std::{ffi::OsString, fmt, marker::PhantomData};
 
 pub use app::CliApp;
@@ -35,8 +48,6 @@ use commands::Commands;
 use futures::Future;
 use reth_cli_commands::launcher::FnLauncher;
 use reth_cli_runner::CliRunner;
-#[cfg(feature = "edge-measurement")]
-use reth_cli_runner::CliRunnerConfig;
 use reth_db::DatabaseEnv;
 use reth_node_builder::{NodeBuilder, WithLaunchContext};
 use reth_node_core::{
@@ -115,11 +126,7 @@ where
         L: FnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv, BaseChainSpec>>, Ext) -> Fut,
         Fut: Future<Output = eyre::Result<()>>,
     {
-        let runner = CliRunner::try_default_runtime()?;
-        #[cfg(feature = "edge-measurement")]
-        let runner = runner.with_config(
-            CliRunnerConfig::new().with_graceful_shutdown_timeout(Duration::from_secs(240)),
-        );
+        let runner = CliApp::<Ext, Rpc>::default_runner()?;
         self.with_runner(runner, launcher)
     }
 
