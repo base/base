@@ -322,12 +322,14 @@ where
         // is registration-gated on nitro-host, so trusting it alone deadlocks
         // bootstrap. Preserve `Draining` so lifecycle teardown still skips
         // registration while protecting active signers.
-        let readiness = futures::stream::iter(instances.iter().enumerate().map(
-            |(index, instance)| async move {
+        let max_concurrency = self.config.max_concurrency.max(1);
+        let readiness = futures::stream::iter(instances.iter_mut()).for_each_concurrent(
+            max_concurrency,
+            |instance| async {
                 if instance.health_status == InstanceHealthStatus::Draining {
-                    return (index, InstanceHealthStatus::Draining);
+                    return;
                 }
-                let status = match self.signer_client.readyz(&instance.endpoint).await {
+                instance.health_status = match self.signer_client.readyz(&instance.endpoint).await {
                     Ok(()) => InstanceHealthStatus::Healthy,
                     Err(e) => {
                         debug!(
@@ -339,14 +341,12 @@ where
                         InstanceHealthStatus::Unhealthy
                     }
                 };
-                (index, status)
             },
-        ))
-        .buffer_unordered(self.config.max_concurrency.max(1))
-        .collect::<Vec<_>>()
-        .await;
-        for (index, status) in readiness {
-            instances[index].health_status = status;
+        );
+        tokio::select! {
+            biased;
+            () = self.config.cancel.cancelled() => return Ok(DiscoveryResolution::default()),
+            () = readiness => {}
         }
 
         let discovered_instance_ids: HashSet<String> =
@@ -384,7 +384,7 @@ where
             }
             .instrument(span)
         }))
-        .buffer_unordered(self.config.max_concurrency.max(1));
+        .buffer_unordered(max_concurrency);
 
         // No cancel-select around `futs.next()`: each future checks
         // cancellation cooperatively between awaits, so new work is
@@ -716,6 +716,24 @@ mod tests {
             )
             .to_vec();
         assert_eq!(*requested_nonces.lock().unwrap(), vec![Some(vec![nonce_a, nonce_b])]);
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_skips_readyz_when_cancelled() {
+        let cancel = CancellationToken::new();
+        let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let requested_readyz = Arc::clone(&signer_client.requested_readyz);
+        let driver =
+            cycle_driver(vec![healthy_prover_instance(EP1)], signer_client, cancel.clone());
+
+        cancel.cancel();
+
+        let resolution = discover_once(&driver).await;
+
+        assert!(resolution.registerable.is_empty());
+        assert!(resolution.active_signers.is_empty());
+        assert!(resolution.unresolved_instance_ids.is_empty());
+        assert!(requested_readyz.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

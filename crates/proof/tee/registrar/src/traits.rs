@@ -17,12 +17,11 @@ pub trait InstanceDiscovery: Send + Sync {
     fn discover_instances(&self) -> impl Future<Output = Result<Vec<ProverInstance>>> + Send + '_;
 }
 
-/// Fetches signer identity data from a prover instance endpoint.
+/// Communicates with a prover instance endpoint.
 ///
 /// The primary implementation is [`ProverClient`](crate::ProverClient), which
-/// adapts a discovered endpoint [`Url`] to the shared
-/// `base_proof_primitives::EnclaveApiClient` JSON-RPC surface. Test code can
-/// substitute a mock to avoid real HTTP calls.
+/// sends readiness and signer JSON-RPC requests to a discovered endpoint
+/// [`Url`]. Test code can substitute a mock to avoid real HTTP calls.
 ///
 /// Implementations must return public keys and attestations in the same stable
 /// signer order across calls for a given endpoint. The registrar pairs each

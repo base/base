@@ -16,10 +16,10 @@ use url::Url;
 
 use crate::{EnclaveEndpointClient, RegistrarError, Result};
 
-/// JSON-RPC client for prover instance signer endpoints.
+/// JSON-RPC client for prover instance readiness and signer endpoints.
 ///
-/// Implements [`EnclaveEndpointClient`] by making HTTP JSON-RPC calls to the prover's
-/// `enclave_signerPublicKey` and `enclave_signerAttestation` endpoints.
+/// Implements [`EnclaveEndpointClient`] with HTTP JSON-RPC calls to the prover's
+/// `readyz`, `enclave_signerPublicKey`, and `enclave_signerAttestation` endpoints.
 ///
 /// The `timeout` is configured once at construction and applied to all requests.
 #[derive(Debug)]
