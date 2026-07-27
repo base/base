@@ -65,8 +65,16 @@ txpool_nodes: []
 flashblocks_ws: "ws://localhost:7111"
 sender_count: 10
 target_gps: 2100000
+# When target_gps is omitted, keep three blocks of gas RPC-accepted (the default)
+# so an unbounded run starts and remains saturated.
+mempool_target_blocks: 3
 duration: "30s"
 ```
+
+Ordinary invocations calibrate, prefill, and run in one go. Benchmark harnesses that need to keep
+prefill outside their measured window can pass `--separate-setup <control-dir>` and
+`--block-gas-limit <gas>` on the command line; these orchestration controls are intentionally not
+part of the portable YAML configuration.
 
 `flashblocks_ws` is required for builder flashblocks broadcast latency data.
 `transaction_submission_rpcs` accepts either a single URL string or a list; submit batches are

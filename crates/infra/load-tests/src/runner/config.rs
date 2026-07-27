@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use alloy_primitives::{Address, U256};
 use revm::precompile::PrecompileId;
@@ -58,6 +58,11 @@ pub enum TxType {
     /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
     /// per run during setup.
     B20,
+    /// B-20 EVM contract token transfer against a pre-deployed contract.
+    B20Evm {
+        /// EVM contract address.
+        contract: Address,
+    },
     /// Osaka (Base Azul) opcode or precompile transaction.
     Osaka {
         /// Target Osaka feature.
@@ -217,6 +222,12 @@ pub struct LoadConfig {
     pub transactions: Vec<TxConfig>,
     /// Optional gas-per-second ceiling applied to adaptive pacing.
     pub target_gps: Option<u64>,
+    /// Optional block gas limit override used to size the saturated mempool.
+    pub block_gas_limit: Option<u64>,
+    /// Number of blocks of gas to keep outstanding.
+    pub mempool_target_blocks: u64,
+    /// Benchmark-only control directory used to separate setup from measurement.
+    pub separate_setup: Option<PathBuf>,
     /// Duration of the load test. `None` means run indefinitely until stopped.
     pub duration: Option<Duration>,
     /// Maximum in-flight (unconfirmed) transactions per sender.
@@ -250,6 +261,9 @@ impl LoadConfig {
             sender_offset: 0,
             transactions: vec![TxConfig { weight: 100, tx_type: TxType::Transfer }],
             target_gps: None,
+            block_gas_limit: None,
+            mempool_target_blocks: 3,
+            separate_setup: None,
             duration: Some(Duration::from_secs(30)),
             max_in_flight_per_sender: 128,
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
@@ -273,6 +287,12 @@ impl LoadConfig {
         }
         if self.target_gps == Some(0) {
             return Err(BaselineError::Config("target_gps must be > 0 when set".into()));
+        }
+        if self.block_gas_limit == Some(0) {
+            return Err(BaselineError::Config("block_gas_limit must be > 0 when set".into()));
+        }
+        if self.mempool_target_blocks == 0 {
+            return Err(BaselineError::Config("mempool_target_blocks must be > 0".into()));
         }
         if self.duration == Some(Duration::ZERO) {
             return Err(BaselineError::Config(

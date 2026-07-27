@@ -238,6 +238,8 @@ pub struct ConfigSummary {
     pub duration: Option<String>,
     /// Optional gas-per-second ceiling for adaptive pacing.
     pub target_gps: Option<u64>,
+    /// Number of blocks of gas targeted in the mempool.
+    pub mempool_target_blocks: u64,
     /// Deterministic account seed.
     pub seed: u64,
     /// Chain ID.

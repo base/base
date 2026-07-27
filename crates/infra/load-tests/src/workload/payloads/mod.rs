@@ -33,6 +33,9 @@ mod b20;
 pub use b20::B20TransferPayload;
 pub(crate) use b20::{b20_salt_for, b20_token_for};
 
+mod b20_evm;
+pub use b20_evm::B20EvmTransferPayload;
+
 mod osaka;
 pub use osaka::OsakaPayload;
 

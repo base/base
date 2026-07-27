@@ -67,7 +67,11 @@ pub struct TestConfig {
     /// Optional ceiling on gas/s throughput; the adaptive in-flight target is clamped so it
     /// never implies exceeding this rate, even when the pool has headroom to send more. Omit for
     /// fully adaptive/unbounded throughput, gated only by confirmed-transaction backpressure.
+    #[serde(default)]
     pub target_gps: Option<u64>,
+
+    /// Number of blocks of gas kept outstanding during measurement.
+    pub mempool_target_blocks: u64,
 
     /// Seed for deterministic account generation (used if mnemonic not provided).
     ///
@@ -138,6 +142,7 @@ impl Default for TestConfig {
             funding_batch_size: default_funding_batch_size(),
             duration: Some("60s".to_string()),
             target_gps: Some(20_000_000),
+            mempool_target_blocks: 3,
             seed: 12345,
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
@@ -166,6 +171,7 @@ impl fmt::Debug for TestConfig {
             .field("funding_batch_size", &self.funding_batch_size)
             .field("duration", &self.duration)
             .field("target_gps", &self.target_gps)
+            .field("mempool_target_blocks", &self.mempool_target_blocks)
             .field("seed", &self.seed)
             .field("chain_id", &self.chain_id)
             .field("transactions", &self.transactions)
@@ -277,6 +283,12 @@ pub enum TxTypeConfig {
     /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
     /// per run during setup.
     B20,
+
+    /// B-20 EVM contract token transfer against a pre-deployed contract.
+    B20Evm {
+        /// EVM contract address.
+        contract: String,
+    },
 
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
@@ -524,6 +536,7 @@ impl TestConfig {
             funding_batch_size: self.funding_batch_size,
             duration: self.duration.clone(),
             target_gps: self.target_gps,
+            mempool_target_blocks: self.mempool_target_blocks,
             seed: self.seed,
             chain_id: self.chain_id,
             transactions: serde_json::to_value(&self.transactions)
@@ -587,6 +600,9 @@ impl TestConfig {
             sender_offset: self.sender_offset as usize,
             transactions,
             target_gps: self.target_gps,
+            mempool_target_blocks: self.mempool_target_blocks,
+            block_gas_limit: None,
+            separate_setup: None,
             duration,
             max_in_flight_per_sender: self.in_flight_per_sender as u64,
             funding_batch_size: self.funding_batch_size.max(1) as usize,
@@ -646,6 +662,9 @@ impl TestConfig {
                 }
             }
             TxTypeConfig::B20 => TxType::B20,
+            TxTypeConfig::B20Evm { contract } => {
+                TxType::B20Evm { contract: parse_address(contract, "b20_evm contract")? }
+            }
             TxTypeConfig::Osaka { target } => TxType::Osaka { target: target.clone() },
             TxTypeConfig::UniswapV3 {
                 router,
@@ -790,6 +809,8 @@ flashblocks_ws: ws://localhost:7111
         assert_eq!(config.sender_count, 100);
         assert!(config.mnemonic.is_none());
         assert!(config.txpool_nodes.is_empty());
+        assert_eq!(config.target_gps, None);
+        assert_eq!(config.mempool_target_blocks, 3);
     }
 
     #[test]

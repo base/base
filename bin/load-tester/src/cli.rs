@@ -1,6 +1,6 @@
 //! CLI argument parsing and execution for the load tester binary.
 
-use std::{path::PathBuf, time::Duration};
+use std::{num::NonZeroU64, path::PathBuf, time::Duration};
 
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, U256, utils::format_ether};
@@ -86,6 +86,14 @@ struct LoadArgs {
     #[arg(long)]
     skip_drain: bool,
 
+    /// Benchmark-only directory for the ready/start handshake that separates setup from the run.
+    #[arg(long, value_name = "DIR", requires = "block_gas_limit")]
+    separate_setup: Option<PathBuf>,
+
+    /// Block gas limit used for mempool sizing instead of the latest RPC block.
+    #[arg(long, requires = "separate_setup")]
+    block_gas_limit: Option<NonZeroU64>,
+
     /// Load test YAML configuration.
     #[arg(value_name = "CONFIG")]
     config: PathBuf,
@@ -141,7 +149,9 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     };
 
     // Continuous mode is applied by LoadTestExecutor from LoadTestRunOptions.
-    let load_config = test_config.to_load_config(rpc_chain_id)?;
+    let mut load_config = test_config.to_load_config(rpc_chain_id)?;
+    load_config.separate_setup = args.separate_setup;
+    load_config.block_gas_limit = args.block_gas_limit.map(NonZeroU64::get);
 
     let funding_key = TestConfig::funder_key()?;
 
