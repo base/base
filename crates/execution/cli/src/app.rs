@@ -231,18 +231,6 @@ where
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "edge-measurement")]
-    use crate::mev_trader::{
-        EdgeOobFailureSinkAuditSnapshotV1, EdgeOobFailureSinkV1, edge_node_result_test_consumed_v1,
-        edge_node_result_test_install_v1, edge_node_result_test_lock_v1,
-        edge_node_result_test_oob_sink_v1, edge_node_result_test_poison_v1,
-        edge_node_result_test_reset_v1,
-    };
-    #[cfg(feature = "edge-measurement")]
-    use base_flashblocks::{
-        EdgeMeasurementAdmissionStateV1, EdgeMeasurementAuthorityAuditSnapshotV1,
-        EdgeMeasurementRecorderV1,
-    };
-    #[cfg(feature = "edge-measurement")]
     use std::{
         collections::BTreeMap,
         fmt, fs,
@@ -250,11 +238,25 @@ mod tests {
         sync::{Arc, Mutex},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[cfg(feature = "edge-measurement")]
+    use base_flashblocks::{
+        EdgeMeasurementAdmissionStateV1, EdgeMeasurementAuthorityAuditSnapshotV1,
+        EdgeMeasurementRecorderV1,
+    };
     #[cfg(feature = "edge-measurement")]
     use tracing::{
         Event, Id, Level, Metadata, Subscriber,
         field::{Field, Visit},
         span::{Attributes, Record},
+    };
+
+    #[cfg(feature = "edge-measurement")]
+    use crate::mev_trader::{
+        EdgeOobFailureSinkAuditSnapshotV1, EdgeOobFailureSinkV1, edge_node_result_test_consumed_v1,
+        edge_node_result_test_install_v1, edge_node_result_test_lock_v1,
+        edge_node_result_test_oob_sink_v1, edge_node_result_test_poison_v1,
+        edge_node_result_test_reset_v1,
     };
 
     #[cfg(feature = "edge-measurement")]
@@ -442,6 +444,34 @@ mod tests {
         assert_eq!(line["writerInstanceId"], after.oob.writer_instance_id);
     }
 
+    #[cfg(feature = "edge-measurement")]
+    #[test]
+    fn node_command_execute_outer_result_arm_source_seal() {
+        const APP_SOURCE: &str = include_str!("app.rs");
+        const NODE_ARM_START: &str = concat!("            Commands::", "Node(command) => {\n");
+        const NEXT_ARM_START: &str = concat!("            Commands::", "Init(command) => {\n");
+        const OUTER_RESULT_SEQUENCE: &str = concat!(
+            "                let result = runner.run_command_until_exit(|ctx| command.",
+            "execute(ctx, launcher));\n",
+            "                #[cfg(feature = \"edge-measurement\")]\n",
+            "                let result = edge_node_result_outer_",
+            "arm!(result);\n",
+            "                result\n",
+        );
+        const OUTER_RESULT_MACRO_CALL: &str = concat!("edge_node_result_outer_", "arm!(");
+
+        assert_eq!(APP_SOURCE.matches(NODE_ARM_START).count(), 1);
+        assert_eq!(APP_SOURCE.matches(NEXT_ARM_START).count(), 1);
+        assert_eq!(APP_SOURCE.matches(OUTER_RESULT_SEQUENCE).count(), 1);
+
+        let (_, after_node_arm_start) =
+            APP_SOURCE.split_once(NODE_ARM_START).expect("real Node command arm");
+        let (node_arm, _) = after_node_arm_start
+            .split_once(NEXT_ARM_START)
+            .expect("Node command arm must precede Init command arm");
+        assert_eq!(node_arm.matches(OUTER_RESULT_SEQUENCE).count(), 1);
+        assert_eq!(node_arm.matches(OUTER_RESULT_MACRO_CALL).count(), 1);
+    }
     #[cfg(feature = "edge-measurement")]
     #[test]
     fn app_outer_result_arm_uses_real_static_once_and_preserves_identity() {

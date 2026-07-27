@@ -890,7 +890,7 @@ fn edge_oob_audit_surface_is_test_only() {
         "#[cfg(all(feature = \"edge-measurement\", test))]\n/// Strongly typed OOB authority audit snapshot.",
         "#[cfg(all(feature = \"edge-measurement\", test))]\nimpl EdgeOobFailureSinkAuditSnapshotV1 {",
         "    #[cfg(test)]\n    /// Returns writer identity, epoch, ordinal, exact file bytes, and stable Unix metadata.\n    pub fn audit_snapshot(",
-        "        #[cfg(test)]\n        options.read(true);",
+        "        let audit_file = OpenOptions::new().read(true).open(audit_path)?;",
     ] {
         assert_eq!(adapter.matches(marker).count(), 1, "audit item lost direct test cfg: {marker}");
     }
