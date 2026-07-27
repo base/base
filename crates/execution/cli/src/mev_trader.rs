@@ -3246,6 +3246,7 @@ impl EdgeCanonicalWriterV1 {
                 .as_ref()
                 .ok_or_else(|| io::Error::other("writer OOB sink missing after preparation"))?,
         );
+        let mut terminal_retry_attempt = 0_u64;
         loop {
             self.deadline_cancellation.check()?;
             if let Err(error) = self.retry_open_cleanup_incident() {
@@ -3277,10 +3278,17 @@ impl EdgeCanonicalWriterV1 {
                         let attempt = if retrying_periodic {
                             self.incidents.accounting_periodic_write_failed.attempt_count.max(1)
                         } else {
+                            terminal_retry_attempt =
+                                terminal_retry_attempt.checked_add(1).ok_or_else(|| {
+                                    io::Error::other("terminal retry attempt count overflow")
+                                })?;
                             let _ = sink.record("writer", "DataLedgerWriteFailed", None);
-                            self.incidents.data_ledger_write_failed.attempt_count.max(1)
+                            terminal_retry_attempt
                         };
-                        let delay = EdgeWriterFailureClassV1::retry_delay(attempt, false);
+                        let delay = EdgeWriterFailureClassV1::retry_delay(
+                            attempt,
+                            self.recorder.cutoff_latched(),
+                        );
                         EdgeWriterFailureClassV1::wait_for_retry_delay_until_cutoff(delay, || {
                             self.deadline_cancellation.is_cancelled()
                         });
@@ -3320,24 +3328,29 @@ impl EdgeCanonicalWriterV1 {
                             let failed_ns = incident.first_failed_mono_ns.ok_or_else(|| {
                                 io::Error::other("data incident failure time missing")
                             })?;
-                            incident.single_recovery_witness = Some(json!({
-                                "incidentId": format!("{ledger}|{next_sequence}|{digest}"),
-                                "ledgerPrefix": ledger,
-                                "scheduledMonoNs": JsonValue::Null,
-                                "failedMonoNs": failed_ns.to_string(),
-                                "lastAttemptMonoNs": incident
-                                    .last_failed_mono_ns
-                                    .ok_or_else(|| io::Error::other(
-                                        "data incident last-attempt time missing",
-                                    ))?
-                                    .to_string(),
-                                "recoveredMonoNs": recovered_ns.to_string(),
-                                "attemptCount": incident.attempt_count.to_string(),
-                                "preStateSha256": JsonValue::Null,
-                                "postStateSha256": JsonValue::Null,
-                                "attemptedBytesSha256": digest,
-                                "durableBytesSha256": digest,
-                            }));
+                            incident.single_recovery_witness =
+                                Some(Self::single_recovery_witness([
+                                    JsonValue::String(format!("{ledger}|{next_sequence}|{digest}")),
+                                    JsonValue::String(ledger.to_owned()),
+                                    JsonValue::Null,
+                                    JsonValue::String(failed_ns.to_string()),
+                                    JsonValue::String(
+                                        incident
+                                            .last_failed_mono_ns
+                                            .ok_or_else(|| {
+                                                io::Error::other(
+                                                    "data incident last-attempt time missing",
+                                                )
+                                            })?
+                                            .to_string(),
+                                    ),
+                                    JsonValue::String(recovered_ns.to_string()),
+                                    JsonValue::String(incident.attempt_count.to_string()),
+                                    JsonValue::Null,
+                                    JsonValue::Null,
+                                    JsonValue::String(digest.to_owned()),
+                                    JsonValue::String(digest.to_owned()),
+                                ])?);
                         }
                         incident.active_identity = None;
                         incident.attempt_count = 0;
@@ -3507,24 +3520,26 @@ impl EdgeCanonicalWriterV1 {
             let failed_ns = incident
                 .first_failed_mono_ns
                 .ok_or_else(|| io::Error::other("cleanup incident failure time missing"))?;
-            incident.single_recovery_witness = Some(json!({
-                "incidentId": identity.clone(),
-                "ledgerPrefix": ledger,
-                "scheduledMonoNs": JsonValue::Null,
-                "failedMonoNs": failed_ns.to_string(),
-                "lastAttemptMonoNs": incident
-                    .last_failed_mono_ns
-                    .ok_or_else(|| io::Error::other(
-                        "cleanup incident last-attempt time missing",
-                    ))?
-                    .to_string(),
-                "recoveredMonoNs": recovered_ns.to_string(),
-                "attemptCount": incident.attempt_count.to_string(),
-                "preStateSha256": JsonValue::Null,
-                "postStateSha256": JsonValue::Null,
-                "attemptedBytesSha256": digest,
-                "durableBytesSha256": digest,
-            }));
+            incident.single_recovery_witness = Some(Self::single_recovery_witness([
+                JsonValue::String(identity.clone()),
+                JsonValue::String(ledger.to_owned()),
+                JsonValue::Null,
+                JsonValue::String(failed_ns.to_string()),
+                JsonValue::String(
+                    incident
+                        .last_failed_mono_ns
+                        .ok_or_else(|| {
+                            io::Error::other("cleanup incident last-attempt time missing")
+                        })?
+                        .to_string(),
+                ),
+                JsonValue::String(recovered_ns.to_string()),
+                JsonValue::String(incident.attempt_count.to_string()),
+                JsonValue::Null,
+                JsonValue::Null,
+                JsonValue::String(digest.to_owned()),
+                JsonValue::String(digest.to_owned()),
+            ])?);
         }
         incident.active_identity = None;
         incident.attempt_count = 0;
@@ -4915,19 +4930,22 @@ impl EdgeCanonicalWriterV1 {
                     .checked_add(1)
                     .ok_or_else(|| io::Error::other("cleanup recovery count overflow"))?;
                 if incident.count == 1 {
-                    incident.single_recovery_witness = Some(json!({
-                        "incidentId": format!("{}|{pending_filename}|{pending_digest}", ledger.name),
-                        "ledgerPrefix": ledger.name,
-                        "scheduledMonoNs": JsonValue::Null,
-                        "failedMonoNs": first_failed_ns.to_string(),
-                        "lastAttemptMonoNs": last_attempt_ns.to_string(),
-                        "recoveredMonoNs": recovered_ns.to_string(),
-                        "attemptCount": attempt_count.to_string(),
-                        "preStateSha256": JsonValue::Null,
-                        "postStateSha256": JsonValue::Null,
-                        "attemptedBytesSha256": pending_digest.clone(),
-                        "durableBytesSha256": pending_digest,
-                    }));
+                    incident.single_recovery_witness = Some(Self::single_recovery_witness([
+                        JsonValue::String(format!(
+                            "{}|{pending_filename}|{pending_digest}",
+                            ledger.name
+                        )),
+                        JsonValue::String(ledger.name.to_owned()),
+                        JsonValue::Null,
+                        JsonValue::String(first_failed_ns.to_string()),
+                        JsonValue::String(last_attempt_ns.to_string()),
+                        JsonValue::String(recovered_ns.to_string()),
+                        JsonValue::String(attempt_count.to_string()),
+                        JsonValue::Null,
+                        JsonValue::Null,
+                        JsonValue::String(pending_digest.clone()),
+                        JsonValue::String(pending_digest),
+                    ])?);
                 }
                 incident.active_identity = None;
                 incident.attempt_count = 0;
@@ -5503,6 +5521,12 @@ impl EdgeCanonicalWriterV1 {
                 .map(|key| (key.to_owned(), exact.remove(key).expect("validated object key")))
                 .collect(),
         ))
+    }
+    fn single_recovery_witness(values: [JsonValue; 11]) -> io::Result<JsonValue> {
+        Self::exact_object(
+            EDGE_SINGLE_RECOVERY_WITNESS_KEYS_V1,
+            EDGE_SINGLE_RECOVERY_WITNESS_KEYS_V1.into_iter().zip(values),
+        )
     }
 
     fn decimal_map<const N: usize>(
@@ -6239,26 +6263,31 @@ impl EdgeCanonicalWriterV1 {
                         if identity_kind != Some("periodic") || identity_fields.next().is_some() {
                             return Err(io::Error::other("periodic incident identity malformed"));
                         }
-                        incident.single_recovery_witness = Some(json!({
-                            "incidentId": incident_id.clone(),
-                            "ledgerPrefix": JsonValue::Null,
-                            "scheduledMonoNs": incident_scheduled_ns.to_string(),
-                            "failedMonoNs": failed_ns.to_string(),
-                            "lastAttemptMonoNs": incident
-                                .last_failed_mono_ns
-                                .ok_or_else(|| io::Error::other(
-                                    "periodic last-attempt time missing",
-                                ))?
-                                .to_string(),
-                            "recoveredMonoNs": recovered_ns.to_string(),
-                            "attemptCount": incident.attempt_count.to_string(),
-                            "preStateSha256": incident_pre_state_sha,
-                            "postStateSha256": pending_state_sha
-                                .as_deref()
-                                .unwrap_or(snapshot_state_sha.as_str()),
-                            "attemptedBytesSha256": JsonValue::Null,
-                            "durableBytesSha256": JsonValue::Null,
-                        }));
+                        incident.single_recovery_witness = Some(Self::single_recovery_witness([
+                            JsonValue::String(incident_id.clone()),
+                            JsonValue::Null,
+                            JsonValue::String(incident_scheduled_ns.to_string()),
+                            JsonValue::String(failed_ns.to_string()),
+                            JsonValue::String(
+                                incident
+                                    .last_failed_mono_ns
+                                    .ok_or_else(|| {
+                                        io::Error::other("periodic last-attempt time missing")
+                                    })?
+                                    .to_string(),
+                            ),
+                            JsonValue::String(recovered_ns.to_string()),
+                            JsonValue::String(incident.attempt_count.to_string()),
+                            JsonValue::String(incident_pre_state_sha.to_owned()),
+                            JsonValue::String(
+                                pending_state_sha
+                                    .as_deref()
+                                    .unwrap_or(snapshot_state_sha.as_str())
+                                    .to_owned(),
+                            ),
+                            JsonValue::Null,
+                            JsonValue::Null,
+                        ])?);
                     }
                     incident.active_identity = None;
                     incident.attempt_count = 0;
@@ -18622,12 +18651,17 @@ mod tests {
             writer.incidents.accounting_periodic_write_failed.attempt_count, 2,
             "one scheduled attempt and one forced retry"
         );
+        assert!(writer.recorder.cutoff_latched());
         let retry_delay = EdgeWriterFailureClassV1::retry_delay(
             writer.incidents.accounting_periodic_write_failed.attempt_count,
-            false,
+            writer.recorder.cutoff_latched(),
         );
-        assert!(retry_delay >= Duration::from_secs(1));
-        assert!(retry_delay <= Duration::from_secs(60));
+        assert_eq!(retry_delay, Duration::ZERO);
+        let cumulative_retry_delay = (1..=7).fold(Duration::ZERO, |total, attempt| {
+            total + EdgeWriterFailureClassV1::retry_delay(attempt, writer.recorder.cutoff_latched())
+        });
+        assert_eq!(cumulative_retry_delay, Duration::ZERO);
+        assert!(cumulative_retry_delay < EDGE_SHUTDOWN_WRITER_DEADLINE_V1);
         let wait_started = Instant::now();
         EdgeWriterFailureClassV1::wait_for_retry_delay_until_cutoff(
             Duration::from_millis(20),
