@@ -121,6 +121,8 @@ pub struct InMemoryTokenAccounting {
     pub role_admins: HashMap<B256, B256>,
     /// Policy IDs keyed by policy type.
     pub policy_ids: HashMap<B256, u64>,
+    /// Current block timestamp. Asset-token tests set this to exercise versioned lazy reads.
+    pub timestamp: U256,
     /// Multiplier scaled to WAD (1e18). Asset tokens only.
     pub multiplier: U256,
     /// Pending scheduled multiplier target (ERC-8056). Asset tokens only.
@@ -156,6 +158,7 @@ impl InMemoryTokenAccounting {
             role_member_counts: HashMap::new(),
             role_admins: HashMap::new(),
             policy_ids: HashMap::new(),
+            timestamp: U256::ZERO,
             multiplier: U256::ZERO,
             pending_multiplier: 0,
             pending_effective_at: 0,
@@ -431,6 +434,10 @@ impl PolicyAccounting for FakePolicyAccounting {
 }
 
 impl AssetAccounting for InMemoryTokenAccounting {
+    fn timestamp(&self) -> Result<U256> {
+        Ok(self.timestamp)
+    }
+
     fn multiplier(&self) -> Result<U256> {
         Ok(if self.multiplier.is_zero() { B20AssetStorage::WAD } else { self.multiplier })
     }

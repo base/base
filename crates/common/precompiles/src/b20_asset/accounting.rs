@@ -12,6 +12,14 @@ use crate::TokenAccounting;
 /// Extra metadata entries are only exposed through the asset-token surface,
 /// not the base B-20 surface.
 pub trait AssetAccounting: TokenAccounting {
+    /// Returns the current block timestamp from the active storage context.
+    ///
+    /// A read used only by the scheduled-multiplier surface (`AssetV2`); earlier versions never
+    /// reach it, so the default rejects like the other frozen-selector defaults.
+    fn timestamp(&self) -> Result<U256> {
+        reject_frozen_selector!()
+    }
+
     /// Returns the current multiplier scaled to WAD (1e18).
     fn multiplier(&self) -> Result<U256>;
     /// Writes a new multiplier.
