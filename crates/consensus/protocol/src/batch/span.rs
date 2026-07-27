@@ -527,7 +527,8 @@ impl SpanBatch {
 
         // Check overlapped blocks
         let parent_num = parent_block.block_info.number;
-        let next_timestamp = l2_safe_head.block_info.timestamp + cfg.block_time;
+        let next_timestamp =
+            cfg.l2_block_timestamp(l2_safe_head.block_info.number.saturating_add(1));
         if self.starting_timestamp() < next_timestamp {
             for i in 0..(l2_safe_head.block_info.number - parent_num) {
                 let safe_block_num = parent_num + i + 1;
@@ -614,7 +615,8 @@ impl SpanBatch {
         }
 
         let epoch = l1_origins[0];
-        let next_timestamp = l2_safe_head.block_info.timestamp + cfg.block_time;
+        let next_timestamp =
+            cfg.l2_block_timestamp(l2_safe_head.block_info.number.saturating_add(1));
 
         let starting_epoch_num = self.starting_epoch_num();
         let mut batch_origin = epoch;
@@ -1009,6 +1011,7 @@ mod tests {
         let cfg = RollupConfig {
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
             ..Default::default()
         };
         let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
@@ -1039,6 +1042,7 @@ mod tests {
         let cfg = RollupConfig {
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
             ..Default::default()
         };
         let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
@@ -1068,6 +1072,11 @@ mod tests {
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             max_sequencer_drift: 1000,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 10, ..Default::default() },
+                l2_time: 20,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
@@ -1131,6 +1140,11 @@ mod tests {
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             max_sequencer_drift: 1000,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 10, ..Default::default() },
+                l2_time: 20,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
@@ -1206,6 +1220,7 @@ mod tests {
         let cfg = RollupConfig {
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
             ..Default::default()
         };
         let l1_block = BlockInfo { number: 10, timestamp: 20, ..Default::default() };
@@ -1241,6 +1256,7 @@ mod tests {
         let cfg = RollupConfig {
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
             ..Default::default()
         };
         let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
@@ -1299,6 +1315,11 @@ mod tests {
         let cfg = RollupConfig {
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
@@ -1331,6 +1352,11 @@ mod tests {
         let cfg = RollupConfig {
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
@@ -1380,6 +1406,11 @@ mod tests {
         let cfg = RollupConfig {
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
@@ -1426,6 +1457,11 @@ mod tests {
             seq_window_size: 100,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let block = BlockInfo { number: 10, timestamp: 10, ..Default::default() };
@@ -1478,6 +1514,11 @@ mod tests {
             seq_window_size: 100,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_block_hash =
@@ -1534,6 +1575,11 @@ mod tests {
             seq_window_size: 100,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_block_hash =
@@ -1585,6 +1631,11 @@ mod tests {
             seq_window_size: 100,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_block_hash =
@@ -1640,6 +1691,11 @@ mod tests {
             max_sequencer_drift: 0,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_blocks = gen_l1_blocks(9, 3, 10, 0);
@@ -1688,6 +1744,11 @@ mod tests {
             max_sequencer_drift: 0,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         // Create two L1 blocks with number,timestamp: (10,10) and (11,40) so that the second batch
@@ -1743,6 +1804,11 @@ mod tests {
             max_sequencer_drift: 0,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_blocks = gen_l1_blocks(9, 3, 10, 0);
@@ -1804,6 +1870,11 @@ mod tests {
             max_sequencer_drift: 100,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_block_hash =
@@ -1869,6 +1940,11 @@ mod tests {
             max_sequencer_drift: 100,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
@@ -1928,6 +2004,11 @@ mod tests {
             max_sequencer_drift: 100,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
@@ -1991,6 +2072,11 @@ mod tests {
             max_sequencer_drift: 100,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
@@ -2059,6 +2145,11 @@ mod tests {
                 ..Default::default()
             },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
@@ -2114,6 +2205,11 @@ mod tests {
             seq_window_size: 100,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_block_hash =
@@ -2167,6 +2263,11 @@ mod tests {
             seq_window_size: 100,
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 41, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_block_hash =
@@ -2237,6 +2338,7 @@ mod tests {
             block_time: 10,
             genesis: ChainGenesis {
                 l2: BlockNumHash { number: 41, hash: payload_block_hash },
+                l2_time: 10,
                 ..Default::default()
             },
             ..Default::default()

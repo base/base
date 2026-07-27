@@ -625,7 +625,7 @@ impl EthereumHardforks for BaseChainSpec {
 }
 
 impl Upgrades for BaseChainSpec {
-    fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
+    fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
         self.fork(fork)
     }
 

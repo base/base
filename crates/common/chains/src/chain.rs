@@ -79,7 +79,7 @@ impl EthereumHardforks for ChainUpgrades {
 }
 
 impl Upgrades for ChainUpgrades {
-    fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
+    fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
         self[fork]
     }
 }
@@ -215,7 +215,7 @@ mod tests {
             ForkCondition::Timestamp(ChainConfig::sepolia().isthmus_timestamp)
         );
         assert_eq!(
-            base_sepolia_forks.upgrade_activation(Jovian),
+            base_sepolia_forks.fork_condition(Jovian),
             ForkCondition::Timestamp(ChainConfig::sepolia().jovian_timestamp)
         );
         assert_eq!(
@@ -354,7 +354,7 @@ mod tests {
             let _ = base_mainnet_forks.ethereum_fork_activation(*ethereum_upgrade);
         }
         for base_upgrade in BaseUpgrade::VARIANTS {
-            let _ = base_mainnet_forks.upgrade_activation(*base_upgrade);
+            let _ = base_mainnet_forks.fork_condition(*base_upgrade);
         }
     }
 }

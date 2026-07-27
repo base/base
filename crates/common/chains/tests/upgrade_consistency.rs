@@ -19,8 +19,8 @@ fn mainnet_rollup_config_matches_chain_upgrades() {
             continue;
         }
         assert_eq!(
-            BASE_MAINNET_ROLLUP_CONFIG.upgrade_activation(*fork),
-            chain.upgrade_activation(*fork),
+            BASE_MAINNET_ROLLUP_CONFIG.fork_condition(*fork),
+            chain.fork_condition(*fork),
             "mainnet fork activation mismatch for {fork:?}",
         );
     }
@@ -35,8 +35,8 @@ fn sepolia_rollup_config_matches_chain_upgrades() {
             continue;
         }
         assert_eq!(
-            BASE_SEPOLIA_ROLLUP_CONFIG.upgrade_activation(*fork),
-            chain.upgrade_activation(*fork),
+            BASE_SEPOLIA_ROLLUP_CONFIG.fork_condition(*fork),
+            chain.fork_condition(*fork),
             "sepolia fork activation mismatch for {fork:?}",
         );
     }
