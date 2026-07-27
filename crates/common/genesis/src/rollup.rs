@@ -1165,17 +1165,13 @@ mod tests {
     }
 
     #[test]
-    fn l2_block_full_millis_handles_block_time_edge_values() {
-        let zombie_after_genesis = rollup_config_with_zombie(100, 0, Some(101));
-        assert_eq!(zombie_after_genesis.zombie_activation_block_number(), None);
-        assert_eq!(zombie_after_genesis.l2_block_timestamp_millis(0), 100_000);
-        assert_eq!(zombie_after_genesis.l2_block_timestamp_millis(10), 100_000);
+    #[should_panic(expected = "rollup config: block time cannot be 0")]
+    fn zombie_activation_block_number_rejects_zero_block_time() {
+        rollup_config_with_zombie(100, 0, Some(101)).zombie_activation_block_number();
+    }
 
-        let zombie_at_genesis = rollup_config_with_zombie(100, 0, Some(100));
-        assert_eq!(zombie_at_genesis.zombie_activation_block_number(), Some(0));
-        assert_eq!(zombie_at_genesis.l2_block_timestamp_millis(0), 100_000);
-        assert_eq!(zombie_at_genesis.l2_block_timestamp_millis(1), 100_200);
-
+    #[test]
+    fn l2_block_full_millis_saturates() {
         let saturating = rollup_config_with_zombie(u64::MAX, u64::MAX, None);
         assert_eq!(saturating.l2_block_timestamp_millis(1), u64::MAX);
     }
