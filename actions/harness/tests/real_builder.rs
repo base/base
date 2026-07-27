@@ -156,30 +156,40 @@ async fn builder_backed_sequencer_excludes_future_bundle() -> eyre::Result<()> {
     Ok(())
 }
 
-/// A block produced by the real builder (containing a pool-selected transaction) is batched to L1
-/// and re-derived by the verifier. The verifier re-executes the derived block and — via the
-/// block-hash registry shared with the builder backend — asserts its state root matches the
-/// builder-produced one, validating full builder → batcher → derivation round-trip parity.
+/// A block produced by the real builder is batched to L1 and re-derived by the verifier. The
+/// verifier re-executes the derived block and — via the block-hash registry shared with the builder
+/// backend — asserts its state root matches the builder-produced one, validating full
+/// builder → batcher → derivation round-trip parity.
 ///
-/// IGNORED: under the wall-clock timestamp mode (required so the Flashblocks builder produces a
-/// non-empty block), the batcher/derivation round-trip currently yields zero derived blocks — the
-/// batch does not reach the derived L1 chain in a form the verifier consumes. The builder side and
-/// the verifier-creation seam are in place (`create_test_rollup_node_from_sequencer` is generic over
-/// the backend and shares the block-hash registry); the remaining work is reconciling batcher
-/// submission/mining timing (and L2/L1 timestamp handling) with the wall-clock mode. Tracked as P4.
-#[ignore = "batcher→derivation round-trip yields 0 derived under wall-clock timestamp mode; needs P4 timing reconciliation"]
+/// Uses the harness's normal (deterministic, ancient-timestamp) model: the real builder's
+/// deposit-only fallback block is a valid production-built block. Pool-based selection is covered
+/// separately by `builder_backed_sequencer_selects_pool_transaction`.
+///
+/// IGNORED: the batch produced from this block is submitted to L1 during the batcher's drain
+/// *after* `advance()` mines its last L1 block, so it never lands in the L1 chain the verifier
+/// derives from (0 derived). This reproduces regardless of timestamp mode and is specific to the
+/// builder-backed round-trip here (a deposit-only block yields an empty sequencer batch). The
+/// verifier-creation seam is in place and generic; the remaining work is reconciling batcher
+/// `advance()` submission/mining ordering (and deposit-only-block batching) — tracked as P4.
+#[ignore = "batch submitted after advance()'s last L1 mine, so 0 blocks derived; needs P4 batcher-ordering fix"]
 #[tokio::test(flavor = "multi_thread")]
 async fn builder_block_round_trips_through_derivation() -> eyre::Result<()> {
-    let (mut h, mut sequencer, batcher_cfg) = wall_clock_builder_sequencer().await?;
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .through_isthmus()
+        .with_jovian_at(0)
+        .build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
-    // Build block 1 with a pool-selected user transaction via the real builder.
-    let block = sequencer.build_next_block_with_single_transaction().await;
-    assert_eq!(block.header.number, 1, "block 1 must be produced");
-    assert!(
-        block.body.transactions.len() >= 2,
-        "block 1 must contain the pool-selected user tx, got {} tx(s)",
-        block.body.transactions.len(),
-    );
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer_with_builder(l1_chain).await?;
+
+    // Build block 1 through the real builder (deposit-only fallback block under ancient timestamps).
+    let block = sequencer.build_empty_block().await;
+    assert_eq!(block.header.number, 1, "block 1 must be produced by the real builder");
 
     // Batch block 1 to L1.
     let mut source = ActionL2Source::new();
