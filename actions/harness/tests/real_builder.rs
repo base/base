@@ -165,13 +165,15 @@ async fn builder_backed_sequencer_excludes_future_bundle() -> eyre::Result<()> {
 /// deposit-only fallback block is a valid production-built block. Pool-based selection is covered
 /// separately by `builder_backed_sequencer_selects_pool_transaction`.
 ///
-/// IGNORED: the batch produced from this block is submitted to L1 during the batcher's drain
-/// *after* `advance()` mines its last L1 block, so it never lands in the L1 chain the verifier
-/// derives from (0 derived). This reproduces regardless of timestamp mode and is specific to the
-/// builder-backed round-trip here (a deposit-only block yields an empty sequencer batch). The
-/// verifier-creation seam is in place and generic; the remaining work is reconciling batcher
-/// `advance()` submission/mining ordering (and deposit-only-block batching) — tracked as P4.
-#[ignore = "batch submitted after advance()'s last L1 mine, so 0 blocks derived; needs P4 batcher-ordering fix"]
+/// IGNORED — root cause: `Batcher::try_advance` sends the L2 blocks + a `Flush` to the batcher's
+/// async driver task and yields only once before `mine_block` runs. In the builder-backed path the
+/// in-process builder node's background tasks starve that driver during the single `yield_now`, so
+/// the batch frames are submitted to L1 *after* `mine_block` (on the driver's drain) and never land
+/// in the L1 chain the verifier derives from (0 derived). The existing (builder-less) derivation
+/// tests win this race. The verifier-creation seam is in place and generic; the fix needs the
+/// batcher to await frame submission before mining (or a deterministic harness-side drain) —
+/// tracked as P4.
+#[ignore = "batcher async driver starved by builder node; frames submitted after mine_block, so 0 derived (P4)"]
 #[tokio::test(flavor = "multi_thread")]
 async fn builder_block_round_trips_through_derivation() -> eyre::Result<()> {
     let batcher_cfg = BatcherConfig {
