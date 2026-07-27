@@ -18,7 +18,7 @@ use tokio::{sync::watch, time::Sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
-use crate::{Deadline, PayloadBuilder};
+use crate::{PayloadBuilder, PayloadJobDeadline};
 
 /// The generator type that creates new jobs that build empty blocks.
 #[derive(Debug)]
@@ -36,7 +36,7 @@ pub struct BlockPayloadJobGenerator<Client, Builder> {
     /// The last payload being processed
     last_payload: Arc<Mutex<CancellationToken>>,
     /// Calculates and constructs payload job deadline timers.
-    deadline: Deadline,
+    deadline: PayloadJobDeadline,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
 }
@@ -59,7 +59,7 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
             builder,
             ensure_only_one_payload,
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
-            deadline: Deadline::new(extra_block_deadline),
+            deadline: PayloadJobDeadline::new(extra_block_deadline),
             pre_cached: None,
         }
     }

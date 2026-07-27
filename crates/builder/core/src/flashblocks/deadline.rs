@@ -19,12 +19,12 @@ use tracing::warn;
 ///
 /// A longer-term alternative would be cancellation logic that retires existing jobs when new block
 /// building requests arrive.
-#[derive(Debug)]
-pub struct Deadline {
+#[derive(Debug, Clone, Copy)]
+pub struct PayloadJobDeadline {
     extra_block_deadline: Duration,
 }
 
-impl Deadline {
+impl PayloadJobDeadline {
     /// Creates a deadline calculator that owns the configured additional payload retention time.
     pub const fn new(extra_block_deadline: Duration) -> Self {
         Self { extra_block_deadline }
@@ -65,7 +65,7 @@ mod tests {
 
     use rstest::rstest;
 
-    use super::Deadline;
+    use super::PayloadJobDeadline;
 
     #[rstest]
     #[case(Duration::ZERO, Duration::from_secs(1))]
@@ -74,7 +74,7 @@ mod tests {
         #[case] extra_block_deadline: Duration,
         #[case] expected: Duration,
     ) {
-        let deadline = Deadline::new(extra_block_deadline);
+        let deadline = PayloadJobDeadline::new(extra_block_deadline);
 
         assert_eq!(deadline.calculate(0), expected);
     }
@@ -84,7 +84,7 @@ mod tests {
     #[case(Duration::from_secs(5))]
     fn calculate_uses_attributes_timestamp(#[case] extra_block_deadline: Duration) {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let deadline = Deadline::new(extra_block_deadline);
+        let deadline = PayloadJobDeadline::new(extra_block_deadline);
 
         let calculated = deadline.calculate(now + 60);
 
