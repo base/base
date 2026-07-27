@@ -317,7 +317,6 @@ where
 
         let discovered_instance_ids: HashSet<String> =
             instances.iter().map(|instance| instance.instance_id.clone()).collect();
-        let max_concurrency = self.config.max_concurrency.max(1);
         let mut resolution = DiscoveryResolution::default();
         let mut unhealthy_instance_ids = HashSet::new();
 
@@ -355,7 +354,7 @@ where
                 let result = self.resolve_instance(&instance).instrument(span).await;
                 (instance, Some(result))
             }))
-            .buffer_unordered(max_concurrency);
+            .buffer_unordered(self.config.max_concurrency.max(1));
 
         while let Some((instance, result)) = futs.next().await {
             let Some(result) = result else {
@@ -459,8 +458,8 @@ where
 #[cfg(test)]
 mod tests {
     //! Driver tests use a hand-rolled endpoint client because they coordinate
-    //! scripted responses and a shared cross-method call log across concurrent
-    //! readiness, signer-key, and attestation requests.
+    //! scripted responses with a blocked readiness request across concurrent
+    //! calls.
 
     use std::{
         collections::{HashMap, HashSet},
@@ -496,14 +495,13 @@ mod tests {
         fail_readyz: HashSet<Url>,
         block_readyz: HashMap<Url, Arc<Notify>>,
         public_key_requested: Arc<Notify>,
-        requested_public_keys: RequestedPublicKeys,
+        requested_public_keys: RequestedEndpoints,
         requested_nonces: RequestedNonces,
-        requested_readyz: RequestedReadyz,
+        requested_readyz: RequestedEndpoints,
     }
 
-    type RequestedPublicKeys = Arc<Mutex<Vec<Url>>>;
+    type RequestedEndpoints = Arc<Mutex<Vec<Url>>>;
     type RequestedNonces = Arc<Mutex<Vec<Option<Vec<Vec<u8>>>>>>;
-    type RequestedReadyz = Arc<Mutex<Vec<Url>>>;
 
     impl MockEnclaveEndpointClient {
         fn from_keys(entries: &[(&str, &[u8; 32])]) -> Self {
