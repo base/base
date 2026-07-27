@@ -20,7 +20,10 @@ use tracing::{debug, info, trace, warn};
 
 use crate::{PayloadBuilder, PayloadJobDeadline};
 
-/// The generator type that creates new jobs that build empty blocks.
+/// Creates payload jobs that build blocks from Engine API payload attributes.
+///
+/// Each generated job delegates payload construction to the configured [`PayloadBuilder`] and
+/// manages its execution, resolution, cancellation, and deadline.
 #[derive(Debug)]
 pub struct BlockPayloadJobGenerator<Client, Builder> {
     /// The client that can interact with the chain.
