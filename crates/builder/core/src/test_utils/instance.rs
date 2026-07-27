@@ -124,22 +124,13 @@ where
 ///     .build()
 ///     .await?;
 /// ```
+#[derive(derive_more::Debug)]
 pub struct LocalInstanceBuilder<S = DefaultCandidateSource> {
     builder_config: BuilderConfig,
     node_config: NodeConfig<BaseChainSpec>,
     candidate_source: S,
+    #[debug("{}", extensions.len())]
     extensions: Vec<Box<dyn BaseNodeExtension>>,
-}
-
-impl<S: core::fmt::Debug> core::fmt::Debug for LocalInstanceBuilder<S> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("LocalInstanceBuilder")
-            .field("builder_config", &self.builder_config)
-            .field("node_config", &self.node_config)
-            .field("candidate_source", &self.candidate_source)
-            .field("extensions", &self.extensions.len())
-            .finish_non_exhaustive()
-    }
 }
 
 impl LocalInstanceBuilder {
