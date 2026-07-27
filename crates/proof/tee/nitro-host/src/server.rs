@@ -356,6 +356,11 @@ mod tests {
                 .await
                 .unwrap();
 
+        let client = jsonrpsee::http_client::HttpClientBuilder::default()
+            .build(format!("http://{addr}"))
+            .unwrap();
+        client.request::<(), _>("readyz", jsonrpsee::rpc_params![]).await.unwrap();
+        assert_eq!(call_count.load(Ordering::Relaxed), 0);
         assert_eq!(http_status(addr, "/readyz").await, 200);
         assert_eq!(call_count.load(Ordering::Relaxed), 0);
         assert_eq!(http_status(addr, "/healthz").await, 500);
