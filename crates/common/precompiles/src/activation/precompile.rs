@@ -16,16 +16,12 @@ use crate::{
 pub struct ActivationRegistry;
 
 impl ActivationRegistry {
-    /// Installs the activation registry precompile using a static fallback admin.
-    pub fn install(
-        precompiles: &mut PrecompilesMap,
-        activation_admin_address: Option<Address>,
-        upgrade: BaseUpgrade,
-    ) {
+    /// Installs the Beryl activation registry precompile using a static fallback admin.
+    pub fn install(precompiles: &mut PrecompilesMap, activation_admin_address: Option<Address>) {
         Self::install_with_config(
             precompiles,
             ActivationAdminConfig::static_fallback(activation_admin_address),
-            upgrade,
+            BaseUpgrade::Beryl,
         );
     }
 
@@ -86,7 +82,6 @@ impl ActivationRegistry {
 mod tests {
     use alloy_evm::precompiles::PrecompilesMap;
     use alloy_primitives::Address;
-    use base_common_genesis::BaseUpgrade;
     use revm::precompile::Precompiles;
 
     use crate::{ActivationRegistry, ActivationRegistryStorage};
@@ -95,11 +90,7 @@ mod tests {
     fn install_accepts_static_fallback_admin() {
         let mut precompiles = PrecompilesMap::from_static(Precompiles::cancun());
 
-        ActivationRegistry::install(
-            &mut precompiles,
-            Some(Address::repeat_byte(0x11)),
-            BaseUpgrade::Beryl,
-        );
+        ActivationRegistry::install(&mut precompiles, Some(Address::repeat_byte(0x11)));
 
         assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_some());
     }
