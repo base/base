@@ -141,8 +141,7 @@ where
         let expiry_epoch = epoch.number + self.cfg.seq_window_size;
         let force_empty_batches = expiry_epoch <= stage_origin.number;
         let first_of_epoch = epoch.number == parent.l1_origin.number + 1;
-        let next_timestamp =
-            self.cfg.l2_block_timestamp(parent.block_info.number.saturating_add(1));
+        let next_timestamp = self.cfg.l2_block_timestamp(parent.block_info.number + 1);
 
         // If the sequencer window did not expire,
         // there is still room to receive batches for the current epoch.

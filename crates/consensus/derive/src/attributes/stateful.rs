@@ -129,7 +129,7 @@ where
 
         // Sanity check the L1 origin was correctly selected to maintain the time invariant
         // between L1 and L2.
-        let next_l2_block_number = l2_parent.block_info.number.saturating_add(1);
+        let next_l2_block_number = l2_parent.block_info.number + 1;
         let (next_l2_time, next_l2_timestamp_millis_part) =
             self.rollup_cfg.l2_block_timestamp_parts(next_l2_block_number);
         if next_l2_time < l1_header.timestamp {
@@ -469,7 +469,7 @@ mod tests {
             l1_origin: BlockNumHash { hash, number: l2_number },
             seq_num: 0,
         };
-        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number.saturating_add(1));
+        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
         let block_id = BlockNumHash { hash, number: 0 };
         let expected = BuilderError::BrokenTimeInvariant(
             l2_parent.l1_origin,
@@ -515,7 +515,7 @@ mod tests {
             l1_origin: BlockNumHash { hash, number: l2_number },
             seq_num: 0,
         };
-        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number.saturating_add(1));
+        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
         let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
@@ -579,7 +579,7 @@ mod tests {
             seq_num: 0,
         };
 
-        let next_l2_block_number = l2_parent.block_info.number.saturating_add(1);
+        let next_l2_block_number = l2_parent.block_info.number + 1;
         let (_, expected_millis_part) = cfg.l2_block_timestamp_parts(next_l2_block_number);
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
         assert_eq!(
@@ -638,7 +638,7 @@ mod tests {
             seq_num: 0,
         };
 
-        let next_l2_block_number = l2_parent.block_info.number.saturating_add(1);
+        let next_l2_block_number = l2_parent.block_info.number + 1;
         let (expected_timestamp, expected_millis_part) =
             cfg.l2_block_timestamp_parts(next_l2_block_number);
         assert_eq!(expected_millis_part, 200);
@@ -692,7 +692,7 @@ mod tests {
             l1_origin: BlockNumHash { hash, number: l2_number },
             seq_num: 0,
         };
-        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number.saturating_add(1));
+        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
         let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
@@ -753,7 +753,7 @@ mod tests {
             l1_origin: BlockNumHash { hash, number: l2_number },
             seq_num: 0,
         };
-        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number.saturating_add(1));
+        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
         let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
@@ -813,7 +813,7 @@ mod tests {
             l1_origin: BlockNumHash { hash, number: l2_number },
             seq_num: 0,
         };
-        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number.saturating_add(1));
+        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
         let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {

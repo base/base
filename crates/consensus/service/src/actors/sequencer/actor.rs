@@ -320,12 +320,12 @@ where
     /// metrics; only the scheduling compensation is clamped.
     fn block_seal_target(&self, block_number: u64, last_seal_duration: Duration) -> SystemTime {
         let target = UNIX_EPOCH
-            + Duration::from_millis(self.rollup_config.l2_block_full_millis(block_number));
+            + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number));
         let block_interval = if self
             .rollup_config
             .is_zombie_active(self.rollup_config.l2_block_timestamp(block_number))
         {
-            Duration::from_millis(RollupConfig::ZOMBIE_BLOCK_INTERVAL_MILLIS)
+            Duration::from_millis(RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS)
         } else {
             Duration::from_secs(self.rollup_config.block_time)
         };
@@ -533,7 +533,7 @@ where
                                 // child build because variable getPayload durations can make
                                 // insertion complete early.
                                 let parent_millis =
-                                    self.rollup_config.l2_block_full_millis(inserted_head.block_info.number);
+                                    self.rollup_config.l2_block_timestamp_millis(inserted_head.block_info.number);
                                 pending_build_parent = Some(inserted_head);
                                 build_ticker.reset_at(UNIX_EPOCH + Duration::from_millis(parent_millis));
                             }

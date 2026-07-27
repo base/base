@@ -125,8 +125,7 @@ where
         // We may not have sufficient information to proceed filtering, and then we stop.
         // There may be none: in that case we force-create an empty batch
         let mut next_batch = None;
-        let next_timestamp =
-            self.cfg.l2_block_timestamp(parent.block_info.number.saturating_add(1));
+        let next_timestamp = self.cfg.l2_block_timestamp(parent.block_info.number + 1);
 
         let origin = self.origin.ok_or(PipelineError::MissingOrigin.crit())?;
 
@@ -292,7 +291,7 @@ where
             // There are cached singular batches derived from the span batch.
             // Check if the next cached batch matches the given parent block.
             if self.next_spans.front().expect("checked non-empty").timestamp
-                == self.cfg.l2_block_timestamp(parent.block_info.number.saturating_add(1))
+                == self.cfg.l2_block_timestamp(parent.block_info.number + 1)
             {
                 return self.pop_next_batch(parent).ok_or(PipelineError::BatchQueueEmpty.crit());
             }
