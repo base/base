@@ -114,7 +114,7 @@ async fn set_transfer_sender_policy(
 /// `test_allowlist_gates_transfer`
 ///
 /// Full cycle:
-///   1. Create an ALLOWLIST policy.
+///   1. Create an ALLOWLIST policy and add the admin (for seeding).
 ///   2. Wire it to the token's `TRANSFER_SENDER_POLICY` slot.
 ///   3. Assert a non-member transfer reverts.
 ///   4. Add the non-member to the allowlist.
@@ -146,6 +146,23 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
     assert!(
         !is_authorized(&client, policy_id, non_member.address()).await?,
         "non-member must not be authorized on a fresh ALLOWLIST policy",
+    );
+
+    // Allowlist the admin so they can seed balances after the policy is wired.
+    client
+        .send_call(
+            PolicyRegistryStorage::ADDRESS,
+            IPolicyRegistry::updateAllowlistCall {
+                policyId: policy_id,
+                allowed: true,
+                accounts: vec![admin.address()],
+            },
+            "updateAllowlist add admin",
+        )
+        .await?;
+    assert!(
+        is_authorized(&client, policy_id, admin.address()).await?,
+        "admin must be authorized after being added to the allowlist",
     );
 
     // --- Create B20 token and wire the allowlist policy ---

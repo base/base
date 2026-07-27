@@ -10,11 +10,11 @@
 //!
 //! After a signer deregistration or image rotation the health latch stays set
 //! while the proving guard rejects every request.  The prover will continue
-//! returning 200 from `/healthz` but respond with `-32001` errors. Registrar
-//! target groups use `/readyz`, so their eligibility is independent of this
-//! latch. If another deployment uses `/healthz` as its **sole** load-balancer
-//! signal with no retry layer, switch to a bounded latch (e.g. stay healthy for
-//! N minutes after the last successful validation).
+//! returning 200 from `/healthz` but respond with `-32001` errors. The
+//! registrar probes `/readyz` (not registration-gated) so bootstrap stays
+//! independent of this latch. If another deployment uses `/healthz` as its
+//! **sole** load-balancer signal with no retry layer, switch to a bounded latch
+//! (e.g. stay healthy for N minutes after the last successful validation).
 
 use std::{sync::Arc, time::Duration};
 
