@@ -259,7 +259,6 @@ impl FlashblockAssembler {
                 receipts: Some(receipts_with_hash),
             }
         };
-        info.extra.last_flashblock_index = info.executed_transactions.len();
 
         let flashblock = FlashblocksPayloadV1 {
             payload_id: ctx.payload_id(),
@@ -297,7 +296,10 @@ impl FlashblockAssembler {
             metadata: serde_json::to_value(&metadata).unwrap_or_default(),
         };
 
-        state.take_bundle();
+        // Advance the delta cursor only after every fallible operation above has succeeded, so an
+        // early return never leaves `info` with an advanced cursor and no emitted flashblock.
+        info.extra.last_flashblock_index = info.executed_transactions.len();
+
         state.transition_state = untouched_transition_state;
 
         Ok(FlashblockAssembly {
