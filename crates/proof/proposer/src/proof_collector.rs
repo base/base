@@ -405,7 +405,11 @@ where
                     deleted_count,
                     "Deleted invalid TEE signer proof requests"
                 );
-                true
+                // A zero-row delete means the just-submitted proof was not matched
+                // (e.g. its recorded signer diverged from the reported one). Treat it
+                // as "not deleted" so the caller idles and backs off instead of
+                // immediately re-polling the same still-present proof in a tight loop.
+                deleted_count > 0
             }
             Err(error) => {
                 warn!(
