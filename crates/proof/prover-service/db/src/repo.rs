@@ -786,7 +786,7 @@ impl ProofRequestRepo {
         let result_payload =
             serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
         let tee_signer = match &req.result {
-            ProtocolProofResult::Tee(tee) => tee.tee_signer.map(|signer| format!("{signer:#x}")),
+            ProtocolProofResult::Tee(tee) => Some(format!("{:#x}", tee.tee_signer)),
             _ => None,
         };
 

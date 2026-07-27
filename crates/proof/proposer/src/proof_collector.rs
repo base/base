@@ -347,26 +347,13 @@ where
                 );
                 let deleted = cancel
                     .run_until_cancelled(async {
-                        match (&error, tee_signer) {
-                            (
-                                ProposerError::Submission(ProofSubmissionError::InvalidSigner),
-                                Some(tee_signer),
-                            ) => self.delete_proofs_by_tee_signer(tee_signer, target_block).await,
-                            (
-                                ProposerError::Submission(ProofSubmissionError::InvalidSigner),
-                                None,
-                            ) => {
-                                // Legacy proof without signer metadata: only the current
-                                // session can be deleted, so InvalidSigner will recur for
-                                // each remaining proof from this signer until they drain.
-                                warn!(
-                                    target_block,
-                                    "Invalid signer with no recorded TEE signer; \
-                                     falling back to single-session delete (legacy proof)"
-                                );
-                                self.delete_proof_request(session_id, target_block).await
-                            }
-                            _ => self.delete_proof_request(session_id, target_block).await,
+                        if matches!(
+                            error,
+                            ProposerError::Submission(ProofSubmissionError::InvalidSigner)
+                        ) {
+                            self.delete_proofs_by_tee_signer(tee_signer, target_block).await
+                        } else {
+                            self.delete_proof_request(session_id, target_block).await
                         }
                     })
                     .await;
@@ -775,7 +762,7 @@ mod tests {
                     aggregate_proposal,
                     proposals: vec![],
                     tee_kind: TeeKind::AwsNitro,
-                    tee_signer: None,
+                    tee_signer: Address::repeat_byte(0x11),
                 },
                 Address::ZERO,
                 &CancellationToken::new(),

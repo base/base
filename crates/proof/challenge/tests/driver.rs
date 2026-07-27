@@ -184,7 +184,7 @@ fn succeeded_tee_prover(aggregate_proposal: Proposal) -> Arc<MockZkProofProvider
                 aggregate_proposal,
                 proposals: Vec::new(),
                 tee_kind: TeeKind::AwsNitro,
-                tee_signer: None,
+                tee_signer: Address::repeat_byte(0x11),
             })),
             ..Default::default()
         }),

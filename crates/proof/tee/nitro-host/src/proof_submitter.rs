@@ -75,7 +75,7 @@ impl ProofSubmitterRequest {
                 aggregate_proposal,
                 proposals,
                 tee_kind: TeeKind::AwsNitro,
-                tee_signer: Some(tee_signer),
+                tee_signer,
             }),
         })
     }
@@ -388,7 +388,7 @@ mod tests {
         let ServiceProofResult::Tee(result) = request.result else {
             panic!("expected tee proof result");
         };
-        assert_eq!(result.tee_signer, Some(signer.address()));
+        assert_eq!(result.tee_signer, signer.address());
         assert_eq!(result.tee_kind, TeeKind::AwsNitro);
         assert_eq!(result.aggregate_proposal.l2_block_number, 10);
         assert_eq!(result.proposals.len(), 3);

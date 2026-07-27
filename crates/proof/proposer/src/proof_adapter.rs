@@ -122,14 +122,14 @@ mod tests {
             aggregate_proposal: aggregate.clone(),
             proposals: vec![proposal.clone()],
             tee_kind: TeeKind::AwsNitro,
-            tee_signer: None,
+            tee_signer: Address::repeat_byte(0x11),
         });
 
         let converted = ProposerProofAdapter::tee_proof_result(result).unwrap();
 
         assert_eq!(converted.aggregate_proposal, aggregate);
         assert_eq!(converted.proposals, vec![proposal]);
-        assert_eq!(converted.tee_signer, None);
+        assert_eq!(converted.tee_signer, Address::repeat_byte(0x11));
     }
 
     #[test]

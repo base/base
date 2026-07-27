@@ -242,7 +242,7 @@ mod tests {
             aggregate_proposal: test_proposal(root),
             proposals: Vec::new(),
             tee_kind: TeeKind::AwsNitro,
-            tee_signer: None,
+            tee_signer: Address::repeat_byte(0x11),
         });
 
         let proof_bytes = ChallengerProofAdapter::tee_dispute_proof_bytes(result, root).unwrap();
@@ -257,7 +257,7 @@ mod tests {
             aggregate_proposal: test_proposal(B256::repeat_byte(0xaa)),
             proposals: Vec::new(),
             tee_kind: TeeKind::AwsNitro,
-            tee_signer: None,
+            tee_signer: Address::repeat_byte(0x11),
         });
 
         let err = ChallengerProofAdapter::tee_dispute_proof_bytes(result, B256::repeat_byte(0xbb))

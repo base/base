@@ -479,7 +479,7 @@ impl ProofRequesterProvider for MockProofRequester {
                 aggregate_proposal,
                 proposals,
                 tee_kind: TeeKind::AwsNitro,
-                tee_signer: Some(Address::repeat_byte(0x11)),
+                tee_signer: Address::repeat_byte(0x11),
             })),
         })
     }

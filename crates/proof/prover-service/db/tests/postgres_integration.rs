@@ -15,6 +15,7 @@
 
 use std::time::Duration;
 
+use alloy_primitives::Address;
 use base_proof_primitives::Proposal;
 use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
@@ -1950,7 +1951,7 @@ async fn test_delete_proof_requests_by_tee_signer() {
                     },
                     proposals: vec![],
                     tee_kind: ProtocolTeeKind::AwsNitro,
-                    tee_signer: Some(submitted_signer.parse().unwrap()),
+                    tee_signer: submitted_signer.parse().unwrap(),
                 }),
             })
             .await
@@ -1966,7 +1967,7 @@ async fn test_delete_proof_requests_by_tee_signer() {
         serde_json::from_value(repo.get(ids[2]).await.unwrap().unwrap().result_payload.unwrap())
             .unwrap();
     let ProtocolProofResult::Tee(result) = result else { panic!("expected TEE proof") };
-    assert_eq!(result.tee_signer, Some(other_signer.parse().unwrap()));
+    assert_eq!(result.tee_signer, other_signer.parse::<Address>().unwrap());
 
     assert_eq!(repo.delete_proof_requests_by_tee_signer(other_signer).await.unwrap(), 1);
 }
