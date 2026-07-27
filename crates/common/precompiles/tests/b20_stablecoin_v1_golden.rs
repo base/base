@@ -217,9 +217,6 @@ fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
 // Version resolver
 // ============================================================================
 
-// Asserts only the V1 activation premise this golden suite depends on (V1 is live from Beryl,
-// absent before). The full cross-fork mapping (incl. Cobalt -> V2) is owned by the resolver's own
-// unit tests in `versions.rs`, so later versions never need to touch this V1 golden file.
 #[test]
 fn resolver_activates_v1_at_beryl() {
     assert_eq!(StablecoinVersions::from_base_upgrade(BaseUpgrade::Azul), None);
