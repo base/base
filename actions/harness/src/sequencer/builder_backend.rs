@@ -19,8 +19,7 @@ use std::{
 };
 
 use alloy_consensus::transaction::SignerRecoverable;
-use alloy_eips::eip2718::Encodable2718;
-use alloy_eips::eip7685::Requests;
+use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
 use alloy_provider::{Identity, ProviderBuilder};
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
