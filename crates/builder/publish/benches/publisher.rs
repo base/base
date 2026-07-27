@@ -104,6 +104,20 @@ fn bench_publish(c: &mut Criterion) {
             });
         }
     }
+
+    let publisher = publisher_with_subscribers(&rt, 0);
+    for &(label, ref payload) in &payloads {
+        c.bench_function(&format!("serialize/{label}"), |b| {
+            b.iter(|| black_box(WebSocketPublisher::serialize(payload).unwrap()));
+        });
+
+        let serialized = WebSocketPublisher::serialize(payload).unwrap();
+        c.bench_function(&format!("publish_serialized/{label}"), |b| {
+            b.iter(|| {
+                black_box(publisher.publish_serialized(serialized.clone(), 1, 0));
+            });
+        });
+    }
 }
 
 criterion_group!(benches, bench_publish);

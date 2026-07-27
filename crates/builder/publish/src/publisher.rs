@@ -105,6 +105,28 @@ impl WebSocketPublisher {
         block_number: u64,
         flashblock_index: u64,
     ) -> Result<usize, serde_json::Error> {
+        let payload = Self::serialize(payload)?;
+        Ok(self.publish_serialized(payload, block_number, flashblock_index))
+    }
+
+    /// Serializes a payload for a later atomic publication step.
+    ///
+    /// Callers that coordinate publication with cancellation can perform this allocation-heavy
+    /// work before entering their critical section, then call [`Self::publish_serialized`].
+    pub fn serialize(payload: &impl Serialize) -> Result<Utf8Bytes, serde_json::Error> {
+        serde_json::to_string(payload).map(Utf8Bytes::from)
+    }
+
+    /// Stores and broadcasts an already serialized payload.
+    ///
+    /// Returns the payload byte size. Serialization must be performed with [`Self::serialize`] to
+    /// preserve the same JSON wire format as [`Self::publish`].
+    pub fn publish_serialized(
+        &self,
+        payload: Utf8Bytes,
+        block_number: u64,
+        flashblock_index: u64,
+    ) -> usize {
         let publish_span = span!(
             Level::INFO,
             "publish_flashblock",
@@ -114,23 +136,21 @@ impl WebSocketPublisher {
         );
         let _publish_span_guard = publish_span.enter();
 
-        let json = serde_json::to_string(payload)?;
-        let size = json.len();
+        let size = payload.len();
         publish_span.record("byte_size", size);
-        let utf8_bytes = Utf8Bytes::from(json);
         let position = FlashblockPosition { block_number, flashblock_index };
 
         {
             let mut buf = self.ring_buffer.write();
-            buf.push(position, utf8_bytes.clone());
+            buf.push(position, payload.clone());
         }
 
         // Ignore SendError — there may be zero receivers when no clients
         // are connected. The entry is already stored in the ring buffer
         // for replay on future connections.
-        let _ = self.pipe.send((position, utf8_bytes));
+        let _ = self.pipe.send((position, payload));
         self.metrics.on_payload_size(size);
-        Ok(size)
+        size
     }
 }
 
@@ -246,5 +266,23 @@ mod tests {
             .entries_after(&FlashblockPosition { block_number: 100, flashblock_index: 0 })
             .collect();
         assert_eq!(entries.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn serialized_publication_preserves_publish_wire_format() {
+        let publisher = WebSocketPublisher::new("127.0.0.1:0".parse().unwrap()).unwrap();
+        let payload = serde_json::json!({"block": 42});
+        let serialized = WebSocketPublisher::serialize(&payload).unwrap();
+
+        let publish_size = publisher.publish(&payload, 1, 0).unwrap();
+        let serialized_size = publisher.publish_serialized(serialized.clone(), 1, 1);
+
+        assert_eq!(publish_size, serialized.len());
+        assert_eq!(serialized_size, serialized.len());
+        let buf = publisher.ring_buffer.read();
+        let entries = buf
+            .entries_after(&FlashblockPosition { block_number: 0, flashblock_index: 0 })
+            .collect::<Vec<_>>();
+        assert_eq!(entries, vec![&serialized, &serialized]);
     }
 }

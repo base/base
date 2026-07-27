@@ -203,7 +203,7 @@ pub struct FlashblocksExecutionInfo {
 }
 
 /// Accumulated execution state for the current block being built.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct ExecutionInfo {
     /// All executed transactions (unrecovered).
     pub executed_transactions: Vec<BaseTransactionSigned>,

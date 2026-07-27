@@ -225,7 +225,11 @@ jobs:
           free-disk: "true"
           native-deps: "true"
           rust-cache-shared-key: "stable"
-      - run: cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
+      - name: Smoke-test benchmarks
+        run: |
+          cargo bench --locked -p base-builder-core --bench flashblock_assembly -- --test
+          cargo bench --locked -p base-builder-publish --bench publisher -- --test
+          cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
 
   docker:
     name: Docker

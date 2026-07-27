@@ -1,18 +1,18 @@
-//! Benchmarks for state root computation during block building.
+//! Stress benchmarks for state root computation through the Base Proofs external trie overlay.
 //!
-//! Measures the cost of the two `calculate_state_root` modes with 10
-//! flashblocks at varying accounts-per-flashblock sizes:
+//! These benchmarks do not use the concrete `BlockchainProvider` used by the flashblocks payload
+//! builder and therefore do not measure mainnet block-building latency. They compare the shape of
+//! two root-computation strategies with 10 flashblocks at varying accounts-per-flashblock sizes:
 //!
 //! - `finalize_only` (`calculate_state_root = false`) — state root computed
-//!   once over the full accumulated state at finalization. This is the
-//!   **current production behavior**.
+//!   once over the full accumulated state at finalization, mirroring the builder's control flow.
 //!
 //! - `per_flashblock` (`calculate_state_root = true`) — state root
 //!   recomputed from scratch after every flashblock.
 //!
 //! The benchmarks use a RocksDB-backed [`RocksdbProofsStorage`] pre-populated with
 //! 50k base-state accounts so that state root computation exercises real disk
-//! I/O through the production trie overlay path.
+//! I/O through the Base Proofs trie overlay used by proof and RPC functionality.
 //!
 //! [`StateRootProvider::state_root_with_updates`] takes [`HashedPostState`] by
 //! value, so each iteration clones the post state. `finalize_only` clones the
@@ -138,8 +138,7 @@ fn create_populated_storage() -> (TempDir, BaseProofsStorage<Arc<RocksdbProofsSt
     (dir, storage)
 }
 
-/// Benchmarks `calculate_state_root = false`: state root computed once at
-/// finalization over the full accumulated state (current production behavior).
+/// Computes one root over the full accumulated state through the Base Proofs overlay.
 fn finalize_only_benches(c: &mut Criterion) {
     let mut g = c.benchmark_group("state_root/finalize_only");
     g.sample_size(10);
@@ -161,8 +160,7 @@ fn finalize_only_benches(c: &mut Criterion) {
     g.finish();
 }
 
-/// Benchmarks `calculate_state_root = true`: state root recomputed from
-/// scratch after every flashblock.
+/// Recomputes a root from scratch after every synthetic flashblock through the Base Proofs overlay.
 fn per_flashblock_benches(c: &mut Criterion) {
     let mut g = c.benchmark_group("state_root/per_flashblock");
     g.sample_size(10);

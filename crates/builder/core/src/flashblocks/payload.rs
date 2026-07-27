@@ -1,54 +1,37 @@
 use core::time::Duration;
 use std::{
     ops::{Div, Rem},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
     time::Instant,
 };
 
-use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, TxReceipt, constants::EMPTY_WITHDRAWALS,
-    proofs,
-};
-use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
+use alloy_consensus::Transaction;
 use alloy_evm::Database;
-use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
+use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use base_builder_publish::WebSocketPublisher;
 use base_bundles::RejectedTransaction;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
-use base_common_flashblocks::{
-    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockId, FlashblocksPayloadV1,
-    Metadata,
-};
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
+use base_common_consensus::BaseTransactionSigned;
+use base_common_flashblocks::FlashblockId;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttributes};
-use base_execution_txpool::AccountStateDiff;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
 use eyre::WrapErr as _;
+use parking_lot::RwLock;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::ChangedAccount;
-use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
+use reth_node_api::PayloadBuilderError;
 use reth_payload_primitives::PayloadAttributes;
 use reth_payload_util::BestPayloadTransactions;
-use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
-    BlockExecutionOutput, BlockExecutionResult, HashedPostStateProvider, ProviderError,
-    StateRootProvider, StorageRootProvider,
+    HashedPostStateProvider, ProviderError, StateRootProvider, StorageRootProvider,
 };
-use reth_revm::{
-    State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
-};
+use reth_revm::{State, database::StateProviderDatabase};
 use reth_transaction_pool::TransactionPool;
-use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database as _;
-use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
+use serde::Serialize;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
@@ -57,8 +40,8 @@ use crate::{
     BuilderConfig, BuilderMetrics, CandidateSource, DefaultCandidateSource, ExecutionInfo,
     PayloadBuilder, ResourceLimits,
     flashblocks::{
-        FlashblocksExtraCtx, best_txs::BestFlashblocksTxs, context::BasePayloadBuilderCtx,
-        generator::BuildArguments,
+        FlashblockAssembler, FlashblocksExtraCtx, StateRootMode, best_txs::BestFlashblocksTxs,
+        context::BasePayloadBuilderCtx, generator::BuildArguments,
     },
     traits::{ClientBounds, PoolBounds},
     transaction_events::{
@@ -81,26 +64,6 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
             >,
     >,
 >;
-
-#[derive(Debug, Default)]
-struct LastEmittedFlashblockId {
-    block_number: AtomicU64,
-    index: AtomicU64,
-}
-
-impl LastEmittedFlashblockId {
-    fn load(&self) -> FlashblockId {
-        FlashblockId {
-            block_number: self.block_number.load(Ordering::Relaxed),
-            index: self.index.load(Ordering::Relaxed),
-        }
-    }
-
-    fn store(&self, flashblock_id: FlashblockId) {
-        self.block_number.store(flashblock_id.block_number, Ordering::Relaxed);
-        self.index.store(flashblock_id.index, Ordering::Relaxed);
-    }
-}
 
 /// The outbound channels the flashblocks builder emits to.
 ///
@@ -133,7 +96,7 @@ pub(super) struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource> {
     /// transactions to.
     pub outputs: BuilderOutputs,
     /// Last flashblock emitted by this builder instance.
-    last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
+    last_emitted_flashblock_id: Arc<RwLock<FlashblockId>>,
     /// Transforms the candidate transaction stream drained by the build loop.
     candidate_source: S,
 }
@@ -160,11 +123,11 @@ impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
     }
 
     fn previous_flashblock_id(&self) -> FlashblockId {
-        self.last_emitted_flashblock_id.load()
+        *self.last_emitted_flashblock_id.read()
     }
 
     fn record_emitted_flashblock(&self, block_number: u64, index: u64) {
-        self.last_emitted_flashblock_id.store(FlashblockId { block_number, index });
+        *self.last_emitted_flashblock_id.write() = FlashblockId { block_number, index };
     }
 }
 
@@ -329,13 +292,16 @@ where
         let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
 
         let prev_flashblock_id = self.previous_flashblock_id();
-        let (payload, fb_payload, state_diff) = build_block(
+        let assembly = FlashblockAssembler::build(
             &mut state,
             &ctx,
             &mut info,
             prev_flashblock_id,
-            skip_flashblocks_building, // need to calculate state root for CL sync or if not building flashblocks
+            if skip_flashblocks_building { StateRootMode::Compute } else { StateRootMode::Skip },
         )?;
+        let payload = assembly.payload;
+        let fb_payload = assembly.flashblock;
+        let state_diff = assembly.state_diff;
 
         self.outputs.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
 
@@ -740,8 +706,13 @@ where
 
         let total_block_built_duration = Instant::now();
         let prev_flashblock_id = self.previous_flashblock_id();
-        let build_result =
-            build_block(state, ctx, info, prev_flashblock_id, ctx.attributes().no_tx_pool);
+        let build_result = FlashblockAssembler::build(
+            state,
+            ctx,
+            info,
+            prev_flashblock_id,
+            if ctx.attributes().no_tx_pool { StateRootMode::Compute } else { StateRootMode::Skip },
+        );
         let total_block_built_duration = total_block_built_duration.elapsed();
         BuilderMetrics::total_block_built_duration().record(total_block_built_duration);
         BuilderMetrics::total_block_built_gauge().set(total_block_built_duration);
@@ -751,9 +722,14 @@ where
                 BuilderMetrics::invalid_built_blocks_count().increment(1);
                 Err(err).wrap_err("failed to build payload")
             }
-            Ok((new_payload, mut fb_payload, state_diff)) => {
+            Ok(assembly) => {
+                let new_payload = assembly.payload;
+                let mut fb_payload = assembly.flashblock;
+                let state_diff = assembly.state_diff;
                 fb_payload.index = flashblock_index;
                 fb_payload.base = None;
+                let serialized_flashblock = WebSocketPublisher::serialize(&fb_payload)
+                    .wrap_err("failed to serialize flashblock for websocket publication")?;
 
                 // Synchronized check + publish.
                 // The publish_guard mutex ensures that if get_payload (resolve_kind) is called,
@@ -765,11 +741,11 @@ where
                     if block_cancel.is_cancelled() {
                         (true, 0)
                     } else {
-                        let size = self
-                            .outputs
-                            .ws_pub
-                            .publish(&fb_payload, ctx.block_number(), flashblock_index)
-                            .wrap_err("failed to publish flashblock via websocket")?;
+                        let size = self.outputs.ws_pub.publish_serialized(
+                            serialized_flashblock,
+                            ctx.block_number(),
+                            flashblock_index,
+                        );
                         self.record_emitted_flashblock(ctx.block_number(), flashblock_index);
                         (false, size)
                     }
@@ -972,7 +948,14 @@ where
         let start_time = Instant::now();
 
         // Build the final block WITH state root computed
-        let (final_payload, _, _) = build_block(state, ctx, info, FlashblockId::default(), true)?;
+        let final_payload = FlashblockAssembler::build(
+            state,
+            ctx,
+            info,
+            FlashblockId::default(),
+            StateRootMode::Compute,
+        )?
+        .payload;
 
         ctx.flush_rejected_txs(info);
         self.emit_final_inclusion_events(ctx, &final_payload);
@@ -1105,18 +1088,6 @@ where
     }
 }
 
-#[skip_serializing_none]
-#[derive(Debug, Serialize, Deserialize)]
-struct FlashblocksMetadata {
-    /// Metadata fields consumed by flashblock clients.
-    #[serde(flatten)]
-    metadata: Metadata,
-    /// Receipts for transactions in this flashblock (removed in Base 1.0)
-    receipts: Option<HashMap<B256, BaseReceipt>>,
-    /// Changed account balances (removed in Base 1.0)
-    new_account_balances: Option<HashMap<Address, U256>>,
-}
-
 pub(crate) fn execute_pre_steps<DB>(
     state: &mut State<DB>,
     ctx: &BasePayloadBuilderCtx,
@@ -1135,300 +1106,11 @@ where
 
     Ok(info)
 }
-
-pub(crate) fn build_block<DB, P>(
-    state: &mut State<DB>,
-    ctx: &BasePayloadBuilderCtx,
-    info: &mut ExecutionInfo,
-    prev_flashblock_id: FlashblockId,
-    calculate_state_root: bool,
-) -> Result<(BaseBuiltPayload, FlashblocksPayloadV1, Vec<AccountStateDiff>), PayloadBuilderError>
-where
-    DB: Database<Error = ProviderError> + AsRef<P> + revm::Database,
-    P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
-{
-    // We use it to preserve state, so we run merge_transitions on transition state at most once
-    let untouched_transition_state = state.transition_state.clone();
-    let state_merge_start_time = Instant::now();
-    state.merge_transitions(BundleRetention::Reverts);
-    let state_transition_merge_time = state_merge_start_time.elapsed();
-    BuilderMetrics::state_transition_merge_duration().record(state_transition_merge_time);
-    BuilderMetrics::state_transition_merge_gauge().set(state_transition_merge_time);
-
-    let block_number = ctx.block_number();
-    let expected = ctx.parent().number + 1;
-    if block_number != expected {
-        return Err(PayloadBuilderError::Other(
-            eyre::eyre!(
-                "build context block number mismatch: expected {}, got {}",
-                expected,
-                block_number
-            )
-            .into(),
-        ));
-    }
-
-    let receipts_root = calculate_receipt_root_no_memo(
-        &info.receipts,
-        &ctx.chain_spec,
-        ctx.attributes().timestamp(),
-    );
-    let logs_bloom: Bloom = logs_bloom(info.receipts.iter().flat_map(|r| r.logs()));
-
-    // TODO: maybe recreate state with bundle in here
-    // calculate the state root
-    let state_root_start_time = Instant::now();
-    let mut state_root = B256::ZERO;
-    let mut trie_output = TrieUpdates::default();
-    let mut hashed_state = HashedPostState::default();
-
-    if calculate_state_root {
-        let state_root_span = span!(
-            Level::INFO,
-            "calculate_state_root",
-            block_number = ctx.block_number(),
-            parent_hash = %ctx.parent().hash(),
-        );
-        let _state_root_span_guard = state_root_span.enter();
-
-        let state_provider = state.database.as_ref();
-        hashed_state = state_provider.hashed_post_state(&state.bundle_state);
-        (state_root, trie_output) =
-            state_provider.state_root_with_updates(hashed_state.clone()).inspect_err(|err| {
-                warn!(target: "payload_builder",
-                    parent_header=%ctx.parent().hash(),
-                    %err,
-                    "failed to calculate state root for payload"
-                );
-            })?;
-        let state_root_calculation_time = state_root_start_time.elapsed();
-        BuilderMetrics::state_root_calculation_duration().record(state_root_calculation_time);
-        BuilderMetrics::state_root_calculation_gauge().set(state_root_calculation_time);
-    }
-
-    let mut requests_hash = None;
-    let withdrawals_root =
-        if ctx.chain_spec.is_isthmus_active_at_timestamp(ctx.attributes().timestamp()) {
-            // always empty requests hash post isthmus
-            requests_hash = Some(EMPTY_REQUESTS_HASH);
-
-            // withdrawals root field in block header is used for storage root of L2 predeploy
-            // `l2tol1-message-passer`
-            Some(
-                isthmus::withdrawals_root(&state.bundle_state, state.database.as_ref())
-                    .map_err(PayloadBuilderError::other)?,
-            )
-        } else if ctx.chain_spec.is_canyon_active_at_timestamp(ctx.attributes().timestamp()) {
-            Some(EMPTY_WITHDRAWALS)
-        } else {
-            None
-        };
-
-    // create the block header
-    let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
-
-    let (excess_blob_gas, blob_gas_used) = ctx.blob_fields(info);
-    let extra_data = ctx.extra_data()?;
-
-    let header = Header {
-        parent_hash: ctx.parent().hash(),
-        ommers_hash: EMPTY_OMMER_ROOT_HASH,
-        beneficiary: ctx.evm_env.block_env.beneficiary,
-        state_root,
-        transactions_root,
-        receipts_root,
-        withdrawals_root,
-        logs_bloom,
-        timestamp: ctx.attributes().payload_attributes.timestamp,
-        mix_hash: ctx.attributes().payload_attributes.prev_randao,
-        nonce: BEACON_NONCE.into(),
-        base_fee_per_gas: Some(ctx.base_fee()),
-        number: ctx.parent().number + 1,
-        gas_limit: ctx.block_gas_limit(),
-        difficulty: U256::ZERO,
-        gas_used: info.cumulative_gas_used,
-        extra_data,
-        parent_beacon_block_root: ctx.attributes().payload_attributes.parent_beacon_block_root,
-        blob_gas_used,
-        excess_blob_gas,
-        requests_hash,
-        block_access_list_hash: None,
-        slot_number: ctx.attributes().payload_attributes.slot_number,
-    };
-
-    // seal the block
-    let block = alloy_consensus::Block::<BaseTransactionSigned>::new(
-        header,
-        BlockBody {
-            transactions: info.executed_transactions.clone(),
-            ommers: vec![],
-            withdrawals: ctx.withdrawals().cloned(),
-        },
-    );
-
-    let recovered_block =
-        RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
-
-    // Read the invalidation diff before take_bundle() empties the bundle state.
-    // The builder prunes included transactions itself, so nonce advances are
-    // omitted to avoid evicting valid successors promoted in the same lane.
-    let state_diff = AccountStateDiff::collect_for_intra_block(&state.bundle_state);
-    let new_account_balances = state
-        .bundle_state
-        .state
-        .iter()
-        .filter_map(|(address, account)| account.info.as_ref().map(|info| (*address, info.balance)))
-        .collect::<HashMap<Address, U256>>();
-
-    // create the executed block data
-    let executed = BuiltPayloadExecutedBlock {
-        recovered_block: Arc::new(recovered_block),
-        execution_output: Arc::new(BlockExecutionOutput {
-            result: BlockExecutionResult {
-                receipts: info.receipts.clone(),
-                requests: vec![].into(),
-                gas_used: info.cumulative_gas_used,
-                blob_gas_used: 0,
-            },
-            state: state.take_bundle(),
-        }),
-        hashed_state: Arc::new(hashed_state),
-        trie_updates: Arc::new(trie_output),
-    };
-    debug!(target: "payload_builder", message = "Executed block created");
-
-    let sealed_block = Arc::new(block.seal_slow());
-    debug!(target: "payload_builder", ?sealed_block, "sealed built block");
-
-    let block_hash = sealed_block.hash();
-
-    // pick the new transactions from the info field and update the last flashblock index
-    let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..].to_vec();
-
-    let new_transactions_encoded =
-        new_transactions.clone().into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
-
-    let new_receipts = info.receipts[info.extra.last_flashblock_index..].to_vec();
-    info.extra.last_flashblock_index = info.executed_transactions.len();
-
-    let receipts_with_hash = new_transactions
-        .iter()
-        .zip(new_receipts.iter())
-        .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
-        .collect::<HashMap<B256, BaseReceipt>>();
-
-    let metadata: FlashblocksMetadata =
-        if ctx.chain_spec.is_azul_active_at_timestamp(ctx.attributes().timestamp()) {
-            FlashblocksMetadata {
-                metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
-                receipts: None,
-                new_account_balances: None,
-            }
-        } else {
-            FlashblocksMetadata {
-                metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
-                new_account_balances: Some(new_account_balances),
-                receipts: Some(receipts_with_hash),
-            }
-        };
-
-    // Prepare the flashblocks message
-    let fb_payload = FlashblocksPayloadV1 {
-        payload_id: ctx.payload_id(),
-        index: 0,
-        base: Some(ExecutionPayloadBaseV1 {
-            parent_beacon_block_root: ctx
-                .attributes()
-                .payload_attributes
-                .parent_beacon_block_root
-                .ok_or_else(|| {
-                    PayloadBuilderError::Other(
-                        eyre::eyre!("parent beacon block root not found").into(),
-                    )
-                })?,
-            parent_hash: ctx.parent().hash(),
-            fee_recipient: ctx.attributes().payload_attributes.suggested_fee_recipient,
-            prev_randao: ctx.attributes().payload_attributes.prev_randao,
-            block_number: ctx.parent().number + 1,
-            gas_limit: ctx.block_gas_limit(),
-            timestamp: ctx.attributes().payload_attributes.timestamp,
-            extra_data: ctx.extra_data()?,
-            base_fee_per_gas: ctx.base_fee().try_into().unwrap(),
-        }),
-        diff: ExecutionPayloadFlashblockDeltaV1 {
-            state_root,
-            receipts_root,
-            logs_bloom,
-            gas_used: info.cumulative_gas_used,
-            block_hash,
-            transactions: new_transactions_encoded,
-            withdrawals: ctx.withdrawals().cloned().unwrap_or_default().to_vec(),
-            withdrawals_root: withdrawals_root.unwrap_or_default(),
-            blob_gas_used,
-        },
-        metadata: serde_json::to_value(&metadata).unwrap_or_default(),
-    };
-
-    // We clean bundle and place initial state transaction back
-    state.take_bundle();
-    state.transition_state = untouched_transition_state;
-
-    Ok((
-        BaseBuiltPayload::new(
-            ctx.payload_id(),
-            sealed_block,
-            info.total_fees,
-            Some(executed),
-            None,
-        ),
-        fb_payload,
-        state_diff,
-    ))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use alloy_consensus::{Header, Receipt};
-    use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
-    use base_common_consensus::BaseReceipt;
-    use base_common_flashblocks::{FlashblockId, Metadata};
-    use base_execution_chainspec::BaseChainSpec;
-    use reth_chainspec::ChainSpec;
+    use alloy_primitives::{Address, B256, U256};
     use reth_execution_cache::{CachedStateProvider, CachedStatus, ExecutionCache, SavedCache};
-    use reth_primitives_traits::SealedHeader;
     use reth_provider::{StateProviderBox, noop::NoopProvider};
-    use reth_revm::{State, database::StateProviderDatabase};
-
-    use super::{FlashblocksMetadata, build_block};
-    use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
-
-    /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
-    /// active at genesis but **no** inherited rollup upgrades (Bedrock, Canyon,
-    /// Ecotone, Holocene, Isthmus, Jovian are all absent).
-    ///
-    /// This keeps `build_block` on the simplest code paths: no blob fields,
-    /// default extra data, no withdrawals root calculation.
-    fn minimal_chain_spec() -> Arc<BaseChainSpec> {
-        let genesis: serde_json::Value = serde_json::json!({
-            "config": { "chainId": 901 },
-            "gasLimit": "0x1C9C380",
-            "timestamp": "0x0"
-        });
-        let genesis = serde_json::from_value(genesis).expect("valid genesis");
-
-        let inner =
-            ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
-
-        Arc::new(BaseChainSpec::from(inner))
-    }
-
-    /// Builds a sealed genesis header consistent with [`minimal_chain_spec`].
-    fn genesis_header() -> Arc<SealedHeader> {
-        let header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
-        Arc::new(SealedHeader::seal_slow(header))
-    }
 
     #[test]
     fn canonical_state_provider_uses_shared_cache_without_filling_misses() {
@@ -1463,248 +1145,5 @@ mod tests {
         }
 
         assert!(cache.is_available(), "provider must release the shared cache when dropped");
-    }
-
-    /// Verify that [`build_block`] produces a valid empty block when called
-    /// with no transactions and `calculate_state_root = false`.
-    ///
-    /// This exercises the full block-assembly path (receipts root, logs bloom,
-    /// header construction, flashblocks payload) using only in-memory state —
-    /// no node, no disk, no network.
-    #[test]
-    fn build_block_empty_no_state_root() {
-        let chain_spec = minimal_chain_spec();
-        let parent = genesis_header();
-        let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
-
-        let db = StateProviderDatabase::new(NoopProvider::default());
-        let mut state = State::builder().with_database(db).with_bundle_update().build();
-        let mut info = ExecutionInfo::default();
-
-        let (payload, fb_payload, state_diff) = build_block::<_, NoopProvider>(
-            &mut state,
-            &ctx,
-            &mut info,
-            FlashblockId::default(),
-            false,
-        )
-        .expect("build_block should succeed for an empty block");
-
-        // Block number must be parent + 1.
-        assert_eq!(payload.block().number, parent.number + 1, "block number should be parent + 1");
-
-        // No transactions were executed, so gas used must be zero.
-        assert_eq!(payload.block().gas_used, 0, "empty block should use zero gas");
-
-        // The flashblocks payload must reference the same block.
-        assert_eq!(fb_payload.diff.block_hash, payload.block().hash(), "hash mismatch");
-        assert!(state_diff.is_empty(), "empty block must produce no invalidation diff");
-    }
-
-    /// Verify that [`build_block`] exercises the state root calculation path
-    /// when `calculate_state_root = true`.
-    ///
-    /// With [`NoopProvider`], both `hashed_post_state` and
-    /// `state_root_with_updates` return defaults, so the state root ends up
-    /// as [`B256::ZERO`].  The important property under test is that the
-    /// `calculate_state_root = true` branch runs without error and the
-    /// resulting header carries the computed root.
-    #[test]
-    fn build_block_empty_with_state_root() {
-        let chain_spec = minimal_chain_spec();
-        let parent = genesis_header();
-        let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
-
-        let db = StateProviderDatabase::new(NoopProvider::default());
-        let mut state = State::builder().with_database(db).with_bundle_update().build();
-        let mut info = ExecutionInfo::default();
-
-        let (payload, _fb_payload, state_diff) = build_block::<_, NoopProvider>(
-            &mut state,
-            &ctx,
-            &mut info,
-            FlashblockId::default(),
-            true,
-        )
-        .expect("build_block with state root should succeed");
-
-        assert!(state_diff.is_empty(), "empty block must produce no invalidation diff");
-
-        // NoopProvider returns B256::default() for all state root queries,
-        // which equals B256::ZERO.
-        assert_eq!(
-            payload.block().state_root,
-            B256::ZERO,
-            "NoopProvider should yield a zero state root"
-        );
-
-        assert_eq!(payload.block().number, parent.number + 1);
-    }
-
-    /// [`build_block`] must return an error when the EVM environment's block
-    /// number does not match `parent.number + 1`.
-    ///
-    /// In production this would indicate a bug in context construction or a
-    /// stale parent header.  The guard at the top of `build_block` exists to
-    /// catch exactly this class of misconfiguration.
-    #[test]
-    fn build_block_rejects_block_number_mismatch() {
-        let chain_spec = minimal_chain_spec();
-        let parent = genesis_header();
-        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
-
-        // Tamper with the EVM block number so it disagrees with parent + 1.
-        // parent.number is 0, so the expected block number is 1.
-        // Setting it to 99 should trigger the mismatch guard.
-        ctx.evm_env.block_env.number = U256::from(99);
-
-        let db = StateProviderDatabase::new(NoopProvider::default());
-        let mut state = State::builder().with_database(db).with_bundle_update().build();
-        let mut info = ExecutionInfo::default();
-
-        let err = build_block::<_, NoopProvider>(
-            &mut state,
-            &ctx,
-            &mut info,
-            FlashblockId::default(),
-            false,
-        )
-        .expect_err("build_block should fail on block number mismatch");
-
-        let msg = err.to_string();
-        assert!(
-            msg.contains("block number mismatch"),
-            "error should mention block number mismatch, got: {msg}"
-        );
-    }
-
-    /// [`build_block`] must return an error when the payload attributes lack
-    /// a `parent_beacon_block_root`.
-    ///
-    /// The flashblocks payload construction unconditionally reads this field,
-    /// so a `None` value is an unrecoverable configuration error that should
-    /// surface clearly rather than panicking.
-    #[test]
-    fn build_block_rejects_missing_beacon_block_root() {
-        let chain_spec = minimal_chain_spec();
-        let parent = genesis_header();
-        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
-
-        // Clear the parent beacon block root that for_test() sets.
-        ctx.config.attributes.payload_attributes.parent_beacon_block_root = None;
-
-        let db = StateProviderDatabase::new(NoopProvider::default());
-        let mut state = State::builder().with_database(db).with_bundle_update().build();
-        let mut info = ExecutionInfo::default();
-
-        let err = build_block::<_, NoopProvider>(
-            &mut state,
-            &ctx,
-            &mut info,
-            FlashblockId::default(),
-            false,
-        )
-        .expect_err("build_block should fail without beacon block root");
-
-        let msg = err.to_string();
-        assert!(
-            msg.contains("parent beacon block root not found"),
-            "error should mention missing beacon block root, got: {msg}"
-        );
-    }
-
-    /// Pin the JSON field names and structure of [`FlashblocksMetadata`].
-    ///
-    /// This struct is serialized into the `metadata` field of the flashblocks
-    /// websocket payload. Changing field names, types, or serde attributes
-    /// without updating downstream consumers is a breaking change.
-    #[test]
-    fn flashblocks_metadata_json_format_is_stable() {
-        let tx_hash = B256::from([0xAA; 32]);
-        let address = Address::from([0xBB; 20]);
-
-        let receipt = BaseReceipt::Eip1559(Receipt {
-            status: true.into(),
-            cumulative_gas_used: 21_000,
-            logs: Vec::<Log>::new(),
-        });
-
-        let mut receipts = HashMap::default();
-        receipts.insert(tx_hash, receipt);
-
-        let mut balances = HashMap::default();
-        balances.insert(address, U256::from(1_000_000_000_000_000_000u128));
-
-        let metadata = FlashblocksMetadata {
-            receipts: Some(receipts),
-            new_account_balances: Some(balances),
-            metadata: Metadata {
-                block_number: 42,
-                prev_flashblock_id: FlashblockId { block_number: 41, index: 10 },
-            },
-        };
-
-        let json = serde_json::to_value(&metadata).unwrap();
-        let obj = json.as_object().unwrap();
-
-        // Verify exact field set
-        let mut keys: Vec<&String> = obj.keys().collect();
-        keys.sort();
-        assert_eq!(
-            keys,
-            vec!["block_number", "new_account_balances", "prev_flashblock_id", "receipts",],
-            "metadata field names changed"
-        );
-
-        // block_number is a plain integer, not hex-encoded
-        assert_eq!(obj["block_number"], serde_json::json!(42));
-        assert_eq!(obj["prev_flashblock_id"], serde_json::json!("41-10"));
-
-        // receipts is a map keyed by tx hash
-        let receipts_obj = obj["receipts"].as_object().unwrap();
-        let tx_key = format!("{tx_hash:#x}");
-        assert!(receipts_obj.contains_key(&tx_key), "receipt should be keyed by tx hash");
-
-        // receipt has internally-tagged type field
-        let receipt_json = &receipts_obj[&tx_key];
-        assert_eq!(receipt_json["type"], "0x2", "EIP-1559 receipt type tag must be 0x2");
-
-        // new_account_balances is a map keyed by address
-        let balances_obj = obj["new_account_balances"].as_object().unwrap();
-        let addr_key = format!("{address:#x}");
-        assert!(balances_obj.contains_key(&addr_key), "balance should be keyed by address");
-    }
-
-    /// The client-side [`Metadata`] type must be able to deserialize from
-    /// `FlashblocksMetadata` JSON, ignoring the extra fields.
-    #[test]
-    fn client_metadata_deserializes_from_builder_metadata() {
-        let metadata = FlashblocksMetadata {
-            receipts: Some(HashMap::default()),
-            new_account_balances: Some(HashMap::default()),
-            metadata: Metadata {
-                block_number: 99,
-                prev_flashblock_id: FlashblockId { block_number: 98, index: 10 },
-            },
-        };
-
-        let json = serde_json::to_value(&metadata).unwrap();
-        let client_metadata: Metadata =
-            serde_json::from_value(json).expect("client Metadata must parse builder metadata");
-        assert_eq!(client_metadata.block_number, 99);
-        assert_eq!(
-            client_metadata.prev_flashblock_id,
-            FlashblockId { block_number: 98, index: 10 }
-        );
-    }
-
-    /// The v0.4.1 metadata format (only `block_number`) must still deserialize
-    /// into the client-side [`Metadata`] type.
-    #[test]
-    fn client_metadata_deserializes_from_v0_4_1_format() {
-        let json = serde_json::json!({"block_number": 123});
-        let metadata: Metadata = serde_json::from_value(json).expect("v0.4.1 metadata must parse");
-        assert_eq!(metadata.block_number, 123);
-        assert_eq!(metadata.prev_flashblock_id, FlashblockId::default());
     }
 }

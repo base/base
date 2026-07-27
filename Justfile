@@ -154,8 +154,14 @@ watch-check:
 
 # Runs all benchmarks
 benches:
+    @just bench-builder
     @just bench-flashblocks
     @just bench-proof-mpt
+
+# Runs production-path builder assembly and publisher benchmarks
+bench-builder:
+    cargo bench -p base-builder-core --bench flashblock_assembly
+    cargo bench -p base-builder-publish --bench publisher
 
 # Runs flashblocks pending state benchmarks
 bench-flashblocks:

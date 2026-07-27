@@ -1,5 +1,8 @@
 //! Flashblocks builder types.
 
+mod assembler;
+pub use assembler::{FlashblockAssembler, FlashblockAssembly, FlashblocksMetadata, StateRootMode};
+
 mod best_txs;
 pub use best_txs::BestFlashblocksTxs;
 
