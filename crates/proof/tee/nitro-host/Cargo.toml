@@ -46,6 +46,7 @@ tokio-vsock.workspace = true
 [dev-dependencies]
 chrono.workspace = true
 alloy-genesis.workspace = true
+alloy-signer-local.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 

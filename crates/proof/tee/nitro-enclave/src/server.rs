@@ -251,7 +251,7 @@ impl Server {
             }
         };
 
-        Ok(ProofResult::Tee { aggregate_proposal, proposals, tee_signer: self.signer_address() })
+        Ok(ProofResult::Tee { aggregate_proposal, proposals })
     }
 }
 

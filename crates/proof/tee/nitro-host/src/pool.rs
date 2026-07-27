@@ -103,9 +103,6 @@ impl NitroEnclavePool {
     }
 
     /// Proves one request using the busy-enclave policy.
-    ///
-    /// The returned [`ProofResult::Tee`] carries the enclave signer that
-    /// produced it, stamped inside the enclave at signing time.
     pub async fn prove(&self, request: ProofRequest) -> Result<ProofResult, NitroEnclavePoolError> {
         let l2_block = request.claimed_l2_block_number;
         let (enclave, _permit) = self.acquire_enclave(l2_block).await?;
