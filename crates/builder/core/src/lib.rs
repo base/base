@@ -45,8 +45,8 @@ pub use rejection_cache::RejectionCache;
 mod flashblocks;
 pub use flashblocks::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockPayloadJob, BlockPayloadJobGenerator,
-    BuildArguments, FlashblockDiagnostics, FlashblockSelectionOutcome, FlashblocksExtraCtx,
-    FlashblocksServiceBuilder, PayloadBuilder, PayloadHandler, ResolvePayload,
+    BuildArguments, Deadline, FlashblockDiagnostics, FlashblockSelectionOutcome,
+    FlashblocksExtraCtx, FlashblocksServiceBuilder, PayloadBuilder, PayloadHandler, ResolvePayload,
 };
 
 mod extension;

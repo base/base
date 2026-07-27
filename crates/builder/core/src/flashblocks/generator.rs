@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::sync::Arc;
 
 use alloy_primitives::B256;
 use futures::{Future, FutureExt};
@@ -17,14 +14,11 @@ use reth_primitives_traits::HeaderTy;
 use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFactory};
 use reth_revm::cached::CachedReads;
 use reth_tasks::Runtime;
-use tokio::{
-    sync::watch,
-    time::{Duration, Sleep},
-};
+use tokio::{sync::watch, time::Sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
-use crate::PayloadBuilder;
+use crate::{Deadline, PayloadBuilder};
 
 /// The generator type that creates new jobs that build empty blocks.
 #[derive(Debug)]
@@ -41,8 +35,8 @@ pub struct BlockPayloadJobGenerator<Client, Builder> {
     ensure_only_one_payload: bool,
     /// The last payload being processed
     last_payload: Arc<Mutex<CancellationToken>>,
-    /// The extra block deadline in seconds
-    extra_block_deadline: std::time::Duration,
+    /// Calculates and constructs payload job deadline timers.
+    deadline: Deadline,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
 }
@@ -65,7 +59,7 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
             builder,
             ensure_only_one_payload,
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
-            extra_block_deadline,
+            deadline: Deadline::new(extra_block_deadline),
             pre_cached: None,
         }
     }
@@ -128,25 +122,7 @@ where
 
         info!("Spawn block building job");
 
-        // The deadline is critical for payload availability. If we reach the deadline,
-        // the payload job stops and cannot be queried again. With tight deadlines close
-        // to the block number, we risk reaching the deadline before the node queries the payload.
-        //
-        // Adding 0.5 seconds as wiggle room since block times are shorter here.
-        // TODO: A better long-term solution would be to implement cancellation logic
-        // that cancels existing jobs when receiving new block building requests.
-        //
-        // When batcher's max channel duration is big enough (e.g. 10m), the
-        // sequencer would send an avalanche of FCUs/getBlockByNumber on
-        // each batcher update (with 10m channel it's ~800 FCUs at once).
-        // At such moment it can happen that the time b/w FCU and ensuing
-        // getPayload would be on the scale of ~2.5s. Therefore we should
-        // "remember" the payloads long enough to accommodate this corner-case
-        // (without it we are losing blocks). Postponing the deadline for 5s
-        // (not just 0.5s) because of that.
-        let deadline = job_deadline(input.attributes.timestamp()) + self.extra_block_deadline;
-
-        let deadline = Box::pin(tokio::time::sleep(deadline));
+        let deadline = self.deadline.sleep(input.attributes.timestamp());
 
         // Extract hash before moving parent_header into Arc to avoid cloning
         let parent_hash = parent_header.hash();
@@ -197,7 +173,13 @@ use std::{
     task::{Context, Poll},
 };
 
-/// A [`PayloadJob`] that builds empty blocks.
+/// A [`PayloadJob`] that manages the asynchronous construction of a block payload.
+///
+/// [`PayloadJobGenerator::new_payload_job`] creates this job when the
+/// [`PayloadBuilderService`](reth_payload_builder::PayloadBuilderService) receives new payload
+/// attributes from an Engine API forkchoice update. The service polls the job to enforce its
+/// deadline and resolve payload requests, while the job runs its [`PayloadBuilder`] on a blocking
+/// task and receives updated built payloads through a watch channel.
 pub struct BlockPayloadJob<Builder>
 where
     Builder: PayloadBuilder,
@@ -400,26 +382,6 @@ impl<T> Future for ResolvePayload<T> {
     }
 }
 
-fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
-    let unix_now = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(d) => d.as_secs(),
-        Err(e) => {
-            warn!(error = %e, "System clock went backward, returning zero deadline");
-            return Duration::ZERO;
-        }
-    };
-
-    // Safe subtraction that handles the case where timestamp is in the past
-    let duration_until = unix_timestamp_secs.saturating_sub(unix_now);
-
-    if duration_until == 0 {
-        // Enforce a minimum block time of 1 second by rounding up any duration less than 1 second
-        Duration::from_secs(1)
-    } else {
-        Duration::from_secs(duration_until)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_eips::eip7685::Requests;
@@ -519,28 +481,6 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
-    }
-
-    #[tokio::test]
-    async fn test_job_deadline() {
-        // Test future deadline
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let future_timestamp = now + Duration::from_secs(2);
-        // 2 seconds from now
-        let deadline = job_deadline(future_timestamp.as_secs());
-        assert!(deadline <= Duration::from_secs(2));
-        assert!(deadline > Duration::from_secs(0));
-
-        // Test past deadline
-        let past_timestamp = now - Duration::from_secs(10);
-        let deadline = job_deadline(past_timestamp.as_secs());
-        // Should default to 1 second when timestamp is in the past
-        assert_eq!(deadline, Duration::from_secs(1));
-
-        // Test current timestamp
-        let deadline = job_deadline(now.as_secs());
-        // Should use 1 second when timestamp is current
-        assert_eq!(deadline, Duration::from_secs(1));
     }
 
     #[tokio::test]
