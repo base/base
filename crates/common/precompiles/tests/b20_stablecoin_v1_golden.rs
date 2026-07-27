@@ -226,7 +226,7 @@ fn resolver_maps_forks_to_versions() {
     );
     assert_eq!(
         StablecoinVersions::from_base_upgrade(BaseUpgrade::Cobalt),
-        Some(StablecoinVersion::V1)
+        Some(StablecoinVersion::V2)
     );
 }
 

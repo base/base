@@ -9,15 +9,18 @@
 
 use base_common_genesis::BaseUpgrade;
 
-use crate::{PolicyAccounting, Stablecoin, StablecoinAccounting, StablecoinV1};
+use crate::{PolicyAccounting, Stablecoin, StablecoinAccounting, StablecoinV1, StablecoinV2};
 
 /// An activated version of the stablecoin B-20 precompile logic.
 ///
-/// Each variant maps to an immutable implementation via [`Self::implementation`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Each variant maps to an immutable implementation via [`Self::implementation`]. Variants are
+/// declared in activation order, so the derived ordering is chronological.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StablecoinVersion {
     /// Introduced at Beryl, the stablecoin's activation fork.
     V1,
+    /// Introduced at Cobalt. Behavior-identical to V1 (scaffold seam for future changes).
+    V2,
 }
 
 impl StablecoinVersion {
@@ -28,8 +31,10 @@ impl StablecoinVersion {
         A: PolicyAccounting + 'l,
     {
         static V1: StablecoinV1 = StablecoinV1;
+        static V2: StablecoinV2 = StablecoinV2;
         match self {
             Self::V1 => &V1,
+            Self::V2 => &V2,
         }
     }
 }
@@ -44,8 +49,18 @@ pub struct StablecoinVersions;
 impl StablecoinVersions {
     /// Returns the version active at `upgrade`, or `None` before the introduction
     /// fork (Beryl), where the stablecoin precompile is not installed at all.
+    ///
+    /// V1 is active from Beryl; V2 supersedes it from Cobalt.
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<StablecoinVersion> {
-        if upgrade >= BaseUpgrade::Beryl { Some(StablecoinVersion::V1) } else { None }
+        // Ordered thresholds rather than per-variant arms: a fork newer than Cobalt must inherit the
+        // latest version (V2) until one supersedes it, and `BaseUpgrade` is `#[non_exhaustive]`, so
+        // an explicit-variant match would need a wildcard that would wrongly send future forks to
+        // `None`.
+        match upgrade {
+            u if u >= BaseUpgrade::Cobalt => Some(StablecoinVersion::V2),
+            u if u >= BaseUpgrade::Beryl => Some(StablecoinVersion::V1),
+            _ => None,
+        }
     }
 }
 
@@ -69,10 +84,10 @@ mod tests {
     }
 
     #[test]
-    fn resolves_v1_at_cobalt() {
+    fn resolves_v2_at_cobalt() {
         assert_eq!(
             StablecoinVersions::from_base_upgrade(BaseUpgrade::Cobalt),
-            Some(StablecoinVersion::V1)
+            Some(StablecoinVersion::V2)
         );
     }
 }
