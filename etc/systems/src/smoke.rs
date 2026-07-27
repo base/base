@@ -260,6 +260,7 @@ pub struct SystemTestStackBuilder {
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
     base_cobalt_activation_block: Option<u64>,
+    base_zenith_activation_block: Option<u64>,
     output_dir: Option<PathBuf>,
     stable_config: Option<StableSystemTestConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
@@ -315,6 +316,12 @@ impl SystemTestStackBuilder {
     /// Sets the L2 block number at which Base Cobalt activates.
     pub const fn with_base_cobalt_activation_block(mut self, block: u64) -> Self {
         self.base_cobalt_activation_block = Some(block);
+        self
+    }
+
+    /// Sets the L2 block number at which Base Zenith activates.
+    pub const fn with_base_zenith_activation_block(mut self, block: u64) -> Self {
+        self.base_zenith_activation_block = Some(block);
         self
     }
 
@@ -417,6 +424,10 @@ impl SystemTestStackBuilder {
 
         if let Some(block) = self.base_cobalt_activation_block {
             setup = setup.with_base_cobalt_activation_block(block);
+        }
+
+        if let Some(block) = self.base_zenith_activation_block {
+            setup = setup.with_base_zenith_activation_block(block);
         }
 
         if let Some(ref config) = self.stable_config {
