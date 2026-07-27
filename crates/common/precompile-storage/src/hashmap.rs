@@ -10,7 +10,7 @@ use revm::{
 
 use crate::{
     error::BasePrecompileError,
-    provider::{PrecompileStorageProvider, validate_loaded_code_presence},
+    provider::{PrecompileStorageProvider, StorageFeatures, validate_loaded_code_presence},
 };
 
 /// In-memory [`PrecompileStorageProvider`] for unit tests.
@@ -38,6 +38,7 @@ pub struct HashMapStorageProvider {
     gas_params: GasParams,
     state_gas_used: u64,
     gas_refunded: i64,
+    storage_features: StorageFeatures,
     /// Emitted events keyed by contract address.
     pub events: HashMap<Address, Vec<LogData>>,
 }
@@ -83,6 +84,7 @@ impl HashMapStorageProvider {
             gas_params: GasParams::default(),
             state_gas_used: 0,
             gas_refunded: 0,
+            storage_features: StorageFeatures::Legacy,
         }
     }
 }
@@ -260,6 +262,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         0
     }
 
+    fn storage_features(&self) -> StorageFeatures {
+        self.storage_features
+    }
+
     fn is_static(&self) -> bool {
         self.is_static
     }
@@ -426,6 +432,11 @@ impl HashMapStorageProvider {
     /// Overrides the gas parameters used for state gas accounting (test-utils only).
     pub fn set_gas_params(&mut self, gas_params: GasParams) {
         self.gas_params = gas_params;
+    }
+
+    /// Overrides persistent-storage features (test-utils only).
+    pub const fn set_storage_features(&mut self, features: StorageFeatures) {
+        self.storage_features = features;
     }
 }
 

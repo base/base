@@ -136,12 +136,12 @@ dirs-next.workspace = true
 secp256k1.workspace = true
 serde_with.workspace = true
 parking_lot.workspace = true
-derive_more.workspace = true
 tar = { workspace = true, optional = true }
 ctor = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["debug"] }
 serde = { workspace = true, features = ["std"] }
 hyper-util = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }

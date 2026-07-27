@@ -19,7 +19,7 @@ use revm::{
 
 use crate::{
     error::{BasePrecompileError, Result},
-    provider::{PrecompileStorageProvider, validate_loaded_code_presence},
+    provider::{PrecompileStorageProvider, StorageFeatures, validate_loaded_code_presence},
 };
 
 /// Production [`PrecompileStorageProvider`] backed by a live EVM journal.
@@ -41,6 +41,7 @@ pub struct EvmPrecompileStorageProvider<'a> {
     beneficiary: Address,
     origin: Address,
     state_gas_used: u64,
+    storage_features: StorageFeatures,
 }
 
 impl<'a> EvmPrecompileStorageProvider<'a> {
@@ -49,6 +50,15 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
     /// `gas_params` drives all EIP-2929/2200/3529 cost calculations.
     /// Pass [`GasParams::default`] when the active spec is unknown at call site.
     pub fn new(input: PrecompileInput<'a>, gas_params: GasParams) -> Self {
+        Self::new_with_storage_features(input, gas_params, StorageFeatures::Legacy)
+    }
+
+    /// Consume a [`PrecompileInput`] and build the provider with fork-specific storage features.
+    pub fn new_with_storage_features(
+        input: PrecompileInput<'a>,
+        gas_params: GasParams,
+        storage_features: StorageFeatures,
+    ) -> Self {
         let PrecompileInput { gas, caller, value, is_static, internals, .. } = input;
 
         let block_number = internals.block_env().number().to::<u64>();
@@ -70,6 +80,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
             beneficiary,
             origin,
             state_gas_used: 0,
+            storage_features,
         }
     }
 }
@@ -317,6 +328,10 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         0
     }
 
+    fn storage_features(&self) -> StorageFeatures {
+        self.storage_features
+    }
+
     fn is_static(&self) -> bool {
         self.is_static
     }
@@ -366,15 +381,17 @@ impl From<alloy_evm::EvmInternalsError> for BasePrecompileError {
 #[cfg(test)]
 mod tests {
     use alloy_evm::{EvmInternals, eth::EthEvmContext, precompiles::PrecompileInput};
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::{Address, Bytes, U256};
     use revm::{
         context_interface::cfg::GasParams, database::EmptyDB, primitives::hardfork::SpecId,
         state::Bytecode,
     };
 
     use crate::{
-        error::BasePrecompileError, hashmap::HashMapStorageProvider,
-        provider::PrecompileStorageProvider,
+        BytesLikeHandler, Handler, StorageCtx,
+        error::BasePrecompileError,
+        hashmap::HashMapStorageProvider,
+        provider::{PrecompileStorageProvider, StorageFeatures},
     };
 
     fn amsterdam_provider() -> HashMapStorageProvider {
@@ -389,6 +406,16 @@ mod tests {
         gas: u64,
         is_static: bool,
     ) -> super::EvmPrecompileStorageProvider<'a> {
+        make_evm_provider_with_features(ctx, gas_params, gas, is_static, StorageFeatures::Legacy)
+    }
+
+    fn make_evm_provider_with_features<'a>(
+        ctx: &'a mut EthEvmContext<EmptyDB>,
+        gas_params: GasParams,
+        gas: u64,
+        is_static: bool,
+        storage_features: StorageFeatures,
+    ) -> super::EvmPrecompileStorageProvider<'a> {
         let input = PrecompileInput {
             data: &[],
             gas,
@@ -400,7 +427,11 @@ mod tests {
             bytecode_address: Address::ZERO,
             internals: EvmInternals::from_context(ctx),
         };
-        super::EvmPrecompileStorageProvider::new(input, gas_params)
+        super::EvmPrecompileStorageProvider::new_with_storage_features(
+            input,
+            gas_params,
+            storage_features,
+        )
     }
 
     /// EIP-2200 stipend boundary: `remaining == call_stipend` (2300) must block.
@@ -441,6 +472,30 @@ mod tests {
         let mut provider = make_evm_provider(&mut ctx, gas_params, gas, false);
 
         assert!(provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)).is_ok());
+    }
+
+    #[test]
+    fn cobalt_bytes_shrink_records_revm_storage_refund() {
+        let gas_params = GasParams::new_spec(SpecId::OSAKA);
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::OSAKA);
+        let address = Address::repeat_byte(0x42);
+        let base_slot = U256::from(10u64);
+        let mut provider = make_evm_provider_with_features(
+            &mut ctx,
+            gas_params,
+            1_000_000,
+            false,
+            StorageFeatures::Cobalt,
+        );
+
+        StorageCtx::enter(&mut provider, |storage| {
+            let mut slot = BytesLikeHandler::<Bytes>::new(base_slot, address, storage);
+            slot.write(Bytes::from(vec![0x11; 64])).unwrap();
+            assert_eq!(storage.gas_refunded(), 0);
+
+            slot.write(Bytes::from_static(b"short")).unwrap();
+            assert!(storage.gas_refunded() > 0, "clearing long-data slots must record a refund");
+        });
     }
 
     /// Static-call violation is checked before the stipend guard.

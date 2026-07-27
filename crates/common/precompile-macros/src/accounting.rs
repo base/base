@@ -309,6 +309,12 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = input.ident;
     Ok(quote! {
         impl crate::AssetAccounting for #name<'_> {
+            fn timestamp(
+                &self,
+            ) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
+                Ok(self.storage.timestamp())
+            }
+
             fn multiplier(
                 &self,
             ) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
@@ -321,6 +327,28 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
                 multiplier: ::alloy_primitives::U256,
             ) -> ::base_precompile_storage::Result<()> {
                 self.asset.set_multiplier(multiplier)
+            }
+
+            fn pending_multiplier(&self) -> ::base_precompile_storage::Result<u128> {
+                self.asset.pending_multiplier()
+            }
+
+            fn pending_effective_at(&self) -> ::base_precompile_storage::Result<u64> {
+                self.asset.pending_effective_at()
+            }
+
+            fn set_pending_and_effective_at(
+                &mut self,
+                multiplier: u128,
+                effective_at: u64,
+            ) -> ::base_precompile_storage::Result<()> {
+                self.write_pending(multiplier, effective_at)
+            }
+
+            fn clear_pending_multiplier_and_effective_at(
+                &mut self,
+            ) -> ::base_precompile_storage::Result<()> {
+                self.write_pending(0, 0)
             }
 
             fn extra_metadata(

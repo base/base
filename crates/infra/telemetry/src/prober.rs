@@ -131,6 +131,7 @@ pub struct RlpxProbeResult {
 }
 
 /// Interface used by the HTTP route to execute reachability probes.
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait ReachabilityProber: fmt::Debug + Send + Sync {
     /// Probes one execution-layer target.

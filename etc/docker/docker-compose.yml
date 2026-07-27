@@ -268,6 +268,7 @@ services:
       - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/transaction-events:/var/log/transaction-events
     environment:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
@@ -275,6 +276,9 @@ services:
       - NODE_HEALTHCHECK_HTTP_PORT=${L2_BUILDER_HTTP_PORT}
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_BUILDER_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-builder
+      - BUILDER_TRANSACTION_EVENTS_ENABLED=true
+      - BUILDER_TRANSACTION_EVENTS_PATH=/var/log/transaction-events/base-builder/events.jsonl
+      - BUILDER_TRANSACTION_EVENTS_NETWORK=base-devnet
     entrypoint: /app/base-entrypoint.sh
     command:
       - sequencer
@@ -420,6 +424,7 @@ services:
       - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/transaction-events:/var/log/transaction-events
     environment:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
@@ -427,7 +432,10 @@ services:
       - NODE_HEALTHCHECK_HTTP_PORT=${L2_CLIENT_HTTP_PORT}
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_CLIENT_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-client
-      - BASE_TRANSACTION_EVENTS_PATH=/tmp/base-client-transaction-events.jsonl
+      - BASE_TRANSACTION_EVENTS_ENABLED=true
+      - BASE_TRANSACTION_EVENTS_PATH=/var/log/transaction-events/base-client/events.jsonl
+      - BASE_TRANSACTION_EVENTS_NETWORK=base-devnet
+      - BASE_TRANSACTION_EVENTS_NODE_ROLE=devnet-client
     entrypoint: /app/base-entrypoint.sh
     command:
       - rpc

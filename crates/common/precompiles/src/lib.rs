@@ -14,7 +14,7 @@ mod lookup;
 pub use lookup::{BerylLookup, BerylLookupWithObserver};
 
 mod spec;
-pub use spec::BasePrecompileSpec;
+pub use spec::{BasePrecompileSpec, UpgradeGatedStorageFeatures};
 
 mod activation;
 pub use activation::{
@@ -58,15 +58,16 @@ pub use metrics::{
 
 mod b20_asset;
 pub use b20_asset::{
-    Asset, AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20AssetExtensionStorage,
-    B20AssetInit, B20AssetPrecompile, B20AssetStorage, B20AssetToken, IB20Asset,
+    Asset, AssetAccounting, AssetV1, AssetV2, AssetVersion, AssetVersions,
+    B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage, B20AssetToken,
+    ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset,
 };
 
 mod b20_stablecoin;
 pub use b20_stablecoin::{
     B20StablecoinExtensionStorage, B20StablecoinInit, B20StablecoinPrecompile,
     B20StablecoinStorage, B20StablecoinToken, IB20Stablecoin, Stablecoin, StablecoinAccounting,
-    StablecoinV1, StablecoinVersion, StablecoinVersions,
+    StablecoinV1, StablecoinV2, StablecoinVersion, StablecoinVersions,
 };
 
 mod b20_factory;

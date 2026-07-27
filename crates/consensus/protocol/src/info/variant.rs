@@ -104,7 +104,7 @@ impl L1BlockInfoTx {
                     // not present, and L1 has activated pectra, the Prague blob fee schedule is used
                     // immediately.
                     (rollup_config
-                        .contract_upgrade_activation_timestamp(BaseUpgrade::PectraBlobSchedule)
+                        .upgrade_activation_timestamp(BaseUpgrade::PectraBlobSchedule)
                         .is_none() ||
                         rollup_config.is_pectra_blob_schedule_active(l1_header.timestamp)) =>
                 {

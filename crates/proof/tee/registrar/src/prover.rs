@@ -1,21 +1,25 @@
-//! JSON-RPC client for polling prover instance signer endpoints.
+//! JSON-RPC client for polling prover instance readiness and signer endpoints.
 
 use std::time::Duration;
 
 use alloy_primitives::Address;
 use alloy_signer::utils::public_key_to_address;
 use base_proof_primitives::EnclaveApiClient;
-use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
+use jsonrpsee::{
+    core::client::ClientT,
+    http_client::{HttpClient, HttpClientBuilder},
+    rpc_params,
+};
 use k256::ecdsa::VerifyingKey;
 use tracing::debug;
 use url::Url;
 
 use crate::{EnclaveEndpointClient, RegistrarError, Result};
 
-/// JSON-RPC client for prover instance signer endpoints.
+/// JSON-RPC client for prover instance readiness and signer endpoints.
 ///
-/// Implements [`EnclaveEndpointClient`] by making HTTP JSON-RPC calls to the prover's
-/// `enclave_signerPublicKey` and `enclave_signerAttestation` endpoints.
+/// Implements [`EnclaveEndpointClient`] with HTTP JSON-RPC calls to the prover's
+/// `readyz`, `enclave_signerPublicKey`, and `enclave_signerAttestation` endpoints.
 ///
 /// The `timeout` is configured once at construction and applied to all requests.
 #[derive(Debug)]
@@ -53,6 +57,13 @@ impl ProverClient {
 }
 
 impl EnclaveEndpointClient for ProverClient {
+    async fn readyz(&self, endpoint: &Url) -> Result<()> {
+        let client = self.build_client(endpoint)?;
+        client.request::<(), _>("readyz", rpc_params![]).await.map_err(|e| {
+            RegistrarError::ProverClient { instance: endpoint.to_string(), source: Box::new(e) }
+        })
+    }
+
     async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
         debug!(endpoint = %endpoint, "fetching signer public keys");
         let client = self.build_client(endpoint)?;

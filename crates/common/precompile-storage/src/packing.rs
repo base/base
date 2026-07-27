@@ -38,6 +38,10 @@ use crate::{
 pub struct PackedSlot(pub U256);
 
 impl StorageOps for PackedSlot {
+    fn ensure_writable(&self) -> Result<()> {
+        Ok(())
+    }
+
     fn load(&self, _slot: U256) -> Result<U256> {
         Ok(self.0)
     }

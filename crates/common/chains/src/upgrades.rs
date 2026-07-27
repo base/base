@@ -7,7 +7,7 @@ use base_common_genesis::{BaseUpgrade, RollupConfig};
 pub trait Upgrades: EthereumHardforks {
     /// Retrieves [`ForkCondition`] by a [`BaseUpgrade`]. If `fork` is not present, returns
     /// [`ForkCondition::Never`].
-    fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition;
+    fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition;
 
     /// Returns the activation registry admin address.
     fn activation_admin_address(&self) -> Option<Address> {
@@ -17,122 +17,122 @@ pub trait Upgrades: EthereumHardforks {
     /// Convenience method to check if [`BaseUpgrade::Bedrock`] is active at a given block
     /// number.
     fn is_bedrock_active_at_block(&self, block_number: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Bedrock).active_at_block(block_number)
+        self.fork_condition(BaseUpgrade::Bedrock).active_at_block(block_number)
     }
 
     /// Returns `true` if [`Regolith`](BaseUpgrade::Regolith) is active at given block
     /// timestamp.
     fn is_regolith_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Regolith).active_at_timestamp(timestamp)
+        self.fork_condition(BaseUpgrade::Regolith).active_at_timestamp(timestamp)
     }
 
     /// Returns `true` if [`Canyon`](BaseUpgrade::Canyon) is active at given block timestamp.
     fn is_canyon_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Canyon).active_at_timestamp(timestamp)
+        self.fork_condition(BaseUpgrade::Canyon).active_at_timestamp(timestamp)
     }
 
     /// Returns `true` if [`Ecotone`](BaseUpgrade::Ecotone) is active at given block timestamp.
     fn is_ecotone_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Ecotone).active_at_timestamp(timestamp)
+        self.fork_condition(BaseUpgrade::Ecotone).active_at_timestamp(timestamp)
     }
 
     /// Returns `true` if [`Fjord`](BaseUpgrade::Fjord) is active at given block timestamp.
     fn is_fjord_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Fjord).active_at_timestamp(timestamp)
+        self.fork_condition(BaseUpgrade::Fjord).active_at_timestamp(timestamp)
     }
 
     /// Returns `true` if [`Granite`](BaseUpgrade::Granite) is active at given block timestamp.
     fn is_granite_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Granite).active_at_timestamp(timestamp)
+        self.fork_condition(BaseUpgrade::Granite).active_at_timestamp(timestamp)
     }
 
     /// Returns `true` if [`Holocene`](BaseUpgrade::Holocene) is active at given block
     /// timestamp.
     fn is_holocene_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Holocene).active_at_timestamp(timestamp)
+        self.fork_condition(BaseUpgrade::Holocene).active_at_timestamp(timestamp)
     }
 
     /// Returns `true` if [`Isthmus`](BaseUpgrade::Isthmus) is active at given block
     /// timestamp.
     fn is_isthmus_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Isthmus).active_at_timestamp(timestamp)
+        self.fork_condition(BaseUpgrade::Isthmus).active_at_timestamp(timestamp)
     }
 
     /// Returns `true` if [`Jovian`](BaseUpgrade::Jovian) is active at given block
     /// timestamp.
     fn is_jovian_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Jovian).active_at_timestamp(timestamp)
+        self.fork_condition(BaseUpgrade::Jovian).active_at_timestamp(timestamp)
     }
 
     /// Returns `true` if [`Azul`](BaseUpgrade::Azul) is active at given block timestamp.
     fn is_azul_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Azul).active_at_timestamp(timestamp)
+        self.fork_condition(BaseUpgrade::Azul).active_at_timestamp(timestamp)
     }
 
     /// Returns `true` if [`Beryl`](BaseUpgrade::Beryl) is active at given block timestamp.
     fn is_beryl_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Beryl).active_at_timestamp(timestamp)
+        self.fork_condition(BaseUpgrade::Beryl).active_at_timestamp(timestamp)
     }
 
     /// Returns `true` if [`Cobalt`](BaseUpgrade::Cobalt) is active at given block timestamp.
     fn is_cobalt_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Cobalt).active_at_timestamp(timestamp)
+        self.fork_condition(BaseUpgrade::Cobalt).active_at_timestamp(timestamp)
     }
 
     /// Returns `true` if the [`Zombie`](BaseUpgrade::Zombie) gate is active at the given block
     /// timestamp. Zombie is a permanently-off gate, so this always returns `false`; use it to
     /// keep not-yet-ready features disabled behind a fork check like any other upgrade.
     fn is_zombie_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::Zombie).active_at_timestamp(timestamp)
+        self.fork_condition(BaseUpgrade::Zombie).active_at_timestamp(timestamp)
     }
 }
 
 impl Upgrades for RollupConfig {
-    fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
+    fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
         match fork {
             BaseUpgrade::Bedrock => ForkCondition::Block(0),
             BaseUpgrade::Regolith => self
-                .contract_upgrade_activation_timestamp(BaseUpgrade::Regolith)
+                .upgrade_activation_timestamp(BaseUpgrade::Regolith)
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Canyon)),
+                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Canyon)),
             BaseUpgrade::Canyon => self
-                .contract_upgrade_activation_timestamp(BaseUpgrade::Canyon)
+                .upgrade_activation_timestamp(BaseUpgrade::Canyon)
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Ecotone)),
+                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Ecotone)),
             BaseUpgrade::Ecotone => self
-                .contract_upgrade_activation_timestamp(BaseUpgrade::Ecotone)
+                .upgrade_activation_timestamp(BaseUpgrade::Ecotone)
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Fjord)),
+                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Fjord)),
             BaseUpgrade::Fjord => self
-                .contract_upgrade_activation_timestamp(BaseUpgrade::Fjord)
+                .upgrade_activation_timestamp(BaseUpgrade::Fjord)
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Granite)),
+                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Granite)),
             BaseUpgrade::Granite => self
-                .contract_upgrade_activation_timestamp(BaseUpgrade::Granite)
+                .upgrade_activation_timestamp(BaseUpgrade::Granite)
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Holocene)),
+                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Holocene)),
             BaseUpgrade::Holocene => self
-                .contract_upgrade_activation_timestamp(BaseUpgrade::Holocene)
+                .upgrade_activation_timestamp(BaseUpgrade::Holocene)
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Isthmus)),
+                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Isthmus)),
             BaseUpgrade::Isthmus => self
-                .contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus)
+                .upgrade_activation_timestamp(BaseUpgrade::Isthmus)
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Jovian)),
+                .unwrap_or_else(|| self.fork_condition(BaseUpgrade::Jovian)),
             BaseUpgrade::Jovian => self
-                .contract_upgrade_activation_timestamp(BaseUpgrade::Jovian)
+                .upgrade_activation_timestamp(BaseUpgrade::Jovian)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Azul => self
-                .contract_upgrade_activation_timestamp(BaseUpgrade::Azul)
+                .upgrade_activation_timestamp(BaseUpgrade::Azul)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Beryl => self
-                .contract_upgrade_activation_timestamp(BaseUpgrade::Beryl)
+                .upgrade_activation_timestamp(BaseUpgrade::Beryl)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Cobalt => self
-                .contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt)
+                .upgrade_activation_timestamp(BaseUpgrade::Cobalt)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             // Contract-only upgrades (Delta, PectraBlobSchedule), the permanently-off Zombie gate,
@@ -153,26 +153,17 @@ mod tests {
         cfg.upgrades.ecotone_time = Some(ACTIVATION);
 
         // Cascading: Regolith and Canyon should fall through to Ecotone.
-        assert_eq!(
-            cfg.upgrade_activation(BaseUpgrade::Regolith),
-            ForkCondition::Timestamp(ACTIVATION)
-        );
-        assert_eq!(
-            cfg.upgrade_activation(BaseUpgrade::Canyon),
-            ForkCondition::Timestamp(ACTIVATION)
-        );
-        assert_eq!(
-            cfg.upgrade_activation(BaseUpgrade::Ecotone),
-            ForkCondition::Timestamp(ACTIVATION)
-        );
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Regolith), ForkCondition::Timestamp(ACTIVATION));
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Canyon), ForkCondition::Timestamp(ACTIVATION));
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Ecotone), ForkCondition::Timestamp(ACTIVATION));
 
         // Bedrock is always at block 0; later forks unset are Never.
-        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Bedrock), ForkCondition::Block(0));
-        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Jovian), ForkCondition::Never);
-        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Azul), ForkCondition::Never);
-        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Beryl), ForkCondition::Never);
-        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Cobalt), ForkCondition::Never);
-        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Zombie), ForkCondition::Never);
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Bedrock), ForkCondition::Block(0));
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Jovian), ForkCondition::Never);
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Azul), ForkCondition::Never);
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Beryl), ForkCondition::Never);
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Cobalt), ForkCondition::Never);
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Zombie), ForkCondition::Never);
     }
 
     #[cfg(feature = "std")]
@@ -197,12 +188,12 @@ mod tests {
         // Even a runtime override cannot activate the permanently-off Zombie gate.
         RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, BaseUpgrade::Zombie, u64::MAX);
 
-        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Azul), ForkCondition::Timestamp(ACTIVATION));
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Azul), ForkCondition::Timestamp(ACTIVATION));
         assert_eq!(
-            cfg.upgrade_activation(BaseUpgrade::Cobalt),
+            cfg.fork_condition(BaseUpgrade::Cobalt),
             ForkCondition::Timestamp(ACTIVATION + 1)
         );
-        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Zombie), ForkCondition::Never);
+        assert_eq!(cfg.fork_condition(BaseUpgrade::Zombie), ForkCondition::Never);
 
         RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
     }

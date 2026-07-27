@@ -5,23 +5,6 @@ x-rust-service-build: &rust-service-build
     PROFILE: "${CARGO_PROFILE:-dev}"
 
 services:
-  base-builder:
-    volumes:
-      - ../../.devnet/transaction-events:/var/log/transaction-events
-    environment:
-      - BUILDER_TRANSACTION_EVENTS_ENABLED=true
-      - BUILDER_TRANSACTION_EVENTS_PATH=/var/log/transaction-events/base-builder/events.jsonl
-      - BUILDER_TRANSACTION_EVENTS_NETWORK=base-devnet
-
-  base-client:
-    volumes:
-      - ../../.devnet/transaction-events:/var/log/transaction-events
-    environment:
-      - BASE_TRANSACTION_EVENTS_ENABLED=true
-      - BASE_TRANSACTION_EVENTS_PATH=/var/log/transaction-events/base-client/events.jsonl
-      - BASE_TRANSACTION_EVENTS_NETWORK=base-devnet
-      - BASE_TRANSACTION_EVENTS_NODE_ROLE=devnet-client
-
   minio:
     image: minio/minio:latest
     container_name: minio

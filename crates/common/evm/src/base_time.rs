@@ -415,7 +415,7 @@ mod tests {
     }
 
     impl Upgrades for TestUpgrades {
-        fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
+        fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
             if fork == BaseUpgrade::Zombie && self.0 {
                 ForkCondition::Timestamp(100)
             } else {
