@@ -17,6 +17,11 @@ use crate::{ActionL1ChainProvider, ActionL2ChainProvider};
 pub struct ActionSequencerAttributesBuilder {
     inner: StatefulAttributesBuilder<ActionL1ChainProvider, ActionL2ChainProvider>,
     user_txs: Arc<Mutex<Option<Vec<BaseTxEnvelope>>>>,
+    /// Whether to force `no_tx_pool = true` on produced attributes.
+    ///
+    /// `true` for the in-memory backend (all txs are force-included via attributes); `false` for
+    /// the production-builder backend (txs are selected from the real pool).
+    force_no_tx_pool: bool,
 }
 
 impl ActionSequencerAttributesBuilder {
@@ -24,8 +29,9 @@ impl ActionSequencerAttributesBuilder {
     pub const fn new(
         inner: StatefulAttributesBuilder<ActionL1ChainProvider, ActionL2ChainProvider>,
         user_txs: Arc<Mutex<Option<Vec<BaseTxEnvelope>>>>,
+        force_no_tx_pool: bool,
     ) -> Self {
-        Self { inner, user_txs }
+        Self { inner, user_txs, force_no_tx_pool }
     }
 }
 
@@ -54,7 +60,7 @@ impl AttributesBuilder for ActionSequencerAttributesBuilder {
         if !encoded_user_txs.is_empty() {
             attrs.transactions.get_or_insert_with(Vec::new).extend(encoded_user_txs);
         }
-        attrs.no_tx_pool = Some(true);
+        attrs.no_tx_pool = Some(self.force_no_tx_pool);
         Ok(attrs)
     }
 }

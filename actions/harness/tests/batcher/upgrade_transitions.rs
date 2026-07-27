@@ -403,7 +403,7 @@ async fn jovian_single_batch_transition_block_deposit_only() {
         .with_upgrades(upgrades)
         .with_seq_window_size(4)
         .build();
-    let l1_config = L1MinerConfig { block_time: 2 };
+    let l1_config = L1MinerConfig { block_time: 2, ..Default::default() };
     let mut h = ActionTestHarness::new(l1_config, rollup_cfg);
 
     // The sequencer is initialized with the L1 chain at genesis (before any
