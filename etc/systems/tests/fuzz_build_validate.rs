@@ -654,39 +654,11 @@ fn fuzz_derive_roundtrip() -> Result<()> {
         block_txs.push(txs);
     }
 
-    // Encode side (batcher): append each block as a singular batch on a single
-    // fixed L1 origin, with timestamps on the block-time grid so derive reproduces
-    // them exactly.
-    let parent_hash = B256::repeat_byte(0x11);
-    let epoch_hash = B256::repeat_byte(0x22);
-    let mut span = SpanBatch {
-        chain_id: DEVNET_CHAIN_ID,
-        genesis_timestamp: DERIVE_GENESIS_TS,
-        ..Default::default()
-    };
-    for (i, txs) in block_txs.iter().enumerate() {
-        let single = SingleBatch {
-            parent_hash,
-            epoch_num: DERIVE_EPOCH,
-            epoch_hash,
-            timestamp: DERIVE_GENESIS_TS + DERIVE_BLOCK_TIME * (i as u64 + 1),
-            transactions: txs.clone(),
-        };
-        span.append_singular_batch(single, i as u64)
-            .map_err(|e| eyre!("span batch append failed at block {i} (seed={seed:#x}): {e:?}"))?;
-    }
-
-    // Serialize, then read back exactly as the derivation pipeline does.
-    let raw = span
-        .to_raw_span_batch()
-        .map_err(|e| eyre!("to_raw_span_batch failed (seed={seed:#x}): {e:?}"))?;
-    let mut buf = Vec::new();
-    raw.encode(&mut buf).map_err(|e| eyre!("span batch encode failed (seed={seed:#x}): {e:?}"))?;
-    let mut decoded = RawSpanBatch::decode(&mut buf.as_slice())
-        .map_err(|e| eyre!("span batch decode failed (seed={seed:#x}): {e:?}"))?;
-    let derived = decoded
-        .derive(DERIVE_BLOCK_TIME, DERIVE_GENESIS_TS, DEVNET_CHAIN_ID)
-        .map_err(|e| eyre!("span batch derive failed (seed={seed:#x}): {e:?}"))?;
+    // Encode as the batcher does, then read back exactly as the derivation
+    // pipeline does.
+    let span = assemble_span(&block_txs).map_err(|e| eyre!("{e} (seed={seed:#x})"))?;
+    let bytes = encode_span(&span).map_err(|e| eyre!("{e} (seed={seed:#x})"))?;
+    let derived = derive_encoded(&bytes).map_err(|e| eyre!("{e} (seed={seed:#x})"))?;
 
     // Derivation must reconstruct exactly what the batcher encoded.
     if derived.batches.len() != block_txs.len() {
@@ -722,4 +694,162 @@ fn fuzz_derive_roundtrip() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Assemble a [`SpanBatch`] from per-block transaction sets the way the batcher
+/// does: one singular batch per block on a single fixed L1 origin, with
+/// timestamps on the block-time grid so `derive` reconstructs them exactly.
+fn assemble_span(block_txs: &[Vec<Bytes>]) -> Result<SpanBatch> {
+    let parent_hash = B256::repeat_byte(0x11);
+    let epoch_hash = B256::repeat_byte(0x22);
+    let mut span = SpanBatch {
+        chain_id: DEVNET_CHAIN_ID,
+        genesis_timestamp: DERIVE_GENESIS_TS,
+        ..Default::default()
+    };
+    for (i, txs) in block_txs.iter().enumerate() {
+        let single = SingleBatch {
+            parent_hash,
+            epoch_num: DERIVE_EPOCH,
+            epoch_hash,
+            timestamp: DERIVE_GENESIS_TS + DERIVE_BLOCK_TIME * (i as u64 + 1),
+            transactions: txs.clone(),
+        };
+        span.append_singular_batch(single, i as u64)
+            .map_err(|e| eyre!("span batch append failed at block {i}: {e:?}"))?;
+    }
+    Ok(span)
+}
+
+/// Serialize a span batch the way the batcher posts it (`to_raw_span_batch` -> `encode`).
+fn encode_span(span: &SpanBatch) -> Result<Vec<u8>> {
+    let raw = span.to_raw_span_batch().map_err(|e| eyre!("to_raw_span_batch failed: {e:?}"))?;
+    let mut buf = Vec::new();
+    raw.encode(&mut buf).map_err(|e| eyre!("span batch encode failed: {e:?}"))?;
+    Ok(buf)
+}
+
+/// Read a span batch back the way the derivation pipeline does
+/// (`RawSpanBatch::decode` -> `derive`).
+fn derive_encoded(bytes: &[u8]) -> Result<SpanBatch> {
+    let mut decoded = RawSpanBatch::decode(&mut &bytes[..])
+        .map_err(|e| eyre!("span batch decode failed: {e:?}"))?;
+    decoded
+        .derive(DERIVE_BLOCK_TIME, DERIVE_GENESIS_TS, DEVNET_CHAIN_ID)
+        .map_err(|e| eyre!("span batch derive failed: {e:?}"))
+}
+
+/// Build a signed, EIP-2718 encoded transaction of an explicit type (`0` legacy,
+/// `1` EIP-2930, `2` EIP-1559), with fixed fields, for the derive round-trip
+/// regression vectors.
+fn fixed_typed_tx(
+    account: &Account,
+    nonce: u64,
+    tx_type: u8,
+    access_list: AccessList,
+) -> Result<Bytes> {
+    let signer = account.signer();
+    let mut request = BaseTransactionRequest::default()
+        .from(signer.address())
+        .to(SENDERS[1].address())
+        .value(U256::from(nonce + 1))
+        .transaction_type(tx_type)
+        .with_gas_limit(50_000)
+        .with_chain_id(DEVNET_CHAIN_ID)
+        .with_nonce(nonce);
+    request = if tx_type == 2 {
+        request.with_max_fee_per_gas(1_000_000_000).with_max_priority_fee_per_gas(0)
+    } else {
+        request.with_gas_price(1_000_000_000)
+    };
+    if !access_list.0.is_empty() {
+        request = request.with_access_list(access_list);
+    }
+    finish(&signer, request)
+}
+
+/// A fixed EIP-8130 shape (one value-less call phase) for the regression vectors.
+fn fixed_8130_shape(sender: usize, payer: Option<usize>) -> Eip8130Shape {
+    Eip8130Shape {
+        sender,
+        payer,
+        phases: vec![vec![SENDERS[(sender + 1) % SENDERS.len()].address()]],
+        expiry: 0,
+        metadata: Bytes::from_static(&[0xaa, 0xbb]),
+    }
+}
+
+/// Regression: one transaction of every span-batchable type round-trips through
+/// Base's span-batch codec byte-for-byte. The fuzzer only emits 1559 and 8130, so
+/// this pins the legacy and EIP-2930 codec paths too; a regression that corrupts
+/// any single type's encode/decode turns this red immediately.
+#[test]
+fn derive_roundtrip_all_tx_types() -> Result<()> {
+    let alice = Account::Alice;
+    let access = AccessList(vec![AccessListItem {
+        address: SENDERS[0].address(),
+        storage_keys: vec![B256::from(U256::from(1u64)), B256::from(U256::from(2u64))],
+    }]);
+    let block_txs = vec![vec![
+        fixed_typed_tx(&alice, 0, 0, AccessList::default())?, // legacy
+        fixed_typed_tx(&alice, 1, 1, access.clone())?,        // EIP-2930
+        fixed_typed_tx(&alice, 2, 2, access)?,                // EIP-1559
+        sign_8130(&fixed_8130_shape(0, None), 0)?,            // EIP-8130 self-pay
+        sign_8130(&fixed_8130_shape(1, Some(2)), 0)?,         // EIP-8130 sponsored
+    ]];
+
+    // Guard that the vector really covers distinct types (a legacy tx has no type
+    // byte and starts with an RLP list header >= 0xc0; typed txs lead with their
+    // type byte), so "all tx types" can't silently degrade to all-1559.
+    let leads = &block_txs[0];
+    assert!(leads[0][0] >= 0xc0, "tx 0 must be legacy (RLP list), got {:#x}", leads[0][0]);
+    assert_eq!(leads[1][0], 0x01, "tx 1 must be EIP-2930");
+    assert_eq!(leads[2][0], 0x02, "tx 2 must be EIP-1559");
+    assert_eq!(leads[3][0], 0x79, "tx 3 must be EIP-8130");
+    assert_eq!(leads[4][0], 0x79, "tx 4 must be EIP-8130");
+
+    let derived = derive_encoded(&encode_span(&assemble_span(&block_txs)?)?)?;
+    let original = &block_txs[0];
+    let got = derived.batches.first().map(|b| &b.transactions);
+    if got != Some(original) {
+        return Err(eyre!(
+            "per-type span-batch round-trip changed the transactions: {} encoded, {:?} derived",
+            original.len(),
+            got.map(Vec::len)
+        ));
+    }
+    Ok(())
+}
+
+/// Regression / prove-red for the codec oracle: a corrupted span-batch encoding
+/// must be caught, so the byte-for-byte equality check above is meaningful rather
+/// than vacuous. Flipping a single byte of the encoding must make the round-trip
+/// either error or reconstruct different transactions.
+#[test]
+fn derive_roundtrip_detects_corruption() -> Result<()> {
+    let alice = Account::Alice;
+    let block_txs = vec![vec![
+        fixed_typed_tx(&alice, 0, 2, AccessList::default())?,
+        sign_8130(&fixed_8130_shape(0, None), 0)?,
+    ]];
+    let mut bytes = encode_span(&assemble_span(&block_txs)?)?;
+
+    // Flip the last byte (tail of the transaction data).
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0xff;
+
+    match derive_encoded(&bytes) {
+        // Decode/derive rejected the corruption outright.
+        Err(_) => Ok(()),
+        // Or it decoded to something, which must differ from the original.
+        Ok(derived) => {
+            if derived.batches.first().map(|b| &b.transactions) == Some(&block_txs[0]) {
+                Err(eyre!(
+                    "corrupted span batch round-tripped unchanged; the equality check is not meaningful"
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
 }
