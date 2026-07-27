@@ -271,6 +271,10 @@ where
     ) -> SubmitOutcome {
         info!(target_block, parent_address = %parent_address, "Submitting proof");
 
+        // Bind up front (the field is `Copy`) so the later discard-path match does
+        // not read `proof` after it has been borrowed for submission below.
+        let tee_signer = proof.tee_signer;
+
         let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
         let result = match cancel
             .run_until_cancelled(async {
@@ -343,7 +347,7 @@ where
                 );
                 let deleted = cancel
                     .run_until_cancelled(async {
-                        match (&error, proof.tee_signer) {
+                        match (&error, tee_signer) {
                             (
                                 ProposerError::Submission(ProofSubmissionError::InvalidSigner),
                                 Some(tee_signer),

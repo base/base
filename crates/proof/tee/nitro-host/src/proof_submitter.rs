@@ -58,13 +58,9 @@ impl ProofSubmitterRequest {
             return Err(ProofSubmitterError::UnsupportedProofResult);
         };
 
-        let signer_proposal =
-            proposals.first().ok_or(ProofSubmitterError::MissingProposals)?;
-        let tee_signer = TeeSignerRecovery::recover_from_proposal(
-            signer_proposal,
-            proposer,
-            tee_image_hash,
-        )?;
+        let signer_proposal = proposals.first().ok_or(ProofSubmitterError::MissingProposals)?;
+        let tee_signer =
+            TeeSignerRecovery::recover_from_proposal(signer_proposal, proposer, tee_image_hash)?;
 
         Ok(WorkerSubmitProofRequest {
             session_id,

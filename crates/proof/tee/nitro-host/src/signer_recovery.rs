@@ -28,17 +28,16 @@ impl TeeSignerRecovery {
     ///
     /// # Errors
     ///
-    /// Returns [`NitroHostError::InvalidSignerKey`] if the signature is
-    /// malformed or the public key cannot be recovered.
+    /// Returns [`NitroHostError::SignerRecovery`] if the block number is zero,
+    /// the signature is malformed, or the public key cannot be recovered.
     pub fn recover_from_proposal(
         proposal: &Proposal,
         proposer: Address,
         tee_image_hash: B256,
     ) -> Result<Address, NitroHostError> {
-        let starting_l2_block = proposal
-            .l2_block_number
-            .checked_sub(1)
-            .ok_or(NitroHostError::InvalidSignerKey)?;
+        let starting_l2_block = proposal.l2_block_number.checked_sub(1).ok_or_else(|| {
+            NitroHostError::SignerRecovery("proposal l2_block_number is 0".to_owned())
+        })?;
 
         let journal = ProofJournal {
             proposer,
@@ -55,16 +54,23 @@ impl TeeSignerRecovery {
         let digest = keccak256(journal.encode());
 
         if proposal.signature.len() != ECDSA_SIGNATURE_LENGTH {
-            return Err(NitroHostError::InvalidSignerKey);
+            return Err(NitroHostError::SignerRecovery(format!(
+                "expected {ECDSA_SIGNATURE_LENGTH}-byte signature, got {}",
+                proposal.signature.len()
+            )));
         }
         let signature = Signature::from_slice(&proposal.signature[..64])
-            .map_err(|_| NitroHostError::InvalidSignerKey)?;
-        let recovery_id = RecoveryId::from_byte(proposal.signature[64])
-            .ok_or(NitroHostError::InvalidSignerKey)?;
+            .map_err(|e| NitroHostError::SignerRecovery(format!("invalid signature: {e}")))?;
+        let recovery_id = RecoveryId::from_byte(proposal.signature[64]).ok_or_else(|| {
+            NitroHostError::SignerRecovery(format!(
+                "invalid recovery id {}",
+                proposal.signature[64]
+            ))
+        })?;
 
         let verifying_key =
             VerifyingKey::recover_from_prehash(digest.as_slice(), &signature, recovery_id)
-                .map_err(|_| NitroHostError::InvalidSignerKey)?;
+                .map_err(|e| NitroHostError::SignerRecovery(format!("recovery failed: {e}")))?;
         Ok(public_key_to_address(&verifying_key))
     }
 }
@@ -131,12 +137,9 @@ mod tests {
 
         let proposal = signed_proposal(&signer, proposer, tee_image_hash);
         // Recovering with a mismatched image hash yields some other address, never the signer.
-        let recovered = TeeSignerRecovery::recover_from_proposal(
-            &proposal,
-            proposer,
-            B256::repeat_byte(0x33),
-        )
-        .unwrap();
+        let recovered =
+            TeeSignerRecovery::recover_from_proposal(&proposal, proposer, B256::repeat_byte(0x33))
+                .unwrap();
 
         assert_ne!(recovered, signer.address());
     }
@@ -156,7 +159,27 @@ mod tests {
 
         assert!(matches!(
             TeeSignerRecovery::recover_from_proposal(&proposal, Address::ZERO, B256::ZERO),
-            Err(NitroHostError::InvalidSignerKey)
+            Err(NitroHostError::SignerRecovery(_))
         ));
+    }
+
+    #[test]
+    fn zero_block_number_is_rejected_with_specific_error() {
+        let proposal = Proposal {
+            output_root: B256::ZERO,
+            signature: Bytes::from(vec![0u8; ECDSA_SIGNATURE_LENGTH]),
+            l1_origin_hash: B256::ZERO,
+            l1_origin_number: 0,
+            l2_block_number: 0,
+            prev_output_root: B256::ZERO,
+            config_hash: B256::ZERO,
+            schedule_id: B256::ZERO,
+        };
+
+        let err = TeeSignerRecovery::recover_from_proposal(&proposal, Address::ZERO, B256::ZERO)
+            .unwrap_err();
+        assert!(
+            matches!(&err, NitroHostError::SignerRecovery(msg) if msg.contains("l2_block_number is 0"))
+        );
     }
 }
