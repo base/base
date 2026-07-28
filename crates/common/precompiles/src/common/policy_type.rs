@@ -10,6 +10,8 @@ const TRANSFER_EXECUTOR_POLICY: B256 =
     b256!("10be5173aff2a44e748bd9acd8b19fe34689581398a9db7ba2fb671e786ff7d8");
 const MINT_RECEIVER_POLICY: B256 =
     b256!("a0d5ae037e66a09119acf080a1d807abb9b6d03b6b9130eb19f7c1e6bdb8ffc8");
+const SEIZABLE_ACCOUNT_POLICY: B256 =
+    b256!("3efcaab33335f8757bc9054f42ac0ae92950f9727a52ff4db8681fc9521c9e25");
 
 /// Built-in B-20 policy slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +24,9 @@ pub enum B20PolicyType {
     TransferExecutor,
     /// Policy slot checked against mint receivers.
     MintReceiver,
+    /// Policy slot consulted against `from` by the seize operations. A `from` is seizable only when
+    /// it is NOT authorized by this policy (mirroring the `burnBlocked` "blocked" semantics).
+    Seizable,
 }
 
 impl B20PolicyType {
@@ -35,6 +40,8 @@ impl B20PolicyType {
             Some(Self::TransferExecutor)
         } else if id == MINT_RECEIVER_POLICY {
             Some(Self::MintReceiver)
+        } else if id == SEIZABLE_ACCOUNT_POLICY {
+            Some(Self::Seizable)
         } else {
             None
         }
@@ -47,6 +54,34 @@ impl B20PolicyType {
             Self::TransferReceiver => TRANSFER_RECEIVER_POLICY,
             Self::TransferExecutor => TRANSFER_EXECUTOR_POLICY,
             Self::MintReceiver => MINT_RECEIVER_POLICY,
+            Self::Seizable => SEIZABLE_ACCOUNT_POLICY,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::keccak256;
+
+    use crate::B20PolicyType;
+
+    /// Cross-impl parity: the built-in scope ids must equal `keccak256` of the exact strings
+    /// base-std uses, so the two implementations cannot silently diverge.
+    #[test]
+    fn policy_ids_match_base_std_keccak() {
+        assert_eq!(B20PolicyType::TransferSender.id(), keccak256("TRANSFER_SENDER_POLICY"));
+        assert_eq!(B20PolicyType::TransferReceiver.id(), keccak256("TRANSFER_RECEIVER_POLICY"));
+        assert_eq!(B20PolicyType::TransferExecutor.id(), keccak256("TRANSFER_EXECUTOR_POLICY"));
+        assert_eq!(B20PolicyType::MintReceiver.id(), keccak256("MINT_RECEIVER_POLICY"));
+        assert_eq!(B20PolicyType::Seizable.id(), keccak256("SEIZABLE_ACCOUNT_POLICY"));
+    }
+
+    /// `from_id` is the inverse of `id`, including for the seizable scope.
+    #[test]
+    fn seizable_scope_round_trips() {
+        assert_eq!(
+            B20PolicyType::from_id(B20PolicyType::Seizable.id()),
+            Some(B20PolicyType::Seizable)
+        );
     }
 }

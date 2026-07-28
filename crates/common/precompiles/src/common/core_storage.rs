@@ -78,6 +78,21 @@ pub struct B20CoreStorage {
     #[accessor(name = nonce, keys(owner))]
     #[mutator(name = set_nonce, keys(owner), value = nonce)]
     pub nonces: Mapping<Address, U256>, // offset 13
+    /// Reserved full-slot hole mirroring base-std's `initialized` bootstrap flag.
+    ///
+    /// base-std pins `bool initialized` to its own slot at offset 14. This Rust impl distinguishes
+    /// the factory-init window through a different mechanism and stores no such flag, but must leave
+    /// this slot empty so that `seizable_policy_id` lands at the same offset (15) base-std uses.
+    /// Do not collapse this hole, or the mock and precompile storage layouts diverge and fork tests
+    /// break.
+    pub initialized_hole: FixedBytes<32>, // offset 14 (unused; base-std `initialized`)
+    /// Seizable-account policy ID, consulted by the seize operations. Appended after the
+    /// `initialized` hole so no pre-existing field offset shifts on already-deployed tokens.
+    #[accessor]
+    #[mutator]
+    pub seizable_policy_id: u64, // slot 15, offset 0
+    /// Reserved padding to fill the remainder of slot 15.
+    pub seize_reserved: FixedBytes<24>, // slot 15, offset 8 (fills remaining 24 bytes)
 }
 
 #[cfg(test)]
@@ -121,5 +136,12 @@ mod tests {
         assert_eq!(__packing_b20_core_storage::PAUSED_LOC.offset_slots, 11);
         assert_eq!(__packing_b20_core_storage::SUPPLY_CAP_LOC.offset_slots, 12);
         assert_eq!(__packing_b20_core_storage::NONCES_LOC.offset_slots, 13);
+        // Offset 14 is the unused `initialized` hole (base-std pins its bootstrap flag here); the
+        // seizable policy id is appended after it at offset 15, byte 0, mirroring base-std.
+        assert_eq!(__packing_b20_core_storage::INITIALIZED_HOLE_LOC.offset_slots, 14);
+        assert_eq!(__packing_b20_core_storage::SEIZABLE_POLICY_ID_LOC.offset_slots, 15);
+        assert_eq!(__packing_b20_core_storage::SEIZABLE_POLICY_ID_LOC.offset_bytes, 0);
+        assert_eq!(__packing_b20_core_storage::SEIZE_RESERVED_LOC.offset_slots, 15);
+        assert_eq!(__packing_b20_core_storage::SEIZE_RESERVED_LOC.offset_bytes, 8);
     }
 }
