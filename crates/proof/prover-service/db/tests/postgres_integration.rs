@@ -15,6 +15,8 @@
 
 use std::time::Duration;
 
+use alloy_primitives::Address;
+use base_proof_primitives::Proposal;
 use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
     CreateProofRequestError, CreateProofRequestOutcome, CreateProofSession,
@@ -26,7 +28,8 @@ use base_prover_service_db::{
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
     ProofResult as ProtocolProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult,
-    TeeKind as ProtocolTeeKind, TeeProofRequest, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
+    TeeKind as ProtocolTeeKind, TeeProofRequest, TeeProofResult, ZkBackend, ZkProofRequest,
+    ZkProofResult, ZkVm,
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -1910,6 +1913,63 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
         repo.get(id).await.unwrap().unwrap().stark_receipt.as_deref(),
         Some(&[0xca, 0xfe][..])
     );
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_delete_proof_requests_by_tee_signer() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+    let signer = "0x1111111111111111111111111111111111111111";
+    let other_signer = "0x2222222222222222222222222222222222222222";
+
+    drain_claimable_tee_jobs(&repo).await;
+    let mut ids = Vec::new();
+    for submitted_signer in [signer, signer, other_signer] {
+        let id = repo.create(tee_request()).await.unwrap();
+        let claimed = repo
+            .claim_next_proof_job(tee_claim("batch-delete-worker", 3))
+            .await
+            .unwrap()
+            .expect("TEE job should be claimed");
+        assert_eq!(claimed.id, id);
+        let outcome = repo
+            .complete_claimed_proof_job(CompleteClaimedProofJob {
+                session_id: claimed.session_id,
+                lock_id: claimed.lock_id.expect("claimed job has lock"),
+                worker_id: "batch-delete-worker".to_owned(),
+                result: ProtocolProofResult::Tee(TeeProofResult {
+                    aggregate_proposal: Proposal {
+                        output_root: Default::default(),
+                        signature: Default::default(),
+                        l1_origin_hash: Default::default(),
+                        l1_origin_number: 0,
+                        l2_block_number: 0,
+                        prev_output_root: Default::default(),
+                        config_hash: Default::default(),
+                        schedule_id: Default::default(),
+                    },
+                    proposals: vec![],
+                    tee_kind: ProtocolTeeKind::AwsNitro,
+                    tee_signer: submitted_signer.parse().unwrap(),
+                }),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(outcome, SubmitProofOutcome::Completed(_)));
+        ids.push(id);
+    }
+
+    assert_eq!(repo.delete_proof_requests_by_tee_signer(signer).await.unwrap(), 2);
+    assert!(repo.get(ids[0]).await.unwrap().is_none());
+    assert!(repo.get(ids[1]).await.unwrap().is_none());
+    let result: ProtocolProofResult =
+        serde_json::from_value(repo.get(ids[2]).await.unwrap().unwrap().result_payload.unwrap())
+            .unwrap();
+    let ProtocolProofResult::Tee(result) = result else { panic!("expected TEE proof") };
+    assert_eq!(result.tee_signer, other_signer.parse::<Address>().unwrap());
+
+    assert_eq!(repo.delete_proof_requests_by_tee_signer(other_signer).await.unwrap(), 1);
 }
 
 #[tokio::test]

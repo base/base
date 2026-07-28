@@ -22,6 +22,9 @@ pub use registration::{RegistrationChecker, RegistrationError, ValidSigner};
 mod proof_submitter;
 pub use proof_submitter::{ProofSubmitter, ProofSubmitterError, ProofSubmitterRequest};
 
+mod signer_recovery;
+pub use signer_recovery::TeeSignerRecovery;
+
 mod proof_generator;
 pub use proof_generator::{
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_INTERVAL,

@@ -637,17 +637,18 @@ impl ProofJob {
         match result {
             ProtocolProofResult::Compressed(zk) => {
                 self.check_api_proof_type(ApiProofType::Compressed)?;
-                self.check_zk_vm(ZkVmKind::from(zk.zk_vm))
+                self.check_zk_vm(ZkVmKind::from(zk.zk_vm))?;
             }
             ProtocolProofResult::SnarkPlonk(snark) => {
                 self.check_api_proof_type(ApiProofType::SnarkPlonk)?;
-                self.check_zk_vm(ZkVmKind::from(snark.proof.zk_vm))
+                self.check_zk_vm(ZkVmKind::from(snark.proof.zk_vm))?;
             }
             ProtocolProofResult::Tee(tee) => {
                 self.check_api_proof_type(ApiProofType::Tee)?;
-                self.check_tee_kind(TeeKind::from(tee.tee_kind))
+                self.check_tee_kind(TeeKind::from(tee.tee_kind))?;
             }
         }
+        Ok(())
     }
 
     fn check_api_proof_type(&self, expected: ApiProofType) -> Result<(), String> {
