@@ -117,19 +117,22 @@ impl TxpoolAdminClient {
             .rpc("drop sender transactions")
     }
 
-    /// Returns all pending and queued transaction nonces for a sender.
-    pub async fn sender_transaction_nonces(&self, address: Address) -> Result<Vec<u64>> {
+    /// Returns pending and queued transaction nonces for a sender, respectively.
+    pub async fn sender_transaction_nonces(
+        &self,
+        address: Address,
+    ) -> Result<(Vec<u64>, Vec<u64>)> {
         let content: serde_json::Value = self
             .provider
             .client()
             .request("txpool_contentFrom", (address,))
             .await
             .rpc("get sender txpool content")?;
-        let mut nonces = Vec::new();
-        for section in ["pending", "queued"] {
+        let parse_section = |section: &str| -> Result<Vec<u64>> {
+            let mut nonces = Vec::new();
             let Some(transactions) = content.get(section).and_then(serde_json::Value::as_object)
             else {
-                continue;
+                return Ok(nonces);
             };
             for nonce in transactions.keys() {
                 let parsed = nonce
@@ -142,8 +145,9 @@ impl TxpoolAdminClient {
                     })?;
                 nonces.push(parsed);
             }
-        }
-        Ok(nonces)
+            Ok(nonces)
+        };
+        Ok((parse_section("pending")?, parse_section("queued")?))
     }
 
     /// Returns the RPC endpoint URL.

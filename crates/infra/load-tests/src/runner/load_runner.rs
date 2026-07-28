@@ -736,7 +736,7 @@ impl LoadRunner {
                 .await
                 .rpc("get calibration transaction nonce")?;
             let base_fee = self.client.get_base_fee().await?;
-            let priority_fee = (base_fee / 10).max(1);
+            let priority_fee = (base_fee / 10).max(1).min(self.config.max_gas_price);
             let max_fee = SubmissionPipeline::submission_max_fee(
                 base_fee,
                 priority_fee,
@@ -897,6 +897,23 @@ impl LoadRunner {
         let funder_provider =
             Arc::new(create_wallet_provider(primary_submission_rpc.clone(), wallet));
 
+        let mut txpool_endpoints = vec![primary_submission_rpc];
+        txpool_endpoints.extend(self.config.txpool_nodes.iter().cloned());
+        txpool_endpoints.sort();
+        txpool_endpoints.dedup();
+        for endpoint in &txpool_endpoints {
+            let txpool_client = TxpoolAdminClient::new(endpoint.clone())?;
+            match txpool_client.drop_sender_transactions(funder_address).await {
+                Ok(removed) if !removed.is_empty() => {
+                    info!(url = %endpoint, removed = removed.len(), "dropped stale exclusive-funder transactions");
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    debug!(url = %endpoint, error = %error, "funder txpool admin cleanup unavailable");
+                }
+            }
+        }
+
         // The funder is exclusively owned by this load tester, so reclaim any pending nonce range
         // left by an interrupted run instead of appending new transfers behind stale transactions.
         let canonical_nonce = funder_provider
@@ -913,17 +930,17 @@ impl LoadRunner {
                 "inconsistent funder nonces: canonical {canonical_nonce}, pending {pending_nonce}"
             )));
         }
-        let mut txpool_endpoints = vec![primary_submission_rpc];
-        txpool_endpoints.extend(self.config.txpool_nodes.iter().cloned());
-        txpool_endpoints.sort();
-        txpool_endpoints.dedup();
         let mut highest_txpool_nonce = None;
         let mut txpool_content_available = false;
-        for endpoint in txpool_endpoints {
+        let mut queued_funder_transactions = 0usize;
+        for endpoint in &txpool_endpoints {
             let txpool_client = TxpoolAdminClient::new(endpoint.clone())?;
             match txpool_client.sender_transaction_nonces(funder_address).await {
-                Ok(nonces) => {
+                Ok((pending_nonces, queued_nonces)) => {
                     txpool_content_available = true;
+                    queued_funder_transactions =
+                        queued_funder_transactions.saturating_add(queued_nonces.len());
+                    let nonces = pending_nonces.into_iter().chain(queued_nonces);
                     if let Some(highest) = nonces.into_iter().max() {
                         highest_txpool_nonce = Some(
                             highest_txpool_nonce
@@ -935,6 +952,11 @@ impl LoadRunner {
                     debug!(url = %endpoint, error = %error, "sender txpool content unavailable");
                 }
             }
+        }
+        if queued_funder_transactions > 0 {
+            return Err(BaselineError::Transaction(format!(
+                "exclusive funder {funder_address} still has {queued_funder_transactions} queued transaction(s) after cleanup; top up the funder for cumulative max-cost affordability or enable admin_dropSenderTransactions on every txpool node"
+            )));
         }
         if !txpool_content_available {
             warn!(
@@ -978,17 +1000,10 @@ impl LoadRunner {
             accounts_to_fund.len().max(usize::try_from(stale_nonce_count).map_err(|_| {
                 BaselineError::Transaction("stale funder nonce range exceeds usize".into())
             })?);
-        // max_gas_price is an execution safety cap, not the amount EIP-1559 transactions normally
-        // pay. Budget using the current submission price so large funding sets do not require the
-        // funder to hold 21,000 * max_gas_price for every transaction.
-        let initial_base_fee = client.get_base_fee().await?;
-        let initial_priority_fee = (initial_base_fee / 10).max(1);
-        let estimated_gas_price = SubmissionPipeline::submission_max_fee(
-            initial_base_fee,
-            initial_priority_fee,
-            max_gas_price,
-        );
-        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(estimated_gas_price));
+        // Reth only classifies the full nonce chain as executable when the funder can afford every
+        // transaction's maximum declared cost. Using an expected EIP-1559 price here can leave an
+        // affordable pending prefix followed by queued descendants that promote one per block.
+        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(max_gas_price));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(funding_request_count));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
@@ -1041,7 +1056,7 @@ impl LoadRunner {
             .expect("nonce overflow");
         while !txs_remaining.is_empty() {
             let base_fee = client.get_base_fee().await?;
-            let max_priority_fee = (base_fee / 10).max(1);
+            let max_priority_fee = (base_fee / 10).max(1).min(max_gas_price);
             // Funding transactions form one strict nonce chain and may wait several blocks behind
             // earlier transfers. Use the configured safety cap as maxFeePerGas so a rising base
             // fee cannot make the head transaction non-executable and strand every later nonce.
@@ -1626,7 +1641,7 @@ impl LoadRunner {
         let max_gas_price = self.config.max_gas_price;
 
         let base_fee = self.client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1);
+        let max_priority_fee = (base_fee / 10).max(1).min(max_gas_price);
         let max_fee =
             SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
 
@@ -2489,7 +2504,7 @@ impl LoadRunner {
             return Ok(Vec::new());
         }
 
-        let priority_fee = (base_fee / 10).max(1);
+        let priority_fee = (base_fee / 10).max(1).min(max_gas_price);
         let max_fee = SubmissionPipeline::submission_max_fee(base_fee, priority_fee, max_gas_price);
 
         let mut signing_tasks = Vec::with_capacity(sender_count);
@@ -3165,7 +3180,7 @@ impl LoadRunner {
         let chain_id = self.config.chain_id;
 
         let base_fee = client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1);
+        let max_priority_fee = (base_fee / 10).max(1).min(self.config.max_gas_price);
         let max_fee = SubmissionPipeline::submission_max_fee(
             base_fee,
             max_priority_fee,

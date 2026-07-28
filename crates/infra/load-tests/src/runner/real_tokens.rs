@@ -108,7 +108,7 @@ impl LoadRunner {
         let approval_targets = self.collect_real_token_setup_approvals(setup);
 
         let base_fee = self.client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1);
+        let max_priority_fee = (base_fee / 10).max(1).min(self.config.max_gas_price);
         let max_fee = SubmissionPipeline::submission_max_fee(
             base_fee,
             max_priority_fee,
@@ -369,7 +369,7 @@ impl LoadRunner {
         let chain_id = self.config.chain_id;
 
         let base_fee = client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1);
+        let max_priority_fee = (base_fee / 10).max(1).min(self.config.max_gas_price);
         let max_fee = SubmissionPipeline::submission_max_fee(
             base_fee,
             max_priority_fee,
