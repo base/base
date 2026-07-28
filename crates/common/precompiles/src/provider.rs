@@ -49,9 +49,9 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             BaseUpgrade::Jovian => Self::jovian(),
             BaseUpgrade::Azul => Self::azul(),
             BaseUpgrade::Beryl => Self::beryl(),
-            // Zombie is a placeholder that never activates; it tracks the latest precompile set so
+            // Zenith is a placeholder that never activates; it tracks the latest precompile set so
             // it evolves with the newest hardfork (keep it grouped with the latest arm).
-            BaseUpgrade::Cobalt | BaseUpgrade::Zombie => Self::cobalt(),
+            BaseUpgrade::Cobalt | BaseUpgrade::Zenith => Self::cobalt(),
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
 

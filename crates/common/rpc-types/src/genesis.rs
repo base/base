@@ -35,8 +35,8 @@ impl TryFrom<&OtherFields> for ChainInfo {
 
 /// Base-specific upgrade configuration in a genesis file.
 ///
-/// `deny_unknown_fields` ensures a genesis cannot smuggle in a `zombie` (or any other unknown)
-/// activation time: Zombie is a permanently-off gate and is not configurable.
+/// `deny_unknown_fields` ensures a genesis cannot smuggle in a `zenith` (or any other unknown)
+/// activation time: Zenith is a permanently-off gate and is not configurable.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpgradeInfo {

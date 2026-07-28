@@ -237,7 +237,7 @@ impl PerChainConfig {
                 pectra_blob_schedule_time: None,
                 isthmus_time: Some(0),
                 jovian_time: Some(0),
-                base: BaseUpgradeConfig { azul: Some(0), beryl: None, cobalt: None, zombie: None },
+                base: BaseUpgradeConfig { azul: Some(0), beryl: None, cobalt: None, zenith: None },
             },
             chain_op_config: FeeConfig::base_mainnet(),
         }

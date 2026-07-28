@@ -3,10 +3,13 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
-use base_proof_primitives::Proposal;
 use base_proof_rpc::RollupProvider;
+use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::{DeleteProofRequest, GetProofRequest, ProofStatus};
+use base_prover_service_protocol::{
+    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, ProofStatus,
+    TeeProofResult,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -107,7 +110,7 @@ where
             };
 
             let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
-            let (aggregate_proposal, proposals) = match Self::poll_proof(
+            let proof = match Self::poll_proof(
                 self.proof_requester.as_ref(),
                 target_block,
                 &session_id,
@@ -129,14 +132,7 @@ where
             };
 
             match self
-                .submit_proof(
-                    target_block,
-                    &session_id,
-                    aggregate_proposal,
-                    proposals,
-                    current.parent_address,
-                    cancel,
-                )
+                .submit_proof(target_block, &session_id, proof, current.parent_address, cancel)
                 .await
             {
                 SubmitOutcome::Advanced(next) => *current = next,
@@ -151,7 +147,7 @@ where
         target_block: u64,
         session_id: &str,
         request_dispatched: bool,
-    ) -> Result<Option<(Proposal, Vec<Proposal>)>, ProposerError> {
+    ) -> Result<Option<TeeProofResult>, ProposerError> {
         let response = match proof_requester
             .get_proof(GetProofRequest { session_id: session_id.to_owned() })
             .await
@@ -269,19 +265,22 @@ where
         &self,
         target_block: u64,
         session_id: &str,
-        aggregate_proposal: Proposal,
-        proposals: Vec<Proposal>,
+        proof: TeeProofResult,
         parent_address: Address,
         cancel: &CancellationToken,
     ) -> SubmitOutcome {
         info!(target_block, parent_address = %parent_address, "Submitting proof");
 
+        // Bind up front (the field is `Copy`) so the later discard-path match does
+        // not read `proof` after it has been borrowed for submission below.
+        let tee_signer = proof.tee_signer;
+
         let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
         let result = match cancel
             .run_until_cancelled(async {
                 let submit = self.submitter.submit(
-                    &aggregate_proposal,
-                    &proposals,
+                    &proof.aggregate_proposal,
+                    &proof.proposals,
                     target_block,
                     parent_address,
                 );
@@ -346,10 +345,21 @@ where
                     error = %error,
                     "Submission discarded, deleting proof request for re-prove"
                 );
-                return if self.delete_proof_request(session_id, target_block).await {
-                    SubmitOutcome::Restart
-                } else {
-                    SubmitOutcome::Idle
+                let deleted = cancel
+                    .run_until_cancelled(async {
+                        if matches!(
+                            error,
+                            ProposerError::Submission(ProofSubmissionError::InvalidSigner)
+                        ) {
+                            self.delete_proofs_by_tee_signer(tee_signer, target_block).await
+                        } else {
+                            self.delete_proof_request(session_id, target_block).await
+                        }
+                    })
+                    .await;
+                return match deleted {
+                    Some(true) => SubmitOutcome::Restart,
+                    Some(false) | None => SubmitOutcome::Idle,
                 };
             }
         }
@@ -382,6 +392,37 @@ where
             }
         }
     }
+
+    async fn delete_proofs_by_tee_signer(&self, tee_signer: Address, target_block: u64) -> bool {
+        match self
+            .proof_requester
+            .delete_proofs_by_tee_signer(DeleteProofsByTeeSignerRequest { tee_signer })
+            .await
+        {
+            Ok(deleted_count) => {
+                info!(
+                    target_block,
+                    tee_signer = %tee_signer,
+                    deleted_count,
+                    "Deleted invalid TEE signer proof requests"
+                );
+                // A zero-row delete means the just-submitted proof was not matched
+                // (e.g. its recorded signer diverged from the reported one). Treat it
+                // as "not deleted" so the caller idles and backs off instead of
+                // immediately re-polling the same still-present proof in a tight loop.
+                deleted_count > 0
+            }
+            Err(error) => {
+                warn!(
+                    target_block,
+                    tee_signer = %tee_signer,
+                    error = %error,
+                    "Failed to delete proof requests by TEE signer"
+                );
+                false
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -394,6 +435,7 @@ mod tests {
     };
     use base_proof_primitives::ProofRequest;
     use base_proof_submission::ProofSubmissionError;
+    use base_prover_service_protocol::TeeKind;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
@@ -602,7 +644,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tick_deletes_succeeded_proof_when_submission_discards_it() {
+    async fn tick_batch_deletes_proofs_from_invalid_signer() {
         let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
@@ -618,6 +660,18 @@ mod tests {
             .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
             .await
             .expect("test setup should dispatch root session");
+        let later_root = B256::repeat_byte(0xcc);
+        let later_session_id = ProposerProofAdapter::tee_session_id_for_root(later_root);
+        requester
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(ProofRequest {
+                claimed_l2_output_root: later_root,
+                claimed_l2_block_number: target_block + BLOCK_INTERVAL,
+                intermediate_block_interval: BLOCK_INTERVAL,
+                l1_head_number: 1000,
+                ..Default::default()
+            }))
+            .await
+            .expect("test setup should dispatch later root session");
         let collector = make_collector(
             Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
             rollup_client(target_block, Some(claimed_root)),
@@ -633,6 +687,11 @@ mod tests {
 
         assert!(restart);
         assert!(!requester.requests.lock().unwrap().contains_key(&session_id));
+        assert!(!requester.requests.lock().unwrap().contains_key(&later_session_id));
+        assert_eq!(
+            *requester.deleted_tee_signers.lock().unwrap(),
+            vec![Address::repeat_byte(0x11)]
+        );
     }
 
     #[tokio::test]
@@ -699,8 +758,12 @@ mod tests {
             .submit_proof(
                 target_block,
                 &session_id,
-                aggregate_proposal,
-                vec![],
+                TeeProofResult {
+                    aggregate_proposal,
+                    proposals: vec![],
+                    tee_kind: TeeKind::AwsNitro,
+                    tee_signer: Address::repeat_byte(0x11),
+                },
                 Address::ZERO,
                 &CancellationToken::new(),
             )

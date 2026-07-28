@@ -2594,7 +2594,7 @@ mod tests {
         assert_eq!(target_upgrade(&chain, 100), Some("Beryl"));
 
         chain.apply_upgrades(&UpgradeConfig {
-            base: BaseUpgradeConfig { azul: Some(10), beryl: Some(12), cobalt: None, zombie: None },
+            base: BaseUpgradeConfig { azul: Some(10), beryl: Some(12), cobalt: None, zenith: None },
             ..UpgradeConfig::default()
         });
 
@@ -2613,7 +2613,7 @@ mod tests {
         };
         chain.apply_upgrades(&UpgradeConfig {
             jovian_time: Some(10),
-            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None, zombie: None },
+            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None, zenith: None },
             ..UpgradeConfig::default()
         });
 
@@ -2632,7 +2632,7 @@ mod tests {
         let delta = chain.specs.iter().find(|spec| spec.name == "Delta").unwrap().timestamp;
 
         chain.apply_upgrades(&UpgradeConfig {
-            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None, zombie: None },
+            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None, zenith: None },
             ..UpgradeConfig::default()
         });
 

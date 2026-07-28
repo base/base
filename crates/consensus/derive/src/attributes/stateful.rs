@@ -182,7 +182,7 @@ where
         let mut encoded_l1_info_tx = Vec::with_capacity(l1_info_tx_envelope.length());
         l1_info_tx_envelope.encode_2718(&mut encoded_l1_info_tx);
 
-        let base_time_active = self.rollup_cfg.is_zombie_active(next_l2_time);
+        let base_time_active = self.rollup_cfg.is_zenith_active(next_l2_time);
         let mut txs = Vec::with_capacity(
             1 + usize::from(base_time_active)
                 + deposit_transactions.len()
@@ -546,7 +546,7 @@ mod tests {
         let timestamp = 100_u64;
         let chain_id = 9_100_004;
         let _activation =
-            base_common_genesis::RuntimeUpgradeRegistry::activate_zombie_for_testing(chain_id, 102);
+            base_common_genesis::RuntimeUpgradeRegistry::activate_zenith_for_testing(chain_id, 102);
         let cfg = Arc::new(RollupConfig {
             block_time,
             genesis: ChainGenesis {
@@ -600,12 +600,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_prepare_payload_uses_zombie_formula_for_subsequent_block() {
+    async fn test_prepare_payload_uses_zenith_formula_for_subsequent_block() {
         let block_time = 2_u64;
         let timestamp = 100_u64;
         let chain_id = 9_100_005;
         let _activation =
-            base_common_genesis::RuntimeUpgradeRegistry::activate_zombie_for_testing(chain_id, 102);
+            base_common_genesis::RuntimeUpgradeRegistry::activate_zenith_for_testing(chain_id, 102);
         let cfg = Arc::new(RollupConfig {
             block_time,
             genesis: ChainGenesis {
