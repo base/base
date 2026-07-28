@@ -30,7 +30,7 @@ impl UpgradeActivationSink for RuntimeRegistrySink {
         upgrade_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
-        if matches!(upgrade_id, BaseUpgrade::Zombie) {
+        if matches!(upgrade_id, BaseUpgrade::Zenith) {
             return Ok(false);
         }
 

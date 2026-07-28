@@ -121,7 +121,7 @@ impl Index<EthereumHardfork> for ChainUpgrades {
 mod tests {
     use BaseUpgrade::{
         Azul, Bedrock, Beryl, Canyon, Cobalt, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian,
-        Regolith, Zombie,
+        Regolith, Zenith,
     };
     use alloy_hardforks::EthereumHardfork;
 
@@ -176,7 +176,7 @@ mod tests {
             ForkCondition::Timestamp(ChainConfig::mainnet().beryl_timestamp.unwrap())
         );
         assert_eq!(base_mainnet_forks[Cobalt], ForkCondition::Never);
-        assert_eq!(base_mainnet_forks[Zombie], ForkCondition::Never);
+        assert_eq!(base_mainnet_forks[Zenith], ForkCondition::Never);
     }
 
     #[test]
@@ -227,7 +227,7 @@ mod tests {
             ForkCondition::Timestamp(ChainConfig::sepolia().beryl_timestamp.unwrap())
         );
         assert_eq!(base_sepolia_forks[Cobalt], ForkCondition::Never);
-        assert_eq!(base_sepolia_forks[Zombie], ForkCondition::Never);
+        assert_eq!(base_sepolia_forks[Zenith], ForkCondition::Never);
     }
 
     #[test]
@@ -311,13 +311,13 @@ mod tests {
     }
 
     #[test]
-    fn is_zombie_active_at_timestamp() {
+    fn is_zenith_active_at_timestamp() {
         let base_mainnet_forks = ChainUpgrades::mainnet();
-        assert!(!base_mainnet_forks.is_zombie_active_at_timestamp(0));
-        assert!(!base_mainnet_forks.is_zombie_active_at_timestamp(u64::MAX));
+        assert!(!base_mainnet_forks.is_zenith_active_at_timestamp(0));
+        assert!(!base_mainnet_forks.is_zenith_active_at_timestamp(u64::MAX));
 
         let devnet_forks = ChainUpgrades::devnet();
-        assert!(!devnet_forks.is_zombie_active_at_timestamp(0));
+        assert!(!devnet_forks.is_zenith_active_at_timestamp(0));
     }
 
     #[test]

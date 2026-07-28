@@ -5817,6 +5817,7 @@ dependencies = [
  "alloy-genesis 2.2.0",
  "alloy-primitives",
  "alloy-signer 2.2.0",
+ "alloy-signer-local 2.2.0",
  "async-trait",
  "base-common-genesis",
  "base-health",
@@ -6168,7 +6169,9 @@ dependencies = [
 name = "base-prover-service-db"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
+ "base-proof-primitives",
  "base-prover-service-protocol",
  "chrono",
  "futures",

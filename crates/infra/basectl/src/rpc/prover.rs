@@ -222,9 +222,9 @@ mod tests {
     };
 
     use base_prover_service_protocol::{
-        DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest,
-        ListProofsResponse, ProofRequestKind, ProofStatus, ProveBlockRangeRequest,
-        ProveBlockRangeResponse, ProverRequesterApiServer, ZkVm,
+        DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
+        ListProofsRequest, ListProofsResponse, ProofRequestKind, ProofStatus,
+        ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkVm,
     };
     use jsonrpsee::{
         core::{RpcResult, async_trait},
@@ -341,6 +341,17 @@ mod tests {
         }
 
         async fn delete_proof_request(&self, _request: DeleteProofRequest) -> RpcResult<()> {
+            Err(ErrorObjectOwned::owned(
+                ErrorCode::MethodNotFound.code(),
+                "not used by tests",
+                None::<()>,
+            ))
+        }
+
+        async fn delete_proofs_by_tee_signer(
+            &self,
+            _request: DeleteProofsByTeeSignerRequest,
+        ) -> RpcResult<u64> {
             Err(ErrorObjectOwned::owned(
                 ErrorCode::MethodNotFound.code(),
                 "not used by tests",

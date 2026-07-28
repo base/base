@@ -4,8 +4,9 @@ use std::fmt;
 
 use base_prover_service_db::ProofRequestRepo;
 use base_prover_service_protocol::{
-    DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer,
+    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
+    ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    ProverRequesterApiServer,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -104,6 +105,13 @@ impl ProverRequesterApiServer for ProverServiceServer {
 
     async fn delete_proof_request(&self, request: DeleteProofRequest) -> RpcResult<()> {
         self.delete_proof_request_impl(request).await
+    }
+
+    async fn delete_proofs_by_tee_signer(
+        &self,
+        request: DeleteProofsByTeeSignerRequest,
+    ) -> RpcResult<u64> {
+        self.delete_proofs_by_tee_signer_impl(request).await
     }
 
     async fn list_proofs(&self, request: ListProofsRequest) -> RpcResult<ListProofsResponse> {

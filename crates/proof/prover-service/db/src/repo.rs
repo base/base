@@ -211,6 +211,7 @@ impl ProofRequestRepo {
                         stark_receipt = NULL,
                         snark_receipt = NULL,
                         result_payload = NULL,
+                        tee_signer = NULL,
                         submitted_by_worker_id = NULL,
                         submitted_lock_id = NULL,
                         completed_at = NULL,
@@ -273,7 +274,6 @@ impl ProofRequestRepo {
         }
 
         let id: Uuid = row.get("id");
-        // Outbox rows do not cascade; proof_sessions rows cascade from proof_requests.
         sqlx::query("DELETE FROM proof_request_outbox WHERE proof_request_id = $1")
             .bind(id)
             .execute(&mut *tx)
@@ -282,6 +282,40 @@ impl ProofRequestRepo {
 
         tx.commit().await?;
         Ok(DeleteProofRequestOutcome::Deleted)
+    }
+
+    /// Delete completed TEE proof requests produced by one reported signer.
+    ///
+    /// The `tee_signer` column is stored as lowercase `0x`-prefixed hex (via
+    /// `format!("{addr:#x}")`). The lookup lowercases its argument to match that
+    /// contract, so a differently-cased caller string still matches stored rows.
+    pub async fn delete_proof_requests_by_tee_signer(&self, tee_signer: &str) -> Result<u64> {
+        let tee_signer = tee_signer.to_lowercase();
+        let mut tx = self.pool.begin().await?;
+        let ids = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM proof_requests \
+             WHERE tee_signer = $1 AND status = 'SUCCEEDED' FOR UPDATE",
+        )
+        .bind(&tee_signer)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        sqlx::query("DELETE FROM proof_request_outbox WHERE proof_request_id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?;
+        let deleted = sqlx::query("DELETE FROM proof_requests WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+
+        tx.commit().await?;
+        Ok(deleted)
     }
 
     /// Get a proof request by ID
@@ -751,6 +785,10 @@ impl ProofRequestRepo {
 
         let result_payload =
             serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+        let tee_signer = match &req.result {
+            ProtocolProofResult::Tee(tee) => Some(format!("{:#x}", tee.tee_signer)),
+            _ => None,
+        };
 
         let (stark_receipt, snark_receipt) = compatibility_receipts_for_result(&req.result);
         let submitted_lock_id = req.lock_id.to_string();
@@ -765,6 +803,7 @@ impl ProofRequestRepo {
                 submitted_lock_id = $5,
                 stark_receipt = COALESCE($6, stark_receipt),
                 snark_receipt = COALESCE($7, snark_receipt),
+                tee_signer = $8,
                 error_message = NULL,
                 completed_at = NOW()
             WHERE COALESCE(session_id, id::text) = $1
@@ -784,6 +823,7 @@ impl ProofRequestRepo {
             .bind(&submitted_lock_id)
             .bind(&stark_receipt)
             .bind(&snark_receipt)
+            .bind(&tee_signer)
             .fetch_optional(&self.pool)
             .await?;
 
@@ -974,6 +1014,7 @@ impl ProofRequestRepo {
                 stark_receipt = NULL,
                 snark_receipt = NULL,
                 result_payload = NULL,
+                tee_signer = NULL,
                 submitted_by_worker_id = NULL,
                 submitted_lock_id = NULL,
                 completed_at = NULL,
