@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
             command.run(MonitoringConfig::load(config).await?).await
         }
         Some(Commands::P2p(command)) => {
-            if command.run(config).await?.has_failures() {
+            if command.run(MonitoringConfig::load(config).await?).await?.has_failures() {
                 std::process::exit(1);
             }
             Ok(())

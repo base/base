@@ -124,14 +124,12 @@ pub struct DestructiveClBulkArgs {
 
 impl P2pCommand {
     /// Runs the selected `basectl p2p` operation.
-    pub async fn run(self, config: &str) -> Result<CommandOutcome> {
+    pub async fn run(self, config: MonitoringConfig) -> Result<CommandOutcome> {
         match self.command {
             P2pCommands::Reachability { enode, json } => {
-                let config = MonitoringConfig::load(config).await?;
                 run_reachability(&config, &enode, json).await
             }
             other => {
-                let config = MonitoringConfig::load(config).await?;
                 match other {
                     P2pCommands::Peers(args) => run_peers(config, args).await?,
                     P2pCommands::Info(args) => run_info(config, args).await?,
@@ -879,8 +877,8 @@ mod tests {
     use url::Url;
 
     use super::{
-        AddTarget, P2pCommand, P2pCommands, PeerAction, PeerActionJson, PeerBulkActionResultJson,
-        PeerTarget, fail_unban_all_if_partial, resolve_cl_rpc, run_reachability,
+        AddTarget, PeerAction, PeerActionJson, PeerBulkActionResultJson, PeerTarget,
+        fail_unban_all_if_partial, resolve_cl_rpc, run_reachability,
     };
     use crate::{MonitoringConfig, P2pCommandError, P2pTargetError};
 
@@ -939,19 +937,6 @@ mod tests {
                 ..
             } if config_name == "devnet" && command_name == "p2p info"
         ));
-    }
-
-    #[tokio::test]
-    async fn reachability_loads_selected_monitoring_config() {
-        let command = P2pCommand {
-            command: P2pCommands::Reachability { enode: VALID_ENODE.to_string(), json: false },
-        };
-
-        let error = command.run("/definitely/missing/basectl.yaml").await.unwrap_err();
-
-        assert!(
-            error.to_string().starts_with("Config '/definitely/missing/basectl.yaml' not found")
-        );
     }
 
     #[tokio::test]
