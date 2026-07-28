@@ -4,14 +4,14 @@ use std::io::{self, Write};
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
-use serde::Serialize;
+use serde_json::{Value, json};
 use tracing::warn;
 use url::Url;
 
 use crate::{
     CommandOutcome, ConductorClusterSnapshot, ConductorCommandError, ConductorControl,
-    ConductorFanoutReport, ConductorNodeConfig, ConductorNodeFailure, ConductorNodeStatus,
-    ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig, OptionalValue,
+    ConductorFanoutReport, ConductorNodeConfig, ConductorNodeStatus, ConductorSource, Confirm,
+    JsonOutput, KeyValueTable, MonitoringConfig,
 };
 
 /// Inspect and control an HA conductor cluster.
@@ -88,74 +88,6 @@ pub struct ConductorClusterActionArgs {
     pub json: bool,
 }
 
-/// Single-node conductor action selected by dispatch.
-#[derive(Debug, Clone, Copy)]
-pub enum NodeActionKind {
-    /// Pause the control loop.
-    Pause,
-    /// Resume the control loop.
-    Unpause,
-}
-
-impl NodeActionKind {
-    const fn action(self) -> ConductorAction {
-        match self {
-            Self::Pause => ConductorAction::Pause,
-            Self::Unpause => ConductorAction::Unpause,
-        }
-    }
-
-    const fn verb(self) -> &'static str {
-        match self {
-            Self::Pause => "Pause",
-            Self::Unpause => "Unpause",
-        }
-    }
-}
-
-/// Cluster-wide conductor action selected by dispatch.
-#[derive(Debug, Clone, Copy)]
-pub enum ClusterActionKind {
-    /// Pause every node.
-    PauseAll,
-    /// Resume every node.
-    UnpauseAll,
-}
-
-/// Membership source used for a cluster-wide action.
-#[derive(Debug, Clone, Copy)]
-pub enum ClusterNodeScope {
-    /// Nodes returned by live raft membership.
-    CurrentRaftMembers,
-    /// Nodes from static configuration.
-    ConfiguredNodes,
-}
-
-impl ClusterNodeScope {
-    const fn description(self) -> &'static str {
-        match self {
-            Self::CurrentRaftMembers => "current raft members",
-            Self::ConfiguredNodes => "configured conductors",
-        }
-    }
-}
-
-impl ClusterActionKind {
-    const fn action(self) -> ConductorAction {
-        match self {
-            Self::PauseAll => ConductorAction::PauseAll,
-            Self::UnpauseAll => ConductorAction::UnpauseAll,
-        }
-    }
-
-    const fn verb(self) -> &'static str {
-        match self {
-            Self::PauseAll => "pause",
-            Self::UnpauseAll => "unpause",
-        }
-    }
-}
-
 impl ConductorCommand {
     /// Runs the selected conductor subcommand.
     pub async fn run(
@@ -170,17 +102,13 @@ impl ConductorCommand {
             ConductorCommands::TransferLeader(args) => {
                 run_transfer_leader(config, source, args).await
             }
-            ConductorCommands::Pause(args) => {
-                run_node_action(config, source, args, NodeActionKind::Pause).await
-            }
-            ConductorCommands::Unpause(args) => {
-                run_node_action(config, source, args, NodeActionKind::Unpause).await
-            }
+            ConductorCommands::Pause(args) => run_node_action(config, source, args, true).await,
+            ConductorCommands::Unpause(args) => run_node_action(config, source, args, false).await,
             ConductorCommands::PauseAll(args) => {
-                run_cluster_action(config, source, args, ClusterActionKind::PauseAll).await
+                run_cluster_action(config, source, args, true).await
             }
             ConductorCommands::UnpauseAll(args) => {
-                run_cluster_action(config, source, args, ClusterActionKind::UnpauseAll).await
+                run_cluster_action(config, source, args, false).await
             }
         }
     }
@@ -192,11 +120,10 @@ async fn run_status(
     args: ConductorStatusArgs,
 ) -> Result<CommandOutcome> {
     let snapshot = ConductorControl::snapshot(source).await?;
-    let status = ConductorStatusJson::from_snapshot(&config.name, &snapshot);
     if args.json {
-        JsonOutput::print(&status)?;
+        JsonOutput::print(&conductor_status_json(&config.name, &snapshot))?;
     } else {
-        print_status_pretty(&status)?;
+        print_status_pretty(&config.name, &snapshot)?;
     }
     Ok(CommandOutcome::Success)
 }
@@ -227,15 +154,7 @@ async fn run_transfer_leader(
     }
 
     let message = ConductorControl::transfer_leader(&nodes, args.target.as_deref()).await?;
-    print_single_action(
-        &ConductorActionJson::single(
-            &config.name,
-            ConductorAction::TransferLeader,
-            args.target,
-            message,
-        ),
-        args.json,
-    )?;
+    print_single_action(&config.name, "transferLeader", args.target, &message, args.json)?;
     Ok(CommandOutcome::Success)
 }
 
@@ -243,15 +162,14 @@ async fn run_node_action(
     config: MonitoringConfig,
     source: ConductorSource,
     args: ConductorNodeActionArgs,
-    action: NodeActionKind,
+    pause: bool,
 ) -> Result<CommandOutcome> {
     let nodes = current_nodes_for_action(&source).await?;
     let node =
         ConductorNodeConfig::find(&nodes, &args.node).map_err(ConductorCommandError::from)?;
-    let json_action = action.action();
     let prompt = format!(
         "{} conductor control loop on {} ({})? [y/N] ",
-        action.verb(),
+        if pause { "Pause" } else { "Unpause" },
         node.name,
         node.conductor_rpc
     );
@@ -259,12 +177,16 @@ async fn run_node_action(
         return Ok(CommandOutcome::Success);
     }
 
-    let message = match action {
-        NodeActionKind::Pause => ConductorControl::pause_node(node).await?,
-        NodeActionKind::Unpause => ConductorControl::resume_node(node).await?,
+    let message = if pause {
+        ConductorControl::pause_node(node).await?
+    } else {
+        ConductorControl::resume_node(node).await?
     };
     print_single_action(
-        &ConductorActionJson::single(&config.name, json_action, Some(node.name.clone()), message),
+        &config.name,
+        if pause { "pause" } else { "unpause" },
+        Some(node.name.clone()),
+        &message,
         args.json,
     )?;
     Ok(CommandOutcome::Success)
@@ -274,29 +196,34 @@ async fn run_cluster_action(
     config: MonitoringConfig,
     source: ConductorSource,
     args: ConductorClusterActionArgs,
-    action: ClusterActionKind,
+    pause: bool,
 ) -> Result<CommandOutcome> {
     let (nodes, node_scope) = current_nodes_for_cluster_action(&source).await?;
     let names = nodes.iter().map(|node| node.name.as_str()).collect::<Vec<_>>().join(", ");
-    let json_action = action.action();
+    let verb = if pause { "pause" } else { "unpause" };
     let prompt = format!(
         "Type {} to {} conductor control loop on all {} {} ({}): ",
         config.name,
-        action.verb(),
+        verb,
         nodes.len(),
-        node_scope.description(),
+        node_scope,
         names
     );
     if !Confirm::typed_or_abort(&prompt, &config.name, args.yes)? {
         return Ok(CommandOutcome::Success);
     }
 
-    let report = match action {
-        ClusterActionKind::PauseAll => ConductorControl::pause_all(nodes).await,
-        ClusterActionKind::UnpauseAll => ConductorControl::resume_all(nodes).await,
+    let report = if pause {
+        ConductorControl::pause_all(nodes).await
+    } else {
+        ConductorControl::resume_all(nodes).await
     };
     print_fanout_action(
-        &ConductorFanoutJson::from_report(&config.name, json_action, &report),
+        &config.name,
+        if pause { "pauseAll" } else { "unpauseAll" },
+        verb,
+        if pause { "paused" } else { "resumed" },
+        &report,
         args.json,
     )?;
     Ok(CommandOutcome::from_failures(fanout_requires_failure_exit(&report)))
@@ -314,7 +241,7 @@ async fn current_nodes_for_action(source: &ConductorSource) -> Result<Vec<Conduc
 
 async fn current_nodes_for_cluster_action(
     source: &ConductorSource,
-) -> Result<(Vec<ConductorNodeConfig>, ClusterNodeScope)> {
+) -> Result<(Vec<ConductorNodeConfig>, &'static str)> {
     match source {
         // Prefer live membership when it is reachable so stale static entries are
         // not mutated unnecessarily, but fall back to the configured list so a
@@ -323,21 +250,21 @@ async fn current_nodes_for_cluster_action(
             match ConductorControl::current_membership(source).await {
                 Ok(membership) => Ok((
                     ConductorControl::nodes_from_membership(source, &membership)?,
-                    ClusterNodeScope::CurrentRaftMembers,
+                    "current raft members",
                 )),
                 Err(error) => {
                     warn!(
                         error = %error,
                         "membership lookup failed for static conductor source; falling back to configured node list"
                     );
-                    Ok((nodes.clone(), ClusterNodeScope::ConfiguredNodes))
+                    Ok((nodes.clone(), "configured conductors"))
                 }
             }
         }
         ConductorSource::Discover { .. } => {
             let membership = ConductorControl::current_membership(source).await?;
             let nodes = ConductorControl::nodes_from_membership(source, &membership)?;
-            Ok((nodes, ClusterNodeScope::CurrentRaftMembers))
+            Ok((nodes, "current raft members"))
         }
     }
 }
@@ -346,54 +273,92 @@ const fn fanout_requires_failure_exit(report: &ConductorFanoutReport) -> bool {
     !report.is_success()
 }
 
-fn print_status_pretty(status: &ConductorStatusJson) -> Result<()> {
+fn print_status_pretty(network: &str, snapshot: &ConductorClusterSnapshot) -> Result<()> {
     let mut table = KeyValueTable::new();
     table
-        .row("network", &status.network)
-        .row("source", status.source)
-        .row("nodes", status.nodes.len().to_string());
-    if let Some(version) = status.membership_version {
+        .row("network", network)
+        .row("source", if snapshot.discovered { "discovered" } else { "static" })
+        .row("nodes", snapshot.nodes.len().to_string());
+    if let Some(version) = snapshot.membership.as_ref().map(|membership| membership.version) {
         table.row("membership_version", version.to_string());
     }
-    if let Some(error) = &status.membership_error {
+    if let Some(error) = &snapshot.membership_error {
         table.row("membership_error", error);
     }
-    table.row("leader", status.leader.as_deref().unwrap_or("unknown"));
-    table.row("paused", format!("{}/{} known paused", status.paused.paused, status.paused.known));
-    for node in &status.nodes {
-        table.row(format!("node.{}", node.name), node.compact_status());
+    let leader = snapshot
+        .nodes
+        .iter()
+        .find(|node| {
+            snapshot
+                .statuses
+                .iter()
+                .find(|status| status.name == node.name)
+                .is_some_and(|status| status.is_leader == Some(true))
+        })
+        .map(|node| node.name.as_str())
+        .unwrap_or("unknown");
+    let known_paused = snapshot
+        .nodes
+        .iter()
+        .filter_map(|node| snapshot.statuses.iter().find(|status| status.name == node.name))
+        .filter(|status| status.conductor_paused.is_some())
+        .count();
+    let paused = snapshot
+        .nodes
+        .iter()
+        .filter_map(|node| snapshot.statuses.iter().find(|status| status.name == node.name))
+        .filter(|status| status.conductor_paused == Some(true))
+        .count();
+    table.row("leader", leader);
+    table.row("paused", format!("{paused}/{known_paused} known paused"));
+    for node in &snapshot.nodes {
+        let status = snapshot.statuses.iter().find(|status| status.name == node.name);
+        table.row(format!("node.{}", node.name), conductor_node_compact_status(status));
     }
     table.print()?;
     Ok(())
 }
 
-fn print_single_action(action: &ConductorActionJson, json: bool) -> Result<()> {
-    if json {
-        JsonOutput::print(action)?;
+fn print_single_action(
+    network: &str,
+    action: &str,
+    target: Option<String>,
+    message: &str,
+    json_output: bool,
+) -> Result<()> {
+    if json_output {
+        JsonOutput::print(&conductor_action_json(network, action, target, message))?;
     } else {
         let mut stdout = io::stdout().lock();
-        writeln!(stdout, "OK {}", action.message)?;
+        writeln!(stdout, "OK {message}")?;
     }
     Ok(())
 }
 
-fn print_fanout_action(action: &ConductorFanoutJson, json: bool) -> Result<()> {
-    if json {
-        JsonOutput::print(action)?;
+fn print_fanout_action(
+    network: &str,
+    action: &str,
+    infinitive: &str,
+    past_tense: &str,
+    report: &ConductorFanoutReport,
+    json_output: bool,
+) -> Result<()> {
+    if json_output {
+        JsonOutput::print(&conductor_fanout_json(network, action, report))?;
     } else {
         let mut stdout = io::stdout().lock();
-        if action.total == 0 {
-            writeln!(stdout, "WARN no conductor nodes to {}", action.action.infinitive())?;
-        } else if action.failures.is_empty() {
+        if report.total == 0 {
+            writeln!(stdout, "WARN no conductor nodes to {infinitive}")?;
+        } else if report.failures.is_empty() {
             writeln!(
                 stdout,
                 "OK conductor {} on {}/{} nodes",
-                action.action.past_tense(),
-                action.successes.len(),
-                action.total
+                past_tense,
+                report.successes.len(),
+                report.total
             )?;
         } else {
-            let failures = action
+            let failures = report
                 .failures
                 .iter()
                 .map(|f| format!("{}: {}", f.name, f.error))
@@ -402,291 +367,147 @@ fn print_fanout_action(action: &ConductorFanoutJson, json: bool) -> Result<()> {
             writeln!(
                 stdout,
                 "WARN conductor {} on {}/{} nodes; failures: {failures}",
-                action.action.past_tense(),
-                action.successes.len(),
-                action.total
+                past_tense,
+                report.successes.len(),
+                report.total
             )?;
         }
     }
     Ok(())
 }
 
-/// Conductor operation represented in JSON output.
-#[derive(Debug, Clone, Copy, Serialize)]
-pub enum ConductorAction {
-    /// Transfer raft leadership.
-    #[serde(rename = "transferLeader")]
-    TransferLeader,
-    /// Pause one conductor.
-    #[serde(rename = "pause")]
-    Pause,
-    /// Resume one conductor.
-    #[serde(rename = "unpause")]
-    Unpause,
-    /// Pause every conductor.
-    #[serde(rename = "pauseAll")]
-    PauseAll,
-    /// Resume every conductor.
-    #[serde(rename = "unpauseAll")]
-    UnpauseAll,
-}
-
-impl ConductorAction {
-    const fn past_tense(self) -> &'static str {
-        match self {
-            Self::TransferLeader => "transferred",
-            Self::Pause | Self::PauseAll => "paused",
-            Self::Unpause | Self::UnpauseAll => "resumed",
-        }
+fn conductor_action_json(
+    network: &str,
+    action: &str,
+    target: Option<String>,
+    message: &str,
+) -> Value {
+    let mut value = json!({
+        "network": network,
+        "action": action,
+        "message": message,
+    });
+    if let Some(target) = target {
+        value["target"] = json!(target);
     }
+    value
+}
 
-    const fn infinitive(self) -> &'static str {
-        match self {
-            Self::TransferLeader => "transfer",
-            Self::Pause | Self::PauseAll => "pause",
-            Self::Unpause | Self::UnpauseAll => "resume",
-        }
+fn conductor_fanout_json(network: &str, action: &str, report: &ConductorFanoutReport) -> Value {
+    json!({
+        "network": network,
+        "action": action,
+        "total": report.total,
+        "successes": report.successes,
+        "failures": report.failures.iter().map(|failure| json!({
+            "name": failure.name,
+            "error": failure.error,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn conductor_status_json(network: &str, snapshot: &ConductorClusterSnapshot) -> Value {
+    let nodes = snapshot
+        .nodes
+        .iter()
+        .map(|node| {
+            let status = snapshot.statuses.iter().find(|status| status.name == node.name);
+            conductor_node_json(node, status, snapshot.discovered)
+        })
+        .collect::<Vec<_>>();
+    let leader = snapshot
+        .nodes
+        .iter()
+        .find(|node| {
+            snapshot
+                .statuses
+                .iter()
+                .find(|status| status.name == node.name)
+                .is_some_and(|status| status.is_leader == Some(true))
+        })
+        .map(|node| node.name.clone());
+    let mut value = json!({
+        "network": network,
+        "source": if snapshot.discovered { "discovered" } else { "static" },
+        "leader": leader,
+        "paused": {
+            "known": snapshot.nodes.iter()
+                .filter_map(|node| snapshot.statuses.iter().find(|status| status.name == node.name))
+                .filter(|status| status.conductor_paused.is_some())
+                .count(),
+            "paused": snapshot.nodes.iter()
+                .filter_map(|node| snapshot.statuses.iter().find(|status| status.name == node.name))
+                .filter(|status| status.conductor_paused == Some(true))
+                .count(),
+        },
+        "nodes": nodes,
+    });
+    if let Some(version) = snapshot.membership.as_ref().map(|membership| membership.version) {
+        value["membershipVersion"] = json!(version);
     }
-}
-
-/// JSON result for a single conductor action.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConductorActionJson {
-    /// Network name.
-    pub network: String,
-    /// Action performed.
-    pub action: ConductorAction,
-    /// Optional target node.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
-    /// Human-readable result.
-    pub message: String,
-}
-
-impl ConductorActionJson {
-    fn single(
-        network: &str,
-        action: ConductorAction,
-        target: Option<String>,
-        message: String,
-    ) -> Self {
-        Self { network: network.to_string(), action, target, message }
+    if let Some(error) = &snapshot.membership_error {
+        value["membershipError"] = json!(error);
     }
+    value
 }
 
-/// JSON result for a cluster-wide conductor action.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConductorFanoutJson {
-    /// Network name.
-    pub network: String,
-    /// Action performed.
-    pub action: ConductorAction,
-    /// Number of targeted nodes.
-    pub total: usize,
-    /// Nodes where the action succeeded.
-    pub successes: Vec<String>,
-    /// Per-node failures.
-    pub failures: Vec<ConductorFailureJson>,
+fn conductor_node_json(
+    node: &ConductorNodeConfig,
+    status: Option<&ConductorNodeStatus>,
+    discovered: bool,
+) -> Value {
+    json!({
+        "name": node.name,
+        "serverId": node.server_id,
+        "raftAddr": node.raft_addr,
+        "conductorRpc": node.conductor_rpc.to_string(),
+        "isLeader": status.and_then(|status| status.is_leader),
+        "conductorActive": status.and_then(|status| status.conductor_active),
+        "conductorPaused": status.and_then(|status| status.conductor_paused),
+        "conductorStopped": status.and_then(|status| status.conductor_stopped),
+        "sequencerHealthy": status.and_then(|status| status.sequencer_healthy),
+        "sequencerActive": status.and_then(|status| status.sequencer_active),
+        "unsafeL2Block": status.and_then(|status| status.unsafe_l2_block),
+        "unsafeL2Hash": status.and_then(|status| status.unsafe_l2_hash).map(|hash| hash.to_string()),
+        "safeL2Block": status.and_then(|status| status.safe_l2_block),
+        "safeL2Hash": status.and_then(|status| status.safe_l2_hash).map(|hash| hash.to_string()),
+        "finalizedL2Block": status.and_then(|status| status.finalized_l2_block),
+        "currentL1Block": status.and_then(|status| status.current_l1_block),
+        "headL1Block": status.and_then(|status| status.head_l1_block),
+        "clPeerCount": status.and_then(|status| status.cl_peer_count),
+        "elBlock": status.and_then(|status| status.el_block),
+        "elSyncing": status.and_then(|status| status.el_syncing),
+        "elPeerCount": status.and_then(|status| status.el_peer_count),
+        "suffrage": status.and_then(|status| {
+            status.suffrage.map(|suffrage| format!("{suffrage:?}").to_ascii_lowercase())
+        }),
+        "discovered": discovered,
+    })
 }
 
-impl ConductorFanoutJson {
-    fn from_report(network: &str, action: ConductorAction, report: &ConductorFanoutReport) -> Self {
-        Self {
-            network: network.to_string(),
-            action,
-            total: report.total,
-            successes: report.successes.clone(),
-            failures: report.failures.iter().map(ConductorFailureJson::from_failure).collect(),
-        }
-    }
-}
-
-/// JSON representation of a conductor node action failure.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConductorFailureJson {
-    /// Node name.
-    pub name: String,
-    /// Failure message.
-    pub error: String,
-}
-
-impl ConductorFailureJson {
-    fn from_failure(failure: &ConductorNodeFailure) -> Self {
-        Self { name: failure.name.clone(), error: failure.error.clone() }
-    }
-}
-
-/// JSON conductor cluster status.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConductorStatusJson {
-    /// Network name.
-    pub network: String,
-    /// Membership source.
-    pub source: &'static str,
-    /// Raft membership version.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub membership_version: Option<u64>,
-    /// Membership lookup error.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub membership_error: Option<String>,
-    /// Current leader node.
-    pub leader: Option<String>,
-    /// Pause-state summary.
-    pub paused: PausedSummaryJson,
-    /// Per-node statuses.
-    pub nodes: Vec<ConductorNodeJson>,
-}
-
-impl ConductorStatusJson {
-    fn from_snapshot(network: &str, snapshot: &ConductorClusterSnapshot) -> Self {
-        let source = if snapshot.discovered { "discovered" } else { "static" };
-        let nodes = snapshot
-            .nodes
-            .iter()
-            .map(|node| {
-                let status = snapshot.statuses.iter().find(|status| status.name == node.name);
-                ConductorNodeJson::from_node_status(node, status, snapshot.discovered)
-            })
-            .collect::<Vec<_>>();
-        let leader =
-            nodes.iter().find(|node| node.is_leader == Some(true)).map(|node| node.name.clone());
-        let paused = PausedSummaryJson {
-            known: nodes.iter().filter(|node| node.conductor_paused.is_some()).count(),
-            paused: nodes.iter().filter(|node| node.conductor_paused == Some(true)).count(),
-        };
-
-        Self {
-            network: network.to_string(),
-            source,
-            membership_version: snapshot.membership.as_ref().map(|membership| membership.version),
-            membership_error: snapshot.membership_error.clone(),
-            leader,
-            paused,
-            nodes,
-        }
-    }
-}
-
-/// Summary of known paused conductor nodes.
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PausedSummaryJson {
-    /// Nodes with a known pause state.
-    pub known: usize,
-    /// Known paused nodes.
-    pub paused: usize,
-}
-
-/// JSON status for one conductor node.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConductorNodeJson {
-    /// Node name.
-    pub name: String,
-    /// Raft server ID.
-    pub server_id: String,
-    /// Raft address.
-    pub raft_addr: String,
-    /// Conductor RPC URL.
-    pub conductor_rpc: String,
-    /// Whether this node is leader.
-    pub is_leader: Option<bool>,
-    /// Whether the conductor is active.
-    pub conductor_active: Option<bool>,
-    /// Whether the conductor is paused.
-    pub conductor_paused: Option<bool>,
-    /// Whether the conductor is stopped.
-    pub conductor_stopped: Option<bool>,
-    /// Whether the sequencer is healthy.
-    pub sequencer_healthy: Option<bool>,
-    /// Whether the sequencer is active.
-    pub sequencer_active: Option<bool>,
-    /// Unsafe L2 block number.
-    pub unsafe_l2_block: Option<u64>,
-    /// Unsafe L2 block hash.
-    pub unsafe_l2_hash: Option<String>,
-    /// Safe L2 block number.
-    pub safe_l2_block: Option<u64>,
-    /// Safe L2 block hash.
-    pub safe_l2_hash: Option<String>,
-    /// Finalized L2 block number.
-    pub finalized_l2_block: Option<u64>,
-    /// Current L1 block number.
-    pub current_l1_block: Option<u64>,
-    /// Head L1 block number.
-    pub head_l1_block: Option<u64>,
-    /// Consensus-layer peer count.
-    pub cl_peer_count: Option<u32>,
-    /// Execution-layer block number.
-    pub el_block: Option<u64>,
-    /// Whether the execution layer is syncing.
-    pub el_syncing: Option<bool>,
-    /// Execution-layer peer count.
-    pub el_peer_count: Option<u32>,
-    /// Raft suffrage.
-    pub suffrage: Option<String>,
-    /// Whether runtime discovery produced this node.
-    pub discovered: bool,
-}
-
-impl ConductorNodeJson {
-    fn from_node_status(
-        node: &ConductorNodeConfig,
-        status: Option<&ConductorNodeStatus>,
-        discovered: bool,
-    ) -> Self {
-        Self {
-            name: node.name.clone(),
-            server_id: node.server_id.clone(),
-            raft_addr: node.raft_addr.clone(),
-            conductor_rpc: node.conductor_rpc.to_string(),
-            is_leader: status.and_then(|status| status.is_leader),
-            conductor_active: status.and_then(|status| status.conductor_active),
-            conductor_paused: status.and_then(|status| status.conductor_paused),
-            conductor_stopped: status.and_then(|status| status.conductor_stopped),
-            sequencer_healthy: status.and_then(|status| status.sequencer_healthy),
-            sequencer_active: status.and_then(|status| status.sequencer_active),
-            unsafe_l2_block: status.and_then(|status| status.unsafe_l2_block),
-            unsafe_l2_hash: status
-                .and_then(|status| status.unsafe_l2_hash)
-                .map(|hash| hash.to_string()),
-            safe_l2_block: status.and_then(|status| status.safe_l2_block),
-            safe_l2_hash: status
-                .and_then(|status| status.safe_l2_hash)
-                .map(|hash| hash.to_string()),
-            finalized_l2_block: status.and_then(|status| status.finalized_l2_block),
-            current_l1_block: status.and_then(|status| status.current_l1_block),
-            head_l1_block: status.and_then(|status| status.head_l1_block),
-            cl_peer_count: status.and_then(|status| status.cl_peer_count),
-            el_block: status.and_then(|status| status.el_block),
-            el_syncing: status.and_then(|status| status.el_syncing),
-            el_peer_count: status.and_then(|status| status.el_peer_count),
-            suffrage: status.and_then(|status| {
-                status.suffrage.map(|suffrage| format!("{suffrage:?}").to_ascii_lowercase())
-            }),
-            discovered,
-        }
-    }
-
-    fn compact_status(&self) -> String {
-        format!(
-            "leader={} conductor_active={} conductor_paused={} conductor_stopped={} sequencer_active={} sequencer_healthy={} unsafe={} safe={} cl_peers={} el_peers={}",
-            OptionalValue::boolean(self.is_leader),
-            OptionalValue::boolean(self.conductor_active),
-            OptionalValue::boolean(self.conductor_paused),
-            OptionalValue::boolean(self.conductor_stopped),
-            OptionalValue::boolean(self.sequencer_active),
-            OptionalValue::boolean(self.sequencer_healthy),
-            OptionalValue::u64(self.unsafe_l2_block),
-            OptionalValue::u64(self.safe_l2_block),
-            OptionalValue::u32(self.cl_peer_count),
-            OptionalValue::u32(self.el_peer_count),
-        )
-    }
+fn conductor_node_compact_status(status: Option<&ConductorNodeStatus>) -> String {
+    let boolean = |value| match value {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "unknown",
+    };
+    let u64 =
+        |value: Option<u64>| value.map_or_else(|| "unknown".to_string(), |value| value.to_string());
+    let u32 =
+        |value: Option<u32>| value.map_or_else(|| "unknown".to_string(), |value| value.to_string());
+    format!(
+        "leader={} conductor_active={} conductor_paused={} conductor_stopped={} sequencer_active={} sequencer_healthy={} unsafe={} safe={} cl_peers={} el_peers={}",
+        boolean(status.and_then(|status| status.is_leader)),
+        boolean(status.and_then(|status| status.conductor_active)),
+        boolean(status.and_then(|status| status.conductor_paused)),
+        boolean(status.and_then(|status| status.conductor_stopped)),
+        boolean(status.and_then(|status| status.sequencer_active)),
+        boolean(status.and_then(|status| status.sequencer_healthy)),
+        u64(status.and_then(|status| status.unsafe_l2_block)),
+        u64(status.and_then(|status| status.safe_l2_block)),
+        u32(status.and_then(|status| status.cl_peer_count)),
+        u32(status.and_then(|status| status.el_peer_count)),
+    )
 }
 
 #[cfg(test)]
@@ -696,8 +517,8 @@ mod tests {
     use url::Url;
 
     use super::{
-        ConductorAction, ConductorActionJson, ConductorFanoutJson, ConductorNodeJson,
-        ConductorStatusJson, fanout_requires_failure_exit,
+        conductor_action_json, conductor_fanout_json, conductor_node_compact_status,
+        conductor_status_json, fanout_requires_failure_exit,
     };
     use crate::{
         CommandOutcome, ConductorClusterSnapshot, ConductorCommandError, ConductorNodeConfig,
@@ -746,13 +567,12 @@ mod tests {
 
     #[test]
     fn conductor_action_json_serializes_camel_case_action() {
-        let value = serde_json::to_value(ConductorActionJson::single(
+        let value = conductor_action_json(
             "devnet",
-            ConductorAction::TransferLeader,
+            "transferLeader",
             Some("op-conductor-1".to_string()),
-            "leadership transferred to op-conductor-1".to_string(),
-        ))
-        .unwrap();
+            "leadership transferred to op-conductor-1",
+        );
 
         assert_eq!(
             value,
@@ -776,12 +596,7 @@ mod tests {
             }],
         };
 
-        let value = serde_json::to_value(ConductorFanoutJson::from_report(
-            "devnet",
-            ConductorAction::PauseAll,
-            &report,
-        ))
-        .unwrap();
+        let value = conductor_fanout_json("devnet", "pauseAll", &report);
 
         assert_eq!(
             value,
@@ -840,8 +655,7 @@ mod tests {
             discovered: false,
         };
 
-        let value =
-            serde_json::to_value(ConductorStatusJson::from_snapshot("devnet", &snapshot)).unwrap();
+        let value = conductor_status_json("devnet", &snapshot);
 
         assert_eq!(value["leader"], "op-conductor-0");
         assert_eq!(value["paused"], json!({"known": 2, "paused": 1}));
@@ -850,14 +664,12 @@ mod tests {
 
     #[test]
     fn compact_status_distinguishes_conductor_and_sequencer_activity() {
-        let node = node("op-conductor-0");
         let mut node_status = status("op-conductor-0", true, true);
         node_status.conductor_active = Some(false);
         node_status.conductor_paused = Some(true);
         node_status.sequencer_active = Some(true);
 
-        let compact =
-            ConductorNodeJson::from_node_status(&node, Some(&node_status), false).compact_status();
+        let compact = conductor_node_compact_status(Some(&node_status));
 
         assert!(compact.contains("conductor_active=false"));
         assert!(compact.contains("conductor_paused=true"));
@@ -875,8 +687,7 @@ mod tests {
             discovered: true,
         };
 
-        let value =
-            serde_json::to_value(ConductorStatusJson::from_snapshot("devnet", &snapshot)).unwrap();
+        let value = conductor_status_json("devnet", &snapshot);
 
         assert_eq!(value["nodes"][0]["discovered"], true);
     }
@@ -891,8 +702,7 @@ mod tests {
             discovered: false,
         };
 
-        let value =
-            serde_json::to_value(ConductorStatusJson::from_snapshot("devnet", &snapshot)).unwrap();
+        let value = conductor_status_json("devnet", &snapshot);
 
         assert_eq!(value["membershipError"], "membership request timed out");
     }

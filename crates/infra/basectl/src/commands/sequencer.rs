@@ -10,7 +10,7 @@ use std::{
 use alloy_primitives::B256;
 use anyhow::Result;
 use clap::{Args, Subcommand};
-use serde::Serialize;
+use serde_json::{Value, json};
 use tokio::time::{Instant, sleep, timeout};
 use tracing::{debug, info, warn};
 use url::Url;
@@ -18,8 +18,8 @@ use url::Url;
 use crate::{
     CommandOutcome, ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig,
     ConductorNodeStatus, ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig,
-    OptionalValue, SequencerCommandError, StateConvergenceTimeoutError, fetch_sequencer_active,
-    start_sequencer, stop_sequencer,
+    SequencerCommandError, StateConvergenceTimeoutError, fetch_sequencer_active, start_sequencer,
+    stop_sequencer,
 };
 
 /// Inspect and control sequencer activity on HA conductor nodes.
@@ -89,15 +89,6 @@ const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(12);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const REQUIRED_OBSERVATIONS: usize = 2;
 
-/// Leadership knowledge available during start preflight.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LeadershipStatus {
-    /// The target is the confirmed leader.
-    ConfirmedLeader,
-    /// Leadership could not be established locally.
-    Unknown,
-}
-
 impl SequencerCommand {
     /// Runs the selected sequencer subcommand.
     pub async fn run(
@@ -127,19 +118,27 @@ async fn run_status(
         "fetching sequencer status"
     );
     let snapshot = ConductorControl::snapshot(source).await?;
-    let status = SequencerStatusJson::from_snapshot(&config.name, &snapshot, args.node.as_deref())?;
+    let status = sequencer_status_json(&config.name, &snapshot, args.node.as_deref())?;
     debug!(
         network = %config.name,
-        leader = ?status.leader,
-        node_count = status.nodes.len(),
-        membership_version = ?status.membership_version,
-        membership_error = ?status.membership_error,
+        leader = ?snapshot
+            .statuses
+            .iter()
+            .find(|status| status.is_leader == Some(true))
+            .map(|status| &status.name),
+        node_count = snapshot
+            .nodes
+            .iter()
+            .filter(|node| args.node.as_ref().is_none_or(|selected| node.name == *selected))
+            .count(),
+        membership_version = ?snapshot.membership.as_ref().map(|membership| membership.version),
+        membership_error = ?snapshot.membership_error,
         "sequencer status snapshot ready"
     );
     if args.json {
         JsonOutput::print(&status)?;
     } else {
-        print_status_pretty(&status)?;
+        print_status_pretty(&config.name, &snapshot, args.node.as_deref())?;
     }
     Ok(())
 }
@@ -166,8 +165,8 @@ async fn run_start(
         sequencer_active = ?status.and_then(|status| status.sequencer_active),
         "resolved sequencer start target"
     );
-    let leadership_status = match ensure_start_allowed(&snapshot, node, status) {
-        Ok(leadership_status) => leadership_status,
+    let leadership_confirmed = match ensure_start_allowed(&snapshot, node, status) {
+        Ok(leadership_confirmed) => leadership_confirmed,
         Err(error) => {
             warn!(
                 error = %error,
@@ -178,7 +177,7 @@ async fn run_start(
             return Err(error.into());
         }
     };
-    if matches!(leadership_status, LeadershipStatus::Unknown) {
+    if !leadership_confirmed {
         warn!(
             node = %node.name,
             cl_rpc = %node.cl_rpc,
@@ -206,7 +205,7 @@ async fn run_start(
             node = %node.name,
             cl_rpc = %node.cl_rpc,
             unsafe_head = %unsafe_head,
-            unsafe_head_source = %unsafe_head_source.as_str(),
+            unsafe_head_source,
             "sequencer start unsafe head validation failed"
         );
         return Err(error.into());
@@ -223,23 +222,24 @@ async fn run_start(
         node = %node.name,
         cl_rpc = %node.cl_rpc,
         unsafe_head = %unsafe_head,
-        unsafe_head_source = %unsafe_head_source.as_str(),
+        unsafe_head_source,
         "calling admin_startSequencer"
     );
     start_sequencer(&node.cl_rpc, unsafe_head).await?;
-    wait_for_expected_state(node, SequencerAction::Start, Some(unsafe_head)).await?;
+    wait_for_expected_state(node, true, Some(unsafe_head)).await?;
     info!(
         network = %config.name,
         node = %node.name,
         cl_rpc = %node.cl_rpc,
         unsafe_head = %unsafe_head,
-        unsafe_head_source = %unsafe_head_source.as_str(),
+        unsafe_head_source,
         "sequencer start completed"
     );
 
     let message = format!("sequencer started on {} at {}", node.name, unsafe_head);
     print_action(
-        &SequencerActionJson::start(&config.name, node, unsafe_head, unsafe_head_source, message),
+        &sequencer_start_json(&config.name, node, unsafe_head, unsafe_head_source, &message),
+        &message,
         args.json,
     )?;
     Ok(())
@@ -291,7 +291,7 @@ async fn run_stop(
     // A zero head means the sequencer stopped but the captured head is unavailable,
     // so do not surface it as a valid restart point.
     let captured_head = (unsafe_head != B256::ZERO).then_some(unsafe_head);
-    wait_for_expected_state(node, SequencerAction::Stop, captured_head).await?;
+    wait_for_expected_state(node, false, captured_head).await?;
     info!(
         network = %config.name,
         node = %node.name,
@@ -305,7 +305,8 @@ async fn run_stop(
         |unsafe_head| format!("sequencer stopped on {} at {unsafe_head}", node.name),
     );
     print_action(
-        &SequencerActionJson::stop(&config.name, node, captured_head, message),
+        &sequencer_stop_json(&config.name, node, captured_head, &message),
+        &message,
         args.json,
     )?;
     Ok(())
@@ -315,9 +316,9 @@ fn resolve_start_hash(
     snapshot: &ConductorClusterSnapshot,
     node: &ConductorNodeConfig,
     unsafe_head: Option<&str>,
-) -> Result<(B256, UnsafeHeadSource), SequencerCommandError> {
+) -> Result<(B256, &'static str), SequencerCommandError> {
     match unsafe_head {
-        Some(unsafe_head) => Ok((parse_unsafe_head(unsafe_head)?, UnsafeHeadSource::Explicit)),
+        Some(unsafe_head) => Ok((parse_unsafe_head(unsafe_head)?, "explicit")),
         None => {
             let hash = snapshot_node_status(snapshot, &node.name)
                 .and_then(|status| status.unsafe_l2_hash)
@@ -325,7 +326,7 @@ fn resolve_start_hash(
                 .ok_or_else(|| SequencerCommandError::MissingUnsafeHead {
                     node: node.name.clone(),
                 })?;
-            Ok((hash, UnsafeHeadSource::Observed))
+            Ok((hash, "observed"))
         }
     }
 }
@@ -341,11 +342,11 @@ fn ensure_start_allowed(
     snapshot: &ConductorClusterSnapshot,
     node: &ConductorNodeConfig,
     status: Option<&ConductorNodeStatus>,
-) -> Result<LeadershipStatus, SequencerCommandError> {
+) -> Result<bool, SequencerCommandError> {
     if status.and_then(|status| status.sequencer_active) == Some(true) {
         return Err(SequencerCommandError::AlreadyActive { node: node.name.clone() });
     }
-    ensure_leader_target(snapshot, node, status, SequencerAction::Start)
+    ensure_leader_target(snapshot, node, status, "start")
 }
 
 fn ensure_stop_allowed(
@@ -362,8 +363,8 @@ fn ensure_leader_target(
     snapshot: &ConductorClusterSnapshot,
     node: &ConductorNodeConfig,
     status: Option<&ConductorNodeStatus>,
-    action: SequencerAction,
-) -> Result<LeadershipStatus, SequencerCommandError> {
+    action: &str,
+) -> Result<bool, SequencerCommandError> {
     let leader = snapshot
         .statuses
         .iter()
@@ -371,29 +372,29 @@ fn ensure_leader_target(
         .map(|status| status.name.as_str());
     if let Some(leader) = leader {
         if leader == node.name {
-            return Ok(LeadershipStatus::ConfirmedLeader);
+            return Ok(true);
         }
         return Err(SequencerCommandError::NotCurrentLeader {
             requested_node: node.name.clone(),
             current_leader: leader.to_string(),
-            action: action.infinitive().to_string(),
+            action: action.to_string(),
         });
     }
     if status.and_then(|status| status.is_leader) == Some(false) {
         return Err(SequencerCommandError::NotLeader {
             requested_node: node.name.clone(),
-            action: action.infinitive().to_string(),
+            action: action.to_string(),
         });
     }
-    Ok(LeadershipStatus::Unknown)
+    Ok(false)
 }
 
 fn ensure_start_request_matches_observed_head(
     status: Option<&ConductorNodeStatus>,
     unsafe_head: B256,
-    unsafe_head_source: UnsafeHeadSource,
+    unsafe_head_source: &str,
 ) -> Result<(), SequencerCommandError> {
-    if !matches!(unsafe_head_source, UnsafeHeadSource::Explicit) {
+    if unsafe_head_source != "explicit" {
         return Ok(());
     }
 
@@ -438,12 +439,12 @@ fn parse_unsafe_head(raw: &str) -> Result<B256, SequencerCommandError> {
 
 async fn wait_for_expected_state(
     node: &ConductorNodeConfig,
-    action: SequencerAction,
+    expected_active: bool,
     unsafe_head: Option<B256>,
 ) -> Result<(), SequencerCommandError> {
     wait_for_expected_state_with_fetch(
         node,
-        action,
+        expected_active,
         unsafe_head,
         OBSERVATION_TIMEOUT,
         POLL_INTERVAL,
@@ -454,7 +455,7 @@ async fn wait_for_expected_state(
 
 async fn wait_for_expected_state_with_fetch<F, Fut>(
     node: &ConductorNodeConfig,
-    action: SequencerAction,
+    expected_active: bool,
     unsafe_head: Option<B256>,
     observation_timeout: Duration,
     poll_interval: Duration,
@@ -464,7 +465,7 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<bool>>,
 {
-    let expected_active = action.expected_active();
+    let action = if expected_active { "start" } else { "stop" };
     let deadline = Instant::now() + observation_timeout;
     let mut matching_observations = 0usize;
     let mut last_observed = None;
@@ -473,7 +474,7 @@ where
     debug!(
         node = %node.name,
         cl_rpc = %node.cl_rpc,
-        action = %action.infinitive(),
+        action,
         expected_active,
         observation_timeout_ms = observation_timeout.as_millis(),
         poll_interval_ms = poll_interval.as_millis(),
@@ -495,7 +496,7 @@ where
                 debug!(
                     node = %node.name,
                     cl_rpc = %node.cl_rpc,
-                    action = %action.infinitive(),
+                    action,
                     observed_active = is_active,
                     matching_observations = next_matching_observations,
                     required_observations = REQUIRED_OBSERVATIONS,
@@ -506,7 +507,7 @@ where
                     info!(
                         node = %node.name,
                         cl_rpc = %node.cl_rpc,
-                        action = %action.infinitive(),
+                        action,
                         expected_active,
                         matching_observations,
                         "sequencer state converged"
@@ -520,7 +521,7 @@ where
                     error = %error,
                     node = %node.name,
                     cl_rpc = %node.cl_rpc,
-                    action = %action.infinitive(),
+                    action,
                     "failed to poll sequencer state"
                 );
                 last_error = Some(error.to_string());
@@ -529,7 +530,7 @@ where
                 debug!(
                     node = %node.name,
                     cl_rpc = %node.cl_rpc,
-                    action = %action.infinitive(),
+                    action,
                     "timed out waiting for sequencer state poll"
                 );
                 last_error = Some("timed out waiting for admin_sequencerActive".to_string());
@@ -547,358 +548,220 @@ where
     warn!(
         node = %node.name,
         cl_rpc = %node.cl_rpc,
-        action = %action.infinitive(),
+        action,
         expected_active,
         unsafe_head = ?unsafe_head,
         last_observed,
         last_error = ?last_error,
         "sequencer state did not converge after successful RPC"
     );
-    Err(action.timeout_error(node, unsafe_head, observation_timeout, last_observed, last_error))
+    Err(SequencerCommandError::StateConvergenceTimeout(Box::new(StateConvergenceTimeoutError {
+        action,
+        node: node.name.clone(),
+        cl_rpc: node.cl_rpc.to_string(),
+        unsafe_head,
+        expected_active,
+        timeout: observation_timeout,
+        last_observed,
+        last_error,
+    })))
 }
 
-fn print_status_pretty(status: &SequencerStatusJson) -> Result<()> {
+fn print_status_pretty(
+    network: &str,
+    snapshot: &ConductorClusterSnapshot,
+    selected_node: Option<&str>,
+) -> Result<()> {
     let mut table = KeyValueTable::new();
     table
-        .row("network", &status.network)
-        .row("source", status.source)
-        .row("nodes", status.nodes.len().to_string());
-    if let Some(selected_node) = &status.selected_node {
+        .row("network", network)
+        .row("source", if snapshot.discovered { "discovered" } else { "static" })
+        .row(
+            "nodes",
+            snapshot
+                .nodes
+                .iter()
+                .filter(|node| selected_node.is_none_or(|selected| node.name == selected))
+                .count()
+                .to_string(),
+        );
+    if let Some(selected_node) = selected_node {
         table.row("selected_node", selected_node);
     }
-    if let Some(version) = status.membership_version {
+    if let Some(version) = snapshot.membership.as_ref().map(|membership| membership.version) {
         table.row("membership_version", version.to_string());
     }
-    if let Some(error) = &status.membership_error {
+    if let Some(error) = &snapshot.membership_error {
         table.row("membership_error", error);
     }
-    table.row("leader", status.leader.as_deref().unwrap_or("unknown"));
-    for node in &status.nodes {
-        table.row(format!("node.{}", node.name), node.compact_status());
+    let leader = snapshot
+        .statuses
+        .iter()
+        .find(|status| status.is_leader == Some(true))
+        .map(|status| status.name.as_str())
+        .unwrap_or("unknown");
+    table.row("leader", leader);
+    for node in snapshot
+        .nodes
+        .iter()
+        .filter(|node| selected_node.is_none_or(|selected| node.name == selected))
+    {
+        let status = snapshot.statuses.iter().find(|status| status.name == node.name);
+        table.row(format!("node.{}", node.name), sequencer_node_compact_status(status));
     }
     table.print()?;
     Ok(())
 }
 
-fn print_action(action: &SequencerActionJson, json: bool) -> Result<()> {
-    if json {
+fn print_action(action: &Value, message: &str, json_output: bool) -> Result<()> {
+    if json_output {
         JsonOutput::print(action)?;
     } else {
         let mut stdout = io::stdout().lock();
-        writeln!(stdout, "OK {}", action.message)?;
+        writeln!(stdout, "OK {message}")?;
     }
     Ok(())
 }
 
-/// Sequencer mutation represented in command output.
-#[derive(Debug, Clone, Copy, Serialize)]
-pub enum SequencerAction {
-    /// Start sequencing.
-    #[serde(rename = "start")]
-    Start,
-    /// Stop sequencing.
-    #[serde(rename = "stop")]
-    Stop,
+fn sequencer_start_json(
+    network: &str,
+    node: &ConductorNodeConfig,
+    unsafe_head: B256,
+    unsafe_head_source: &str,
+    message: &str,
+) -> Value {
+    json!({
+        "network": network,
+        "action": "start",
+        "node": node.name,
+        "clRpc": node.cl_rpc.to_string(),
+        "unsafeHead": unsafe_head.to_string(),
+        "unsafeHeadSource": unsafe_head_source,
+        "message": message,
+    })
 }
 
-impl SequencerAction {
-    const fn expected_active(self) -> bool {
-        match self {
-            Self::Start => true,
-            Self::Stop => false,
-        }
+fn sequencer_stop_json(
+    network: &str,
+    node: &ConductorNodeConfig,
+    unsafe_head: Option<B256>,
+    message: &str,
+) -> Value {
+    let mut value = json!({
+        "network": network,
+        "action": "stop",
+        "node": node.name,
+        "clRpc": node.cl_rpc.to_string(),
+        "message": message,
+    });
+    if let Some(unsafe_head) = unsafe_head {
+        value["unsafeHead"] = json!(unsafe_head.to_string());
+    }
+    value
+}
+
+fn sequencer_status_json(
+    network: &str,
+    snapshot: &ConductorClusterSnapshot,
+    selected_node: Option<&str>,
+) -> Result<Value, SequencerCommandError> {
+    if let Some(selected_node) = selected_node {
+        ConductorNodeConfig::find(&snapshot.nodes, selected_node)
+            .map_err(SequencerCommandError::from)?;
     }
 
-    const fn infinitive(self) -> &'static str {
-        match self {
-            Self::Start => "start",
-            Self::Stop => "stop",
-        }
-    }
-
-    fn timeout_error(
-        self,
-        node: &ConductorNodeConfig,
-        unsafe_head: Option<B256>,
-        observation_timeout: Duration,
-        last_observed: Option<bool>,
-        last_error: Option<String>,
-    ) -> SequencerCommandError {
-        SequencerCommandError::StateConvergenceTimeout(Box::new(StateConvergenceTimeoutError {
-            action: self.infinitive(),
-            node: node.name.clone(),
-            cl_rpc: node.cl_rpc.to_string(),
-            unsafe_head,
-            expected_active: self.expected_active(),
-            timeout: observation_timeout,
-            last_observed,
-            last_error,
-        }))
-    }
-}
-
-/// Source of the unsafe head used to start sequencing.
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UnsafeHeadSource {
-    /// Supplied by the operator.
-    Explicit,
-    /// Read from the target node.
-    Observed,
-}
-
-impl UnsafeHeadSource {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Explicit => "explicit",
-            Self::Observed => "observed",
-        }
-    }
-}
-
-/// JSON result for a sequencer action.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SequencerActionJson {
-    /// Network name.
-    pub network: String,
-    /// Action performed.
-    pub action: SequencerAction,
-    /// Target node name.
-    pub node: String,
-    /// Target consensus-layer RPC URL.
-    pub cl_rpc: String,
-    /// Unsafe head associated with the action.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unsafe_head: Option<String>,
-    /// Source of the unsafe head.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unsafe_head_source: Option<UnsafeHeadSource>,
-    /// Human-readable result.
-    pub message: String,
-}
-
-impl SequencerActionJson {
-    fn start(
-        network: &str,
-        node: &ConductorNodeConfig,
-        unsafe_head: B256,
-        unsafe_head_source: UnsafeHeadSource,
-        message: String,
-    ) -> Self {
-        Self {
-            network: network.to_string(),
-            action: SequencerAction::Start,
-            node: node.name.clone(),
-            cl_rpc: node.cl_rpc.to_string(),
-            unsafe_head: Some(unsafe_head.to_string()),
-            unsafe_head_source: Some(unsafe_head_source),
-            message,
-        }
-    }
-
-    fn stop(
-        network: &str,
-        node: &ConductorNodeConfig,
-        unsafe_head: Option<B256>,
-        message: String,
-    ) -> Self {
-        Self {
-            network: network.to_string(),
-            action: SequencerAction::Stop,
-            node: node.name.clone(),
-            cl_rpc: node.cl_rpc.to_string(),
-            unsafe_head: unsafe_head.map(|unsafe_head| unsafe_head.to_string()),
-            unsafe_head_source: None,
-            message,
-        }
-    }
-}
-
-/// JSON sequencer cluster status.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SequencerStatusJson {
-    /// Network name.
-    pub network: String,
-    /// Membership source.
-    pub source: &'static str,
-    /// Selected node filter.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selected_node: Option<String>,
-    /// Raft membership version.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub membership_version: Option<u64>,
-    /// Membership lookup error.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub membership_error: Option<String>,
-    /// Current leader node.
-    pub leader: Option<String>,
-    /// Per-node statuses.
-    pub nodes: Vec<SequencerNodeJson>,
-}
-
-impl SequencerStatusJson {
-    fn from_snapshot(
-        network: &str,
-        snapshot: &ConductorClusterSnapshot,
-        selected_node: Option<&str>,
-    ) -> Result<Self, SequencerCommandError> {
-        if let Some(selected_node) = selected_node {
-            ConductorNodeConfig::find(&snapshot.nodes, selected_node)
-                .map_err(SequencerCommandError::from)?;
-        }
-
-        let nodes = snapshot
-            .nodes
-            .iter()
-            .filter(|node| selected_node.is_none_or(|selected_node| node.name == selected_node))
-            .map(|node| {
-                let status = snapshot.statuses.iter().find(|status| status.name == node.name);
-                SequencerNodeJson::from_node_status(node, status, snapshot.discovered)
-            })
-            .collect::<Vec<_>>();
-
-        Ok(Self {
-            network: network.to_string(),
-            source: if snapshot.discovered { "discovered" } else { "static" },
-            selected_node: selected_node.map(str::to_owned),
-            membership_version: snapshot.membership.as_ref().map(|membership| membership.version),
-            membership_error: snapshot.membership_error.clone(),
-            leader: snapshot
-                .statuses
-                .iter()
-                .find(|status| status.is_leader == Some(true))
-                .map(|status| status.name.clone()),
-            nodes,
+    let nodes = snapshot
+        .nodes
+        .iter()
+        .filter(|node| selected_node.is_none_or(|selected| node.name == selected))
+        .map(|node| {
+            let status = snapshot.statuses.iter().find(|status| status.name == node.name);
+            sequencer_node_json(node, status, snapshot.discovered)
         })
+        .collect::<Vec<_>>();
+    let mut value = json!({
+        "network": network,
+        "source": if snapshot.discovered { "discovered" } else { "static" },
+        "leader": snapshot
+            .statuses
+            .iter()
+            .find(|status| status.is_leader == Some(true))
+            .map(|status| status.name.clone()),
+        "nodes": nodes,
+    });
+    if let Some(selected_node) = selected_node {
+        value["selectedNode"] = json!(selected_node);
+    }
+    if let Some(version) = snapshot.membership.as_ref().map(|membership| membership.version) {
+        value["membershipVersion"] = json!(version);
+    }
+    if let Some(error) = &snapshot.membership_error {
+        value["membershipError"] = json!(error);
+    }
+    Ok(value)
+}
+
+fn sequencer_node_json(
+    node: &ConductorNodeConfig,
+    status: Option<&ConductorNodeStatus>,
+    discovered: bool,
+) -> Value {
+    let is_leader = status.and_then(|status| status.is_leader);
+    json!({
+        "name": node.name,
+        "clRpc": node.cl_rpc.to_string(),
+        "role": sequencer_role(is_leader),
+        "isLeader": is_leader,
+        "sequencerActive": status.and_then(|status| status.sequencer_active),
+        "sequencerHealthy": status.and_then(|status| status.sequencer_healthy),
+        "conductorPaused": status.and_then(|status| status.conductor_paused),
+        "unsafeL2Block": status.and_then(|status| status.unsafe_l2_block),
+        "unsafeL2Hash": status.and_then(|status| status.unsafe_l2_hash).map(|hash| hash.to_string()),
+        "safeL2Block": status.and_then(|status| status.safe_l2_block),
+        "safeL2Hash": status.and_then(|status| status.safe_l2_hash).map(|hash| hash.to_string()),
+        "finalizedL2Block": status.and_then(|status| status.finalized_l2_block),
+        "currentL1Block": status.and_then(|status| status.current_l1_block),
+        "headL1Block": status.and_then(|status| status.head_l1_block),
+        "clPeerCount": status.and_then(|status| status.cl_peer_count),
+        "elBlock": status.and_then(|status| status.el_block),
+        "elSyncing": status.and_then(|status| status.el_syncing),
+        "elPeerCount": status.and_then(|status| status.el_peer_count),
+        "discovered": discovered,
+    })
+}
+
+const fn sequencer_role(is_leader: Option<bool>) -> &'static str {
+    match is_leader {
+        Some(true) => "leader",
+        Some(false) => "follower",
+        None => "unknown",
     }
 }
 
-/// Sequencer node role derived from leadership status.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum SequencerRole {
-    /// Current raft leader.
-    Leader,
-    /// Confirmed follower.
-    Follower,
-    /// Leadership status unavailable.
-    Unknown,
-}
-
-impl SequencerRole {
-    const fn from_is_leader(is_leader: Option<bool>) -> Self {
-        match is_leader {
-            Some(true) => Self::Leader,
-            Some(false) => Self::Follower,
-            None => Self::Unknown,
-        }
-    }
-
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Leader => "leader",
-            Self::Follower => "follower",
-            Self::Unknown => "unknown",
-        }
-    }
-}
-
-/// JSON status for one sequencer node.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SequencerNodeJson {
-    /// Node name.
-    pub name: String,
-    /// Consensus-layer RPC URL.
-    pub cl_rpc: String,
-    /// Derived sequencer role.
-    pub role: SequencerRole,
-    /// Whether this node is leader.
-    pub is_leader: Option<bool>,
-    /// Whether sequencing is active.
-    pub sequencer_active: Option<bool>,
-    /// Whether the sequencer is healthy.
-    pub sequencer_healthy: Option<bool>,
-    /// Whether the conductor is paused.
-    pub conductor_paused: Option<bool>,
-    /// Unsafe L2 block number.
-    pub unsafe_l2_block: Option<u64>,
-    /// Unsafe L2 block hash.
-    pub unsafe_l2_hash: Option<String>,
-    /// Safe L2 block number.
-    pub safe_l2_block: Option<u64>,
-    /// Safe L2 block hash.
-    pub safe_l2_hash: Option<String>,
-    /// Finalized L2 block number.
-    pub finalized_l2_block: Option<u64>,
-    /// Current L1 block number.
-    pub current_l1_block: Option<u64>,
-    /// Head L1 block number.
-    pub head_l1_block: Option<u64>,
-    /// Consensus-layer peer count.
-    pub cl_peer_count: Option<u32>,
-    /// Execution-layer block number.
-    pub el_block: Option<u64>,
-    /// Whether the execution layer is syncing.
-    pub el_syncing: Option<bool>,
-    /// Execution-layer peer count.
-    pub el_peer_count: Option<u32>,
-    /// Whether runtime discovery produced this node.
-    pub discovered: bool,
-}
-
-impl SequencerNodeJson {
-    fn from_node_status(
-        node: &ConductorNodeConfig,
-        status: Option<&ConductorNodeStatus>,
-        discovered: bool,
-    ) -> Self {
-        let is_leader = status.and_then(|status| status.is_leader);
-        Self {
-            name: node.name.clone(),
-            cl_rpc: node.cl_rpc.to_string(),
-            role: SequencerRole::from_is_leader(is_leader),
-            is_leader,
-            sequencer_active: status.and_then(|status| status.sequencer_active),
-            sequencer_healthy: status.and_then(|status| status.sequencer_healthy),
-            conductor_paused: status.and_then(|status| status.conductor_paused),
-            unsafe_l2_block: status.and_then(|status| status.unsafe_l2_block),
-            unsafe_l2_hash: status
-                .and_then(|status| status.unsafe_l2_hash)
-                .map(|unsafe_l2_hash| unsafe_l2_hash.to_string()),
-            safe_l2_block: status.and_then(|status| status.safe_l2_block),
-            safe_l2_hash: status
-                .and_then(|status| status.safe_l2_hash)
-                .map(|safe_l2_hash| safe_l2_hash.to_string()),
-            finalized_l2_block: status.and_then(|status| status.finalized_l2_block),
-            current_l1_block: status.and_then(|status| status.current_l1_block),
-            head_l1_block: status.and_then(|status| status.head_l1_block),
-            cl_peer_count: status.and_then(|status| status.cl_peer_count),
-            el_block: status.and_then(|status| status.el_block),
-            el_syncing: status.and_then(|status| status.el_syncing),
-            el_peer_count: status.and_then(|status| status.el_peer_count),
-            discovered,
-        }
-    }
-
-    fn compact_status(&self) -> String {
-        format!(
-            "role={} active={} healthy={} paused={} unsafe={} safe={} finalized={} current_l1={} head_l1={} cl_peers={} el_peers={}",
-            self.role.as_str(),
-            OptionalValue::boolean(self.sequencer_active),
-            OptionalValue::boolean(self.sequencer_healthy),
-            OptionalValue::boolean(self.conductor_paused),
-            OptionalValue::u64(self.unsafe_l2_block),
-            OptionalValue::u64(self.safe_l2_block),
-            OptionalValue::u64(self.finalized_l2_block),
-            OptionalValue::u64(self.current_l1_block),
-            OptionalValue::u64(self.head_l1_block),
-            OptionalValue::u32(self.cl_peer_count),
-            OptionalValue::u32(self.el_peer_count),
-        )
-    }
+fn sequencer_node_compact_status(status: Option<&ConductorNodeStatus>) -> String {
+    let boolean = |value| match value {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "unknown",
+    };
+    let u64 =
+        |value: Option<u64>| value.map_or_else(|| "unknown".to_string(), |value| value.to_string());
+    let u32 =
+        |value: Option<u32>| value.map_or_else(|| "unknown".to_string(), |value| value.to_string());
+    format!(
+        "role={} active={} healthy={} paused={} unsafe={} safe={} finalized={} current_l1={} head_l1={} cl_peers={} el_peers={}",
+        sequencer_role(status.and_then(|status| status.is_leader)),
+        boolean(status.and_then(|status| status.sequencer_active)),
+        boolean(status.and_then(|status| status.sequencer_healthy)),
+        boolean(status.and_then(|status| status.conductor_paused)),
+        u64(status.and_then(|status| status.unsafe_l2_block)),
+        u64(status.and_then(|status| status.safe_l2_block)),
+        u64(status.and_then(|status| status.finalized_l2_block)),
+        u64(status.and_then(|status| status.current_l1_block)),
+        u64(status.and_then(|status| status.head_l1_block)),
+        u32(status.and_then(|status| status.cl_peer_count)),
+        u32(status.and_then(|status| status.el_peer_count)),
+    )
 }
 
 #[cfg(test)]
@@ -909,11 +772,10 @@ mod tests {
     use url::Url;
 
     use super::{
-        LeadershipStatus, OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS,
-        SequencerAction, SequencerActionJson, SequencerStatusJson, UnsafeHeadSource,
-        ensure_leader_target, ensure_start_allowed, ensure_start_request_matches_observed_head,
-        ensure_stop_allowed, parse_unsafe_head, resolve_start_hash,
-        wait_for_expected_state_with_fetch,
+        OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS, ensure_leader_target,
+        ensure_start_allowed, ensure_start_request_matches_observed_head, ensure_stop_allowed,
+        parse_unsafe_head, resolve_start_hash, sequencer_start_json, sequencer_status_json,
+        sequencer_stop_json, wait_for_expected_state_with_fetch,
     };
     use crate::{
         ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus,
@@ -989,7 +851,7 @@ mod tests {
         let err = ensure_start_request_matches_observed_head(
             Some(&status("op-conductor-0", true, false)),
             B256::with_last_byte(9),
-            UnsafeHeadSource::Explicit,
+            "explicit",
         )
         .expect_err("mismatched explicit hash should error");
 
@@ -1011,7 +873,7 @@ mod tests {
         let err = ensure_start_request_matches_observed_head(
             Some(&observed),
             B256::with_last_byte(9),
-            UnsafeHeadSource::Explicit,
+            "explicit",
         )
         .expect_err("zero observed hash should error");
 
@@ -1075,7 +937,7 @@ mod tests {
             &snapshot,
             &snapshot.nodes[1],
             Some(&snapshot.statuses[1]),
-            SequencerAction::Start,
+            "start",
         )
         .expect_err("follower target should error");
 
@@ -1128,11 +990,11 @@ mod tests {
         let mut unknown_status = snapshot.statuses[0].clone();
         unknown_status.is_leader = None;
 
-        let leadership_status =
+        let leadership_confirmed =
             ensure_start_allowed(&snapshot, &snapshot.nodes[0], Some(&unknown_status))
                 .expect("unknown leadership should defer to server-side RPC");
 
-        assert_eq!(leadership_status, LeadershipStatus::Unknown);
+        assert!(!leadership_confirmed);
     }
 
     #[test]
@@ -1164,7 +1026,7 @@ mod tests {
 
         let err = wait_for_expected_state_with_fetch(
             &node,
-            SequencerAction::Start,
+            true,
             Some(B256::with_last_byte(1)),
             Duration::from_millis(40),
             Duration::from_millis(5),
@@ -1207,14 +1069,13 @@ mod tests {
 
     #[test]
     fn sequencer_action_json_includes_hash_source() {
-        let value = serde_json::to_value(SequencerActionJson::start(
+        let value = sequencer_start_json(
             "devnet",
             &node("op-conductor-0"),
             B256::with_last_byte(9),
-            UnsafeHeadSource::Observed,
-            "sequencer started on op-conductor-0 at 0x09".to_string(),
-        ))
-        .unwrap();
+            "observed",
+            "sequencer started on op-conductor-0 at 0x09",
+        );
 
         assert_eq!(
             value,
@@ -1232,13 +1093,12 @@ mod tests {
 
     #[test]
     fn sequencer_stop_json_omits_missing_unsafe_head() {
-        let value = serde_json::to_value(SequencerActionJson::stop(
+        let value = sequencer_stop_json(
             "devnet",
             &node("op-conductor-0"),
             None,
-            "sequencer stopped on op-conductor-0 (unsafe head unavailable)".to_string(),
-        ))
-        .unwrap();
+            "sequencer stopped on op-conductor-0 (unsafe head unavailable)",
+        );
 
         assert_eq!(
             value,
@@ -1265,11 +1125,7 @@ mod tests {
             discovered: false,
         };
 
-        let value = serde_json::to_value(
-            SequencerStatusJson::from_snapshot("devnet", &snapshot, Some("op-conductor-1"))
-                .unwrap(),
-        )
-        .unwrap();
+        let value = sequencer_status_json("devnet", &snapshot, Some("op-conductor-1")).unwrap();
 
         assert_eq!(value["selectedNode"], "op-conductor-1");
         assert_eq!(value["membershipError"], "membership request timed out");
@@ -1288,10 +1144,7 @@ mod tests {
             discovered: true,
         };
 
-        let value = serde_json::to_value(
-            SequencerStatusJson::from_snapshot("devnet", &snapshot, None).unwrap(),
-        )
-        .unwrap();
+        let value = sequencer_status_json("devnet", &snapshot, None).unwrap();
 
         assert_eq!(value["nodes"][0]["discovered"], true);
     }
