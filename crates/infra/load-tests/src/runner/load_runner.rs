@@ -78,6 +78,8 @@ const OPEN_LOOP_TARGET_TPS_EWMA_ALPHA: f64 = 0.35;
 const OPEN_LOOP_TARGET_MIN_BATCHES: u64 = 1;
 /// Bootstrap open-loop depth before enough confirmations exist to adapt.
 const OPEN_LOOP_TARGET_INITIAL_BATCHES: u64 = 2;
+const FUNDING_REPLACEMENT_FEE_MULTIPLIER: u128 = 3;
+const FUNDING_REPLACEMENT_MAX_ATTEMPTS: u32 = 8;
 const START_FILE_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug)]
@@ -819,10 +821,13 @@ impl LoadRunner {
         let funder_provider =
             Arc::new(create_wallet_provider(primary_submission_rpc.clone(), wallet));
 
-        let base_fee = client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1);
-        let max_fee =
-            SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
+        let initial_base_fee = client.get_base_fee().await?;
+        let initial_priority_fee = (initial_base_fee / 10).max(1);
+        let initial_max_fee = SubmissionPipeline::submission_max_fee(
+            initial_base_fee,
+            initial_priority_fee,
+            max_gas_price,
+        );
 
         // Phase 2: Early balance validation — abort before sending any TXs if
         // the funder cannot cover the total cost.
@@ -830,7 +835,7 @@ impl LoadRunner {
             .iter()
             .map(|(_, deficit)| *deficit)
             .fold(U256::ZERO, |a, b| a.saturating_add(b));
-        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(max_fee));
+        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(initial_max_fee));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(accounts_to_fund.len()));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
@@ -864,43 +869,44 @@ impl LoadRunner {
             "funding accounts"
         );
 
-        let replacement_max_fee = max_fee.saturating_mul(3);
-        let replacement_priority_fee = max_priority_fee.saturating_mul(3);
-
         // Phase 3+4: Send funding TXs in batches and confirm each batch before
         // sending the next. This avoids overwhelming the txpool's per-sender limit.
-        let txs: Vec<(TransactionRequest, Address, U256, u64)> = accounts_to_fund
+        let funding_requests: Vec<(Address, U256, u64)> = accounts_to_fund
             .iter()
             .enumerate()
             .map(|(i, &(address, deficit))| {
                 let nonce = start_nonce
                     .checked_add(u64::try_from(i).expect("account index exceeds u64"))
                     .expect("nonce overflow");
-                let tx = TransactionRequest::default()
-                    .with_to(address)
-                    .with_value(deficit)
-                    .with_nonce(nonce)
-                    .with_chain_id(chain_id)
-                    .with_gas_limit(21_000)
-                    .with_max_fee_per_gas(max_fee)
-                    .with_max_priority_fee_per_gas(max_priority_fee);
-                (tx, address, deficit, nonce)
+                (address, deficit, nonce)
             })
             .collect();
 
-        let total_txs = txs.len() as u64;
+        let total_txs = funding_requests.len() as u64;
         let pb_fund = self.progress_bar(total_txs, "Funding accounts");
-        let mut txs_remaining = txs.into_iter().peekable();
+        let mut txs_remaining = funding_requests.into_iter().peekable();
         while txs_remaining.peek().is_some() {
+            let base_fee = client.get_base_fee().await?;
+            let max_priority_fee = (base_fee / 10).max(1);
+            let max_fee =
+                SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
             let batch: Vec<_> =
                 txs_remaining.by_ref().take(self.config.max_in_flight_per_sender as usize).collect();
             let mut batch_pending: Vec<Address> = Vec::with_capacity(batch.len());
             let mut retries: Vec<(Address, U256, u64)> = Vec::new();
             let mut fatal_errors: Vec<String> = Vec::new();
 
-            let send_futs = batch.into_iter().map(|(tx, address, deficit, nonce)| {
+            let send_futs = batch.into_iter().map(|(address, deficit, nonce)| {
                 let provider = Arc::clone(&funder_provider);
                 async move {
+                    let tx = TransactionRequest::default()
+                        .with_to(address)
+                        .with_value(deficit)
+                        .with_nonce(nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(21_000)
+                        .with_max_fee_per_gas(max_fee)
+                        .with_max_priority_fee_per_gas(max_priority_fee);
                     let result = provider.send_transaction(tx).await;
                     (result, address, deficit, nonce)
                 }
@@ -920,9 +926,10 @@ impl LoadRunner {
                     }
                     Err(e) => {
                         let error_str = e.to_string();
-                        if error_str.contains("already known")
-                            || error_str.contains("replacement transaction underpriced")
-                        {
+                        if error_str.contains("already known") {
+                            info!(to = %address, nonce, "funding transaction already pending");
+                            batch_pending.push(address);
+                        } else if error_str.contains("replacement transaction underpriced") {
                             retries.push((address, deficit, nonce));
                         } else if error_str.contains("nonce too low") {
                             info!(to = %address, nonce, "nonce too low, will refresh and retry");
@@ -945,37 +952,107 @@ impl LoadRunner {
             }
 
             if !retries.is_empty() {
+                let replacement_addresses: Vec<Address> =
+                    retries.iter().map(|(address, _, _)| *address).collect();
                 let retry_futs = retries.into_iter().map(|(address, deficit, nonce)| {
                     let provider = Arc::clone(&funder_provider);
                     async move {
-                        let replacement = TransactionRequest::default()
-                            .with_to(address)
-                            .with_value(deficit)
-                            .with_nonce(nonce)
-                            .with_chain_id(chain_id)
-                            .with_gas_limit(21_000)
-                            .with_max_fee_per_gas(replacement_max_fee)
-                            .with_max_priority_fee_per_gas(replacement_priority_fee);
-                        let result = provider.send_transaction(replacement).await;
-                        (result, address, nonce)
+                        let mut replacement_max_fee = max_fee;
+                        let mut replacement_priority_fee = max_priority_fee;
+
+                        for attempt in 1..=FUNDING_REPLACEMENT_MAX_ATTEMPTS {
+                            let next_max_fee = replacement_max_fee
+                                .saturating_mul(FUNDING_REPLACEMENT_FEE_MULTIPLIER)
+                                .min(max_gas_price);
+                            let next_priority_fee = replacement_priority_fee
+                                .saturating_mul(FUNDING_REPLACEMENT_FEE_MULTIPLIER)
+                                .min(next_max_fee);
+                            if next_max_fee == replacement_max_fee
+                                && next_priority_fee == replacement_priority_fee
+                            {
+                                return Err(format!(
+                                    "replacement funding tx for {address} nonce {nonce} remains underpriced at max gas price {max_gas_price}"
+                                ));
+                            }
+                            replacement_max_fee = next_max_fee;
+                            replacement_priority_fee = next_priority_fee;
+
+                            let replacement = TransactionRequest::default()
+                                .with_to(address)
+                                .with_value(deficit)
+                                .with_nonce(nonce)
+                                .with_chain_id(chain_id)
+                                .with_gas_limit(21_000)
+                                .with_max_fee_per_gas(replacement_max_fee)
+                                .with_max_priority_fee_per_gas(replacement_priority_fee);
+
+                            match provider.send_transaction(replacement).await {
+                                Ok(pending) => {
+                                    return Ok((address, nonce, Some(*pending.tx_hash()), attempt));
+                                }
+                                Err(e) => {
+                                    let error = e.to_string();
+                                    if error.contains("already known")
+                                        || error.contains("nonce too low")
+                                    {
+                                        return Ok((address, nonce, None, attempt));
+                                    }
+                                    if !error.contains("replacement transaction underpriced") {
+                                        return Err(format!(
+                                            "replacement funding tx for {address} nonce {nonce} failed: {e}"
+                                        ));
+                                    }
+                                    warn!(
+                                        to = %address,
+                                        nonce,
+                                        attempt,
+                                        replacement_max_fee,
+                                        replacement_priority_fee,
+                                        "replacement funding transaction still underpriced"
+                                    );
+                                }
+                            }
+                        }
+
+                        Err(format!(
+                            "replacement funding tx for {address} nonce {nonce} remained underpriced after {FUNDING_REPLACEMENT_MAX_ATTEMPTS} attempts"
+                        ))
                     }
                 });
 
                 let mut retry_stream =
                     stream::iter(retry_futs).buffer_unordered(self.config.max_in_flight_per_sender as usize);
 
-                while let Some((result, address, nonce)) = retry_stream.next().await {
+                while let Some(result) = retry_stream.next().await {
                     match result {
-                        Ok(pending) => {
-                            let tx_hash = *pending.tx_hash();
-                            info!(to = %address, nonce, tx_hash = %tx_hash, "replacement funding tx sent");
-                            batch_pending.push(address);
+                        Ok((address, nonce, tx_hash, attempt)) => {
+                            info!(
+                                to = %address,
+                                nonce,
+                                attempt,
+                                tx_hash = ?tx_hash,
+                                "replacement funding transaction accepted"
+                            );
                         }
-                        Err(replace_err) => {
-                            warn!(to = %address, nonce, error = %replace_err, "replacement tx also failed, proceeding");
+                        Err(error) => {
+                            fatal_errors.push(error);
                         }
                     }
                 }
+
+                if !fatal_errors.is_empty() {
+                    pb_fund.finish_and_clear();
+                    return Err(BaselineError::Transaction(format!(
+                        "{} replacement funding tx(s) failed: {}",
+                        fatal_errors.len(),
+                        fatal_errors.join("; "),
+                    )));
+                }
+
+                // Every replacement either entered the pool, was already known, or its nonce was
+                // consumed while retrying. In all cases, wait for the intended recipient balance
+                // before allowing later funder nonces to proceed.
+                batch_pending.extend(replacement_addresses);
             }
 
             Self::await_balances(&client, &mut batch_pending, amount_per_account, &pb_fund).await?;

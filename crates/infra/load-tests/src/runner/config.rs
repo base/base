@@ -260,6 +260,10 @@ impl LoadConfig {
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: "ws://localhost:7111".parse().expect("valid default flashblocks_ws"),
             fresh_recipient_ratio: 0.0,
+<<<<<<< HEAD
+=======
+            funding_batch_size: 8,
+>>>>>>> ca83b28f1 (fix(load-tests): keep funding transactions executable)
         }
     }
 
