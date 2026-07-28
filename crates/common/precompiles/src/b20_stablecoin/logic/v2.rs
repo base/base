@@ -48,6 +48,22 @@ impl StablecoinV2 {
             B20Guards::ensure_policy_type(token, B20PolicyType::TransferSender, from)?;
             B20Guards::ensure_policy_type(token, B20PolicyType::TransferReceiver, to)?;
         }
+        self.move_balance(token, from, to, amount)
+    }
+
+    /// Debits `from`, credits `to`, and emits `Transfer(from, to, amount)`.
+    ///
+    /// The shared balance-move primitive: no policy, allowance, pause, or zero-address checks —
+    /// callers apply their own guards first. Both [`Self::transfer_inner`] and the seize path use
+    /// this, so seize never has to reuse the policy-bearing `transfer_inner` (nor the factory
+    /// privileged bypass).
+    fn move_balance<S: StablecoinAccounting, A: PolicyAccounting>(
+        &self,
+        token: &mut B20StablecoinToken<S, A>,
+        from: Address,
+        to: Address,
+        amount: U256,
+    ) -> Result<()> {
         let from_balance = token.accounting().balance_of(from)?;
         if from_balance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
