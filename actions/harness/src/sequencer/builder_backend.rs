@@ -14,6 +14,7 @@
 //! block hashes and state roots aligned with `rollup_config.genesis.l2.hash`.
 
 use std::{
+    collections::HashMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -59,6 +60,8 @@ pub struct BuilderBackedEngineClient {
     rollup_config: Arc<RollupConfig>,
     /// The current unsafe head, advanced as payloads are inserted. Initialized to genesis.
     head: Mutex<L2BlockInfo>,
+    /// Execution requests returned with sealed payloads, keyed by block hash until import.
+    pending_execution_requests: Mutex<HashMap<alloy_primitives::B256, Requests>>,
     /// Registry of produced block hashes / state roots, shared with the harness for
     /// sequencer↔verifier state-root cross-checks.
     block_registry: SharedBlockHashRegistry,
@@ -94,6 +97,7 @@ impl BuilderBackedEngineClient {
             block_time,
             rollup_config,
             head: Mutex::new(genesis_head),
+            pending_execution_requests: Mutex::new(HashMap::new()),
             block_registry: SharedBlockHashRegistry::new(),
         })
     }
@@ -119,10 +123,11 @@ impl BuilderBackedEngineClient {
         max_block: Option<u64>,
         min_timestamp_millis: Option<u64>,
         max_timestamp_millis: Option<u64>,
-    ) -> eyre::Result<()> {
+    ) -> EngineClientResult<()> {
         let pool = self.instance.lock().expect("instance lock").pool_handle();
-        let recovered =
-            tx.try_into_recovered().map_err(|e| eyre::eyre!("failed to recover signer: {e}"))?;
+        let recovered = tx
+            .try_into_recovered()
+            .map_err(|e| EngineClientError::RequestError(format!("recover signer: {e}")))?;
         let encoded_length = recovered.encode_2718_len();
         let pooled = BasePooledTransaction::new(recovered, encoded_length).with_bundle_metadata(
             min_block,
@@ -132,7 +137,7 @@ impl BuilderBackedEngineClient {
         );
         pool.add_external_transaction(pooled)
             .await
-            .map_err(|e| eyre::eyre!("pool rejected bundle transaction: {e}"))?;
+            .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
         Ok(())
     }
 
@@ -170,6 +175,9 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
         attributes: AttributesWithParent,
     ) -> EngineClientResult<PayloadId> {
         let parent = attributes.parent.block_info.hash;
+        // BasePayloadBuilderAttributes currently computes payload IDs with version 3 in its
+        // PayloadAttributes implementation. Keep this constructor in sync with that engine-side
+        // contract; changing only this value would make getPayload miss the registered build.
         let builder_attrs = BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
             parent,
             attributes.attributes,
@@ -198,13 +206,21 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
             .get_payload(payload_id)
             .await
             .map_err(|e| EngineClientError::ResponseError(e.to_string()))?;
-        Ok(BaseExecutionPayloadEnvelope {
+        let execution_requests = Requests::new(envelope.execution_requests);
+        let payload = BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: attributes
                 .attributes
                 .payload_attributes
                 .parent_beacon_block_root,
             execution_payload: BaseExecutionPayload::V4(envelope.execution_payload),
-        })
+        };
+        let block = ExecutionPayloadConverter::block_from_envelope(&payload)
+            .map_err(|e| EngineClientError::ResponseError(e.to_string()))?;
+        self.pending_execution_requests
+            .lock()
+            .expect("pending execution requests lock")
+            .insert(block.header.hash_slow(), execution_requests);
+        Ok(payload)
     }
 
     async fn insert_unsafe_payload(
@@ -220,10 +236,21 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
                 "builder backend expects a V4 execution payload".into(),
             ));
         };
+        let execution_requests = self
+            .pending_execution_requests
+            .lock()
+            .expect("pending execution requests lock")
+            .get(&new_hash)
+            .cloned()
+            .ok_or_else(|| {
+                EngineClientError::RequestError(format!(
+                    "missing execution requests for payload {new_hash}"
+                ))
+            })?;
 
         let engine = self.engine();
         let status = engine
-            .new_payload(v4, vec![], parent_beacon_block_root, Requests::default())
+            .new_payload(v4, vec![], parent_beacon_block_root, execution_requests)
             .await
             .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
         if !status.is_valid() {
@@ -233,10 +260,20 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
         }
 
         let current_head = self.head.lock().expect("head lock").block_info.hash;
-        engine
+        let fcu = engine
             .update_forkchoice(current_head, new_hash, None)
             .await
             .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
+        if !fcu.payload_status.is_valid() {
+            return Err(EngineClientError::RequestError(format!(
+                "engine rejected forkchoice update: {:?}",
+                fcu.payload_status
+            )));
+        }
+        self.pending_execution_requests
+            .lock()
+            .expect("pending execution requests lock")
+            .remove(&new_hash);
 
         // Record the produced block so the harness verifier can cross-check its re-executed
         // state root against the builder-produced one.
