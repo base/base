@@ -189,13 +189,14 @@ impl DryRunZkProver {
             })
             .await
             .map_err(|e| {
+                let error = e.chain();
                 error!(
                     start_block = start_block,
                     end_block = end_block,
-                    error = %e,
+                    error = %error,
                     "dry-run witness generation failed"
                 );
-                backend_error!("witness generation failed: {e}")
+                backend_error!("witness generation failed: {error}")
             })?;
         let witness_generation_ms =
             u64::try_from(witness_start.elapsed().as_millis()).unwrap_or(u64::MAX);

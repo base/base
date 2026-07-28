@@ -11,6 +11,7 @@ use base_proof_succinct_host_utils::{
 use sp1_sdk::{SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
 use thiserror::Error;
 use tracing::{debug, info};
+use url::Url;
 
 /// Inputs to [`OpSuccinctWitnessProvider::generate_witness`].
 #[derive(Debug, Clone, Copy)]
@@ -124,6 +125,54 @@ pub enum WitnessError {
         #[source]
         source: Box<dyn StdError + Send + Sync>,
     },
+}
+
+impl WitnessError {
+    /// Formats this error and its full source chain as a single line.
+    ///
+    /// The top-level variant messages are static descriptions, so logging or
+    /// storing only `Display` loses the underlying host/RPC failure. Use this
+    /// wherever the error is flattened into a message string.
+    pub fn chain(&self) -> String {
+        let mut message = Self::redact_urls(&self.to_string());
+        let mut source = StdError::source(self);
+        while let Some(cause) = source {
+            message.push_str(": ");
+            message.push_str(&Self::redact_urls(&cause.to_string()));
+            source = cause.source();
+        }
+        message
+    }
+
+    fn redact_urls(message: &str) -> String {
+        let mut redacted = String::with_capacity(message.len());
+        let mut remaining = message;
+
+        while let Some(start) =
+            ["http://", "https://"].into_iter().filter_map(|prefix| remaining.find(prefix)).min()
+        {
+            redacted.push_str(&remaining[..start]);
+            let candidate = &remaining[start..];
+            let end = candidate.find(char::is_whitespace).unwrap_or(candidate.len());
+            let token = &candidate[..end];
+            let url_text = token.trim_end_matches(|character: char| {
+                matches!(character, ',' | '.' | ';' | ':' | ')' | ']' | '}' | '\'' | '"')
+            });
+            let suffix = &token[url_text.len()..];
+
+            if let Ok(url) = Url::parse(url_text) {
+                redacted.push_str(&url.origin().ascii_serialization());
+                redacted.push_str("/<redacted>");
+                redacted.push_str(suffix);
+            } else {
+                redacted.push_str(token);
+            }
+            remaining = &candidate[end..];
+        }
+
+        redacted.push_str(remaining);
+        redacted
+    }
 }
 
 /// Provider wrapping the Succinct host for witness generation.
@@ -252,5 +301,57 @@ impl OpSuccinctWitnessProvider {
             .map_err(|source| WitnessError::AggregationStdin {
                 source: source.into_boxed_dyn_error(),
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("boot info rejected")]
+    struct BootInfoRejected {
+        #[source]
+        source: std::io::Error,
+    }
+
+    #[test]
+    fn chain_flattens_full_source_chain() {
+        let error = WitnessError::HostRun {
+            source: Box::new(BootInfoRejected {
+                source: std::io::Error::other("missing activation admin"),
+            }),
+        };
+
+        assert_eq!(
+            error.chain(),
+            "failed to run Succinct host: boot info rejected: missing activation admin"
+        );
+    }
+
+    #[test]
+    fn chain_without_nested_source_matches_display() {
+        let error = WitnessError::Stdin { source: "stdin conversion failed".into() };
+
+        assert_eq!(
+            error.chain(),
+            "failed to build SP1 stdin from Succinct witness: stdin conversion failed"
+        );
+    }
+
+    #[test]
+    fn chain_redacts_rpc_url_credentials() {
+        let error = WitnessError::HostRun {
+            source: std::io::Error::other(
+                "failed to connect to RPC at https://user:secret@rpc.example/v1/key?token=abc: timeout",
+            )
+            .into(),
+        };
+
+        assert_eq!(
+            error.chain(),
+            "failed to run Succinct host: failed to connect to RPC at \
+             https://rpc.example/<redacted>: timeout"
+        );
     }
 }

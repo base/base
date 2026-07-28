@@ -20,6 +20,19 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 - The `base-prover-service` JSON-RPC coordinator with local Postgres storage
 - The `base-prover-zk-host` worker (dry-run when RPC URLs are set)
 
+The ZK worker's backend is selected at devnet startup: `just devnet up`
+defaults to `zk=dry-run`, `zk=cluster` uses a self-hosted SP1 cluster, and
+`zk=network` submits paid proof requests to the Succinct Prover Network (it
+requires a funded `NETWORK_PRIVATE_KEY` in the environment and real SP1 ELFs
+built via `just succinct build-elfs`).
+
+`docker-compose.prover.yml` is a standalone stack that runs only the prover
+trio (Postgres, prover-service, zk-host) against user-provided RPC endpoints.
+Run it as `just prover up <network>` so jobs and Postgres data stay isolated
+per network — see the
+[standalone proving guide](../../docs/guides/STANDALONE_PROVING.md) and the
+`just prover` recipes.
+
 All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.
 
 ## Usage

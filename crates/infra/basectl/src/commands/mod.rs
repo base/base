@@ -33,8 +33,9 @@ pub use outcome::{CommandOutcome, OptionalValue};
 mod proofs;
 pub use proofs::{
     ProofOutputStatus, ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand,
-    ProofsCommands, ProofsFinalizeArgs, ProofsFinalizeJson, ProofsListArgs, ProofsListJson,
-    ProofsStatusArgs, ProofsStatusJson,
+    ProofsCommands, ProofsFinalizeArgs, ProofsFinalizeJson, ProofsGamesArgs, ProofsListArgs,
+    ProofsListJson, ProofsProposeArgs, ProofsStatusArgs, ProofsStatusJson, ProofsSubmitArgs,
+    ZkBackendOption,
 };
 
 mod sequencer;

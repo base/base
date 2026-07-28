@@ -5,6 +5,7 @@ use std::time::Duration;
 use alloy_primitives::B256;
 use alloy_transport::TransportError;
 use alloy_transport_http::reqwest;
+use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::{ProverServiceClientBuildError, ProverServiceClientError};
 use jsonrpsee::core::client::Error as JsonRpcClientError;
 use thiserror::Error;
@@ -183,6 +184,101 @@ pub enum ProofsCommandError {
         waited: Duration,
         /// The last proof status observed before the timeout.
         last_status: String,
+    },
+    /// The command could not resolve a `DisputeGameFactory` address from flags or config.
+    #[error(
+        "proofs games needs a DisputeGameFactory address.\n\
+         The '{config_name}' config does not set `proofs.dispute_game_factory`.\n\
+         Override with `--factory <address>` or set `proofs.dispute_game_factory` \
+         in your YAML config."
+    )]
+    MissingDisputeGameFactory {
+        /// The config name selected for the command.
+        config_name: String,
+    },
+    /// An L1 dispute-game contract read failed.
+    #[error("dispute game read failed against {endpoint}: {message}")]
+    L1Contract {
+        /// The L1 RPC URL selected for the command.
+        endpoint: String,
+        /// The underlying contract client error message.
+        message: String,
+    },
+    /// The dispute game cannot accept a ZK proposal proof.
+    #[error("game {game} cannot be proven: {reason}")]
+    GameNotProvable {
+        /// The dispute game proxy address.
+        game: String,
+        /// Why the game cannot accept a ZK proposal proof.
+        reason: String,
+    },
+    /// The submitter private key could not be parsed.
+    #[error("invalid submitter private key: {message}")]
+    InvalidSubmitterKey {
+        /// The parser error returned by the signer.
+        message: String,
+    },
+    /// The proof session has not reached a terminal status yet.
+    #[error(
+        "proof session {session_id} is not complete yet (status: {status}); \
+         re-run with `--wait` or try again later"
+    )]
+    ProofNotReady {
+        /// The proof session identifier.
+        session_id: String,
+        /// The last observed proof status.
+        status: String,
+    },
+    /// The proof session failed on the prover service.
+    #[error("proof session {session_id} failed: {message}")]
+    ProofFailed {
+        /// The proof session identifier.
+        session_id: String,
+        /// The prover-service error message.
+        message: String,
+    },
+    /// The completed proof session did not include a result payload.
+    #[error("proof session {session_id} succeeded but returned no result payload")]
+    ProofResultMissing {
+        /// The proof session identifier.
+        session_id: String,
+    },
+    /// The session's result is not a PLONK proposal proof.
+    #[error(
+        "proof session {session_id} holds a {actual} proof, not a snark_plonk proposal proof; \
+         request one with `basectl proofs propose`"
+    )]
+    NotAProposalProof {
+        /// The proof session identifier.
+        session_id: String,
+        /// The proof type actually stored in the session.
+        actual: &'static str,
+    },
+    /// The PLONK result carries no proof bytes.
+    #[error(
+        "proof session {session_id} returned empty proof bytes; \
+         dry-run backends produce no submittable proof"
+    )]
+    EmptyProofBytes {
+        /// The proof session identifier.
+        session_id: String,
+    },
+    /// The L1 transaction manager could not be constructed.
+    #[error("failed to build L1 transaction manager for {endpoint}: {message}")]
+    BuildTxManager {
+        /// The L1 RPC URL selected for the command.
+        endpoint: String,
+        /// The construction error message.
+        message: String,
+    },
+    /// The `verifyProposalProof` submission failed.
+    #[error("verifyProposalProof submission to game {game} failed: {source}")]
+    Submission {
+        /// The dispute game proxy address.
+        game: String,
+        /// The underlying proof submission error.
+        #[source]
+        source: ProofSubmissionError,
     },
 }
 
