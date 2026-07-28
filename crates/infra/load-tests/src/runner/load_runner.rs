@@ -897,7 +897,17 @@ impl LoadRunner {
             accounts_to_fund.len().max(usize::try_from(stale_nonce_count).map_err(|_| {
                 BaselineError::Transaction("stale funder nonce range exceeds usize".into())
             })?);
-        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(max_gas_price));
+        // max_gas_price is an execution safety cap, not the amount EIP-1559 transactions normally
+        // pay. Budget using the current submission price so large funding sets do not require the
+        // funder to hold 21,000 * max_gas_price for every transaction.
+        let initial_base_fee = client.get_base_fee().await?;
+        let initial_priority_fee = (initial_base_fee / 10).max(1);
+        let estimated_gas_price = SubmissionPipeline::submission_max_fee(
+            initial_base_fee,
+            initial_priority_fee,
+            max_gas_price,
+        );
+        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(estimated_gas_price));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(funding_request_count));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
