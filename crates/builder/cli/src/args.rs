@@ -9,7 +9,8 @@ use base_builder_core::{
 use base_builder_metering::MeteringStore;
 use base_node_core::args::RollupArgs;
 use base_observability_events::{
-    DEFAULT_QUEUE_CAPACITY, TransactionEventProducer, TransactionEventWriterConfig,
+    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
+    TransactionEventWriterConfig,
 };
 use tracing::warn;
 
@@ -75,6 +76,14 @@ pub struct TransactionEventsArgs {
     #[arg(long = "builder.transaction-events.queue-capacity", env = "BUILDER_TRANSACTION_EVENTS_QUEUE_CAPACITY", default_value_t = DEFAULT_QUEUE_CAPACITY)]
     pub queue_capacity: usize,
 
+    /// Maximum size of an active transaction event JSONL segment.
+    #[arg(long = "builder.transaction-events.max-file-bytes", env = "BUILDER_TRANSACTION_EVENTS_MAX_FILE_BYTES", default_value_t = DEFAULT_MAX_FILE_BYTES)]
+    pub max_file_bytes: u64,
+
+    /// Maximum number of transaction event JSONL segments to retain, including the active file.
+    #[arg(long = "builder.transaction-events.max-files", env = "BUILDER_TRANSACTION_EVENTS_MAX_FILES", default_value_t = DEFAULT_MAX_FILES)]
+    pub max_files: usize,
+
     /// Fail builder startup if the transaction event writer cannot open.
     #[arg(
         long = "builder.transaction-events.required",
@@ -98,6 +107,8 @@ impl Default for TransactionEventsArgs {
             enabled: false,
             file_path: PathBuf::from("/var/log/transaction-events/base-builder/events.jsonl"),
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_files: DEFAULT_MAX_FILES,
             required: false,
             network: "unknown".to_string(),
         }
@@ -111,6 +122,8 @@ impl TransactionEventsArgs {
             enabled: self.enabled,
             file_path: self.file_path.clone(),
             queue_capacity: self.queue_capacity,
+            max_file_bytes: self.max_file_bytes,
+            max_files: self.max_files,
             required: self.required,
             producer: TransactionEventProducer::BaseBuilder,
             network: self.network.clone(),
