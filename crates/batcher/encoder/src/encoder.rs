@@ -526,6 +526,29 @@ impl BatchEncoder {
 
         self.invalidate_ready_channel(chan_idx, self.l1_head, channel_timeout);
     }
+
+    /// Rebase all block-queue-relative offsets after pruning a prefix from `blocks`.
+    fn rebase_after_block_prune(&mut self, prune_count: usize) {
+        self.block_cursor = self.block_cursor.saturating_sub(prune_count);
+
+        if let Some(open) = self.current_channel.as_mut() {
+            let old_end = open.block_start.saturating_add(open.blocks_added);
+            let new_start = open.block_start.saturating_sub(prune_count);
+            let new_end = old_end.saturating_sub(prune_count);
+            open.block_start = new_start;
+            open.blocks_added = new_end.saturating_sub(new_start);
+        }
+
+        // Adjust the high-water mark for all remaining channels.
+        // block_range.start is always 0 and unused in prune logic.
+        for channel in &mut self.ready_channels {
+            channel.block_range.end = channel.block_range.end.saturating_sub(prune_count);
+            channel.encoded_block_range.start =
+                channel.encoded_block_range.start.saturating_sub(prune_count);
+            channel.encoded_block_range.end =
+                channel.encoded_block_range.end.saturating_sub(prune_count);
+        }
+    }
 }
 
 impl BatchPipeline for BatchEncoder {
@@ -832,20 +855,10 @@ impl BatchPipeline for BatchEncoder {
             let prune_count = block_range.end;
             if prune_count > 0 {
                 self.blocks.drain(..prune_count);
-                self.block_cursor = self.block_cursor.saturating_sub(prune_count);
+                self.rebase_after_block_prune(prune_count);
                 BatcherMetrics::pending_blocks().decrement(prune_count as f64);
 
                 debug!(prune_count = %prune_count, "pruned confirmed blocks from encoder queue");
-
-                // Adjust the high-water mark for all remaining channels.
-                // block_range.start is always 0 and unused in prune logic.
-                for ch in &mut self.ready_channels {
-                    ch.block_range.end = ch.block_range.end.saturating_sub(prune_count);
-                    ch.encoded_block_range.start =
-                        ch.encoded_block_range.start.saturating_sub(prune_count);
-                    ch.encoded_block_range.end =
-                        ch.encoded_block_range.end.saturating_sub(prune_count);
-                }
             }
         }
     }
@@ -958,16 +971,8 @@ impl BatchPipeline for BatchEncoder {
         debug!(prune_count, safe_l2_number, "pruning safe blocks from input queue");
 
         self.blocks.drain(..prune_count);
-        self.block_cursor -= prune_count;
+        self.rebase_after_block_prune(prune_count);
         BatcherMetrics::pending_blocks().decrement(prune_count as f64);
-
-        // Adjust block_range high-water marks in ready channels so that confirm()
-        // does not over-prune later. This mirrors the adjustment in confirm().
-        for ch in &mut self.ready_channels {
-            ch.block_range.end = ch.block_range.end.saturating_sub(prune_count);
-            ch.encoded_block_range.start = ch.encoded_block_range.start.saturating_sub(prune_count);
-            ch.encoded_block_range.end = ch.encoded_block_range.end.saturating_sub(prune_count);
-        }
     }
 
     fn da_backlog_bytes(&self) -> u64 {
@@ -1154,6 +1159,34 @@ mod tests {
         // Blocks should be pruned.
         assert!(encoder.blocks.is_empty());
         assert_eq!(encoder.block_cursor, 0);
+    }
+
+    #[test]
+    fn test_confirm_rebases_open_channel_block_range() {
+        let mut encoder = default_encoder();
+        let mut blocks = make_user_tx_chain(2).into_iter();
+
+        encoder.add_block(blocks.next().unwrap()).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        encoder.force_close_channel();
+        let first_submission = encoder.next_submission().unwrap();
+
+        encoder.add_block(blocks.next().unwrap()).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert_eq!(encoder.current_channel.as_ref().unwrap().block_start, 1);
+
+        encoder.confirm(first_submission.id, 1);
+
+        let open = encoder.current_channel.as_ref().unwrap();
+        assert_eq!(open.block_start, 0);
+        assert_eq!(open.blocks_added, 1);
+        assert_eq!(encoder.blocks.len(), 1);
+
+        encoder.force_close_channel();
+        for submission in drain_submissions(&mut encoder) {
+            encoder.confirm(submission.id, 2);
+        }
+        assert!(encoder.blocks.is_empty());
     }
 
     #[test]
@@ -2224,6 +2257,30 @@ mod tests {
         assert_eq!(encoder.blocks.len(), 1, "only block 3 should remain");
         assert_eq!(encoder.blocks[0].header.number, 3);
         assert_eq!(encoder.block_cursor, 1, "cursor must be adjusted by prune count");
+    }
+
+    #[test]
+    fn test_prune_safe_rebases_open_channel_block_range() {
+        let mut encoder = default_encoder();
+        for block in make_user_tx_chain(2) {
+            encoder.add_block(block).unwrap();
+        }
+
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+
+        encoder.prune_safe(0);
+
+        let open = encoder.current_channel.as_ref().unwrap();
+        assert_eq!(open.block_start, 0);
+        assert_eq!(open.blocks_added, 1);
+        assert_eq!(encoder.blocks.len(), 1);
+
+        encoder.force_close_channel();
+        for submission in drain_submissions(&mut encoder) {
+            encoder.confirm(submission.id, 1);
+        }
+        assert!(encoder.blocks.is_empty());
     }
 
     /// `prune_safe` must not prune blocks that have not yet been encoded
