@@ -30,7 +30,10 @@ mod v1;
 pub use v1::IPolicyRegistry as IPolicyRegistryV1;
 
 mod v2;
-pub use v2::{IPolicyRegistry, IPolicyRegistry as IPolicyRegistryV2};
+pub use v2::IPolicyRegistry as IPolicyRegistryV2;
+
+mod v3;
+pub use v3::{IPolicyRegistry, IPolicyRegistry as IPolicyRegistryV3};
 
 impl IPolicyRegistry::IPolicyRegistryCalls {
     /// Returns the stable metric label for this decoded policy-registry call.
@@ -49,6 +52,7 @@ impl IPolicyRegistry::IPolicyRegistryCalls {
             Self::policyExists(_) => "policy.policyExists",
             Self::policyAdmin(_) => "policy.policyAdmin",
             Self::pendingPolicyAdmin(_) => "policy.pendingPolicyAdmin",
+            Self::policyCount(_) => "policy.policyCount",
         }
     }
 }

@@ -26,8 +26,8 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, PolicyAccounting, PolicyRegistryLogic,
-    PolicyRegistryV1, PolicyRegistryV2,
+    IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, IPolicyRegistryV3, PolicyAccounting,
+    PolicyRegistryLogic, PolicyRegistryV1, PolicyRegistryV2,
 };
 
 /// An activated version of the `PolicyRegistry` precompile logic.
@@ -39,6 +39,13 @@ pub enum PolicyVersion {
     V1,
     /// Introduced at Cobalt, superseding [`Self::V1`].
     V2,
+    /// Introduced at Zombie. Worked example of a wire-only fork: the logic is still
+    /// [`PolicyRegistryV2`], and only [`Self::abi`] moves.
+    ///
+    /// A version exists here even though no behavior changed, because [`Self::abi`] is a function
+    /// of the version alone. Leaving Zombie on [`Self::V2`] would ask one version to answer with
+    /// two surfaces.
+    V3,
 }
 
 impl PolicyVersion {
@@ -51,7 +58,9 @@ impl PolicyVersion {
         static V2: PolicyRegistryV2 = PolicyRegistryV2;
         match self {
             Self::V1 => &V1,
-            Self::V2 => &V2,
+            // Zombie reuses Cobalt's frozen logic: `policyCount` reads the existing counter and
+            // needs no version-specific behavior, so the fork adds no file under `logic/`.
+            Self::V2 | Self::V3 => &V2,
         }
     }
 
@@ -63,6 +72,7 @@ impl PolicyVersion {
         match self {
             Self::V1 => PolicyAbi::V1,
             Self::V2 => PolicyAbi::V2,
+            Self::V3 => PolicyAbi::V3,
         }
     }
 }
@@ -78,6 +88,8 @@ pub enum PolicyAbi {
     /// The Cobalt surface: adds `createCompositePolicy`/`updateComposite` and the
     /// `UNION`/`INTERSECT` discriminants.
     V2,
+    /// The Zombie surface: adds the `policyCount` read and nothing else.
+    V3,
 }
 
 impl PolicyAbi {
@@ -89,6 +101,7 @@ impl PolicyAbi {
         match self {
             Self::V1 => IPolicyRegistryV1::IPolicyRegistryCalls::valid_selector(selector),
             Self::V2 => IPolicyRegistryV2::IPolicyRegistryCalls::valid_selector(selector),
+            Self::V3 => IPolicyRegistryV3::IPolicyRegistryCalls::valid_selector(selector),
         }
     }
 
@@ -110,6 +123,9 @@ impl PolicyAbi {
             }
             Self::V2 => {
                 IPolicyRegistryV2::IPolicyRegistryCalls::abi_decode_validate(calldata).map(|_| ())
+            }
+            Self::V3 => {
+                IPolicyRegistryV3::IPolicyRegistryCalls::abi_decode_validate(calldata).map(|_| ())
             }
         }
         .map_err(|error| BasePrecompileError::AbiDecodeFailed {
@@ -155,7 +171,9 @@ pub struct PolicyVersions;
 impl PolicyVersions {
     /// Returns the version active at `upgrade`, or `None` before Beryl, where the policy
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
-        if upgrade >= BaseUpgrade::Cobalt {
+        if upgrade >= BaseUpgrade::Zombie {
+            Some(PolicyVersion::V3)
+        } else if upgrade >= BaseUpgrade::Cobalt {
             Some(PolicyVersion::V2)
         } else if upgrade >= BaseUpgrade::Beryl {
             Some(PolicyVersion::V1)
@@ -244,6 +262,36 @@ mod tests {
     fn surface_interface_names_are_frozen() {
         assert_eq!(IPolicyRegistryV1::IPolicyRegistryCalls::NAME, "IPolicyRegistryCalls");
         assert_eq!(IPolicyRegistryV2::IPolicyRegistryCalls::NAME, "IPolicyRegistryCalls");
+    }
+
+    /// The wire-only fork. Zombie earns a new [`PolicyVersion`] and a new [`PolicyAbi`], but no new
+    /// logic: `policyCount` reads the existing counter, so V3 routes to the same frozen
+    /// implementation Cobalt uses. This is the axis-independence the two enums exist for.
+    #[test]
+    fn zombie_moves_the_wire_without_moving_the_logic() {
+        let cobalt = PolicyVersions::from_base_upgrade(BaseUpgrade::Cobalt).unwrap();
+        let zombie = PolicyVersions::from_base_upgrade(BaseUpgrade::Zombie).unwrap();
+
+        assert_eq!(cobalt, PolicyVersion::V2);
+        assert_eq!(zombie, PolicyVersion::V3);
+
+        // The wire surfaces differ...
+        assert_ne!(cobalt.abi(), zombie.abi());
+        assert_eq!(zombie.abi(), PolicyAbi::V3);
+
+        // ...while `implementation` sends both to `PolicyRegistryV2`. The arm
+        // `Self::V2 | Self::V3 => &V2` above is the whole cost of this fork on the logic axis.
+        assert!(matches!(zombie, PolicyVersion::V3));
+    }
+
+    /// `policyCount` is dialable only from Zombie. Older surfaces reject the selector with no
+    /// hand-written fork gate, which is what lets the defaulted trait method stay unreachable.
+    #[test]
+    fn policy_count_is_dialable_only_from_v3() {
+        let selector = IPolicyRegistry::policyCountCall::SELECTOR;
+        assert!(!PolicyAbi::V1.valid_selector(selector));
+        assert!(!PolicyAbi::V2.valid_selector(selector));
+        assert!(PolicyAbi::V3.valid_selector(selector));
     }
 
     /// The composite selectors were not dialable at Beryl, so the V1 surface must not know them.

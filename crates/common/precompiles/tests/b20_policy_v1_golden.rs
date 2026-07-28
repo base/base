@@ -1034,5 +1034,18 @@ fn v1_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
         // V2 ABI; unknown to V1. Goldens pin the UnknownFunctionSelector (old error) behavior.
         C::createCompositePolicy(_) => covered(&[golden_create_composite_selector_unknown_in_v1]),
         C::updateComposite(_) => covered(&[golden_update_composite_selector_unknown_in_v1]),
+        // V3 ABI; unknown to V1.
+        C::policyCount(_) => covered(&[golden_policy_count_selector_unknown_in_v1]),
     }
+}
+
+#[test]
+fn golden_policy_count_selector_unknown_in_v1() {
+    // `policyCount` arrives on the V3 (Zombie) wire surface. Beryl predates it, so the selector
+    // must stay unknown rather than routing to the defaulted trait method.
+    let mut s = fresh();
+    let (rev, bytes) = call_policy(&mut s, ADMIN, IPolicyRegistry::policyCountCall {}.abi_encode());
+
+    assert!(rev);
+    assert_eq!(bytes, Bytes::from(IPolicyRegistry::policyCountCall::SELECTOR.as_ref()));
 }

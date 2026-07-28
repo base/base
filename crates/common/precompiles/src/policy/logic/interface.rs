@@ -52,6 +52,16 @@ pub trait PolicyRegistryLogic<S: PolicyAccounting> {
         Err(BasePrecompileError::Revert(Bytes::new()))
     }
 
+    /// Returns the next policy-ID counter. Introduced on the V3 (Zombie) wire surface.
+    ///
+    /// Defaulted rather than per-version: the answer is a plain counter read with no
+    /// version-specific behavior, so V1 and V2 inherit a correct body. They still cannot be asked
+    /// for it, because neither of their wire surfaces declares `policyCount` and the dispatcher
+    /// rejects the selector before reaching any logic.
+    fn policy_count(&self, storage: &S) -> Result<u64> {
+        storage.read_next_counter()
+    }
+
     /// Stages a pending admin transfer for `policy_id`.
     ///
     /// Passing `Address::ZERO` clears a previously staged transfer without nominating a

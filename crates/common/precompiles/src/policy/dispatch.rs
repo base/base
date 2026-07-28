@@ -69,7 +69,8 @@ impl PolicyRegistryStorage<'_> {
                     && (sel == IPolicyRegistry::isAuthorizedCall::SELECTOR
                         || sel == IPolicyRegistry::policyExistsCall::SELECTOR
                         || sel == IPolicyRegistry::policyAdminCall::SELECTOR
-                        || sel == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR) =>
+                        || sel == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR
+                        || sel == IPolicyRegistry::policyCountCall::SELECTOR) =>
             {
                 self.route(calldata, version, &observer)
             }
@@ -156,6 +157,10 @@ impl PolicyRegistryStorage<'_> {
                 let authorized = logic.is_authorized(self, call.policyId, call.account)?;
                 Ok(IPolicyRegistry::isAuthorizedCall::abi_encode_returns(&authorized).into())
             }
+            C::policyCount(_) => {
+                let count = logic.policy_count(self)?;
+                Ok(IPolicyRegistry::policyCountCall::abi_encode_returns(&count).into())
+            }
             C::policyExists(call) => {
                 let exists = logic.policy_exists(self, call.policyId)?;
                 Ok(IPolicyRegistry::policyExistsCall::abi_encode_returns(&exists).into())
@@ -168,9 +173,7 @@ impl PolicyRegistryStorage<'_> {
                 let pending = logic.pending_policy_admin(self, call.policyId)?;
                 Ok(IPolicyRegistry::pendingPolicyAdminCall::abi_encode_returns(&pending).into())
             }
-            // Composite ops are a V2 feature. The Beryl wire surface does not declare these
-            // selectors, so a V1 call never clears the gate in `dispatch_with_observer` and these
-            // arms only run under V2.
+            // Introduced in V2 (Cobalt).
             C::createCompositePolicy(call) => {
                 let id = logic.create_composite_policy(
                     self,
@@ -180,6 +183,7 @@ impl PolicyRegistryStorage<'_> {
                 )?;
                 Ok(IPolicyRegistry::createCompositePolicyCall::abi_encode_returns(&id).into())
             }
+            // Introduced in V2 (Cobalt).
             C::updateComposite(call) => {
                 logic.update_composite(self, call.policyId, call.childPolicyIds)?;
                 Ok(Bytes::new())
