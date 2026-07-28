@@ -46,6 +46,10 @@ pub struct AccountStateDiff {
     pub code_changed: bool,
     /// Changed contract storage slots.
     pub changed_slots: Vec<B256>,
+    /// New account code hash, when the account is present in the bundle.
+    pub code_hash: Option<B256>,
+    /// New raw ERC-1967 implementation slot value, when that slot changed.
+    pub erc1967_impl_slot: Option<U256>,
 }
 
 impl AccountStateDiff {
@@ -1716,6 +1720,8 @@ mod tests {
             nonce_changed: true,
             code_changed: true,
             changed_slots: vec![slot],
+            code_hash: None,
+            erc1967_impl_slot: None,
         };
         let mut keys = Vec::new();
         diff.push_exact_keys(&mut keys);

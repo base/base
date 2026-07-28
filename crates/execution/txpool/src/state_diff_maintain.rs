@@ -5,6 +5,7 @@
 //! deltas into the EIP-8130 invalidation index.
 
 use alloy_primitives::{B256, U256};
+use base_common_consensus::Eip8130Contracts;
 use base_common_precompiles::NonceManagerStorage;
 use futures::StreamExt;
 use reth_provider::CanonStateNotification;
@@ -127,6 +128,15 @@ impl AccountStateDiff {
                 .map(|(key, _)| B256::from(*key))
                 .collect::<Vec<_>>();
 
+            let code_hash = new_code_hash;
+            let impl_slot_key =
+                U256::from_be_bytes(Eip8130Contracts::ERC1967_IMPLEMENTATION_SLOT.0);
+            let erc1967_impl_slot = account
+                .storage
+                .get(&impl_slot_key)
+                .filter(|slot| slot.is_changed())
+                .map(|slot| slot.present_value);
+
             if balance.is_some() || nonce_changed || code_changed || !changed_slots.is_empty() {
                 diffs.push(Self {
                     address: *address,
@@ -134,6 +144,8 @@ impl AccountStateDiff {
                     nonce_changed,
                     code_changed,
                     changed_slots,
+                    code_hash,
+                    erc1967_impl_slot,
                 });
             }
         }
