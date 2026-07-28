@@ -7,6 +7,7 @@ use alloy_provider::RootProvider;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
+use base_consensus_derive::DynAltDaResolver;
 use base_consensus_providers::{L1BlobProvider, L1RpcProvider};
 use base_proof_primitives::ProofRequest;
 use serde::Serialize;
@@ -22,9 +23,9 @@ pub struct HostProviders {
     pub l2: RootProvider<Base>,
     /// The L2 rollup RPC provider.
     pub l2_node: RootProvider,
-    /// The alt-DA client, present only when a da-server URL is configured. Used to
+    /// The alt-DA resolver, present only when a da-server URL is configured. Used to
     /// resolve `DERIVATION_VERSION_1` generic commitments into off-chain batch bytes.
-    pub alt_da: Option<base_alt_da::Client>,
+    pub alt_da: Option<DynAltDaResolver>,
 }
 
 /// Supplies raw L1 data needed to populate preimage storage.

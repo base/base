@@ -12,9 +12,9 @@ workspace = true
 
 [dependencies]
 # base
-base-alt-da.workspace = true
 base-protocol.workspace = true
 base-common-consensus.workspace = true
+base-consensus-derive.workspace = true
 base-proof-mpt.workspace = true
 base-common-evm.workspace = true
 base-optimism-rpc.workspace = true

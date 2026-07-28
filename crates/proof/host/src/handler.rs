@@ -1023,6 +1023,11 @@ async fn handle_hint_inner(
             )?;
         }
         HintType::AltDaCommitment => {
+            // The current derivation protocol defines `DERIVATION_VERSION_1` as a fixed-size
+            // generic commitment, and `AltDaDataSource` enforces the same length before sending
+            // this hint. `preimage_key_for_commitment` also understands 33-byte keccak256
+            // commitments for a future protocol, but accepting them only here would leave the
+            // derivation source and host inconsistent, so this path intentionally fails closed.
             if hint.data.len() != GENERIC_COMMITMENT_LEN {
                 return Err(HostError::InvalidHintDataLength);
             }
@@ -1034,16 +1039,15 @@ async fn handle_hint_inner(
                 )
             })?;
             let bytes = client
-                .get(commitment)
+                .resolve(commitment)
                 .await
-                .map_err(|e| HostError::Custom(format!("alt-da fetch failed: {e}")))?;
+                .map_err(|error| HostError::Custom(format!("alt-da fetch failed: {error}")))?;
 
-            // Store under the same key the client program derives (single source of truth). The
-            // key type follows the commitment type: generic commitments are served on trust,
-            // keccak256 commitments are re-verified against their content hash by the oracle (see
-            // `preimage_key_for_commitment`).
+            // Store under the same key the client program derives (single source of truth).
+            // Current generic commitments use a trusted GlobalGeneric key; see
+            // `preimage_key_for_commitment` for the keying rules.
             let key = preimage_key_for_commitment(commitment);
-            kv.write().await.set(key.into(), bytes)?;
+            kv.write().await.set(key.into(), bytes.to_vec())?;
         }
         HintType::L1Precompile => {
             if hint.data.len() < 28 {
@@ -1660,5 +1664,19 @@ mod tests {
         }
         assert!(kv.read().await.get(PreimageKey::new_keccak256(*requested_hash).into()).is_none());
         assert!(kv.read().await.get(PreimageKey::new_keccak256(*actual_hash).into()).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_alt_da_rejects_keccak_commitment_until_protocol_supports_it() {
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let providers = test_providers(l2);
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        let mut commitment = [0u8; 33];
+        commitment[0] = 0x00;
+        let hint = HintType::AltDaCommitment.with_data(&[&commitment]);
+
+        let err = handle_hint(hint, &test_cfg(), &providers, kv).await.unwrap_err();
+
+        assert!(matches!(err, HostError::InvalidHintDataLength));
     }
 }

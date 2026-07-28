@@ -75,11 +75,11 @@ enum Command {
 
     /// Claim Nitro TEE jobs from prover-service and forward them to the enclave over vsock.
     #[cfg(target_os = "linux")]
-    Server(ServerArgs),
+    Server(Box<ServerArgs>),
 
     /// Claim Nitro TEE jobs from prover-service using in-process local enclave instances.
     #[cfg(feature = "local")]
-    Local(LocalArgs),
+    Local(Box<LocalArgs>),
 }
 
 /// Arguments for the `config-hash` subcommand.

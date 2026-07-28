@@ -226,17 +226,14 @@ mod tests {
         commitment.extend_from_slice(keccak256(&data).as_slice());
         let key = preimage_key_for_commitment(&commitment);
 
-        let good =
-            OracleAltDaResolver::new(Arc::new(VerifyingOracle { key, value: data.clone() }));
+        let good = OracleAltDaResolver::new(Arc::new(VerifyingOracle { key, value: data.clone() }));
         assert_eq!(
             good.resolve(&commitment).await.expect("matching bytes resolve").as_ref(),
             data.as_slice()
         );
 
-        let bad = OracleAltDaResolver::new(Arc::new(VerifyingOracle {
-            key,
-            value: vec![0xaau8; 5],
-        }));
+        let bad =
+            OracleAltDaResolver::new(Arc::new(VerifyingOracle { key, value: vec![0xaau8; 5] }));
         assert!(matches!(
             bad.resolve(&commitment).await.unwrap_err(),
             AltDaResolverError::Resolve(_)
