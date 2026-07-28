@@ -11,6 +11,12 @@ pub const SCHEMA_VERSION: &str = "transaction-event/v1";
 /// Default bounded channel capacity for the background writer.
 pub const DEFAULT_QUEUE_CAPACITY: usize = 16_384;
 
+/// Default maximum size of an active transaction event journal segment.
+pub const DEFAULT_MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
+
+/// Default number of transaction event journal segments to retain, including the active file.
+pub const DEFAULT_MAX_FILES: usize = 8;
+
 const MAX_DATA_VALIDATION_DEPTH: usize = 16;
 
 /// Producer identity for a transaction event.
