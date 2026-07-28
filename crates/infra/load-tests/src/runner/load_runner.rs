@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     path::Path,
     sync::{
@@ -811,32 +811,94 @@ impl LoadRunner {
             }
         }
 
-        if accounts_to_fund.is_empty() {
-            info!("all accounts already have sufficient balance, skipping funding");
-            return Ok(());
-        }
-
         let funder_address = funding_key.address();
         let wallet = EthereumWallet::from(funding_key);
         let funder_provider =
             Arc::new(create_wallet_provider(primary_submission_rpc.clone(), wallet));
 
-        let initial_base_fee = client.get_base_fee().await?;
-        let initial_priority_fee = (initial_base_fee / 10).max(1);
-        let initial_max_fee = SubmissionPipeline::submission_max_fee(
-            initial_base_fee,
-            initial_priority_fee,
-            max_gas_price,
-        );
+        // The funder is exclusively owned by this load tester, so reclaim any pending nonce range
+        // left by an interrupted run instead of appending new transfers behind stale transactions.
+        let canonical_nonce = funder_provider
+            .get_transaction_count(funder_address)
+            .await
+            .rpc("get canonical transaction count")?;
+        let pending_nonce = funder_provider
+            .get_transaction_count(funder_address)
+            .pending()
+            .await
+            .rpc("get pending transaction count")?;
+        if pending_nonce < canonical_nonce {
+            return Err(BaselineError::Transaction(format!(
+                "inconsistent funder nonces: canonical {canonical_nonce}, pending {pending_nonce}"
+            )));
+        }
+        let mut txpool_endpoints = vec![primary_submission_rpc];
+        txpool_endpoints.extend(self.config.txpool_nodes.iter().cloned());
+        txpool_endpoints.sort();
+        txpool_endpoints.dedup();
+        let mut highest_txpool_nonce = None;
+        let mut txpool_content_available = false;
+        for endpoint in txpool_endpoints {
+            let txpool_client = TxpoolAdminClient::new(endpoint.clone())?;
+            match txpool_client.sender_transaction_nonces(funder_address).await {
+                Ok(nonces) => {
+                    txpool_content_available = true;
+                    if let Some(highest) = nonces.into_iter().max() {
+                        highest_txpool_nonce = Some(
+                            highest_txpool_nonce
+                                .map_or(highest, |current: u64| current.max(highest)),
+                        );
+                    }
+                }
+                Err(error) => {
+                    debug!(url = %endpoint, error = %error, "sender txpool content unavailable");
+                }
+            }
+        }
+        if !txpool_content_available {
+            warn!(
+                "sender txpool content unavailable; queued funder transactions behind nonce gaps cannot be discovered"
+            );
+        }
+        let stale_end_nonce = highest_txpool_nonce
+            .and_then(|nonce| nonce.checked_add(1))
+            .unwrap_or(pending_nonce)
+            .max(pending_nonce);
+        let stale_nonce_count = stale_end_nonce.checked_sub(canonical_nonce).ok_or_else(|| {
+            BaselineError::Transaction(format!(
+                "inconsistent funder txpool range: canonical {canonical_nonce}, stale end {stale_end_nonce}"
+            ))
+        })?;
+
+        if accounts_to_fund.is_empty() && stale_nonce_count == 0 {
+            info!("all accounts already have sufficient balance, skipping funding");
+            return Ok(());
+        }
+
+        if stale_nonce_count > 0 {
+            warn!(
+                from = %funder_address,
+                canonical_nonce,
+                pending_nonce,
+                stale_end_nonce,
+                stale_nonce_count,
+                "replacing stale pending funder transactions"
+            );
+        }
 
         // Phase 2: Early balance validation — abort before sending any TXs if
-        // the funder cannot cover the total cost.
+        // the funder cannot cover the total cost, including cancellations for any
+        // stale nonce tail longer than the set of accounts that need funding.
         let total_deficit: U256 = accounts_to_fund
             .iter()
             .map(|(_, deficit)| *deficit)
             .fold(U256::ZERO, |a, b| a.saturating_add(b));
-        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(initial_max_fee));
-        let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(accounts_to_fund.len()));
+        let funding_request_count =
+            accounts_to_fund.len().max(usize::try_from(stale_nonce_count).map_err(|_| {
+                BaselineError::Transaction("stale funder nonce range exceeds usize".into())
+            })?);
+        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(max_gas_price));
+        let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(funding_request_count));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
         let funder_balance = client.get_balance(funder_address).await.rpc("get balance")?;
@@ -854,38 +916,39 @@ impl LoadRunner {
             )));
         }
 
-        let start_nonce = funder_provider
-            .get_transaction_count(funder_address)
-            .pending()
-            .await
-            .rpc("get pending transaction count")?;
-
         info!(
             from = %funder_address,
             amount = %amount_per_account,
             accounts_needing_funds = accounts_to_fund.len(),
+            stale_nonce_count,
+            cancellation_count = funding_request_count.saturating_sub(accounts_to_fund.len()),
             funder_balance = %format_ether(funder_balance),
             total_needed = %format_ether(total_needed),
             "funding accounts"
         );
 
         // Phase 3+4: Send funding TXs in batches and confirm each batch before
-        // sending the next. This avoids overwhelming the txpool's per-sender limit.
-        let funding_requests: Vec<(Address, U256, u64)> = accounts_to_fund
-            .iter()
-            .enumerate()
-            .map(|(i, &(address, deficit))| {
-                let nonce = start_nonce
+        // sending the next. Existing stale nonces are reused for current funding
+        // transfers; any stale tail is cancelled with zero-value self-transfers.
+        let funding_requests: VecDeque<(Address, U256, u64, bool)> = (0..funding_request_count)
+            .map(|i| {
+                let nonce = canonical_nonce
                     .checked_add(u64::try_from(i).expect("account index exceeds u64"))
                     .expect("nonce overflow");
-                (address, deficit, nonce)
+                match accounts_to_fund.get(i) {
+                    Some(&(address, deficit)) => (address, deficit, nonce, true),
+                    None => (funder_address, U256::ZERO, nonce, false),
+                }
             })
             .collect();
 
-        let total_txs = funding_requests.len() as u64;
+        let total_txs = accounts_to_fund.len() as u64;
         let pb_fund = self.progress_bar(total_txs, "Funding accounts");
-        let mut txs_remaining = funding_requests.into_iter().peekable();
-        while txs_remaining.peek().is_some() {
+        let mut txs_remaining = funding_requests;
+        let mut next_retry_nonce = canonical_nonce
+            .checked_add(u64::try_from(funding_request_count).expect("request count exceeds u64"))
+            .expect("nonce overflow");
+        while !txs_remaining.is_empty() {
             let base_fee = client.get_base_fee().await?;
             let max_priority_fee = (base_fee / 10).max(1);
             // Funding transactions form one strict nonce chain and may wait several blocks behind
@@ -894,13 +957,20 @@ impl LoadRunner {
             // EIP-1559 still charges only base fee plus priority fee, not this full cap.
             let max_fee = max_gas_price;
             info!(base_fee, max_fee, max_priority_fee, "pricing funding transaction batch");
-            let batch: Vec<_> =
-                txs_remaining.by_ref().take(self.config.funding_batch_size).collect();
+            let batch: Vec<_> = (0..self.config.funding_batch_size)
+                .filter_map(|_| txs_remaining.pop_front())
+                .collect();
+            let reclaimed_nonce_target = batch
+                .iter()
+                .filter_map(|(_, _, nonce, _)| (*nonce < stale_end_nonce).then_some(*nonce + 1))
+                .max();
             let mut batch_pending: Vec<Address> = Vec::with_capacity(batch.len());
-            let mut retries: Vec<(Address, U256, u64)> = Vec::new();
+            let mut retries: Vec<(Address, U256, u64, bool)> = Vec::new();
+            let mut consumed_funding_nonces: Vec<(Address, U256, u64)> = Vec::new();
+            let mut existing_nonce_targets = Vec::new();
             let mut fatal_errors: Vec<String> = Vec::new();
 
-            let send_futs = batch.into_iter().map(|(address, deficit, nonce)| {
+            let send_futs = batch.into_iter().map(|(address, deficit, nonce, fund_account)| {
                 let provider = Arc::clone(&funder_provider);
                 async move {
                     let tx = TransactionRequest::default()
@@ -912,35 +982,50 @@ impl LoadRunner {
                         .with_max_fee_per_gas(max_fee)
                         .with_max_priority_fee_per_gas(max_priority_fee);
                     let result = provider.send_transaction(tx).await;
-                    (result, address, deficit, nonce)
+                    (result, address, deficit, nonce, fund_account)
                 }
             });
 
             let mut send_stream =
                 stream::iter(send_futs).buffer_unordered(self.config.funding_batch_size);
 
-            let mut nonce_refresh_needed: Vec<(Address, U256)> = Vec::new();
-
-            while let Some((result, address, deficit, nonce)) = send_stream.next().await {
+            while let Some((result, address, deficit, nonce, fund_account)) =
+                send_stream.next().await
+            {
                 match result {
                     Ok(pending) => {
                         let tx_hash = *pending.tx_hash();
-                        debug!(to = %address, deficit = %deficit, nonce, tx_hash = %tx_hash, "funding tx sent");
-                        batch_pending.push(address);
+                        debug!(to = %address, deficit = %deficit, nonce, tx_hash = %tx_hash, fund_account, "funder transaction sent");
+                        if fund_account {
+                            batch_pending.push(address);
+                        }
                     }
                     Err(e) => {
                         let error_str = e.to_string();
                         if error_str.contains("already known") {
-                            info!(to = %address, nonce, "funding transaction already pending");
-                            batch_pending.push(address);
+                            // The provider signed the exact request above, so "already known"
+                            // identifies this intended transaction rather than an arbitrary tx at
+                            // the same nonce.
+                            info!(to = %address, nonce, fund_account, "funder transaction already pending");
+                            if fund_account {
+                                batch_pending.push(address);
+                            }
                         } else if error_str.contains("replacement transaction underpriced") {
-                            retries.push((address, deficit, nonce));
+                            retries.push((address, deficit, nonce, fund_account));
                         } else if error_str.contains("nonce too low") {
-                            info!(to = %address, nonce, "nonce too low, will refresh and retry");
-                            nonce_refresh_needed.push((address, deficit));
+                            // A stale transaction raced this replacement into a block. Waiting for
+                            // its canonical state below determines whether the intended recipient
+                            // still needs a new transfer at the end of the reclaimed nonce range.
+                            info!(to = %address, nonce, fund_account, "funder nonce already consumed");
+                            existing_nonce_targets.push(nonce.saturating_add(1));
+                            if fund_account {
+                                consumed_funding_nonces.push((address, deficit, nonce));
+                            }
                         } else {
-                            error!(to = %address, error = %e, "failed to fund account");
-                            fatal_errors.push(format!("failed to fund {address}: {e}"));
+                            error!(to = %address, nonce, fund_account, error = %e, "failed to send funder transaction");
+                            fatal_errors.push(format!(
+                                "failed to send funder nonce {nonce} to {address}: {e}"
+                            ));
                         }
                     }
                 }
@@ -956,9 +1041,11 @@ impl LoadRunner {
             }
 
             if !retries.is_empty() {
-                let replacement_addresses: Vec<Address> =
-                    retries.iter().map(|(address, _, _)| *address).collect();
-                let retry_futs = retries.into_iter().map(|(address, deficit, nonce)| {
+                let replacement_addresses: Vec<Address> = retries
+                    .iter()
+                    .filter_map(|(address, _, _, fund)| fund.then_some(*address))
+                    .collect();
+                let retry_futs = retries.into_iter().map(|(address, deficit, nonce, fund_account)| {
                     let provider = Arc::clone(&funder_provider);
                     async move {
                         let mut replacement_max_fee = max_fee;
@@ -974,8 +1061,17 @@ impl LoadRunner {
                             if next_max_fee == replacement_max_fee
                                 && next_priority_fee == replacement_priority_fee
                             {
-                                return Err(format!(
-                                    "replacement funding tx for {address} nonce {nonce} remains underpriced at max gas price {max_gas_price}"
+                                // A transaction from a previous run may already use the configured
+                                // absolute fee cap and therefore be impossible to replace. Let the
+                                // executable original settle, then verify the intended recipient.
+                                return Ok((
+                                    address,
+                                    deficit,
+                                    nonce,
+                                    None,
+                                    attempt,
+                                    fund_account,
+                                    true,
                                 ));
                             }
                             replacement_max_fee = next_max_fee;
@@ -992,14 +1088,39 @@ impl LoadRunner {
 
                             match provider.send_transaction(replacement).await {
                                 Ok(pending) => {
-                                    return Ok((address, nonce, Some(*pending.tx_hash()), attempt));
+                                    return Ok((
+                                        address,
+                                        deficit,
+                                        nonce,
+                                        Some(*pending.tx_hash()),
+                                        attempt,
+                                        fund_account,
+                                        false,
+                                    ));
                                 }
                                 Err(e) => {
                                     let error = e.to_string();
-                                    if error.contains("already known")
-                                        || error.contains("nonce too low")
-                                    {
-                                        return Ok((address, nonce, None, attempt));
+                                    if error.contains("already known") {
+                                        return Ok((
+                                            address,
+                                            deficit,
+                                            nonce,
+                                            None,
+                                            attempt,
+                                            fund_account,
+                                            false,
+                                        ));
+                                    }
+                                    if error.contains("nonce too low") {
+                                        return Ok((
+                                            address,
+                                            deficit,
+                                            nonce,
+                                            None,
+                                            attempt,
+                                            fund_account,
+                                            true,
+                                        ));
                                     }
                                     if !error.contains("replacement transaction underpriced") {
                                         return Err(format!(
@@ -1018,8 +1139,14 @@ impl LoadRunner {
                             }
                         }
 
-                        Err(format!(
-                            "replacement funding tx for {address} nonce {nonce} remained underpriced after {FUNDING_REPLACEMENT_MAX_ATTEMPTS} attempts"
+                        Ok((
+                            address,
+                            deficit,
+                            nonce,
+                            None,
+                            FUNDING_REPLACEMENT_MAX_ATTEMPTS,
+                            fund_account,
+                            true,
                         ))
                     }
                 });
@@ -1029,14 +1156,29 @@ impl LoadRunner {
 
                 while let Some(result) = retry_stream.next().await {
                     match result {
-                        Ok((address, nonce, tx_hash, attempt)) => {
+                        Ok((
+                            address,
+                            deficit,
+                            nonce,
+                            tx_hash,
+                            attempt,
+                            fund_account,
+                            verify_after_existing,
+                        )) => {
                             info!(
                                 to = %address,
                                 nonce,
                                 attempt,
                                 tx_hash = ?tx_hash,
-                                "replacement funding transaction accepted"
+                                fund_account,
+                                "replacement funder transaction accepted"
                             );
+                            if fund_account && verify_after_existing {
+                                consumed_funding_nonces.push((address, deficit, nonce));
+                            }
+                            if verify_after_existing {
+                                existing_nonce_targets.push(nonce.saturating_add(1));
+                            }
                         }
                         Err(error) => {
                             fatal_errors.push(error);
@@ -1053,69 +1195,82 @@ impl LoadRunner {
                     )));
                 }
 
-                // Every replacement either entered the pool, was already known, or its nonce was
-                // consumed while retrying. In all cases, wait for the intended recipient balance
-                // before allowing later funder nonces to proceed.
-                batch_pending.extend(replacement_addresses);
+                // Do not wait for an intended recipient whose nonce was consumed by a different
+                // stale transaction. It is checked and, if needed, requeued below.
+                batch_pending.extend(replacement_addresses.into_iter().filter(|address| {
+                    !consumed_funding_nonces.iter().any(|(consumed, _, _)| consumed == address)
+                }));
+            }
+
+            // Balance polling cannot confirm zero-value cancellation transactions. Wait until the
+            // canonical nonce has crossed every stale nonce reclaimed by this batch before moving
+            // on, ensuring stale funding traffic cannot leak into setup calibration or the run.
+            let settlement_target =
+                reclaimed_nonce_target.into_iter().chain(existing_nonce_targets).max();
+            if let Some(target_nonce) = settlement_target {
+                let started = Instant::now();
+                loop {
+                    let observed_nonce = funder_provider
+                        .get_transaction_count(funder_address)
+                        .await
+                        .rpc("get canonical transaction count")?;
+                    if observed_nonce >= target_nonce {
+                        break;
+                    }
+                    if started.elapsed() >= PENDING_CONFIRMATION_TIMEOUT {
+                        pb_fund.finish_and_clear();
+                        return Err(BaselineError::Timeout {
+                            operation: format!(
+                                "reclaiming stale funder nonces through {} (canonical nonce {})",
+                                target_nonce.saturating_sub(1),
+                                observed_nonce
+                            ),
+                            duration: PENDING_CONFIRMATION_TIMEOUT,
+                        });
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
+
+            for (address, _, _) in consumed_funding_nonces {
+                // Read through the same provider whose canonical nonce was observed above so a
+                // lagging query endpoint cannot cause a duplicate transfer.
+                let balance = funder_provider.get_balance(address).await.rpc("get balance")?;
+                if balance >= amount_per_account {
+                    pb_fund.inc(1);
+                    continue;
+                }
+
+                let deficit = amount_per_account.saturating_sub(balance);
+                let remaining_deficit = txs_remaining
+                    .iter()
+                    .map(|(_, value, _, _)| *value)
+                    .fold(deficit, U256::saturating_add);
+                let remaining_count = txs_remaining.len().saturating_add(1);
+                let remaining_gas = gas_cost_per_tx.saturating_mul(U256::from(remaining_count));
+                let remaining_needed = remaining_deficit.saturating_add(remaining_gas);
+                let current_funder_balance =
+                    funder_provider.get_balance(funder_address).await.rpc("get funder balance")?;
+                if current_funder_balance < remaining_needed {
+                    pb_fund.finish_and_clear();
+                    return Err(BaselineError::Transaction(format!(
+                        "funder {} has insufficient balance after stale nonce settlement: has {} ETH, needs {} ETH for remaining funding",
+                        funder_address,
+                        format_ether(current_funder_balance),
+                        format_ether(remaining_needed),
+                    )));
+                }
+                warn!(
+                    to = %address,
+                    balance = %balance,
+                    nonce = next_retry_nonce,
+                    "stale transaction consumed nonce without funding intended account; requeuing transfer"
+                );
+                txs_remaining.push_back((address, deficit, next_retry_nonce, true));
+                next_retry_nonce = next_retry_nonce.checked_add(1).expect("nonce overflow");
             }
 
             Self::await_balances(&client, &mut batch_pending, amount_per_account, &pb_fund).await?;
-
-            if !nonce_refresh_needed.is_empty() {
-                let fresh_nonce = funder_provider
-                    .get_transaction_count(funder_address)
-                    .pending()
-                    .await
-                    .rpc("get pending transaction count")?;
-
-                info!(
-                    count = nonce_refresh_needed.len(),
-                    fresh_nonce, "retrying funding txs with refreshed nonce"
-                );
-
-                let nonce_retry_futs =
-                    nonce_refresh_needed.into_iter().enumerate().map(|(i, (address, deficit))| {
-                        let provider = Arc::clone(&funder_provider);
-                        let retry_nonce = fresh_nonce + i as u64;
-                        async move {
-                            let tx = TransactionRequest::default()
-                                .with_to(address)
-                                .with_value(deficit)
-                                .with_nonce(retry_nonce)
-                                .with_chain_id(chain_id)
-                                .with_gas_limit(21_000)
-                                .with_max_fee_per_gas(max_fee)
-                                .with_max_priority_fee_per_gas(max_priority_fee);
-                            let result = provider.send_transaction(tx).await;
-                            (result, address, retry_nonce)
-                        }
-                    });
-
-                let mut nonce_retry_stream =
-                    stream::iter(nonce_retry_futs).buffered(self.config.funding_batch_size);
-
-                let mut nonce_retry_pending: Vec<Address> = Vec::new();
-                while let Some((result, address, retry_nonce)) = nonce_retry_stream.next().await {
-                    match result {
-                        Ok(pending) => {
-                            let tx_hash = *pending.tx_hash();
-                            info!(to = %address, nonce = retry_nonce, tx_hash = %tx_hash, "nonce-refreshed funding tx sent");
-                            nonce_retry_pending.push(address);
-                        }
-                        Err(retry_err) => {
-                            warn!(to = %address, nonce = retry_nonce, error = %retry_err, "nonce-refreshed retry also failed, proceeding");
-                        }
-                    }
-                }
-
-                Self::await_balances(
-                    &client,
-                    &mut nonce_retry_pending,
-                    amount_per_account,
-                    &pb_fund,
-                )
-                .await?;
-            }
         }
         pb_fund.finish_and_clear();
 
