@@ -80,7 +80,6 @@ const OPEN_LOOP_TARGET_MIN_BATCHES: u64 = 1;
 const OPEN_LOOP_TARGET_INITIAL_BATCHES: u64 = 2;
 const FUNDING_REPLACEMENT_FEE_MULTIPLIER: u128 = 3;
 const FUNDING_REPLACEMENT_MAX_ATTEMPTS: u32 = 8;
-const L1_FEE_BUFFER_WEI: u128 = 1_000_000_000_000_000;
 const START_FILE_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug)]
@@ -1002,12 +1001,9 @@ impl LoadRunner {
                 BaselineError::Transaction("stale funder nonce range exceeds usize".into())
             })?);
         // Reth only classifies the full nonce chain as executable when the funder can afford every
-        // transaction's maximum declared cost. Base admission also includes L1 data and operator
-        // fees, which dominate at low L2 gas-price caps. Omitting them leaves one affordable root
-        // followed by queued descendants that promote one at a time.
-        let gas_cost_per_tx = U256::from(21_000u64)
-            .saturating_mul(U256::from(max_gas_price))
-            .saturating_add(U256::from(L1_FEE_BUFFER_WEI));
+        // transaction's maximum declared L2 cost. Using an expected EIP-1559 price here can leave
+        // an affordable pending prefix followed by queued descendants.
+        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(max_gas_price));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(funding_request_count));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
@@ -3191,8 +3187,10 @@ impl LoadRunner {
             self.config.max_gas_price,
         );
         let drain_gas_limit = 21_000u128;
-        // L1 data fee on Base can be significant. Use the same conservative buffer as funding.
-        let drain_gas_cost = U256::from(drain_gas_limit * max_fee + L1_FEE_BUFFER_WEI);
+        // L1 data fee on Base can be significant (0.0001-0.001 ETH depending on L1 gas prices).
+        // Use 0.001 ETH (1e15 wei) buffer to be safe. We may leave dust in accounts.
+        let l1_fee_buffer = 1_000_000_000_000_000u128;
+        let drain_gas_cost = U256::from(drain_gas_limit * max_fee + l1_fee_buffer);
 
         let total_accounts = self.accounts.len();
         let pb_drain = self.progress_bar(total_accounts as u64, "Draining accounts");
