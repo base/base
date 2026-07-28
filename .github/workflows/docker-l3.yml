@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [execution, base, builder, consensus, proposer, challenger, batcher, da-server, snapshotter]
+        target: [execution, base, builder, consensus, proposer, challenger, batcher, da-server, snapshotter, prover-service]
 
     runs-on: ubuntu-24.04
 
