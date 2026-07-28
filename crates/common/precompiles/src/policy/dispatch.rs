@@ -67,6 +67,15 @@ impl PolicyRegistryStorage<'_> {
             {
                 self.route(calldata, version, &observer)
             }
+            // Composite policies are a V2 feature. Before V2 these selectors were unknown, so V1
+            // must keep reverting with UnknownFunctionSelector rather than routing/decoding them.
+            Some(sel)
+                if version == PolicyVersion::V1
+                    && (sel == IPolicyRegistry::createCompositePolicyCall::SELECTOR
+                        || sel == IPolicyRegistry::updateCompositeCall::SELECTOR) =>
+            {
+                Err(BasePrecompileError::UnknownFunctionSelector(sel))
+            }
             Some(sel) if IPolicyRegistry::IPolicyRegistryCalls::valid_selector(sel) => {
                 // Validate ABI encoding before the activation gate so that malformed
                 // arguments return AbiDecodeFailed regardless of activation state.
@@ -158,6 +167,21 @@ impl PolicyRegistryStorage<'_> {
             C::pendingPolicyAdmin(call) => {
                 let pending = logic.pending_policy_admin(self, call.policyId)?;
                 Ok(IPolicyRegistry::pendingPolicyAdminCall::abi_encode_returns(&pending).into())
+            }
+            // Composite ops are a V2 feature; V1 short-circuits these selectors to
+            // UnknownFunctionSelector in `dispatch_with_observer`, so this only runs under V2.
+            C::createCompositePolicy(call) => {
+                let id = logic.create_composite_policy(
+                    self,
+                    call.admin,
+                    call.policyType,
+                    call.childPolicyIds,
+                )?;
+                Ok(IPolicyRegistry::createCompositePolicyCall::abi_encode_returns(&id).into())
+            }
+            C::updateComposite(call) => {
+                logic.update_composite(self, call.policyId, call.childPolicyIds)?;
+                Ok(Bytes::new())
             }
         }
     }
@@ -399,6 +423,40 @@ mod tests {
         let output = run(&mut storage, &calldata);
 
         assert!(output.is_revert());
+    }
+
+    #[test]
+    fn v1_composite_selectors_revert_with_unknown_function_selector() {
+        // Composite policies are a V2 feature; at Beryl (V1) their selectors are unknown, so
+        // dispatch reverts with UnknownFunctionSelector (raw 4-byte selector) — the old behavior.
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+        storage.set_caller(ADMIN);
+        let create = IPolicyRegistry::createCompositePolicyCall {
+            admin: ADMIN,
+            policyType: IPolicyRegistry::PolicyType::UNION,
+            childPolicyIds: alloc::vec![2, (1u64 << 56) | 2],
+        }
+        .abi_encode();
+        let update = IPolicyRegistry::updateCompositeCall {
+            policyId: 2,
+            childPolicyIds: alloc::vec![2, (1u64 << 56) | 2],
+        }
+        .abi_encode();
+
+        let create_out = run(&mut storage, &create);
+        let update_out = run(&mut storage, &update);
+
+        assert!(create_out.is_revert());
+        assert_eq!(
+            create_out.bytes,
+            Bytes::from(IPolicyRegistry::createCompositePolicyCall::SELECTOR.as_ref())
+        );
+        assert!(update_out.is_revert());
+        assert_eq!(
+            update_out.bytes,
+            Bytes::from(IPolicyRegistry::updateCompositeCall::SELECTOR.as_ref())
+        );
     }
 
     fn create_allowlist_policy(storage: &mut HashMapStorageProvider) -> u64 {
