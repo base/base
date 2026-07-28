@@ -356,12 +356,23 @@ Submits and inspects ZK proof requests on the internal prover service, used to
 speed up finality for a block range when required.
 
 - `basectl proofs finalize <START_BLOCK> <NUM_BLOCKS>` submits a proof request
-  for a consecutive L2 block range.
+  for a consecutive L2 block range beginning at `START_BLOCK`. Basectl maps
+  this to the prover protocol's pre-state boundary internally.
 - `basectl proofs status <SESSION_ID>` shows status and result data for a
   submitted proof request.
 - `basectl proofs list` lists submitted proof requests.
+- `basectl proofs games [GAME_ADDRESS]` lists recent dispute games from the L1
+  `DisputeGameFactory`, or inspects one game in detail when an address is
+  given.
+- `basectl proofs propose <GAME_ADDRESS> --prover-address <ADDRESS>` requests
+  a PLONK proposal proof matched to an existing dispute game. The block range,
+  L1 head, and intermediate root interval are read from the game so the proof
+  verifies against the game's on-chain state.
+- `basectl proofs submit <GAME_ADDRESS> --private-key <HEX>` fetches the
+  completed PLONK proof from the prover service and sends the
+  `AggregateVerifier.verifyProposalProof` transaction to the game on L1.
 
-All proofs commands resolve the prover-service endpoint from the `--prover-rpc`
+The `finalize`, `status`, and `list` commands resolve the prover-service endpoint from the `--prover-rpc`
 flag, then the `BASECTL_PROVER_RPC` environment variable, then the selected
 config's `prover_rpc` field. The built-in presets ship without a `prover_rpc`
 because the prover service is internal, so one of the three must be provided.
@@ -370,7 +381,8 @@ because the prover service is internal, so one of the three must be provided.
 
 | Flag | Description |
 |------|-------------|
-| `--session-id <ID>` | Explicit proof session ID (prover-service idempotency key). If omitted, basectl derives a deterministic session ID from the network name and block range, so re-running the same command resolves to the existing session instead of enqueueing a duplicate proof. |
+| `--zk-backend <BACKEND>` | ZK proving backend: `cluster` (default, self-hosted SP1 cluster), `network` (Succinct Prover Network, paid in PROVE), or `dry-run` (local SP1 execution statistics, no proof bytes). See the [standalone proving guide](../../docs/guides/STANDALONE_PROVING.md). |
+| `--session-id <ID>` | Explicit proof session ID (prover-service idempotency key). If omitted, basectl derives a deterministic session ID from the network name, ZK backend, and block range, so re-running the same command resolves to the existing session instead of enqueueing a duplicate proof. |
 | `--l1-head <HASH>` | L1 head hash used for witness generation. If omitted, the prover service picks one. |
 | `--sequence-window <N>` | Sequencing window passed to the prover. |
 | `--intermediate-root-interval <N>` | Intermediate output root interval passed to the prover. |
@@ -396,6 +408,65 @@ because the prover service is internal, so one of the three must be provided.
 | `--limit <N>` | Maximum rows to return. Default `50`. |
 | `--prover-rpc <URL>` | Prover-service RPC URL. Also `BASECTL_PROVER_RPC` or config `prover_rpc`. |
 | `--json` | Emit humanized JSON instead of pretty text. |
+
+`proofs games` reads L1 directly (no prover service required). The factory
+address comes from `--factory` or the config's `proofs.dispute_game_factory`;
+the L1 endpoint comes from `--l1-rpc` or the config's `l1_rpc`.
+
+| Flag | Description |
+|------|-------------|
+| `--limit <N>` | Maximum games to list, scanning backwards from the newest. Default `20`, maximum `100`. |
+| `--game-type <TYPE>` | Only list games of this game type. |
+| `--missing-zk` | Only list games whose ZK proof slot is still empty. |
+| `--factory <ADDRESS>` | `DisputeGameFactory` address. Also config `proofs.dispute_game_factory`. |
+| `--l1-rpc <URL>` | L1 RPC URL. Also config `l1_rpc`. |
+| `--json` | Emit humanized JSON instead of pretty text. |
+
+`proofs propose` reads the target game from L1 and submits a game-matched
+`snark_plonk` request to the prover service. The game must be in progress with
+an empty ZK proof slot. The proof journal commits to `--prover-address` as
+the proposer, so the later `verifyProposalProof` L1 transaction must be sent
+from exactly that wallet — a proof generated for one address cannot be
+submitted from another.
+
+| Flag | Description |
+|------|-------------|
+| `--prover-address <ADDRESS>` | Required. L1 wallet that will submit the proof on chain. |
+| `--zk-backend <BACKEND>` | ZK proving backend: `network` (default, Succinct Prover Network, paid in PROVE), `cluster`, or `dry-run`. |
+| `--session-id <ID>` | Explicit proof session ID. If omitted, derived from the network name, ZK backend, game address, block range, and prover address. |
+| `--intermediate-root-interval <N>` | Override the checkpoint stride derived from the game's committed intermediate roots. |
+| `--wait` | Poll the prover service until the proof succeeds or fails. |
+| `--prover-rpc <URL>` | Prover-service RPC URL. Also `BASECTL_PROVER_RPC` or config `prover_rpc`. |
+| `--factory <ADDRESS>` | `DisputeGameFactory` address. Also config `proofs.dispute_game_factory`. |
+| `--l1-rpc <URL>` | L1 RPC URL. Also config `l1_rpc`. |
+| `--yes` | Skip the interactive confirmation prompt. |
+| `--json` | Emit a structured JSON action outcome instead of pretty text. Requires `--yes`. |
+
+`proofs submit` completes the standalone proving workflow: it fetches the
+completed PLONK proof for the game from the prover service and sends
+`AggregateVerifier.verifyProposalProof(proof)` to the game on L1, waiting for
+the transaction to be mined. The signing wallet must be exactly the
+`--prover-address` the proof was proposed with; the contract rejects any other
+sender with `InvalidSigner`. Before sending, basectl re-reads the game and
+refuses to spend gas when the game is no longer in progress or already has a
+ZK proof.
+
+When `--session-id` is omitted, basectl derives the same deterministic session
+ID that `proofs propose` derives — from the network name, ZK backend, game
+address, block range, and the submitting wallet's address — so a proof proposed
+and submitted with the same wallet needs no session bookkeeping.
+
+| Flag | Description |
+|------|-------------|
+| `--private-key <HEX>` | Required. Private key of the L1 wallet that signs and pays for the transaction. Also `BASECTL_SUBMITTER_PRIVATE_KEY`. Must control the `--prover-address` used at propose time. |
+| `--session-id <ID>` | Explicit proof session ID. If omitted, derived as described above. |
+| `--zk-backend <BACKEND>` | ZK backend the proof was proposed with (`network` default). Only used for session ID derivation. |
+| `--wait` | Poll the prover service until the proof completes before submitting. |
+| `--prover-rpc <URL>` | Prover-service RPC URL. Also `BASECTL_PROVER_RPC` or config `prover_rpc`. |
+| `--factory <ADDRESS>` | `DisputeGameFactory` address. Also config `proofs.dispute_game_factory`. |
+| `--l1-rpc <URL>` | L1 RPC URL. Also config `l1_rpc`. |
+| `--yes` | Skip the interactive confirmation prompt. |
+| `--json` | Emit a structured JSON action outcome instead of pretty text. Requires `--yes`. |
 
 ## Examples
 

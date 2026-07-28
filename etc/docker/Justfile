@@ -160,7 +160,7 @@ _build-setup-image:
     docker build --load -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
 
 [private]
-_build-rust-images group profile='dev':
+_build-rust-images group profile='dev' elf_require_override='':
     #!/usr/bin/env bash
     set -euo pipefail
     case "$(uname -m)" in
@@ -176,6 +176,9 @@ _build-rust-images group profile='dev':
         esac
         ;;
     esac
+    if [ -n "{{ elf_require_override }}" ]; then
+      elf_require="{{ elf_require_override }}"
+    fi
     PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
@@ -241,7 +244,10 @@ _up-devnet compose_profile mode zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        start_devnet_with_upgrade_signal
+        DEVNET_SP1_CLUSTER_API_ENDPOINT= DEVNET_CLI_S3_BUCKET= \
+          DEVNET_NETWORK_PRIVATE_KEY= DEVNET_USE_KMS_REQUESTER=false \
+          DEVNET_AWS_ACCESS_KEY_ID= DEVNET_AWS_SECRET_ACCESS_KEY= DEVNET_AWS_SESSION_TOKEN= \
+          start_devnet_with_upgrade_signal
         ;;
       cluster)
         if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -269,29 +275,64 @@ _up-devnet compose_profile mode zk:
         cluster_env="$(mktemp)"
         trap 'rm -f "$cluster_env"' EXIT
         python3 {{ _yaml_to_env }} "$cluster_config" "$cluster_env" \
-          --map sp1.cluster_api_endpoint=SP1_CLUSTER_API_ENDPOINT \
-          --map sp1.cluster_timeout_hours=SP1_CLUSTER_TIMEOUT_HOURS \
-          --map artifact.s3_bucket=CLI_S3_BUCKET \
-          --map artifact.s3_region=CLI_S3_REGION \
-          --map aws.endpoint_url=AWS_ENDPOINT_URL \
-          --map aws.default_region=AWS_DEFAULT_REGION \
+          --map sp1.cluster_api_endpoint=DEVNET_SP1_CLUSTER_API_ENDPOINT \
+          --map sp1.cluster_timeout_hours=DEVNET_SP1_CLUSTER_TIMEOUT_HOURS \
+          --map artifact.s3_bucket=DEVNET_CLI_S3_BUCKET \
+          --map artifact.s3_region=DEVNET_CLI_S3_REGION \
+          --map aws.endpoint_url=DEVNET_AWS_ENDPOINT_URL \
+          --map aws.default_region=DEVNET_AWS_DEFAULT_REGION \
           --map prover.default_sequence_window=DEFAULT_SEQUENCE_WINDOW \
           --map logging.rust_log=RUST_LOG \
-          --default SP1_CLUSTER_TIMEOUT_HOURS=24 \
-          --default CLI_S3_REGION=us-east-1 \
-          --default AWS_DEFAULT_REGION=us-east-1 \
-          --require SP1_CLUSTER_API_ENDPOINT \
-          --require CLI_S3_BUCKET \
+          --default DEVNET_SP1_CLUSTER_TIMEOUT_HOURS=24 \
+          --default DEVNET_CLI_S3_REGION=us-east-1 \
+          --default DEVNET_AWS_DEFAULT_REGION=us-east-1 \
+          --require DEVNET_SP1_CLUSTER_API_ENDPOINT \
+          --require DEVNET_CLI_S3_BUCKET \
           --deny aws.access_key_id \
           --deny aws.secret_access_key \
           --deny aws.session_token
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        UPGRADE_SIGNAL_ENV_FILES="$cluster_env" start_devnet_with_upgrade_signal --env-file "$cluster_env"
+        DEVNET_NETWORK_PRIVATE_KEY= DEVNET_USE_KMS_REQUESTER=false \
+          DEVNET_AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+          DEVNET_AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+          DEVNET_AWS_SESSION_TOKEN="${AWS_SESSION_TOKEN:-}" \
+          UPGRADE_SIGNAL_ENV_FILES="$cluster_env" \
+          start_devnet_with_upgrade_signal --env-file "$cluster_env"
+        ;;
+      network)
+        if [ -z "${NETWORK_PRIVATE_KEY:-}" ]; then
+          echo "ERROR: zk=network requires NETWORK_PRIVATE_KEY in the caller environment." >&2
+          echo "Export a funded Succinct Network requester key, then retry:" >&2
+          echo "  export NETWORK_PRIVATE_KEY=0x..." >&2
+          echo "  just devnet up zk=network" >&2
+          echo "See docs/guides/STANDALONE_PROVING.md for requester-key setup." >&2
+          exit 1
+        fi
+        for elf in range-elf-embedded aggregation-elf; do
+          elf_path="crates/proof/succinct/elf/${elf}"
+          if [ ! -s "$elf_path" ]; then
+            echo "ERROR: real SP1 ELF not found: ${elf_path}" >&2
+            echo "Paid network proving requires reproducible ELFs. Build them first:" >&2
+            echo "  just succinct build-elfs" >&2
+            exit 1
+          fi
+        done
+        just --justfile {{ source_file() }} down
+        just --justfile {{ source_file() }} _build-setup-image
+        # Force real ELFs into the zk-host image: paid network requests must
+        # never run against a stub-backed worker.
+        just --justfile {{ source_file() }} _build-rust-images "devnet" "dev" "1"
+        L2_BASE_BERYL_BLOCK= L2_BASE_COBALT_BLOCK= \
+          DEVNET_SP1_CLUSTER_API_ENDPOINT= DEVNET_CLI_S3_BUCKET= \
+          DEVNET_NETWORK_PRIVATE_KEY="$NETWORK_PRIVATE_KEY" \
+          DEVNET_USE_KMS_REQUESTER="${USE_KMS_REQUESTER:-false}" \
+          DEVNET_AWS_ACCESS_KEY_ID= DEVNET_AWS_SECRET_ACCESS_KEY= DEVNET_AWS_SESSION_TOKEN= \
+          start_devnet_with_upgrade_signal
         ;;
       *)
-        echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2
+        echo "ERROR: zk must be 'dry-run', 'cluster', or 'network' (got '${zk_mode}')" >&2
         exit 1
         ;;
     esac

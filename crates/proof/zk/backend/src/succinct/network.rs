@@ -356,13 +356,14 @@ impl NetworkZkProver {
             })
             .await
             .map_err(|e| {
+                let error = e.chain();
                 error!(
                     start_block = start_block,
                     end_block = end_block,
-                    error = %e,
+                    error = %error,
                     "witness generation failed"
                 );
-                backend_error!("witness generation failed: {e}")
+                backend_error!("witness generation failed: {error}")
             })?;
         let witness_gen_duration_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
 
@@ -440,7 +441,7 @@ impl NetworkZkProver {
                 request.prover_address,
             )
             .await
-            .map_err(|e| backend_error!("aggregation witness generation failed: {e}"))?;
+            .map_err(|e| backend_error!("aggregation witness generation failed: {}", e.chain()))?;
         let witness_gen_duration_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
 
         info!(

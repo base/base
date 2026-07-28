@@ -159,6 +159,7 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     use super::Cli;
+    use crate::{Commands, ProofsCommands, ZkBackendOption};
 
     fn try_parse<const N: usize>(args: [&str; N]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(args)
@@ -400,6 +401,8 @@ mod tests {
                 "finalize",
                 "100",
                 "5",
+                "--zk-backend",
+                "network",
                 "--session-id",
                 "custom-session",
                 "--l1-head",
@@ -449,8 +452,235 @@ mod tests {
     }
 
     #[test]
+    fn proofs_games_parse() {
+        assert!(try_parse(["basectl", "proofs", "games"]).is_ok());
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "games",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--factory",
+                "0xffffffffffffffffffffffffffffffffffffffff",
+                "--l1-rpc",
+                "http://127.0.0.1:8545",
+                "--json",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "games",
+                "--limit",
+                "5",
+                "--game-type",
+                "3",
+                "--missing-zk",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn proofs_propose_parse() {
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "propose",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--prover-address",
+                "0xdddddddddddddddddddddddddddddddddddddddd",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "propose",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--prover-address",
+                "0xdddddddddddddddddddddddddddddddddddddddd",
+                "--zk-backend",
+                "cluster",
+                "--session-id",
+                "custom-session",
+                "--intermediate-root-interval",
+                "100",
+                "--wait",
+                "--prover-rpc",
+                "http://127.0.0.1:9000",
+                "--factory",
+                "0xffffffffffffffffffffffffffffffffffffffff",
+                "--l1-rpc",
+                "http://127.0.0.1:8545",
+                "--yes",
+                "--json",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn proofs_propose_rejects_bad_inputs() {
+        // Game address and prover address are both required.
+        assert!(try_parse(["basectl", "proofs", "propose"]).is_err());
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "propose",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ])
+            .is_err()
+        );
+        // JSON output requires --yes so scripts do not hang on the prompt.
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "propose",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--prover-address",
+                "0xdddddddddddddddddddddddddddddddddddddddd",
+                "--json",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn proofs_submit_parse() {
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "submit",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--private-key",
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "submit",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--private-key",
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "--session-id",
+                "custom-session",
+                "--zk-backend",
+                "cluster",
+                "--wait",
+                "--prover-rpc",
+                "http://127.0.0.1:9000",
+                "--factory",
+                "0xffffffffffffffffffffffffffffffffffffffff",
+                "--l1-rpc",
+                "http://127.0.0.1:8545",
+                "--yes",
+                "--json",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn proofs_submit_rejects_bad_inputs() {
+        // Game address and private key are both required.
+        assert!(try_parse(["basectl", "proofs", "submit"]).is_err());
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "submit",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ])
+            .is_err()
+        );
+        // JSON output requires --yes so scripts do not hang on the prompt.
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "submit",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--private-key",
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "--json",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn proofs_games_rejects_bad_inputs() {
+        // Limit must be within 1..=100.
+        assert!(try_parse(["basectl", "proofs", "games", "--limit", "0"]).is_err());
+        assert!(try_parse(["basectl", "proofs", "games", "--limit", "101"]).is_err());
+        // Game address must be a 20-byte hex address.
+        assert!(try_parse(["basectl", "proofs", "games", "not-an-address"]).is_err());
+    }
+
+    #[test]
     fn proofs_finalize_rejects_zero_blocks() {
         assert!(try_parse(["basectl", "proofs", "finalize", "100", "0", "--yes"]).is_err());
+    }
+
+    #[test]
+    fn proofs_finalize_rejects_genesis_as_first_block() {
+        assert!(try_parse(["basectl", "proofs", "finalize", "0", "5", "--yes"]).is_err());
+    }
+
+    #[test]
+    fn proofs_finalize_zk_backend_values() {
+        for backend in ["cluster", "network", "dry-run"] {
+            assert!(
+                try_parse([
+                    "basectl",
+                    "proofs",
+                    "finalize",
+                    "100",
+                    "5",
+                    "--zk-backend",
+                    backend,
+                    "--yes",
+                ])
+                .is_ok(),
+                "backend {backend} should parse"
+            );
+        }
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "100",
+                "5",
+                "--zk-backend",
+                "unknown",
+                "--yes",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn proofs_finalize_defaults_to_cluster_backend() {
+        let cli = try_parse(["basectl", "proofs", "finalize", "100", "5", "--yes"])
+            .expect("finalize should parse");
+        match cli.command {
+            Some(Commands::Proofs(crate::ProofsCommand { command: ProofsCommands::Finalize(args) })) => {
+                assert_eq!(args.zk_backend, ZkBackendOption::Cluster);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
     }
 
     #[test]
