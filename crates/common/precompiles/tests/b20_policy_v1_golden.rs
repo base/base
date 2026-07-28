@@ -25,11 +25,11 @@
 
 use IPolicyRegistry::PolicyType;
 use alloy_primitives::{Address, B256, Bytes, LogData, U256, b256, keccak256};
-use alloy_sol_types::{SolCall, SolError, SolEvent};
+use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
-    PolicyRegistryStorage, PolicyVersion, PolicyVersions,
+    IPolicyRegistryV1, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
@@ -375,6 +375,120 @@ fn golden_update_composite_selector_unknown_in_v1() {
     );
     assert!(rev);
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::updateCompositeCall::SELECTOR.as_ref()));
+}
+
+// ============================================================================
+// composite PolicyType discriminants on V1 (UNION = 2, INTERSECT = 3)
+// ============================================================================
+//
+// `UNION`/`INTERSECT` were appended to `PolicyType` for V2, but `PolicyType` rides on selectors
+// that did NOT change: `createPolicy(address,uint8)` and
+// `createPolicyWithAccounts(address,uint8,address[])` hash identically before and after Cobalt.
+// The composite-selector guard in `dispatch` keys on selector, so it does not cover this path.
+//
+// At V1 the two-variant enum made `abi_decode_validate` reject discriminants 2 and 3 outright, so
+// dispatch returned `AbiDecodeFailed`. The V2 binary executing at `BaseUpgrade::Beryl` must still
+// return that same error, byte for byte.
+
+/// Replays `calldata` through the frozen pre-Cobalt ABI and returns the revert payload V1 owes:
+/// `selector || utf8(decoder error)`, matching `BasePrecompileError::AbiDecodeFailed`.
+///
+/// [`IPolicyRegistryV1`] is the same artifact the precompile decodes Beryl calldata against, so
+/// this catches a widening of the frozen surface only via the `else` arm below. The literal pins
+/// in [`expected_v1_decode_error`] are what independently attest to the bytes.
+fn frozen_v1_abi_decode_failure(calldata: &[u8]) -> Bytes {
+    let selector = calldata.first_chunk::<4>().copied().expect("calldata must carry a selector");
+    let Err(error) = IPolicyRegistryV1::IPolicyRegistryCalls::abi_decode_validate(calldata) else {
+        panic!("pre-Cobalt PolicyType must reject composite discriminants");
+    };
+
+    let mut bytes = selector.to_vec();
+    bytes.extend_from_slice(error.to_string().as_bytes());
+    bytes.into()
+}
+
+/// The exact decoder message Beryl emits for a composite `discriminant` on `signature`.
+///
+/// Pinned by hand, deliberately. The string is consensus data — `AbiDecodeFailed` puts it on the
+/// wire verbatim (`BasePrecompileError::into_precompile_result`) — and it is produced by alloy's
+/// `Display`, which the workspace tracks through a caret range. Recomputing it through
+/// [`IPolicyRegistryV1`] cannot detect an alloy upgrade that rewords the message, because both
+/// sides of the comparison would move together. If this assertion fails after a dependency bump,
+/// that bump changes historical revert payloads and is a hardfork-relevant event, not a test to
+/// re-bless.
+fn expected_v1_decode_error(signature: &str, discriminant: u8, args_hex: &str) -> String {
+    format!("type check failed for {signature:?} with data: {args_hex}{discriminant:064x}")
+}
+
+/// ABI-encoded `admin` word shared by both create calls, using [`ADMIN`].
+const ADMIN_WORD: &str = "000000000000000000000000adadadadadadadadadadadadadadadadadadadad";
+
+#[test]
+fn golden_create_policy_composite_type_is_abi_decode_failure_in_v1() {
+    for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
+        let calldata = IPolicyRegistry::createPolicyCall { admin: ADMIN, policyType: policy_type }
+            .abi_encode();
+
+        let mut s = fresh();
+        let (rev, bytes) = call_policy(&mut s, ADMIN, calldata.clone());
+
+        assert!(rev);
+        assert_eq!(
+            bytes,
+            frozen_v1_abi_decode_failure(&calldata),
+            "createPolicy with PolicyType discriminant {} must still fail ABI decoding under V1",
+            policy_type as u8
+        );
+        assert_eq!(
+            String::from_utf8(bytes[4..].to_vec()).unwrap(),
+            expected_v1_decode_error("(address,uint8)", policy_type as u8, ADMIN_WORD),
+        );
+        assert_eq!(bytes[..4], IPolicyRegistry::createPolicyCall::SELECTOR);
+    }
+}
+
+#[test]
+fn golden_create_policy_with_accounts_composite_type_is_abi_decode_failure_in_v1() {
+    for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
+        let calldata = IPolicyRegistry::createPolicyWithAccountsCall {
+            admin: ADMIN,
+            policyType: policy_type,
+            accounts: vec![ALICE, BOB],
+        }
+        .abi_encode();
+
+        let mut s = fresh();
+        let (rev, bytes) = call_policy(&mut s, ADMIN, calldata.clone());
+
+        assert!(rev);
+        assert_eq!(
+            bytes,
+            frozen_v1_abi_decode_failure(&calldata),
+            "createPolicyWithAccounts with PolicyType discriminant {} must still fail ABI decoding \
+             under V1",
+            policy_type as u8
+        );
+        // head offset, admin, [discriminant], accounts offset, len, ALICE, BOB
+        let args_hex = format!(
+            "{:064x}{ADMIN_WORD}",
+            0x20, // outer 1-tuple indirection: the inner tuple is dynamic
+        );
+        let tail_hex = format!(
+            "{:064x}{:064x}{:064x}{:064x}",
+            0x60, // accounts offset, past the 3-word inner head
+            2,    // accounts.len()
+            alloy_primitives::U256::from_be_slice(ALICE.as_slice()),
+            alloy_primitives::U256::from_be_slice(BOB.as_slice()),
+        );
+        assert_eq!(
+            String::from_utf8(bytes[4..].to_vec()).unwrap(),
+            format!(
+                "{}{tail_hex}",
+                expected_v1_decode_error("(address,uint8,address[])", policy_type as u8, &args_hex)
+            ),
+        );
+        assert_eq!(bytes[..4], IPolicyRegistry::createPolicyWithAccountsCall::SELECTOR);
+    }
 }
 
 #[test]

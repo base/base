@@ -78,8 +78,9 @@ pub use b20_factory::{
 
 mod policy;
 pub use policy::{
-    IPolicyRegistry, PackedPolicy, PolicyAccounting, PolicyRegistryLogic, PolicyRegistryPrecompile,
-    PolicyRegistryStorage, PolicyRegistryV1, PolicyRegistryV2, PolicyVersion, PolicyVersions,
+    IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, PackedPolicy, PolicyAbi,
+    PolicyAccounting, PolicyRegistryLogic, PolicyRegistryPrecompile, PolicyRegistryStorage,
+    PolicyRegistryV1, PolicyRegistryV2, PolicyVersion, PolicyVersions,
 };
 
 mod tx_context;

@@ -1,3 +1,20 @@
+//! The `PolicyRegistry` wire surface frozen at Cobalt.
+//!
+//! Extends [Beryl's surface](super) with composite policies: the `UNION`/`INTERSECT` discriminants,
+//! `createCompositePolicy`/`updateComposite`, their two errors, and `CompositePolicyUpdated`.
+//! Selected on the execution path by [`crate::PolicyAbi::V2`].
+//!
+//! This is also the *canonical* live surface: [`super`] re-exports it unqualified as
+//! `IPolicyRegistry`, so the two can never drift. Editing this file therefore un-freezes Cobalt and
+//! moves canonical in one stroke. When a later fork changes the wire, add `abi/v3.rs` and retarget
+//! the canonical alias in [`super`] rather than editing here.
+//!
+//! # Frozen — do not edit
+//!
+//! The same consensus constraints as [Beryl's surface](super) apply. In particular the interface
+//! must stay named `IPolicyRegistry`: `SolInterface::NAME` is `"{interface}Calls"` and reaches the
+//! wire through `AbiDecodeFailed` on short calldata.
+
 use alloy_sol_types::sol;
 
 sol! {
@@ -65,74 +82,58 @@ sol! {
     }
 }
 
-impl IPolicyRegistry::IPolicyRegistryCalls {
-    /// Returns the stable metric label for this decoded policy-registry call.
-    pub const fn as_label(&self) -> &'static str {
-        match self {
-            Self::createPolicy(_) => "policy.createPolicy",
-            Self::createPolicyWithAccounts(_) => "policy.createPolicyWithAccounts",
-            Self::createCompositePolicy(_) => "policy.createCompositePolicy",
-            Self::updateComposite(_) => "policy.updateComposite",
-            Self::stageUpdateAdmin(_) => "policy.stageUpdateAdmin",
-            Self::finalizeUpdateAdmin(_) => "policy.finalizeUpdateAdmin",
-            Self::renounceAdmin(_) => "policy.renounceAdmin",
-            Self::updateAllowlist(_) => "policy.updateAllowlist",
-            Self::updateBlocklist(_) => "policy.updateBlocklist",
-            Self::isAuthorized(_) => "policy.isAuthorized",
-            Self::policyExists(_) => "policy.policyExists",
-            Self::policyAdmin(_) => "policy.policyAdmin",
-            Self::pendingPolicyAdmin(_) => "policy.pendingPolicyAdmin",
-        }
-    }
-}
-
-impl IPolicyRegistry::PolicyType {
-    /// Returns the raw `u8` discriminant for this policy type.
-    pub const fn as_discriminant(self) -> u8 {
-        self as u8
-    }
-
-    /// Returns whether this value is a supported *simple* policy type.
-    ///
-    /// Only `BLOCKLIST`/`ALLOWLIST` are simple types accepted by `createPolicy`; composite
-    /// gates (`UNION`/`INTERSECT`) are created via `createCompositePolicy` and are not valid here.
-    pub const fn is_valid(self) -> bool {
-        matches!(self, Self::BLOCKLIST | Self::ALLOWLIST)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Address;
-    use alloy_sol_types::SolEnum;
+    use alloc::vec::Vec;
+
+    use alloy_sol_types::{SolCall, SolEnum, SolInterface};
 
     use super::IPolicyRegistry;
 
+    /// See [`super`] — the interface name reaches consensus data via `AbiDecodeFailed`.
     #[test]
-    fn simple_policy_types_are_valid_composites_are_not() {
-        // Simple leaf types are valid for `createPolicy`.
-        assert!(IPolicyRegistry::PolicyType::BLOCKLIST.is_valid());
-        assert!(IPolicyRegistry::PolicyType::ALLOWLIST.is_valid());
-
-        // Composite gates are created via `createCompositePolicy`, not `createPolicy`.
-        assert!(!IPolicyRegistry::PolicyType::UNION.is_valid());
-        assert!(!IPolicyRegistry::PolicyType::INTERSECT.is_valid());
-
-        // Every generated discriminant still decodes to a variant.
-        for discriminant in 0..IPolicyRegistry::PolicyType::COUNT {
-            IPolicyRegistry::PolicyType::try_from(discriminant as u8)
-                .expect("generated PolicyType discriminant should decode");
-        }
+    fn interface_name_is_frozen() {
+        assert_eq!(IPolicyRegistry::IPolicyRegistryCalls::NAME, "IPolicyRegistryCalls");
     }
 
     #[test]
-    fn policy_call_labels_are_stable() {
+    fn policy_type_carries_the_composite_gates() {
+        assert_eq!(IPolicyRegistry::PolicyType::COUNT, 4);
         assert_eq!(
-            IPolicyRegistry::IPolicyRegistryCalls::isAuthorized(
-                IPolicyRegistry::isAuthorizedCall { policyId: 0, account: Address::ZERO },
-            )
-            .as_label(),
-            "policy.isAuthorized"
+            IPolicyRegistry::PolicyType::try_from(2u8),
+            Ok(IPolicyRegistry::PolicyType::UNION)
         );
+        assert_eq!(
+            IPolicyRegistry::PolicyType::try_from(3u8),
+            Ok(IPolicyRegistry::PolicyType::INTERSECT)
+        );
+    }
+
+    /// The exact selector set dialable at Cobalt.
+    #[test]
+    fn selector_set_is_frozen() {
+        let mut selectors: Vec<[u8; 4]> =
+            IPolicyRegistry::IPolicyRegistryCalls::selectors().collect();
+        selectors.sort_unstable();
+
+        let mut expected: Vec<[u8; 4]> = alloc::vec![
+            IPolicyRegistry::createPolicyCall::SELECTOR,
+            IPolicyRegistry::createPolicyWithAccountsCall::SELECTOR,
+            IPolicyRegistry::createCompositePolicyCall::SELECTOR,
+            IPolicyRegistry::updateCompositeCall::SELECTOR,
+            IPolicyRegistry::stageUpdateAdminCall::SELECTOR,
+            IPolicyRegistry::finalizeUpdateAdminCall::SELECTOR,
+            IPolicyRegistry::renounceAdminCall::SELECTOR,
+            IPolicyRegistry::updateAllowlistCall::SELECTOR,
+            IPolicyRegistry::updateBlocklistCall::SELECTOR,
+            IPolicyRegistry::isAuthorizedCall::SELECTOR,
+            IPolicyRegistry::policyExistsCall::SELECTOR,
+            IPolicyRegistry::policyAdminCall::SELECTOR,
+            IPolicyRegistry::pendingPolicyAdminCall::SELECTOR,
+        ];
+        expected.sort_unstable();
+
+        assert_eq!(selectors.len(), 13);
+        assert_eq!(selectors, expected);
     }
 }
