@@ -888,8 +888,12 @@ impl LoadRunner {
         while txs_remaining.peek().is_some() {
             let base_fee = client.get_base_fee().await?;
             let max_priority_fee = (base_fee / 10).max(1);
-            let max_fee =
-                SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
+            // Funding transactions form one strict nonce chain and may wait several blocks behind
+            // earlier transfers. Use the configured safety cap as maxFeePerGas so a rising base
+            // fee cannot make the head transaction non-executable and strand every later nonce.
+            // EIP-1559 still charges only base fee plus priority fee, not this full cap.
+            let max_fee = max_gas_price;
+            info!(base_fee, max_fee, max_priority_fee, "pricing funding transaction batch");
             let batch: Vec<_> =
                 txs_remaining.by_ref().take(self.config.max_in_flight_per_sender as usize).collect();
             let mut batch_pending: Vec<Address> = Vec::with_capacity(batch.len());
