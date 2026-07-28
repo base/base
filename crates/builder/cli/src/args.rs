@@ -305,6 +305,12 @@ impl Args {
         {
             warn!("deprecated builder resource limit flags are ignored");
         }
+        if self.enable_resource_metering {
+            warn!(
+                "--builder.enable-resource-metering is deprecated and ignored; \
+                 use --builder.execution-metering-mode instead"
+            );
+        }
 
         let flashblocks_ws_addr = SocketAddr::new(
             self.flashblocks.flashblocks_addr.parse()?,
