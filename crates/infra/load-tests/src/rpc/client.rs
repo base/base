@@ -182,14 +182,9 @@ impl BatchRpcClient {
             return Ok(Vec::new());
         }
 
-        let chunk_futures: Vec<_> =
-            raw_txs.chunks(MAX_BATCH_RPC_SIZE).map(|chunk| self.send_raw_chunk(chunk)).collect();
-
-        let chunk_results = futures::future::join_all(chunk_futures).await;
-
         let mut all_results: Vec<BatchSendResult> = Vec::with_capacity(raw_txs.len());
-        for result in chunk_results {
-            all_results.extend(result?);
+        for chunk in raw_txs.chunks(MAX_BATCH_RPC_SIZE) {
+            all_results.extend(self.send_raw_chunk(chunk).await?);
         }
 
         debug!(count = raw_txs.len(), "batch send complete");

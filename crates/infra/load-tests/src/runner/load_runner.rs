@@ -1941,10 +1941,16 @@ impl LoadRunner {
         );
 
         let drain_start = Instant::now();
+        let confirmation_drain_timeout = if open_loop_enqueue_error.is_some() {
+            warn!("skipping confirmation drain after open-loop enqueue failure");
+            Duration::ZERO
+        } else {
+            CONFIRMATION_DRAIN_TIMEOUT
+        };
         let results_poll_interval = Duration::from_millis(600);
         let mut last_confirmed_at = start.elapsed();
 
-        while drain_start.elapsed() < CONFIRMATION_DRAIN_TIMEOUT {
+        while drain_start.elapsed() < confirmation_drain_timeout {
             for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
                 self.collector.record_flashblock_observed(latency, observed_at);
             }
@@ -2002,7 +2008,7 @@ impl LoadRunner {
         // our transactions landed in, to backfill gas and revert status. This can be
         // slow on large runs, so notify the user before starting.
         let landed_blocks = results_tracker.landed_block_numbers();
-        if !landed_blocks.is_empty() {
+        if open_loop_enqueue_error.is_none() && !landed_blocks.is_empty() {
             println!(
                 "Fetching receipts for {} block(s) to compute gas and reverts (this may take a while)...",
                 landed_blocks.len()
