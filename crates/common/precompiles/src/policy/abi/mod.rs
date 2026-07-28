@@ -49,10 +49,82 @@ impl IPolicyRegistry::PolicyType {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Address;
-    use alloy_sol_types::{SolEnum, SolError, SolEvent};
+    use alloc::vec::Vec;
+
+    use alloy_primitives::{Address, B256, b256, keccak256};
+    use alloy_sol_types::{SolEnum, SolError, SolEvent, SolInterface};
 
     use super::{IPolicyRegistry, IPolicyRegistryV1};
+
+    /// Absolute wire fingerprint for Beryl's surface. Catches both-sides drift that relative
+    /// V1==V2 asserts miss (alloy Display / signature changes that move every copy together).
+    const V1_ABI_FINGERPRINT: B256 =
+        b256!("1ae189209c8c4875de2caa707322ea74f0d1f3e74a1104ecee6884e8984415da");
+
+    /// Absolute wire fingerprint for Cobalt's (canonical) surface.
+    const V2_ABI_FINGERPRINT: B256 =
+        b256!("047d1fceaa9beac82fd473d474bb7f3b6dcd720c9e62c86facc75ef6dd611631");
+
+    /// Keccak of sorted call selectors, then sorted event topic0s, then sorted error selectors,
+    /// then `PolicyType::COUNT`. Order is fixed so a single pin catches any wire-surface edit.
+    fn abi_fingerprint(
+        selectors: impl IntoIterator<Item = [u8; 4]>,
+        event_hashes: impl IntoIterator<Item = B256>,
+        error_selectors: impl IntoIterator<Item = [u8; 4]>,
+        policy_type_count: usize,
+    ) -> B256 {
+        let mut selectors: Vec<[u8; 4]> = selectors.into_iter().collect();
+        selectors.sort_unstable();
+
+        let mut event_hashes: Vec<B256> = event_hashes.into_iter().collect();
+        event_hashes.sort_unstable();
+
+        let mut error_selectors: Vec<[u8; 4]> = error_selectors.into_iter().collect();
+        error_selectors.sort_unstable();
+
+        let mut buf = Vec::with_capacity(
+            selectors.len() * 4 + event_hashes.len() * 32 + error_selectors.len() * 4 + 1,
+        );
+        for selector in &selectors {
+            buf.extend_from_slice(selector);
+        }
+        for hash in &event_hashes {
+            buf.extend_from_slice(hash.as_slice());
+        }
+        for selector in &error_selectors {
+            buf.extend_from_slice(selector);
+        }
+        buf.push(policy_type_count as u8);
+        keccak256(&buf)
+    }
+
+    fn v1_abi_fingerprint() -> B256 {
+        abi_fingerprint(
+            IPolicyRegistryV1::IPolicyRegistryCalls::selectors(),
+            IPolicyRegistryV1::IPolicyRegistryEvents::SELECTORS.iter().copied().map(B256::new),
+            IPolicyRegistryV1::IPolicyRegistryErrors::selectors(),
+            IPolicyRegistryV1::PolicyType::COUNT,
+        )
+    }
+
+    fn v2_abi_fingerprint() -> B256 {
+        abi_fingerprint(
+            IPolicyRegistry::IPolicyRegistryCalls::selectors(),
+            IPolicyRegistry::IPolicyRegistryEvents::SELECTORS.iter().copied().map(B256::new),
+            IPolicyRegistry::IPolicyRegistryErrors::selectors(),
+            IPolicyRegistry::PolicyType::COUNT,
+        )
+    }
+
+    #[test]
+    fn v1_abi_fingerprint_is_pinned() {
+        assert_eq!(v1_abi_fingerprint(), V1_ABI_FINGERPRINT);
+    }
+
+    #[test]
+    fn v2_abi_fingerprint_is_pinned() {
+        assert_eq!(v2_abi_fingerprint(), V2_ABI_FINGERPRINT);
+    }
 
     #[test]
     fn simple_policy_types_are_valid_composites_are_not() {
