@@ -1,30 +1,9 @@
 //! Wire (ABI) surfaces for the `PolicyRegistry` precompile, one per hardfork that moved them.
 //!
-//! [`IPolicyRegistry`] is the canonical live surface. [`IPolicyRegistryV1`] and
-//! [`IPolicyRegistryV2`] are the frozen per-fork surfaces, selected on the execution path by
-//! [`crate::PolicyAbi`] so that each block decodes against the surface that was dialable when it
-//! was produced. That is what a selector-keyed fork gate cannot do: appending `UNION`/`INTERSECT`
-//! to `PolicyType` left `createPolicy(address,uint8)` hashing to the same selector while changing
-//! which discriminants the decoder accepts.
-//!
-//! # Canonical aliases the newest frozen surface
-//!
-//! Canonical is not a third copy — it is a re-export of the newest `vN`, so the two cannot drift
-//! and no equality test is needed to keep them honest. Every generated nested name
-//! (`IPolicyRegistryCalls`, `PolicyType`, `createPolicyCall`, …) therefore keeps its exact spelling
-//! for the whole crate and its consumers.
-//!
-//! A fork that changes the wire adds `abi/vN.rs` and retargets the canonical alias below. A fork
-//! that only changes logic adds nothing here; [`crate::PolicyVersion::abi`] maps it onto the
-//! existing surface. The two axes grow independently and meet only in `versions.rs`.
-//!
-//! # Both surfaces must stay named `IPolicyRegistry`
-//!
-//! `SolInterface::abi_decode_validate` short-circuits on `data.len() < MIN_DATA_LENGTH + 4` with
-//! `Error::type_check_fail(data, Self::NAME)`, and `BasePrecompileError::AbiDecodeFailed` encodes
-//! as `selector || utf8(error)`. `NAME` is `"{interface}Calls"`, so the interface's Rust name is
-//! consensus data on every truncated-calldata revert. Naming a frozen surface `IPolicyRegistryV1`
-//! would silently change those bytes.
+//! The latest surface is always named `IPolicyRegistry` in its `vN` module, then re-exported here
+//! as both [`IPolicyRegistry`] (canonical) and `IPolicyRegistryVN`. Older forks keep the same
+//! Rust name inside their module so truncated-calldata revert bytes stay stable, and are re-exported
+//! as [`IPolicyRegistryV1`], [`IPolicyRegistryV2`], etc.
 
 mod v1;
 pub use v1::IPolicyRegistry as IPolicyRegistryV1;
