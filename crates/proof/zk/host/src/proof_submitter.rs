@@ -81,6 +81,7 @@ mod tests {
             aggregate_proposal: proposal(),
             proposals: vec![proposal()],
             tee_kind: TeeKind::AwsNitro,
+            tee_signer: alloy_primitives::Address::repeat_byte(0x11),
         });
 
         let result = WorkerSubmitProofRequest::try_from(ProofSubmitterRequest {

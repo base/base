@@ -33,6 +33,9 @@ pub enum NitroHostError {
     /// The signer public key returned by the enclave is malformed.
     #[error("invalid signer public key: expected 65-byte uncompressed SEC1 key")]
     InvalidSignerKey,
+    /// A proposal could not be used to recover its signer.
+    #[error("cannot recover signer from proposal: {0}")]
+    SignerRecovery(String),
     /// A response-read timed out (distinct from connect timeout).
     #[error("{operation} timed out")]
     ResponseTimeout {

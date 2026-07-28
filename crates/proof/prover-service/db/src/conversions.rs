@@ -485,7 +485,8 @@ mod tests {
                     "config_hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
                 },
                 "proposals": [],
-                "tee_kind": "aws_nitro"
+                "tee_kind": "aws_nitro",
+                "tee_signer": "0x1111111111111111111111111111111111111111"
             }
         });
         let mut req = proof_request(None);
