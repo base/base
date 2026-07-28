@@ -38,7 +38,7 @@ jobs:
           - fork: Cobalt
             key: cobalt
             base_anvil_ref: ae7557c4f8602caa1da0be33143bb2504c85b0c8
-            base_std_ref: b0a4f048684c4cd279025bf2ba3aa76c45569fa4
+            base_std_ref: 9423b2e713affc333e387d7b764b6f50d77056f2
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
