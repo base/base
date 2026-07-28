@@ -50,10 +50,6 @@ pub struct PopulateArgs {
     #[arg(long, default_value = "1000000000000000000")]
     pub balance: U256,
 
-    /// Number of balance slots written per MDBX transaction.
-    #[arg(long, default_value = "1000000")]
-    pub chunk_size: u64,
-
     /// Seed for deriving load-test sender addresses to pre-seed with balances.
     /// Must match the `seed` field in the load-test config being benchmarked.
     #[arg(long)]

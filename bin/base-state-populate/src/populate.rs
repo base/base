@@ -134,7 +134,7 @@ impl Populator {
         balance: U256,
         mapping_slot: B256,
     ) -> Result<()> {
-        const COMMIT_CHUNK: usize = 10_000_000;
+        const CHUNK_SIZE: usize = 1_000_000;
 
         info!(count, "generating and sorting plain slots");
         let mut plain_entries: Vec<B256> = (0..count)
@@ -152,7 +152,7 @@ impl Populator {
                 )?
                 .progress_chars("##-"),
         );
-        for chunk in plain_entries.chunks(COMMIT_CHUNK) {
+        for chunk in plain_entries.chunks(CHUNK_SIZE) {
             let tx = db.tx_mut().wrap_err("begin plain-slots tx")?;
             let mut cursor = tx
                 .cursor_dup_write::<tables::PlainStorageState>()
@@ -184,7 +184,7 @@ impl Populator {
                 )?
                 .progress_chars("##-"),
         );
-        for chunk in hashed_entries.chunks(COMMIT_CHUNK) {
+        for chunk in hashed_entries.chunks(CHUNK_SIZE) {
             let tx = db.tx_mut().wrap_err("begin hashed-slots tx")?;
             let mut cursor =
                 tx.cursor_dup_write::<tables::HashedStorages>().wrap_err("open HashedStorages")?;
