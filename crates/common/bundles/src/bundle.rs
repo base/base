@@ -133,17 +133,11 @@ mod tests {
     fn test_bundle_serialization_always_includes_legacy_block_number() {
         // Ingress-style payload: only txs / expiry metadata, no block window.
         // Older meterBundle nodes require `blockNumber` and reject otherwise.
-        let bundle = Bundle {
-            txs: vec![],
-            max_timestamp: Some(1_700_000_000),
-            ..Default::default()
-        };
+        let bundle =
+            Bundle { txs: vec![], max_timestamp: Some(1_700_000_000), ..Default::default() };
 
         let json = serde_json::to_string(&bundle).unwrap();
-        assert!(
-            json.contains("\"blockNumber\":\"0x0\""),
-            "expected legacy blockNumber in {json}"
-        );
+        assert!(json.contains("\"blockNumber\":\"0x0\""), "expected legacy blockNumber in {json}");
         assert!(!json.contains("minBlockNumber"));
         assert!(!json.contains("maxBlockNumber"));
     }
