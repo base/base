@@ -54,11 +54,6 @@ impl PolicyRegistryStorage<'_> {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
-        // Every decode below runs against the wire surface frozen at `version`, never the canonical
-        // one. That is what keeps a fork-scoped type change honest: appending `UNION`/`INTERSECT`
-        // to `PolicyType` left `createPolicy(address,uint8)` on the same selector, so no
-        // selector-keyed gate could have caught it, but the Beryl surface's decoder still rejects
-        // those discriminants exactly as the pre-Cobalt binary did.
         let abi = version.abi();
         let result = match calldata.first_chunk::<4>().copied() {
             None => Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4])),
@@ -91,11 +86,6 @@ impl PolicyRegistryStorage<'_> {
 
     /// Decodes calldata against the active wire surface and routes each operation to the active
     /// version's logic.
-    ///
-    /// Both halves of "what this fork does" are resolved from `version` and nothing else: the
-    /// surface that decides what decodes, and the vtable that decides what runs. The match below is
-    /// neither of those. It only binds a decoded call to a trait method, which is why one table
-    /// serves every version.
     fn route<O>(
         &mut self,
         calldata: &[u8],
@@ -168,9 +158,7 @@ impl PolicyRegistryStorage<'_> {
                 let pending = logic.pending_policy_admin(self, call.policyId)?;
                 Ok(IPolicyRegistry::pendingPolicyAdminCall::abi_encode_returns(&pending).into())
             }
-            // Composite ops are a V2 feature. The Beryl wire surface does not declare these
-            // selectors, so a V1 call never clears the gate in `dispatch_with_observer` and these
-            // arms only run under V2.
+            // Introduced in V2 (Cobalt).
             C::createCompositePolicy(call) => {
                 let id = logic.create_composite_policy(
                     self,
@@ -180,6 +168,7 @@ impl PolicyRegistryStorage<'_> {
                 )?;
                 Ok(IPolicyRegistry::createCompositePolicyCall::abi_encode_returns(&id).into())
             }
+            // Introduced in V2 (Cobalt).
             C::updateComposite(call) => {
                 logic.update_composite(self, call.policyId, call.childPolicyIds)?;
                 Ok(Bytes::new())

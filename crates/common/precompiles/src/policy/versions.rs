@@ -6,18 +6,6 @@
 //! ([`PolicyVersion::abi`]). Centralizing fork routing here keeps hardfork logic auditable and off
 //! the execution path, and lets the dispatcher route calls without ever matching on the version
 //! itself.
-//!
-//! # Two axes, one resolver
-//!
-//! Logic and the wire move at different rates: a fork can rewrite behavior without touching the
-//! ABI, or widen a type without changing any selector. So [`PolicyVersion`] and [`PolicyAbi`] are
-//! separate sequences, and a new [`PolicyAbi`] variant appears only when the wire actually moves.
-//!
-//! What keeps that safe is that [`PolicyVersion`] remains the *only* type that reads the fork
-//! ladder. [`PolicyAbi`] deliberately has no `from_base_upgrade`: a second resolver over the same
-//! ladder would be two maps that must agree, which is the failure this module exists to prevent.
-//! With one resolver, both lookups are exhaustive matches over a single enum, so a new version is
-//! a compile error in both arms until someone fills them in.
 
 use alloc::string::ToString;
 
@@ -54,11 +42,7 @@ impl PolicyVersion {
             Self::V2 => &V2,
         }
     }
-
-    /// Returns the wire surface frozen alongside this version's logic.
-    ///
-    /// A version whose fork left the ABI untouched maps onto the previous surface; only a fork that
-    /// moves the wire earns a new [`PolicyAbi`] variant.
+    // Returns the policy abi for the version
     pub const fn abi(self) -> PolicyAbi {
         match self {
             Self::V1 => PolicyAbi::V1,
@@ -67,24 +51,17 @@ impl PolicyVersion {
     }
 }
 
-/// A frozen wire (ABI) surface of the `PolicyRegistry` precompile.
-///
-/// Reached only through [`PolicyVersion::abi`]; see the module docs for why there is no
-/// `from_base_upgrade` here.
+/// A frozen wire (ABI) surface of the `PolicyRegistry` precompile. Reached only through [`PolicyVersion::abi`]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PolicyAbi {
-    /// The Beryl surface: 11 functions, two-variant `PolicyType`.
+    // Beryl
     V1,
-    /// The Cobalt surface: adds `createCompositePolicy`/`updateComposite` and the
-    /// `UNION`/`INTERSECT` discriminants.
+    // Cobalt
     V2,
 }
 
 impl PolicyAbi {
     /// Returns whether `selector` was dialable on this wire surface.
-    ///
-    /// Selectors introduced by a later fork are absent here, so the dispatcher rejects them as
-    /// unknown without needing a hand-written fork gate.
     pub fn valid_selector(self, selector: [u8; 4]) -> bool {
         match self {
             Self::V1 => IPolicyRegistryV1::IPolicyRegistryCalls::valid_selector(selector),
@@ -92,17 +69,7 @@ impl PolicyAbi {
         }
     }
 
-    /// Validates `calldata` against this wire surface, discarding the decoded call.
-    ///
-    /// The decoder's error text is consensus data: `AbiDecodeFailed` reverts with
-    /// `selector || utf8(error)`. Decoding against the fork's own surface is what makes a Beryl
-    /// `createPolicy(admin, UNION)` reproduce the pre-Cobalt revert rather than decoding cleanly
-    /// and failing later with a different payload.
-    ///
-    /// The decoded value is dropped because
-    /// [`route`](crate::PolicyRegistryStorage) re-decodes against the canonical surface. That is
-    /// sound: every frozen surface accepts a subset of what canonical accepts, and produces the
-    /// same value on that subset.
+    /// Validates `calldata` against this wire surface, discarding the decoded call. using alloy's abi_decode_validate function
     pub fn abi_decode_validate(self, calldata: &[u8], selector: [u8; 4]) -> Result<()> {
         match self {
             Self::V1 => {
@@ -118,18 +85,7 @@ impl PolicyAbi {
         })
     }
 
-    /// Decodes `calldata` into a routable call, gated on this wire surface.
-    ///
-    /// The frozen surface decides what is dialable and owns any error bytes; the canonical surface
-    /// then produces the value the dispatcher matches on. Splitting it that way is what lets one
-    /// routing table serve every version: a frozen surface accepts a subset of canonical's inputs
-    /// and yields the same value on that subset, so the canonical decode can never disagree about a
-    /// call the gate already admitted.
-    ///
-    /// Error shapes match the surrounding dispatch path: calldata too short to carry a selector and
-    /// selectors absent from this surface are [`BasePrecompileError::UnknownFunctionSelector`];
-    /// a dialable selector with undecodable arguments is
-    /// [`BasePrecompileError::AbiDecodeFailed`].
+    /// Decodes `calldata` into a routable call, gated on this wire surface. using alloy's abi_decode function
     pub fn decode(self, calldata: &[u8]) -> Result<IPolicyRegistry::IPolicyRegistryCalls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
