@@ -78,15 +78,14 @@ pub struct B20CoreStorage {
     #[accessor(name = nonce, keys(owner))]
     #[mutator(name = set_nonce, keys(owner), value = nonce)]
     pub nonces: Mapping<Address, U256>, // offset 13
-    /// Unused full-slot hole where base-std pins its `initialized` flag; kept empty so
-    /// `seizable_policy_id` lands at offset 15 as in base-std.
-    pub initialized_hole: FixedBytes<32>, // offset 14 (unused; base-std `initialized`)
-    /// Seizable-account policy ID, consulted by the seize operations.
+    /// Seizable-account policy ID, consulted by the seize operations. base-std keeps its mock-only
+    /// `initialized` flag trailing (offset 15), which this impl omits, so seize lands at offset 14
+    /// on both sides.
     #[accessor]
     #[mutator]
-    pub seizable_policy_id: u64, // slot 15, offset 0
-    /// Reserved padding to close slot 15.
-    pub seize_reserved: FixedBytes<24>, // slot 15, offset 8
+    pub seizable_policy_id: u64, // slot 14, offset 0
+    /// Reserved padding to close slot 14.
+    pub seize_reserved: FixedBytes<24>, // slot 14, offset 8
 }
 
 #[cfg(test)]
@@ -130,10 +129,9 @@ mod tests {
         assert_eq!(__packing_b20_core_storage::PAUSED_LOC.offset_slots, 11);
         assert_eq!(__packing_b20_core_storage::SUPPLY_CAP_LOC.offset_slots, 12);
         assert_eq!(__packing_b20_core_storage::NONCES_LOC.offset_slots, 13);
-        assert_eq!(__packing_b20_core_storage::INITIALIZED_HOLE_LOC.offset_slots, 14);
-        assert_eq!(__packing_b20_core_storage::SEIZABLE_POLICY_ID_LOC.offset_slots, 15);
+        assert_eq!(__packing_b20_core_storage::SEIZABLE_POLICY_ID_LOC.offset_slots, 14);
         assert_eq!(__packing_b20_core_storage::SEIZABLE_POLICY_ID_LOC.offset_bytes, 0);
-        assert_eq!(__packing_b20_core_storage::SEIZE_RESERVED_LOC.offset_slots, 15);
+        assert_eq!(__packing_b20_core_storage::SEIZE_RESERVED_LOC.offset_slots, 14);
         assert_eq!(__packing_b20_core_storage::SEIZE_RESERVED_LOC.offset_bytes, 8);
     }
 }
