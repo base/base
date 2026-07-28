@@ -1710,6 +1710,23 @@ mod tests {
     }
 
     #[test]
+    fn burn_blocked_with_memo_requires_role() {
+        // Uses BURN_BLOCKED_ROLE (not TRANSFER_FROM_SEIZABLE_ROLE), matching legacy `burnBlocked`.
+        let mut tok = token();
+        make_seizable(&mut tok);
+        let err = LOGIC
+            .burn_blocked_with_memo(&mut tok, ADMIN, ALICE, U256::from(1u64), MEMO)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ADMIN,
+                neededRole: B20TokenRole::BurnBlocked.id(),
+            })
+        );
+    }
+
+    #[test]
     fn burn_blocked_with_memo_reverts_when_account_not_seizable() {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(100u64));
