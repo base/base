@@ -35,7 +35,7 @@ url = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["net", "process", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "process", "time"] }
 alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
