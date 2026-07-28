@@ -611,9 +611,10 @@ impl ParityState {
         // extra or missing batch, the pending queue delta below is the operator
         // signal that later comparisons may be offset rather than independently
         // divergent.
-        while let (Some(canonical), Some(shadow)) =
-            (self.canonical.batches.pop_front(), self.shadow.batches.pop_front())
-        {
+        while !self.canonical.batches.is_empty() && !self.shadow.batches.is_empty() {
+            let canonical =
+                self.canonical.batches.pop_front().expect("canonical queue is non-empty");
+            let shadow = self.shadow.batches.pop_front().expect("shadow queue is non-empty");
             compared_batches = true;
             if canonical == shadow {
                 stats.matches += 1;
@@ -901,6 +902,46 @@ mod tests {
         assert_eq!(state.canonical.pending_batches(), 0);
         assert_eq!(state.shadow.pending_batches(), 0);
         assert_eq!(state.is_aligned(), Some(true));
+    }
+
+    #[test]
+    fn compare_ready_preserves_unpaired_canonical_batch() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(100));
+
+        let stats = state.compare_ready(50);
+
+        assert_eq!(stats, ParityCompareStats::default());
+        assert_eq!(state.canonical.pending_batches(), 1);
+        assert_eq!(state.shadow.pending_batches(), 0);
+
+        state.shadow.batches.push_back(normalized_batch(100));
+        let stats = state.compare_ready(51);
+
+        assert_eq!(stats.matches, 1);
+        assert_eq!(stats.divergences, 0);
+        assert_eq!(state.canonical.pending_batches(), 0);
+        assert_eq!(state.shadow.pending_batches(), 0);
+    }
+
+    #[test]
+    fn compare_ready_preserves_unpaired_shadow_batch() {
+        let mut state = ParityState::default();
+        state.shadow.batches.push_back(normalized_batch(100));
+
+        let stats = state.compare_ready(50);
+
+        assert_eq!(stats, ParityCompareStats::default());
+        assert_eq!(state.canonical.pending_batches(), 0);
+        assert_eq!(state.shadow.pending_batches(), 1);
+
+        state.canonical.batches.push_back(normalized_batch(100));
+        let stats = state.compare_ready(51);
+
+        assert_eq!(stats.matches, 1);
+        assert_eq!(stats.divergences, 0);
+        assert_eq!(state.canonical.pending_batches(), 0);
+        assert_eq!(state.shadow.pending_batches(), 0);
     }
 
     #[test]
