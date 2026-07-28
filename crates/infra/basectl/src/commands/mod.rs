@@ -13,10 +13,9 @@ pub use cli::{
 };
 
 mod doctor;
-pub use doctor::{DoctorCommand, DoctorRenderer};
+pub use doctor::DoctorCommand;
 
 mod sync_status;
 pub use sync_status::{
-    ElSyncInfoJson, HeadJson, SyncStatusCommand, SyncStatusJson, SyncStatusRenderer,
-    TipReferenceJson, TipStatus,
+    ElSyncInfoJson, HeadJson, SyncStatusCommand, SyncStatusJson, TipReferenceJson, TipStatus,
 };

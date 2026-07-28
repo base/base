@@ -79,7 +79,7 @@ impl DoctorCommand {
         if self.json {
             JsonOutput::print(&report)?;
         } else {
-            DoctorRenderer::print_pretty(&report)?;
+            print_pretty(&report)?;
         }
         Ok(CommandOutcome::from_failures(report.has_failures()))
     }
@@ -102,158 +102,152 @@ impl DoctorCommand {
     }
 }
 
-/// Pretty-text renderer for [`DoctorReport`].
-#[derive(Debug)]
-pub struct DoctorRenderer;
+/// Writes pretty output to standard output.
+fn print_pretty(report: &DoctorReport) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    write_pretty(&mut stdout, report)?;
+    Ok(())
+}
 
-impl DoctorRenderer {
-    /// Writes pretty output to standard output.
-    pub fn print_pretty(report: &DoctorReport) -> Result<()> {
-        let mut stdout = io::stdout().lock();
-        Self::write_pretty(&mut stdout, report)?;
-        Ok(())
+/// Writes pretty output to an arbitrary writer.
+fn write_pretty<W: Write>(writer: &mut W, report: &DoctorReport) -> io::Result<()> {
+    writeln!(writer, "network  {}", report.network)?;
+    writeln!(
+        writer,
+        "summary  pass={} warn={} fail={} info={} skip={}",
+        report.summary.pass,
+        report.summary.warn,
+        report.summary.fail,
+        report.summary.info,
+        report.summary.skip,
+    )?;
+    writeln!(writer)?;
+    for check in sorted_checks(report) {
+        write_check(writer, check)?;
     }
+    Ok(())
+}
 
-    /// Writes pretty output to an arbitrary writer.
-    pub fn write_pretty<W: Write>(writer: &mut W, report: &DoctorReport) -> io::Result<()> {
-        writeln!(writer, "network  {}", report.network)?;
-        writeln!(
-            writer,
-            "summary  pass={} warn={} fail={} info={} skip={}",
-            report.summary.pass,
-            report.summary.warn,
-            report.summary.fail,
-            report.summary.info,
-            report.summary.skip,
-        )?;
-        writeln!(writer)?;
-        for check in Self::sorted_checks(report) {
-            Self::write_check(writer, check)?;
-        }
-        Ok(())
+/// Returns checks ordered by operational severity.
+fn sorted_checks(report: &DoctorReport) -> Vec<&DoctorCheck> {
+    let mut checks = report.checks.iter().collect::<Vec<_>>();
+    checks.sort_by_key(|check| status_sort_key(check.status));
+    checks
+}
+
+/// Returns the sort priority for a diagnostic status.
+const fn status_sort_key(status: DoctorStatus) -> u8 {
+    match status {
+        DoctorStatus::Fail => 0,
+        DoctorStatus::Warn => 1,
+        DoctorStatus::Skip => 2,
+        DoctorStatus::Info => 3,
+        DoctorStatus::Pass => 4,
     }
+}
 
-    /// Returns checks ordered by operational severity.
-    pub fn sorted_checks(report: &DoctorReport) -> Vec<&DoctorCheck> {
-        let mut checks = report.checks.iter().collect::<Vec<_>>();
-        checks.sort_by_key(|check| Self::status_sort_key(check.status));
-        checks
+/// Writes one diagnostic check.
+fn write_check<W: Write>(writer: &mut W, check: &DoctorCheck) -> io::Result<()> {
+    writeln!(writer, "{} {}", colored_status(check.status), check.check)?;
+    writeln!(writer, "  message: {}", check.message)?;
+    write_value_block(writer, "value", &check.value, 2)?;
+    write_value_block(writer, "threshold", &check.threshold, 2)?;
+    if let Some(hint) = &check.hint {
+        writeln!(writer, "  hint: {hint}")?;
     }
+    writeln!(writer)
+}
 
-    /// Returns the sort priority for a diagnostic status.
-    pub const fn status_sort_key(status: DoctorStatus) -> u8 {
-        match status {
-            DoctorStatus::Fail => 0,
-            DoctorStatus::Warn => 1,
-            DoctorStatus::Skip => 2,
-            DoctorStatus::Info => 3,
-            DoctorStatus::Pass => 4,
-        }
+/// Formats a diagnostic status with its ANSI color.
+fn colored_status(status: DoctorStatus) -> String {
+    let color = match status {
+        DoctorStatus::Fail => ANSI_RED,
+        DoctorStatus::Warn => ANSI_YELLOW,
+        DoctorStatus::Skip => ANSI_DIM,
+        DoctorStatus::Info => ANSI_CYAN,
+        DoctorStatus::Pass => ANSI_GREEN,
+    };
+    format!("{color}{}{ANSI_RESET}", status.as_str())
+}
+
+/// Writes a labeled JSON value block when it is non-empty.
+fn write_value_block<W: Write>(
+    writer: &mut W,
+    label: &str,
+    value: &serde_json::Value,
+    indent: usize,
+) -> io::Result<()> {
+    if is_empty_value(value) {
+        return Ok(());
     }
+    writeln!(writer, "{0:1$}{label}:", "", indent)?;
+    write_json_value(writer, value, indent + 2)
+}
 
-    /// Writes one diagnostic check.
-    pub fn write_check<W: Write>(writer: &mut W, check: &DoctorCheck) -> io::Result<()> {
-        writeln!(writer, "{} {}", Self::colored_status(check.status), check.check)?;
-        writeln!(writer, "  message: {}", check.message)?;
-        Self::write_value_block(writer, "value", &check.value, 2)?;
-        Self::write_value_block(writer, "threshold", &check.threshold, 2)?;
-        if let Some(hint) = &check.hint {
-            writeln!(writer, "  hint: {hint}")?;
-        }
-        writeln!(writer)
-    }
-
-    /// Formats a diagnostic status with its ANSI color.
-    pub fn colored_status(status: DoctorStatus) -> String {
-        let color = match status {
-            DoctorStatus::Fail => ANSI_RED,
-            DoctorStatus::Warn => ANSI_YELLOW,
-            DoctorStatus::Skip => ANSI_DIM,
-            DoctorStatus::Info => ANSI_CYAN,
-            DoctorStatus::Pass => ANSI_GREEN,
-        };
-        format!("{color}{}{ANSI_RESET}", status.as_str())
-    }
-
-    /// Writes a labeled JSON value block when it is non-empty.
-    pub fn write_value_block<W: Write>(
-        writer: &mut W,
-        label: &str,
-        value: &serde_json::Value,
-        indent: usize,
-    ) -> io::Result<()> {
-        if Self::is_empty_value(value) {
-            return Ok(());
-        }
-        writeln!(writer, "{0:1$}{label}:", "", indent)?;
-        Self::write_json_value(writer, value, indent + 2)
-    }
-
-    /// Recursively writes a JSON value as indented text.
-    pub fn write_json_value<W: Write>(
-        writer: &mut W,
-        value: &serde_json::Value,
-        indent: usize,
-    ) -> io::Result<()> {
-        match value {
-            serde_json::Value::Object(map) => {
-                for (key, value) in map {
-                    if Self::is_empty_value(value) {
-                        continue;
-                    }
-                    match value {
-                        serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
-                            writeln!(writer, "{0:1$}{key}:", "", indent)?;
-                            Self::write_json_value(writer, value, indent + 2)?;
-                        }
-                        _ => writeln!(
-                            writer,
-                            "{:indent$}{}: {}",
-                            "",
-                            key,
-                            Self::scalar_value(value),
-                            indent = indent,
-                        )?,
-                    }
+/// Recursively writes a JSON value as indented text.
+fn write_json_value<W: Write>(
+    writer: &mut W,
+    value: &serde_json::Value,
+    indent: usize,
+) -> io::Result<()> {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                if is_empty_value(value) {
+                    continue;
                 }
-                Ok(())
-            }
-            serde_json::Value::Array(values) => {
-                for value in values {
-                    match value {
-                        serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
-                            writeln!(writer, "{0:1$}-", "", indent)?;
-                            Self::write_json_value(writer, value, indent + 2)?;
-                        }
-                        _ => writeln!(
-                            writer,
-                            "{:indent$}- {}",
-                            "",
-                            Self::scalar_value(value),
-                            indent = indent,
-                        )?,
+                match value {
+                    serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                        writeln!(writer, "{0:1$}{key}:", "", indent)?;
+                        write_json_value(writer, value, indent + 2)?;
                     }
+                    _ => writeln!(
+                        writer,
+                        "{:indent$}{}: {}",
+                        "",
+                        key,
+                        scalar_value(value),
+                        indent = indent,
+                    )?,
                 }
-                Ok(())
             }
-            _ => writeln!(writer, "{:indent$}{}", "", Self::scalar_value(value), indent = indent),
+            Ok(())
         }
-    }
-
-    /// Formats a scalar JSON value without quoting strings.
-    pub fn scalar_value(value: &serde_json::Value) -> String {
-        match value {
-            serde_json::Value::String(s) => s.clone(),
-            _ => value.to_string(),
+        serde_json::Value::Array(values) => {
+            for value in values {
+                match value {
+                    serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                        writeln!(writer, "{0:1$}-", "", indent)?;
+                        write_json_value(writer, value, indent + 2)?;
+                    }
+                    _ => writeln!(
+                        writer,
+                        "{:indent$}- {}",
+                        "",
+                        scalar_value(value),
+                        indent = indent,
+                    )?,
+                }
+            }
+            Ok(())
         }
+        _ => writeln!(writer, "{:indent$}{}", "", scalar_value(value), indent = indent),
     }
+}
 
-    /// Returns whether a JSON value contains no renderable data.
-    pub fn is_empty_value(value: &serde_json::Value) -> bool {
-        matches!(value, serde_json::Value::Null)
-            || matches!(value, serde_json::Value::Object(map) if map.values().all(Self::is_empty_value))
-            || matches!(value, serde_json::Value::Array(values) if values.iter().all(Self::is_empty_value))
+/// Formats a scalar JSON value without quoting strings.
+fn scalar_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        _ => value.to_string(),
     }
+}
+
+/// Returns whether a JSON value contains no renderable data.
+fn is_empty_value(value: &serde_json::Value) -> bool {
+    matches!(value, serde_json::Value::Null)
+        || matches!(value, serde_json::Value::Object(map) if map.values().all(is_empty_value))
+        || matches!(value, serde_json::Value::Array(values) if values.iter().all(is_empty_value))
 }
 
 #[cfg(test)]
@@ -263,7 +257,7 @@ mod tests {
     use serde_json::json;
     use url::Url;
 
-    use super::{ANSI_YELLOW, DoctorCommand, DoctorRenderer};
+    use super::{ANSI_YELLOW, DoctorCommand, status_sort_key, write_check};
     use crate::{DoctorArgsError, DoctorCheck, DoctorStatus};
 
     #[test]
@@ -278,7 +272,7 @@ mod tests {
         );
         let mut out = Vec::new();
 
-        DoctorRenderer::write_check(&mut out, &check).unwrap();
+        write_check(&mut out, &check).unwrap();
         let rendered = String::from_utf8(out).unwrap();
 
         assert!(rendered.contains("WARN"));
@@ -299,7 +293,7 @@ mod tests {
             DoctorStatus::Fail,
         ];
 
-        statuses.sort_by_key(|status| DoctorRenderer::status_sort_key(*status));
+        statuses.sort_by_key(|status| status_sort_key(*status));
 
         assert_eq!(
             statuses,

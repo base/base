@@ -83,13 +83,7 @@ impl SyncStatusCommand {
                 JsonOutput::print(&summary)?;
             }
             (false, _) => {
-                SyncStatusRenderer::print_pretty(
-                    &config.name,
-                    &report,
-                    tip_url,
-                    public_tip_block,
-                    self.tip_tolerance,
-                )?;
+                print_pretty(&config.name, &report, tip_url, public_tip_block, self.tip_tolerance)?;
             }
         }
         Ok(())
@@ -109,100 +103,88 @@ impl SyncStatusCommand {
     }
 }
 
-/// Pretty-table renderer for [`SyncStatusReport`].
-#[derive(Debug)]
-pub struct SyncStatusRenderer;
+/// Renders sync status as the pretty key-value table.
+fn print_pretty(
+    network: &str,
+    report: &SyncStatusReport,
+    tip_url: &str,
+    public_tip_block: Option<u64>,
+    tip_tolerance: u64,
+) -> Result<()> {
+    let cl = &report.cl;
+    let mut table = KeyValueTable::new();
+    table.row("network", network);
 
-impl SyncStatusRenderer {
-    /// Renders sync status as the pretty key-value table.
-    pub fn print_pretty(
-        network: &str,
-        report: &SyncStatusReport,
-        tip_url: &str,
-        public_tip_block: Option<u64>,
-        tip_tolerance: u64,
-    ) -> Result<()> {
-        let cl = &report.cl;
-        let mut table = KeyValueTable::new();
-        table.row("network", network);
-
-        match &report.el {
-            EthSyncStatus::None => {
-                table.row("el_syncing", "false");
-            }
-            EthSyncStatus::Info(info) => {
-                let starting = info.starting_block.to::<u64>();
-                let current = info.current_block.to::<u64>();
-                let highest = info.highest_block.to::<u64>();
-                let processed = current.saturating_sub(starting);
-                let remaining = highest.saturating_sub(current);
-                table.row(
-                    "el_syncing",
-                    format!(
-                        "true (catching up: {remaining} blocks remaining, {processed} done; \
-                         current={current} highest={highest})",
-                    ),
-                );
-            }
+    match &report.el {
+        EthSyncStatus::None => {
+            table.row("el_syncing", "false");
         }
-
-        table
-            .row("unsafe_l2", Self::format_block_info(&cl.unsafe_l2.block_info))
-            .row("safe_l2", Self::format_block_info(&cl.safe_l2.block_info))
-            .row("finalized_l2", Self::format_block_info(&cl.finalized_l2.block_info));
-
-        let lag_seconds =
-            cl.unsafe_l2.block_info.timestamp.saturating_sub(cl.safe_l2.block_info.timestamp);
-        let lag_blocks =
-            cl.unsafe_l2.block_info.number.saturating_sub(cl.safe_l2.block_info.number);
-        table.row(
-            "safe_lag",
-            format!(
-                "{} ({} blocks behind unsafe)",
-                format_duration(Duration::from_secs(lag_seconds)),
-                lag_blocks,
-            ),
-        );
-
-        table
-            .row("l1_head", Self::format_block_info(&cl.head_l1))
-            .row("l1_safe", Self::format_block_info(&cl.safe_l1))
-            .row("l1_finalized", Self::format_block_info(&cl.finalized_l1));
-
-        table.row(
-            "tip_reference",
-            Self::format_tip_reference(
-                tip_url,
-                cl.unsafe_l2.block_info.number,
-                public_tip_block,
-                tip_tolerance,
-            ),
-        );
-
-        table.print()?;
-        Ok(())
-    }
-
-    /// Formats the public-tip comparison row.
-    pub fn format_tip_reference(
-        url: &str,
-        local: u64,
-        public: Option<u64>,
-        tolerance: u64,
-    ) -> String {
-        let tip = TipReferenceJson::from_local_and_public(url, local, public, tolerance);
-        match (tip.block_number, tip.delta_blocks) {
-            (Some(block), Some(delta)) => {
-                format!("#{block} (url={url}) delta={delta} ({})", tip.status.as_str())
-            }
-            _ => format!("unavailable (url={url} fetch failed)"),
+        EthSyncStatus::Info(info) => {
+            let starting = info.starting_block.to::<u64>();
+            let current = info.current_block.to::<u64>();
+            let highest = info.highest_block.to::<u64>();
+            let processed = current.saturating_sub(starting);
+            let remaining = highest.saturating_sub(current);
+            table.row(
+                "el_syncing",
+                format!(
+                    "true (catching up: {remaining} blocks remaining, {processed} done; \
+                     current={current} highest={highest})",
+                ),
+            );
         }
     }
 
-    /// Formats a block number and timestamp for pretty output.
-    pub fn format_block_info(b: &BlockInfo) -> String {
-        format!("#{} ts={} ({})", b.number, b.timestamp, format_unix_timestamp(b.timestamp))
+    table
+        .row("unsafe_l2", format_block_info(&cl.unsafe_l2.block_info))
+        .row("safe_l2", format_block_info(&cl.safe_l2.block_info))
+        .row("finalized_l2", format_block_info(&cl.finalized_l2.block_info));
+
+    let lag_seconds =
+        cl.unsafe_l2.block_info.timestamp.saturating_sub(cl.safe_l2.block_info.timestamp);
+    let lag_blocks = cl.unsafe_l2.block_info.number.saturating_sub(cl.safe_l2.block_info.number);
+    table.row(
+        "safe_lag",
+        format!(
+            "{} ({} blocks behind unsafe)",
+            format_duration(Duration::from_secs(lag_seconds)),
+            lag_blocks,
+        ),
+    );
+
+    table
+        .row("l1_head", format_block_info(&cl.head_l1))
+        .row("l1_safe", format_block_info(&cl.safe_l1))
+        .row("l1_finalized", format_block_info(&cl.finalized_l1));
+
+    table.row(
+        "tip_reference",
+        format_tip_reference(
+            tip_url,
+            cl.unsafe_l2.block_info.number,
+            public_tip_block,
+            tip_tolerance,
+        ),
+    );
+
+    table.print()?;
+    Ok(())
+}
+
+/// Formats the public-tip comparison row.
+fn format_tip_reference(url: &str, local: u64, public: Option<u64>, tolerance: u64) -> String {
+    let tip = TipReferenceJson::from_local_and_public(url, local, public, tolerance);
+    match (tip.block_number, tip.delta_blocks) {
+        (Some(block), Some(delta)) => {
+            format!("#{block} (url={url}) delta={delta} ({})", tip.status.as_str())
+        }
+        _ => format!("unavailable (url={url} fetch failed)"),
     }
+}
+
+/// Formats a block number and timestamp for pretty output.
+fn format_block_info(b: &BlockInfo) -> String {
+    format!("#{} ts={} ({})", b.number, b.timestamp, format_unix_timestamp(b.timestamp))
 }
 
 /// Humanized JSON shape for `basectl sync-status --json`.

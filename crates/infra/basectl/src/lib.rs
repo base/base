@@ -4,11 +4,11 @@ mod commands;
 pub use commands::{
     BlockCommand, BlockSummaryJson, Cli, Commands, ConductorClusterActionArgs, ConductorCommands,
     ConductorLeaderArgs, ConductorNodeActionArgs, ConductorStatusArgs, DestructiveClBulkArgs,
-    DestructivePeerArgs, DoctorCommand, DoctorRenderer, ElSyncInfoJson, HeadJson, MonitorCommands,
-    P2pArgs, P2pCommands, ProofStatusFilter, ProofsCommands, ProofsFinalizeArgs, ProofsListArgs,
+    DestructivePeerArgs, DoctorCommand, ElSyncInfoJson, HeadJson, MonitorCommands, P2pArgs,
+    P2pCommands, ProofStatusFilter, ProofsCommands, ProofsFinalizeArgs, ProofsListArgs,
     ProofsStatusArgs, SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs,
-    SequencerStatusArgs, SyncStatusCommand, SyncStatusJson, SyncStatusRenderer, TipReferenceJson,
-    TipStatus, TxpoolClearArgs, TxpoolCommands, TxpoolReadArgs,
+    SequencerStatusArgs, SyncStatusCommand, SyncStatusJson, TipReferenceJson, TipStatus,
+    TxpoolClearArgs, TxpoolCommands, TxpoolReadArgs,
 };
 
 mod confirm;
