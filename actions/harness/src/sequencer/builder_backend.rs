@@ -240,8 +240,7 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
             .pending_execution_requests
             .lock()
             .expect("pending execution requests lock")
-            .get(&new_hash)
-            .cloned()
+            .remove(&new_hash)
             .ok_or_else(|| {
                 EngineClientError::RequestError(format!(
                     "missing execution requests for payload {new_hash}"
@@ -270,10 +269,6 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
                 fcu.payload_status
             )));
         }
-        self.pending_execution_requests
-            .lock()
-            .expect("pending execution requests lock")
-            .remove(&new_hash);
 
         // Record the produced block so the harness verifier can cross-check its re-executed
         // state root against the builder-produced one.

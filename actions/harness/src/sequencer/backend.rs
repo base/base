@@ -32,6 +32,9 @@ pub trait SequencerEngineBackend: base_consensus_node::SequencerEngineClient + '
     /// Inject harness-supplied transactions into the backend's mempool.
     ///
     /// No-op for force-attribute backends (which never consult a pool).
+    ///
+    /// Implementations backed by an external pool may not insert a batch atomically. If this
+    /// returns an error, a prefix of `txs` may remain queued and surface in a later block.
     async fn inject_pool_transactions(&self, _txs: Vec<BaseTxEnvelope>) -> EngineClientResult<()> {
         Ok(())
     }
