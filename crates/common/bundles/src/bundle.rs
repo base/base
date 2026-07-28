@@ -10,6 +10,15 @@ pub struct Bundle {
     /// The raw transaction bytes in the bundle.
     pub txs: Vec<Bytes>,
 
+    /// Deprecated single target block number.
+    ///
+    /// Always serialized so mixed-version deployments remain compatible with
+    /// older nodes that still require `blockNumber` on bundle RPC params
+    /// (notably `base_meterBundle`). Prefer [`Self::min_block_number`] /
+    /// [`Self::max_block_number`].
+    #[serde(default, with = "alloy_serde::quantity")]
+    pub block_number: u64,
+
     /// Minimum block number for inclusion.
     #[serde(
         default,
@@ -79,6 +88,7 @@ mod tests {
     fn test_bundle_default() {
         let bundle = Bundle::default();
         assert!(bundle.txs.is_empty());
+        assert_eq!(bundle.block_number, 0);
         assert!(bundle.min_block_number.is_none());
         assert!(bundle.max_block_number.is_none());
         assert!(bundle.flashblock_number_min.is_none());
@@ -94,6 +104,7 @@ mod tests {
     fn test_bundle_serialization() {
         let bundle = Bundle {
             txs: vec![],
+            block_number: 12345,
             min_block_number: Some(12345),
             max_block_number: Some(12350),
             flashblock_number_min: Some(1),
@@ -106,6 +117,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&bundle).unwrap();
+        assert!(json.contains("\"blockNumber\":\"0x3039\""));
         assert!(json.contains("\"minBlockNumber\":12345"));
         assert!(json.contains("\"maxBlockNumber\":12350"));
         // Optional fields serialize as integers, not hex
@@ -118,6 +130,25 @@ mod tests {
     }
 
     #[test]
+    fn test_bundle_serialization_always_includes_legacy_block_number() {
+        // Ingress-style payload: only txs / expiry metadata, no block window.
+        // Older meterBundle nodes require `blockNumber` and reject otherwise.
+        let bundle = Bundle {
+            txs: vec![],
+            max_timestamp: Some(1_700_000_000),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&bundle).unwrap();
+        assert!(
+            json.contains("\"blockNumber\":\"0x0\""),
+            "expected legacy blockNumber in {json}"
+        );
+        assert!(!json.contains("minBlockNumber"));
+        assert!(!json.contains("maxBlockNumber"));
+    }
+
+    #[test]
     fn test_bundle_deserialization_minimal() {
         let json = r#"{
             "txs": [],
@@ -126,12 +157,26 @@ mod tests {
         }"#;
 
         let bundle: Bundle = serde_json::from_str(json).unwrap();
+        assert_eq!(bundle.block_number, 0);
         assert_eq!(bundle.min_block_number, Some(1));
         assert_eq!(bundle.max_block_number, Some(2));
         assert!(bundle.flashblock_number_min.is_none());
         assert!(bundle.flashblock_number_max.is_none());
         assert!(bundle.min_timestamp.is_none());
         assert!(bundle.max_timestamp.is_none());
+    }
+
+    #[test]
+    fn test_bundle_deserialization_legacy_block_number() {
+        let json = r#"{
+            "txs": [],
+            "blockNumber": "0x64"
+        }"#;
+
+        let bundle: Bundle = serde_json::from_str(json).unwrap();
+        assert_eq!(bundle.block_number, 100);
+        assert!(bundle.min_block_number.is_none());
+        assert!(bundle.max_block_number.is_none());
     }
 
     #[test]

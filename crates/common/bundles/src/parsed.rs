@@ -99,9 +99,7 @@ mod tests {
             flashblock_number_max: Some(5),
             min_timestamp: Some(1000),
             max_timestamp: Some(2000),
-            reverting_tx_hashes: vec![],
-            replacement_uuid: None,
-            dropping_tx_hashes: vec![],
+            ..Default::default()
         };
 
         let parsed: ParsedBundle = bundle.try_into().unwrap();

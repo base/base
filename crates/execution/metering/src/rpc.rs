@@ -501,6 +501,7 @@ mod tests {
     fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>) -> Bundle {
         Bundle {
             txs,
+            block_number,
             min_block_number: Some(block_number),
             max_block_number: Some(block_number),
             flashblock_number_min: None,
