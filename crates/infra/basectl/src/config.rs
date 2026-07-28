@@ -130,6 +130,16 @@ pub struct ConductorNodeConfig {
 }
 
 impl ConductorNodeConfig {
+    /// Finds a conductor node by name or returns a typed lookup error.
+    pub fn find<'a>(nodes: &'a [Self], name: &str) -> Result<&'a Self, crate::NodeLookupError> {
+        nodes.iter().find(|node| node.name == name).ok_or_else(|| {
+            crate::NodeLookupError::MissingNode {
+                requested_node: name.to_string(),
+                available_nodes: nodes.iter().map(|node| node.name.clone()).collect(),
+            }
+        })
+    }
+
     /// Sorts conductor nodes by server id, then display name.
     pub fn sort_by_server_id(nodes: &mut [Self]) {
         nodes.sort_by(Self::cmp_by_server_id);
@@ -388,6 +398,15 @@ pub struct MonitoringConfig {
 }
 
 impl MonitoringConfig {
+    /// Resolves the conductor source or returns a typed error when none is configured.
+    pub fn resolve_conductor_source(
+        &self,
+        conductor_rpc: Option<Url>,
+    ) -> Result<ConductorSource, crate::NodeLookupError> {
+        self.conductor_source(conductor_rpc)
+            .ok_or_else(|| crate::NodeLookupError::MissingSource { config_name: self.name.clone() })
+    }
+
     /// Returns the block explorer base URL for this chain, if known.
     pub fn explorer_base_url(&self) -> Option<&'static str> {
         match self.name.as_str() {

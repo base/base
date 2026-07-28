@@ -4,10 +4,14 @@ mod block;
 pub use block::{BlockCommand, BlockSummaryJson};
 
 mod cli;
-pub use cli::{
-    Cli, Commands, ConductorClusterActionArgs, ConductorCommands, ConductorLeaderArgs,
-    ConductorNodeActionArgs, ConductorStatusArgs, MonitorCommands, SequencerCommands,
-    SequencerNodeActionArgs, SequencerStartArgs, SequencerStatusArgs,
+pub use cli::{Cli, Commands, MonitorCommands};
+
+mod conductor;
+pub use conductor::{
+    ClusterActionKind, ClusterNodeScope, ConductorAction, ConductorActionJson,
+    ConductorClusterActionArgs, ConductorCommand, ConductorCommands, ConductorFailureJson,
+    ConductorFanoutJson, ConductorLeaderArgs, ConductorNodeActionArgs, ConductorNodeJson,
+    ConductorStatusArgs, ConductorStatusJson, NodeActionKind, PausedSummaryJson,
 };
 
 mod doctor;
@@ -20,11 +24,21 @@ pub use p2p::{
     PeersJson,
 };
 
+mod outcome;
+pub use outcome::{CommandOutcome, OptionalValue};
+
 mod proofs;
 pub use proofs::{
     ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand, ProofsCommands,
     ProofsFinalizeArgs, ProofsFinalizeJson, ProofsListArgs, ProofsListJson, ProofsStatusArgs,
     ProofsStatusJson,
+};
+
+mod sequencer;
+pub use sequencer::{
+    LeadershipStatus, SequencerAction, SequencerActionJson, SequencerCommand, SequencerCommands,
+    SequencerNodeActionArgs, SequencerNodeJson, SequencerRole, SequencerStartArgs,
+    SequencerStatusArgs, SequencerStatusJson, UnsafeHeadSource,
 };
 
 mod sync_status;

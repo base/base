@@ -3,20 +3,97 @@
 use std::io::{self, Write};
 
 use anyhow::Result;
-use basectl_cli::{
-    CommandOutcome, ConductorClusterActionArgs, ConductorClusterSnapshot, ConductorCommandError,
-    ConductorCommands, ConductorControl, ConductorFanoutReport, ConductorLeaderArgs,
-    ConductorNodeActionArgs, ConductorNodeConfig, ConductorNodeFailure, ConductorNodeStatus,
-    ConductorSource, ConductorStatusArgs, Confirm, JsonOutput, KeyValueTable, MonitoringConfig,
-    find_conductor_node, fmt_bool, fmt_u32, fmt_u64, resolve_conductor_source,
-};
+use clap::{Args, Subcommand};
 use serde::Serialize;
 use tracing::warn;
 use url::Url;
 
+use crate::{
+    CommandOutcome, ConductorClusterSnapshot, ConductorCommandError, ConductorControl,
+    ConductorFanoutReport, ConductorNodeConfig, ConductorNodeFailure, ConductorNodeStatus,
+    ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig, OptionalValue,
+};
+
+/// Inspect and control an HA conductor cluster.
+#[derive(Debug, Args)]
+pub struct ConductorCommand {
+    /// Conductor operation to run.
+    #[command(subcommand)]
+    pub command: ConductorCommands,
+}
+
+/// HA conductor inspection and control commands.
+#[derive(Debug, Subcommand)]
+pub enum ConductorCommands {
+    /// Show current cluster status.
+    Status(ConductorStatusArgs),
+    /// Transfer raft leadership away from the current leader or to a target node.
+    TransferLeader(ConductorLeaderArgs),
+    /// Pause op-conductor's control loop on one node.
+    Pause(ConductorNodeActionArgs),
+    /// Resume op-conductor's control loop on one node.
+    Unpause(ConductorNodeActionArgs),
+    /// Pause the control loop on every current raft member, falling back to
+    /// the configured conductor list if static membership lookup is unavailable.
+    PauseAll(ConductorClusterActionArgs),
+    /// Resume the control loop on every current raft member, falling back to
+    /// the configured conductor list if static membership lookup is unavailable.
+    UnpauseAll(ConductorClusterActionArgs),
+}
+
+/// Flags for `basectl conductor status`.
+#[derive(Debug, Args)]
+pub struct ConductorStatusArgs {
+    /// Emit a structured JSON status summary instead of pretty text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Flags for `basectl conductor transfer-leader`.
+#[derive(Debug, Args)]
+pub struct ConductorLeaderArgs {
+    /// Optional target node name.
+    #[arg(value_name = "TARGET")]
+    pub target: Option<String>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub json: bool,
+}
+
+/// Shared flags for single-node destructive conductor commands.
+#[derive(Debug, Args)]
+pub struct ConductorNodeActionArgs {
+    /// Conductor node name or discovered raft server ID.
+    #[arg(value_name = "NODE")]
+    pub node: String,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub json: bool,
+}
+
+/// Shared flags for cluster-wide destructive conductor commands.
+#[derive(Debug, Args)]
+pub struct ConductorClusterActionArgs {
+    /// Skip the typed network-name confirmation prompt.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub json: bool,
+}
+
+/// Single-node conductor action selected by dispatch.
 #[derive(Debug, Clone, Copy)]
-enum NodeActionKind {
+pub enum NodeActionKind {
+    /// Pause the control loop.
     Pause,
+    /// Resume the control loop.
     Unpause,
 }
 
@@ -36,15 +113,21 @@ impl NodeActionKind {
     }
 }
 
+/// Cluster-wide conductor action selected by dispatch.
 #[derive(Debug, Clone, Copy)]
-enum ClusterActionKind {
+pub enum ClusterActionKind {
+    /// Pause every node.
     PauseAll,
+    /// Resume every node.
     UnpauseAll,
 }
 
+/// Membership source used for a cluster-wide action.
 #[derive(Debug, Clone, Copy)]
-enum ClusterNodeScope {
+pub enum ClusterNodeScope {
+    /// Nodes returned by live raft membership.
     CurrentRaftMembers,
+    /// Nodes from static configuration.
     ConfiguredNodes,
 }
 
@@ -73,28 +156,32 @@ impl ClusterActionKind {
     }
 }
 
-/// Runs the `basectl conductor` command group.
-pub(crate) async fn run(
-    config: MonitoringConfig,
-    conductor_rpc: Option<Url>,
-    command: ConductorCommands,
-) -> Result<CommandOutcome> {
-    let source =
-        resolve_conductor_source(&config, conductor_rpc).map_err(ConductorCommandError::from)?;
-    match command {
-        ConductorCommands::Status(args) => run_status(config, source, args).await,
-        ConductorCommands::TransferLeader(args) => run_transfer_leader(config, source, args).await,
-        ConductorCommands::Pause(args) => {
-            run_node_action(config, source, args, NodeActionKind::Pause).await
-        }
-        ConductorCommands::Unpause(args) => {
-            run_node_action(config, source, args, NodeActionKind::Unpause).await
-        }
-        ConductorCommands::PauseAll(args) => {
-            run_cluster_action(config, source, args, ClusterActionKind::PauseAll).await
-        }
-        ConductorCommands::UnpauseAll(args) => {
-            run_cluster_action(config, source, args, ClusterActionKind::UnpauseAll).await
+impl ConductorCommand {
+    /// Runs the selected conductor subcommand.
+    pub async fn run(
+        self,
+        config: MonitoringConfig,
+        conductor_rpc: Option<Url>,
+    ) -> Result<CommandOutcome> {
+        let source =
+            config.resolve_conductor_source(conductor_rpc).map_err(ConductorCommandError::from)?;
+        match self.command {
+            ConductorCommands::Status(args) => run_status(config, source, args).await,
+            ConductorCommands::TransferLeader(args) => {
+                run_transfer_leader(config, source, args).await
+            }
+            ConductorCommands::Pause(args) => {
+                run_node_action(config, source, args, NodeActionKind::Pause).await
+            }
+            ConductorCommands::Unpause(args) => {
+                run_node_action(config, source, args, NodeActionKind::Unpause).await
+            }
+            ConductorCommands::PauseAll(args) => {
+                run_cluster_action(config, source, args, ClusterActionKind::PauseAll).await
+            }
+            ConductorCommands::UnpauseAll(args) => {
+                run_cluster_action(config, source, args, ClusterActionKind::UnpauseAll).await
+            }
         }
     }
 }
@@ -123,7 +210,7 @@ async fn run_transfer_leader(
     if let Some(target) = args.target.as_deref() {
         // Validate before prompting so a typo does not ask for confirmation and only
         // fail after the operator already answered yes.
-        find_conductor_node(&nodes, target).map_err(ConductorCommandError::from)?;
+        ConductorNodeConfig::find(&nodes, target).map_err(ConductorCommandError::from)?;
     }
 
     let prompt = args.target.as_deref().map_or_else(
@@ -159,7 +246,8 @@ async fn run_node_action(
     action: NodeActionKind,
 ) -> Result<CommandOutcome> {
     let nodes = current_nodes_for_action(&source).await?;
-    let node = find_conductor_node(&nodes, &args.node).map_err(ConductorCommandError::from)?;
+    let node =
+        ConductorNodeConfig::find(&nodes, &args.node).map_err(ConductorCommandError::from)?;
     let json_action = action.action();
     let prompt = format!(
         "{} conductor control loop on {} ({})? [y/N] ",
@@ -323,16 +411,22 @@ fn print_fanout_action(action: &ConductorFanoutJson, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Conductor operation represented in JSON output.
 #[derive(Debug, Clone, Copy, Serialize)]
-enum ConductorAction {
+pub enum ConductorAction {
+    /// Transfer raft leadership.
     #[serde(rename = "transferLeader")]
     TransferLeader,
+    /// Pause one conductor.
     #[serde(rename = "pause")]
     Pause,
+    /// Resume one conductor.
     #[serde(rename = "unpause")]
     Unpause,
+    /// Pause every conductor.
     #[serde(rename = "pauseAll")]
     PauseAll,
+    /// Resume every conductor.
     #[serde(rename = "unpauseAll")]
     UnpauseAll,
 }
@@ -355,14 +449,19 @@ impl ConductorAction {
     }
 }
 
+/// JSON result for a single conductor action.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ConductorActionJson {
-    network: String,
-    action: ConductorAction,
+pub struct ConductorActionJson {
+    /// Network name.
+    pub network: String,
+    /// Action performed.
+    pub action: ConductorAction,
+    /// Optional target node.
     #[serde(skip_serializing_if = "Option::is_none")]
-    target: Option<String>,
-    message: String,
+    pub target: Option<String>,
+    /// Human-readable result.
+    pub message: String,
 }
 
 impl ConductorActionJson {
@@ -376,14 +475,20 @@ impl ConductorActionJson {
     }
 }
 
+/// JSON result for a cluster-wide conductor action.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ConductorFanoutJson {
-    network: String,
-    action: ConductorAction,
-    total: usize,
-    successes: Vec<String>,
-    failures: Vec<ConductorFailureJson>,
+pub struct ConductorFanoutJson {
+    /// Network name.
+    pub network: String,
+    /// Action performed.
+    pub action: ConductorAction,
+    /// Number of targeted nodes.
+    pub total: usize,
+    /// Nodes where the action succeeded.
+    pub successes: Vec<String>,
+    /// Per-node failures.
+    pub failures: Vec<ConductorFailureJson>,
 }
 
 impl ConductorFanoutJson {
@@ -398,11 +503,14 @@ impl ConductorFanoutJson {
     }
 }
 
+/// JSON representation of a conductor node action failure.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ConductorFailureJson {
-    name: String,
-    error: String,
+pub struct ConductorFailureJson {
+    /// Node name.
+    pub name: String,
+    /// Failure message.
+    pub error: String,
 }
 
 impl ConductorFailureJson {
@@ -411,18 +519,26 @@ impl ConductorFailureJson {
     }
 }
 
+/// JSON conductor cluster status.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ConductorStatusJson {
-    network: String,
-    source: &'static str,
+pub struct ConductorStatusJson {
+    /// Network name.
+    pub network: String,
+    /// Membership source.
+    pub source: &'static str,
+    /// Raft membership version.
     #[serde(skip_serializing_if = "Option::is_none")]
-    membership_version: Option<u64>,
+    pub membership_version: Option<u64>,
+    /// Membership lookup error.
     #[serde(skip_serializing_if = "Option::is_none")]
-    membership_error: Option<String>,
-    leader: Option<String>,
-    paused: PausedSummaryJson,
-    nodes: Vec<ConductorNodeJson>,
+    pub membership_error: Option<String>,
+    /// Current leader node.
+    pub leader: Option<String>,
+    /// Pause-state summary.
+    pub paused: PausedSummaryJson,
+    /// Per-node statuses.
+    pub nodes: Vec<ConductorNodeJson>,
 }
 
 impl ConductorStatusJson {
@@ -455,39 +571,66 @@ impl ConductorStatusJson {
     }
 }
 
+/// Summary of known paused conductor nodes.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PausedSummaryJson {
-    known: usize,
-    paused: usize,
+pub struct PausedSummaryJson {
+    /// Nodes with a known pause state.
+    pub known: usize,
+    /// Known paused nodes.
+    pub paused: usize,
 }
 
+/// JSON status for one conductor node.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ConductorNodeJson {
-    name: String,
-    server_id: String,
-    raft_addr: String,
-    conductor_rpc: String,
-    is_leader: Option<bool>,
-    conductor_active: Option<bool>,
-    conductor_paused: Option<bool>,
-    conductor_stopped: Option<bool>,
-    sequencer_healthy: Option<bool>,
-    sequencer_active: Option<bool>,
-    unsafe_l2_block: Option<u64>,
-    unsafe_l2_hash: Option<String>,
-    safe_l2_block: Option<u64>,
-    safe_l2_hash: Option<String>,
-    finalized_l2_block: Option<u64>,
-    current_l1_block: Option<u64>,
-    head_l1_block: Option<u64>,
-    cl_peer_count: Option<u32>,
-    el_block: Option<u64>,
-    el_syncing: Option<bool>,
-    el_peer_count: Option<u32>,
-    suffrage: Option<String>,
-    discovered: bool,
+pub struct ConductorNodeJson {
+    /// Node name.
+    pub name: String,
+    /// Raft server ID.
+    pub server_id: String,
+    /// Raft address.
+    pub raft_addr: String,
+    /// Conductor RPC URL.
+    pub conductor_rpc: String,
+    /// Whether this node is leader.
+    pub is_leader: Option<bool>,
+    /// Whether the conductor is active.
+    pub conductor_active: Option<bool>,
+    /// Whether the conductor is paused.
+    pub conductor_paused: Option<bool>,
+    /// Whether the conductor is stopped.
+    pub conductor_stopped: Option<bool>,
+    /// Whether the sequencer is healthy.
+    pub sequencer_healthy: Option<bool>,
+    /// Whether the sequencer is active.
+    pub sequencer_active: Option<bool>,
+    /// Unsafe L2 block number.
+    pub unsafe_l2_block: Option<u64>,
+    /// Unsafe L2 block hash.
+    pub unsafe_l2_hash: Option<String>,
+    /// Safe L2 block number.
+    pub safe_l2_block: Option<u64>,
+    /// Safe L2 block hash.
+    pub safe_l2_hash: Option<String>,
+    /// Finalized L2 block number.
+    pub finalized_l2_block: Option<u64>,
+    /// Current L1 block number.
+    pub current_l1_block: Option<u64>,
+    /// Head L1 block number.
+    pub head_l1_block: Option<u64>,
+    /// Consensus-layer peer count.
+    pub cl_peer_count: Option<u32>,
+    /// Execution-layer block number.
+    pub el_block: Option<u64>,
+    /// Whether the execution layer is syncing.
+    pub el_syncing: Option<bool>,
+    /// Execution-layer peer count.
+    pub el_peer_count: Option<u32>,
+    /// Raft suffrage.
+    pub suffrage: Option<String>,
+    /// Whether runtime discovery produced this node.
+    pub discovered: bool,
 }
 
 impl ConductorNodeJson {
@@ -532,16 +675,16 @@ impl ConductorNodeJson {
     fn compact_status(&self) -> String {
         format!(
             "leader={} conductor_active={} conductor_paused={} conductor_stopped={} sequencer_active={} sequencer_healthy={} unsafe={} safe={} cl_peers={} el_peers={}",
-            fmt_bool(self.is_leader),
-            fmt_bool(self.conductor_active),
-            fmt_bool(self.conductor_paused),
-            fmt_bool(self.conductor_stopped),
-            fmt_bool(self.sequencer_active),
-            fmt_bool(self.sequencer_healthy),
-            fmt_u64(self.unsafe_l2_block),
-            fmt_u64(self.safe_l2_block),
-            fmt_u32(self.cl_peer_count),
-            fmt_u32(self.el_peer_count),
+            OptionalValue::boolean(self.is_leader),
+            OptionalValue::boolean(self.conductor_active),
+            OptionalValue::boolean(self.conductor_paused),
+            OptionalValue::boolean(self.conductor_stopped),
+            OptionalValue::boolean(self.sequencer_active),
+            OptionalValue::boolean(self.sequencer_healthy),
+            OptionalValue::u64(self.unsafe_l2_block),
+            OptionalValue::u64(self.safe_l2_block),
+            OptionalValue::u32(self.cl_peer_count),
+            OptionalValue::u32(self.el_peer_count),
         )
     }
 }
@@ -549,16 +692,16 @@ impl ConductorNodeJson {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use basectl_cli::{
-        CommandOutcome, ConductorClusterSnapshot, ConductorCommandError, ConductorNodeConfig,
-        ConductorNodeFailure, find_conductor_node,
-    };
     use serde_json::json;
     use url::Url;
 
     use super::{
         ConductorAction, ConductorActionJson, ConductorFanoutJson, ConductorNodeJson,
         ConductorStatusJson, fanout_requires_failure_exit,
+    };
+    use crate::{
+        CommandOutcome, ConductorClusterSnapshot, ConductorCommandError, ConductorNodeConfig,
+        ConductorNodeFailure,
     };
 
     fn node(name: &str) -> ConductorNodeConfig {
@@ -576,8 +719,8 @@ mod tests {
         }
     }
 
-    fn status(name: &str, leader: bool, paused: bool) -> basectl_cli::ConductorNodeStatus {
-        basectl_cli::ConductorNodeStatus {
+    fn status(name: &str, leader: bool, paused: bool) -> crate::ConductorNodeStatus {
+        crate::ConductorNodeStatus {
             name: name.to_string(),
             is_leader: Some(leader),
             conductor_active: Some(leader),
@@ -624,7 +767,7 @@ mod tests {
 
     #[test]
     fn conductor_fanout_json_serializes_failures() {
-        let report = basectl_cli::ConductorFanoutReport {
+        let report = crate::ConductorFanoutReport {
             total: 2,
             successes: vec!["op-conductor-0".to_string()],
             failures: vec![ConductorNodeFailure {
@@ -654,12 +797,12 @@ mod tests {
 
     #[test]
     fn fanout_failure_exit_matches_report_status() {
-        let success = basectl_cli::ConductorFanoutReport {
+        let success = crate::ConductorFanoutReport {
             total: 2,
             successes: vec!["op-conductor-0".to_string(), "op-conductor-1".to_string()],
             failures: Vec::new(),
         };
-        let partial_failure = basectl_cli::ConductorFanoutReport {
+        let partial_failure = crate::ConductorFanoutReport {
             total: 2,
             successes: vec!["op-conductor-0".to_string()],
             failures: vec![ConductorNodeFailure {
@@ -667,11 +810,8 @@ mod tests {
                 error: "request timed out".to_string(),
             }],
         };
-        let empty = basectl_cli::ConductorFanoutReport {
-            total: 0,
-            successes: Vec::new(),
-            failures: Vec::new(),
-        };
+        let empty =
+            crate::ConductorFanoutReport { total: 0, successes: Vec::new(), failures: Vec::new() };
 
         assert_eq!(
             CommandOutcome::from_failures(fanout_requires_failure_exit(&success)),
@@ -761,7 +901,7 @@ mod tests {
     fn find_node_reports_missing_name() {
         let nodes = vec![node("op-conductor-0")];
 
-        let err = find_conductor_node(&nodes, "op-conductor-1")
+        let err = ConductorNodeConfig::find(&nodes, "op-conductor-1")
             .map_err(ConductorCommandError::from)
             .expect_err("missing node should error");
 

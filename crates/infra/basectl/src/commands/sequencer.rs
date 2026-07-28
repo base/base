@@ -9,17 +9,79 @@ use std::{
 
 use alloy_primitives::B256;
 use anyhow::Result;
-use basectl_cli::{
-    CommandOutcome, ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig,
-    ConductorNodeStatus, ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig,
-    SequencerCommandError, SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs,
-    SequencerStatusArgs, StateConvergenceTimeoutError, fetch_sequencer_active, find_conductor_node,
-    fmt_bool, fmt_u32, fmt_u64, resolve_conductor_source, start_sequencer, stop_sequencer,
-};
+use clap::{Args, Subcommand};
 use serde::Serialize;
 use tokio::time::{Instant, sleep, timeout};
 use tracing::{debug, info, warn};
 use url::Url;
+
+use crate::{
+    CommandOutcome, ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig,
+    ConductorNodeStatus, ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig,
+    OptionalValue, SequencerCommandError, StateConvergenceTimeoutError, fetch_sequencer_active,
+    start_sequencer, stop_sequencer,
+};
+
+/// Inspect and control sequencer activity on HA conductor nodes.
+#[derive(Debug, Args)]
+pub struct SequencerCommand {
+    /// Sequencer operation to run.
+    #[command(subcommand)]
+    pub command: SequencerCommands,
+}
+
+/// Sequencer inspection and control commands.
+#[derive(Debug, Subcommand)]
+pub enum SequencerCommands {
+    /// Show sequencer state for every node or one selected node.
+    Status(SequencerStatusArgs),
+    /// Start sequencing on one node.
+    Start(SequencerStartArgs),
+    /// Stop sequencing on one node.
+    Stop(SequencerNodeActionArgs),
+}
+
+/// Flags for `basectl sequencer status`.
+#[derive(Debug, Args)]
+pub struct SequencerStatusArgs {
+    /// Optional node name or discovered raft server ID.
+    #[arg(value_name = "NODE")]
+    pub node: Option<String>,
+    /// Emit a structured JSON status summary instead of pretty text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Flags for `basectl sequencer start`.
+#[derive(Debug, Args)]
+pub struct SequencerStartArgs {
+    /// Sequencer node name or discovered raft server ID.
+    #[arg(value_name = "NODE")]
+    pub node: String,
+    /// Unsafe head hash passed to `admin_startSequencer`.
+    #[arg(value_name = "UNSAFE_HEAD")]
+    pub unsafe_head: Option<String>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub json: bool,
+}
+
+/// Flags for `basectl sequencer stop`.
+#[derive(Debug, Args)]
+pub struct SequencerNodeActionArgs {
+    /// Sequencer node name or discovered raft server ID.
+    #[arg(value_name = "NODE")]
+    pub node: String,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub json: bool,
+}
 
 // Allow two full `admin_sequencerActive` polls plus the stabilization sleep,
 // with a little slack for scheduling jitter and connection setup.
@@ -27,26 +89,31 @@ const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(12);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const REQUIRED_OBSERVATIONS: usize = 2;
 
+/// Leadership knowledge available during start preflight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LeadershipStatus {
+pub enum LeadershipStatus {
+    /// The target is the confirmed leader.
     ConfirmedLeader,
+    /// Leadership could not be established locally.
     Unknown,
 }
 
-/// Runs the `basectl sequencer` command group.
-pub(crate) async fn run(
-    config: MonitoringConfig,
-    conductor_rpc: Option<Url>,
-    command: SequencerCommands,
-) -> Result<CommandOutcome> {
-    let source =
-        resolve_conductor_source(&config, conductor_rpc).map_err(SequencerCommandError::from)?;
-    match command {
-        SequencerCommands::Status(args) => run_status(config, source, args).await,
-        SequencerCommands::Start(args) => run_start(config, source, args).await,
-        SequencerCommands::Stop(args) => run_stop(config, source, args).await,
-    }?;
-    Ok(CommandOutcome::Success)
+impl SequencerCommand {
+    /// Runs the selected sequencer subcommand.
+    pub async fn run(
+        self,
+        config: MonitoringConfig,
+        conductor_rpc: Option<Url>,
+    ) -> Result<CommandOutcome> {
+        let source =
+            config.resolve_conductor_source(conductor_rpc).map_err(SequencerCommandError::from)?;
+        match self.command {
+            SequencerCommands::Status(args) => run_status(config, source, args).await,
+            SequencerCommands::Start(args) => run_start(config, source, args).await,
+            SequencerCommands::Stop(args) => run_stop(config, source, args).await,
+        }?;
+        Ok(CommandOutcome::Success)
+    }
 }
 
 async fn run_status(
@@ -89,8 +156,8 @@ async fn run_start(
         "running sequencer start command"
     );
     let snapshot = ConductorControl::snapshot(source).await?;
-    let node =
-        find_conductor_node(&snapshot.nodes, &args.node).map_err(SequencerCommandError::from)?;
+    let node = ConductorNodeConfig::find(&snapshot.nodes, &args.node)
+        .map_err(SequencerCommandError::from)?;
     let status = snapshot_node_status(&snapshot, &node.name);
     debug!(
         node = %node.name,
@@ -189,8 +256,8 @@ async fn run_stop(
         "running sequencer stop command"
     );
     let snapshot = ConductorControl::snapshot(source).await?;
-    let node =
-        find_conductor_node(&snapshot.nodes, &args.node).map_err(SequencerCommandError::from)?;
+    let node = ConductorNodeConfig::find(&snapshot.nodes, &args.node)
+        .map_err(SequencerCommandError::from)?;
     let status = snapshot_node_status(&snapshot, &node.name);
     debug!(
         node = %node.name,
@@ -523,10 +590,13 @@ fn print_action(action: &SequencerActionJson, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Sequencer mutation represented in command output.
 #[derive(Debug, Clone, Copy, Serialize)]
-enum SequencerAction {
+pub enum SequencerAction {
+    /// Start sequencing.
     #[serde(rename = "start")]
     Start,
+    /// Stop sequencing.
     #[serde(rename = "stop")]
     Stop,
 }
@@ -567,10 +637,13 @@ impl SequencerAction {
     }
 }
 
+/// Source of the unsafe head used to start sequencing.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum UnsafeHeadSource {
+pub enum UnsafeHeadSource {
+    /// Supplied by the operator.
     Explicit,
+    /// Read from the target node.
     Observed,
 }
 
@@ -583,18 +656,26 @@ impl UnsafeHeadSource {
     }
 }
 
+/// JSON result for a sequencer action.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SequencerActionJson {
-    network: String,
-    action: SequencerAction,
-    node: String,
-    cl_rpc: String,
+pub struct SequencerActionJson {
+    /// Network name.
+    pub network: String,
+    /// Action performed.
+    pub action: SequencerAction,
+    /// Target node name.
+    pub node: String,
+    /// Target consensus-layer RPC URL.
+    pub cl_rpc: String,
+    /// Unsafe head associated with the action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    unsafe_head: Option<String>,
+    pub unsafe_head: Option<String>,
+    /// Source of the unsafe head.
     #[serde(skip_serializing_if = "Option::is_none")]
-    unsafe_head_source: Option<UnsafeHeadSource>,
-    message: String,
+    pub unsafe_head_source: Option<UnsafeHeadSource>,
+    /// Human-readable result.
+    pub message: String,
 }
 
 impl SequencerActionJson {
@@ -634,19 +715,27 @@ impl SequencerActionJson {
     }
 }
 
+/// JSON sequencer cluster status.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SequencerStatusJson {
-    network: String,
-    source: &'static str,
+pub struct SequencerStatusJson {
+    /// Network name.
+    pub network: String,
+    /// Membership source.
+    pub source: &'static str,
+    /// Selected node filter.
     #[serde(skip_serializing_if = "Option::is_none")]
-    selected_node: Option<String>,
+    pub selected_node: Option<String>,
+    /// Raft membership version.
     #[serde(skip_serializing_if = "Option::is_none")]
-    membership_version: Option<u64>,
+    pub membership_version: Option<u64>,
+    /// Membership lookup error.
     #[serde(skip_serializing_if = "Option::is_none")]
-    membership_error: Option<String>,
-    leader: Option<String>,
-    nodes: Vec<SequencerNodeJson>,
+    pub membership_error: Option<String>,
+    /// Current leader node.
+    pub leader: Option<String>,
+    /// Per-node statuses.
+    pub nodes: Vec<SequencerNodeJson>,
 }
 
 impl SequencerStatusJson {
@@ -656,7 +745,7 @@ impl SequencerStatusJson {
         selected_node: Option<&str>,
     ) -> Result<Self, SequencerCommandError> {
         if let Some(selected_node) = selected_node {
-            find_conductor_node(&snapshot.nodes, selected_node)
+            ConductorNodeConfig::find(&snapshot.nodes, selected_node)
                 .map_err(SequencerCommandError::from)?;
         }
 
@@ -686,11 +775,15 @@ impl SequencerStatusJson {
     }
 }
 
+/// Sequencer node role derived from leadership status.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum SequencerRole {
+pub enum SequencerRole {
+    /// Current raft leader.
     Leader,
+    /// Confirmed follower.
     Follower,
+    /// Leadership status unavailable.
     Unknown,
 }
 
@@ -712,28 +805,48 @@ impl SequencerRole {
     }
 }
 
+/// JSON status for one sequencer node.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SequencerNodeJson {
-    name: String,
-    cl_rpc: String,
-    role: SequencerRole,
-    is_leader: Option<bool>,
-    sequencer_active: Option<bool>,
-    sequencer_healthy: Option<bool>,
-    conductor_paused: Option<bool>,
-    unsafe_l2_block: Option<u64>,
-    unsafe_l2_hash: Option<String>,
-    safe_l2_block: Option<u64>,
-    safe_l2_hash: Option<String>,
-    finalized_l2_block: Option<u64>,
-    current_l1_block: Option<u64>,
-    head_l1_block: Option<u64>,
-    cl_peer_count: Option<u32>,
-    el_block: Option<u64>,
-    el_syncing: Option<bool>,
-    el_peer_count: Option<u32>,
-    discovered: bool,
+pub struct SequencerNodeJson {
+    /// Node name.
+    pub name: String,
+    /// Consensus-layer RPC URL.
+    pub cl_rpc: String,
+    /// Derived sequencer role.
+    pub role: SequencerRole,
+    /// Whether this node is leader.
+    pub is_leader: Option<bool>,
+    /// Whether sequencing is active.
+    pub sequencer_active: Option<bool>,
+    /// Whether the sequencer is healthy.
+    pub sequencer_healthy: Option<bool>,
+    /// Whether the conductor is paused.
+    pub conductor_paused: Option<bool>,
+    /// Unsafe L2 block number.
+    pub unsafe_l2_block: Option<u64>,
+    /// Unsafe L2 block hash.
+    pub unsafe_l2_hash: Option<String>,
+    /// Safe L2 block number.
+    pub safe_l2_block: Option<u64>,
+    /// Safe L2 block hash.
+    pub safe_l2_hash: Option<String>,
+    /// Finalized L2 block number.
+    pub finalized_l2_block: Option<u64>,
+    /// Current L1 block number.
+    pub current_l1_block: Option<u64>,
+    /// Head L1 block number.
+    pub head_l1_block: Option<u64>,
+    /// Consensus-layer peer count.
+    pub cl_peer_count: Option<u32>,
+    /// Execution-layer block number.
+    pub el_block: Option<u64>,
+    /// Whether the execution layer is syncing.
+    pub el_syncing: Option<bool>,
+    /// Execution-layer peer count.
+    pub el_peer_count: Option<u32>,
+    /// Whether runtime discovery produced this node.
+    pub discovered: bool,
 }
 
 impl SequencerNodeJson {
@@ -774,16 +887,16 @@ impl SequencerNodeJson {
         format!(
             "role={} active={} healthy={} paused={} unsafe={} safe={} finalized={} current_l1={} head_l1={} cl_peers={} el_peers={}",
             self.role.as_str(),
-            fmt_bool(self.sequencer_active),
-            fmt_bool(self.sequencer_healthy),
-            fmt_bool(self.conductor_paused),
-            fmt_u64(self.unsafe_l2_block),
-            fmt_u64(self.safe_l2_block),
-            fmt_u64(self.finalized_l2_block),
-            fmt_u64(self.current_l1_block),
-            fmt_u64(self.head_l1_block),
-            fmt_u32(self.cl_peer_count),
-            fmt_u32(self.el_peer_count),
+            OptionalValue::boolean(self.sequencer_active),
+            OptionalValue::boolean(self.sequencer_healthy),
+            OptionalValue::boolean(self.conductor_paused),
+            OptionalValue::u64(self.unsafe_l2_block),
+            OptionalValue::u64(self.safe_l2_block),
+            OptionalValue::u64(self.finalized_l2_block),
+            OptionalValue::u64(self.current_l1_block),
+            OptionalValue::u64(self.head_l1_block),
+            OptionalValue::u32(self.cl_peer_count),
+            OptionalValue::u32(self.el_peer_count),
         )
     }
 }
@@ -791,10 +904,6 @@ impl SequencerNodeJson {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use basectl_cli::{
-        ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus,
-        SEQUENCER_ACTIVE_RPC_TIMEOUT, SequencerCommandError, find_conductor_node,
-    };
     use serde_json::json;
     use tokio::time::{Duration, Instant};
     use url::Url;
@@ -805,6 +914,10 @@ mod tests {
         ensure_leader_target, ensure_start_allowed, ensure_start_request_matches_observed_head,
         ensure_stop_allowed, parse_unsafe_head, resolve_start_hash,
         wait_for_expected_state_with_fetch,
+    };
+    use crate::{
+        ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus,
+        SEQUENCER_ACTIVE_RPC_TIMEOUT, SequencerCommandError,
     };
 
     fn node(name: &str) -> ConductorNodeConfig {
@@ -1187,7 +1300,7 @@ mod tests {
     fn find_node_reports_missing_name() {
         let nodes = vec![node("op-conductor-0")];
 
-        let err = find_conductor_node(&nodes, "op-conductor-1")
+        let err = ConductorNodeConfig::find(&nodes, "op-conductor-1")
             .map_err(SequencerCommandError::from)
             .expect_err("missing node should error");
 

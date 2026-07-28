@@ -12,14 +12,9 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-url = { workspace = true }
+clap = { workspace = true }
 anyhow = { workspace = true }
-tracing = { workspace = true }
 basectl-cli = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }
-clap = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true, features = ["std"] }
-serde = { workspace = true, features = ["derive", "std"] }
-alloy-primitives = { workspace = true, features = ["serde"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
