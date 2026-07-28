@@ -5,7 +5,10 @@
 //! Canonical receipts are sampled during the run for gas calibration and fetched again
 //! in a complete end-of-run pass for final metrics.
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_network::ReceiptResponse;
 use alloy_primitives::TxHash;
@@ -13,6 +16,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use base_common_network::Base;
 use futures::{StreamExt, stream};
+use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
@@ -62,6 +66,7 @@ impl BlockWatcher {
         let mut backoff = Duration::from_millis(100);
         let max_backoff = Duration::from_secs(5);
         let mut last_seen_block: Option<u64> = None;
+        let live_receipt_fetch = Arc::new(Semaphore::new(1));
 
         while !self.cancel_token.is_cancelled() {
             match self.fetch_latest_block().await {
@@ -123,9 +128,31 @@ impl BlockWatcher {
                                 self.results_tracker.has_measured_pending(&tx_hashes);
                             self.results_tracker.on_new_block_hashes(block, tx_hashes);
                             if has_measured_pending {
-                                let (receipts, _) =
-                                    Self::fetch_block_receipts(&self.provider, block_number).await;
-                                self.results_tracker.observe_live_receipts(&receipts);
+                                if let Ok(permit) =
+                                    Arc::clone(&live_receipt_fetch).try_acquire_owned()
+                                {
+                                    let provider = self.provider.clone();
+                                    let results_tracker = self.results_tracker.clone();
+                                    let cancel_token = self.cancel_token.clone();
+                                    tokio::spawn(async move {
+                                        tokio::select! {
+                                            biased;
+                                            _ = cancel_token.cancelled() => {}
+                                            result = Self::fetch_block_receipts(
+                                                &provider,
+                                                block_number,
+                                            ) => {
+                                                results_tracker.observe_live_receipts(&result.0);
+                                            }
+                                        }
+                                        drop(permit);
+                                    });
+                                } else {
+                                    trace!(
+                                        block = block_number,
+                                        "skipping live receipts while previous fetch is pending"
+                                    );
+                                }
                             }
                             last_seen_block = Some(block_number);
                         }
