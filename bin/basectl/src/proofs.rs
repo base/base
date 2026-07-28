@@ -8,20 +8,13 @@ use base_prover_service_protocol::{
     TeeKind, ZkVm,
 };
 use basectl_cli::{
-    JsonOutput, KeyValueTable, MonitoringConfig, ProofFinalizeRequest, ProofsClient,
-    ProofsCommandError,
+    CommandOutcome, Confirm, JsonOutput, KeyValueTable, MonitoringConfig, ProofFinalizeRequest,
+    ProofStatusFilter, ProofsClient, ProofsCommandError, ProofsCommands, ProofsFinalizeArgs,
+    ProofsListArgs, ProofsStatusArgs,
 };
 use serde::Serialize;
 use tracing::info;
 use url::Url;
-
-use crate::{
-    cli::{
-        ProofStatusFilter, ProofsCommands, ProofsFinalizeArgs, ProofsListArgs, ProofsStatusArgs,
-    },
-    confirm::confirm_or_abort,
-    helpers::CommandOutcome,
-};
 
 /// Runs the `basectl proofs` command group.
 pub(crate) async fn run(
@@ -85,7 +78,7 @@ async fn run_finalize(
         "Submit compressed ZK proof request for blocks {start_block}..={end_block} \
          ({num_blocks} block(s)) to {endpoint}? [y/N] "
     );
-    if !confirm_or_abort(&prompt, yes)? {
+    if !Confirm::prompt_or_abort(&prompt, yes)? {
         return Ok(CommandOutcome::Success);
     }
 

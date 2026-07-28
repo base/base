@@ -5,7 +5,8 @@ use std::io::{self, Write};
 use anyhow::{Context, Result, anyhow};
 use base_consensus_peers::BootNode;
 use basectl_cli::{
-    ElReachabilityOutcome, JsonOutput, KeyValueTable, MonitoringConfig, P2pCommandError,
+    CommandOutcome, Confirm, DestructiveClBulkArgs, DestructivePeerArgs, ElReachabilityOutcome,
+    JsonOutput, KeyValueTable, MonitoringConfig, P2pArgs, P2pCommandError, P2pCommands,
     P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary, TelemetryClient,
     add_peer, ban_el_peer, ban_peer, connect_peer, disconnect_peer, el_peer_is_trusted,
     fetch_connected_peers, fetch_info, fetch_l2_chain_id, fetch_raw_info, fetch_raw_peers,
@@ -13,12 +14,6 @@ use basectl_cli::{
 };
 use serde::Serialize;
 use url::Url;
-
-use crate::{
-    cli::{DestructiveClBulkArgs, DestructivePeerArgs, P2pArgs, P2pCommands},
-    confirm::confirm,
-    helpers::CommandOutcome,
-};
 
 /// Runs the `basectl p2p` command group.
 pub(crate) async fn run(config: &str, command: P2pCommands) -> Result<CommandOutcome> {
@@ -118,7 +113,7 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
             );
             let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
             let prompt = format!("Add EL peer {enode} through {el_rpc}? [y/N] ");
-            if !confirm(&prompt, yes)? {
+            if !Confirm::prompt(&prompt, yes)? {
                 println!("aborted");
                 return Ok(());
             }
@@ -137,7 +132,7 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
             );
             let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p add-peer")?;
             let prompt = format!("Connect CL peer {multiaddr} through {cl_rpc}? [y/N] ");
-            if !confirm(&prompt, yes)? {
+            if !Confirm::prompt(&prompt, yes)? {
                 println!("aborted");
                 return Ok(());
             }
@@ -164,7 +159,7 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
             );
             let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
             let prompt = format!("Remove EL peer {enode} through {el_rpc}? [y/N] ");
-            if !confirm(&prompt, yes)? {
+            if !Confirm::prompt(&prompt, yes)? {
                 println!("aborted");
                 return Ok(());
             }
@@ -183,7 +178,7 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
             );
             let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p remove-peer")?;
             let prompt = format!("Disconnect CL peer {peer_id} from {cl_rpc}? [y/N] ");
-            if !confirm(&prompt, yes)? {
+            if !Confirm::prompt(&prompt, yes)? {
                 println!("aborted");
                 return Ok(());
             }
@@ -222,7 +217,7 @@ async fn run_peer_ban_action(
                 return Err(P2pCommandError::TrustedElPeerBan { target: enode }.into());
             }
             let prompt = format!("{verb} EL peer {enode} through {el_rpc}? [y/N] ");
-            if !confirm(&prompt, yes)? {
+            if !Confirm::prompt(&prompt, yes)? {
                 println!("aborted");
                 return Ok(());
             }
@@ -244,7 +239,7 @@ async fn run_peer_ban_action(
             );
             let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), command_name)?;
             let prompt = format!("{verb} CL peer {peer_id} through {cl_rpc}? [y/N] ");
-            if !confirm(&prompt, yes)? {
+            if !Confirm::prompt(&prompt, yes)? {
                 println!("aborted");
                 return Ok(());
             }
@@ -291,7 +286,7 @@ async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) ->
     }
 
     let prompt = format!("Unban all {} banned CL peers through {cl_rpc}? [y/N] ", peer_ids.len());
-    if !confirm(&prompt, yes)? {
+    if !Confirm::prompt(&prompt, yes)? {
         println!("aborted");
         return Ok(());
     }
@@ -715,7 +710,7 @@ mod tests {
     use std::net::TcpListener;
 
     use alloy_primitives::Address;
-    use basectl_cli::{P2pCommandError, P2pTargetError};
+    use basectl_cli::{P2pCommandError, P2pCommands, P2pTargetError};
     use serde_json::json;
     use url::Url;
 
@@ -724,7 +719,6 @@ mod tests {
         fail_unban_all_if_partial, parse_add_target, parse_peer_target, resolve_cl_rpc, run,
         run_reachability,
     };
-    use crate::cli::P2pCommands;
 
     const VALID_ENODE: &str = "enode://d7dfaea49c7ef37701e668652bcf1bc63d3abb2ae97593374a949e175e4ff128730a2f35199f3462a56298b981dfc395a5abebd2d6f0284ffe5bdc3d8e258b86@127.0.0.1:30304?discport=30301";
     const VALID_ENR: &str = "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg";
