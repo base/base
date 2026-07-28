@@ -191,8 +191,8 @@ impl RealTokenAcquisition {
     }
 }
 
-/// Default maximum gas price cap (1 gwei).
-pub const DEFAULT_MAX_GAS_PRICE: u128 = 1_000_000_000;
+/// Default maximum gas price cap (0.01 gwei).
+pub const DEFAULT_MAX_GAS_PRICE: u128 = 10_000_000;
 
 /// Configuration for a load test run.
 #[derive(Debug, Clone)]

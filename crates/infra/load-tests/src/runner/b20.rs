@@ -53,11 +53,13 @@ impl LoadRunner {
         let chain_id = self.config.chain_id;
         let max_gas_price = self.config.max_gas_price;
         let base_fee = self.client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1);
+        let max_priority_fee = (base_fee / 10).max(1).min(max_gas_price);
         let max_fee =
             SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
-        let replacement_max_fee = max_fee.saturating_mul(REPLACEMENT_FEE_MULTIPLIER);
-        let replacement_priority_fee = max_priority_fee.saturating_mul(REPLACEMENT_FEE_MULTIPLIER);
+        let replacement_max_fee =
+            max_fee.saturating_mul(REPLACEMENT_FEE_MULTIPLIER).min(max_gas_price);
+        let replacement_priority_fee =
+            max_priority_fee.saturating_mul(REPLACEMENT_FEE_MULTIPLIER).min(max_gas_price);
 
         // A fresh random salt per run keeps each run's token addresses distinct, so re-running the
         // same sender set never collides with the previous run's tokens.
@@ -282,7 +284,7 @@ impl LoadRunner {
         let chain_id = self.config.chain_id;
         let max_gas_price = self.config.max_gas_price;
         let base_fee = self.client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1);
+        let max_priority_fee = (base_fee / 10).max(1).min(max_gas_price);
         let max_fee =
             SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
 

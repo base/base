@@ -505,14 +505,14 @@ impl SubmissionPipeline {
 
     /// Computes EIP-1559 `maxFeePerGas` for submissions.
     ///
-    /// The result is `min(target, max_gas_price)` but always at least `priority_fee`,
-    /// where `target = max(base_fee * MULTIPLIER, base_fee + priority_fee)`.
+    /// The result is `min(target, max_gas_price)`, where
+    /// `target = max(base_fee * MULTIPLIER, base_fee + priority_fee)`.
     /// When `max_gas_price` is lower than the target, the tx may be unincludable.
     pub fn submission_max_fee(base_fee: u128, priority_fee: u128, max_gas_price: u128) -> u128 {
         let target = base_fee
             .saturating_mul(MAX_FEE_BASE_FEE_MULTIPLIER)
             .max(base_fee.saturating_add(priority_fee));
-        target.min(max_gas_price).max(priority_fee)
+        target.min(max_gas_price)
     }
 
     async fn signer_worker(
@@ -871,7 +871,7 @@ impl SubmissionPipeline {
         prepared: &PreparedTransaction,
         base_fee: u128,
     ) -> Option<SignedTransaction> {
-        let priority_fee = (base_fee / 10).max(1);
+        let priority_fee = (base_fee / 10).max(1).min(ctx.max_gas_price);
         let max_fee = Self::submission_max_fee(base_fee, priority_fee, ctx.max_gas_price);
 
         let Some(signer) = ctx.signers.get(&prepared.from) else {
@@ -1012,9 +1012,10 @@ mod tests {
     }
 
     #[test]
-    fn submission_max_fee_is_at_least_priority_fee() {
+    fn submission_max_fee_honors_absolute_cap() {
         assert_eq!(SubmissionPipeline::submission_max_fee(0, 1, 1_000_000_000), 1);
         assert_eq!(SubmissionPipeline::submission_max_fee(1_000, 10, 500), 500);
+        assert_eq!(SubmissionPipeline::submission_max_fee(0, 10, 1), 1);
     }
 
     #[test]
