@@ -79,7 +79,7 @@ impl DoctorCommand {
         if self.json {
             JsonOutput::print(&report)?;
         } else {
-            Self::print_pretty(&report)?;
+            DoctorRenderer::print_pretty(&report)?;
         }
         Ok(CommandOutcome::from_failures(report.has_failures()))
     }
@@ -100,7 +100,13 @@ impl DoctorCommand {
         }
         Ok(())
     }
+}
 
+/// Pretty-text renderer for [`DoctorReport`].
+#[derive(Debug)]
+pub struct DoctorRenderer;
+
+impl DoctorRenderer {
     /// Writes pretty output to standard output.
     pub fn print_pretty(report: &DoctorReport) -> Result<()> {
         let mut stdout = io::stdout().lock();
@@ -257,7 +263,7 @@ mod tests {
     use serde_json::json;
     use url::Url;
 
-    use super::{ANSI_YELLOW, DoctorCommand};
+    use super::{ANSI_YELLOW, DoctorCommand, DoctorRenderer};
     use crate::{DoctorArgsError, DoctorCheck, DoctorStatus};
 
     #[test]
@@ -272,7 +278,7 @@ mod tests {
         );
         let mut out = Vec::new();
 
-        DoctorCommand::write_check(&mut out, &check).unwrap();
+        DoctorRenderer::write_check(&mut out, &check).unwrap();
         let rendered = String::from_utf8(out).unwrap();
 
         assert!(rendered.contains("WARN"));
@@ -293,7 +299,7 @@ mod tests {
             DoctorStatus::Fail,
         ];
 
-        statuses.sort_by_key(|status| DoctorCommand::status_sort_key(*status));
+        statuses.sort_by_key(|status| DoctorRenderer::status_sort_key(*status));
 
         assert_eq!(
             statuses,

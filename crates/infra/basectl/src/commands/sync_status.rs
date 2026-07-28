@@ -83,7 +83,7 @@ impl SyncStatusCommand {
                 JsonOutput::print(&summary)?;
             }
             (false, _) => {
-                Self::print_pretty(
+                SyncStatusRenderer::print_pretty(
                     &config.name,
                     &report,
                     tip_url,
@@ -107,7 +107,13 @@ impl SyncStatusCommand {
             SyncStatusCommandError::MissingConsensusRpc { config_name: config.name.clone() }
         })
     }
+}
 
+/// Pretty-table renderer for [`SyncStatusReport`].
+#[derive(Debug)]
+pub struct SyncStatusRenderer;
+
+impl SyncStatusRenderer {
     /// Renders sync status as the pretty key-value table.
     pub fn print_pretty(
         network: &str,
