@@ -78,9 +78,9 @@ pub struct B20CoreStorage {
     #[accessor(name = nonce, keys(owner))]
     #[mutator(name = set_nonce, keys(owner), value = nonce)]
     pub nonces: Mapping<Address, U256>, // offset 13
-    /// Seizable-account policy ID, consulted by the seize operations. base-std keeps its mock-only
-    /// `initialized` flag trailing (offset 15), which this impl omits, so seize lands at offset 14
-    /// on both sides.
+    // The base-std mock keeps an `initialized` bootstrap flag as its last field; this impl checks
+    // factory-init via deployed marker bytecode instead, so it stores no such field.
+    /// Seizable-account policy ID, consulted by the seize operations.
     #[accessor]
     #[mutator]
     pub seizable_policy_id: u64, // slot 14, offset 0
