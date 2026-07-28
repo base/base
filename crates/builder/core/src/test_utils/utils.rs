@@ -1,5 +1,5 @@
 use core::future::Future;
-use std::{net::TcpListener, sync::Arc};
+use std::{net::TcpListener, path::PathBuf, sync::Arc};
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
@@ -236,6 +236,31 @@ pub fn create_test_db(config: NodeConfig<BaseChainSpec>) -> Arc<TempDatabase<Dat
     )
     .expect(ERROR_DB_CREATION);
     Arc::new(TempDatabase::new(db, path))
+}
+
+/// Creates a persistent MDBX [`DatabaseEnv`] in a fresh temporary directory.
+///
+/// Unlike [`create_test_db`], this returns the concrete `DatabaseEnv` (not wrapped in
+/// [`TempDatabase`]) so the resulting node matches the production database type used by the node
+/// builder's type bounds. This is required when applying node extensions whose hooks are typed
+/// against the concrete node types. The returned [`PathBuf`] is the temporary directory backing the
+/// database; the caller is responsible for removing it once the database has been dropped.
+pub fn create_test_db_env(
+    config: NodeConfig<BaseChainSpec>,
+) -> eyre::Result<(DatabaseEnv, PathBuf)> {
+    let root = reth_db::test_utils::tempdir_path();
+    let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(root.clone());
+    let db_config =
+        config.with_datadir_args(DatadirArgs { datadir: path.clone(), ..Default::default() });
+    let data_dir = path.unwrap_or_chain_default(db_config.chain.chain(), db_config.datadir.clone());
+    let db = init_db(
+        data_dir.db().as_path(),
+        DatabaseArguments::new(ClientVersion::default())
+            .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded))
+            .with_geometry_max_size(Some(4 * MEGABYTE))
+            .with_growth_step(Some(4 * KILOBYTE)),
+    )?;
+    Ok((db, root))
 }
 
 /// Gets an available port by first binding to port 0 -- instructing the OS to

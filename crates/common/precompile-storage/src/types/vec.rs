@@ -40,7 +40,7 @@ where
     T: Storable,
 {
     fn load<S: StorageOps>(storage: &S, len_slot: U256, ctx: LayoutCtx) -> Result<Self> {
-        debug_assert_eq!(ctx, LayoutCtx::FULL, "Dynamic arrays cannot be packed");
+        debug_assert!(ctx.is_full(), "Dynamic arrays cannot be packed");
 
         let length = load_checked_len(storage, len_slot)?;
         if length == 0 {
@@ -56,23 +56,33 @@ where
     }
 
     fn store<S: StorageOps>(&self, storage: &mut S, len_slot: U256, ctx: LayoutCtx) -> Result<()> {
-        debug_assert_eq!(ctx, LayoutCtx::FULL, "Dynamic arrays cannot be packed");
-
-        storage.store(len_slot, U256::from(self.len()))?;
-        if self.is_empty() {
-            return Ok(());
-        }
+        debug_assert!(ctx.is_full(), "Dynamic arrays cannot be packed");
 
         let data_start = calc_data_slot(len_slot);
-        if T::BYTES <= 16 {
-            store_packed_elements(self, storage, data_start, T::BYTES)
-        } else {
-            store_unpacked_elements(self, storage, data_start)
+        if storage.storage_features().dynamic_storage_tail_cleanup_enabled() {
+            // Cobalt intentionally charges an old-length SLOAD on every full Vec write so
+            // shrinking values can be detected, including when reusing storage written pre-fork.
+            storage.ensure_writable()?;
+            let old_len = load_checked_len(storage, len_slot)?;
+            if self.len() < old_len {
+                clear_stale_elements::<T, S>(storage, data_start, self.len(), old_len)?;
+            }
         }
+
+        storage.store(len_slot, U256::from(self.len()))?;
+        if !self.is_empty() {
+            if T::BYTES <= 16 {
+                store_packed_elements(self, storage, data_start, T::BYTES)?;
+            } else {
+                store_unpacked_elements(self, storage, data_start)?;
+            }
+        }
+
+        Ok(())
     }
 
     fn delete<S: StorageOps>(storage: &mut S, len_slot: U256, ctx: LayoutCtx) -> Result<()> {
-        debug_assert_eq!(ctx, LayoutCtx::FULL, "Dynamic arrays cannot be packed");
+        debug_assert!(ctx.is_full(), "Dynamic arrays cannot be packed");
 
         let length = load_checked_len(storage, len_slot)?;
         storage.store(len_slot, U256::ZERO)?;
@@ -483,6 +493,41 @@ where
     Ok(slot_value.0)
 }
 
+fn clear_stale_elements<T, S>(
+    storage: &mut S,
+    data_start: U256,
+    new_len: usize,
+    old_len: usize,
+) -> Result<()>
+where
+    T: Storable,
+    S: StorageOps,
+{
+    if new_len >= old_len {
+        return Ok(());
+    }
+    if T::BYTES <= 16 {
+        // Only fully retired slots are cleared here. `store_packed_elements` rebuilds every
+        // retained slot from zero, which clears stale lanes in the shared boundary slot.
+        let first_tail_slot = calc_packed_slot_count(new_len, T::BYTES);
+        let old_slot_count = calc_packed_slot_count(old_len, T::BYTES);
+        for slot_idx in first_tail_slot..old_slot_count {
+            let slot_addr = data_start
+                .checked_add(U256::from(slot_idx))
+                .ok_or(BasePrecompileError::SlotOverflow)?;
+            storage.store(slot_addr, U256::ZERO)?;
+        }
+    } else {
+        for index in new_len..old_len {
+            let elem_slot = data_start
+                .checked_add(U256::from(index * T::SLOTS))
+                .ok_or(BasePrecompileError::SlotOverflow)?;
+            T::delete(storage, elem_slot, LayoutCtx::FULL)?;
+        }
+    }
+    Ok(())
+}
+
 fn load_unpacked_elements<T, S>(storage: &S, data_start: U256, length: usize) -> Result<Vec<T>>
 where
     T: Storable,
@@ -515,7 +560,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{hashmap::setup_storage, packing::gen_word_from, storage_ctx::StorageCtx};
+    use crate::{
+        StorageFeatures, hashmap::setup_storage, packing::gen_word_from, storage_ctx::StorageCtx,
+    };
+
+    #[derive(Debug, Default, Clone, PartialEq, Eq, base_precompile_macros::Storable)]
+    struct DynamicRecord {
+        value: String,
+    }
 
     #[test]
     fn test_vec_empty_roundtrip() {
@@ -736,6 +788,153 @@ mod tests {
                 "0x01", "0x00",
             ]);
             assert_eq!(slot0, expected, "slot 0 must be fully intact after truncate");
+        });
+    }
+
+    #[test]
+    fn test_vec_store_shrink_keeps_tail_when_cleanup_disabled() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(650u64);
+            let mut slot = Slot::<Vec<U256>>::new(len_slot, address, ctx);
+
+            slot.write((0..5).map(U256::from).collect()).unwrap();
+            slot.write((0..2).map(U256::from).collect()).unwrap();
+
+            let data_start = calc_data_slot(len_slot);
+            let stale = U256::handle(data_start + U256::from(2), LayoutCtx::FULL, address, ctx)
+                .read()
+                .unwrap();
+            assert_ne!(stale, U256::ZERO, "pre-Cobalt Vec overwrite preserves tail slots");
+            assert_eq!(ctx.gas_refunded(), 0, "pre-Cobalt Vec overwrite does not clear slots");
+        });
+    }
+
+    #[test]
+    fn test_vec_store_shrink_clears_unpacked_tail_when_cleanup_enabled() {
+        let (mut storage, address) = setup_storage();
+        storage.set_storage_features(StorageFeatures::Cobalt);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(651u64);
+            let mut slot = Slot::<Vec<U256>>::new(len_slot, address, ctx);
+
+            slot.write((0..5).map(U256::from).collect()).unwrap();
+            slot.write((0..2).map(U256::from).collect()).unwrap();
+
+            let data_start = calc_data_slot(len_slot);
+            for i in 2..5 {
+                let tail = U256::handle(data_start + U256::from(i), LayoutCtx::FULL, address, ctx)
+                    .read()
+                    .unwrap();
+                assert_eq!(tail, U256::ZERO, "Cobalt Vec overwrite clears tail slot {i}");
+            }
+            assert!(ctx.gas_refunded() > 0, "clearing non-zero Vec tail slots earns gas refund");
+        });
+    }
+
+    #[test]
+    fn test_vec_store_shrink_clears_packed_tail_when_cleanup_enabled() {
+        let (mut storage, address) = setup_storage();
+        storage.set_storage_features(StorageFeatures::Cobalt);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(652u64);
+            let mut slot = Slot::<Vec<u8>>::new(len_slot, address, ctx);
+
+            slot.write((0u8..65).collect()).unwrap();
+            slot.write((0u8..32).collect()).unwrap();
+
+            let data_start = calc_data_slot(len_slot);
+            let slot0 = U256::handle(data_start, LayoutCtx::FULL, address, ctx).read().unwrap();
+            let slot1 = U256::handle(data_start + U256::from(1), LayoutCtx::FULL, address, ctx)
+                .read()
+                .unwrap();
+            let slot2 = U256::handle(data_start + U256::from(2), LayoutCtx::FULL, address, ctx)
+                .read()
+                .unwrap();
+            assert_ne!(slot0, U256::ZERO, "kept packed data remains intact");
+            assert_eq!(slot1, U256::ZERO, "first fully-retired packed slot is cleared");
+            assert_eq!(slot2, U256::ZERO, "second fully-retired packed slot is cleared");
+        });
+    }
+
+    #[test]
+    fn test_vec_store_packed_boundary_shrink_avoids_redundant_storage_ops() {
+        let (mut storage, address) = setup_storage();
+        storage.set_storage_features(StorageFeatures::Cobalt);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(653u64);
+            let mut slot = Slot::<Vec<u8>>::new(len_slot, address, ctx);
+            slot.write((0u8..35).collect()).unwrap();
+
+            ctx.reset_counters();
+            slot.write((0u8..33).collect()).unwrap();
+
+            assert_eq!(ctx.counter_sload(), 1, "shrink only loads the previous length");
+            assert_eq!(ctx.counter_sstore(), 3, "shrink writes length and two live slots");
+            assert_eq!(slot.read().unwrap(), (0u8..33).collect::<Vec<_>>());
+        });
+    }
+
+    #[test]
+    fn test_vec_push_dynamic_value_clears_legacy_tail_on_reused_slot() {
+        let (mut storage, address) = setup_storage();
+        let len_slot = U256::from(654u64);
+        let data_start = calc_data_slot(len_slot);
+        let reused_tail_start = calc_data_slot(data_start + U256::ONE);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut slot = Slot::<Vec<String>>::new(len_slot, address, ctx);
+            slot.write(vec!["kept".to_string(), "x".repeat(64)]).unwrap();
+            slot.write(vec!["kept".to_string()]).unwrap();
+            assert_ne!(
+                Slot::<U256>::new(reused_tail_start, address, ctx).read().unwrap(),
+                U256::ZERO
+            );
+        });
+        storage.set_storage_features(StorageFeatures::Cobalt);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let handler = VecHandler::<String>::new(len_slot, address, ctx);
+            handler.push("short".to_string()).unwrap();
+
+            assert_eq!(
+                Slot::<U256>::new(reused_tail_start, address, ctx).read().unwrap(),
+                U256::ZERO
+            );
+            assert_eq!(handler.read().unwrap(), vec!["kept".to_string(), "short".to_string()]);
+            assert!(ctx.gas_refunded() > 0, "reused stale tail must earn a storage refund");
+        });
+    }
+
+    #[test]
+    fn test_vec_store_cleans_nested_dynamic_struct_fields() {
+        let (mut storage, address) = setup_storage();
+        storage.set_storage_features(StorageFeatures::Cobalt);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(655u64);
+            let data_start = calc_data_slot(len_slot);
+            let tail_start = calc_data_slot(data_start);
+            let mut slot = Slot::<Vec<DynamicRecord>>::new(len_slot, address, ctx);
+            slot.write(vec![DynamicRecord { value: "a".repeat(64) }]).unwrap();
+
+            slot.write(vec![DynamicRecord { value: "short".to_string() }]).unwrap();
+            for chunk in 0..2 {
+                let value =
+                    Slot::<U256>::new(tail_start + U256::from(chunk), address, ctx).read().unwrap();
+                assert_eq!(value, U256::ZERO, "nested overwrite must clear tail chunk");
+            }
+
+            slot.write(vec![DynamicRecord { value: "b".repeat(64) }]).unwrap();
+            slot.write(Vec::new()).unwrap();
+            for chunk in 0..2 {
+                let value =
+                    Slot::<U256>::new(tail_start + U256::from(chunk), address, ctx).read().unwrap();
+                assert_eq!(value, U256::ZERO, "nested delete must clear tail chunk");
+            }
         });
     }
 

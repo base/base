@@ -121,8 +121,14 @@ pub struct InMemoryTokenAccounting {
     pub role_admins: HashMap<B256, B256>,
     /// Policy IDs keyed by policy type.
     pub policy_ids: HashMap<B256, u64>,
+    /// Current block timestamp. Asset-token tests set this to exercise versioned lazy reads.
+    pub timestamp: U256,
     /// Multiplier scaled to WAD (1e18). Asset tokens only.
     pub multiplier: U256,
+    /// Pending scheduled multiplier target (ERC-8056). Asset tokens only.
+    pub pending_multiplier: u128,
+    /// Timestamp at which `pending_multiplier` becomes effective; `0` means none. Asset tokens only.
+    pub pending_effective_at: u64,
     /// Extra-metadata values keyed by raw metadata `key`. Asset tokens only.
     pub extra_metadata: HashMap<String, String>,
     /// Consumed announcement ids keyed by raw announcement id. Asset tokens only.
@@ -152,7 +158,10 @@ impl InMemoryTokenAccounting {
             role_member_counts: HashMap::new(),
             role_admins: HashMap::new(),
             policy_ids: HashMap::new(),
+            timestamp: U256::ZERO,
             multiplier: U256::ZERO,
+            pending_multiplier: 0,
+            pending_effective_at: 0,
             extra_metadata: HashMap::new(),
             announcement_ids_used: HashSet::new(),
             events: Vec::new(),
@@ -425,12 +434,36 @@ impl PolicyAccounting for FakePolicyAccounting {
 }
 
 impl AssetAccounting for InMemoryTokenAccounting {
+    fn timestamp(&self) -> Result<U256> {
+        Ok(self.timestamp)
+    }
+
     fn multiplier(&self) -> Result<U256> {
         Ok(if self.multiplier.is_zero() { B20AssetStorage::WAD } else { self.multiplier })
     }
 
     fn set_multiplier(&mut self, ratio: U256) -> Result<()> {
         self.multiplier = ratio;
+        Ok(())
+    }
+
+    fn pending_multiplier(&self) -> Result<u128> {
+        Ok(self.pending_multiplier)
+    }
+
+    fn pending_effective_at(&self) -> Result<u64> {
+        Ok(self.pending_effective_at)
+    }
+
+    fn set_pending_and_effective_at(&mut self, multiplier: u128, effective_at: u64) -> Result<()> {
+        self.pending_multiplier = multiplier;
+        self.pending_effective_at = effective_at;
+        Ok(())
+    }
+
+    fn clear_pending_multiplier_and_effective_at(&mut self) -> Result<()> {
+        self.pending_multiplier = 0;
+        self.pending_effective_at = 0;
         Ok(())
     }
 

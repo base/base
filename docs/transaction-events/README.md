@@ -94,8 +94,11 @@ and `privateKey` before ingest.
 
 ## Local Devnet Verification
 
-The ingress devnet stack runs a local Postgres, Vector shipper, and
-Postgres-backed `audit-archiver` ingest path:
+Core devnet (`just devnet up` / `just devnet up-single`) enables durable
+transaction event journals on `base-client` and `base-builder`, writing JSONL
+under `.devnet/transaction-events/`. The ingress overlay adds the collection
+pipeline (Vector, Postgres, `audit-archiver`) plus ingress/proxyd producers; it
+does not own node journal config.
 
 ```bash
 just devnet ingress

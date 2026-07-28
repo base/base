@@ -3,7 +3,9 @@
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use base_common_genesis::BaseUpgrade;
 
-use crate::{B20FactoryStorage, PrecompileCallObserver, macros::base_precompile};
+use crate::{
+    B20FactoryStorage, PrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile,
+};
 
 /// Entry point for the `B20Factory` precompile.
 #[derive(Debug, Default, Clone, Copy)]
@@ -31,9 +33,14 @@ impl B20Factory {
     where
         O: PrecompileCallObserver,
     {
-        base_precompile!("B20Factory", |ctx, calldata| {
+        let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
+        base_precompile!(
+            "B20Factory",
+            storage_features: storage_features,
+            |ctx, calldata| {
             let observer = observer.clone();
             B20FactoryStorage::new(ctx).dispatch_with_observer(ctx, &calldata, upgrade, observer)
-        })
+            }
+        )
     }
 }

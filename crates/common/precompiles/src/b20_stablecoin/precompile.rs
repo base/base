@@ -7,7 +7,7 @@ use base_precompile_storage::BasePrecompileError;
 
 use crate::{
     B20StablecoinStorage, B20StablecoinToken, NoopPrecompileCallObserver, PolicyRegistryStorage,
-    PolicyVersions, PrecompileCallObserver, macros::base_precompile,
+    PolicyVersions, PrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile,
 };
 
 /// Entry point for the stablecoin B-20 variant.
@@ -33,7 +33,11 @@ impl B20StablecoinPrecompile {
     where
         O: PrecompileCallObserver,
     {
-        base_precompile!(alloc::format!("B20StablecoinToken@{token_address}"), |ctx, calldata| {
+        let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
+        base_precompile!(
+            alloc::format!("B20StablecoinToken@{token_address}"),
+            storage_features: storage_features,
+            |ctx, calldata| {
             let observer = observer.clone();
             let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
                 return BasePrecompileError::Revert(Bytes::new()).into_precompile_result(0, 0);
@@ -44,6 +48,7 @@ impl B20StablecoinPrecompile {
                 version,
             )
             .dispatch_with_observer(ctx, &calldata, upgrade, observer)
-        })
+            }
+        )
     }
 }

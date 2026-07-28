@@ -5,7 +5,7 @@ use base_common_genesis::BaseUpgrade;
 
 use crate::{
     NoopPrecompileCallObserver, PolicyRegistryStorage, PrecompileCallObserver,
-    macros::base_precompile,
+    UpgradeGatedStorageFeatures, macros::base_precompile,
 };
 
 /// EVM entry point for the `PolicyRegistry` precompile.
@@ -40,10 +40,15 @@ impl PolicyRegistryPrecompile {
     where
         O: PrecompileCallObserver,
     {
-        base_precompile!("PolicyRegistryPrecompile", |ctx, calldata| {
+        let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
+        base_precompile!(
+            "PolicyRegistryPrecompile",
+            storage_features: storage_features,
+            |ctx, calldata| {
             let observer = observer.clone();
             PolicyRegistryStorage::new(ctx)
                 .dispatch_with_observer(ctx, &calldata, upgrade, observer)
-        })
+            }
+        )
     }
 }

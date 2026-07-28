@@ -274,7 +274,7 @@ fn seconds_until_next_upgrades(config: &RollupConfig, now: u64) -> Vec<(&'static
         .into_iter()
         .filter_map(|upgrade| {
             config
-                .contract_upgrade_activation_timestamp(upgrade)
+                .upgrade_activation_timestamp(upgrade)
                 .filter(|activation_time| {
                     activation_time.saturating_add(UPGRADE_ACTIVATION_GRACE_SECONDS) >= now
                 })
@@ -290,7 +290,7 @@ fn seconds_until_next_upgrades(config: &RollupConfig, now: u64) -> Vec<(&'static
         .into_iter()
         .filter_map(|upgrade| {
             config
-                .contract_upgrade_activation_timestamp(upgrade)
+                .upgrade_activation_timestamp(upgrade)
                 .filter(|activation_time| *activation_time == next_activation_time)
                 .and_then(|activation_time| {
                     upgrade_metric_label(upgrade)
@@ -315,7 +315,7 @@ mod tests {
                     azul: Some(1_000),
                     beryl: Some(2_000),
                     cobalt: Some(3_000),
-                    zombie: None,
+                    zenith: None,
                 },
                 ..Default::default()
             },
@@ -369,7 +369,7 @@ mod tests {
                     azul: Some(1_000),
                     beryl: Some(1_000),
                     cobalt: Some(2_000),
-                    zombie: None,
+                    zenith: None,
                 },
                 ..Default::default()
             },

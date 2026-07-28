@@ -61,11 +61,13 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
         is_recovery_mode: bool,
     ) -> Result<BlockInfo, L1OriginSelectorError> {
         self.select_origins(&unsafe_head, is_recovery_mode).await?;
+        let next_l2_timestamp =
+            self.cfg.l2_block_timestamp(unsafe_head.block_info.number.saturating_add(1));
 
         // Start building on the next L1 origin block if the next L2 block's timestamp is
         // greater than or equal to the next L1 origin's timestamp.
         if let Some(next) = self.next
-            && unsafe_head.block_info.timestamp + self.cfg.block_time >= next.timestamp
+            && next_l2_timestamp >= next.timestamp
         {
             return Ok(next);
         }
@@ -75,9 +77,7 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
         };
 
         let max_seq_drift = self.cfg.max_sequencer_drift(current.timestamp);
-        let past_seq_drift = unsafe_head.block_info.timestamp + self.cfg.block_time
-            - current.timestamp
-            > max_seq_drift;
+        let past_seq_drift = next_l2_timestamp.saturating_sub(current.timestamp) > max_seq_drift;
 
         // If the sequencer drift has not been exceeded, return the current L1 origin.
         if !past_seq_drift {
@@ -88,15 +88,12 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
             target: "l1_origin_selector",
             current_origin_time = current.timestamp,
             unsafe_head_time = unsafe_head.block_info.timestamp,
+            next_l2_time = next_l2_timestamp,
             max_seq_drift,
             "Next L2 block time is past the sequencer drift"
         );
 
-        if self
-            .next
-            .map(|n| unsafe_head.block_info.timestamp + self.cfg.block_time < n.timestamp)
-            .unwrap_or(false)
-        {
+        if self.next.map(|n| next_l2_timestamp < n.timestamp).unwrap_or(false) {
             // If the next L1 origin is ahead of the next L2 block's timestamp, return the current
             // origin.
             return Ok(current);
@@ -500,6 +497,7 @@ mod tests {
         let mut selector = L1OriginSelector::new(Arc::clone(&cfg), provider);
         let unsafe_head = L2BlockInfo {
             block_info: BlockInfo {
+                number: (MAX_SEQUENCER_DRIFT - cfg.block_time) / cfg.block_time,
                 timestamp: MAX_SEQUENCER_DRIFT - cfg.block_time,
                 ..Default::default()
             },
@@ -534,6 +532,7 @@ mod tests {
         let mut selector = L1OriginSelector::new(Arc::clone(&cfg), provider);
         let unsafe_head = L2BlockInfo {
             block_info: BlockInfo {
+                number: (MAX_SEQUENCER_DRIFT - cfg.block_time) / cfg.block_time,
                 timestamp: MAX_SEQUENCER_DRIFT - cfg.block_time,
                 ..Default::default()
             },
@@ -567,7 +566,11 @@ mod tests {
 
         let mut selector = L1OriginSelector::new(Arc::clone(&cfg), provider);
         let unsafe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: MAX_SEQUENCER_DRIFT, ..Default::default() },
+            block_info: BlockInfo {
+                number: MAX_SEQUENCER_DRIFT / cfg.block_time,
+                timestamp: MAX_SEQUENCER_DRIFT,
+                ..Default::default()
+            },
             l1_origin: NumHash { number: current.number, hash: current.hash },
             seq_num: 0,
         };
@@ -626,7 +629,11 @@ mod tests {
 
         let current_epoch = 0;
         let unsafe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: cfg.max_sequencer_drift, ..Default::default() },
+            block_info: BlockInfo {
+                number: cfg.max_sequencer_drift / cfg.block_time,
+                timestamp: cfg.max_sequencer_drift,
+                ..Default::default()
+            },
             l1_origin: NumHash {
                 number: current_epoch,
                 hash: B256::with_last_byte(current_epoch as u8),

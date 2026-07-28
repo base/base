@@ -132,32 +132,32 @@ impl EthereumHardforks for RollupConfig {
         } else if fork <= EthereumHardfork::Shanghai {
             // Canyon activates Shanghai; cascade through later Base upgrades if unset.
             cascade(&[
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Canyon),
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Ecotone),
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Fjord),
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Granite),
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Holocene),
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus),
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Jovian),
+                self.upgrade_activation_timestamp(BaseUpgrade::Canyon),
+                self.upgrade_activation_timestamp(BaseUpgrade::Ecotone),
+                self.upgrade_activation_timestamp(BaseUpgrade::Fjord),
+                self.upgrade_activation_timestamp(BaseUpgrade::Granite),
+                self.upgrade_activation_timestamp(BaseUpgrade::Holocene),
+                self.upgrade_activation_timestamp(BaseUpgrade::Isthmus),
+                self.upgrade_activation_timestamp(BaseUpgrade::Jovian),
             ])
         } else if fork <= EthereumHardfork::Cancun {
             // Ecotone activates Cancun; cascade through later Base upgrades if unset.
             cascade(&[
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Ecotone),
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Fjord),
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Granite),
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Holocene),
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus),
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Jovian),
+                self.upgrade_activation_timestamp(BaseUpgrade::Ecotone),
+                self.upgrade_activation_timestamp(BaseUpgrade::Fjord),
+                self.upgrade_activation_timestamp(BaseUpgrade::Granite),
+                self.upgrade_activation_timestamp(BaseUpgrade::Holocene),
+                self.upgrade_activation_timestamp(BaseUpgrade::Isthmus),
+                self.upgrade_activation_timestamp(BaseUpgrade::Jovian),
             ])
         } else if fork <= EthereumHardfork::Prague {
             // Isthmus activates Prague; cascade through later Base upgrades if unset.
             cascade(&[
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus),
-                self.contract_upgrade_activation_timestamp(BaseUpgrade::Jovian),
+                self.upgrade_activation_timestamp(BaseUpgrade::Isthmus),
+                self.upgrade_activation_timestamp(BaseUpgrade::Jovian),
             ])
         } else if fork <= EthereumHardfork::Osaka {
-            self.contract_upgrade_activation_timestamp(BaseUpgrade::Azul)
+            self.upgrade_activation_timestamp(BaseUpgrade::Azul)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never)
         } else {
@@ -194,14 +194,14 @@ macro_rules! rollup_fork_methods {
 
 impl RollupConfig {
     /// Returns this rollup config's runtime-aware activation for a contract upgrade ID.
-    pub fn contract_upgrade_activation(&self, upgrade_id: BaseUpgrade) -> UpgradeActivation {
+    pub fn upgrade_activation(&self, upgrade_id: BaseUpgrade) -> UpgradeActivation {
         RuntimeUpgradeRegistry::activation(self.l2_chain_id.id(), upgrade_id)
             .unwrap_or_else(|| self.upgrades.activation(upgrade_id))
     }
 
     /// Returns this rollup config's runtime-aware activation timestamp for a contract upgrade ID.
-    pub fn contract_upgrade_activation_timestamp(&self, upgrade_id: BaseUpgrade) -> Option<u64> {
-        self.contract_upgrade_activation(upgrade_id).timestamp()
+    pub fn upgrade_activation_timestamp(&self, upgrade_id: BaseUpgrade) -> Option<u64> {
+        self.upgrade_activation(upgrade_id).timestamp()
     }
 
     /// Applies runtime upgrade overrides to this rollup config's local upgrade view.
@@ -254,81 +254,81 @@ impl RollupConfig {
     rollup_fork_methods! {
         is_regolith_active,
         is_first_regolith_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Regolith)],
+        [upgrade_activation_timestamp(BaseUpgrade::Regolith)],
         "Regolith",
         implies is_canyon_active;
 
         is_canyon_active,
         is_first_canyon_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Canyon)],
+        [upgrade_activation_timestamp(BaseUpgrade::Canyon)],
         "Canyon",
         implies is_delta_active;
 
         is_delta_active,
         is_first_delta_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Delta)],
+        [upgrade_activation_timestamp(BaseUpgrade::Delta)],
         "Delta",
         implies is_ecotone_active;
 
         is_ecotone_active,
         is_first_ecotone_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Ecotone)],
+        [upgrade_activation_timestamp(BaseUpgrade::Ecotone)],
         "Ecotone",
         implies is_fjord_active;
 
         is_fjord_active,
         is_first_fjord_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Fjord)],
+        [upgrade_activation_timestamp(BaseUpgrade::Fjord)],
         "Fjord",
         implies is_granite_active;
 
         is_granite_active,
         is_first_granite_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Granite)],
+        [upgrade_activation_timestamp(BaseUpgrade::Granite)],
         "Granite",
         implies is_holocene_active;
 
         is_holocene_active,
         is_first_holocene_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Holocene)],
+        [upgrade_activation_timestamp(BaseUpgrade::Holocene)],
         "Holocene",
         implies is_isthmus_active;
 
         is_pectra_blob_schedule_active,
         is_first_pectra_blob_schedule_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::PectraBlobSchedule)],
+        [upgrade_activation_timestamp(BaseUpgrade::PectraBlobSchedule)],
         "pectra blob schedule";
 
         is_isthmus_active,
         is_first_isthmus_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus)],
+        [upgrade_activation_timestamp(BaseUpgrade::Isthmus)],
         "Isthmus",
         implies is_jovian_active;
 
         is_jovian_active,
         is_first_jovian_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Jovian)],
+        [upgrade_activation_timestamp(BaseUpgrade::Jovian)],
         "Jovian";
 
         is_base_azul_active,
         is_first_base_azul_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Azul)],
+        [upgrade_activation_timestamp(BaseUpgrade::Azul)],
         "Base Azul";
 
         is_beryl_active,
         is_first_beryl_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Beryl)],
+        [upgrade_activation_timestamp(BaseUpgrade::Beryl)],
         "Beryl";
 
         is_cobalt_active,
         is_first_cobalt_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt)],
+        [upgrade_activation_timestamp(BaseUpgrade::Cobalt)],
         "Cobalt";
 
-        is_zombie_active,
-        is_first_zombie_block,
-        [contract_upgrade_activation_timestamp(BaseUpgrade::Zombie)],
-        "Zombie";
+        is_zenith_active,
+        is_first_zenith_block,
+        [upgrade_activation_timestamp(BaseUpgrade::Zenith)],
+        "Zenith";
     }
 
     /// Returns the max sequencer drift for the given timestamp.
@@ -357,6 +357,68 @@ impl RollupConfig {
             self.channel_timeout
         }
     }
+
+    /// Returns the L2 block number at which Zenith activates.
+    ///
+    /// If Zenith is not configured, returns [`None`].
+    pub fn zenith_activation_block_number(&self) -> Option<u64> {
+        let zenith_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Zenith)?;
+
+        if self.block_time == 0 {
+            panic!("rollup config: block time cannot be 0");
+        }
+
+        Some(zenith_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
+    }
+
+    /// Returns the deterministic timestamp of an L2 block in milliseconds.
+    ///
+    /// Before Zenith activation, this matches the legacy whole-second schedule exactly.
+    /// After Zenith activation, this advances by a fixed 200ms cadence from the activation block.
+    ///
+    /// `block_number` is an absolute L2 block number; it is measured relative to the L2 genesis
+    /// block number (`self.genesis.l2.number`), which is non-zero for chains whose L2 genesis
+    /// was anchored at a later block.
+    pub fn l2_block_timestamp_millis(&self, block_number: u64) -> u64 {
+        let blocks_since_genesis = block_number.saturating_sub(self.genesis.l2.number);
+
+        let legacy_seconds = self
+            .genesis
+            .l2_time
+            .saturating_add(blocks_since_genesis.saturating_mul(self.block_time));
+        let legacy_millis = legacy_seconds.saturating_mul(1_000);
+
+        let Some(zenith_activation_block) = self.zenith_activation_block_number() else {
+            return legacy_millis;
+        };
+
+        if blocks_since_genesis < zenith_activation_block {
+            return legacy_millis;
+        }
+
+        let zenith_activation_seconds = self
+            .genesis
+            .l2_time
+            .saturating_add(zenith_activation_block.saturating_mul(self.block_time));
+        let zenith_activation_full_millis = zenith_activation_seconds.saturating_mul(1_000);
+        zenith_activation_full_millis.saturating_add(
+            blocks_since_genesis
+                .saturating_sub(zenith_activation_block)
+                .saturating_mul(Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS),
+        )
+    }
+
+    /// Returns the deterministic whole-second timestamp of an L2 block.
+    pub fn l2_block_timestamp(&self, block_number: u64) -> u64 {
+        self.l2_block_timestamp_millis(block_number).saturating_div(1_000)
+    }
+
+    /// Returns the deterministic timestamp split into `(seconds, millis_part)`.
+    pub fn l2_block_timestamp_parts(&self, block_number: u64) -> (u64, u16) {
+        let full_millis = self.l2_block_timestamp_millis(block_number);
+        (full_millis.saturating_div(1_000), (full_millis % 1_000) as u16)
+    }
+
     /// Computes the lower-bound block number for a timestamp, relative to the L2 genesis time and
     /// the block time.
     ///
@@ -402,6 +464,9 @@ impl RollupConfig {
 
     /// The channel timeout once the Granite hardfork is active.
     pub const GRANITE_CHANNEL_TIMEOUT: u64 = 50;
+
+    /// The fixed cadence once subsecond blocks activates.
+    pub const NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS: u64 = 200;
 
     /// Helper method for deserializing a default granite channel timeout.
     #[cfg(feature = "serde")]
@@ -458,7 +523,7 @@ impl UpgradeActivationSink for RollupConfig {
         upgrade_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
-        if matches!(upgrade_id, BaseUpgrade::Zombie) {
+        if matches!(upgrade_id, BaseUpgrade::Zenith) {
             return Ok(false);
         }
 
@@ -526,7 +591,7 @@ mod tests {
                     azul: Some(110),
                     beryl: Some(120),
                     cobalt: Some(130),
-                    zombie: None,
+                    zenith: None,
                 },
             },
             block_time: 2,
@@ -607,7 +672,7 @@ mod tests {
                     azul: Some(110),
                     beryl: Some(120),
                     cobalt: None,
-                    zombie: None,
+                    zenith: None,
                 },
                 ..Default::default()
             },
@@ -885,7 +950,7 @@ mod tests {
         // Osaka↔Azul: azul drives Osaka activation; standalone (not cascaded from Jovian).
         let mut cfg = RollupConfig::default();
         cfg.upgrades.base =
-            BaseUpgradeConfig { azul: Some(700), beryl: None, cobalt: None, zombie: None };
+            BaseUpgradeConfig { azul: Some(700), beryl: None, cobalt: None, zenith: None };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
@@ -894,7 +959,7 @@ mod tests {
         // Beryl follows Azul; Osaka still activates at Azul when both are configured.
         let mut cfg = RollupConfig::default();
         cfg.upgrades.base =
-            BaseUpgradeConfig { azul: Some(700), beryl: Some(800), cobalt: None, zombie: None };
+            BaseUpgradeConfig { azul: Some(700), beryl: Some(800), cobalt: None, zenith: None };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
@@ -905,7 +970,7 @@ mod tests {
         // Beryl requires Azul, and does not independently activate Osaka.
         let mut cfg = RollupConfig::default();
         cfg.upgrades.base =
-            BaseUpgradeConfig { azul: None, beryl: Some(800), cobalt: None, zombie: None };
+            BaseUpgradeConfig { azul: None, beryl: Some(800), cobalt: None, zenith: None };
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
 
         // Jovian set but Azul unset → Osaka is Never.
@@ -947,43 +1012,40 @@ mod tests {
         crate::RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, BaseUpgrade::Canyon);
         crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
         crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
-        // The Zombie gate stays off even when a runtime override tries to activate it.
+        // The Zenith gate stays off even when a runtime override tries to activate it.
         crate::RuntimeUpgradeRegistry::set_activation_timestamp(
             chain_id,
-            BaseUpgrade::Zombie,
+            BaseUpgrade::Zenith,
             u64::MAX,
         );
 
         assert!(!cfg.is_canyon_active(10));
         assert!(cfg.is_base_azul_active(42));
         assert!(cfg.is_cobalt_active(84));
-        assert!(!cfg.is_zombie_active(84));
-        assert!(!cfg.is_zombie_active(u64::MAX));
+        assert!(!cfg.is_zenith_active(84));
+        assert!(!cfg.is_zenith_active(u64::MAX));
 
         let materialized = cfg.with_runtime_upgrade_overrides();
         assert_eq!(materialized.upgrades.canyon_time, None);
         assert_eq!(materialized.upgrades.base.azul, Some(42));
         assert_eq!(materialized.upgrades.base.cobalt, Some(84));
-        assert_eq!(
-            materialized.contract_upgrade_activation(BaseUpgrade::Zombie),
-            UpgradeActivation::Never
-        );
+        assert_eq!(materialized.upgrade_activation(BaseUpgrade::Zenith), UpgradeActivation::Never);
 
         crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     #[test]
-    fn zombie_activation_can_be_enabled_for_testing() {
+    fn zenith_activation_can_be_enabled_for_testing() {
         let chain_id = 9_100_003;
         crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 21);
         let cfg = RollupConfig { l2_chain_id: Chain::from_id(chain_id), ..Default::default() };
         {
             let _activation =
-                crate::RuntimeUpgradeRegistry::activate_zombie_for_testing(chain_id, 42);
+                crate::RuntimeUpgradeRegistry::activate_zenith_for_testing(chain_id, 42);
 
-            assert!(!cfg.is_zombie_active(41));
-            assert!(cfg.is_zombie_active(42));
-            assert!(cfg.is_zombie_active(u64::MAX));
+            assert!(!cfg.is_zenith_active(41));
+            assert!(cfg.is_zenith_active(42));
+            assert!(cfg.is_zenith_active(u64::MAX));
             crate::RuntimeUpgradeRegistry::set_activation_timestamp(
                 chain_id,
                 BaseUpgrade::Azul,
@@ -991,33 +1053,127 @@ mod tests {
             );
             {
                 let _nested =
-                    crate::RuntimeUpgradeRegistry::activate_zombie_for_testing(chain_id, 84);
-                assert!(!cfg.is_zombie_active(83));
-                assert!(cfg.is_zombie_active(84));
+                    crate::RuntimeUpgradeRegistry::activate_zenith_for_testing(chain_id, 84);
+                assert!(!cfg.is_zenith_active(83));
+                assert!(cfg.is_zenith_active(84));
             }
-            assert!(cfg.is_zombie_active(42));
+            assert!(cfg.is_zenith_active(42));
         }
         assert_eq!(
             crate::RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
             Some(UpgradeActivation::Timestamp(22))
         );
-        assert_eq!(crate::RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Zombie), None);
+        assert_eq!(crate::RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Zenith), None);
         crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     #[test]
-    fn zombie_activates_via_genesis_config() {
+    fn zenith_activates_via_genesis_config() {
         let cfg = RollupConfig {
             upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { zombie: Some(100), ..Default::default() },
+                base: BaseUpgradeConfig { zenith: Some(100), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
         };
 
-        assert!(!cfg.is_zombie_active(99));
-        assert!(cfg.is_zombie_active(100));
-        assert!(cfg.is_zombie_active(u64::MAX));
+        assert!(!cfg.is_zenith_active(99));
+        assert!(cfg.is_zenith_active(100));
+        assert!(cfg.is_zenith_active(u64::MAX));
+    }
+
+    fn rollup_config_with_zenith(
+        genesis_l2_time: u64,
+        block_time: u64,
+        zenith_time: Option<u64>,
+    ) -> RollupConfig {
+        RollupConfig {
+            genesis: ChainGenesis { l2_time: genesis_l2_time, ..Default::default() },
+            block_time,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { zenith: zenith_time, ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn l2_block_full_millis_matches_legacy_before_zenith_activation() {
+        let cfg = rollup_config_with_zenith(10, 2, Some(15));
+        assert_eq!(cfg.zenith_activation_block_number(), Some(3));
+
+        for block_number in 0..3 {
+            let expected = (10 + block_number * 2) * 1_000;
+            assert_eq!(cfg.l2_block_timestamp_millis(block_number), expected);
+            assert_eq!(cfg.l2_block_timestamp(block_number), expected / 1_000);
+            assert_eq!(cfg.l2_block_timestamp_parts(block_number), (expected / 1_000, 0));
+        }
+    }
+
+    #[test]
+    fn l2_block_full_millis_respects_zenith_activation_boundary() {
+        let cfg = rollup_config_with_zenith(10, 2, Some(15));
+
+        assert_eq!(cfg.zenith_activation_block_number(), Some(3));
+        assert_eq!(cfg.l2_block_timestamp_millis(3), 16_000);
+        assert_eq!(cfg.l2_block_timestamp_parts(3), (16, 0));
+    }
+
+    #[test]
+    fn l2_block_full_millis_advances_by_200ms_after_activation() {
+        let cfg = rollup_config_with_zenith(10, 2, Some(15));
+
+        let activation = cfg.l2_block_timestamp_millis(3);
+        let next = cfg.l2_block_timestamp_millis(4);
+        assert_eq!(
+            next.saturating_sub(activation),
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        );
+        assert_eq!(next, 16_200);
+        assert_eq!(cfg.l2_block_timestamp_parts(4), (16, 200));
+    }
+
+    #[test]
+    fn l2_block_full_millis_keeps_fixed_200ms_cadence_in_zenith_era() {
+        let cfg = rollup_config_with_zenith(10, 2, Some(15));
+
+        let start_block = 3;
+        let mut previous = cfg.l2_block_timestamp_millis(start_block);
+        for block_number in (start_block + 1)..=14 {
+            let current = cfg.l2_block_timestamp_millis(block_number);
+            assert_eq!(
+                current.saturating_sub(previous),
+                RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+            );
+            previous = current;
+        }
+    }
+
+    #[test]
+    fn l2_block_full_millis_without_zenith_uses_legacy_formula() {
+        let cfg = rollup_config_with_zenith(11, 3, None);
+
+        assert_eq!(cfg.zenith_activation_block_number(), None);
+        for block_number in [0_u64, 1, 2, 10, 100] {
+            let expected =
+                11u64.saturating_add(block_number.saturating_mul(3)).saturating_mul(1_000);
+            assert_eq!(cfg.l2_block_timestamp_millis(block_number), expected);
+            assert_eq!(cfg.l2_block_timestamp(block_number), expected / 1_000);
+            assert_eq!(cfg.l2_block_timestamp_parts(block_number), (expected / 1_000, 0));
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "rollup config: block time cannot be 0")]
+    fn zenith_activation_block_number_rejects_zero_block_time() {
+        rollup_config_with_zenith(100, 0, Some(101)).zenith_activation_block_number();
+    }
+
+    #[test]
+    fn l2_block_full_millis_saturates() {
+        let saturating = rollup_config_with_zenith(u64::MAX, u64::MAX, None);
+        assert_eq!(saturating.l2_block_timestamp_millis(1), u64::MAX);
     }
 
     #[test]

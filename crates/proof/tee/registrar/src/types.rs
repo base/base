@@ -7,7 +7,7 @@ pub struct ProverInstance {
     pub instance_id: String,
     /// HTTP endpoint URL for the prover (e.g. `http://10.0.1.5:8000/`).
     pub endpoint: Url,
-    /// Current health status of the instance.
+    /// Current health status from discovery or direct readiness probing.
     pub health_status: InstanceHealthStatus,
 }
 
@@ -16,9 +16,9 @@ pub struct ProverInstance {
 pub enum InstanceHealthStatus {
     /// ALB health checks are in progress — instance just started.
     Initial,
-    /// Instance is reachable and passing health checks.
+    /// Instance is reachable and passing readiness checks.
     Healthy,
-    /// Instance did not respond to the poll or is failing health checks.
+    /// Instance did not respond to `readyz` or is failing health checks.
     Unhealthy,
     /// ALB is draining connections from this instance.
     Draining,

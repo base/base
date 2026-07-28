@@ -678,53 +678,10 @@ impl BasePayloadBuilderCtx {
         let payload_id = self.payload_id().to_string();
 
         while let Some(tx) = best_txs.next(()) {
-            if let Some(target) = tx.target_block_number()
-                && target != block_number
-            {
-                let tx_hash = *tx.hash();
-                num_txs_considered += 1;
-                let ordering_position = num_txs_considered;
-                trace!(
-                    target: "payload_builder",
-                    tx_hash = ?tx_hash,
-                    target_block = target,
-                    current_block = block_number,
-                    "skipping bundle tx: wrong target block"
-                );
-                self.emit_builder_decision_event(
-                    &payload_id,
-                    TransactionEventType::BuilderConsidered,
-                    tx_hash,
-                    Some(ordering_position),
-                    || {
-                        BuilderConsideredEventData::new(info, limits, None)
-                            .with_bundle_target_block(target)
-                    },
-                );
-                self.emit_builder_decision_event(
-                    &payload_id,
-                    TransactionEventType::BuilderRejected,
-                    tx_hash,
-                    Some(ordering_position),
-                    || {
-                        BuilderRejectedEventData::new(
-                            "wrong_target_block",
-                            "bundle target block does not match current block",
-                            false,
-                            info,
-                            limits,
-                            None,
-                        )
-                        .with_bundle_target_block(target)
-                        .with_current_block(block_number)
-                    },
-                );
-                best_txs.mark_invalid(tx.sender(), tx.nonce());
-                continue;
-            }
-
             if tx.is_bundle_expired(block_number, block_timestamp) {
                 let tx_hash = *tx.hash();
+                let min_block_number = tx.min_block_number();
+                let max_block_number = tx.max_block_number();
                 num_txs_considered += 1;
                 let ordering_position = num_txs_considered;
                 trace!(
@@ -739,7 +696,10 @@ impl BasePayloadBuilderCtx {
                     TransactionEventType::BuilderConsidered,
                     tx_hash,
                     Some(ordering_position),
-                    || BuilderConsideredEventData::new(info, limits, None),
+                    || {
+                        BuilderConsideredEventData::new(info, limits, None)
+                            .with_bundle_block_window(min_block_number, max_block_number)
+                    },
                 );
                 self.emit_builder_decision_event(
                     &payload_id,
@@ -755,6 +715,7 @@ impl BasePayloadBuilderCtx {
                             limits,
                             None,
                         )
+                        .with_bundle_block_window(min_block_number, max_block_number)
                         .with_block_timestamp(block_timestamp)
                     },
                 );
@@ -762,8 +723,10 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
-            if tx.is_bundle_not_yet_valid(block_timestamp) {
+            if tx.is_bundle_not_yet_valid(block_number, block_timestamp) {
                 let tx_hash = *tx.hash();
+                let min_block_number = tx.min_block_number();
+                let max_block_number = tx.max_block_number();
                 num_txs_considered += 1;
                 let ordering_position = num_txs_considered;
                 trace!(
@@ -778,7 +741,10 @@ impl BasePayloadBuilderCtx {
                     TransactionEventType::BuilderConsidered,
                     tx_hash,
                     Some(ordering_position),
-                    || BuilderConsideredEventData::new(info, limits, None),
+                    || {
+                        BuilderConsideredEventData::new(info, limits, None)
+                            .with_bundle_block_window(min_block_number, max_block_number)
+                    },
                 );
                 self.emit_builder_decision_event(
                     &payload_id,
@@ -794,6 +760,8 @@ impl BasePayloadBuilderCtx {
                             limits,
                             None,
                         )
+                        .with_bundle_block_window(min_block_number, max_block_number)
+                        .with_current_block(block_number)
                         .with_block_timestamp(block_timestamp)
                     },
                 );

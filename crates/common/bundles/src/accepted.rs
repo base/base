@@ -19,9 +19,21 @@ pub struct AcceptedBundle {
     /// Decoded and recovered transactions.
     pub txs: Vec<Recovered<BaseTxEnvelope>>,
 
-    /// The target block number for inclusion.
-    #[serde(with = "alloy_serde::quantity")]
-    pub block_number: u64,
+    /// Minimum block number for inclusion.
+    #[serde(
+        default,
+        deserialize_with = "alloy_serde::quantity::opt::deserialize",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub min_block_number: Option<u64>,
+
+    /// Maximum block number for inclusion.
+    #[serde(
+        default,
+        deserialize_with = "alloy_serde::quantity::opt::deserialize",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_block_number: Option<u64>,
 
     /// Minimum flashblock number for inclusion.
     #[serde(
@@ -77,7 +89,8 @@ impl AcceptedBundle {
         Self {
             uuid: bundle.replacement_uuid.unwrap_or_else(Uuid::new_v4),
             txs: bundle.txs,
-            block_number: bundle.block_number,
+            min_block_number: bundle.min_block_number,
+            max_block_number: bundle.max_block_number,
             flashblock_number_min: bundle.flashblock_number_min,
             flashblock_number_max: bundle.flashblock_number_max,
             min_timestamp: bundle.min_timestamp,
@@ -99,7 +112,8 @@ impl From<AcceptedBundle> for ParsedBundle {
     fn from(accepted_bundle: AcceptedBundle) -> Self {
         Self {
             txs: accepted_bundle.txs,
-            block_number: accepted_bundle.block_number,
+            min_block_number: accepted_bundle.min_block_number,
+            max_block_number: accepted_bundle.max_block_number,
             flashblock_number_min: accepted_bundle.flashblock_number_min,
             flashblock_number_max: accepted_bundle.flashblock_number_max,
             min_timestamp: accepted_bundle.min_timestamp,
@@ -132,7 +146,12 @@ mod tests {
         let tx_hash = tx.tx_hash();
         let tx_bytes = tx.encoded_2718();
 
-        let bundle = Bundle { txs: vec![tx_bytes.into()], block_number: 100, ..Default::default() };
+        let bundle = Bundle {
+            txs: vec![tx_bytes.into()],
+            min_block_number: Some(100),
+            max_block_number: Some(105),
+            ..Default::default()
+        };
 
         let parsed: ParsedBundle = bundle.try_into().unwrap();
         let meter_response = create_test_meter_bundle_response();
@@ -142,7 +161,8 @@ mod tests {
         assert!(accepted.replacement_uuid.is_none());
         assert_eq!(accepted.txs.len(), 1);
         assert_eq!(accepted.txs[0].tx_hash(), tx_hash);
-        assert_eq!(accepted.block_number, 100);
+        assert_eq!(accepted.min_block_number, Some(100));
+        assert_eq!(accepted.max_block_number, Some(105));
     }
 
     #[test]
@@ -156,7 +176,8 @@ mod tests {
         let uuid = Uuid::new_v4();
         let bundle = Bundle {
             txs: vec![tx_bytes.into()],
-            block_number: 100,
+            min_block_number: Some(100),
+            max_block_number: Some(100),
             replacement_uuid: Some(uuid.to_string()),
             ..Default::default()
         };
@@ -180,7 +201,8 @@ mod tests {
 
         let bundle = Bundle {
             txs: vec![tx_bytes.into()],
-            block_number: 100,
+            min_block_number: Some(100),
+            max_block_number: Some(105),
             flashblock_number_min: Some(1),
             flashblock_number_max: Some(5),
             min_timestamp: Some(1000),
@@ -195,7 +217,8 @@ mod tests {
         let back_to_parsed: ParsedBundle = accepted.into();
         assert_eq!(back_to_parsed.txs.len(), 1);
         assert_eq!(back_to_parsed.txs[0].tx_hash(), tx_hash);
-        assert_eq!(back_to_parsed.block_number, 100);
+        assert_eq!(back_to_parsed.min_block_number, Some(100));
+        assert_eq!(back_to_parsed.max_block_number, Some(105));
         assert_eq!(back_to_parsed.flashblock_number_min, Some(1));
         assert_eq!(back_to_parsed.flashblock_number_max, Some(5));
         assert_eq!(back_to_parsed.min_timestamp, Some(1000));

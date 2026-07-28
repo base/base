@@ -4,16 +4,29 @@ mod p2p;
 #[cfg(test)]
 pub use p2p::TEST_NODE_ID;
 pub use p2p::{
-    P2P_REACHABILITY_MAX_CONCURRENT_PROBES, P2P_REACHABILITY_MAX_REQUEST_BYTES,
+    DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES, P2P_REACHABILITY_MAX_REQUEST_BYTES,
     P2P_REACHABILITY_PATH, P2pApiError, P2pErrorResponse, P2pReachabilityRequest,
     P2pReachabilityResponse, P2pRoutes, P2pState,
 };
 
 mod prober;
+#[cfg(test)]
+pub use prober::MockReachabilityProber;
 pub use prober::{
     RLPX_PROBE_TIMEOUT, ReachabilityProber, RlpxProbeError, RlpxProbeOutcome, RlpxProbeResult,
     RlpxProbeStage, RlpxProbeTarget, RlpxProber,
 };
 
+mod rate_limit;
+pub use rate_limit::{
+    CLIENT_IP_HEADER, DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE, IpRateLimiter, PerIpRateLimit,
+    RATE_LIMIT_EVICTION_INTERVAL, RATE_LIMITED_BODY, RateLimitExceeded,
+};
+
 mod server;
 pub use server::{BaseTelemetryServer, ServerConfig};
+
+#[cfg(test)]
+mod test_utils;
+#[cfg(test)]
+pub use test_utils::BlockingProber;

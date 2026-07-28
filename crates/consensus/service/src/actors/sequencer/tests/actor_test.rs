@@ -9,7 +9,7 @@ use std::{
 
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{ChainGenesis, RollupConfig};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
 };
@@ -168,8 +168,17 @@ async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seco
     let mut gossip = MockUnsafePayloadGossipClient::new();
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
-    let rollup_config =
-        Arc::new(base_common_genesis::RollupConfig { block_time, ..Default::default() });
+    let rollup_config = Arc::new(base_common_genesis::RollupConfig {
+        block_time,
+        genesis: ChainGenesis {
+            l2_time: initial_head
+                .block_info
+                .timestamp
+                .saturating_sub(initial_head.block_info.number.saturating_mul(block_time)),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
     let engine_client = Arc::new(client);
 
     let mut actor = test_actor();
@@ -229,8 +238,17 @@ async fn test_early_insert_defers_child_build_until_parent_timestamp() {
     let mut gossip = MockUnsafePayloadGossipClient::new();
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
-    let rollup_config =
-        Arc::new(base_common_genesis::RollupConfig { block_time, ..Default::default() });
+    let rollup_config = Arc::new(base_common_genesis::RollupConfig {
+        block_time,
+        genesis: ChainGenesis {
+            l2_time: initial_head
+                .block_info
+                .timestamp
+                .saturating_sub(initial_head.block_info.number.saturating_mul(block_time)),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
     let engine_client = Arc::new(client);
 
     let mut actor = test_actor();
@@ -312,8 +330,17 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
     let mut gossip = MockUnsafePayloadGossipClient::new();
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
-    let rollup_config =
-        Arc::new(base_common_genesis::RollupConfig { block_time, ..Default::default() });
+    let rollup_config = Arc::new(base_common_genesis::RollupConfig {
+        block_time,
+        genesis: ChainGenesis {
+            l2_time: initial_head
+                .block_info
+                .timestamp
+                .saturating_sub(initial_head.block_info.number.saturating_mul(block_time)),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
     let engine_client = Arc::new(client);
 
     let (admin_api_tx, admin_api_rx) = mpsc::channel(4);

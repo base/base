@@ -1,7 +1,11 @@
 //! HTTP API for execution-layer P2P reachability checks: request validation
 //! and probe concurrency limits.
 
-use std::{net::SocketAddr, str::FromStr, sync::Arc};
+use std::{
+    net::{IpAddr, SocketAddr},
+    str::FromStr,
+    sync::Arc,
+};
 
 use axum::{
     Json, Router,
@@ -21,8 +25,8 @@ use crate::prober::{ReachabilityProber, RlpxProbeOutcome, RlpxProbeStage, RlpxPr
 pub const P2P_REACHABILITY_PATH: &str = "/v1/p2p/reachability/el";
 /// Maximum JSON request body size accepted by the reachability route.
 pub const P2P_REACHABILITY_MAX_REQUEST_BYTES: usize = 1024;
-/// Maximum number of reachability probes allowed in flight globally.
-pub const P2P_REACHABILITY_MAX_CONCURRENT_PROBES: usize = 32;
+/// Default maximum number of reachability probes allowed in flight globally.
+pub const DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES: usize = 32;
 /// Valid execution-layer node identity shared by reachability tests.
 #[cfg(test)]
 pub const TEST_NODE_ID: &str = "2bd2e657bb3c8efffb8ff6db9071d9eb7be70d7c6d7d980ff80fc93b2629675c5f750bc0a5ef27cd788c2e491b8795a7e9a4a6e72178c14acc6753c0e5d77ae4";
@@ -45,7 +49,36 @@ impl P2pReachabilityRequest {
         let record = NodeRecord::from_str(&self.enode).ok()?;
         id2pk(record.id).ok()?;
         let address = record.tcp_addr();
-        (address.port() != 0).then_some(RlpxProbeTarget { address, node_id: record.id })
+        (address.port() != 0 && Self::is_public_ip(address.ip()))
+            .then_some(RlpxProbeTarget { address, node_id: record.id })
+    }
+
+    /// Returns whether `ip` is a supported, publicly routable `IPv4` address.
+    /// `IPv6` and non-public targets are rejected because the execution P2P
+    /// network currently supports only public `IPv4` reachability probes.
+    pub const fn is_public_ip(ip: IpAddr) -> bool {
+        match ip {
+            IpAddr::V4(v4) => {
+                !(v4.is_loopback()
+                    || v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_documentation()
+                    || v4.is_multicast()
+                    // "This network" (0.0.0.0/8), including the unspecified address.
+                    || v4.octets()[0] == 0
+                    // Carrier-grade NAT (100.64.0.0/10).
+                    || matches!(v4.octets(), [100, 64..=127, _, _])
+                    // Benchmarking (198.18.0.0/15).
+                    || matches!(v4.octets(), [198, 18..=19, _, _])
+                    // IETF Protocol Assignments (192.0.0.0/24).
+                    || matches!(v4.octets(), [192, 0, 0, _])
+                    // Deprecated 6to4 relay anycast (192.88.99.0/24).
+                    || matches!(v4.octets(), [192, 88, 99, _])
+                    // Reserved (240.0.0.0/4), including broadcast.
+                    || v4.octets()[0] >= 240)
+            }
+            IpAddr::V6(_) => false,
+        }
     }
 }
 
@@ -184,63 +217,20 @@ impl P2pRoutes {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        net::SocketAddr,
-        str::FromStr,
-        sync::{Arc, Mutex, PoisonError},
-        time::Duration,
-    };
+    use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 
     use alloy_primitives::B512;
-    use async_trait::async_trait;
     use axum::{Router, http::StatusCode};
     use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 
     use super::{
-        P2P_REACHABILITY_MAX_CONCURRENT_PROBES, P2P_REACHABILITY_PATH, P2pReachabilityRequest,
-        P2pReachabilityResponse, P2pRoutes, TEST_NODE_ID,
+        DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES, P2P_REACHABILITY_PATH,
+        P2pReachabilityRequest, P2pReachabilityResponse, P2pRoutes, TEST_NODE_ID,
     };
     use crate::{
-        ReachabilityProber, RlpxProbeOutcome, RlpxProbeResult, RlpxProbeStage, RlpxProbeTarget,
+        BlockingProber, MockReachabilityProber, RlpxProbeOutcome, RlpxProbeResult, RlpxProbeStage,
+        RlpxProbeTarget,
     };
-
-    #[derive(Debug, Clone, Default)]
-    struct FakeProber {
-        targets: Arc<Mutex<Vec<RlpxProbeTarget>>>,
-    }
-
-    #[async_trait]
-    impl ReachabilityProber for FakeProber {
-        async fn probe(&self, target: RlpxProbeTarget) -> RlpxProbeResult {
-            self.targets.lock().unwrap_or_else(PoisonError::into_inner).push(target);
-            RlpxProbeResult {
-                outcome: RlpxProbeOutcome::Reachable,
-                stage: RlpxProbeStage::Devp2pHello,
-                elapsed: Duration::from_millis(12),
-                client_version: Some("test-peer/1.0".to_string()),
-            }
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    struct BlockingProber {
-        entered: Arc<Semaphore>,
-        release: Arc<Semaphore>,
-    }
-
-    #[async_trait]
-    impl ReachabilityProber for BlockingProber {
-        async fn probe(&self, _: RlpxProbeTarget) -> RlpxProbeResult {
-            self.entered.add_permits(1);
-            self.release.acquire().await.unwrap().forget();
-            RlpxProbeResult {
-                outcome: RlpxProbeOutcome::Reachable,
-                stage: RlpxProbeStage::Devp2pHello,
-                elapsed: Duration::from_millis(1),
-                client_version: None,
-            }
-        }
-    }
 
     async fn start_test_server(router: Router) -> (SocketAddr, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -275,11 +265,6 @@ mod tests {
         };
         assert!(invalid_discport.target().is_none());
 
-        let ipv6 = P2pReachabilityRequest {
-            enode: format!("enode://{TEST_NODE_ID}@[2606:4700:4700::1111]:30303"),
-        };
-        assert_eq!(ipv6.target().unwrap().address, "[2606:4700:4700::1111]:30303".parse().unwrap());
-
         let zero_port =
             P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@8.8.8.8:0") };
         assert!(zero_port.target().is_none());
@@ -296,9 +281,35 @@ mod tests {
             P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@example.com:30303") };
         assert!(hostname.target().is_none());
 
-        let private =
-            P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@10.0.0.1:30303") };
-        assert_eq!(private.target().unwrap().address, SocketAddr::from(([10, 0, 0, 1], 30303)));
+        // Non-public targets are rejected to keep untrusted enodes from
+        // steering probes at internal networks.
+        for ip in [
+            "10.0.0.1",
+            "127.0.0.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "0.1.2.3",
+            "198.18.0.1",
+            "198.19.255.255",
+            "192.0.0.8",
+            "192.88.99.1",
+            "240.0.0.1",
+            "255.255.255.255",
+            "[2606:4700:4700::1111]",
+            "[::1]",
+            "[fc00::1]",
+            "[fe80::1]",
+            "[::ffff:10.0.0.1]",
+            "[64:ff9b::a00:1]",
+            "[2002:a00:1::]",
+            "[::a00:1]",
+            "[::]",
+        ] {
+            let non_public =
+                P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@{ip}:30303") };
+            assert!(non_public.target().is_none(), "expected {ip} to be rejected");
+        }
     }
 
     #[test]
@@ -313,10 +324,23 @@ mod tests {
 
     #[tokio::test]
     async fn ignores_forwarded_header_and_probes_enode_address() {
-        let prober = Arc::new(FakeProber::default());
+        // A probe against any other target panics with no matching expectation.
+        let expected = RlpxProbeTarget {
+            address: SocketAddr::from(([8, 8, 8, 8], 30303)),
+            node_id: B512::from_str(TEST_NODE_ID).unwrap(),
+        };
+        let mut prober = MockReachabilityProber::new();
+        prober.expect_probe().times(1).withf(move |target| *target == expected).returning(|_| {
+            RlpxProbeResult {
+                outcome: RlpxProbeOutcome::Reachable,
+                stage: RlpxProbeStage::Devp2pHello,
+                elapsed: Duration::from_millis(12),
+                client_version: Some("test-peer/1.0".to_string()),
+            }
+        });
         let router = P2pRoutes::router_with_prober(
-            P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
-            Arc::clone(&prober),
+            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            Arc::new(prober),
         );
         let (address, handle) = start_test_server(router).await;
         let request = test_request();
@@ -334,23 +358,16 @@ mod tests {
         assert_eq!(response.outcome, RlpxProbeOutcome::Reachable);
         assert_eq!(response.observed_address, SocketAddr::from(([8, 8, 8, 8], 30303)));
         assert_eq!(response.client_version.as_deref(), Some("test-peer/1.0"));
-        assert_eq!(
-            prober.targets.lock().unwrap_or_else(PoisonError::into_inner).as_slice(),
-            &[RlpxProbeTarget {
-                address: SocketAddr::from(([8, 8, 8, 8], 30303)),
-                node_id: B512::from_str(TEST_NODE_ID).unwrap(),
-            }]
-        );
 
         handle.abort();
     }
 
     #[tokio::test]
-    async fn probes_private_target() {
-        let prober = Arc::new(FakeProber::default());
+    async fn rejects_private_target() {
+        // No expectations: any probe call panics and fails the status assert.
         let router = P2pRoutes::router_with_prober(
-            P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
-            Arc::clone(&prober),
+            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            Arc::new(MockReachabilityProber::new()),
         );
         let (address, handle) = start_test_server(router).await;
         let request =
@@ -363,19 +380,15 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            prober.targets.lock().unwrap_or_else(PoisonError::into_inner)[0].address,
-            SocketAddr::from(([10, 0, 0, 1], 30303))
-        );
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         handle.abort();
     }
 
     #[tokio::test]
     async fn rejects_oversized_body() {
         let router = P2pRoutes::router_with_prober(
-            P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
-            Arc::new(FakeProber::default()),
+            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            Arc::new(MockReachabilityProber::new()),
         );
         let (address, handle) = start_test_server(router).await;
 
