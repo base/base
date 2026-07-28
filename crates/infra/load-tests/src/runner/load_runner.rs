@@ -20,7 +20,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, sol};
 use base_common_network::Base;
 use base_tx_manager::NonceManager;
-use futures::{StreamExt, stream};
+use futures::{StreamExt, TryStreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::Rng;
 use tokio::{
@@ -1473,18 +1473,6 @@ impl LoadRunner {
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
         let initial_avg_gas = self.calibrate_avg_gas().await?;
-        for (address, nonce_manager) in self.nonce_managers.iter() {
-            nonce_manager.reset().await;
-            match nonce_manager.next_nonce().await {
-                Ok(guard) => {
-                    guard.rollback();
-                    debug!(address = %address, "nonce manager pre-warmed");
-                }
-                Err(e) => {
-                    warn!(address = %address, error = %e, "failed to pre-warm nonce manager");
-                }
-            }
-        }
         // Seed the collector so live throughput (rolling GPS) and rate-limiter
         // feedback have a non-zero gas figure before canonical receipt gas lands.
         self.collector.set_estimated_gas(initial_avg_gas);
@@ -2051,25 +2039,23 @@ impl LoadRunner {
         &self,
         sender_addresses: &[Address],
     ) -> Result<Vec<u64>> {
-        let mut sender_start_nonces = Vec::with_capacity(sender_addresses.len());
+        let nonce_futures = sender_addresses.iter().map(|from| async move {
+            let nonce_manager = self.nonce_managers.get(from).ok_or_else(|| {
+                BaselineError::Transaction(format!("missing nonce manager for sender {from}"))
+            })?;
 
-        for from in sender_addresses {
-            let Some(nonce_manager) = self.nonce_managers.get(from) else {
-                return Err(BaselineError::Transaction(format!(
-                    "missing nonce manager for sender {from}"
-                )));
-            };
-
+            nonce_manager.reset().await;
             let nonce_guard = nonce_manager.next_nonce().await.map_err(|e| {
                 BaselineError::Transaction(format!(
                     "failed to fetch starting nonce for sender {from}: {e}"
                 ))
             })?;
-            sender_start_nonces.push(nonce_guard.nonce());
+            let nonce = nonce_guard.nonce();
             nonce_guard.rollback();
-        }
+            Ok(nonce)
+        });
 
-        Ok(sender_start_nonces)
+        stream::iter(nonce_futures).buffered(FUNDING_CONCURRENCY).try_collect().await
     }
 
     fn select_open_loop_recipient(
