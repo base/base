@@ -225,6 +225,11 @@ jobs:
           free-disk: "true"
           native-deps: "true"
           rust-cache-shared-key: "stable"
+          foundry: "true"
+      - name: Build test contracts
+        # base-test-utils embeds Foundry artifacts (contracts/out/*.json) at compile
+        # time; they are gitignored build output, so generate them before building.
+        run: cd crates/utilities/test-utils/contracts && forge soldeer install && forge build
       - name: Smoke-test benchmarks
         run: |
           cargo bench --locked -p base-builder-core --bench flashblock_assembly -- --test
