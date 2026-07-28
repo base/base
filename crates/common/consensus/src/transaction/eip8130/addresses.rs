@@ -90,6 +90,21 @@ impl Eip8130Contracts {
     pub const CANONICAL_HIGH_RATE_PAYER_PROXY_CODE_HASH: B256 =
         b256!("0x3e37c64c39476e47c52408ea45eb3ae0f07e3ca0fd1d713acbcf17bf3b51312c");
 
+    /// The EIP-1967 implementation storage slot
+    /// (`keccak256("eip1967.proxy.implementation") - 1`), where an upgradeable
+    /// ERC-1967 proxy stores its current implementation address.
+    ///
+    /// Read by the two-tier high-rate payer recognition (see the txpool
+    /// validator): behind a *trusted upgradeable-proxy shell* codehash, the node
+    /// resolves the effective implementation from this slot and checks it against
+    /// the trusted-implementation allowlist. This lets an *upgradeable* account
+    /// qualify for the high-rate tier (provided the shell is a constrained proxy
+    /// that freezes upgrades while locked), whereas the single-tier path
+    /// ([`Self::CANONICAL_HIGH_RATE_PAYER_PROXY_CODE_HASH`]) only recognizes
+    /// immutable ERC-1167 clones.
+    pub const ERC1967_IMPLEMENTATION_SLOT: B256 =
+        b256!("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc");
+
     // ─────────────────────────────────────────────────────────────────────────
     // Canonical authenticators (accepted on the EIP-8130 block-validation path)
     // ─────────────────────────────────────────────────────────────────────────

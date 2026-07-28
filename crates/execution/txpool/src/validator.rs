@@ -102,6 +102,22 @@ struct Eip8130ValidationState {
 
 const LIMIT_CLASS_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(100_000).unwrap();
 
+/// Whether an account qualifies for the high-rate payer tier, and by which code
+/// shape: an immutable ERC-1167 clone (single-tier), or a trusted upgradeable
+/// proxy shell currently pointing at a trusted implementation (two-tier).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HighRatePayerClass {
+    None,
+    Immutable,
+    Upgradeable,
+}
+
+impl HighRatePayerClass {
+    const fn is_trusted(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 /// Cached lock state and trusted-delegation classification by account.
 #[derive(Debug)]
 pub struct LimitClassCache {
@@ -682,6 +698,13 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// implementations. Precomputed so classification is an O(1) code-hash lookup
     /// with no code fetch or bytecode parsing.
     trusted_proxy_code_hashes: Arc<HashSet<B256>>,
+    /// Codehashes of trusted *upgradeable* proxy shells (the outer tier of
+    /// two-tier recognition). A match triggers a nested read of the ERC-1967
+    /// implementation slot, whose resolved implementation must be trusted.
+    trusted_upgradeable_proxy_code_hashes: Arc<HashSet<B256>>,
+    /// Codehashes of trusted high-rate implementations an upgradeable proxy shell
+    /// may point at (the inner tier).
+    trusted_implementation_code_hashes: Arc<HashSet<B256>>,
     limit_class_cache: Arc<RwLock<LimitClassCache>>,
     limit_class_cache_generation: Arc<AtomicU64>,
 }
@@ -750,6 +773,39 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         }
     }
 
+    /// Default trusted upgradeable-proxy shell codehashes (outer tier).
+    ///
+    /// Empty until the constrained upgradeable proxy shell is finalized and
+    /// pinned (like the provisional addresses in `Eip8130Contracts`). While
+    /// empty, the two-tier path is dormant and behavior is identical to the
+    /// single-tier baseline. Operators supply values via
+    /// [`Self::with_trusted_upgradeable_proxies`].
+    pub fn default_trusted_upgradeable_proxy_code_hashes() -> HashSet<B256> {
+        HashSet::new()
+    }
+
+    /// Default trusted high-rate implementation codehashes (inner tier). Empty by
+    /// default; see [`Self::default_trusted_upgradeable_proxy_code_hashes`].
+    pub fn default_trusted_implementation_code_hashes() -> HashSet<B256> {
+        HashSet::new()
+    }
+
+    /// Configures the two-tier upgradeable high-rate allowlists: the trusted proxy
+    /// shell codehashes and the implementation codehashes they may point at.
+    pub fn with_trusted_upgradeable_proxies(
+        self,
+        shell_code_hashes: HashSet<B256>,
+        implementation_code_hashes: HashSet<B256>,
+    ) -> Self {
+        Self {
+            trusted_upgradeable_proxy_code_hashes: Arc::new(shell_code_hashes),
+            trusted_implementation_code_hashes: Arc::new(implementation_code_hashes),
+            limit_class_cache: Arc::default(),
+            limit_class_cache_generation: Arc::default(),
+            ..self
+        }
+    }
+
     /// Returns the cache generation used to close validation/invalidation races.
     pub fn limit_class_cache_generation(&self) -> u64 {
         self.limit_class_cache_generation.load(Ordering::Acquire)
@@ -765,6 +821,14 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         let mut changed = false;
         for diff in diffs {
             if diff.code_changed {
+                changed = true;
+                cache.invalidate_code(diff.address);
+            }
+            // A write to the ERC-1967 implementation slot re-points a tier-B
+            // (upgradeable-proxy) payer's implementation, which can flip its trust
+            // classification even though the proxy's own code is unchanged. Clear
+            // the cached class so it is recomputed against the new implementation.
+            if diff.changed_slots.contains(&Eip8130Contracts::ERC1967_IMPLEMENTATION_SLOT) {
                 changed = true;
                 cache.invalidate_code(diff.address);
             }
@@ -841,6 +905,12 @@ where
             require_l1_data_gas_fee: true,
             trusted_delegation_targets: Arc::new(trusted_delegation_targets),
             trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
+            trusted_upgradeable_proxy_code_hashes: Arc::new(
+                Self::default_trusted_upgradeable_proxy_code_hashes(),
+            ),
+            trusted_implementation_code_hashes: Arc::new(
+                Self::default_trusted_implementation_code_hashes(),
+            ),
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
         }
@@ -1217,14 +1287,28 @@ where
         // hard-lock → pending-unlock transition writes the account-state slot, so
         // the slot watch above drains any already-admitted transactions naturally
         // — no timed bucket is needed for the trusted dimension.
-        let payer_trusted = Self::qualifies_as_high_rate_lock(&payer_status)
-            && self.is_high_rate_account(
+        let payer_class = if Self::qualifies_as_high_rate_lock(&payer_status) {
+            self.high_rate_payer_class(
                 payer,
                 payer_account.bytecode_hash,
+                &*state,
                 classification_generation,
-            );
+            )
+        } else {
+            HighRatePayerClass::None
+        };
+        let payer_trusted = payer_class.is_trusted();
         if payer_trusted {
             watch_set.push(InvalidationKey::CodeHash(payer));
+            // Tier-B (upgradeable) trust depends on the ERC-1967 implementation
+            // slot, so watch it: an upgrade re-pointing the impl demotes any
+            // already-admitted transactions from the balance-bounded book.
+            if matches!(payer_class, HighRatePayerClass::Upgradeable) {
+                watch_set.push(InvalidationKey::Slot {
+                    address: payer,
+                    slot: Eip8130Contracts::ERC1967_IMPLEMENTATION_SLOT,
+                });
+            }
         }
 
         let gas_charge = FeeCheck::max_fee_charge(
@@ -1375,48 +1459,125 @@ where
         account_state.lock_status(now)
     }
 
-    /// Whether `account` is a trusted high-rate (balance-bounded) payer: its
-    /// on-chain code hash must exactly equal the canonical immutable ERC-1167
-    /// minimal-proxy runtime of a trusted implementation
-    /// ([`Self::trusted_proxy_code_hashes`]).
+    /// Classifies `account` for the high-rate (balance-bounded) payer tier.
     ///
-    /// `bytecode_hash` is the account's code hash the caller already loaded (the
-    /// fee check reads the payer account), so classification is an O(1) code-hash
-    /// set lookup with no extra account read, code fetch, or bytecode parsing.
+    /// High-rate trust is balance-bounded: the mempool reserves against the
+    /// payer's ETH balance and assumes that reservation cannot be pulled out from
+    /// under it. That holds only if the code the account runs cannot change to
+    /// something that moves ETH while locked. Two shapes satisfy this:
     ///
-    /// High-rate payer trust is *balance-bounded*: the mempool reserves against
-    /// the payer's ETH balance and assumes that reservation cannot be pulled out
-    /// from under it. That guarantee only holds if the payer's code — and thus
-    /// the enshrined "block ETH transfers while locked" behavior of the
-    /// high-rate implementation — can never change. Membership of the code hash
-    /// in `trusted_proxy_code_hashes` is exactly that check: it matches only the
-    /// canonical immutable ERC-1167 minimal-proxy runtime (no upgrade slot) of a
-    /// trusted implementation.
+    /// - [`HighRatePayerClass::Immutable`]: the account's own codehash is the
+    ///   canonical immutable ERC-1167 minimal-proxy runtime of a trusted
+    ///   implementation (`trusted_proxy_code_hashes`). O(1), no state read.
+    /// - [`HighRatePayerClass::Upgradeable`]: the account's codehash is a trusted
+    ///   *constrained* proxy shell (`trusted_upgradeable_proxy_code_hashes`, which
+    ///   freezes upgrades while locked) whose current ERC-1967 implementation
+    ///   resolves to a trusted implementation codehash
+    ///   (`trusted_implementation_code_hashes`). This reads the impl slot; the
+    ///   caller watches that slot so an upgrade demotes already-admitted txs.
     ///
-    /// An **EIP-7702 delegation** deliberately never qualifies: its code is the
-    /// `0xef0100 ‖ impl` designator, whose hash differs from any proxy runtime,
-    /// and the delegating EOA can broadcast a fresh authorization to re-point or
-    /// clear that code at any time — escaping the lock and draining the balance
-    /// the mempool relied on. Only immutable contract deployments are trusted.
-    fn is_high_rate_account(
+    /// An EIP-7702 delegation never qualifies (its `0xef0100 || impl` code hashes
+    /// to neither set and is freely re-pointable). State reads fail closed to
+    /// [`HighRatePayerClass::None`] and are not cached, so a transient provider
+    /// error cannot pin a stale class for the LRU lifetime.
+    fn high_rate_payer_class(
         &self,
         account: Address,
         bytecode_hash: Option<B256>,
+        state: &dyn StateProvider,
         generation: u64,
-    ) -> bool {
-        // Invalidation may advance the generation immediately after this read.
-        // Pool admission rejects the captured classification if that happens.
-        let cached = self.limit_class_cache.write().trusted(account);
-        if let Some(value) = cached {
-            return value;
+    ) -> HighRatePayerClass {
+        // A cached entry records only whether the account is trusted; the tier is
+        // reconstructed from codehash membership (no state read), stable because a
+        // code change invalidates the entry.
+        if let Some(trusted) = self.limit_class_cache.write().trusted(account) {
+            return if trusted {
+                self.trusted_tier(bytecode_hash)
+            } else {
+                HighRatePayerClass::None
+            };
         }
-        let trusted =
-            bytecode_hash.is_some_and(|hash| self.trusted_proxy_code_hashes.contains(&hash));
+
+        let Some(hash) = bytecode_hash else {
+            self.cache_high_rate_trust(account, false, generation);
+            return HighRatePayerClass::None;
+        };
+
+        if self.trusted_proxy_code_hashes.contains(&hash) {
+            self.cache_high_rate_trust(account, true, generation);
+            return HighRatePayerClass::Immutable;
+        }
+
+        if self.trusted_upgradeable_proxy_code_hashes.contains(&hash) {
+            match self.resolve_upgradeable_impl_trusted(account, state) {
+                Err(()) => HighRatePayerClass::None,
+                Ok(trusted) => {
+                    self.cache_high_rate_trust(account, trusted, generation);
+                    if trusted { HighRatePayerClass::Upgradeable } else { HighRatePayerClass::None }
+                }
+            }
+        } else {
+            self.cache_high_rate_trust(account, false, generation);
+            HighRatePayerClass::None
+        }
+    }
+
+    /// Reconstructs the tier for an account already cached as trusted, from its
+    /// codehash membership alone (no state read).
+    fn trusted_tier(&self, bytecode_hash: Option<B256>) -> HighRatePayerClass {
+        match bytecode_hash {
+            Some(hash) if self.trusted_proxy_code_hashes.contains(&hash) => {
+                HighRatePayerClass::Immutable
+            }
+            Some(hash) if self.trusted_upgradeable_proxy_code_hashes.contains(&hash) => {
+                HighRatePayerClass::Upgradeable
+            }
+            _ => HighRatePayerClass::None,
+        }
+    }
+
+    /// Resolves the implementation behind a trusted upgradeable proxy shell and
+    /// returns whether it is trusted. `Err(())` signals a state-read failure, on
+    /// which the caller fails closed without caching.
+    ///
+    /// A zero implementation slot means the account still runs the shell's baked
+    /// default implementation; trusting the shell codehash (which commits to that
+    /// default) implies trusting it. A non-zero slot must decode to an address
+    /// (upper 96 bits zero) whose code hash is in the trusted set.
+    fn resolve_upgradeable_impl_trusted(
+        &self,
+        account: Address,
+        state: &dyn StateProvider,
+    ) -> Result<bool, ()> {
+        let slot = state
+            .storage(account, Eip8130Contracts::ERC1967_IMPLEMENTATION_SLOT)
+            .map_err(|error| {
+                tracing::warn!(error = %error, account = %account, "EIP-8130 impl-slot read failed");
+            })?
+            .unwrap_or_default();
+        if slot.is_zero() {
+            return Ok(true);
+        }
+        if slot >> 160 != U256::ZERO {
+            return Ok(false);
+        }
+        let implementation = Address::from_word(B256::from(slot));
+        let impl_code_hash = state
+            .basic_account(&implementation)
+            .map_err(|error| {
+                tracing::warn!(error = %error, implementation = %implementation, "EIP-8130 impl read failed");
+            })?
+            .and_then(|account| account.bytecode_hash);
+        Ok(impl_code_hash
+            .is_some_and(|hash| self.trusted_implementation_code_hashes.contains(&hash)))
+    }
+
+    /// Caches the high-rate trust bit under the generation guard.
+    fn cache_high_rate_trust(&self, account: Address, trusted: bool, generation: u64) {
         let mut cache = self.limit_class_cache.write();
         if generation == self.limit_class_cache_generation() {
             cache.insert_trusted(account, trusted);
         }
-        trusted
     }
 
     fn validate_eip8130_create_freshness(
@@ -2048,7 +2209,7 @@ where
 mod tests {
     use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes, hex::decode};
+    use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes, hex::decode, keccak256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
@@ -3514,5 +3675,174 @@ mod tests {
         assert_eq!(state.payer, sender);
         assert_eq!(state.sender_bytecode_hash, Some(expected_hash));
         assert!(state.watch_set.iter().any(|key| *key == InvalidationKey::CodeHash(sender)));
+    }
+
+    // Two-tier (upgradeable proxy) high-rate payer recognition.
+
+    fn upgradeable_validator(
+        payer: Address,
+        payer_account: ExtendedAccount,
+        seeded: &[(Address, ExtendedAccount)],
+        shell_code_hash: B256,
+        impl_code_hash: B256,
+    ) -> TestValidator {
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        client.add_account(payer, payer_account);
+        for (address, account) in seeded {
+            client.add_account(*address, account.clone());
+        }
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .build(InMemoryBlobStore::default());
+        BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+            .with_trusted_upgradeable_proxies(
+                HashSet::from([shell_code_hash]),
+                HashSet::from([impl_code_hash]),
+            )
+    }
+
+    fn impl_slot_value(implementation: Address) -> U256 {
+        U256::from_be_slice(implementation.as_slice())
+    }
+
+    #[test]
+    fn high_rate_class_upgradeable_when_impl_slot_points_at_trusted_impl() {
+        let shell_code = bytes!("60016000");
+        let impl_code = bytes!("60026000");
+        let shell_hash = keccak256(shell_code.as_ref());
+        let impl_hash = keccak256(impl_code.as_ref());
+        let payer = Address::repeat_byte(0x11);
+        let implementation = Address::repeat_byte(0x42);
+
+        let payer_account =
+            ExtendedAccount::new(0, U256::ZERO).with_bytecode(shell_code).extend_storage([(
+                Eip8130Contracts::ERC1967_IMPLEMENTATION_SLOT,
+                impl_slot_value(implementation),
+            )]);
+        let impl_account = ExtendedAccount::new(0, U256::ZERO).with_bytecode(impl_code);
+
+        let validator = upgradeable_validator(
+            payer,
+            payer_account,
+            &[(implementation, impl_account)],
+            shell_hash,
+            impl_hash,
+        );
+        let state = validator.client().latest().unwrap();
+        let generation = validator.limit_class_cache_generation();
+        assert_eq!(
+            validator.high_rate_payer_class(payer, Some(shell_hash), &*state, generation),
+            HighRatePayerClass::Upgradeable,
+        );
+    }
+
+    #[test]
+    fn high_rate_class_none_when_upgradeable_impl_not_trusted() {
+        let shell_code = bytes!("60016000");
+        let impl_code = bytes!("60026000");
+        let shell_hash = keccak256(shell_code.as_ref());
+        let impl_hash = keccak256(impl_code.as_ref());
+        let payer = Address::repeat_byte(0x11);
+        let untrusted_impl = Address::repeat_byte(0x43);
+
+        let payer_account =
+            ExtendedAccount::new(0, U256::ZERO).with_bytecode(shell_code).extend_storage([(
+                Eip8130Contracts::ERC1967_IMPLEMENTATION_SLOT,
+                impl_slot_value(untrusted_impl),
+            )]);
+
+        let validator = upgradeable_validator(payer, payer_account, &[], shell_hash, impl_hash);
+        let state = validator.client().latest().unwrap();
+        let generation = validator.limit_class_cache_generation();
+        assert_eq!(
+            validator.high_rate_payer_class(payer, Some(shell_hash), &*state, generation),
+            HighRatePayerClass::None,
+        );
+    }
+
+    #[test]
+    fn high_rate_class_upgradeable_trusts_baked_default_when_slot_zero() {
+        let shell_code = bytes!("60016000");
+        let shell_hash = keccak256(shell_code.as_ref());
+        let impl_hash = keccak256(bytes!("60026000").as_ref());
+        let payer = Address::repeat_byte(0x11);
+
+        let payer_account = ExtendedAccount::new(0, U256::ZERO).with_bytecode(shell_code);
+        let validator = upgradeable_validator(payer, payer_account, &[], shell_hash, impl_hash);
+        let state = validator.client().latest().unwrap();
+        let generation = validator.limit_class_cache_generation();
+        assert_eq!(
+            validator.high_rate_payer_class(payer, Some(shell_hash), &*state, generation),
+            HighRatePayerClass::Upgradeable,
+        );
+    }
+
+    #[test]
+    fn high_rate_class_none_when_impl_slot_is_malformed() {
+        let shell_code = bytes!("60016000");
+        let shell_hash = keccak256(shell_code.as_ref());
+        let impl_hash = keccak256(bytes!("60026000").as_ref());
+        let payer = Address::repeat_byte(0x11);
+        let malformed = U256::from(1u8) << 200;
+
+        let payer_account = ExtendedAccount::new(0, U256::ZERO)
+            .with_bytecode(shell_code)
+            .extend_storage([(Eip8130Contracts::ERC1967_IMPLEMENTATION_SLOT, malformed)]);
+        let validator = upgradeable_validator(payer, payer_account, &[], shell_hash, impl_hash);
+        let state = validator.client().latest().unwrap();
+        let generation = validator.limit_class_cache_generation();
+        assert_eq!(
+            validator.high_rate_payer_class(payer, Some(shell_hash), &*state, generation),
+            HighRatePayerClass::None,
+        );
+    }
+
+    #[test]
+    fn high_rate_class_immutable_for_canonical_erc1167_clone() {
+        let runtime = Eip8130Contracts::erc1167_proxy_runtime(
+            Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_ACCOUNT,
+        );
+        let code_hash = keccak256(runtime);
+        let payer = Address::repeat_byte(0x11);
+        let payer_account =
+            ExtendedAccount::new(0, U256::ZERO).with_bytecode(Bytes::copy_from_slice(&runtime));
+        let validator = build_test_validator_with_account(payer, payer_account);
+        let state = validator.client().latest().unwrap();
+        let generation = validator.limit_class_cache_generation();
+        assert_eq!(
+            validator.high_rate_payer_class(payer, Some(code_hash), &*state, generation),
+            HighRatePayerClass::Immutable,
+        );
+    }
+
+    #[test]
+    fn impl_slot_diff_clears_trusted_class_and_advances_generation() {
+        let validator = build_test_validator();
+        let payer = Address::repeat_byte(0x11);
+        validator.limit_class_cache.write().insert_trusted(payer, true);
+        let before = validator.limit_class_cache_generation();
+
+        validator.invalidate_limit_class_cache(&[crate::AccountStateDiff {
+            address: payer,
+            balance: None,
+            nonce_changed: false,
+            code_changed: false,
+            changed_slots: vec![Eip8130Contracts::ERC1967_IMPLEMENTATION_SLOT],
+        }]);
+
+        assert!(
+            validator.limit_class_cache_generation() > before,
+            "an impl-slot write must advance the classification generation"
+        );
+        assert_eq!(
+            validator.limit_class_cache.write().trusted(payer),
+            None,
+            "an impl-slot write must clear the cached trusted class"
+        );
     }
 }
