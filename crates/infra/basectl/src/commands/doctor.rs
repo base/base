@@ -1,10 +1,16 @@
 //! Implementation of the `basectl doctor` subcommand.
 
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    path::PathBuf,
+};
 
 use anyhow::Result;
-use basectl_cli::{
-    CommandOutcome, Doctor, DoctorArgs, DoctorArgsError, DoctorCheck, DoctorOptions, DoctorReport,
+use clap::Args;
+use url::Url;
+
+use crate::{
+    CommandOutcome, Doctor, DoctorArgsError, DoctorCheck, DoctorOptions, DoctorReport,
     DoctorStatus, DoctorThresholds, JsonOutput, MonitoringConfig,
 };
 
@@ -15,53 +21,95 @@ const ANSI_CYAN: &str = "\x1b[36m";
 const ANSI_DIM: &str = "\x1b[2m";
 const ANSI_RESET: &str = "\x1b[0m";
 
-/// Runs the `basectl doctor` subcommand.
-pub(crate) async fn run(config: MonitoringConfig, args: DoctorArgs) -> Result<CommandOutcome> {
-    validate_thresholds(&args)?;
-    let options = DoctorOptions {
-        el_rpc: args.el_rpc.unwrap_or_else(|| config.rpc.clone()),
-        cl_rpc: args.cl_rpc.or_else(|| config.consensus_node_rpc.clone()),
-        reth_config: args.reth_config,
-        thresholds: DoctorThresholds {
-            peer_warn_threshold: args.peer_warn_threshold,
-            head_lag_warn_blocks: args.head_lag_warn_blocks,
-            head_lag_fail_blocks: args.head_lag_fail_blocks,
-            safe_recency_warn_blocks: args.safe_recency_warn_blocks,
-            safe_recency_fail_blocks: args.safe_recency_fail_blocks,
-        },
-    };
-    let json = args.json;
-    let report = Doctor::run(config, options).await;
-    if json {
-        JsonOutput::print(&report)?;
-    } else {
-        print_pretty(&report)?;
-    }
-    Ok(CommandOutcome::from_failures(report.has_failures()))
+/// Arguments for running read-only diagnostics on a single node.
+#[derive(Debug, Args)]
+pub struct DoctorCommand {
+    /// Override the execution-layer RPC URL.
+    ///
+    /// Defaults to the chain config's `rpc` field. Pass this flag to diagnose
+    /// a specific node instead of a public preset RPC.
+    #[arg(long = "el-rpc", value_name = "URL")]
+    pub el_rpc: Option<Url>,
+    /// Override the consensus-node RPC URL.
+    ///
+    /// If omitted and the selected config has no `consensus_node_rpc`, CL
+    /// checks are skipped with hints while EL/L1/config checks still run.
+    #[arg(long = "cl-rpc", value_name = "URL")]
+    pub cl_rpc: Option<Url>,
+    /// Path to the local `reth.toml` file.
+    #[arg(long = "reth-config", value_name = "PATH")]
+    pub reth_config: Option<PathBuf>,
+    /// Connected peer count below which peer checks warn.
+    #[arg(long = "peer-warn-threshold", value_name = "COUNT", default_value_t = 5)]
+    pub peer_warn_threshold: u32,
+    /// EL head lag above which `el_head_vs_tip` warns.
+    #[arg(long = "head-lag-warn-blocks", value_name = "BLOCKS", default_value_t = 10)]
+    pub head_lag_warn_blocks: u64,
+    /// EL head lag above which `el_head_vs_tip` fails.
+    #[arg(long = "head-lag-fail-blocks", value_name = "BLOCKS", default_value_t = 20)]
+    pub head_lag_fail_blocks: u64,
+    /// Safe-head lag above which `safe_head_recency` warns.
+    #[arg(long = "safe-recency-warn-blocks", value_name = "BLOCKS", default_value_t = 150)]
+    pub safe_recency_warn_blocks: u64,
+    /// Safe-head lag above which `safe_head_recency` fails.
+    #[arg(long = "safe-recency-fail-blocks", value_name = "BLOCKS", default_value_t = 300)]
+    pub safe_recency_fail_blocks: u64,
+    /// Emit a humanized JSON report instead of pretty text.
+    #[arg(long)]
+    pub json: bool,
 }
 
-const fn validate_thresholds(args: &DoctorArgs) -> Result<(), DoctorArgsError> {
-    if args.head_lag_warn_blocks >= args.head_lag_fail_blocks {
-        return Err(DoctorArgsError::HeadLagWarnMustBeLessThanFail {
-            warn_blocks: args.head_lag_warn_blocks,
-            fail_blocks: args.head_lag_fail_blocks,
-        });
+impl DoctorCommand {
+    /// Runs diagnostics and renders the selected output format.
+    pub async fn run(self, config: MonitoringConfig) -> Result<CommandOutcome> {
+        self.validate_thresholds()?;
+        let options = DoctorOptions {
+            el_rpc: self.el_rpc.unwrap_or_else(|| config.rpc.clone()),
+            cl_rpc: self.cl_rpc.or_else(|| config.consensus_node_rpc.clone()),
+            reth_config: self.reth_config,
+            thresholds: DoctorThresholds {
+                peer_warn_threshold: self.peer_warn_threshold,
+                head_lag_warn_blocks: self.head_lag_warn_blocks,
+                head_lag_fail_blocks: self.head_lag_fail_blocks,
+                safe_recency_warn_blocks: self.safe_recency_warn_blocks,
+                safe_recency_fail_blocks: self.safe_recency_fail_blocks,
+            },
+        };
+        let report = Doctor::run(config, options).await;
+        if self.json {
+            JsonOutput::print(&report)?;
+        } else {
+            print_pretty(&report)?;
+        }
+        Ok(CommandOutcome::from_failures(report.has_failures()))
     }
-    if args.safe_recency_warn_blocks >= args.safe_recency_fail_blocks {
-        return Err(DoctorArgsError::SafeRecencyWarnMustBeLessThanFail {
-            warn_blocks: args.safe_recency_warn_blocks,
-            fail_blocks: args.safe_recency_fail_blocks,
-        });
+
+    /// Validates that warning thresholds are lower than failure thresholds.
+    pub const fn validate_thresholds(&self) -> Result<(), DoctorArgsError> {
+        if self.head_lag_warn_blocks >= self.head_lag_fail_blocks {
+            return Err(DoctorArgsError::HeadLagWarnMustBeLessThanFail {
+                warn_blocks: self.head_lag_warn_blocks,
+                fail_blocks: self.head_lag_fail_blocks,
+            });
+        }
+        if self.safe_recency_warn_blocks >= self.safe_recency_fail_blocks {
+            return Err(DoctorArgsError::SafeRecencyWarnMustBeLessThanFail {
+                warn_blocks: self.safe_recency_warn_blocks,
+                fail_blocks: self.safe_recency_fail_blocks,
+            });
+        }
+        Ok(())
     }
-    Ok(())
 }
 
+/// Writes pretty output to standard output.
 fn print_pretty(report: &DoctorReport) -> Result<()> {
     let mut stdout = io::stdout().lock();
     write_pretty(&mut stdout, report)?;
     Ok(())
 }
 
+/// Writes pretty output to an arbitrary writer.
 fn write_pretty<W: Write>(writer: &mut W, report: &DoctorReport) -> io::Result<()> {
     writeln!(writer, "network  {}", report.network)?;
     writeln!(
@@ -80,12 +128,14 @@ fn write_pretty<W: Write>(writer: &mut W, report: &DoctorReport) -> io::Result<(
     Ok(())
 }
 
+/// Returns checks ordered by operational severity.
 fn sorted_checks(report: &DoctorReport) -> Vec<&DoctorCheck> {
     let mut checks = report.checks.iter().collect::<Vec<_>>();
     checks.sort_by_key(|check| status_sort_key(check.status));
     checks
 }
 
+/// Returns the sort priority for a diagnostic status.
 const fn status_sort_key(status: DoctorStatus) -> u8 {
     match status {
         DoctorStatus::Fail => 0,
@@ -96,6 +146,7 @@ const fn status_sort_key(status: DoctorStatus) -> u8 {
     }
 }
 
+/// Writes one diagnostic check.
 fn write_check<W: Write>(writer: &mut W, check: &DoctorCheck) -> io::Result<()> {
     writeln!(writer, "{} {}", colored_status(check.status), check.check)?;
     writeln!(writer, "  message: {}", check.message)?;
@@ -107,6 +158,7 @@ fn write_check<W: Write>(writer: &mut W, check: &DoctorCheck) -> io::Result<()> 
     writeln!(writer)
 }
 
+/// Formats a diagnostic status with its ANSI color.
 fn colored_status(status: DoctorStatus) -> String {
     let color = match status {
         DoctorStatus::Fail => ANSI_RED,
@@ -118,6 +170,7 @@ fn colored_status(status: DoctorStatus) -> String {
     format!("{color}{}{ANSI_RESET}", status.as_str())
 }
 
+/// Writes a labeled JSON value block when it is non-empty.
 fn write_value_block<W: Write>(
     writer: &mut W,
     label: &str,
@@ -131,6 +184,7 @@ fn write_value_block<W: Write>(
     write_json_value(writer, value, indent + 2)
 }
 
+/// Recursively writes a JSON value as indented text.
 fn write_json_value<W: Write>(
     writer: &mut W,
     value: &serde_json::Value,
@@ -181,6 +235,7 @@ fn write_json_value<W: Write>(
     }
 }
 
+/// Formats a scalar JSON value without quoting strings.
 fn scalar_value(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(s) => s.clone(),
@@ -188,6 +243,7 @@ fn scalar_value(value: &serde_json::Value) -> String {
     }
 }
 
+/// Returns whether a JSON value contains no renderable data.
 fn is_empty_value(value: &serde_json::Value) -> bool {
     matches!(value, serde_json::Value::Null)
         || matches!(value, serde_json::Value::Object(map) if map.values().all(is_empty_value))
@@ -198,11 +254,11 @@ fn is_empty_value(value: &serde_json::Value) -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use basectl_cli::{DoctorArgs, DoctorArgsError, DoctorCheck, DoctorStatus};
     use serde_json::json;
     use url::Url;
 
-    use super::{ANSI_YELLOW, status_sort_key, validate_thresholds, write_check};
+    use super::{ANSI_YELLOW, DoctorCommand, status_sort_key, write_check};
+    use crate::{DoctorArgsError, DoctorCheck, DoctorStatus};
 
     #[test]
     fn pretty_check_includes_status_value_threshold_and_hint() {
@@ -258,7 +314,7 @@ mod tests {
             args.head_lag_fail_blocks = 10;
         });
 
-        let err = validate_thresholds(&args).unwrap_err();
+        let err = args.validate_thresholds().unwrap_err();
 
         assert!(matches!(
             err,
@@ -273,7 +329,7 @@ mod tests {
             args.safe_recency_fail_blocks = 300;
         });
 
-        let err = validate_thresholds(&args).unwrap_err();
+        let err = args.validate_thresholds().unwrap_err();
 
         assert!(matches!(
             err,
@@ -284,8 +340,8 @@ mod tests {
         ));
     }
 
-    fn test_args(update: impl FnOnce(&mut DoctorArgs)) -> DoctorArgs {
-        let mut args = DoctorArgs {
+    fn test_args(update: impl FnOnce(&mut DoctorCommand)) -> DoctorCommand {
+        let mut args = DoctorCommand {
             el_rpc: Some(Url::parse("http://127.0.0.1:8545").unwrap()),
             cl_rpc: None,
             reth_config: Option::<PathBuf>::None,

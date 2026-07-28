@@ -1,12 +1,9 @@
 //! Base infrastructure control CLI binary.
 
-mod block;
 mod conductor;
-mod doctor;
 mod p2p;
 mod proofs;
 mod sequencer;
-mod sync_status;
 mod txpool;
 
 use basectl_cli::{Cli, Commands, MonitoringConfig, ViewId, run_app, run_flashblocks_json};
@@ -39,19 +36,9 @@ async fn main() -> anyhow::Result<()> {
             let view = command.map(|c| c.view_id()).unwrap_or(ViewId::Home);
             run_app(view, config, conductor_rpc).await
         }
-        Some(Commands::Block { reference, json, raw }) => {
-            block::run(MonitoringConfig::load(config).await?, &reference, json, raw).await
-        }
-        Some(Commands::SyncStatus { el_rpc, cl_rpc, tip_tolerance, json, raw }) => {
-            sync_status::run(
-                MonitoringConfig::load(config).await?,
-                el_rpc,
-                cl_rpc,
-                tip_tolerance,
-                json,
-                raw,
-            )
-            .await
+        Some(Commands::Block(command)) => command.run(MonitoringConfig::load(config).await?).await,
+        Some(Commands::SyncStatus(command)) => {
+            command.run(MonitoringConfig::load(config).await?).await
         }
         Some(Commands::P2p { command }) => {
             if p2p::run(config, command).await?.has_failures() {
@@ -86,8 +73,8 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Some(Commands::Doctor(args)) => {
-            if doctor::run(MonitoringConfig::load(config).await?, args).await?.has_failures() {
+        Some(Commands::Doctor(command)) => {
+            if command.run(MonitoringConfig::load(config).await?).await?.has_failures() {
                 std::process::exit(1);
             }
             Ok(())

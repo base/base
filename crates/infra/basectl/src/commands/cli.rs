@@ -1,11 +1,10 @@
 //! CLI arguments and subcommands for basectl.
 
-use std::path::PathBuf;
-
 use alloy_primitives::{Address, B256};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use url::Url;
 
+use super::{BlockCommand, DoctorCommand, SyncStatusCommand};
 use crate::ViewId;
 
 /// Base infrastructure control CLI.
@@ -43,53 +42,9 @@ pub enum Commands {
     },
     /// Inspect a single L2 block.
     #[command(visible_alias = "b")]
-    Block {
-        /// Block number (decimal or 0x-hex), tag (latest/safe/finalized/earliest), or 32-byte block hash.
-        #[arg(value_name = "REF")]
-        reference: String,
-        /// Emit JSON (humanized — decoded numbers, ISO + local timestamps) instead of the pretty table.
-        #[arg(long)]
-        json: bool,
-        /// With `--json`, emit the JSON-RPC wire format (camelCase, hex-string quantities) instead of the humanized JSON.
-        #[arg(long, requires = "json")]
-        raw: bool,
-    },
+    Block(BlockCommand),
     /// Report combined CL `optimism_syncStatus` + EL `eth_syncing`.
-    SyncStatus {
-        /// Override the execution-layer RPC URL.
-        ///
-        /// Defaults to the chain config's `rpc` field, which on the
-        /// `mainnet` and `sepolia` presets resolves to the public proxyd
-        /// fleet — `eth_syncing` against that always reports "not syncing"
-        /// because proxyd routes only-healthy backends. Pass this flag to
-        /// point at a single node.
-        #[arg(long = "el-rpc", value_name = "URL")]
-        el_rpc: Option<Url>,
-        /// Override the consensus-node RPC URL.
-        ///
-        /// The mainnet and sepolia presets ship `consensus_node_rpc` unset, so
-        /// non-devnet users must pass this flag (or set the field in their YAML
-        /// config).
-        #[arg(long = "cl-rpc", value_name = "URL")]
-        cl_rpc: Option<Url>,
-        /// Block tolerance for the tip-reference `caught_up` classification.
-        ///
-        /// The local node is reported as `caught_up` when within ±this many
-        /// blocks of the public reference. Beyond the window, status flips
-        /// to `behind` or `ahead`. Default 5 ≈ ~10s of network jitter at
-        /// Base's 2s block time. Lower the value for stricter alerting,
-        /// raise it to dampen noise on flaky networks.
-        #[arg(long = "tip-tolerance", value_name = "BLOCKS", default_value_t = 5)]
-        tip_tolerance: u64,
-        /// Emit JSON (humanized — decoded numbers, ISO + local timestamps,
-        /// precomputed `safeLag*`) instead of the pretty table.
-        #[arg(long)]
-        json: bool,
-        /// With `--json`, emit the JSON-RPC wire format (the alloy-typed
-        /// `optimism_syncStatus` response) instead of the humanized JSON.
-        #[arg(long, requires = "json")]
-        raw: bool,
-    },
+    SyncStatus(SyncStatusCommand),
     /// Inspect p2p peers and advertised endpoints.
     P2p {
         /// P2P operation to run.
@@ -115,7 +70,7 @@ pub enum Commands {
         command: SequencerCommands,
     },
     /// Run read-only diagnostics for a single node.
-    Doctor(DoctorArgs),
+    Doctor(DoctorCommand),
     /// Request and inspect ZK proofs on the internal prover service.
     Proofs {
         /// Proof operation to run.
@@ -125,44 +80,6 @@ pub enum Commands {
     /// Stream flashblocks as JSON lines.
     #[command(after_help = "Use `basectl monitor flashblocks` for the TUI.")]
     Flashblocks,
-}
-
-/// Flags for `basectl doctor`.
-#[derive(Debug, Args)]
-pub struct DoctorArgs {
-    /// Override the execution-layer RPC URL.
-    ///
-    /// Defaults to the chain config's `rpc` field. Pass this flag to diagnose
-    /// a specific node instead of a public preset RPC.
-    #[arg(long = "el-rpc", value_name = "URL")]
-    pub el_rpc: Option<Url>,
-    /// Override the consensus-node RPC URL.
-    ///
-    /// If omitted and the selected config has no `consensus_node_rpc`, CL
-    /// checks are skipped with hints while EL/L1/config checks still run.
-    #[arg(long = "cl-rpc", value_name = "URL")]
-    pub cl_rpc: Option<Url>,
-    /// Path to the local `reth.toml` file.
-    #[arg(long = "reth-config", value_name = "PATH")]
-    pub reth_config: Option<PathBuf>,
-    /// Connected peer count below which peer checks warn.
-    #[arg(long = "peer-warn-threshold", value_name = "COUNT", default_value_t = 5)]
-    pub peer_warn_threshold: u32,
-    /// EL head lag above which `el_head_vs_tip` warns.
-    #[arg(long = "head-lag-warn-blocks", value_name = "BLOCKS", default_value_t = 10)]
-    pub head_lag_warn_blocks: u64,
-    /// EL head lag above which `el_head_vs_tip` fails.
-    #[arg(long = "head-lag-fail-blocks", value_name = "BLOCKS", default_value_t = 20)]
-    pub head_lag_fail_blocks: u64,
-    /// Safe-head lag above which `safe_head_recency` warns.
-    #[arg(long = "safe-recency-warn-blocks", value_name = "BLOCKS", default_value_t = 150)]
-    pub safe_recency_warn_blocks: u64,
-    /// Safe-head lag above which `safe_head_recency` fails.
-    #[arg(long = "safe-recency-fail-blocks", value_name = "BLOCKS", default_value_t = 300)]
-    pub safe_recency_fail_blocks: u64,
-    /// Emit a humanized JSON report instead of pretty text.
-    #[arg(long)]
-    pub json: bool,
 }
 
 /// Prover-service proof request and inspection commands.
