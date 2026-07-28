@@ -225,6 +225,7 @@ mod tests {
             rollup_config: RollupConfig::default(),
             l1_config: ChainConfig::default(),
             enable_experimental_witness_endpoint: false,
+            da_server_url: None,
         }
     }
 

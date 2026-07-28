@@ -12,8 +12,8 @@ workspace = true
 
 [dependencies]
 # base
-base-protocol.workspace = true
 base-alt-da.workspace = true
+base-protocol.workspace = true
 base-common-consensus.workspace = true
 base-proof-mpt.workspace = true
 base-common-evm.workspace = true
