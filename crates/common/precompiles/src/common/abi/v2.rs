@@ -1,8 +1,9 @@
-//! The shared `IB20` wire surface — the canonical live surface, re-exported unqualified by
-//! [`super`]. This is the surface a caller reaches today.
+//! The shared `IB20` wire surface frozen at Cobalt, which added the seize surface
+//! (`burnBlockedWithMemo`, `transferFromSeizableWithMemo`, their getters, the `SEIZE` pause
+//! feature, and the `TransferredFromSeizable` event). Also the canonical live surface, re-exported
+//! unqualified by [`super`].
 //!
-//! A hardfork that moves the wire freezes the prior surface in a new `abi/vN.rs` and grows this one;
-//! see [`super`].
+//! A new wire surface goes in a new `abi/vN.rs`; see [`super`].
 
 use alloy_sol_types::sol;
 
@@ -15,7 +16,10 @@ sol! {
             /// Mint operations.
             MINT,
             /// Burn operations.
-            BURN
+            BURN,
+            /// Seize operations (`burnBlockedWithMemo`, `transferFromSeizableWithMemo`). Legacy
+            /// `burnBlocked` still gates on `BURN` until it is repointed in a future PR.
+            SEIZE
         }
 
         // Errors
@@ -70,6 +74,7 @@ sol! {
         function MINT_ROLE() external view returns (bytes32);
         function BURN_ROLE() external view returns (bytes32);
         function BURN_BLOCKED_ROLE() external view returns (bytes32);
+        function TRANSFER_FROM_SEIZABLE_ROLE() external view returns (bytes32);
         function PAUSE_ROLE() external view returns (bytes32);
         function UNPAUSE_ROLE() external view returns (bytes32);
         function METADATA_ROLE() external view returns (bytes32);
@@ -79,6 +84,7 @@ sol! {
         function TRANSFER_RECEIVER_POLICY() external view returns (bytes32);
         function TRANSFER_EXECUTOR_POLICY() external view returns (bytes32);
         function MINT_RECEIVER_POLICY() external view returns (bytes32);
+        function SEIZABLE_ACCOUNT_POLICY() external view returns (bytes32);
 
         // ERC-20
         function name() external view returns (string);
@@ -105,6 +111,8 @@ sol! {
         function burn(uint256 amount) external;
         function burnWithMemo(uint256 amount, bytes32 memo) external;
         function burnBlocked(address from, uint256 amount) external;
+        function burnBlockedWithMemo(address from, uint256 amount, bytes32 memo) external;
+        function transferFromSeizableWithMemo(address from, address to, uint256 amount, bytes32 memo) external returns (bool);
 
         // Roles
         function hasRole(bytes32 role, address account) external view returns (bool);
@@ -143,7 +151,7 @@ sol! {
 
 #[cfg(test)]
 mod tests {
-    use alloy_sol_types::{SolEnum, SolInterface};
+    use alloy_sol_types::{SolCall, SolEnum, SolInterface};
 
     use super::IB20;
 
@@ -154,10 +162,20 @@ mod tests {
         assert_eq!(IB20::IB20Calls::NAME, "IB20Calls");
     }
 
-    /// The current `PausableFeature` variant count. A widening fork bumps this in a new surface
-    /// while the frozen surfaces keep their own count.
+    /// Cobalt's `PausableFeature` carries the `SEIZE` variant. A `sol!` enum arg is decoded before
+    /// version dispatch, so this discriminant is exactly what the V1 surface must reject.
     #[test]
-    fn pausable_feature_variant_count() {
-        assert_eq!(IB20::PausableFeature::COUNT, 3);
+    fn pausable_feature_carries_seize() {
+        assert_eq!(IB20::PausableFeature::COUNT, 4);
+        assert_eq!(IB20::PausableFeature::try_from(3u8), Ok(IB20::PausableFeature::SEIZE));
+    }
+
+    /// The seize surface is dialable at Cobalt.
+    #[test]
+    fn seize_selectors_present() {
+        assert!(IB20::IB20Calls::valid_selector(IB20::burnBlockedWithMemoCall::SELECTOR));
+        assert!(IB20::IB20Calls::valid_selector(IB20::transferFromSeizableWithMemoCall::SELECTOR));
+        assert!(IB20::IB20Calls::valid_selector(IB20::TRANSFER_FROM_SEIZABLE_ROLECall::SELECTOR));
+        assert!(IB20::IB20Calls::valid_selector(IB20::SEIZABLE_ACCOUNT_POLICYCall::SELECTOR));
     }
 }

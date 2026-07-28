@@ -82,6 +82,34 @@ pub trait Stablecoin<S: StablecoinAccounting, A: PolicyAccounting> {
         privileged: bool,
     ) -> Result<()>;
 
+    /// Burn-based seize with a memo (`Transfer` -> `Memo` -> `BurnedBlocked`). Introduced at `StablecoinV2`.
+    /// An admin op with no factory-privileged path, so the role is always enforced.
+    fn burn_blocked_with_memo(
+        &self,
+        _token: &mut B20StablecoinToken<S, A>,
+        _caller: Address,
+        _from: Address,
+        _amount: U256,
+        _memo: B256,
+    ) -> Result<()> {
+        reject_frozen_selector!()
+    }
+
+    /// Transfer-based seize: reassigns a blocked `from`'s balance to `to`
+    /// (`Transfer` -> `Memo` -> `TransferredFromSeizable`). Introduced at `StablecoinV2`.
+    /// An admin op with no factory-privileged path, so the role is always enforced.
+    fn transfer_from_seizable_with_memo(
+        &self,
+        _token: &mut B20StablecoinToken<S, A>,
+        _caller: Address,
+        _from: Address,
+        _to: Address,
+        _amount: U256,
+        _memo: B256,
+    ) -> Result<()> {
+        reject_frozen_selector!()
+    }
+
     /// Pauses the given features.
     fn pause(
         &self,

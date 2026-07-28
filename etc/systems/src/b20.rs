@@ -602,8 +602,13 @@ impl<'a> B20PrecompileClient<'a> {
 }
 
 fn pausable_features_from_mask(mask: U256) -> Vec<IB20::PausableFeature> {
-    [IB20::PausableFeature::TRANSFER, IB20::PausableFeature::MINT, IB20::PausableFeature::BURN]
-        .into_iter()
-        .filter(|feature| (mask & B20PausableFeature::mask(*feature)) != U256::ZERO)
-        .collect()
+    [
+        IB20::PausableFeature::TRANSFER,
+        IB20::PausableFeature::MINT,
+        IB20::PausableFeature::BURN,
+        IB20::PausableFeature::SEIZE,
+    ]
+    .into_iter()
+    .filter(|feature| (mask & B20PausableFeature::mask(*feature)) != U256::ZERO)
+    .collect()
 }

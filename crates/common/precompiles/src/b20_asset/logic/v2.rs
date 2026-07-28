@@ -364,6 +364,49 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
             .emit_event(IB20::BurnedBlocked { caller, from, amount }.encode_log_data())
     }
 
+    fn burn_blocked_with_memo(
+        &self,
+        token: &mut B20AssetToken<S, A>,
+        caller: Address,
+        from: Address,
+        amount: U256,
+        memo: B256,
+    ) -> Result<()> {
+        B20Guards::ensure_not_paused(token, IB20::PausableFeature::SEIZE)?;
+        B20Guards::ensure_token_role(token, caller, B20TokenRole::BurnBlocked)?;
+        B20Guards::ensure_seizable(token, from)?;
+        self.burn_inner(token, from, amount)?;
+        // `Memo` must immediately follow the `Transfer` (from `burn_inner`), before `BurnedBlocked`.
+        self.emit_memo(token, caller, memo)?;
+        token
+            .accounting_mut()
+            .emit_event(IB20::BurnedBlocked { caller, from, amount }.encode_log_data())
+    }
+
+    fn transfer_from_seizable_with_memo(
+        &self,
+        token: &mut B20AssetToken<S, A>,
+        caller: Address,
+        from: Address,
+        to: Address,
+        amount: U256,
+        memo: B256,
+    ) -> Result<()> {
+        B20Guards::ensure_not_paused(token, IB20::PausableFeature::SEIZE)?;
+        B20Guards::ensure_token_role(token, caller, B20TokenRole::TransferFromSeizable)?;
+        // `to != 0` guards against a disguised burn; `from` is not zero-checked (burn-blocked family).
+        if to == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        B20Guards::ensure_seizable(token, from)?;
+        self.move_balance(token, from, to, amount)?;
+        // `Memo` must immediately follow the `Transfer` (from `move_balance`), before the seize event.
+        self.emit_memo(token, caller, memo)?;
+        token.accounting_mut().emit_event(
+            IB20::TransferredFromSeizable { caller, from, to, amount }.encode_log_data(),
+        )
+    }
+
     fn pause(
         &self,
         token: &mut B20AssetToken<S, A>,
@@ -985,6 +1028,7 @@ mod tests {
     const ADMIN: Address = Address::repeat_byte(0xAD);
     const ALICE: Address = Address::repeat_byte(0xA1);
     const BOB: Address = Address::repeat_byte(0xB0);
+    const MEMO: B256 = B256::repeat_byte(0x77);
     const CHAIN_ID: u64 = 8453;
     const LOGIC: AssetV2 = AssetV2;
 
@@ -1517,6 +1561,179 @@ mod tests {
         LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(40u64), true).unwrap();
         assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
         assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
+    }
+
+    // --- seize ---
+
+    /// Points `SEIZABLE_ACCOUNT_POLICY` at the always-block policy, making every account seizable.
+    fn make_seizable(tok: &mut Tok) {
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizableAccount.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+    }
+
+    fn event_sigs(tok: &Tok) -> Vec<B256> {
+        tok.accounting().events.iter().map(|e| e.topics()[0]).collect()
+    }
+
+    #[test]
+    fn transfer_from_seizable_moves_balance_and_emits_transfer_memo_event() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::TransferFromSeizable.id(), ADMIN);
+        let supply = tok.accounting().total_supply().unwrap();
+
+        LOGIC
+            .transfer_from_seizable_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(40u64), MEMO)
+            .unwrap();
+
+        assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
+        assert_eq!(tok.accounting().total_supply().unwrap(), supply, "seize is a transfer");
+        assert_eq!(
+            event_sigs(&tok),
+            vec![
+                IB20::Transfer::SIGNATURE_HASH,
+                IB20::Memo::SIGNATURE_HASH,
+                IB20::TransferredFromSeizable::SIGNATURE_HASH,
+            ]
+        );
+    }
+
+    #[test]
+    fn transfer_from_seizable_reverts_when_account_not_seizable() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100u64));
+        grant(&mut tok, B20TokenRole::TransferFromSeizable.id(), ADMIN);
+        // SEIZABLE_ACCOUNT_POLICY unset => ALWAYS_ALLOW => ALICE authorized => not seizable.
+        let err = LOGIC
+            .transfer_from_seizable_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO)
+            .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE }));
+    }
+
+    #[test]
+    fn transfer_from_seizable_reverts_on_zero_receiver() {
+        let mut tok = token();
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::TransferFromSeizable.id(), ADMIN);
+        let err = LOGIC
+            .transfer_from_seizable_with_memo(
+                &mut tok,
+                ADMIN,
+                ALICE,
+                Address::ZERO,
+                U256::from(1u64),
+                MEMO,
+            )
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+        );
+    }
+
+    #[test]
+    fn transfer_from_seizable_ignores_receiver_policy_on_to() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(50u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::TransferFromSeizable.id(), ADMIN);
+        // A normal transfer to BOB would revert on this; seize does not consult it.
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::TransferReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+        LOGIC
+            .transfer_from_seizable_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO)
+            .unwrap();
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn transfer_from_seizable_requires_role() {
+        let mut tok = token();
+        make_seizable(&mut tok);
+        let err = LOGIC
+            .transfer_from_seizable_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ADMIN,
+                neededRole: B20TokenRole::TransferFromSeizable.id(),
+            })
+        );
+    }
+
+    #[test]
+    fn transfer_from_seizable_reverts_when_seize_paused() {
+        let mut tok = token();
+        make_seizable(&mut tok);
+        LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::SEIZE], true).unwrap();
+        let err = LOGIC
+            .transfer_from_seizable_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::SEIZE
+            })
+        );
+    }
+
+    #[test]
+    fn burn_blocked_with_memo_destroys_and_emits_transfer_memo_event() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::BurnBlocked.id(), ADMIN);
+
+        LOGIC.burn_blocked_with_memo(&mut tok, ADMIN, ALICE, U256::from(40u64), MEMO).unwrap();
+
+        assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
+        assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(60u64));
+        assert_eq!(
+            event_sigs(&tok),
+            vec![
+                IB20::Transfer::SIGNATURE_HASH,
+                IB20::Memo::SIGNATURE_HASH,
+                IB20::BurnedBlocked::SIGNATURE_HASH,
+            ]
+        );
+    }
+
+    #[test]
+    fn burn_blocked_with_memo_reverts_when_account_not_seizable() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100u64));
+        grant(&mut tok, B20TokenRole::BurnBlocked.id(), ADMIN);
+        let err = LOGIC
+            .burn_blocked_with_memo(&mut tok, ADMIN, ALICE, U256::from(1u64), MEMO)
+            .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE }));
+    }
+
+    #[test]
+    fn burn_blocked_with_memo_reverts_when_seize_paused() {
+        let mut tok = token();
+        make_seizable(&mut tok);
+        LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::SEIZE], true).unwrap();
+        let err = LOGIC
+            .burn_blocked_with_memo(&mut tok, ADMIN, ALICE, U256::from(1u64), MEMO)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::SEIZE
+            })
+        );
     }
 
     // --- pause ---

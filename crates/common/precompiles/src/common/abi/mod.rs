@@ -1,16 +1,17 @@
 //! Versioned wire (ABI) surfaces for the shared `IB20` interface, one per hardfork that moved them.
 //!
 //! `IB20` is shared by the asset and stablecoin B-20 precompiles and is unversioned in Solidity,
-//! but the wire it accepts need not be frozen forever: a hardfork may widen a `sol!` enum or add
-//! selectors. A widened enum is decoded *before* version dispatch, so — unlike a brand-new selector,
-//! which a caller cannot dial until a surface declares it — a new enum discriminant would otherwise
-//! decode against the canonical surface at every historical fork. Freezing the surface each fork
-//! shipped, and decoding calldata against the surface active at the block's fork, keeps historical
-//! behavior byte-for-byte stable.
+//! but the wire it accepts is not: Cobalt widened `PausableFeature` with a `SEIZE` variant and
+//! added the seize functions/getters. Unlike a new selector — which a caller cannot dial before the
+//! surface declares it — a widened `sol!` enum is decoded *before* version dispatch, so at Beryl a
+//! `pause`/`unpause`/`isPaused` carrying the `SEIZE` discriminant would silently decode against the
+//! canonical surface and diverge from the frozen v1 behavior. Freezing the Beryl surface here and
+//! decoding pre-Cobalt calldata against it closes that gap, the same way the selector gate closes it
+//! for the seize functions.
 //!
 //! The latest surface is always named `IB20` in its `vN` module, then re-exported here as both
-//! [`IB20`] (canonical) and the highest `IB20VN`. Older forks keep the same `IB20` Rust name inside
-//! their module so truncated-calldata revert bytes stay stable, and are re-exported as [`IB20V1`].
+//! [`IB20`] (canonical) and [`IB20V2`]. Older forks keep the same `IB20` Rust name inside their
+//! module so truncated-calldata revert bytes stay stable, and are re-exported as [`IB20V1`].
 //!
 //! Both surfaces are reached only through [`B20Abi`], selected per version by the asset/stablecoin
 //! version resolvers (`AssetVersion::abi` / `StablecoinVersion::abi`).
@@ -43,6 +44,7 @@ impl IB20::IB20Calls {
             Self::MINT_ROLE(_) => "precompile-b20-MINT_ROLE",
             Self::BURN_ROLE(_) => "precompile-b20-BURN_ROLE",
             Self::BURN_BLOCKED_ROLE(_) => "precompile-b20-BURN_BLOCKED_ROLE",
+            Self::TRANSFER_FROM_SEIZABLE_ROLE(_) => "precompile-b20-TRANSFER_FROM_SEIZABLE_ROLE",
             Self::PAUSE_ROLE(_) => "precompile-b20-PAUSE_ROLE",
             Self::UNPAUSE_ROLE(_) => "precompile-b20-UNPAUSE_ROLE",
             Self::METADATA_ROLE(_) => "precompile-b20-METADATA_ROLE",
@@ -50,6 +52,7 @@ impl IB20::IB20Calls {
             Self::TRANSFER_RECEIVER_POLICY(_) => "precompile-b20-TRANSFER_RECEIVER_POLICY",
             Self::TRANSFER_EXECUTOR_POLICY(_) => "precompile-b20-TRANSFER_EXECUTOR_POLICY",
             Self::MINT_RECEIVER_POLICY(_) => "precompile-b20-MINT_RECEIVER_POLICY",
+            Self::SEIZABLE_ACCOUNT_POLICY(_) => "precompile-b20-SEIZABLE_ACCOUNT_POLICY",
             Self::hasRole(_) => "precompile-b20-hasRole",
             Self::getRoleAdmin(_) => "precompile-b20-getRoleAdmin",
             Self::pausedFeatures(_) => "precompile-b20-pausedFeatures",
@@ -67,6 +70,8 @@ impl IB20::IB20Calls {
             Self::burn(_) => "precompile-b20-burn",
             Self::burnWithMemo(_) => "precompile-b20-burnWithMemo",
             Self::burnBlocked(_) => "precompile-b20-burnBlocked",
+            Self::burnBlockedWithMemo(_) => "precompile-b20-burnBlockedWithMemo",
+            Self::transferFromSeizableWithMemo(_) => "precompile-b20-transferFromSeizableWithMemo",
             Self::pause(_) => "precompile-b20-pause",
             Self::unpause(_) => "precompile-b20-unpause",
             Self::updateSupplyCap(_) => "precompile-b20-updateSupplyCap",
@@ -88,9 +93,9 @@ impl IB20::IB20Calls {
 /// [`AssetVersion::abi`](crate::AssetVersion) / [`StablecoinVersion::abi`](crate::StablecoinVersion).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum B20Abi {
-    /// Earlier frozen wire surface.
+    /// Wire surface frozen at Beryl (no seize surface; `PausableFeature` has three variants).
     V1,
-    /// Canonical (current) wire surface.
+    /// Wire surface activated at Cobalt (adds the seize surface and the `SEIZE` pause feature).
     V2,
 }
 
@@ -104,8 +109,9 @@ impl B20Abi {
     }
 
     /// Validates `calldata` against this wire surface via alloy's `abi_decode_validate`, discarding
-    /// the decoded call. Decoding against the frozen surface is what keeps an enum discriminant a
-    /// later fork added from being accepted at an earlier fork.
+    /// the decoded call. This is where the frozen V1 surface rejects the `SEIZE` discriminant: its
+    /// `PausableFeature` has no index 3, so the enum type check fails and the call reverts with
+    /// `AbiDecodeFailed` exactly as it did before Cobalt.
     pub fn abi_decode_validate(self, calldata: &[u8], selector: [u8; 4]) -> Result<()> {
         match self {
             Self::V1 => IB20V1::IB20Calls::abi_decode_validate(calldata).map(|_| ()),
@@ -119,9 +125,10 @@ impl B20Abi {
 
     /// Decodes `calldata` into a routable canonical call, gated on this wire surface.
     ///
-    /// A selector absent from this surface returns `UnknownFunctionSelector`; a present selector is
-    /// validated against the frozen surface first and only then re-decoded against the canonical
-    /// surface so the caller matches on one call type across versions.
+    /// A selector absent from this surface (the seize selectors at V1) returns
+    /// `UnknownFunctionSelector`; a present selector is validated against the frozen surface first
+    /// (rejecting e.g. the `SEIZE` discriminant at V1) and only then re-decoded against the
+    /// canonical surface so the caller matches on one call type across versions.
     pub fn decode(self, calldata: &[u8]) -> Result<IB20::IB20Calls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
@@ -139,10 +146,13 @@ impl B20Abi {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256};
-    use alloy_sol_types::SolInterface;
+    use alloc::vec::Vec;
 
-    use super::{IB20, IB20V1, IB20V2};
+    use alloy_primitives::{Address, U256};
+    use alloy_sol_types::{SolCall, SolInterface};
+    use base_precompile_storage::BasePrecompileError;
+
+    use super::{B20Abi, IB20, IB20V1, IB20V2};
 
     #[test]
     fn b20_call_labels_are_stable() {
@@ -162,7 +172,7 @@ mod tests {
 
     /// `SolInterface::NAME` lands in consensus data: the short-calldata branch of
     /// `abi_decode_validate` builds its error from it, and `AbiDecodeFailed` puts that string on the
-    /// wire. Every frozen surface must keep the `IB20` Rust name.
+    /// wire. Both frozen surfaces must keep the `IB20` Rust name.
     #[test]
     fn surface_interface_names_are_frozen() {
         assert_eq!(IB20V1::IB20Calls::NAME, "IB20Calls");
@@ -175,5 +185,62 @@ mod tests {
     #[test]
     fn surfaces_share_a_minimum_calldata_length() {
         assert_eq!(IB20V1::IB20Calls::MIN_DATA_LENGTH, IB20V2::IB20Calls::MIN_DATA_LENGTH);
+    }
+
+    /// The dispatcher re-decodes against the canonical surface after a frozen surface accepts, so
+    /// every V1 selector must exist on canonical. The difference is exactly the seize surface Cobalt
+    /// introduced.
+    #[test]
+    fn v1_selectors_are_a_subset_of_v2() {
+        for selector in IB20V1::IB20Calls::selectors() {
+            assert!(
+                B20Abi::V2.valid_selector(selector),
+                "V1 selector {selector:?} missing from the V2 surface"
+            );
+        }
+
+        let added: Vec<[u8; 4]> = IB20V2::IB20Calls::selectors()
+            .filter(|selector| !B20Abi::V1.valid_selector(*selector))
+            .collect();
+        assert_eq!(added.len(), 4);
+        assert!(added.contains(&IB20::burnBlockedWithMemoCall::SELECTOR));
+        assert!(added.contains(&IB20::transferFromSeizableWithMemoCall::SELECTOR));
+        assert!(added.contains(&IB20::TRANSFER_FROM_SEIZABLE_ROLECall::SELECTOR));
+        assert!(added.contains(&IB20::SEIZABLE_ACCOUNT_POLICYCall::SELECTOR));
+    }
+
+    /// The seize surface was not dialable at Beryl, so the V1 surface must not know its selectors.
+    /// This is what replaces a hand-written fork gate in dispatch.
+    #[test]
+    fn v1_surface_rejects_seize_selectors() {
+        for selector in [
+            IB20::burnBlockedWithMemoCall::SELECTOR,
+            IB20::transferFromSeizableWithMemoCall::SELECTOR,
+            IB20::TRANSFER_FROM_SEIZABLE_ROLECall::SELECTOR,
+            IB20::SEIZABLE_ACCOUNT_POLICYCall::SELECTOR,
+        ] {
+            assert!(!B20Abi::V1.valid_selector(selector));
+            assert!(B20Abi::V2.valid_selector(selector));
+        }
+    }
+
+    /// The bug this module fixes. `pause`/`unpause`/`isPaused` keep their selectors across the
+    /// Cobalt widening, so only decoding against Beryl's own surface rejects the `SEIZE`
+    /// discriminant. At V1 it must fail decode; at V2 it decodes to the `SEIZE` feature.
+    #[test]
+    fn v1_rejects_seize_discriminant_in_pause_path() {
+        let is_paused = IB20::isPausedCall { feature: IB20::PausableFeature::SEIZE }.abi_encode();
+        let pause =
+            IB20::pauseCall { features: alloc::vec![IB20::PausableFeature::SEIZE] }.abi_encode();
+
+        for calldata in [is_paused, pause] {
+            // V1 rejects the discriminant at decode.
+            assert!(matches!(
+                B20Abi::V1.decode(&calldata),
+                Err(BasePrecompileError::AbiDecodeFailed { .. })
+            ));
+            // V2 accepts it and yields a routable canonical call.
+            assert!(B20Abi::V2.decode(&calldata).is_ok());
+        }
     }
 }

@@ -135,8 +135,12 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             });
         }
 
-        // Inherited IB20 selectors, decoded against the wire surface frozen for this version so
-        // historical forks see exactly the surface they shipped with.
+        // Fall through to inherited IB20 selectors, decoded against the wire surface frozen for this
+        // version. The seize surface (`transferFromSeizableWithMemo`, `burnBlockedWithMemo`, their
+        // getters) and the `SEIZE` pause feature arrived at Cobalt with `AssetV2`. At an earlier
+        // version the frozen surface neither declares those selectors (so they stay
+        // `UnknownFunctionSelector`) nor accepts the `SEIZE` discriminant in the pause path (so it
+        // fails the enum type check with `AbiDecodeFailed`) — byte-for-byte as before Cobalt.
         let call = version.abi().decode(calldata)?;
         let label = call.as_label();
 
@@ -169,6 +173,9 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
             C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
             C::BURN_BLOCKED_ROLE(_) => B20TokenRole::BurnBlocked.id().abi_encode().into(),
+            C::TRANSFER_FROM_SEIZABLE_ROLE(_) => {
+                B20TokenRole::TransferFromSeizable.id().abi_encode().into()
+            }
             C::PAUSE_ROLE(_) => B20TokenRole::Pause.id().abi_encode().into(),
             C::UNPAUSE_ROLE(_) => B20TokenRole::Unpause.id().abi_encode().into(),
             C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
@@ -182,6 +189,9 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 B20PolicyType::TransferExecutor.id().abi_encode().into()
             }
             C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
+            C::SEIZABLE_ACCOUNT_POLICY(_) => {
+                B20PolicyType::SeizableAccount.id().abi_encode().into()
+            }
 
             // --- Role reads ---
             C::hasRole(c) => logic.has_role(self, c.role, c.account)?.abi_encode().into(),
@@ -263,6 +273,16 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             C::burnBlocked(c) => {
                 logic.burn_blocked(self, caller, c.from, c.amount, privileged)?;
                 Bytes::new()
+            }
+            C::burnBlockedWithMemo(c) => {
+                logic.burn_blocked_with_memo(self, caller, c.from, c.amount, c.memo)?;
+                Bytes::new()
+            }
+            C::transferFromSeizableWithMemo(c) => {
+                logic.transfer_from_seizable_with_memo(
+                    self, caller, c.from, c.to, c.amount, c.memo,
+                )?;
+                true.abi_encode().into()
             }
 
             // --- Pause ---

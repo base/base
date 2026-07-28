@@ -24,12 +24,12 @@
 //!    --test b20_asset_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
 use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
-use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
+use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     Asset, AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
     B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, FakePolicyAccounting, IB20,
-    IB20Asset, NoopPrecompileCallObserver, PolicyVersion, TokenAccounting,
+    IB20Asset, IB20V1, NoopPrecompileCallObserver, PolicyVersion, TokenAccounting,
 };
 use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 
@@ -268,6 +268,60 @@ fn golden_v2_selectors_unknown_at_v1() {
         let selector: [u8; 4] = calldata[..4].try_into().unwrap();
         let err = op(&mut s, ALICE, FakePolicyAccounting::new(), calldata).unwrap_err();
         assert_eq!(err, BasePrecompileError::UnknownFunctionSelector(selector));
+    }
+}
+
+/// The seize surface (shared `IB20` selectors) was introduced at V2 (Cobalt); on the frozen V1
+/// (Beryl) these selectors are version-gated and stay unknown.
+#[test]
+fn golden_seize_selectors_unknown_at_v1() {
+    let mut s = fresh();
+    let calls: Vec<Vec<u8>> = vec![
+        IB20::TRANSFER_FROM_SEIZABLE_ROLECall {}.abi_encode(),
+        IB20::SEIZABLE_ACCOUNT_POLICYCall {}.abi_encode(),
+        IB20::burnBlockedWithMemoCall { from: ALICE, amount: u(1), memo: B256::ZERO }.abi_encode(),
+        IB20::transferFromSeizableWithMemoCall {
+            from: ALICE,
+            to: BOB,
+            amount: u(1),
+            memo: B256::ZERO,
+        }
+        .abi_encode(),
+    ];
+    for calldata in calls {
+        let selector: [u8; 4] = calldata[..4].try_into().unwrap();
+        let err = op(&mut s, ALICE, FakePolicyAccounting::new(), calldata).unwrap_err();
+        assert_eq!(err, BasePrecompileError::UnknownFunctionSelector(selector));
+    }
+}
+
+/// Recomputes the frozen V1 revert for `calldata` by decoding it against the pre-seize `IB20`
+/// surface (`IB20V1`). The `SEIZE` pause discriminant (index 3) is out of range there, so the enum
+/// type check fails and the call reverts with `AbiDecodeFailed` — the exact pre-Cobalt behavior.
+fn frozen_v1_seize_discriminant_error(calldata: &[u8]) -> BasePrecompileError {
+    let selector: [u8; 4] = calldata[..4].try_into().unwrap();
+    let Err(error) = IB20V1::IB20Calls::abi_decode_validate(calldata) else {
+        panic!("pre-seize IB20 surface must reject the SEIZE discriminant");
+    };
+    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
+}
+
+/// The bug this change fixes. `pause`/`unpause`/`isPaused` keep their selectors across the Cobalt
+/// widening of `PausableFeature`, so a `SEIZE` discriminant (index 3) is only rejected by decoding
+/// against Beryl's own surface. At V1 it must fail ABI decoding, exactly as it did before the shared
+/// enum grew — not decode to a live feature and mutate state.
+#[test]
+fn golden_pause_path_rejects_seize_discriminant_at_v1() {
+    let calls: Vec<Vec<u8>> = vec![
+        IB20::pauseCall { features: vec![IB20::PausableFeature::SEIZE] }.abi_encode(),
+        IB20::unpauseCall { features: vec![IB20::PausableFeature::SEIZE] }.abi_encode(),
+        IB20::isPausedCall { feature: IB20::PausableFeature::SEIZE }.abi_encode(),
+    ];
+    for calldata in calls {
+        let mut s = fresh();
+        let err = op(&mut s, ALICE, FakePolicyAccounting::new(), calldata.clone()).unwrap_err();
+        assert_eq!(err, frozen_v1_seize_discriminant_error(&calldata));
+        assert!(matches!(err, BasePrecompileError::AbiDecodeFailed { .. }));
     }
 }
 
@@ -2661,16 +2715,25 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_burn_blocked_unprivileged_requires_role,
         ]),
 
+        // Seize surface (shared IB20 selectors): introduced at V2 (Cobalt). On the frozen V1
+        // (Beryl) these are version-gated and stay unknown.
+        C::burnBlockedWithMemo(_)
+        | C::transferFromSeizableWithMemo(_)
+        | C::TRANSFER_FROM_SEIZABLE_ROLE(_)
+        | C::SEIZABLE_ACCOUNT_POLICY(_) => covered(&[golden_seize_selectors_unknown_at_v1]),
+
         // pause / config / roles / policy / permit
         C::pause(_) => covered(&[
             golden_pause_sets_feature_bit,
             golden_pause_reverts_empty_feature_set,
             golden_pause_unprivileged_requires_role,
+            golden_pause_path_rejects_seize_discriminant_at_v1,
         ]),
         C::unpause(_) => covered(&[
             golden_unpause_clears_feature_bit,
             golden_unpause_reverts_empty_feature_set,
             golden_unpause_unprivileged_requires_role,
+            golden_pause_path_rejects_seize_discriminant_at_v1,
         ]),
         C::updateSupplyCap(_) => covered(&[
             golden_update_supply_cap,
@@ -2724,9 +2787,10 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         ]),
 
         // computed reads
-        C::isPaused(_) | C::pausedFeatures(_) => {
-            covered(&[golden_read_is_paused_and_paused_features])
-        }
+        C::isPaused(_) | C::pausedFeatures(_) => covered(&[
+            golden_read_is_paused_and_paused_features,
+            golden_pause_path_rejects_seize_discriminant_at_v1,
+        ]),
         C::policyId(_) => covered(&[golden_read_policy_id_and_unsupported_scope]),
         C::DOMAIN_SEPARATOR(_) => covered(&[golden_read_domain_separator]),
         C::eip712Domain(_) => covered(&[golden_read_eip712_domain]),
