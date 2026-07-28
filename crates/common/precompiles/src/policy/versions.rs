@@ -42,7 +42,7 @@ impl PolicyVersion {
             Self::V2 => &V2,
         }
     }
-    // Returns the policy abi for the version
+    /// Returns the wire (ABI) surface frozen for this version.
     pub const fn abi(self) -> PolicyAbi {
         match self {
             Self::V1 => PolicyAbi::V1,
@@ -54,9 +54,9 @@ impl PolicyVersion {
 /// A frozen wire (ABI) surface of the `PolicyRegistry` precompile. Reached only through [`PolicyVersion::abi`]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PolicyAbi {
-    // Beryl
+    /// Wire surface activated at Beryl.
     V1,
-    // Cobalt
+    /// Wire surface activated at Cobalt.
     V2,
 }
 
@@ -69,7 +69,8 @@ impl PolicyAbi {
         }
     }
 
-    /// Validates `calldata` against this wire surface, discarding the decoded call. using alloy's abi_decode_validate function
+    /// Validates `calldata` against this wire surface via alloy's `abi_decode_validate`, discarding
+    /// the decoded call.
     pub fn abi_decode_validate(self, calldata: &[u8], selector: [u8; 4]) -> Result<()> {
         match self {
             Self::V1 => {
@@ -85,7 +86,7 @@ impl PolicyAbi {
         })
     }
 
-    /// Decodes `calldata` into a routable call, gated on this wire surface. using alloy's abi_decode function
+    /// Decodes `calldata` into a routable call via alloy's `abi_decode`, gated on this wire surface.
     pub fn decode(self, calldata: &[u8]) -> Result<IPolicyRegistry::IPolicyRegistryCalls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
