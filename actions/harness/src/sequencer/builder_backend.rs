@@ -189,6 +189,12 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
             .update_forkchoice(parent, parent, Some(builder_attrs))
             .await
             .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
+        if !fcu.payload_status.is_valid() {
+            return Err(EngineClientError::ResponseError(format!(
+                "engine rejected build-block forkchoice: {:?}",
+                fcu.payload_status
+            )));
+        }
         fcu.payload_id
             .ok_or_else(|| EngineClientError::ResponseError("no payload id returned".into()))
     }

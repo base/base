@@ -1,6 +1,9 @@
 //! [`TxManager`] adapter that routes submissions through [`L1Miner`].
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use alloy_consensus::{
     SignableTransaction, TxEip1559, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope,
@@ -143,21 +146,25 @@ impl L1MinerTxManager {
         self.inner.lock().unwrap().pending.len()
     }
 
-    /// Wait until the driver has queued at least one pending submission.
+    /// Wait until the driver queues a pending submission.
     ///
     /// Unlike yielding to the scheduler, this provides a deterministic handoff
     /// between the background [`BatchDriver`] and the harness before an L1 block
-    /// is mined.
+    /// is mined. Returns `false` on timeout.
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    pub async fn wait_for_pending(&self) {
-        loop {
-            let notified = self.pending_notify.notified();
-            if self.pending_count() > 0 {
-                return;
+    pub async fn wait_for_pending(&self, timeout: Duration) -> bool {
+        tokio::time::timeout(timeout, async {
+            loop {
+                let notified = self.pending_notify.notified();
+                if self.pending_count() > 0 {
+                    return;
+                }
+                notified.await;
             }
-            notified.await;
-        }
+        })
+        .await
+        .is_ok()
     }
 
     /// Returns the number of submitted transactions waiting for inclusion receipts.

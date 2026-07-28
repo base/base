@@ -71,6 +71,12 @@ pub enum BatcherError {
     /// The L2 source was exhausted before any blocks could be batched.
     #[error("no L2 blocks available to batch")]
     NoBlocks,
+    /// A new batch cycle was started before prior submissions were mined.
+    #[error("cannot start a batch cycle with outstanding frame submissions")]
+    OutstandingSubmissions,
+    /// The driver did not queue a frame submission before the harness timeout.
+    #[error("timed out waiting for batch frame submission")]
+    SubmissionTimeout,
 }
 
 /// Batcher actor that drives a persistent [`BatchDriver`] through [`L1Miner`].
@@ -233,6 +239,9 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// [`encode_only`]: Batcher::encode_only
     async fn try_encode_only(&mut self) -> Result<(), BatcherError> {
+        if self.pending_count() > 0 || self.staged_count() > 0 {
+            return Err(BatcherError::OutstandingSubmissions);
+        }
         let mut block_count = 0u64;
         while let Some(block) = self.l2_source.next_block() {
             self.block_tx.send(L2BlockEvent::Block(Box::new(block))).expect("driver task alive");
@@ -242,7 +251,9 @@ impl<S: L2BlockProvider> Batcher<S> {
             return Err(BatcherError::NoBlocks);
         }
         self.block_tx.send(L2BlockEvent::Flush).expect("driver task alive");
-        self.tx_manager.wait_for_pending().await;
+        if !self.tx_manager.wait_for_pending(Duration::from_secs(10)).await {
+            return Err(BatcherError::SubmissionTimeout);
+        }
         Ok(())
     }
 
