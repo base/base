@@ -354,7 +354,7 @@ const fn default_aerodrome_tick_spacing() -> i32 {
 }
 
 const fn default_funding_batch_size() -> u32 {
-    16
+    8
 }
 
 fn default_swap_token_amount() -> String {
