@@ -44,7 +44,7 @@ pub use actors::{
     RecoveryModeGuard, ResetRequest, RpcActor, RpcActorError, RpcContext, ScheduledTicker,
     SealState, SealStepError, SealStepOutcome, SequencerActor, SequencerActorError,
     SequencerAdminQuery, SequencerConfig, SequencerEngineClient, ShadowCycle,
-    ShadowReconciliationGate, ShadowReconciliationTask, UnsafePayloadGossipClient,
+    ShadowReconciliationGate, ShadowReconciliationTask, ShadowResetPolicy, UnsafePayloadGossipClient,
     UnsafePayloadGossipClientError, UnsealedPayloadHandle, UpgradeSignalMetricsActor,
     UpgradeSignalNodeConfig,
 };

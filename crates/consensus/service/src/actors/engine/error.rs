@@ -21,7 +21,7 @@ pub enum EngineError {
     /// A critical engine task error was already forwarded to the request caller.
     #[error("critical engine task error: {0}")]
     CriticalEngineTask(String),
-    /// An automatic processor reset invalidated shadow reconciliation state.
+    /// An uncoordinated processor reset orphaned an in-flight private shadow branch.
     #[error(
         "engine performed an internal reset while shadow sequencing; terminating to avoid a stale reconciliation gate"
     )]

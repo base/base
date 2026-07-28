@@ -27,7 +27,9 @@ pub use engine_request_processor::{
 };
 
 mod shadow_reconciliation_gate;
-pub use shadow_reconciliation_gate::{CanonicalReconciliationInputs, ShadowReconciliationGate};
+pub use shadow_reconciliation_gate::{
+    CanonicalReconciliationInputs, ShadowReconciliationGate, ShadowResetPolicy,
+};
 
 mod rpc_request_processor;
 pub use rpc_request_processor::EngineRpcProcessor;

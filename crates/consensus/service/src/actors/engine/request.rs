@@ -120,7 +120,9 @@ pub struct ResetRequest {
     /// response will be sent to this channel, if `Some`.
     pub result_tx: mpsc::Sender<EngineClientResult<()>>,
     /// Whether the caller coordinates rebuilding its shadow-cycle state around this reset.
-    /// Uncoordinated successful resets terminate an active shadow handler after responding.
+    /// An uncoordinated successful reset terminates an active shadow handler only when a private
+    /// shadow branch was in flight (unsafe head diverged from the gate anchor); a reset with no
+    /// private branch outstanding (e.g. the derivation pipeline's cold-start reset) is survivable.
     pub shadow_cycle_coordinated: bool,
 }
 

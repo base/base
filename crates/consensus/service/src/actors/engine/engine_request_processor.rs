@@ -23,6 +23,7 @@ use crate::{
     NoopCheckpointWriter, ResetRequest,
     actors::engine::{
         CanonicalReconciliationInputs, ReconcileShadowRequest, ShadowReconciliationGate,
+        ShadowResetPolicy,
     },
 };
 
@@ -1059,6 +1060,10 @@ where
 
                         warn!(target: "engine", "Received reset request");
 
+                        let private_branch_in_flight = self.shadow_gate.as_ref().is_some_and(|gate| {
+                            self.processor.engine.state().sync_state.unsafe_head() != gate.anchor()
+                        });
+
                         let reset_res = self.processor.reset_engine_state().await;
                         if let Ok(safe_head) = &reset_res {
                             let anchor = self.processor.engine.state().sync_state.unsafe_head();
@@ -1099,10 +1104,12 @@ where
                             // return the error.
                             reset_res?;
                         }
-                        if reset_succeeded
-                            && self.shadow_gate.is_some()
-                            && !shadow_cycle_coordinated
-                        {
+                        if ShadowResetPolicy::is_fatal_reset(
+                            reset_succeeded,
+                            self.shadow_gate.is_some(),
+                            shadow_cycle_coordinated,
+                            private_branch_in_flight,
+                        ) {
                             return Err(EngineError::ShadowInternalReset);
                         }
                     }
@@ -1696,6 +1703,80 @@ mod tests {
             !matches!(result, Err(super::EngineError::ShadowInternalReset)),
             "shadow node must survive the initial EL-sync reset, got: {result:?}"
         );
+    }
+
+    /// Regression test for the shadow-sequencer cold-start crash on the explicit `ResetRequest`
+    /// path: an uncoordinated successful reset whose engine unsafe head still equals the gate
+    /// anchor (no private shadow branch in flight, e.g. the derivation pipeline's mandatory
+    /// cold-start reset) must NOT terminate with [`EngineError::ShadowInternalReset`].
+    ///
+    /// Before the fix, any uncoordinated reset on a shadow sequencer was fatal, so the node
+    /// crash-looped on every startup. The fix gates the fatal return on the unsafe head having
+    /// diverged from the anchor.
+    #[tokio::test]
+    async fn shadow_gate_survives_uncoordinated_reset_without_private_branch() {
+        let head = test_block_info(100);
+
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        mock_derivation.expect_send_signal().returning(|_| Ok(()));
+
+        let mut mock_conductor = MockConductor::new();
+        mock_conductor.expect_leader().returning(|| Ok(false));
+
+        let (state_tx, _state_rx) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Sequencer,
+                unsafe_head_tx: Some(unsafe_head_tx),
+                conductor: Some(Arc::new(mock_conductor)),
+                sequencer_stopped: false,
+            },
+        );
+
+        // A present gate marks this node as a shadow sequencer, arming the fatal-reset guard.
+        // Gate anchor equals the default unsafe head, so no private branch is in flight. The
+        // exhaustive fatal-reset decision matrix lives in ShadowResetPolicy's unit tests; this
+        // integration case guards the wired call path: an armed-gate sequencer that observes an
+        // uncoordinated reset must not surface EngineError::ShadowInternalReset.
+        let gate = super::ShadowReconciliationGate::new(L2BlockInfo::default());
+
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle = EngineRequestHandler::new(processor, Some(gate)).start(req_rx);
+
+        let (result_tx, result_rx) = mpsc::channel(1);
+        req_tx
+            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                result_tx,
+                shadow_cycle_coordinated: false,
+            })))
+            .await
+            .expect("failed to send reset request");
+
+        drop(req_tx);
+        let result = handle.await.expect("engine task panicked");
+        assert!(
+            !matches!(result, Err(super::EngineError::ShadowInternalReset)),
+            "cold-start reset with no private branch must be survivable, got: {result:?}"
+        );
+        let _ = result_rx;
     }
 
     /// Regression test: demonstrates that a validator node (`unsafe_head_tx` = None) was

@@ -20,6 +20,7 @@ pub use engine::{
     EngineProcessor, EngineProcessorOptions, EngineRequestHandler, EngineRequestReceiver,
     EngineRpcProcessor, EngineRpcRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
     QueuedEngineDerivationClient, ReconcileShadowRequest, ResetRequest, ShadowReconciliationGate,
+    ShadowResetPolicy,
 };
 
 mod rpc;

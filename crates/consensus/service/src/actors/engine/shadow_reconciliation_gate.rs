@@ -154,6 +154,31 @@ impl ShadowReconciliationGate {
         self.clear();
         self.anchor = anchor;
     }
+
+    /// The current canonical anchor. Equals the engine's unsafe head unless a private shadow
+    /// branch is in flight.
+    pub const fn anchor(&self) -> L2BlockInfo {
+        self.anchor
+    }
+}
+
+/// Policy for deciding whether a completed engine reset invalidates shadow reconciliation state.
+#[derive(Debug)]
+pub struct ShadowResetPolicy;
+
+impl ShadowResetPolicy {
+    /// A completed engine reset is fatal for a shadow sequencer only when it actually happened, a
+    /// shadow gate is armed, the cycle was not coordinated, and a private branch was outstanding
+    /// (the engine unsafe head had diverged from the gate anchor). A reset with no private branch
+    /// in flight — e.g. the derivation pipeline's mandatory cold-start reset — is survivable.
+    pub const fn is_fatal_reset(
+        reset_succeeded: bool,
+        shadow_present: bool,
+        coordinated: bool,
+        private_branch_in_flight: bool,
+    ) -> bool {
+        reset_succeeded && shadow_present && !coordinated && private_branch_in_flight
+    }
 }
 
 #[cfg(test)]
@@ -164,7 +189,7 @@ mod tests {
     use base_consensus_engine::ConsolidateInput;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
-    use super::ShadowReconciliationGate;
+    use super::{ShadowReconciliationGate, ShadowResetPolicy};
     use crate::EngineClientError;
 
     fn head(number: u64, hash: B256) -> L2BlockInfo {
@@ -282,5 +307,57 @@ mod tests {
         assert!(gate.payloads.is_empty());
         assert_eq!(gate.anchor, anchor);
         assert!(!gate.faulted);
+    }
+
+    #[test]
+    fn anchor_accessor_tracks_constructor_commit_and_reanchor() {
+        let genesis = head(10, B256::with_last_byte(10));
+        let mut gate = ShadowReconciliationGate::new(genesis);
+        assert_eq!(gate.anchor(), genesis);
+
+        let committed = head(11, B256::with_last_byte(11));
+        gate.commit(committed);
+        assert_eq!(gate.anchor(), committed);
+
+        let reanchored = head(20, B256::with_last_byte(20));
+        gate.reanchor(reanchored);
+        assert_eq!(gate.anchor(), reanchored);
+    }
+
+    #[test]
+    fn fatal_reset_only_when_uncoordinated_private_branch_after_successful_reset() {
+        for reset_succeeded in [false, true] {
+            for shadow_present in [false, true] {
+                for coordinated in [false, true] {
+                    for private_branch_in_flight in [false, true] {
+                        let expected = reset_succeeded
+                            && shadow_present
+                            && !coordinated
+                            && private_branch_in_flight;
+                        assert_eq!(
+                            ShadowResetPolicy::is_fatal_reset(
+                                reset_succeeded,
+                                shadow_present,
+                                coordinated,
+                                private_branch_in_flight,
+                            ),
+                            expected,
+                            "reset_succeeded={reset_succeeded} shadow_present={shadow_present} \
+                             coordinated={coordinated} private_branch={private_branch_in_flight}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cold_start_reset_without_private_branch_is_survivable() {
+        assert!(!ShadowResetPolicy::is_fatal_reset(true, true, false, false));
+    }
+
+    #[test]
+    fn uncoordinated_reset_with_private_branch_is_fatal() {
+        assert!(ShadowResetPolicy::is_fatal_reset(true, true, false, true));
     }
 }
