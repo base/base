@@ -14,7 +14,7 @@ use base_tx_manager::{
     BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
     TxManagerResult,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tracing::info;
 
 use crate::{L1Block, L1Miner};
@@ -97,6 +97,7 @@ pub struct Inner {
 #[derive(Debug, Clone)]
 pub struct L1MinerTxManager {
     inner: Arc<Mutex<Inner>>,
+    pending_notify: Arc<Notify>,
     inbox_address: Address,
     signer: PrivateKeySigner,
     chain_id: u64,
@@ -114,6 +115,7 @@ impl L1MinerTxManager {
     pub fn new(signer: PrivateKeySigner, inbox_address: Address, chain_id: u64) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner::default())),
+            pending_notify: Arc::new(Notify::new()),
             inbox_address,
             signer,
             chain_id,
@@ -139,6 +141,23 @@ impl L1MinerTxManager {
     /// Returns the number of pending (not yet staged) submissions.
     pub fn pending_count(&self) -> usize {
         self.inner.lock().unwrap().pending.len()
+    }
+
+    /// Wait until the driver has queued at least one pending submission.
+    ///
+    /// Unlike yielding to the scheduler, this provides a deterministic handoff
+    /// between the background [`BatchDriver`] and the harness before an L1 block
+    /// is mined.
+    ///
+    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    pub async fn wait_for_pending(&self) {
+        loop {
+            let notified = self.pending_notify.notified();
+            if self.pending_count() > 0 {
+                return;
+            }
+            notified.await;
+        }
     }
 
     /// Returns the number of submitted transactions waiting for inclusion receipts.
@@ -434,6 +453,7 @@ impl TxManager for L1MinerTxManager {
         let (responder, rx) = oneshot::channel::<SendResponse>();
         let pending = Pending { envelope: signed.envelope, blobs: signed.blobs, responder };
         self.inner.lock().unwrap().pending.push(pending);
+        self.pending_notify.notify_one();
         SendHandle::new(rx)
     }
 

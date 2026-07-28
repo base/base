@@ -84,7 +84,7 @@ pub enum BatcherError {
 /// Each call to [`advance`] drives one complete batch cycle:
 /// 1. Drain the L2 source and forward each block to the driver via the channel.
 /// 2. Send a [`L2BlockEvent::Flush`] to force-close the current channel.
-/// 3. Yield to let the driver encode blocks, submit frames, and suspend.
+/// 3. Wait for the driver to encode blocks and queue the frame submissions.
 /// 4. Mine one L1 block via the shared [`L1MinerTxManager`], firing all
 ///    receipt oneshots and delivering an [`L1HeadEvent::NewHead`] to the driver.
 /// 5. Yield to let the driver confirm receipts and advance its L1 head.
@@ -211,9 +211,10 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Drain the L2 source and forward all blocks to the driver, then flush.
     ///
     /// Performs steps 1–3 of [`advance`] without mining: sends all L2 blocks,
-    /// sends [`L2BlockEvent::Flush`], and yields once so the driver encodes the
-    /// blocks and calls [`send_async`] for each submission. After this returns,
-    /// [`pending_count`] reflects how many frame transactions are waiting.
+    /// sends [`L2BlockEvent::Flush`], and waits until the driver encodes the
+    /// blocks and calls [`send_async`] to queue the frame submissions. After
+    /// this returns, [`pending_count`] reflects how many frame transactions are
+    /// waiting.
     ///
     /// # Panics
     ///
@@ -241,7 +242,7 @@ impl<S: L2BlockProvider> Batcher<S> {
             return Err(BatcherError::NoBlocks);
         }
         self.block_tx.send(L2BlockEvent::Flush).expect("driver task alive");
-        tokio::task::yield_now().await;
+        self.tx_manager.wait_for_pending().await;
         Ok(())
     }
 
