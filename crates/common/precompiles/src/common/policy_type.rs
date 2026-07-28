@@ -26,7 +26,7 @@ pub enum B20PolicyType {
     MintReceiver,
     /// Policy slot consulted against `from` by the seize operations. A `from` is seizable only when
     /// it is NOT authorized by this policy (mirroring the `burnBlocked` "blocked" semantics).
-    Seizable,
+    SeizableAccount,
 }
 
 impl B20PolicyType {
@@ -41,7 +41,7 @@ impl B20PolicyType {
         } else if id == MINT_RECEIVER_POLICY {
             Some(Self::MintReceiver)
         } else if id == SEIZABLE_ACCOUNT_POLICY {
-            Some(Self::Seizable)
+            Some(Self::SeizableAccount)
         } else {
             None
         }
@@ -54,7 +54,7 @@ impl B20PolicyType {
             Self::TransferReceiver => TRANSFER_RECEIVER_POLICY,
             Self::TransferExecutor => TRANSFER_EXECUTOR_POLICY,
             Self::MintReceiver => MINT_RECEIVER_POLICY,
-            Self::Seizable => SEIZABLE_ACCOUNT_POLICY,
+            Self::SeizableAccount => SEIZABLE_ACCOUNT_POLICY,
         }
     }
 }
@@ -73,15 +73,15 @@ mod tests {
         assert_eq!(B20PolicyType::TransferReceiver.id(), keccak256("TRANSFER_RECEIVER_POLICY"));
         assert_eq!(B20PolicyType::TransferExecutor.id(), keccak256("TRANSFER_EXECUTOR_POLICY"));
         assert_eq!(B20PolicyType::MintReceiver.id(), keccak256("MINT_RECEIVER_POLICY"));
-        assert_eq!(B20PolicyType::Seizable.id(), keccak256("SEIZABLE_ACCOUNT_POLICY"));
+        assert_eq!(B20PolicyType::SeizableAccount.id(), keccak256("SEIZABLE_ACCOUNT_POLICY"));
     }
 
     /// `from_id` is the inverse of `id`, including for the seizable scope.
     #[test]
     fn seizable_scope_round_trips() {
         assert_eq!(
-            B20PolicyType::from_id(B20PolicyType::Seizable.id()),
-            Some(B20PolicyType::Seizable)
+            B20PolicyType::from_id(B20PolicyType::SeizableAccount.id()),
+            Some(B20PolicyType::SeizableAccount)
         );
     }
 }
