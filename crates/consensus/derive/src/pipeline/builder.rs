@@ -3,6 +3,7 @@
 use alloc::sync::Arc;
 use core::fmt::Debug;
 
+use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
 use base_protocol::BlockInfo;
 
@@ -27,6 +28,7 @@ where
     builder: Option<B>,
     origin: Option<BlockInfo>,
     rollup_config: Option<Arc<RollupConfig>>,
+    da_batcher_sender_override: Option<Address>,
 }
 
 impl<B, P, T, D> Default for PipelineBuilder<B, P, T, D>
@@ -44,6 +46,7 @@ where
             builder: None,
             origin: None,
             rollup_config: None,
+            da_batcher_sender_override: None,
         }
     }
 }
@@ -96,6 +99,15 @@ where
         self
     }
 
+    /// Overrides the batcher sender used only to filter L1 data-availability transactions.
+    pub fn da_batcher_sender_override(
+        mut self,
+        da_batcher_sender_override: Option<Address>,
+    ) -> Self {
+        self.da_batcher_sender_override = da_batcher_sender_override;
+        self
+    }
+
     /// Builds a derivation pipeline with the [`PolledAttributesQueueStage`].
     pub fn build_polled(self) -> DerivationPipeline<PolledAttributesQueueStage<D, P, T, B>, T> {
         self.into()
@@ -124,7 +136,8 @@ where
         if let Some(system_config) = rollup_config.genesis.system_config {
             l1_traversal.system_config = system_config;
         }
-        let l1_retrieval = L1Retrieval::new(l1_traversal, dap_source);
+        let l1_retrieval = L1Retrieval::new(l1_traversal, dap_source)
+            .with_da_batcher_sender_override(builder.da_batcher_sender_override);
         let frame_queue = FrameQueue::new(l1_retrieval, Arc::clone(&rollup_config));
         let channel_provider = ChannelProvider::new(Arc::clone(&rollup_config), frame_queue);
         let channel_reader = ChannelReader::new(channel_provider, Arc::clone(&rollup_config));

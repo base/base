@@ -3,6 +3,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_genesis::ChainConfig;
+use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use alloy_transport::TransportResult;
 use base_common_genesis::RollupConfig;
@@ -57,6 +58,8 @@ pub struct L1ConfigBuilder {
     pub slot_duration_override: Option<u64>,
     /// Number of L1 blocks to keep distance from the L1 head for the verifier.
     pub verifier_l1_confs: u64,
+    /// Optional sender used only to filter L1 data-availability transactions.
+    pub da_batcher_sender_override: Option<Address>,
 }
 
 /// The [`RollupNodeBuilder`] is used to construct a [`RollupNode`] service.
@@ -211,6 +214,7 @@ impl RollupNodeBuilder {
             engine_provider: L1RpcProvider::new_http(self.l1_config_builder.rpc_url.clone()),
             finalized_poll_interval,
             verifier_l1_confs: self.l1_config_builder.verifier_l1_confs,
+            da_batcher_sender_override: self.l1_config_builder.da_batcher_sender_override,
         };
 
         let l2_provider_url = Self::derivation_l2_provider_url(self.engine_config.l2_url.clone());
@@ -294,6 +298,7 @@ mod tests {
             rpc_url: Url::parse("http://127.0.0.1:8545").unwrap(),
             slot_duration_override: None,
             verifier_l1_confs: 0,
+            da_batcher_sender_override: None,
         };
         let engine_config = EngineConfig {
             config: Arc::new(rollup_config.clone()),
