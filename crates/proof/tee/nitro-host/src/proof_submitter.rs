@@ -1,5 +1,6 @@
 //! Async proof submission task for prover-service worker delivery.
 
+use alloy_primitives::{Address, B256};
 use base_proof_primitives::ProofResult as NitroProofResult;
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{
@@ -11,12 +12,20 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::{NitroHostError, TeeSignerRecovery};
+
 /// Errors raised while preparing or submitting a generated proof.
 #[derive(Debug, Error)]
 pub enum ProofSubmitterError {
     /// Nitro proof submitter only submits TEE proof results.
     #[error("nitro proof submitter only accepts TEE proof results")]
     UnsupportedProofResult,
+    /// A TEE proof result carried no proposals to recover the signer from.
+    #[error("tee proof result contained no proposals")]
+    MissingProposals,
+    /// The enclave signer could not be recovered from the proof signature.
+    #[error(transparent)]
+    SignerRecovery(#[from] NitroHostError),
     /// Proof submission was cancelled before it started.
     #[error("proof submission cancelled before it started")]
     Cancelled,
@@ -31,15 +40,32 @@ pub struct ProofSubmitterRequest;
 
 impl ProofSubmitterRequest {
     /// Builds a worker proof submission request from a generated Nitro TEE proof.
+    ///
+    /// The enclave signer is recovered host-side from the first per-block
+    /// proposal's signature, using `proposer` and `tee_image_hash` from the
+    /// originating proof request to reconstruct the signed journal. This is the
+    /// exact key that signed the proof, so it cannot drift from a concurrent
+    /// enclave restart the way a separate signer query could.
+    ///
+    /// Relies on the invariant that a TEE proof always carries at least one
+    /// per-block proposal (the enclave rejects empty proposal sets); an empty
+    /// set yields [`ProofSubmitterError::MissingProposals`] rather than falling
+    /// back to the aggregate.
     pub fn from_tee_proof(
         session_id: String,
         lock_id: String,
         worker_id: String,
         proof: NitroProofResult,
+        proposer: Address,
+        tee_image_hash: B256,
     ) -> Result<WorkerSubmitProofRequest, ProofSubmitterError> {
         let NitroProofResult::Tee { aggregate_proposal, proposals } = proof else {
             return Err(ProofSubmitterError::UnsupportedProofResult);
         };
+
+        let signer_proposal = proposals.first().ok_or(ProofSubmitterError::MissingProposals)?;
+        let tee_signer =
+            TeeSignerRecovery::recover_from_proposal(signer_proposal, proposer, tee_image_hash)?;
 
         Ok(WorkerSubmitProofRequest {
             session_id,
@@ -49,6 +75,7 @@ impl ProofSubmitterRequest {
                 aggregate_proposal,
                 proposals,
                 tee_kind: TeeKind::AwsNitro,
+                tee_signer,
             }),
         })
     }
@@ -148,9 +175,11 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_primitives::{B256, Bytes};
+    use alloy_primitives::{Address, B256, Bytes, keccak256};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
     use async_trait::async_trait;
-    use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
+    use base_proof_primitives::{ProofJournal, ProofRequest as PrimitiveProofRequest, Proposal};
     use base_prover_service_protocol::{
         GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
         HeartbeatRequest, HeartbeatResponse, ProofJob, ProofJobStatus, ProofRequest,
@@ -255,22 +284,40 @@ mod tests {
         }
     }
 
-    fn proposal(block: u64) -> Proposal {
-        Proposal {
+    const PROPOSER: Address = Address::repeat_byte(0x22);
+    const TEE_IMAGE_HASH: B256 = B256::repeat_byte(0x33);
+
+    fn proposal(signer: &PrivateKeySigner, block: u64) -> Proposal {
+        let mut proposal = Proposal {
             output_root: B256::repeat_byte(1),
-            signature: Bytes::from(vec![0xab; 65]),
+            signature: Bytes::new(),
             l1_origin_hash: B256::repeat_byte(2),
             l1_origin_number: block.saturating_sub(1),
             l2_block_number: block,
             prev_output_root: B256::repeat_byte(3),
             config_hash: B256::repeat_byte(4),
-        }
+        };
+
+        let journal = ProofJournal {
+            proposer: PROPOSER,
+            l1_origin_hash: proposal.l1_origin_hash,
+            prev_output_root: proposal.prev_output_root,
+            starting_l2_block: block - 1,
+            output_root: proposal.output_root,
+            ending_l2_block: block,
+            intermediate_roots: Vec::new(),
+            config_hash: proposal.config_hash,
+            tee_image_hash: TEE_IMAGE_HASH,
+        };
+        let signature = signer.sign_hash_sync(&keccak256(journal.encode())).unwrap();
+        proposal.signature = Bytes::from(signature.as_rsy().to_vec());
+        proposal
     }
 
-    fn nitro_tee_proof() -> NitroProofResult {
+    fn nitro_tee_proof(signer: &PrivateKeySigner) -> NitroProofResult {
         NitroProofResult::Tee {
-            aggregate_proposal: proposal(10),
-            proposals: vec![proposal(8), proposal(9), proposal(10)],
+            aggregate_proposal: proposal(signer, 10),
+            proposals: vec![proposal(signer, 8), proposal(signer, 9), proposal(signer, 10)],
         }
     }
 
@@ -279,7 +326,9 @@ mod tests {
             "session-1".to_string(),
             "lock-1".to_string(),
             "worker-1".to_string(),
-            nitro_tee_proof(),
+            nitro_tee_proof(&PrivateKeySigner::random()),
+            PROPOSER,
+            TEE_IMAGE_HASH,
         )
         .expect("tee proof should build a submission request")
     }
@@ -319,8 +368,17 @@ mod tests {
     }
 
     #[test]
-    fn tee_proof_request_wraps_nitro_result_for_worker_api() {
-        let request = submit_request();
+    fn tee_proof_request_recovers_signer_from_proposal() {
+        let signer = PrivateKeySigner::random();
+        let request = ProofSubmitterRequest::from_tee_proof(
+            "session-1".to_string(),
+            "lock-1".to_string(),
+            "worker-1".to_string(),
+            nitro_tee_proof(&signer),
+            PROPOSER,
+            TEE_IMAGE_HASH,
+        )
+        .expect("tee proof should build a submission request");
 
         assert_eq!(request.session_id, "session-1");
         assert_eq!(request.lock_id, "lock-1");
@@ -328,6 +386,7 @@ mod tests {
         let ServiceProofResult::Tee(result) = request.result else {
             panic!("expected tee proof result");
         };
+        assert_eq!(result.tee_signer, signer.address());
         assert_eq!(result.tee_kind, TeeKind::AwsNitro);
         assert_eq!(result.aggregate_proposal.l2_block_number, 10);
         assert_eq!(result.proposals.len(), 3);
@@ -340,6 +399,8 @@ mod tests {
             "lock-1".to_string(),
             "worker-1".to_string(),
             NitroProofResult::Zk { proof_bytes: vec![1, 2, 3] },
+            PROPOSER,
+            TEE_IMAGE_HASH,
         );
 
         assert!(matches!(result, Err(ProofSubmitterError::UnsupportedProofResult)));

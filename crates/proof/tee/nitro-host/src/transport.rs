@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
+use alloy_primitives::Address;
+use alloy_signer::utils::public_key_to_address;
 use base_proof_host::Metrics;
 use base_proof_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
 use base_proof_tee_nitro_enclave::Server;
+use k256::ecdsa::VerifyingKey;
 
 #[cfg(target_os = "linux")]
 use super::vsock::VsockTransport;
@@ -55,6 +58,14 @@ impl NitroTransport {
             Self::Vsock(t) => t.signer_public_key().await,
             Self::Local(s) => Ok(s.signer_public_key()),
         }
+    }
+
+    /// Return the Ethereum address of the enclave signer.
+    pub async fn signer_address(&self) -> Result<Address, NitroHostError> {
+        let key = self.signer_public_key().await?;
+        let key =
+            VerifyingKey::from_sec1_bytes(&key).map_err(|_| NitroHostError::InvalidSignerKey)?;
+        Ok(public_key_to_address(&key))
     }
 
     /// Return the raw Nitro attestation document (`COSE_Sign1` bytes) for the enclave signer.
