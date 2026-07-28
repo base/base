@@ -179,8 +179,10 @@ pub struct Args {
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
 
-    /// Whether to enable TIPS Resource Metering
-    #[arg(long = "builder.enable-resource-metering", default_value = "false")]
+    /// Deprecated and ignored. Metering store enablement follows
+    /// `--builder.execution-metering-mode` (`dry-run` / `enforce`).
+    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
+    #[arg(long = "builder.enable-resource-metering", hide = true, default_value = "false")]
     pub enable_resource_metering: bool,
 
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes
@@ -246,9 +248,11 @@ pub struct Args {
 
 impl Args {
     /// Creates a [`MeteringStore`] from the CLI arguments.
+    ///
+    /// The store is enabled when [`ExecutionMeteringMode`] is `dry-run` or `enforce`.
     pub fn build_metering_store(&self) -> MeteringStore {
         MeteringStore::new(
-            self.enable_resource_metering || self.execution_metering_mode.is_enabled(),
+            self.execution_metering_mode.is_enabled(),
             self.tx_data_store_buffer_size,
             Duration::from_secs(self.metering_store_ttl_secs),
         )
@@ -429,7 +433,10 @@ mod tests {
     fn metering_data_written_to_provider_is_readable_from_config() {
         let metering_provider: SharedMeteringProvider =
             Arc::new(MeteringStore::new(true, 100, Duration::from_secs(30)));
-        let args = Args { enable_resource_metering: true, ..Default::default() };
+        let args = Args {
+            execution_metering_mode: ExecutionMeteringMode::DryRun,
+            ..Default::default()
+        };
         let config = args
             .into_builder_config(Arc::clone(&metering_provider))
             .expect("conversion should succeed");
@@ -472,7 +479,7 @@ mod tests {
     fn metering_store_ttl_propagates_to_store() {
         let args = Args {
             metering_store_ttl_secs: 60,
-            enable_resource_metering: true,
+            execution_metering_mode: ExecutionMeteringMode::DryRun,
             ..Default::default()
         };
         let store = args.build_metering_store();
@@ -501,6 +508,26 @@ mod tests {
         assert_eq!(args.metering_store_ttl_secs, 30);
     }
 
+    #[rstest]
+    #[case::off(ExecutionMeteringMode::Off, false)]
+    #[case::dry_run(ExecutionMeteringMode::DryRun, true)]
+    #[case::enforce(ExecutionMeteringMode::Enforce, true)]
+    fn metering_store_follows_execution_metering_mode(
+        #[case] mode: ExecutionMeteringMode,
+        #[case] expected_enabled: bool,
+    ) {
+        let args = Args { execution_metering_mode: mode, ..Default::default() };
+        let store = args.build_metering_store();
+        assert_eq!(store.is_enabled(), expected_enabled);
+    }
+
+    #[test]
+    fn deprecated_enable_resource_metering_flag_does_not_enable_store() {
+        let args = Args { enable_resource_metering: true, ..Default::default() };
+        let store = args.build_metering_store();
+        assert!(!store.is_enabled());
+    }
+
     #[test]
     fn deprecated_resource_limit_flags_remain_accepted() {
         let args = CommandParser::parse_from([
@@ -513,6 +540,7 @@ mod tests {
             "0.1",
             "--builder.state-root-gas-anchor-us",
             "5000",
+            "--builder.enable-resource-metering",
         ])
         .args;
 
@@ -520,6 +548,8 @@ mod tests {
         assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
         assert_eq!(args.state_root_gas_coefficient, Some(0.1));
         assert_eq!(args.state_root_gas_anchor_us, Some(5_000));
+        assert!(args.enable_resource_metering);
+        assert!(!args.build_metering_store().is_enabled());
     }
 
     #[test]

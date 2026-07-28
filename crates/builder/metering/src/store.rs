@@ -39,13 +39,13 @@ impl core::fmt::Debug for MeteringStore {
 }
 
 impl MeteringStore {
-    /// Creates a new [`MeteringStore`] with the given metering flag, max capacity, and TTL.
+    /// Creates a new [`MeteringStore`] with the given enabled flag, max capacity, and TTL.
     ///
     /// Uses LRU eviction (not `TinyLFU`) because this cache is write-once-read-once:
     /// entries are inserted on metering arrival and read once at inclusion time.
     /// `TinyLFU` would reject new entries with zero frequency since `insert()` does
     /// not increment the frequency sketch — only `get()` does.
-    pub fn new(enable_resource_metering: bool, max_capacity: usize, ttl: Duration) -> Self {
+    pub fn new(enabled: bool, max_capacity: usize, ttl: Duration) -> Self {
         let cache = Cache::builder()
             .max_capacity(max_capacity as u64)
             .eviction_policy(EvictionPolicy::lru())
@@ -66,7 +66,7 @@ impl MeteringStore {
             .time_to_live(ttl)
             .build();
 
-        Self { cache, needed_at, metering_enabled: AtomicBool::new(enable_resource_metering) }
+        Self { cache, needed_at, metering_enabled: AtomicBool::new(enabled) }
     }
 
     /// Returns the number of stored entries.
