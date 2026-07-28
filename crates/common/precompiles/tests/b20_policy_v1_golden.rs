@@ -377,25 +377,6 @@ fn golden_update_composite_selector_unknown_in_v1() {
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::updateCompositeCall::SELECTOR.as_ref()));
 }
 
-// ============================================================================
-// composite PolicyType discriminants on V1 (UNION = 2, INTERSECT = 3)
-// ============================================================================
-//
-// `UNION`/`INTERSECT` were appended to `PolicyType` for V2, but `PolicyType` rides on selectors
-// that did NOT change: `createPolicy(address,uint8)` and
-// `createPolicyWithAccounts(address,uint8,address[])` hash identically before and after Cobalt.
-// The composite-selector guard in `dispatch` keys on selector, so it does not cover this path.
-//
-// At V1 the two-variant enum made `abi_decode_validate` reject discriminants 2 and 3 outright, so
-// dispatch returned `AbiDecodeFailed`. The V2 binary executing at `BaseUpgrade::Beryl` must still
-// return that same error, byte for byte.
-
-/// Replays `calldata` through the frozen pre-Cobalt ABI and returns the revert payload V1 owes:
-/// `selector || utf8(decoder error)`, matching `BasePrecompileError::AbiDecodeFailed`.
-///
-/// [`IPolicyRegistryV1`] is the same artifact the precompile decodes Beryl calldata against, so
-/// this catches a widening of the frozen surface only via the `else` arm below. The literal pins
-/// in [`expected_v1_decode_error`] are what independently attest to the bytes.
 fn frozen_v1_abi_decode_failure(calldata: &[u8]) -> Bytes {
     let selector = calldata.first_chunk::<4>().copied().expect("calldata must carry a selector");
     let Err(error) = IPolicyRegistryV1::IPolicyRegistryCalls::abi_decode_validate(calldata) else {
@@ -407,15 +388,6 @@ fn frozen_v1_abi_decode_failure(calldata: &[u8]) -> Bytes {
     bytes.into()
 }
 
-/// The exact decoder message Beryl emits for a composite `discriminant` on `signature`.
-///
-/// Pinned by hand, deliberately. The string is consensus data — `AbiDecodeFailed` puts it on the
-/// wire verbatim (`BasePrecompileError::into_precompile_result`) — and it is produced by alloy's
-/// `Display`, which the workspace tracks through a caret range. Recomputing it through
-/// [`IPolicyRegistryV1`] cannot detect an alloy upgrade that rewords the message, because both
-/// sides of the comparison would move together. If this assertion fails after a dependency bump,
-/// that bump changes historical revert payloads and is a hardfork-relevant event, not a test to
-/// re-bless.
 fn expected_v1_decode_error(signature: &str, discriminant: u8, args_hex: &str) -> String {
     format!("type check failed for {signature:?} with data: {args_hex}{discriminant:064x}")
 }
