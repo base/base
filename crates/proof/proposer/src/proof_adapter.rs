@@ -14,7 +14,7 @@ use crate::ProposerError;
 pub struct ProposerProofAdapter;
 
 impl ProposerProofAdapter {
-    const SESSION_NAMESPACE: &'static [u8] = b"base/proposer/proof-session/v1";
+    const SESSION_NAMESPACE: &'static [u8] = b"base/proposer/proof-session/v2";
 
     const TEE_SESSION_LABEL: &'static str = "tee/aws_nitro";
 
