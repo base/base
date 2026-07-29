@@ -6,8 +6,6 @@ use std::{
     time::Instant,
 };
 
-#[cfg(feature = "t4e-handoff")]
-use crate::{CheckedCandidate, CodeHashProvider};
 use alloy_primitives::{Address, B256};
 #[cfg(feature = "t4e-handoff")]
 use base_mev_trader::CampaignId;
@@ -20,6 +18,8 @@ use super::{
     DeployedContractIdentity, InstalledExecutionIdentity, TxAuthorityAssembler, TxAuthorityError,
     TxAuthorityNodeView, ValidatedUnsignedAtomicTx,
 };
+#[cfg(feature = "t4e-handoff")]
+use crate::{CheckedCandidate, CodeHashProvider};
 
 /// Non-authorizing structural bindings retained by an opaque unsigned candidate.
 #[derive(Debug, PartialEq, Eq)]
@@ -123,9 +123,16 @@ struct InstallationSeal;
 
 /// Unforgeable capability proving that a T4d candidate passed bridge revalidation.
 #[cfg(feature = "t4e-handoff")]
-#[derive(Debug)]
 pub struct BridgeConversionSeal {
     private: (),
+}
+
+#[cfg(feature = "t4e-handoff")]
+impl Debug for BridgeConversionSeal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let _ = self.private;
+        formatter.debug_struct("BridgeConversionSeal").finish_non_exhaustive()
+    }
 }
 
 /// Terminal failure from an unsigned T4e candidate handoff sink.
