@@ -103,6 +103,7 @@ impl IngressApiServer for IngressService {
 
         let bundle = Bundle {
             txs: vec![data.clone()],
+            block_number: Some(0),
             max_timestamp: Some(expiry_timestamp),
             reverting_tx_hashes: vec![transaction.tx_hash()],
             ..Default::default()
@@ -611,6 +612,10 @@ mod tests {
 
         let result = service.send_raw_transaction(tx_bytes).await;
         assert!(result.is_ok());
+
+        let requests = simulation_server.received_requests().await.unwrap();
+        let request: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(request["params"][0]["blockNumber"], "0x0");
 
         let metering = timeout(Duration::from_secs(1), builder_rx.recv()).await.unwrap().unwrap();
         assert_eq!(metering.response, create_test_meter_bundle_response());
