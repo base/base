@@ -6,5 +6,8 @@ pub use pipeline::{OraclePipeline, ProviderAttributesBuilder, ProviderDerivation
 mod blob_provider;
 pub use blob_provider::{OracleBlobProvider, ROOTS_OF_UNITY};
 
+mod alt_da_provider;
+pub use alt_da_provider::{OracleAltDaResolver, preimage_key_for_commitment};
+
 mod chain_provider;
 pub use chain_provider::OracleL1ChainProvider;
