@@ -1,6 +1,7 @@
 //! Shadow-mode batch inbox parity monitoring.
 
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
     panic::AssertUnwindSafe,
     sync::Arc,
@@ -81,6 +82,14 @@ pub struct ParityCompareStats {
     pub matches: usize,
     /// Number of diverging batches compared.
     pub divergences: usize,
+    /// Canonical batches skipped while seeking the first common L2 timestamp.
+    pub canonical_pre_alignment_skips: usize,
+    /// Shadow batches skipped while seeking the first common L2 timestamp.
+    pub shadow_pre_alignment_skips: usize,
+    /// Canonical batches missing after the streams aligned.
+    pub missing_canonical: usize,
+    /// Shadow batches missing after the streams aligned.
+    pub missing_shadow: usize,
 }
 
 /// Stateful parity comparison data.
@@ -92,6 +101,8 @@ pub struct ParityState {
     pub shadow: ParitySideState,
     /// Last comparison result, if any comparison has completed.
     pub last_result: Option<bool>,
+    /// Whether both streams have reached a common L2 timestamp.
+    pub has_aligned: bool,
     /// Last pending queue drift reported to logs.
     pub last_reported_pending_drift: usize,
 }
@@ -347,11 +358,15 @@ impl ShadowParityMonitor {
         self.state.record_alignment_metric();
         BatcherServiceMetrics::latest_l1_block().set(block_number as f64);
 
-        if stats.matches > 0 || stats.divergences > 0 {
+        if stats != ParityCompareStats::default() {
             debug!(
                 l1_block = %block_number,
                 matches = %stats.matches,
                 divergences = %stats.divergences,
+                canonical_pre_alignment_skips = %stats.canonical_pre_alignment_skips,
+                shadow_pre_alignment_skips = %stats.shadow_pre_alignment_skips,
+                missing_canonical = %stats.missing_canonical,
+                missing_shadow = %stats.missing_shadow,
                 canonical_pending = %self.state.canonical.pending_batches(),
                 shadow_pending = %self.state.shadow.pending_batches(),
                 "shadow parity comparisons processed"
@@ -605,17 +620,63 @@ impl ParityState {
     /// Compare all currently paired decoded batches.
     pub fn compare_ready(&mut self, l1_block: u64) -> ParityCompareStats {
         let mut stats = ParityCompareStats::default();
-        let mut compared_batches = false;
+        let mut observed_result = false;
         let mut batches_aligned = true;
-        // Comparisons are intentionally positional: once one side emits an
-        // extra or missing batch, the pending queue delta below is the operator
-        // signal that later comparisons may be offset rather than independently
-        // divergent.
         while !self.canonical.batches.is_empty() && !self.shadow.batches.is_empty() {
+            let canonical_start = self
+                .canonical
+                .batches
+                .front()
+                .expect("canonical queue is non-empty")
+                .start_timestamp;
+            let shadow_start =
+                self.shadow.batches.front().expect("shadow queue is non-empty").start_timestamp;
+
+            match canonical_start.cmp(&shadow_start) {
+                Ordering::Less if !self.has_aligned => {
+                    self.canonical.batches.pop_front();
+                    stats.canonical_pre_alignment_skips += 1;
+                    BatcherServiceMetrics::canonical_pre_alignment_skips_total().increment(1);
+                    continue;
+                }
+                Ordering::Greater if !self.has_aligned => {
+                    self.shadow.batches.pop_front();
+                    stats.shadow_pre_alignment_skips += 1;
+                    BatcherServiceMetrics::shadow_pre_alignment_skips_total().increment(1);
+                    continue;
+                }
+                Ordering::Less => {
+                    self.canonical.batches.pop_front();
+                    stats.missing_shadow += 1;
+                    BatcherServiceMetrics::missing_shadow_batches_total().increment(1);
+                    observed_result = true;
+                    batches_aligned = false;
+                    continue;
+                }
+                Ordering::Greater => {
+                    self.shadow.batches.pop_front();
+                    stats.missing_canonical += 1;
+                    BatcherServiceMetrics::missing_canonical_batches_total().increment(1);
+                    observed_result = true;
+                    batches_aligned = false;
+                    continue;
+                }
+                Ordering::Equal => {}
+            }
+
+            if !self.has_aligned {
+                self.has_aligned = true;
+                info!(
+                    l1_block = %l1_block,
+                    l2_timestamp = %canonical_start,
+                    "shadow parity batch streams aligned"
+                );
+            }
+
             let canonical =
                 self.canonical.batches.pop_front().expect("canonical queue is non-empty");
             let shadow = self.shadow.batches.pop_front().expect("shadow queue is non-empty");
-            compared_batches = true;
+            observed_result = true;
             if canonical == shadow {
                 stats.matches += 1;
                 BatcherServiceMetrics::matches_total().increment(1);
@@ -639,7 +700,15 @@ impl ParityState {
                 );
             }
         }
-        if compared_batches {
+        if stats.missing_canonical > 0 || stats.missing_shadow > 0 {
+            warn!(
+                l1_block = %l1_block,
+                missing_canonical = %stats.missing_canonical,
+                missing_shadow = %stats.missing_shadow,
+                "shadow parity batches missing after alignment"
+            );
+        }
+        if observed_result {
             self.last_result = Some(batches_aligned);
         }
         stats
@@ -653,7 +722,7 @@ impl ParityState {
         BatcherServiceMetrics::pending_batch_delta().set(self.pending_batch_delta() as f64);
     }
 
-    /// Warn when positional comparison queues are persistently drifting apart.
+    /// Warn when decoded-batch queues are persistently drifting apart.
     pub fn warn_on_pending_drift(&mut self, l1_block: u64) {
         let drift = self.pending_batch_delta();
         if drift < PENDING_QUEUE_DRIFT_WARN_THRESHOLD {
@@ -947,21 +1016,26 @@ mod tests {
     #[test]
     fn compare_ready_records_divergence() {
         let mut state = ParityState::default();
+        let mut shadow = normalized_batch(100);
+        shadow.tx_counts = vec![1];
         state.canonical.batches.push_back(normalized_batch(100));
-        state.shadow.batches.push_back(normalized_batch(102));
+        state.shadow.batches.push_back(shadow);
 
         let stats = state.compare_ready(50);
 
         assert_eq!(stats.matches, 0);
         assert_eq!(stats.divergences, 1);
+        assert!(state.has_aligned);
         assert_eq!(state.is_aligned(), Some(false));
     }
 
     #[test]
     fn compare_ready_preserves_batch_divergence_when_later_pair_matches() {
         let mut state = ParityState::default();
+        let mut shadow = normalized_batch(100);
+        shadow.tx_counts = vec![1];
         state.canonical.batches.push_back(normalized_batch(100));
-        state.shadow.batches.push_back(normalized_batch(102));
+        state.shadow.batches.push_back(shadow);
         state.canonical.batches.push_back(normalized_batch(104));
         state.shadow.batches.push_back(normalized_batch(104));
 
@@ -969,6 +1043,120 @@ mod tests {
 
         assert_eq!(stats.matches, 1);
         assert_eq!(stats.divergences, 1);
+        assert_eq!(state.is_aligned(), Some(false));
+    }
+
+    #[test]
+    fn compare_ready_skips_canonical_prefix_before_alignment() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(100));
+        state.canonical.batches.push_back(normalized_batch(102));
+        state.canonical.batches.push_back(normalized_batch(104));
+        state.shadow.batches.push_back(normalized_batch(104));
+
+        let stats = state.compare_ready(50);
+
+        assert_eq!(stats.matches, 1);
+        assert_eq!(stats.canonical_pre_alignment_skips, 2);
+        assert_eq!(stats.divergences, 0);
+        assert!(state.has_aligned);
+        assert_eq!(state.is_aligned(), Some(true));
+    }
+
+    #[test]
+    fn compare_ready_skips_shadow_prefix_before_alignment() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(104));
+        state.shadow.batches.push_back(normalized_batch(100));
+        state.shadow.batches.push_back(normalized_batch(102));
+        state.shadow.batches.push_back(normalized_batch(104));
+
+        let stats = state.compare_ready(50);
+
+        assert_eq!(stats.matches, 1);
+        assert_eq!(stats.shadow_pre_alignment_skips, 2);
+        assert_eq!(stats.divergences, 0);
+        assert!(state.has_aligned);
+        assert_eq!(state.is_aligned(), Some(true));
+    }
+
+    #[test]
+    fn compare_ready_remains_unknown_until_common_timestamp_arrives() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(100));
+        state.shadow.batches.push_back(normalized_batch(102));
+
+        let stats = state.compare_ready(50);
+
+        assert_eq!(stats.canonical_pre_alignment_skips, 1);
+        assert!(!state.has_aligned);
+        assert_eq!(state.is_aligned(), None);
+        assert_eq!(state.shadow.pending_batches(), 1);
+
+        state.canonical.batches.push_back(normalized_batch(102));
+        let stats = state.compare_ready(51);
+
+        assert_eq!(stats.matches, 1);
+        assert!(state.has_aligned);
+        assert_eq!(state.is_aligned(), Some(true));
+    }
+
+    #[test]
+    fn compare_ready_waits_for_delayed_batch_after_alignment() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(100));
+        state.shadow.batches.push_back(normalized_batch(100));
+        state.compare_ready(50);
+
+        state.canonical.batches.push_back(normalized_batch(102));
+        let stats = state.compare_ready(51);
+
+        assert_eq!(stats, ParityCompareStats::default());
+        assert_eq!(state.canonical.pending_batches(), 1);
+
+        state.shadow.batches.push_back(normalized_batch(102));
+        let stats = state.compare_ready(52);
+
+        assert_eq!(stats.matches, 1);
+        assert_eq!(stats.missing_shadow, 0);
+        assert_eq!(state.is_aligned(), Some(true));
+    }
+
+    #[test]
+    fn compare_ready_reports_missing_shadow_batch_after_alignment() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(100));
+        state.shadow.batches.push_back(normalized_batch(100));
+        state.compare_ready(50);
+
+        state.canonical.batches.push_back(normalized_batch(102));
+        state.canonical.batches.push_back(normalized_batch(104));
+        state.shadow.batches.push_back(normalized_batch(104));
+
+        let stats = state.compare_ready(51);
+
+        assert_eq!(stats.matches, 1);
+        assert_eq!(stats.missing_shadow, 1);
+        assert_eq!(stats.missing_canonical, 0);
+        assert_eq!(state.is_aligned(), Some(false));
+    }
+
+    #[test]
+    fn compare_ready_reports_missing_canonical_batch_after_alignment() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(100));
+        state.shadow.batches.push_back(normalized_batch(100));
+        state.compare_ready(50);
+
+        state.canonical.batches.push_back(normalized_batch(104));
+        state.shadow.batches.push_back(normalized_batch(102));
+        state.shadow.batches.push_back(normalized_batch(104));
+
+        let stats = state.compare_ready(51);
+
+        assert_eq!(stats.matches, 1);
+        assert_eq!(stats.missing_canonical, 1);
+        assert_eq!(stats.missing_shadow, 0);
         assert_eq!(state.is_aligned(), Some(false));
     }
 

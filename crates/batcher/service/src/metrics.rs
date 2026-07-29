@@ -28,6 +28,14 @@ base_metrics::define_metrics! {
     matches_total: counter,
     #[describe("Total diverging batch parity comparisons")]
     divergences_total: counter,
+    #[describe("Canonical batches skipped before the first common L2 timestamp")]
+    canonical_pre_alignment_skips_total: counter,
+    #[describe("Shadow batches skipped before the first common L2 timestamp")]
+    shadow_pre_alignment_skips_total: counter,
+    #[describe("Canonical batches missing after shadow parity alignment")]
+    missing_canonical_batches_total: counter,
+    #[describe("Shadow batches missing after shadow parity alignment")]
+    missing_shadow_batches_total: counter,
     #[describe("Latest shadow DA parity alignment state: 1 for aligned, 0 for divergence or lag")]
     aligned: gauge,
     #[describe("Latest L1 block where a matching shadow DA parity comparison was observed")]
