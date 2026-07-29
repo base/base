@@ -1171,12 +1171,24 @@ where
                             let catchup = match &self.sequencer_state {
                                 SequencerEngineState::CatchingUp { shadow, catchup } => Some((
                                     *shadow,
+                                    catchup.is_faulted(),
                                     catchup.is_complete(head, sync_state.safe_head()),
                                 )),
                                 _ => None,
                             };
                             match catchup {
-                                Some((_, false)) => {
+                                Some((_, true, _)) => {
+                                    error!(target: "engine", "Canonical catch-up payload buffer is faulted");
+                                    if result_tx
+                                        .send(Err(EngineClientError::ShadowBufferFaulted))
+                                        .await
+                                        .is_err()
+                                    {
+                                        warn!(target: "engine", "Sending catch-up fault response failed");
+                                    }
+                                    continue;
+                                }
+                                Some((_, false, false)) => {
                                     warn!(target: "engine", "Deferring sequencer reset until canonical catch-up completes");
                                     if result_tx
                                         .send(Err(EngineClientError::ELSyncing))
@@ -1187,7 +1199,7 @@ where
                                     }
                                     continue;
                                 }
-                                Some((true, true)) => {
+                                Some((true, false, true)) => {
                                     if origin != ResetOrigin::ShadowCycleCoordinated {
                                         if result_tx
                                             .send(Err(
@@ -1219,7 +1231,7 @@ where
                                     }
                                     continue;
                                 }
-                                Some((false, true)) => {
+                                Some((false, false, true)) => {
                                     info!(
                                         target: "engine",
                                         canonical_head = head.block_info.number,

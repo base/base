@@ -203,9 +203,9 @@ where
 
     /// Schedules the initial engine reset request and waits for the unsafe head to be updated.
     ///
-    /// If the EL is still syncing (snap sync in progress), the engine will defer the reset and
-    /// return [`EngineClientError::ELSyncing`]. In that case we wait one block time and retry,
-    /// so we never send a `forkchoice_updated` that would abort reth's in-progress EL sync.
+    /// If EL sync or canonical catch-up is still in progress, the engine will defer the reset and
+    /// return [`EngineClientError::ELSyncing`]. In that case we wait one block time and retry. This
+    /// avoids aborting reth's in-progress EL sync and activating before canonical catch-up.
     ///
     /// Admin API queries are serviced throughout — both during reset attempts and during the
     /// backoff sleep — so that control can reach the sequencer while EL sync is in progress.
@@ -231,7 +231,7 @@ where
                 } => match result {
                     Ok(()) => return Ok(()),
                     Err(EngineClientError::ELSyncing) => {
-                        info!(target: "sequencer", "EL sync in progress; deferring initial engine reset");
+                        info!(target: "sequencer", "EL sync or canonical catch-up in progress; deferring initial engine reset");
                     }
                     Err(err) => {
                         error!(target: "sequencer", error = ?err, "Failed to send reset request to engine");

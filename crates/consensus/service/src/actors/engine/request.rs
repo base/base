@@ -39,16 +39,16 @@ pub enum EngineClientError {
     #[error("An error occurred performing the reset: {0}.")]
     ResetForkchoiceError(String),
 
-    /// The EL is still syncing; the reset cannot proceed yet. Retry after a delay.
-    #[error("EL sync in progress; reset deferred")]
+    /// EL sync or canonical catch-up is incomplete; the reset cannot proceed yet.
+    #[error("EL sync or canonical catch-up in progress; reset deferred")]
     ELSyncing,
 
     /// Shadow reconciliation is unavailable in this mode.
     #[error("shadow reconciliation is disabled")]
     ShadowReconciliationDisabled,
 
-    /// The shadow payload buffer can no longer be reconciled safely.
-    #[error("shadow reconciliation payload buffer is faulted")]
+    /// The canonical reconciliation payload buffer can no longer be reconciled safely.
+    #[error("canonical reconciliation payload buffer is faulted")]
     ShadowBufferFaulted,
 
     /// The requested shadow reconciliation range or payload chain is invalid.

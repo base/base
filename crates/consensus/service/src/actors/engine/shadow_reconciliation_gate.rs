@@ -94,6 +94,11 @@ impl CanonicalUnsafeCatchup {
         self.payloads.retain(|number, _| *number > head.block_info.number);
     }
 
+    /// Returns whether conflicting canonical observations have faulted catch-up.
+    pub const fn is_faulted(&self) -> bool {
+        self.faulted
+    }
+
     /// Returns whether the engine has reached or safely overtaken the latest observed payload.
     pub fn is_complete(&self, unsafe_head: L2BlockInfo, safe_head: L2BlockInfo) -> bool {
         self.highest_observed.is_some_and(|(number, hash)| {
@@ -404,7 +409,7 @@ mod tests {
 
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(99)));
 
-        assert!(catchup.faulted);
+        assert!(catchup.is_faulted());
         assert!(!catchup.is_complete(original, L2BlockInfo::default()));
     }
 
