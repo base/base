@@ -125,6 +125,28 @@ impl NonceManagerStorage<'_> {
             return Err(BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
         }
 
+        let current = self.nonces.at(&account).at(&nonce_key).read()?;
+        self.increment_nonce_from_current(account, nonce_key, current)
+    }
+
+    /// Increments a 2D nonce from its caller-provided current value.
+    ///
+    /// `current` must be loaded from the same storage context with no intervening
+    /// write to `(account, nonce_key)`.
+    ///
+    /// # Errors
+    /// - [`INonceManager::InvalidNonceKey`] — `nonce_key` is `0` (the protocol nonce).
+    /// - [`INonceManager::NonceOverflow`] — `current` is already `u64::MAX`.
+    pub fn increment_nonce_from_current(
+        &mut self,
+        account: Address,
+        nonce_key: U256,
+        current: u64,
+    ) -> Result<u64> {
+        if nonce_key == Self::PROTOCOL_NONCE_KEY {
+            return Err(BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
+        }
+
         // The nonce write and its NonceIncremented event must commit together;
         // guard them with a checkpoint so a failure after the write (e.g. during
         // event emission) reverts the advanced nonce rather than leaving it
@@ -132,7 +154,6 @@ impl NonceManagerStorage<'_> {
         let checkpoint = self.storage.checkpoint();
 
         self.__initialize()?;
-        let current = self.nonces.at(&account).at(&nonce_key).read()?;
         let new_nonce = current
             .checked_add(1)
             .ok_or_else(|| BasePrecompileError::revert(INonceManager::NonceOverflow {}))?;
@@ -291,6 +312,27 @@ mod tests {
         assert_eq!(storage.get_events(NonceManagerStorage::ADDRESS).len(), 2);
         StorageCtx::enter(&mut storage, |ctx| {
             assert_eq!(NonceManagerStorage::new(ctx).get_nonce(ACCOUNT_A, nonce_key).unwrap(), 2);
+        });
+    }
+
+    #[test]
+    fn loaded_increment_uses_one_sload_and_one_sstore() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let nonce_key = U256::from(5);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut mgr = NonceManagerStorage::new(ctx);
+
+            ctx.reset_counters();
+            let current = mgr.get_nonce(ACCOUNT_A, nonce_key).unwrap();
+            assert_eq!(mgr.increment_nonce_from_current(ACCOUNT_A, nonce_key, current).unwrap(), 1);
+            assert_eq!(ctx.counter_sload(), 1);
+            assert_eq!(ctx.counter_sstore(), 1);
+
+            ctx.reset_counters();
+            let current = mgr.get_nonce(ACCOUNT_A, nonce_key).unwrap();
+            assert_eq!(mgr.increment_nonce_from_current(ACCOUNT_A, nonce_key, current).unwrap(), 2);
+            assert_eq!(ctx.counter_sload(), 1);
+            assert_eq!(ctx.counter_sstore(), 1);
         });
     }
 
