@@ -1,10 +1,7 @@
 //! Base infrastructure control CLI binary.
 
 mod conductor;
-mod p2p;
-mod proofs;
 mod sequencer;
-mod txpool;
 
 use basectl_cli::{Cli, Commands, MonitoringConfig, ViewId, run_app, run_flashblocks_json};
 use clap::{CommandFactory, Parser};
@@ -40,15 +37,13 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::SyncStatus(command)) => {
             command.run(MonitoringConfig::load(config).await?).await
         }
-        Some(Commands::P2p { command }) => {
-            if p2p::run(config, command).await?.has_failures() {
+        Some(Commands::P2p(command)) => {
+            if command.run(MonitoringConfig::load(config).await?).await?.has_failures() {
                 std::process::exit(1);
             }
             Ok(())
         }
-        Some(Commands::Txpool { command }) => {
-            txpool::run(MonitoringConfig::load(config).await?, command).await
-        }
+        Some(Commands::Txpool(command)) => command.run(MonitoringConfig::load(config).await?).await,
         Some(Commands::Conductor { command }) => {
             if conductor::run(MonitoringConfig::load(config).await?, conductor_rpc, command)
                 .await?
@@ -67,8 +62,8 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Some(Commands::Proofs { command }) => {
-            if proofs::run(MonitoringConfig::load(config).await?, command).await?.has_failures() {
+        Some(Commands::Proofs(command)) => {
+            if command.run(MonitoringConfig::load(config).await?).await?.has_failures() {
                 std::process::exit(1);
             }
             Ok(())

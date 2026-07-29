@@ -2,29 +2,154 @@
 
 use std::io::{self, Write};
 
+use alloy_primitives::B256;
 use anyhow::Result;
 use base_prover_service_protocol::{
     GetProofResponse, ListProofsRequest, ProofResult, ProofStatus, ProofSummary, ProofType,
     TeeKind, ZkVm,
 };
-use basectl_cli::{
-    CommandOutcome, Confirm, JsonOutput, KeyValueTable, MonitoringConfig, ProofFinalizeRequest,
-    ProofStatusFilter, ProofsClient, ProofsCommandError, ProofsCommands, ProofsFinalizeArgs,
-    ProofsListArgs, ProofsStatusArgs,
-};
+use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 use tracing::info;
 use url::Url;
 
-/// Runs the `basectl proofs` command group.
-pub(crate) async fn run(
-    config: MonitoringConfig,
-    command: ProofsCommands,
-) -> Result<CommandOutcome> {
-    match command {
-        ProofsCommands::Finalize(args) => run_finalize(config, args).await,
-        ProofsCommands::Status(args) => run_status(config, args).await,
-        ProofsCommands::List(args) => run_list(config, args).await,
+use crate::{
+    CommandOutcome, Confirm, JsonOutput, KeyValueTable, MonitoringConfig, ProofFinalizeRequest,
+    ProofsClient, ProofsCommandError,
+};
+
+/// Request and inspect ZK proofs on the internal prover service.
+#[derive(Debug, Args)]
+pub struct ProofsCommand {
+    /// Proof operation to run.
+    #[command(subcommand)]
+    pub command: ProofsCommands,
+}
+
+/// Prover-service proof request and inspection commands.
+#[derive(Debug, Subcommand)]
+pub enum ProofsCommands {
+    /// Submit a compressed ZK proof request for a block range to speed up finality.
+    Finalize(ProofsFinalizeArgs),
+    /// Show status and result data for a submitted proof request.
+    Status(ProofsStatusArgs),
+    /// List submitted proof requests.
+    List(ProofsListArgs),
+}
+
+/// Flags for `basectl proofs finalize`.
+#[derive(Debug, Args)]
+pub struct ProofsFinalizeArgs {
+    /// First L2 block number to prove.
+    #[arg(value_name = "START_BLOCK")]
+    pub start_block: u64,
+    /// Number of consecutive L2 blocks to prove.
+    #[arg(value_name = "NUM_BLOCKS", value_parser = clap::value_parser!(u64).range(1..))]
+    pub num_blocks: u64,
+    /// Explicit proof session ID (prover-service idempotency key).
+    ///
+    /// If omitted, basectl derives a deterministic session ID from the
+    /// network name and block range, so re-running the same command resolves
+    /// to the existing prover-service session instead of enqueueing a
+    /// duplicate proof.
+    #[arg(long = "session-id", value_name = "ID")]
+    pub session_id: Option<String>,
+    /// L1 head hash used for witness generation.
+    ///
+    /// If omitted, the prover service picks one.
+    #[arg(long = "l1-head", value_name = "HASH")]
+    pub l1_head: Option<B256>,
+    /// Sequencing window passed to the prover.
+    #[arg(long = "sequence-window", value_name = "N")]
+    pub sequence_window: Option<u64>,
+    /// Intermediate output root interval passed to the prover.
+    #[arg(long = "intermediate-root-interval", value_name = "N")]
+    pub intermediate_root_interval: Option<u64>,
+    /// Poll the prover service until the proof succeeds or fails.
+    ///
+    /// Exits non-zero when the proof fails or does not complete in time.
+    #[arg(long)]
+    pub wait: bool,
+    /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
+    #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
+    pub prover_rpc: Option<Url>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub json: bool,
+}
+
+/// Flags for `basectl proofs status`.
+#[derive(Debug, Args)]
+pub struct ProofsStatusArgs {
+    /// Proof session ID returned by `basectl proofs finalize`.
+    #[arg(value_name = "SESSION_ID")]
+    pub session_id: String,
+    /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
+    #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
+    pub prover_rpc: Option<Url>,
+    /// Emit humanized JSON instead of pretty text.
+    #[arg(long)]
+    pub json: bool,
+    /// With `--json`, emit the prover-service wire shape instead of the humanized summary.
+    #[arg(long, requires = "json")]
+    pub raw: bool,
+}
+
+/// Flags for `basectl proofs list`.
+#[derive(Debug, Args)]
+pub struct ProofsListArgs {
+    /// Only list proofs with this status.
+    #[arg(long, value_enum, value_name = "STATUS")]
+    pub status: Option<ProofStatusFilter>,
+    /// Number of rows to skip.
+    #[arg(long, value_name = "N", default_value_t = 0)]
+    pub offset: u64,
+    /// Maximum rows to return.
+    #[arg(long, value_name = "N", default_value_t = 50)]
+    pub limit: u32,
+    /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
+    #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
+    pub prover_rpc: Option<Url>,
+    /// Emit humanized JSON instead of pretty text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Proof status filter accepted by `basectl proofs list`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ProofStatusFilter {
+    /// Proof request is queued.
+    Queued,
+    /// Proof request is running.
+    Running,
+    /// Proof request completed successfully.
+    Succeeded,
+    /// Proof request failed.
+    Failed,
+}
+
+impl From<ProofStatusFilter> for ProofStatus {
+    fn from(filter: ProofStatusFilter) -> Self {
+        match filter {
+            ProofStatusFilter::Queued => Self::Queued,
+            ProofStatusFilter::Running => Self::Running,
+            ProofStatusFilter::Succeeded => Self::Succeeded,
+            ProofStatusFilter::Failed => Self::Failed,
+        }
+    }
+}
+
+impl ProofsCommand {
+    /// Runs the selected proof operation and renders its output.
+    pub async fn run(self, config: MonitoringConfig) -> Result<CommandOutcome> {
+        match self.command {
+            ProofsCommands::Finalize(args) => run_finalize(config, args).await,
+            ProofsCommands::Status(args) => run_status(config, args).await,
+            ProofsCommands::List(args) => run_list(config, args).await,
+        }
     }
 }
 
@@ -150,7 +275,7 @@ async fn run_status(config: MonitoringConfig, args: ProofsStatusArgs) -> Result<
 async fn run_list(config: MonitoringConfig, args: ProofsListArgs) -> Result<CommandOutcome> {
     let ProofsListArgs { status, offset, limit, prover_rpc, json } = args;
     let endpoint = resolve_prover_rpc(&config, prover_rpc)?;
-    let status_filter = status.map(proof_status_from_filter);
+    let status_filter = status.map(ProofStatus::from);
     info!(
         network = %config.name,
         prover_rpc = %endpoint,
@@ -181,58 +306,35 @@ async fn run_list(config: MonitoringConfig, args: ProofsListArgs) -> Result<Comm
     Ok(CommandOutcome::Success)
 }
 
-/// Maps the CLI status filter to the prover-service protocol status.
-const fn proof_status_from_filter(filter: ProofStatusFilter) -> ProofStatus {
-    match filter {
-        ProofStatusFilter::Queued => ProofStatus::Queued,
-        ProofStatusFilter::Running => ProofStatus::Running,
-        ProofStatusFilter::Succeeded => ProofStatus::Succeeded,
-        ProofStatusFilter::Failed => ProofStatus::Failed,
-    }
-}
-
-/// Returns the CLI label for a proof type.
-const fn proof_type_label(proof_type: ProofType) -> &'static str {
-    match proof_type {
-        ProofType::Compressed => "compressed",
-        ProofType::SnarkPlonk => "snark_plonk",
-        ProofType::Tee => "tee",
-    }
-}
-
-/// Returns the CLI label for a ZK virtual machine.
-const fn zk_vm_label(zk_vm: ZkVm) -> &'static str {
-    match zk_vm {
-        ZkVm::Sp1 => "sp1",
-    }
-}
-
-/// Returns the CLI label for a TEE implementation.
-const fn tee_kind_label(tee_kind: TeeKind) -> &'static str {
-    match tee_kind {
-        TeeKind::AwsNitro => "aws_nitro",
-    }
-}
-
 /// Humanized JSON shape for a `basectl proofs finalize` outcome.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProofsFinalizeJson {
-    network: String,
-    prover_rpc: String,
-    session_id: String,
-    start_block: u64,
-    end_block: u64,
-    num_blocks: u64,
-    status: &'static str,
+pub struct ProofsFinalizeJson {
+    /// Selected network name.
+    pub network: String,
+    /// Prover-service RPC endpoint.
+    pub prover_rpc: String,
+    /// Prover-service session identifier.
+    pub session_id: String,
+    /// First L2 block in the proof range.
+    pub start_block: u64,
+    /// Last L2 block in the inclusive proof range.
+    pub end_block: u64,
+    /// Number of consecutive L2 blocks in the proof range.
+    pub num_blocks: u64,
+    /// Current proof request status.
+    pub status: &'static str,
+    /// Prover-service failure message, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
-    error_message: Option<String>,
+    pub error_message: Option<String>,
+    /// Humanized proof result, when the proof has completed successfully.
     #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<ProofResultJson>,
+    pub result: Option<ProofResultJson>,
 }
 
 impl ProofsFinalizeJson {
-    fn submitted(
+    /// Builds the outcome for an accepted proof request that is not being awaited.
+    pub fn submitted(
         network: &str,
         prover_rpc: &Url,
         session_id: &str,
@@ -252,7 +354,8 @@ impl ProofsFinalizeJson {
         }
     }
 
-    fn completed(
+    /// Builds the outcome for a proof request after completion polling.
+    pub fn completed(
         network: &str,
         prover_rpc: &Url,
         session_id: &str,
@@ -272,19 +375,26 @@ impl ProofsFinalizeJson {
 /// Humanized JSON shape for `basectl proofs status`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProofsStatusJson {
-    network: String,
-    prover_rpc: String,
-    session_id: String,
-    status: &'static str,
+pub struct ProofsStatusJson {
+    /// Selected network name.
+    pub network: String,
+    /// Prover-service RPC endpoint.
+    pub prover_rpc: String,
+    /// Prover-service session identifier.
+    pub session_id: String,
+    /// Current proof request status.
+    pub status: &'static str,
+    /// Prover-service failure message, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
-    error_message: Option<String>,
+    pub error_message: Option<String>,
+    /// Humanized proof result, when the proof has completed successfully.
     #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<ProofResultJson>,
+    pub result: Option<ProofResultJson>,
 }
 
 impl ProofsStatusJson {
-    fn from_response(
+    /// Builds a humanized status from a prover-service response.
+    pub fn from_response(
         network: &str,
         prover_rpc: &Url,
         session_id: &str,
@@ -304,37 +414,56 @@ impl ProofsStatusJson {
 /// Humanized summary of a proof result payload.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProofResultJson {
-    proof_type: &'static str,
+pub struct ProofResultJson {
+    /// Kind of proof returned by the prover service.
+    pub proof_type: &'static str,
+    /// ZK virtual machine used for a ZK proof.
     #[serde(skip_serializing_if = "Option::is_none")]
-    zk_vm: Option<&'static str>,
+    pub zk_vm: Option<&'static str>,
+    /// Trusted execution environment used for a TEE proof.
     #[serde(skip_serializing_if = "Option::is_none")]
-    tee_kind: Option<&'static str>,
+    pub tee_kind: Option<&'static str>,
+    /// Encoded proof payload size in bytes, when applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
-    proof_bytes: Option<usize>,
+    pub proof_bytes: Option<usize>,
 }
 
 impl ProofResultJson {
-    fn from_result(result: &ProofResult) -> Self {
+    /// Builds a humanized summary from a prover-service proof result.
+    pub fn from_result(result: &ProofResult) -> Self {
         match result {
             ProofResult::Compressed(zk) => Self {
                 proof_type: "compressed",
-                zk_vm: Some(zk_vm_label(zk.zk_vm)),
+                zk_vm: Some(Self::zk_vm_label(zk.zk_vm)),
                 tee_kind: None,
                 proof_bytes: Some(zk.proof.len()),
             },
             ProofResult::SnarkPlonk(plonk) => Self {
                 proof_type: "snark_plonk",
-                zk_vm: Some(zk_vm_label(plonk.proof.zk_vm)),
+                zk_vm: Some(Self::zk_vm_label(plonk.proof.zk_vm)),
                 tee_kind: None,
                 proof_bytes: Some(plonk.proof.proof.len()),
             },
             ProofResult::Tee(tee) => Self {
                 proof_type: "tee",
                 zk_vm: None,
-                tee_kind: Some(tee_kind_label(tee.tee_kind)),
+                tee_kind: Some(Self::tee_kind_label(tee.tee_kind)),
                 proof_bytes: None,
             },
+        }
+    }
+
+    /// Returns the CLI label for a ZK virtual machine.
+    pub const fn zk_vm_label(zk_vm: ZkVm) -> &'static str {
+        match zk_vm {
+            ZkVm::Sp1 => "sp1",
+        }
+    }
+
+    /// Returns the CLI label for a TEE implementation.
+    pub const fn tee_kind_label(tee_kind: TeeKind) -> &'static str {
+        match tee_kind {
+            TeeKind::AwsNitro => "aws_nitro",
         }
     }
 }
@@ -342,19 +471,27 @@ impl ProofResultJson {
 /// Humanized JSON shape for `basectl proofs list`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProofsListJson {
-    network: String,
-    prover_rpc: String,
-    offset: u64,
-    limit: u32,
+pub struct ProofsListJson {
+    /// Selected network name.
+    pub network: String,
+    /// Prover-service RPC endpoint.
+    pub prover_rpc: String,
+    /// Number of matching rows skipped by the request.
+    pub offset: u64,
+    /// Maximum number of rows requested.
+    pub limit: u32,
+    /// Requested proof status filter, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
-    status_filter: Option<&'static str>,
-    total_count: u64,
-    proofs: Vec<ProofSummaryJson>,
+    pub status_filter: Option<&'static str>,
+    /// Total number of matching proof requests.
+    pub total_count: u64,
+    /// Humanized summaries returned for this page.
+    pub proofs: Vec<ProofSummaryJson>,
 }
 
 impl ProofsListJson {
-    fn from_response(
+    /// Builds a humanized proof list from a prover-service response.
+    pub fn from_response(
         network: &str,
         prover_rpc: &Url,
         offset: u64,
@@ -378,34 +515,53 @@ impl ProofsListJson {
 /// Humanized JSON row for one submitted proof request.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProofSummaryJson {
-    session_id: String,
-    proof_type: &'static str,
-    status: &'static str,
-    created_at: String,
-    updated_at: String,
+pub struct ProofSummaryJson {
+    /// Prover-service session identifier.
+    pub session_id: String,
+    /// Requested proof type.
+    pub proof_type: &'static str,
+    /// Current proof request status.
+    pub status: &'static str,
+    /// Request creation timestamp in RFC 3339 format.
+    pub created_at: String,
+    /// Most recent update timestamp in RFC 3339 format.
+    pub updated_at: String,
+    /// Completion timestamp in RFC 3339 format, when complete.
     #[serde(skip_serializing_if = "Option::is_none")]
-    completed_at: Option<String>,
+    pub completed_at: Option<String>,
+    /// Prover-service failure message, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
-    error_message: Option<String>,
+    pub error_message: Option<String>,
+    /// Trusted execution environment requested for a TEE proof.
     #[serde(skip_serializing_if = "Option::is_none")]
-    tee_kind: Option<&'static str>,
+    pub tee_kind: Option<&'static str>,
+    /// ZK virtual machine requested for a ZK proof.
     #[serde(skip_serializing_if = "Option::is_none")]
-    zk_vm: Option<&'static str>,
+    pub zk_vm: Option<&'static str>,
 }
 
 impl ProofSummaryJson {
-    fn from_summary(summary: &ProofSummary) -> Self {
+    /// Builds a humanized row from a prover-service proof summary.
+    pub fn from_summary(summary: &ProofSummary) -> Self {
         Self {
             session_id: summary.session_id.clone(),
-            proof_type: proof_type_label(summary.proof_type),
+            proof_type: Self::proof_type_label(summary.proof_type),
             status: ProofsClient::status_label(summary.status),
             created_at: summary.created_at.to_rfc3339(),
             updated_at: summary.updated_at.to_rfc3339(),
             completed_at: summary.completed_at.map(|at| at.to_rfc3339()),
             error_message: summary.error_message.clone(),
-            tee_kind: summary.tee_kind.map(tee_kind_label),
-            zk_vm: summary.zk_vm.map(zk_vm_label),
+            tee_kind: summary.tee_kind.map(ProofResultJson::tee_kind_label),
+            zk_vm: summary.zk_vm.map(ProofResultJson::zk_vm_label),
+        }
+    }
+
+    /// Returns the CLI label for a proof type.
+    pub const fn proof_type_label(proof_type: ProofType) -> &'static str {
+        match proof_type {
+            ProofType::Compressed => "compressed",
+            ProofType::SnarkPlonk => "snark_plonk",
+            ProofType::Tee => "tee",
         }
     }
 }
@@ -518,7 +674,8 @@ fn print_list_pretty_to<W: Write>(writer: &mut W, list: &ProofsListJson) -> Resu
 #[cfg(test)]
 mod tests {
     use base_prover_service_protocol::{
-        GetProofResponse, ProofResult, ProofStatus, ProofSummary, ProofType, ZkProofResult, ZkVm,
+        GetProofResponse, ProofResult, ProofStatus, ProofSummary, ProofType, SnarkPlonkProofResult,
+        ZkProofResult, ZkVm,
     };
     use url::Url;
 
@@ -703,8 +860,6 @@ mod tests {
 
     #[test]
     fn snark_plonk_result_json_shape() {
-        use base_prover_service_protocol::SnarkPlonkProofResult;
-
         let result =
             ProofResultJson::from_result(&ProofResult::SnarkPlonk(SnarkPlonkProofResult {
                 proof: ZkProofResult {

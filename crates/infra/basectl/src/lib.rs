@@ -2,13 +2,16 @@
 
 mod commands;
 pub use commands::{
-    BlockCommand, BlockSummaryJson, Cli, Commands, ConductorClusterActionArgs, ConductorCommands,
-    ConductorLeaderArgs, ConductorNodeActionArgs, ConductorStatusArgs, DestructiveClBulkArgs,
-    DestructivePeerArgs, DoctorCommand, ElSyncInfoJson, HeadJson, MonitorCommands, P2pArgs,
-    P2pCommands, ProofStatusFilter, ProofsCommands, ProofsFinalizeArgs, ProofsListArgs,
-    ProofsStatusArgs, SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs,
-    SequencerStatusArgs, SyncStatusCommand, SyncStatusJson, TipReferenceJson, TipStatus,
-    TxpoolClearArgs, TxpoolCommands, TxpoolReadArgs,
+    AddTarget, BanAction, BlockCommand, BlockSummaryJson, Cli, Commands,
+    ConductorClusterActionArgs, ConductorCommands, ConductorLeaderArgs, ConductorNodeActionArgs,
+    ConductorStatusArgs, DestructiveClBulkArgs, DestructivePeerArgs, DoctorCommand, ElSyncInfoJson,
+    HeadJson, MonitorCommands, P2pArgs, P2pCommand, P2pCommands, PeerAction, PeerActionJson,
+    PeerBulkActionResultJson, PeerLayer, PeerTarget, PeersJson, ProofResultJson, ProofStatusFilter,
+    ProofSummaryJson, ProofsCommand, ProofsCommands, ProofsFinalizeArgs, ProofsFinalizeJson,
+    ProofsListArgs, ProofsListJson, ProofsStatusArgs, ProofsStatusJson, SequencerCommands,
+    SequencerNodeActionArgs, SequencerStartArgs, SequencerStatusArgs, SyncStatusCommand,
+    SyncStatusJson, TipReferenceJson, TipStatus, TxpoolClearArgs, TxpoolClearJson, TxpoolCommand,
+    TxpoolCommands, TxpoolReadArgs, TxpoolReadJson,
 };
 
 mod confirm;
