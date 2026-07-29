@@ -38,8 +38,17 @@ impl PolicyRegistryV2 {
     /// `updateAllowlist`, `updateBlocklist`).
     pub const MAX_ACCOUNTS_PER_BATCH: usize = 64;
 
+    /// Minimum number of child policies a composite must reference.
+    pub const MIN_CHILD_POLICIES: usize = 2;
+
+    /// Maximum number of child policies a composite may reference. Distinct from
+    /// [`Self::MAX_ACCOUNTS_PER_BATCH`], which caps account-membership batches.
+    pub const MAX_CHILD_POLICIES: usize = 4;
+
     const ALLOWLIST_TYPE: u8 = PolicyType::ALLOWLIST as u8;
     const BLOCKLIST_TYPE: u8 = PolicyType::BLOCKLIST as u8;
+    const UNION_TYPE: u8 = PolicyType::UNION as u8;
+    const INTERSECT_TYPE: u8 = PolicyType::INTERSECT as u8;
     const POLICY_ID_TYPE_SHIFT: usize = 56;
 
     /// Returns the policy type encoded in the top byte of `policy_id`.
@@ -53,7 +62,7 @@ impl PolicyRegistryV2 {
     }
 
     /// Reads a custom (non-built-in) policy word, reverting `PolicyNotFound` if absent.
-    fn require_custom<S: PolicyAccounting>(
+    fn require_existing_policy<S: PolicyAccounting>(
         &self,
         storage: &S,
         policy_id: u64,
@@ -82,12 +91,97 @@ impl PolicyRegistryV2 {
         storage: &S,
         policy_id: u64,
     ) -> Result<(PackedPolicy, Address)> {
-        let packed = self.require_custom(storage, policy_id)?;
+        let packed = self.require_existing_policy(storage, policy_id)?;
         let caller = storage.caller();
         if packed.admin() != caller {
             return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
         }
         Ok((packed, caller))
+    }
+
+    /// Returns whether `policy_id`'s top byte encodes a composite gate (UNION or INTERSECT).
+    const fn is_composite(policy_id: u64) -> bool {
+        let policy_type = Self::policy_id_type(policy_id);
+        policy_type == Self::UNION_TYPE || policy_type == Self::INTERSECT_TYPE
+    }
+
+    /// Returns whether `policy_id`'s top byte is a supported policy type (simple or composite).
+    /// Type bytes above INTERSECT are malformed.
+    const fn is_well_formed(policy_id: u64) -> bool {
+        Self::policy_id_type(policy_id) <= Self::INTERSECT_TYPE
+    }
+
+    /// Returns whether `policy_id` is a built-in sentinel (`ALWAYS_ALLOW` / `ALWAYS_BLOCK`).
+    const fn is_builtin(policy_id: u64) -> bool {
+        policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID
+    }
+
+    /// Reverts `ChildPoliciesOutsideOfRange(2, 4)` when the child count is outside `[2, 4]`.
+    fn require_child_policy_in_range(child_policy_ids: &[u64]) -> Result<()> {
+        let count = child_policy_ids.len();
+        if !(Self::MIN_CHILD_POLICIES..=Self::MAX_CHILD_POLICIES).contains(&count) {
+            return Err(BasePrecompileError::revert(
+                IPolicyRegistry::ChildPoliciesOutsideOfRange {
+                    min: U256::from(Self::MIN_CHILD_POLICIES),
+                    max: U256::from(Self::MAX_CHILD_POLICIES),
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    /// Requires every composite child to be a created, custom, simple policy. Two passes so
+    /// `PolicyNotFound` (any non-existent child) takes precedence over `InvalidChildPolicy`
+    /// (a built-in sentinel or a composite) across the whole set — the canonical revert order.
+    fn validate_composite_child_policies<S: PolicyAccounting>(
+        &self,
+        storage: &S,
+        child_policy_ids: &[u64],
+    ) -> Result<()> {
+        for &child in child_policy_ids {
+            // Reverts PolicyNotFound when the child does not exist.
+            self.require_existing_policy(storage, child)?;
+        }
+        for &child in child_policy_ids {
+            if Self::is_builtin(child) || Self::is_composite(child) {
+                return Err(BasePrecompileError::revert(IPolicyRegistry::InvalidChildPolicy {
+                    childPolicyId: child,
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    /// Evaluates a UNION (OR) composite over its live child set: authorized if any child
+    /// authorizes. An empty set is unauthorized.
+    fn is_authorized_union<S: PolicyAccounting>(
+        &self,
+        storage: &S,
+        policy_id: u64,
+        account: Address,
+    ) -> Result<bool> {
+        for child in storage.read_children(policy_id)? {
+            if self.is_authorized(storage, child, account)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Evaluates an INTERSECT (AND) composite over its live child set: authorized only if every
+    /// child authorizes. An empty set is authorized.
+    fn is_authorized_intersect<S: PolicyAccounting>(
+        &self,
+        storage: &S,
+        policy_id: u64,
+        account: Address,
+    ) -> Result<bool> {
+        for child in storage.read_children(policy_id)? {
+            if !self.is_authorized(storage, child, account)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Validates policy-creation inputs and returns the raw policy type discriminator.
@@ -187,7 +281,7 @@ impl PolicyRegistryV2 {
         accounts: &[Address],
     ) -> Result<Address> {
         // Check order matches Solidity canonical: existence → type → admin → batch size.
-        let packed = self.require_custom(storage, policy_id)?;
+        let packed = self.require_existing_policy(storage, policy_id)?;
         if Self::policy_id_type(policy_id) != expected_type {
             return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
         }
@@ -256,6 +350,65 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV2 {
         Ok(policy_id)
     }
 
+    fn create_composite_policy(
+        &self,
+        storage: &mut S,
+        admin: Address,
+        policy_type: PolicyType,
+        child_policy_ids: Vec<u64>,
+    ) -> Result<u64> {
+        if admin == Address::ZERO {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
+        }
+        if !matches!(policy_type, PolicyType::UNION | PolicyType::INTERSECT) {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
+        }
+        Self::require_child_policy_in_range(&child_policy_ids)?;
+        self.validate_composite_child_policies(storage, &child_policy_ids)?;
+
+        // Reuse the simple create core for counter/ID/PolicyCreated+PolicyAdminUpdated events.
+        let policy_id =
+            self.create_policy_inner(storage, admin, policy_type, policy_type.as_discriminant())?;
+        storage.write_children(policy_id, &child_policy_ids)?;
+        storage.emit_event(
+            IPolicyRegistry::CompositePolicyUpdated {
+                policyId: policy_id,
+                updater: storage.caller(),
+                childPolicyIds: child_policy_ids,
+            }
+            .encode_log_data(),
+        )?;
+        Ok(policy_id)
+    }
+
+    fn update_composite(
+        &self,
+        storage: &mut S,
+        policy_id: u64,
+        child_policy_ids: Vec<u64>,
+    ) -> Result<()> {
+        let packed = self.require_existing_policy(storage, policy_id)?;
+        if !Self::is_composite(policy_id) {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
+        }
+        if packed.admin() != storage.caller() {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
+        }
+        Self::require_child_policy_in_range(&child_policy_ids)?;
+        self.validate_composite_child_policies(storage, &child_policy_ids)?;
+
+        storage.write_children(policy_id, &child_policy_ids)?;
+        storage.emit_event(
+            IPolicyRegistry::CompositePolicyUpdated {
+                policyId: policy_id,
+                updater: storage.caller(),
+                childPolicyIds: child_policy_ids,
+            }
+            .encode_log_data(),
+        )?;
+        Ok(())
+    }
+
     fn stage_update_admin(
         &self,
         storage: &mut S,
@@ -280,7 +433,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV2 {
     }
 
     fn finalize_update_admin(&self, storage: &mut S, policy_id: u64) -> Result<()> {
-        let packed = self.require_custom(storage, policy_id)?;
+        let packed = self.require_existing_policy(storage, policy_id)?;
         let pending = storage.read_pending_admin(policy_id)?;
         if pending == Address::ZERO {
             return Err(BasePrecompileError::revert(IPolicyRegistry::NoPendingAdmin {}));
@@ -359,44 +512,40 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV2 {
     }
 
     fn is_authorized(&self, storage: &S, policy_id: u64, account: Address) -> Result<bool> {
-        // Malformed IDs (type byte > 1) are treated as unauthorized rather than reverting.
-        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
-            return Ok(false);
-        }
-        // Fast-paths for built-in IDs: ALWAYS_ALLOW_ID = 0 is the EVM default for any
-        // uninitialized policy field, so this must work before initialization has run.
+        // Built-in short-circuits precede any storage read: ALWAYS_ALLOW_ID = 0 is the EVM
+        // default for any uninitialized policy field, so this must work before init has run.
         if policy_id == Self::ALWAYS_ALLOW_ID {
             return Ok(true);
         }
         if policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(false);
         }
-        // Read membership directly without requiring the policy slot to be written first.
-        // An unwritten slot returns false, which naturally gives:
-        //   ALLOWLIST  => false  (no members => not authorized)
-        //   BLOCKLIST  => !false (no members blocked => authorized)
-        let member = storage.read_member(policy_id, account)?;
+        // Malformed IDs (type byte > INTERSECT) are treated as unauthorized rather than reverting.
+        if !Self::is_well_formed(policy_id) {
+            return Ok(false);
+        }
         match Self::policy_id_type(policy_id) {
-            Self::ALLOWLIST_TYPE => Ok(member),
-            Self::BLOCKLIST_TYPE => Ok(!member),
-            _ => unreachable!("type byte > 1 was rejected by the malformed-ID guard above"),
+            Self::UNION_TYPE => self.is_authorized_union(storage, policy_id, account),
+            Self::INTERSECT_TYPE => self.is_authorized_intersect(storage, policy_id, account),
+            Self::ALLOWLIST_TYPE => storage.read_member(policy_id, account),
+            Self::BLOCKLIST_TYPE => Ok(!storage.read_member(policy_id, account)?),
+            _ => unreachable!("is_well_formed rejects type bytes > INTERSECT"),
         }
     }
 
     fn policy_exists(&self, storage: &S, policy_id: u64) -> Result<bool> {
-        // Malformed IDs (type byte > 1) are not well-formed, so they do not exist.
-        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
-            return Ok(false);
-        }
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(true);
         }
-        let packed = PackedPolicy::from_raw(storage.read_policy_word(policy_id)?);
-        Ok(packed.exists())
+        // Malformed IDs (type byte > INTERSECT) are not well-formed, so they do not exist.
+        if !Self::is_well_formed(policy_id) {
+            return Ok(false);
+        }
+        Ok(PackedPolicy::from_raw(storage.read_policy_word(policy_id)?).exists())
     }
 
     fn get_policy_admin(&self, storage: &S, policy_id: u64) -> Result<Address> {
-        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
+        if !Self::is_well_formed(policy_id) {
             return Ok(Address::ZERO);
         }
         let packed = PackedPolicy::from_raw(storage.read_policy_word(policy_id)?);
@@ -407,7 +556,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV2 {
     }
 
     fn pending_policy_admin(&self, storage: &S, policy_id: u64) -> Result<Address> {
-        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
+        if !Self::is_well_formed(policy_id) {
             return Ok(Address::ZERO);
         }
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
@@ -450,6 +599,7 @@ mod tests {
         members: BTreeMap<(u64, Address), bool>,
         pending_admins: BTreeMap<u64, Address>,
         next_counter: u64,
+        children: BTreeMap<u64, Vec<u64>>,
         events: Vec<LogData>,
     }
 
@@ -462,6 +612,7 @@ mod tests {
                 members: BTreeMap::new(),
                 pending_admins: BTreeMap::new(),
                 next_counter: 0,
+                children: BTreeMap::new(),
                 events: Vec::new(),
             }
         }
@@ -516,6 +667,13 @@ mod tests {
         }
         fn mark_initialized(&mut self) -> Result<()> {
             self.initialized = true;
+            Ok(())
+        }
+        fn read_children(&self, policy_id: u64) -> Result<Vec<u64>> {
+            Ok(self.children.get(&policy_id).cloned().unwrap_or_default())
+        }
+        fn write_children(&mut self, policy_id: u64, child_policy_ids: &[u64]) -> Result<()> {
+            self.children.insert(policy_id, child_policy_ids.to_vec());
             Ok(())
         }
     }
@@ -588,7 +746,8 @@ mod tests {
 
     #[test]
     fn malformed_policy_id_is_authorized_returns_false() {
-        let malformed: u64 = (2u64 << 56) | 42;
+        // Type byte 4 is above INTERSECT (3), so it is malformed (not a composite).
+        let malformed: u64 = (4u64 << 56) | 42;
         let rt = initialized();
         assert!(!LOGIC.is_authorized(&rt, malformed, ALICE).unwrap());
     }
@@ -1004,7 +1163,7 @@ mod tests {
     #[test]
     fn get_policy_admin_malformed_policy_id_returns_zero_address() {
         let rt = initialized();
-        let malformed: u64 = (2u64 << 56) | 42;
+        let malformed: u64 = (4u64 << 56) | 42;
         assert_eq!(LOGIC.get_policy_admin(&rt, malformed).unwrap(), Address::ZERO);
     }
 
@@ -1059,7 +1218,7 @@ mod tests {
     #[test]
     fn pending_policy_admin_malformed_policy_id_returns_zero_address() {
         let rt = initialized();
-        let malformed: u64 = (2u64 << 56) | 42;
+        let malformed: u64 = (4u64 << 56) | 42;
         assert_eq!(LOGIC.pending_policy_admin(&rt, malformed).unwrap(), Address::ZERO);
     }
 
@@ -1068,5 +1227,262 @@ mod tests {
         let rt = initialized();
         let nonexistent = PolicyRegistryV2::make_id(0, 999);
         assert_eq!(LOGIC.pending_policy_admin(&rt, nonexistent).unwrap(), Address::ZERO);
+    }
+
+    // --- composite policies (UNION / INTERSECT) ---
+
+    fn create_union(rt: &mut Storage, children: Vec<u64>) -> u64 {
+        set_caller(rt, ADMIN);
+        LOGIC.create_composite_policy(rt, ADMIN, PolicyType::UNION, children).unwrap()
+    }
+
+    fn create_intersect(rt: &mut Storage, children: Vec<u64>) -> u64 {
+        set_caller(rt, ADMIN);
+        LOGIC.create_composite_policy(rt, ADMIN, PolicyType::INTERSECT, children).unwrap()
+    }
+
+    #[test]
+    fn create_composite_encodes_gate_in_top_byte_and_is_observable() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let id = create_union(&mut rt, vec![a, b]);
+        assert_eq!((id >> 56) as u8, PolicyType::UNION as u8);
+        assert!(LOGIC.policy_exists(&rt, id).unwrap());
+        assert_eq!(LOGIC.get_policy_admin(&rt, id).unwrap(), ADMIN);
+    }
+
+    #[test]
+    fn create_composite_emits_created_admin_and_composite_updated_events() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let before = rt.events.len();
+        let id = create_union(&mut rt, vec![a, b]);
+        let events = &rt.events[before..];
+        assert_eq!(events.len(), 3);
+        assert_eq!(
+            IPolicyRegistry::PolicyCreated::decode_log_data(&events[0]).unwrap().policyId,
+            id
+        );
+        assert_eq!(
+            IPolicyRegistry::PolicyAdminUpdated::decode_log_data(&events[1]).unwrap().newAdmin,
+            ADMIN
+        );
+        let updated = IPolicyRegistry::CompositePolicyUpdated::decode_log_data(&events[2]).unwrap();
+        assert_eq!(updated.policyId, id);
+        assert_eq!(updated.updater, ADMIN);
+        assert_eq!(updated.childPolicyIds, vec![a, b]);
+    }
+
+    #[test]
+    fn union_is_authorized_if_any_child_authorizes() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        LOGIC.update_allowlist(&mut rt, a, true, vec![ALICE]).unwrap();
+        LOGIC.update_allowlist(&mut rt, b, true, vec![BOB]).unwrap();
+        let id = create_union(&mut rt, vec![a, b]);
+        assert!(LOGIC.is_authorized(&rt, id, ALICE).unwrap());
+        assert!(LOGIC.is_authorized(&rt, id, BOB).unwrap());
+        assert!(!LOGIC.is_authorized(&rt, id, NEW_ADMIN).unwrap());
+    }
+
+    #[test]
+    fn intersect_is_authorized_only_if_all_children_authorize() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        LOGIC.update_allowlist(&mut rt, a, true, vec![ALICE, BOB]).unwrap();
+        LOGIC.update_allowlist(&mut rt, b, true, vec![ALICE]).unwrap();
+        let id = create_intersect(&mut rt, vec![a, b]);
+        assert!(LOGIC.is_authorized(&rt, id, ALICE).unwrap());
+        assert!(!LOGIC.is_authorized(&rt, id, BOB).unwrap());
+    }
+
+    #[test]
+    fn composite_evaluates_children_live() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        LOGIC.update_allowlist(&mut rt, a, true, vec![ALICE]).unwrap();
+        let id = create_intersect(&mut rt, vec![a, b]);
+        // ALICE is in A but not B, so the intersection rejects.
+        assert!(!LOGIC.is_authorized(&rt, id, ALICE).unwrap());
+        // Adding ALICE to B flips the result live, without touching the composite.
+        LOGIC.update_allowlist(&mut rt, b, true, vec![ALICE]).unwrap();
+        assert!(LOGIC.is_authorized(&rt, id, ALICE).unwrap());
+    }
+
+    #[test]
+    fn update_composite_replaces_child_set() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let c = create_allowlist(&mut rt);
+        LOGIC.update_allowlist(&mut rt, a, true, vec![ALICE]).unwrap();
+        LOGIC.update_allowlist(&mut rt, c, true, vec![BOB]).unwrap();
+        let id = create_union(&mut rt, vec![a, b]);
+        assert!(LOGIC.is_authorized(&rt, id, ALICE).unwrap());
+        assert!(!LOGIC.is_authorized(&rt, id, BOB).unwrap());
+        // Replace [a, b] with [b, c]: ALICE (only in a) drops out, BOB (in c) joins.
+        set_caller(&mut rt, ADMIN);
+        LOGIC.update_composite(&mut rt, id, vec![b, c]).unwrap();
+        assert!(!LOGIC.is_authorized(&rt, id, ALICE).unwrap());
+        assert!(LOGIC.is_authorized(&rt, id, BOB).unwrap());
+    }
+
+    #[test]
+    fn create_composite_zero_admin_reverts() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let err = LOGIC
+            .create_composite_policy(&mut rt, Address::ZERO, PolicyType::UNION, vec![a, b])
+            .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
+    }
+
+    #[test]
+    fn create_composite_non_composite_type_reverts() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let err = LOGIC
+            .create_composite_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST, vec![a, b])
+            .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
+    }
+
+    #[test]
+    fn create_composite_child_count_out_of_range_reverts() {
+        let mut rt = initialized();
+        let ids: Vec<u64> = (0..5).map(|_| create_allowlist(&mut rt)).collect();
+        let range_err = BasePrecompileError::revert(IPolicyRegistry::ChildPoliciesOutsideOfRange {
+            min: U256::from(2),
+            max: U256::from(4),
+        });
+        // Too few (1) and too many (5) both revert with the same range error.
+        let too_few = LOGIC
+            .create_composite_policy(&mut rt, ADMIN, PolicyType::UNION, vec![ids[0]])
+            .unwrap_err();
+        let too_many =
+            LOGIC.create_composite_policy(&mut rt, ADMIN, PolicyType::UNION, ids).unwrap_err();
+        assert_eq!(too_few, range_err);
+        assert_eq!(too_many, range_err);
+    }
+
+    #[test]
+    fn create_composite_nonexistent_child_reverts_policy_not_found() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let missing = PolicyRegistryV2::make_id(PolicyType::ALLOWLIST as u8, 999);
+        let err = LOGIC
+            .create_composite_policy(&mut rt, ADMIN, PolicyType::UNION, vec![a, missing])
+            .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
+    }
+
+    #[test]
+    fn create_composite_builtin_child_reverts_invalid_child() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let err = LOGIC
+            .create_composite_policy(
+                &mut rt,
+                ADMIN,
+                PolicyType::UNION,
+                vec![a, PolicyRegistryV2::ALWAYS_ALLOW_ID],
+            )
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IPolicyRegistry::InvalidChildPolicy {
+                childPolicyId: PolicyRegistryV2::ALWAYS_ALLOW_ID,
+            })
+        );
+    }
+
+    #[test]
+    fn create_composite_composite_child_reverts_invalid_child() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let inner = create_union(&mut rt, vec![a, b]);
+        let c = create_allowlist(&mut rt);
+        let err = LOGIC
+            .create_composite_policy(&mut rt, ADMIN, PolicyType::INTERSECT, vec![c, inner])
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IPolicyRegistry::InvalidChildPolicy {
+                childPolicyId: inner
+            })
+        );
+    }
+
+    #[test]
+    fn create_composite_nonexistent_child_precedes_invalid_child() {
+        // Two-pass validation: a missing child reverts PolicyNotFound even when another child
+        // is an invalid built-in (which would otherwise revert InvalidChildPolicy).
+        let mut rt = initialized();
+        let missing = PolicyRegistryV2::make_id(PolicyType::ALLOWLIST as u8, 999);
+        let err = LOGIC
+            .create_composite_policy(
+                &mut rt,
+                ADMIN,
+                PolicyType::UNION,
+                vec![PolicyRegistryV2::ALWAYS_ALLOW_ID, missing],
+            )
+            .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
+    }
+
+    #[test]
+    fn update_composite_nonexistent_reverts_policy_not_found() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let missing = PolicyRegistryV2::make_id(PolicyType::UNION as u8, 999);
+        let err = LOGIC.update_composite(&mut rt, missing, vec![a, b]).unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
+    }
+
+    #[test]
+    fn update_composite_on_simple_policy_reverts_incompatible_type() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let err = LOGIC.update_composite(&mut rt, a, vec![a, b]).unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
+    }
+
+    #[test]
+    fn update_composite_unauthorized_reverts() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let id = create_union(&mut rt, vec![a, b]);
+        set_caller(&mut rt, ALICE);
+        let err = LOGIC.update_composite(&mut rt, id, vec![a, b]).unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
+    }
+
+    #[test]
+    fn update_composite_invalid_child_reverts() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let id = create_union(&mut rt, vec![a, b]);
+        set_caller(&mut rt, ADMIN);
+        let err = LOGIC
+            .update_composite(&mut rt, id, vec![a, PolicyRegistryV2::ALWAYS_BLOCK_ID])
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IPolicyRegistry::InvalidChildPolicy {
+                childPolicyId: PolicyRegistryV2::ALWAYS_BLOCK_ID,
+            })
+        );
     }
 }

@@ -1,20 +1,20 @@
-//! Contains the CLI arguments for the basectl binary.
-
-use std::path::PathBuf;
+//! CLI arguments and subcommands for basectl.
 
 use alloy_primitives::{Address, B256};
-use basectl_cli::ViewId;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use url::Url;
+
+use super::{BlockCommand, DoctorCommand, SyncStatusCommand};
+use crate::ViewId;
 
 /// Base infrastructure control CLI.
 #[derive(Debug, Parser)]
 #[command(name = "basectl")]
 #[command(about = "Base infrastructure control CLI")]
-pub(crate) struct Cli {
+pub struct Cli {
     /// Chain configuration (mainnet, sepolia, devnet, or path to config file)
     #[arg(short = 'c', long = "config", default_value = "mainnet", global = true)]
-    pub(crate) config: String,
+    pub config: String,
     /// Bootstrap conductor JSON-RPC URL for runtime cluster discovery.
     ///
     /// When no hardcoded conductor list exists in the chain config, basectl
@@ -25,92 +25,55 @@ pub(crate) struct Cli {
     /// `basectl conductor` / `basectl sequencer` commands. Ignored by
     /// unrelated non-TUI subcommands.
     #[arg(long = "conductor-rpc", env = "BASECTL_CONDUCTOR_RPC", global = true)]
-    pub(crate) conductor_rpc: Option<Url>,
+    pub conductor_rpc: Option<Url>,
+    /// Command to run.
     #[command(subcommand)]
-    pub(crate) command: Option<Commands>,
+    pub command: Option<Commands>,
 }
 
 /// Subcommands for the basectl CLI.
 #[derive(Debug, Subcommand)]
-pub(crate) enum Commands {
+pub enum Commands {
     /// Open the interactive TUI monitor.
     Monitor {
+        /// Monitor view to open.
         #[command(subcommand)]
         command: Option<MonitorCommands>,
     },
     /// Inspect a single L2 block.
     #[command(visible_alias = "b")]
-    Block {
-        /// Block number (decimal or 0x-hex), tag (latest/safe/finalized/earliest), or 32-byte block hash.
-        #[arg(value_name = "REF")]
-        reference: String,
-        /// Emit JSON (humanized — decoded numbers, ISO + local timestamps) instead of the pretty table.
-        #[arg(long)]
-        json: bool,
-        /// With `--json`, emit the JSON-RPC wire format (camelCase, hex-string quantities) instead of the humanized JSON.
-        #[arg(long, requires = "json")]
-        raw: bool,
-    },
+    Block(BlockCommand),
     /// Report combined CL `optimism_syncStatus` + EL `eth_syncing`.
-    SyncStatus {
-        /// Override the execution-layer RPC URL.
-        ///
-        /// Defaults to the chain config's `rpc` field, which on the
-        /// `mainnet` and `sepolia` presets resolves to the public proxyd
-        /// fleet — `eth_syncing` against that always reports "not syncing"
-        /// because proxyd routes only-healthy backends. Pass this flag to
-        /// point at a single node.
-        #[arg(long = "el-rpc", value_name = "URL")]
-        el_rpc: Option<Url>,
-        /// Override the consensus-node RPC URL.
-        ///
-        /// The mainnet and sepolia presets ship `consensus_node_rpc` unset, so
-        /// non-devnet users must pass this flag (or set the field in their YAML
-        /// config).
-        #[arg(long = "cl-rpc", value_name = "URL")]
-        cl_rpc: Option<Url>,
-        /// Block tolerance for the tip-reference `caught_up` classification.
-        ///
-        /// The local node is reported as `caught_up` when within ±this many
-        /// blocks of the public reference. Beyond the window, status flips
-        /// to `behind` or `ahead`. Default 5 ≈ ~10s of network jitter at
-        /// Base's 2s block time. Lower the value for stricter alerting,
-        /// raise it to dampen noise on flaky networks.
-        #[arg(long = "tip-tolerance", value_name = "BLOCKS", default_value_t = 5)]
-        tip_tolerance: u64,
-        /// Emit JSON (humanized — decoded numbers, ISO + local timestamps,
-        /// precomputed `safeLag*`) instead of the pretty table.
-        #[arg(long)]
-        json: bool,
-        /// With `--json`, emit the JSON-RPC wire format (the alloy-typed
-        /// `optimism_syncStatus` response) instead of the humanized JSON.
-        #[arg(long, requires = "json")]
-        raw: bool,
-    },
+    SyncStatus(SyncStatusCommand),
     /// Inspect p2p peers and advertised endpoints.
     P2p {
+        /// P2P operation to run.
         #[command(subcommand)]
         command: P2pCommands,
     },
     /// Inspect and clear execution-layer txpool contents.
     Txpool {
+        /// Transaction-pool operation to run.
         #[command(subcommand)]
         command: TxpoolCommands,
     },
     /// Inspect and control an HA conductor cluster.
     Conductor {
+        /// Conductor operation to run.
         #[command(subcommand)]
         command: ConductorCommands,
     },
     /// Inspect and control sequencer activity on HA conductor nodes.
     Sequencer {
+        /// Sequencer operation to run.
         #[command(subcommand)]
         command: SequencerCommands,
     },
     /// Run read-only diagnostics for a single node.
-    Doctor(DoctorArgs),
+    Doctor(DoctorCommand),
     /// Request and inspect ZK proofs on the internal prover service.
     Proofs {
+        /// Proof operation to run.
         #[command(subcommand)]
         command: ProofsCommands,
     },
@@ -119,47 +82,9 @@ pub(crate) enum Commands {
     Flashblocks,
 }
 
-/// Flags for `basectl doctor`.
-#[derive(Debug, Args)]
-pub(crate) struct DoctorArgs {
-    /// Override the execution-layer RPC URL.
-    ///
-    /// Defaults to the chain config's `rpc` field. Pass this flag to diagnose
-    /// a specific node instead of a public preset RPC.
-    #[arg(long = "el-rpc", value_name = "URL")]
-    pub(crate) el_rpc: Option<Url>,
-    /// Override the consensus-node RPC URL.
-    ///
-    /// If omitted and the selected config has no `consensus_node_rpc`, CL
-    /// checks are skipped with hints while EL/L1/config checks still run.
-    #[arg(long = "cl-rpc", value_name = "URL")]
-    pub(crate) cl_rpc: Option<Url>,
-    /// Path to the local `reth.toml` file.
-    #[arg(long = "reth-config", value_name = "PATH")]
-    pub(crate) reth_config: Option<PathBuf>,
-    /// Connected peer count below which peer checks warn.
-    #[arg(long = "peer-warn-threshold", value_name = "COUNT", default_value_t = 5)]
-    pub(crate) peer_warn_threshold: u32,
-    /// EL head lag above which `el_head_vs_tip` warns.
-    #[arg(long = "head-lag-warn-blocks", value_name = "BLOCKS", default_value_t = 10)]
-    pub(crate) head_lag_warn_blocks: u64,
-    /// EL head lag above which `el_head_vs_tip` fails.
-    #[arg(long = "head-lag-fail-blocks", value_name = "BLOCKS", default_value_t = 20)]
-    pub(crate) head_lag_fail_blocks: u64,
-    /// Safe-head lag above which `safe_head_recency` warns.
-    #[arg(long = "safe-recency-warn-blocks", value_name = "BLOCKS", default_value_t = 150)]
-    pub(crate) safe_recency_warn_blocks: u64,
-    /// Safe-head lag above which `safe_head_recency` fails.
-    #[arg(long = "safe-recency-fail-blocks", value_name = "BLOCKS", default_value_t = 300)]
-    pub(crate) safe_recency_fail_blocks: u64,
-    /// Emit a humanized JSON report instead of pretty text.
-    #[arg(long)]
-    pub(crate) json: bool,
-}
-
 /// Prover-service proof request and inspection commands.
 #[derive(Debug, Subcommand)]
-pub(crate) enum ProofsCommands {
+pub enum ProofsCommands {
     /// Submit a compressed ZK proof request for a block range to speed up finality.
     Finalize(ProofsFinalizeArgs),
     /// Show status and result data for a submitted proof request.
@@ -170,13 +95,13 @@ pub(crate) enum ProofsCommands {
 
 /// Flags for `basectl proofs finalize`.
 #[derive(Debug, Args)]
-pub(crate) struct ProofsFinalizeArgs {
+pub struct ProofsFinalizeArgs {
     /// First L2 block number to prove.
     #[arg(value_name = "START_BLOCK")]
-    pub(crate) start_block: u64,
+    pub start_block: u64,
     /// Number of consecutive L2 blocks to prove.
     #[arg(value_name = "NUM_BLOCKS", value_parser = clap::value_parser!(u64).range(1..))]
-    pub(crate) num_blocks: u64,
+    pub num_blocks: u64,
     /// Explicit proof session ID (prover-service idempotency key).
     ///
     /// If omitted, basectl derives a deterministic session ID from the
@@ -184,74 +109,74 @@ pub(crate) struct ProofsFinalizeArgs {
     /// to the existing prover-service session instead of enqueueing a
     /// duplicate proof.
     #[arg(long = "session-id", value_name = "ID")]
-    pub(crate) session_id: Option<String>,
+    pub session_id: Option<String>,
     /// L1 head hash used for witness generation.
     ///
     /// If omitted, the prover service picks one.
     #[arg(long = "l1-head", value_name = "HASH")]
-    pub(crate) l1_head: Option<B256>,
+    pub l1_head: Option<B256>,
     /// Sequencing window passed to the prover.
     #[arg(long = "sequence-window", value_name = "N")]
-    pub(crate) sequence_window: Option<u64>,
+    pub sequence_window: Option<u64>,
     /// Intermediate output root interval passed to the prover.
     #[arg(long = "intermediate-root-interval", value_name = "N")]
-    pub(crate) intermediate_root_interval: Option<u64>,
+    pub intermediate_root_interval: Option<u64>,
     /// Poll the prover service until the proof succeeds or fails.
     ///
     /// Exits non-zero when the proof fails or does not complete in time.
     #[arg(long)]
-    pub(crate) wait: bool,
+    pub wait: bool,
     /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
     #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
-    pub(crate) prover_rpc: Option<Url>,
+    pub prover_rpc: Option<Url>,
     /// Skip the interactive confirmation prompt.
     #[arg(long)]
-    pub(crate) yes: bool,
+    pub yes: bool,
     /// Emit a structured JSON action outcome instead of pretty text.
     #[arg(long, requires = "yes")]
-    pub(crate) json: bool,
+    pub json: bool,
 }
 
 /// Flags for `basectl proofs status`.
 #[derive(Debug, Args)]
-pub(crate) struct ProofsStatusArgs {
+pub struct ProofsStatusArgs {
     /// Proof session ID returned by `basectl proofs finalize`.
     #[arg(value_name = "SESSION_ID")]
-    pub(crate) session_id: String,
+    pub session_id: String,
     /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
     #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
-    pub(crate) prover_rpc: Option<Url>,
+    pub prover_rpc: Option<Url>,
     /// Emit humanized JSON instead of pretty text.
     #[arg(long)]
-    pub(crate) json: bool,
+    pub json: bool,
     /// With `--json`, emit the prover-service wire shape instead of the humanized summary.
     #[arg(long, requires = "json")]
-    pub(crate) raw: bool,
+    pub raw: bool,
 }
 
 /// Flags for `basectl proofs list`.
 #[derive(Debug, Args)]
-pub(crate) struct ProofsListArgs {
+pub struct ProofsListArgs {
     /// Only list proofs with this status.
     #[arg(long, value_enum, value_name = "STATUS")]
-    pub(crate) status: Option<ProofStatusFilter>,
+    pub status: Option<ProofStatusFilter>,
     /// Number of rows to skip.
     #[arg(long, value_name = "N", default_value_t = 0)]
-    pub(crate) offset: u64,
+    pub offset: u64,
     /// Maximum rows to return.
     #[arg(long, value_name = "N", default_value_t = 50)]
-    pub(crate) limit: u32,
+    pub limit: u32,
     /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
     #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
-    pub(crate) prover_rpc: Option<Url>,
+    pub prover_rpc: Option<Url>,
     /// Emit humanized JSON instead of pretty text.
     #[arg(long)]
-    pub(crate) json: bool,
+    pub json: bool,
 }
 
 /// Proof status filter accepted by `basectl proofs list`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum ProofStatusFilter {
+pub enum ProofStatusFilter {
     /// Proof request is queued.
     Queued,
     /// Proof request is running.
@@ -264,7 +189,7 @@ pub(crate) enum ProofStatusFilter {
 
 /// P2P inspection and peer-management commands.
 #[derive(Debug, Subcommand)]
-pub(crate) enum P2pCommands {
+pub enum P2pCommands {
     /// List connected peers per layer.
     Peers(P2pArgs),
     /// Show advertised endpoints and peer-count summary per layer.
@@ -292,78 +217,78 @@ pub(crate) enum P2pCommands {
 
 /// Shared flags for the read-only `basectl p2p` subcommands.
 #[derive(Debug, Args)]
-pub(crate) struct P2pArgs {
+pub struct P2pArgs {
     /// Override the execution-layer RPC URL.
     ///
     /// Defaults to the chain config's `rpc` field, which on the
     /// `mainnet` and `sepolia` presets resolves to the public proxyd
     /// fleet. Pass this flag to query a single node directly.
     #[arg(long = "el-rpc", value_name = "URL")]
-    pub(crate) el_rpc: Option<Url>,
+    pub el_rpc: Option<Url>,
     /// Override the consensus-node RPC URL.
     ///
     /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
     /// so non-devnet users must pass this flag (or set the field in
     /// their YAML config).
     #[arg(long = "cl-rpc", value_name = "URL")]
-    pub(crate) cl_rpc: Option<Url>,
+    pub cl_rpc: Option<Url>,
     /// Emit JSON instead of the pretty table output.
     #[arg(long)]
-    pub(crate) json: bool,
+    pub json: bool,
     /// With `--json`, emit raw RPC wire shapes instead of the humanized summary.
     #[arg(long, requires = "json")]
-    pub(crate) raw: bool,
+    pub raw: bool,
 }
 
 /// Shared flags for destructive `basectl p2p` subcommands.
 #[derive(Debug, Args)]
-pub(crate) struct DestructivePeerArgs {
+pub struct DestructivePeerArgs {
     /// Peer target. `enode://...` routes to EL; CL add accepts ENR or multiaddr, while other actions use a peer ID.
     #[arg(value_name = "TARGET")]
-    pub(crate) target: String,
+    pub target: String,
     /// Override the execution-layer RPC URL.
     ///
     /// Defaults to the chain config's `rpc` field, which on the
     /// `mainnet` and `sepolia` presets resolves to the public proxyd
     /// fleet. Pass this flag to query a single node directly.
     #[arg(long = "el-rpc", value_name = "URL")]
-    pub(crate) el_rpc: Option<Url>,
+    pub el_rpc: Option<Url>,
     /// Override the consensus-node RPC URL.
     ///
     /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
     /// so non-devnet users must pass this flag (or set the field in
     /// their YAML config).
     #[arg(long = "cl-rpc", value_name = "URL")]
-    pub(crate) cl_rpc: Option<Url>,
+    pub cl_rpc: Option<Url>,
     /// Skip the interactive confirmation prompt.
     #[arg(long)]
-    pub(crate) yes: bool,
+    pub yes: bool,
     /// Emit a structured JSON action outcome instead of pretty text.
     #[arg(long, requires = "yes")]
-    pub(crate) json: bool,
+    pub json: bool,
 }
 
 /// Shared flags for destructive consensus-only `basectl p2p` bulk subcommands.
 #[derive(Debug, Args)]
-pub(crate) struct DestructiveClBulkArgs {
+pub struct DestructiveClBulkArgs {
     /// Override the consensus-node RPC URL.
     ///
     /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
     /// so non-devnet users must pass this flag (or set the field in
     /// their YAML config).
     #[arg(long = "cl-rpc", value_name = "URL")]
-    pub(crate) cl_rpc: Option<Url>,
+    pub cl_rpc: Option<Url>,
     /// Skip the interactive confirmation prompt.
     #[arg(long)]
-    pub(crate) yes: bool,
+    pub yes: bool,
     /// Emit a structured JSON action outcome instead of pretty text.
     #[arg(long, requires = "yes")]
-    pub(crate) json: bool,
+    pub json: bool,
 }
 
 /// Transaction-pool inspection and destructive clearing commands.
 #[derive(Debug, Subcommand)]
-pub(crate) enum TxpoolCommands {
+pub enum TxpoolCommands {
     /// Show pending txpool transactions.
     Pending(TxpoolReadArgs),
     /// Show queued txpool transactions.
@@ -376,47 +301,47 @@ pub(crate) enum TxpoolCommands {
 
 /// Shared flags for read-only `basectl txpool` subcommands.
 #[derive(Debug, Args)]
-pub(crate) struct TxpoolReadArgs {
+pub struct TxpoolReadArgs {
     /// Optional sender address to filter at the RPC layer.
     #[arg(value_name = "SENDER")]
-    pub(crate) sender: Option<Address>,
+    pub sender: Option<Address>,
     /// Override the execution-layer RPC URL.
     ///
     /// Defaults to the chain config's `rpc` field. Pass this flag to query a
     /// single node directly.
     #[arg(long = "el-rpc", value_name = "URL")]
-    pub(crate) el_rpc: Option<Url>,
+    pub el_rpc: Option<Url>,
     /// Emit humanized JSON instead of pretty text.
     #[arg(long)]
-    pub(crate) json: bool,
+    pub json: bool,
     /// With `--json`, emit the txpool wire shape instead of the humanized summary.
     #[arg(long, requires = "json")]
-    pub(crate) raw: bool,
+    pub raw: bool,
 }
 
 /// Flags for destructive `basectl txpool clear`.
 #[derive(Debug, Args)]
-pub(crate) struct TxpoolClearArgs {
+pub struct TxpoolClearArgs {
     /// Sender address whose txpool transactions should be dropped.
     #[arg(long, value_name = "ADDRESS")]
-    pub(crate) sender: Option<Address>,
+    pub sender: Option<Address>,
     /// Override the execution-layer RPC URL.
     ///
     /// Defaults to the chain config's `rpc` field. Destructive txpool calls
     /// usually require an admin-enabled node RPC.
     #[arg(long = "el-rpc", value_name = "URL")]
-    pub(crate) el_rpc: Option<Url>,
+    pub el_rpc: Option<Url>,
     /// Skip the interactive confirmation prompt.
     #[arg(long)]
-    pub(crate) yes: bool,
+    pub yes: bool,
     /// Emit a structured JSON action outcome instead of pretty text.
     #[arg(long, requires = "yes")]
-    pub(crate) json: bool,
+    pub json: bool,
 }
 
 /// HA conductor inspection and control commands.
 #[derive(Debug, Subcommand)]
-pub(crate) enum ConductorCommands {
+pub enum ConductorCommands {
     /// Show current cluster status.
     Status(ConductorStatusArgs),
     /// Transfer raft leadership away from the current leader or to a target node.
@@ -435,54 +360,54 @@ pub(crate) enum ConductorCommands {
 
 /// Flags for `basectl conductor status`.
 #[derive(Debug, Args)]
-pub(crate) struct ConductorStatusArgs {
+pub struct ConductorStatusArgs {
     /// Emit a structured JSON status summary instead of pretty text.
     #[arg(long)]
-    pub(crate) json: bool,
+    pub json: bool,
 }
 
 /// Flags for `basectl conductor transfer-leader`.
 #[derive(Debug, Args)]
-pub(crate) struct ConductorLeaderArgs {
+pub struct ConductorLeaderArgs {
     /// Optional target node name. If omitted, the leader transfers to any available peer.
     #[arg(value_name = "TARGET")]
-    pub(crate) target: Option<String>,
+    pub target: Option<String>,
     /// Skip the interactive confirmation prompt.
     #[arg(long)]
-    pub(crate) yes: bool,
+    pub yes: bool,
     /// Emit a structured JSON action outcome instead of pretty text.
     #[arg(long, requires = "yes")]
-    pub(crate) json: bool,
+    pub json: bool,
 }
 
 /// Shared flags for single-node destructive `basectl conductor` commands.
 #[derive(Debug, Args)]
-pub(crate) struct ConductorNodeActionArgs {
+pub struct ConductorNodeActionArgs {
     /// Conductor node name from the selected config or discovered raft server ID.
     #[arg(value_name = "NODE")]
-    pub(crate) node: String,
+    pub node: String,
     /// Skip the interactive confirmation prompt.
     #[arg(long)]
-    pub(crate) yes: bool,
+    pub yes: bool,
     /// Emit a structured JSON action outcome instead of pretty text.
     #[arg(long, requires = "yes")]
-    pub(crate) json: bool,
+    pub json: bool,
 }
 
 /// Shared flags for cluster-wide destructive `basectl conductor` commands.
 #[derive(Debug, Args)]
-pub(crate) struct ConductorClusterActionArgs {
+pub struct ConductorClusterActionArgs {
     /// Skip the typed network-name confirmation prompt.
     #[arg(long)]
-    pub(crate) yes: bool,
+    pub yes: bool,
     /// Emit a structured JSON action outcome instead of pretty text. Requires `--yes`.
     #[arg(long, requires = "yes")]
-    pub(crate) json: bool,
+    pub json: bool,
 }
 
 /// Sequencer inspection and control commands.
 #[derive(Debug, Subcommand)]
-pub(crate) enum SequencerCommands {
+pub enum SequencerCommands {
     /// Show sequencer state for every node or one selected node.
     Status(SequencerStatusArgs),
     /// Start sequencing on one node.
@@ -493,51 +418,51 @@ pub(crate) enum SequencerCommands {
 
 /// Flags for `basectl sequencer status`.
 #[derive(Debug, Args)]
-pub(crate) struct SequencerStatusArgs {
+pub struct SequencerStatusArgs {
     /// Optional node name from the selected config or discovered raft server ID.
     #[arg(value_name = "NODE")]
-    pub(crate) node: Option<String>,
+    pub node: Option<String>,
     /// Emit a structured JSON status summary instead of pretty text.
     #[arg(long)]
-    pub(crate) json: bool,
+    pub json: bool,
 }
 
 /// Flags for `basectl sequencer start`.
 #[derive(Debug, Args)]
-pub(crate) struct SequencerStartArgs {
+pub struct SequencerStartArgs {
     /// Sequencer node name from the selected config or discovered raft server ID.
     #[arg(value_name = "NODE")]
-    pub(crate) node: String,
+    pub node: String,
     /// Unsafe head hash to pass to `admin_startSequencer`.
     ///
     /// If omitted, basectl uses the node's currently observed unsafe L2 hash.
     #[arg(value_name = "UNSAFE_HEAD")]
-    pub(crate) unsafe_head: Option<String>,
+    pub unsafe_head: Option<String>,
     /// Skip the interactive confirmation prompt.
     #[arg(long)]
-    pub(crate) yes: bool,
+    pub yes: bool,
     /// Emit a structured JSON action outcome instead of pretty text.
     #[arg(long, requires = "yes")]
-    pub(crate) json: bool,
+    pub json: bool,
 }
 
 /// Flags for `basectl sequencer stop`.
 #[derive(Debug, Args)]
-pub(crate) struct SequencerNodeActionArgs {
+pub struct SequencerNodeActionArgs {
     /// Sequencer node name from the selected config or discovered raft server ID.
     #[arg(value_name = "NODE")]
-    pub(crate) node: String,
+    pub node: String,
     /// Skip the interactive confirmation prompt.
     #[arg(long)]
-    pub(crate) yes: bool,
+    pub yes: bool,
     /// Emit a structured JSON action outcome instead of pretty text.
     #[arg(long, requires = "yes")]
-    pub(crate) json: bool,
+    pub json: bool,
 }
 
 /// TUI monitor views.
 #[derive(Debug, Subcommand)]
-pub(crate) enum MonitorCommands {
+pub enum MonitorCommands {
     /// Chain configuration operations
     #[command(visible_alias = "c")]
     Config,
@@ -562,7 +487,8 @@ pub(crate) enum MonitorCommands {
 }
 
 impl MonitorCommands {
-    pub(crate) const fn view_id(&self) -> ViewId {
+    /// Returns the TUI view selected by this command.
+    pub const fn view_id(&self) -> ViewId {
         match self {
             Self::Config => ViewId::Config,
             Self::Flashblocks => ViewId::Flashblocks,
@@ -577,12 +503,35 @@ impl MonitorCommands {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
 
     use super::Cli;
 
     fn try_parse<const N: usize>(args: [&str; N]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(args)
+    }
+
+    #[test]
+    fn block_alias_parses() {
+        assert!(try_parse(["basectl", "b", "latest"]).is_ok());
+    }
+
+    #[test]
+    fn monitor_aliases_parse() {
+        for alias in ["c", "f", "d", "cc", "co", "po", "u"] {
+            assert!(try_parse(["basectl", "monitor", alias]).is_ok(), "alias: {alias}");
+        }
+    }
+
+    #[test]
+    fn flashblocks_help_points_to_monitor() {
+        let help = Cli::command()
+            .find_subcommand_mut("flashblocks")
+            .expect("flashblocks command")
+            .render_long_help()
+            .to_string();
+
+        assert!(help.contains("Use `basectl monitor flashblocks` for the TUI."));
     }
 
     #[test]

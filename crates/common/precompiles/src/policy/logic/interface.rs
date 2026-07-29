@@ -2,8 +2,8 @@
 
 use alloc::vec::Vec;
 
-use alloy_primitives::Address;
-use base_precompile_storage::Result;
+use alloy_primitives::{Address, Bytes};
+use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{IPolicyRegistry::PolicyType, PolicyAccounting};
 
@@ -28,6 +28,29 @@ pub trait PolicyRegistryLogic<S: PolicyAccounting> {
         policy_type: PolicyType,
         accounts: Vec<Address>,
     ) -> Result<u64>;
+
+    /// Creates a composite (UNION/INTERSECT) policy over existing simple child policies.
+    /// Composite support is a V2 feature;
+    fn create_composite_policy(
+        &self,
+        _storage: &mut S,
+        _admin: Address,
+        _policy_type: PolicyType,
+        _child_policy_ids: Vec<u64>,
+    ) -> Result<u64> {
+        Err(BasePrecompileError::Revert(Bytes::new()))
+    }
+
+    /// Replaces a composite policy's child set in full.
+    /// Composite support is a V2 feature;
+    fn update_composite(
+        &self,
+        _storage: &mut S,
+        _policy_id: u64,
+        _child_policy_ids: Vec<u64>,
+    ) -> Result<()> {
+        Err(BasePrecompileError::Revert(Bytes::new()))
+    }
 
     /// Stages a pending admin transfer for `policy_id`.
     ///

@@ -1,5 +1,24 @@
 #![doc = include_str!("../README.md")]
 
+mod commands;
+pub use commands::{
+    BlockCommand, BlockSummaryJson, Cli, Commands, ConductorClusterActionArgs, ConductorCommands,
+    ConductorLeaderArgs, ConductorNodeActionArgs, ConductorStatusArgs, DestructiveClBulkArgs,
+    DestructivePeerArgs, DoctorCommand, ElSyncInfoJson, HeadJson, MonitorCommands, P2pArgs,
+    P2pCommands, ProofStatusFilter, ProofsCommands, ProofsFinalizeArgs, ProofsListArgs,
+    ProofsStatusArgs, SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs,
+    SequencerStatusArgs, SyncStatusCommand, SyncStatusJson, TipReferenceJson, TipStatus,
+    TxpoolClearArgs, TxpoolCommands, TxpoolReadArgs,
+};
+
+mod confirm;
+pub use confirm::Confirm;
+
+mod helpers;
+pub use helpers::{
+    CommandOutcome, find_conductor_node, fmt_bool, fmt_u32, fmt_u64, resolve_conductor_source,
+};
+
 mod app;
 pub use app::{
     Action, ActionMenuItem, App, BLOB_SIZE, BlockContribution, CommandCenterView, ConductorState,

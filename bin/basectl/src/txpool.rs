@@ -5,17 +5,13 @@ use std::io::{self, Write};
 use alloy_primitives::{Address, TxHash};
 use anyhow::Result;
 use basectl_cli::{
-    JsonOutput, KeyValueTable, MonitoringConfig, TxpoolClient, TxpoolCounts, TxpoolReport,
-    TxpoolScope, TxpoolSenderSummary, TxpoolTransactionRow, format_gas, format_gwei,
+    Confirm, JsonOutput, KeyValueTable, MonitoringConfig, TxpoolClearArgs, TxpoolClient,
+    TxpoolCommands, TxpoolCounts, TxpoolReadArgs, TxpoolReport, TxpoolScope, TxpoolSenderSummary,
+    TxpoolTransactionRow, format_gas, format_gwei,
 };
 use serde::Serialize;
 use tracing::{debug, info, warn};
 use url::Url;
-
-use crate::{
-    cli::{TxpoolClearArgs, TxpoolCommands, TxpoolReadArgs},
-    confirm::confirm_or_abort,
-};
 
 /// Runs the `basectl txpool` command group.
 pub(crate) async fn run(config: MonitoringConfig, command: TxpoolCommands) -> Result<()> {
@@ -149,7 +145,7 @@ async fn run_clear(config: MonitoringConfig, args: TxpoolClearArgs) -> Result<()
     match sender {
         Some(sender) => {
             let prompt = format!("Drop txpool transactions from {sender} through {el_rpc}? [y/N] ");
-            if !confirm_or_abort(&prompt, yes)? {
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 debug!(
                     network = %config.name,
                     rpc = %el_rpc,
@@ -181,7 +177,7 @@ async fn run_clear(config: MonitoringConfig, args: TxpoolClearArgs) -> Result<()
         }
         None => {
             let prompt = format!("Clear all txpool transactions through {el_rpc}? [y/N] ");
-            if !confirm_or_abort(&prompt, yes)? {
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 debug!(
                     network = %config.name,
                     rpc = %el_rpc,
