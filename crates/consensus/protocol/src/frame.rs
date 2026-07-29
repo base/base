@@ -217,9 +217,7 @@ impl Frame {
 
     /// Decode a frame from a byte vector.
     pub fn decode(encoded: &[u8]) -> Result<(usize, Self), FrameDecodingError> {
-        const BASE_FRAME_LEN: usize = 16 + 2 + 4 + 1;
-
-        if encoded.len() < BASE_FRAME_LEN {
+        if encoded.len() < Self::ENCODED_OVERHEAD {
             return Err(FrameDecodingError::DataTooShort(encoded.len()));
         }
 
@@ -231,13 +229,13 @@ impl Frame {
             encoded[18..22].try_into().map_err(|_| FrameDecodingError::InvalidDataLength)?,
         ) as usize;
 
-        if data_len > Self::MAX_LEN || data_len >= encoded.len() - (BASE_FRAME_LEN - 1) {
+        if data_len > Self::MAX_LEN || data_len >= encoded.len() - (Self::ENCODED_OVERHEAD - 1) {
             return Err(FrameDecodingError::DataTooLarge(data_len));
         }
 
         let data = encoded[22..22 + data_len].to_vec();
         let is_last = encoded[22 + data_len] == 1;
-        Ok((BASE_FRAME_LEN + data_len, Self { id, number, data, is_last }))
+        Ok((Self::ENCODED_OVERHEAD + data_len, Self { id, number, data, is_last }))
     }
 
     /// Parses a single frame from the given data at the given starting position,
