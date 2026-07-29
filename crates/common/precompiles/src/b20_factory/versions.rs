@@ -62,11 +62,21 @@ impl FactoryAbi {
         }
     }
 
-    /// Validates `calldata` against this wire surface via alloy's `abi_decode_validate`, discarding
-    /// the decoded call.
-    pub fn abi_decode_validate(self, calldata: &[u8], selector: [u8; 4]) -> Result<()> {
+    /// Decodes `calldata` against this wire surface, mirroring alloy's `abi_decode_validate` and
+    /// mapping its failure onto [`BasePrecompileError::AbiDecodeFailed`].
+    ///
+    /// Always the *validating* decode. `dispatch` unwraps `B20Variant::from_abi` on the decoded
+    /// call with `expect`, so a non-validating decode here would turn an out-of-range variant byte
+    /// from a revert into a node panic.
+    pub fn abi_decode_validate(
+        self,
+        calldata: &[u8],
+        selector: [u8; 4],
+    ) -> Result<IB20Factory::IB20FactoryCalls> {
         match self {
-            Self::V1 => IB20FactoryV1::IB20FactoryCalls::abi_decode_validate(calldata).map(|_| ()),
+            // Canonical aliases the V1 surface, so the frozen decode already yields the canonical
+            // call type. A later surface adds its own arm, re-decoding against canonical.
+            Self::V1 => IB20FactoryV1::IB20FactoryCalls::abi_decode_validate(calldata),
         }
         .map_err(|error| BasePrecompileError::AbiDecodeFailed {
             selector,
@@ -74,11 +84,10 @@ impl FactoryAbi {
         })
     }
 
-    /// Decodes `calldata` into a routable call, gated on this wire surface.
+    /// Selector-gates `calldata` against this wire surface, then decodes it into a routable call.
     ///
-    /// Always the *validating* decode. `dispatch` unwraps `B20Variant::from_abi` on the decoded
-    /// call with `expect`, so a non-validating decode here would turn an out-of-range variant byte
-    /// from a revert into a node panic.
+    /// Selectors a later fork introduced are absent from an older surface, so they fail the gate
+    /// as [`BasePrecompileError::UnknownFunctionSelector`] rather than needing a hand-written arm.
     pub fn decode(self, calldata: &[u8]) -> Result<IB20Factory::IB20FactoryCalls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
@@ -86,15 +95,7 @@ impl FactoryAbi {
         if !self.valid_selector(selector) {
             return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }
-        match self {
-            // Canonical aliases the V1 surface, so the frozen decode already yields the canonical
-            // call type. A later surface adds its own arm, re-decoding against canonical.
-            Self::V1 => {
-                IB20FactoryV1::IB20FactoryCalls::abi_decode_validate(calldata).map_err(|error| {
-                    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
-                })
-            }
-        }
+        self.abi_decode_validate(calldata, selector)
     }
 }
 
