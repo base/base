@@ -148,7 +148,7 @@ where
         if self.rollup_cfg.is_ecotone_active(next_l2_time)
             && !self.rollup_cfg.is_ecotone_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions = Upgrades::ECOTONE.txs().collect();
+            upgrade_transactions.extend(Upgrades::ECOTONE.txs());
         }
         if self.rollup_cfg.is_fjord_active(next_l2_time)
             && !self.rollup_cfg.is_fjord_active(l2_parent.block_info.timestamp)
