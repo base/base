@@ -333,6 +333,9 @@ pub struct ProofsFinalizeJson {
 }
 
 impl ProofsFinalizeJson {
+    /// Status reported for an accepted proof request that was not awaited.
+    pub const STATUS_SUBMITTED: &'static str = "submitted";
+
     /// Builds the outcome for an accepted proof request that is not being awaited.
     pub fn submitted(
         network: &str,
@@ -348,7 +351,7 @@ impl ProofsFinalizeJson {
             start_block,
             end_block: start_block.saturating_add(num_blocks.saturating_sub(1)),
             num_blocks,
-            status: "submitted",
+            status: Self::STATUS_SUBMITTED,
             error_message: None,
             result: None,
         }
@@ -597,7 +600,7 @@ fn print_finalize_pretty_to<W: Write>(writer: &mut W, outcome: &ProofsFinalizeJs
         append_result_rows(&mut table, result);
     }
     table.render(writer)?;
-    if outcome.status == "submitted" {
+    if outcome.status == ProofsFinalizeJson::STATUS_SUBMITTED {
         writeln!(writer, "check progress with `basectl proofs status {}`", outcome.session_id)?;
     }
     Ok(())

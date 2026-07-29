@@ -107,6 +107,14 @@ pub struct ConductorClusterSnapshot {
     pub discovered: bool,
 }
 
+impl ConductorClusterSnapshot {
+    /// Machine-readable label describing how the snapshot nodes were sourced,
+    /// used in JSON output and status tables.
+    pub const fn source_label(&self) -> &'static str {
+        if self.discovered { "discovered" } else { "static" }
+    }
+}
+
 /// Result of running a conductor control RPC across several nodes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConductorFanoutReport {

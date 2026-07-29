@@ -88,6 +88,55 @@ pub struct ConductorClusterActionArgs {
     pub json: bool,
 }
 
+/// Machine-readable action name for leadership transfers in JSON output.
+const ACTION_TRANSFER_LEADER: &str = "transferLeader";
+
+/// Pause/unpause direction for conductor control-loop actions.
+///
+/// Centralizes the machine-readable action names and human-facing verb forms so
+/// JSON output and prompts cannot drift apart across call sites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConductorAction {
+    /// Pause the conductor control loop.
+    Pause,
+    /// Resume the conductor control loop.
+    Unpause,
+}
+
+impl ConductorAction {
+    /// Machine-readable action name for single-node JSON output.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Pause => "pause",
+            Self::Unpause => "unpause",
+        }
+    }
+
+    /// Machine-readable action name for cluster-wide JSON output.
+    pub const fn cluster_name(self) -> &'static str {
+        match self {
+            Self::Pause => "pauseAll",
+            Self::Unpause => "unpauseAll",
+        }
+    }
+
+    /// Capitalized verb for confirmation prompts.
+    pub const fn prompt_verb(self) -> &'static str {
+        match self {
+            Self::Pause => "Pause",
+            Self::Unpause => "Unpause",
+        }
+    }
+
+    /// Past tense used in fanout summaries.
+    pub const fn past_tense(self) -> &'static str {
+        match self {
+            Self::Pause => "paused",
+            Self::Unpause => "resumed",
+        }
+    }
+}
+
 impl ConductorCommand {
     /// Runs the selected conductor subcommand.
     pub async fn run(
@@ -102,13 +151,17 @@ impl ConductorCommand {
             ConductorCommands::TransferLeader(args) => {
                 run_transfer_leader(config, source, args).await
             }
-            ConductorCommands::Pause(args) => run_node_action(config, source, args, true).await,
-            ConductorCommands::Unpause(args) => run_node_action(config, source, args, false).await,
+            ConductorCommands::Pause(args) => {
+                run_node_action(config, source, args, ConductorAction::Pause).await
+            }
+            ConductorCommands::Unpause(args) => {
+                run_node_action(config, source, args, ConductorAction::Unpause).await
+            }
             ConductorCommands::PauseAll(args) => {
-                run_cluster_action(config, source, args, true).await
+                run_cluster_action(config, source, args, ConductorAction::Pause).await
             }
             ConductorCommands::UnpauseAll(args) => {
-                run_cluster_action(config, source, args, false).await
+                run_cluster_action(config, source, args, ConductorAction::Unpause).await
             }
         }
     }
@@ -154,7 +207,7 @@ async fn run_transfer_leader(
     }
 
     let message = ConductorControl::transfer_leader(&nodes, args.target.as_deref()).await?;
-    print_single_action(&config.name, "transferLeader", args.target, &message, args.json)?;
+    print_single_action(&config.name, ACTION_TRANSFER_LEADER, args.target, &message, args.json)?;
     Ok(CommandOutcome::Success)
 }
 
@@ -162,14 +215,14 @@ async fn run_node_action(
     config: MonitoringConfig,
     source: ConductorSource,
     args: ConductorNodeActionArgs,
-    pause: bool,
+    action: ConductorAction,
 ) -> Result<CommandOutcome> {
     let nodes = current_nodes_for_action(&source).await?;
     let node =
         ConductorNodeConfig::find(&nodes, &args.node).map_err(ConductorCommandError::from)?;
     let prompt = format!(
         "{} conductor control loop on {} ({})? [y/N] ",
-        if pause { "Pause" } else { "Unpause" },
+        action.prompt_verb(),
         node.name,
         node.conductor_rpc
     );
@@ -177,18 +230,11 @@ async fn run_node_action(
         return Ok(CommandOutcome::Success);
     }
 
-    let message = if pause {
-        ConductorControl::pause_node(node).await?
-    } else {
-        ConductorControl::resume_node(node).await?
+    let message = match action {
+        ConductorAction::Pause => ConductorControl::pause_node(node).await?,
+        ConductorAction::Unpause => ConductorControl::resume_node(node).await?,
     };
-    print_single_action(
-        &config.name,
-        if pause { "pause" } else { "unpause" },
-        Some(node.name.clone()),
-        &message,
-        args.json,
-    )?;
+    print_single_action(&config.name, action.name(), Some(node.name.clone()), &message, args.json)?;
     Ok(CommandOutcome::Success)
 }
 
@@ -196,15 +242,14 @@ async fn run_cluster_action(
     config: MonitoringConfig,
     source: ConductorSource,
     args: ConductorClusterActionArgs,
-    pause: bool,
+    action: ConductorAction,
 ) -> Result<CommandOutcome> {
     let (nodes, node_scope) = current_nodes_for_cluster_action(&source).await?;
     let names = nodes.iter().map(|node| node.name.as_str()).collect::<Vec<_>>().join(", ");
-    let verb = if pause { "pause" } else { "unpause" };
     let prompt = format!(
         "Type {} to {} conductor control loop on all {} {} ({}): ",
         config.name,
-        verb,
+        action.name(),
         nodes.len(),
         node_scope,
         names
@@ -213,16 +258,15 @@ async fn run_cluster_action(
         return Ok(CommandOutcome::Success);
     }
 
-    let report = if pause {
-        ConductorControl::pause_all(nodes).await
-    } else {
-        ConductorControl::resume_all(nodes).await
+    let report = match action {
+        ConductorAction::Pause => ConductorControl::pause_all(nodes).await,
+        ConductorAction::Unpause => ConductorControl::resume_all(nodes).await,
     };
     print_fanout_action(
         &config.name,
-        if pause { "pauseAll" } else { "unpauseAll" },
-        verb,
-        if pause { "paused" } else { "resumed" },
+        action.cluster_name(),
+        action.name(),
+        action.past_tense(),
         &report,
         args.json,
     )?;
@@ -277,7 +321,7 @@ fn print_status_pretty(network: &str, snapshot: &ConductorClusterSnapshot) -> Re
     let mut table = KeyValueTable::new();
     table
         .row("network", network)
-        .row("source", if snapshot.discovered { "discovered" } else { "static" })
+        .row("source", snapshot.source_label())
         .row("nodes", snapshot.nodes.len().to_string());
     if let Some(version) = snapshot.membership.as_ref().map(|membership| membership.version) {
         table.row("membership_version", version.to_string());
@@ -428,7 +472,7 @@ fn conductor_status_json(network: &str, snapshot: &ConductorClusterSnapshot) -> 
         .map(|node| node.name.clone());
     let mut value = json!({
         "network": network,
-        "source": if snapshot.discovered { "discovered" } else { "static" },
+        "source": snapshot.source_label(),
         "leader": leader,
         "paused": {
             "known": snapshot.nodes.iter()

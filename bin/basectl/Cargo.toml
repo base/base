@@ -12,7 +12,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-clap = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
 anyhow = { workspace = true }
 basectl-cli = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }

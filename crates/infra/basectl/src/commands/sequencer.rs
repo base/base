@@ -205,7 +205,7 @@ async fn run_start(
             node = %node.name,
             cl_rpc = %node.cl_rpc,
             unsafe_head = %unsafe_head,
-            unsafe_head_source,
+            unsafe_head_source = unsafe_head_source.as_str(),
             "sequencer start unsafe head validation failed"
         );
         return Err(error.into());
@@ -222,7 +222,7 @@ async fn run_start(
         node = %node.name,
         cl_rpc = %node.cl_rpc,
         unsafe_head = %unsafe_head,
-        unsafe_head_source,
+        unsafe_head_source = unsafe_head_source.as_str(),
         "calling admin_startSequencer"
     );
     start_sequencer(&node.cl_rpc, unsafe_head).await?;
@@ -232,7 +232,7 @@ async fn run_start(
         node = %node.name,
         cl_rpc = %node.cl_rpc,
         unsafe_head = %unsafe_head,
-        unsafe_head_source,
+        unsafe_head_source = unsafe_head_source.as_str(),
         "sequencer start completed"
     );
 
@@ -312,13 +312,32 @@ async fn run_stop(
     Ok(())
 }
 
+/// Origin of the unsafe head hash used for a sequencer start request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnsafeHeadSource {
+    /// The operator passed the hash explicitly on the command line.
+    Explicit,
+    /// The hash was observed from the conductor cluster snapshot.
+    Observed,
+}
+
+impl UnsafeHeadSource {
+    /// Machine-readable source name for JSON output and tracing fields.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Explicit => "explicit",
+            Self::Observed => "observed",
+        }
+    }
+}
+
 fn resolve_start_hash(
     snapshot: &ConductorClusterSnapshot,
     node: &ConductorNodeConfig,
     unsafe_head: Option<&str>,
-) -> Result<(B256, &'static str), SequencerCommandError> {
+) -> Result<(B256, UnsafeHeadSource), SequencerCommandError> {
     match unsafe_head {
-        Some(unsafe_head) => Ok((parse_unsafe_head(unsafe_head)?, "explicit")),
+        Some(unsafe_head) => Ok((parse_unsafe_head(unsafe_head)?, UnsafeHeadSource::Explicit)),
         None => {
             let hash = snapshot_node_status(snapshot, &node.name)
                 .and_then(|status| status.unsafe_l2_hash)
@@ -326,7 +345,7 @@ fn resolve_start_hash(
                 .ok_or_else(|| SequencerCommandError::MissingUnsafeHead {
                     node: node.name.clone(),
                 })?;
-            Ok((hash, "observed"))
+            Ok((hash, UnsafeHeadSource::Observed))
         }
     }
 }
@@ -392,10 +411,13 @@ fn ensure_leader_target(
 fn ensure_start_request_matches_observed_head(
     status: Option<&ConductorNodeStatus>,
     unsafe_head: B256,
-    unsafe_head_source: &str,
+    unsafe_head_source: UnsafeHeadSource,
 ) -> Result<(), SequencerCommandError> {
-    if unsafe_head_source != "explicit" {
-        return Ok(());
+    // Exhaustive match so a new source variant is forced to decide whether it
+    // needs observed-head validation instead of silently skipping it.
+    match unsafe_head_source {
+        UnsafeHeadSource::Observed => return Ok(()),
+        UnsafeHeadSource::Explicit => {}
     }
 
     let Some(observed_head) = status.and_then(|status| status.unsafe_l2_hash) else {
@@ -573,18 +595,15 @@ fn print_status_pretty(
     selected_node: Option<&str>,
 ) -> Result<()> {
     let mut table = KeyValueTable::new();
-    table
-        .row("network", network)
-        .row("source", if snapshot.discovered { "discovered" } else { "static" })
-        .row(
-            "nodes",
-            snapshot
-                .nodes
-                .iter()
-                .filter(|node| selected_node.is_none_or(|selected| node.name == selected))
-                .count()
-                .to_string(),
-        );
+    table.row("network", network).row("source", snapshot.source_label()).row(
+        "nodes",
+        snapshot
+            .nodes
+            .iter()
+            .filter(|node| selected_node.is_none_or(|selected| node.name == selected))
+            .count()
+            .to_string(),
+    );
     if let Some(selected_node) = selected_node {
         table.row("selected_node", selected_node);
     }
@@ -627,7 +646,7 @@ fn sequencer_start_json(
     network: &str,
     node: &ConductorNodeConfig,
     unsafe_head: B256,
-    unsafe_head_source: &str,
+    unsafe_head_source: UnsafeHeadSource,
     message: &str,
 ) -> Value {
     json!({
@@ -636,7 +655,7 @@ fn sequencer_start_json(
         "node": node.name,
         "clRpc": node.cl_rpc.to_string(),
         "unsafeHead": unsafe_head.to_string(),
-        "unsafeHeadSource": unsafe_head_source,
+        "unsafeHeadSource": unsafe_head_source.as_str(),
         "message": message,
     })
 }
@@ -681,7 +700,7 @@ fn sequencer_status_json(
         .collect::<Vec<_>>();
     let mut value = json!({
         "network": network,
-        "source": if snapshot.discovered { "discovered" } else { "static" },
+        "source": snapshot.source_label(),
         "leader": snapshot
             .statuses
             .iter()
@@ -772,10 +791,10 @@ mod tests {
     use url::Url;
 
     use super::{
-        OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS, ensure_leader_target,
-        ensure_start_allowed, ensure_start_request_matches_observed_head, ensure_stop_allowed,
-        parse_unsafe_head, resolve_start_hash, sequencer_start_json, sequencer_status_json,
-        sequencer_stop_json, wait_for_expected_state_with_fetch,
+        OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS, UnsafeHeadSource,
+        ensure_leader_target, ensure_start_allowed, ensure_start_request_matches_observed_head,
+        ensure_stop_allowed, parse_unsafe_head, resolve_start_hash, sequencer_start_json,
+        sequencer_status_json, sequencer_stop_json, wait_for_expected_state_with_fetch,
     };
     use crate::{
         ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus,
@@ -851,7 +870,7 @@ mod tests {
         let err = ensure_start_request_matches_observed_head(
             Some(&status("op-conductor-0", true, false)),
             B256::with_last_byte(9),
-            "explicit",
+            UnsafeHeadSource::Explicit,
         )
         .expect_err("mismatched explicit hash should error");
 
@@ -873,7 +892,7 @@ mod tests {
         let err = ensure_start_request_matches_observed_head(
             Some(&observed),
             B256::with_last_byte(9),
-            "explicit",
+            UnsafeHeadSource::Explicit,
         )
         .expect_err("zero observed hash should error");
 
@@ -1073,7 +1092,7 @@ mod tests {
             "devnet",
             &node("op-conductor-0"),
             B256::with_last_byte(9),
-            "observed",
+            UnsafeHeadSource::Observed,
             "sequencer started on op-conductor-0 at 0x09",
         );
 

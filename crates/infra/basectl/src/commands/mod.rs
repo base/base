@@ -8,8 +8,8 @@ pub use cli::{Cli, Commands, MonitorCommands};
 
 mod conductor;
 pub use conductor::{
-    ConductorClusterActionArgs, ConductorCommand, ConductorCommands, ConductorLeaderArgs,
-    ConductorNodeActionArgs, ConductorStatusArgs,
+    ConductorAction, ConductorClusterActionArgs, ConductorCommand, ConductorCommands,
+    ConductorLeaderArgs, ConductorNodeActionArgs, ConductorStatusArgs,
 };
 
 mod doctor;
@@ -35,7 +35,7 @@ pub use proofs::{
 mod sequencer;
 pub use sequencer::{
     SequencerCommand, SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs,
-    SequencerStatusArgs,
+    SequencerStatusArgs, UnsafeHeadSource,
 };
 
 mod sync_status;
