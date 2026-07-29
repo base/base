@@ -739,6 +739,13 @@ mod tests {
         fn current_block(&self) -> Result<u64, ProviderError> {
             panic!("block provider reached before kill refusal")
         }
+
+        fn native_balance_at_latest_committed(
+            &self,
+            _address: alloy_primitives::Address,
+        ) -> Result<Option<alloy_primitives::U256>, ProviderError> {
+            panic!("balance provider reached before kill refusal")
+        }
     }
 
     struct PanicDeploymentIdentity;

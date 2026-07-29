@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+
 use crate::MevTraderPhaseAInstaller;
 use base_bundle_extension::BundleExtension;
 use base_flashblocks::FlashblocksConfig;
@@ -25,6 +26,11 @@ pub struct StandardNodeArgs {
     /// Shared execution node arguments.
     #[command(flatten)]
     pub rpc: RpcStandardNodeArgs,
+
+    /// Explicitly request the live MEV backend. Absent means simulation.
+    #[cfg(feature = "arm-live-egress")]
+    #[arg(long = "mev-live-egress", default_value_t = false)]
+    pub mev_live_egress: bool,
 
     /// Enable metering RPC for transaction bundle simulation
     #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
@@ -165,6 +171,8 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
     fn from(args: RpcStandardNodeArgs) -> Self {
         Self {
             rpc: args,
+            #[cfg(feature = "arm-live-egress")]
+            mev_live_egress: false,
             enable_metering: false,
             metering_gas_limit: None,
             metering_execution_time_us: None,
@@ -445,5 +453,15 @@ mod tests {
                 }
             }
         }
+    }
+    #[cfg(feature = "arm-live-egress")]
+    #[test]
+    fn live_egress_flag_is_default_false_and_requires_explicit_presence() {
+        let default = CommandParser::<StandardNodeArgs>::parse_from(["reth"]).args;
+        assert!(!default.mev_live_egress);
+
+        let explicit =
+            CommandParser::<StandardNodeArgs>::parse_from(["reth", "--mev-live-egress"]).args;
+        assert!(explicit.mev_live_egress);
     }
 }

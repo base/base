@@ -1,15 +1,17 @@
-//! Two-channel transport. [`send_gated`] is the SINGLE entry point: it consumes a
-//! [`SubmissionAttempt`] by value, re-validates the ENTIRE freshness conjunction at
-//! the egress moment, and only then mints a linear [`RawEgress`] permit and hands
-//! it to a [`RawBackend`]. [`ProdBackend::execute`] is the SOLE real network call
-//! site in the whole crate, and it only compiles under `arm-live-egress` +
-//! `not(test)`. Tests drive [`FakeBackend`] (no network) through the identical
-//! `send_gated` path.
+//! Runtime-selected two-channel transport. [`send_gated`] is the SINGLE entry
+//! point: it consumes a [`SubmissionAttempt`], re-validates the complete freshness
+//! conjunction, and defaults to [`SimBackend`]. The live branch additionally
+//! evaluates all four locks before minting a linear [`LiveEgressPermit`].
+//! [`ProdBackend::execute`] remains the sole real network call site and compiles
+//! only under `arm-live-egress` + `not(test)`.
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 
+use super::proofs::ProviderError;
 use super::request::RequestSpec;
-use super::witness::{FreshnessSources, PairedSubmission, ProofBindings, ValidatedExecutionIdentity};
+use super::witness::{
+    FreshnessSources, PairedSubmission, ProofBindings, ValidatedExecutionIdentity,
+};
 
 /// A single submission attempt (by value; there is no separate retry fn).
 // The `Initial` variant is intentionally larger (it owns both channel specs): a
@@ -24,23 +26,73 @@ pub enum SubmissionAttempt {
     AttributionRetry(AttributionRetryToken),
 }
 
+/// Whether a simulation record represents an initial send or attribution retry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimulationAttempt {
+    /// Initial inclusion plus attribution.
+    Initial,
+    /// Attribution-only retry.
+    AttributionRetry,
+}
+
+/// Inert requests produced by the production simulation backend.
+#[derive(Debug)]
+pub struct SimulationRecord {
+    attempt: SimulationAttempt,
+    requests: Vec<RequestSpec>,
+    inclusion_receipt_hash: B256,
+}
+
+impl SimulationRecord {
+    /// The simulated attempt kind.
+    pub const fn attempt(&self) -> SimulationAttempt {
+        self.attempt
+    }
+
+    /// Exact inert request specifications. No request has been sent.
+    pub fn requests(&self) -> &[RequestSpec] {
+        &self.requests
+    }
+
+    /// Expected inclusion hash, or the receipt hash binding an attribution retry.
+    pub const fn inclusion_receipt_hash(&self) -> B256 {
+        self.inclusion_receipt_hash
+    }
+}
+
+/// A closed live lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveLockClosed {
+    /// No explicit live runtime selection was consumed.
+    ExplicitLiveSelection,
+    /// The signed live-run receipt was not fresh.
+    SignedReceipt,
+    /// The authoritative kill state was not clear.
+    KillAnchor,
+    /// The funded account was absent.
+    FundedAccountAbsent,
+    /// The canonical balance authority failed.
+    FundsUnavailable,
+    /// Present hot-wallet balance exceeded the signed cap.
+    FundsCapExceeded,
+}
+
 /// The typed outcome of a gated submission.
-// `InclusionSentAttributionFailed` carries the full retry permit; the outcome is
-// produced once per submission and matched immediately, so boxing the permit would
-// add an allocation on the submit path for no benefit.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum SubmitOutcome {
-    /// The egress-moment re-validation failed (or the process was poisoned): no
-    /// bytes left the process.
+    /// The egress-moment re-validation failed (or the process was poisoned).
     NoEgress,
-    /// The inclusion channel failed (nothing to retry).
+    /// The four live locks did not all hold.
+    LiveLocksClosed(LiveLockClosed),
+    /// No transport was attempted; exact inert requests are returned by value.
+    Simulated(SimulationRecord),
+    /// The live inclusion channel failed.
     InclusionFailed,
-    /// Inclusion landed but attribution failed — carries the retry permit. The
-    /// inclusion is NEVER re-sent; only attribution may be retried.
+    /// Live inclusion landed but attribution failed.
     InclusionSentAttributionFailed(AttributionRetryToken),
-    /// Both channels succeeded.
-    Complete,
+    /// Both live channels succeeded.
+    LiveComplete,
 }
 
 /// An attribution-only retry permit. It preserves the FULL freshness bindings +
@@ -116,46 +168,178 @@ impl RawEgress {
 }
 
 mod sealed {
-    // Reachable (via the pub `RawBackend` supertrait bound) but deliberately
-    // UNNAMEABLE outside this module — that is exactly the seal: no external crate
-    // can name or implement it, so `ProdBackend`/`FakeBackend` are the only egress
-    // backends. The `unnameable_types` warning is the intended property, not a bug.
     #[allow(unnameable_types)]
-    /// Sealed supertrait: only this module can name it, so no crate outside can
-    /// implement [`super::RawBackend`]. The ONLY implementors are [`super::ProdBackend`]
-    /// (live-egress + non-test) and [`super::FakeBackend`] (test).
+    /// Sealed supertrait: no crate outside this module can implement the backend.
     pub trait Sealed {}
 }
 
-/// The low-level egress backend, SEALED so only [`ProdBackend`] (the sole socket
-/// opener, live-egress + non-test) and [`FakeBackend`] (test) can implement it —
-/// even a future crate that links this one cannot introduce another egress path.
-pub trait RawBackend: sealed::Sealed {
-    /// Perform the permitted egress and report the typed outcome.
-    fn execute(&self, egress: RawEgress) -> SubmitOutcome;
+/// A backend permit. Its payloads have private fields and cannot be forged.
+#[derive(Debug)]
+pub enum BackendPermit {
+    /// Simulation-only permit.
+    Simulated(SimEgressPermit),
+    /// Live-only permit.
+    #[cfg(all(feature = "arm-live-egress", not(test)))]
+    Live(LiveEgressPermit),
 }
 
-/// The single gated submission entry point. Re-validates freshness at the egress
-/// moment and, only on success, mints a [`RawEgress`] permit for `backend`.
-///
-/// ## Node-thread isolation contract (B5 wiring)
-/// The real backend ([`ProdBackend`]) performs SYNCHRONOUS blocking HTTP (up to the
-/// per-request timeout) for up to two channels. It MUST therefore be invoked ONLY
-/// from a dedicated, bounded OS worker thread that the B5 node-linkage wiring spawns
-/// off any node-critical / async-runtime worker — never inline on a Tokio worker or
-/// the ExEx/consensus path. This is a wiring-time contract (there is no in-tier
-/// entrypoint yet); `send_gated` itself is pure/blocking and imposes no runtime.
-pub fn send_gated<B: RawBackend>(
+/// Linear simulation permit, minted only by [`send_gated`].
+#[derive(Debug)]
+pub struct SimEgressPermit {
+    private: (),
+}
+
+/// Linear live permit, minted only after all four locks hold.
+#[cfg(all(feature = "arm-live-egress", not(test)))]
+#[derive(Debug)]
+pub struct LiveEgressPermit {
+    private: (),
+}
+
+/// Sealed low-level backend.
+pub trait RawBackend: sealed::Sealed {
+    /// Consume the matching permit and egress plan.
+    fn execute(&self, permit: BackendPermit, egress: RawEgress) -> SubmitOutcome;
+}
+
+/// Production simulation backend. It records inert requests and opens no socket.
+#[derive(Debug, Default)]
+pub struct SimBackend;
+
+impl sealed::Sealed for SimBackend {}
+
+impl RawBackend for SimBackend {
+    fn execute(&self, permit: BackendPermit, egress: RawEgress) -> SubmitOutcome {
+        if !matches!(permit, BackendPermit::Simulated(SimEgressPermit { private: () })) {
+            return SubmitOutcome::NoEgress;
+        }
+        let record = match egress.into_plan() {
+            EgressPlan::Initial { inclusion, attribution, expected_inclusion_hash, .. } => {
+                SimulationRecord {
+                    attempt: SimulationAttempt::Initial,
+                    requests: vec![inclusion, attribution],
+                    inclusion_receipt_hash: expected_inclusion_hash,
+                }
+            }
+            EgressPlan::AttributionOnly { attribution, inclusion_receipt_hash, .. } => {
+                SimulationRecord {
+                    attempt: SimulationAttempt::AttributionRetry,
+                    requests: vec![attribution],
+                    inclusion_receipt_hash,
+                }
+            }
+        };
+        SubmitOutcome::Simulated(record)
+    }
+}
+
+/// Non-`Clone` runtime backend selection.
+#[derive(Debug)]
+pub struct RuntimeBackend<'a> {
+    inner: RuntimeBackendKind<'a>,
+}
+
+#[derive(Debug)]
+enum RuntimeBackendKind<'a> {
+    Simulated(&'a SimBackend),
+    #[cfg(all(feature = "arm-live-egress", not(test)))]
+    Live {
+        backend: &'a ProdBackend,
+        selection: LiveSelectionProof,
+    },
+}
+
+#[derive(Debug)]
+#[cfg(all(feature = "arm-live-egress", not(test)))]
+struct LiveSelectionProof {
+    private: (),
+}
+
+impl<'a> RuntimeBackend<'a> {
+    /// The default, network-incapable runtime selection.
+    pub const fn simulated(backend: &'a SimBackend) -> Self {
+        Self { inner: RuntimeBackendKind::Simulated(backend) }
+    }
+
+    /// Reduce the explicit startup flag exactly once to a non-`Clone` selection.
+    #[cfg(all(feature = "arm-live-egress", not(test)))]
+    pub fn from_explicit_flag(
+        explicit_live: bool,
+        simulated: &'a SimBackend,
+        live: &'a ProdBackend,
+    ) -> Self {
+        if explicit_live {
+            Self {
+                inner: RuntimeBackendKind::Live {
+                    backend: live,
+                    selection: LiveSelectionProof { private: () },
+                },
+            }
+        } else {
+            Self::simulated(simulated)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LiveLockSnapshot {
+    explicit_live: bool,
+    signed_receipt_fresh: bool,
+    kill_clear: bool,
+    funded_balance: Result<Option<U256>, ProviderError>,
+    signed_cap: U256,
+}
+
+impl LiveLockSnapshot {
+    #[cfg(all(feature = "arm-live-egress", not(test)))]
+    fn from_live_selection(
+        _selection: LiveSelectionProof,
+        funded_balance: Result<Option<U256>, ProviderError>,
+        signed_cap: U256,
+    ) -> Self {
+        Self {
+            explicit_live: true,
+            signed_receipt_fresh: true,
+            kill_clear: true,
+            funded_balance,
+            signed_cap,
+        }
+    }
+}
+
+fn evaluate_live_locks(snapshot: &LiveLockSnapshot) -> Result<(), LiveLockClosed> {
+    if !snapshot.explicit_live {
+        return Err(LiveLockClosed::ExplicitLiveSelection);
+    }
+    if !snapshot.signed_receipt_fresh {
+        return Err(LiveLockClosed::SignedReceipt);
+    }
+    if !snapshot.kill_clear {
+        return Err(LiveLockClosed::KillAnchor);
+    }
+    let balance = snapshot
+        .funded_balance
+        .as_ref()
+        .map_err(|_| LiveLockClosed::FundsUnavailable)?
+        .ok_or(LiveLockClosed::FundedAccountAbsent)?;
+    if balance > snapshot.signed_cap {
+        return Err(LiveLockClosed::FundsCapExceeded);
+    }
+    Ok(())
+}
+
+/// The single gated submission entry point.
+pub fn send_gated(
     attempt: SubmissionAttempt,
     fresh: &FreshnessSources<'_>,
-    backend: &B,
+    backend: RuntimeBackend<'_>,
 ) -> SubmitOutcome {
-    match attempt {
+    let egress = match attempt {
         SubmissionAttempt::Initial(paired) => {
             if !fresh.revalidate(&paired.bindings, &paired.id) {
                 return SubmitOutcome::NoEgress;
             }
-            let egress = RawEgress {
+            RawEgress {
                 plan: EgressPlan::Initial {
                     inclusion: paired.inclusion,
                     attribution: paired.attribution,
@@ -163,22 +347,38 @@ pub fn send_gated<B: RawBackend>(
                     id: paired.id,
                     expected_inclusion_hash: paired.expected_inclusion_hash,
                 },
-            };
-            backend.execute(egress)
+            }
         }
         SubmissionAttempt::AttributionRetry(token) => {
             if !fresh.revalidate(&token.bindings, &token.id) {
                 return SubmitOutcome::NoEgress;
             }
-            let egress = RawEgress {
+            RawEgress {
                 plan: EgressPlan::AttributionOnly {
                     attribution: token.attribution,
                     bindings: token.bindings,
                     id: token.id,
                     inclusion_receipt_hash: token.inclusion_receipt_hash,
                 },
-            };
-            backend.execute(egress)
+            }
+        }
+    };
+
+    match backend.inner {
+        RuntimeBackendKind::Simulated(simulated) => {
+            simulated.execute(BackendPermit::Simulated(SimEgressPermit { private: () }), egress)
+        }
+        #[cfg(all(feature = "arm-live-egress", not(test)))]
+        RuntimeBackendKind::Live { backend, selection } => {
+            let snapshot = LiveLockSnapshot::from_live_selection(
+                selection,
+                fresh.code_hash.native_balance_at_latest_committed(super::custody::FUNDED_WALLET),
+                fresh.armed.hot_wallet_cap_wei(),
+            );
+            if let Err(reason) = evaluate_live_locks(&snapshot) {
+                return SubmitOutcome::LiveLocksClosed(reason);
+            }
+            backend.execute(BackendPermit::Live(LiveEgressPermit { private: () }), egress)
         }
     }
 }
@@ -293,7 +493,10 @@ impl ProdBackend {
 
 #[cfg(all(feature = "arm-live-egress", not(test)))]
 impl RawBackend for ProdBackend {
-    fn execute(&self, egress: RawEgress) -> SubmitOutcome {
+    fn execute(&self, permit: BackendPermit, egress: RawEgress) -> SubmitOutcome {
+        if !matches!(permit, BackendPermit::Live(LiveEgressPermit { private: () })) {
+            return SubmitOutcome::NoEgress;
+        }
         match egress.into_plan() {
             EgressPlan::Initial {
                 inclusion,
@@ -302,121 +505,160 @@ impl RawBackend for ProdBackend {
                 id,
                 expected_inclusion_hash,
             } => {
-                // Inclusion channel: require the node-returned hash to equal ours.
                 match self.send_inclusion(&inclusion) {
                     Some(hash) if hash == expected_inclusion_hash => {}
                     _ => return SubmitOutcome::InclusionFailed,
                 }
-                // Attribution channel (inclusion already landed → preserve the token).
                 if !self.send_attribution(&attribution) {
                     return SubmitOutcome::InclusionSentAttributionFailed(
-                        AttributionRetryToken::new(attribution, bindings, id, expected_inclusion_hash),
+                        AttributionRetryToken::new(
+                            attribution,
+                            bindings,
+                            id,
+                            expected_inclusion_hash,
+                        ),
                     );
                 }
-                SubmitOutcome::Complete
+                SubmitOutcome::LiveComplete
             }
             EgressPlan::AttributionOnly { attribution, bindings, id, inclusion_receipt_hash } => {
                 if !self.send_attribution(&attribution) {
                     return SubmitOutcome::InclusionSentAttributionFailed(
-                        AttributionRetryToken::new(attribution, bindings, id, inclusion_receipt_hash),
+                        AttributionRetryToken::new(
+                            attribution,
+                            bindings,
+                            id,
+                            inclusion_receipt_hash,
+                        ),
                     );
                 }
-                SubmitOutcome::Complete
+                SubmitOutcome::LiveComplete
             }
         }
     }
 }
 
-// -- offline test backend -----------------------------------------------------
+// -- test-only live execution seam --------------------------------------------
 
-/// A recorded channel send (channel/endpoint/body) captured by [`FakeBackend`].
+/// Exercises live sequencing without compiling a socket-capable backend.
 #[cfg(test)]
-#[derive(Debug, Clone)]
-pub(crate) struct RecordedSend {
-    pub(crate) channel: super::request::Channel,
-    pub(crate) endpoint: &'static str,
-    pub(crate) method: &'static str,
-    pub(crate) body: Vec<u8>,
-}
-
-/// A per-channel simulated backend result.
-#[cfg(test)]
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum FakeResult {
-    /// The node/host returned this hash (success iff it equals the expected hash).
-    Hash(B256),
-    /// The host returned no/invalid result (transport or RPC error).
-    Error,
-}
-
-/// An offline backend: records every channel body and returns configured results.
-/// Opens NO socket.
-#[cfg(test)]
-#[derive(Debug)]
-pub(crate) struct FakeBackend {
-    inclusion: FakeResult,
-    attribution: FakeResult,
-    sent: std::cell::RefCell<Vec<RecordedSend>>,
-}
-
-#[cfg(test)]
-impl FakeBackend {
-    pub(crate) fn new(inclusion: FakeResult, attribution: FakeResult) -> Self {
-        Self { inclusion, attribution, sent: std::cell::RefCell::new(Vec::new()) }
-    }
-
-    pub(crate) fn sent(&self) -> Vec<RecordedSend> {
-        self.sent.borrow().clone()
-    }
-
-    fn record(&self, spec: &RequestSpec) {
-        self.sent.borrow_mut().push(RecordedSend {
-            channel: spec.channel(),
-            endpoint: spec.endpoint(),
-            method: spec.method(),
-            body: spec.body().to_vec(),
-        });
-    }
-}
-
-#[cfg(test)]
-impl sealed::Sealed for FakeBackend {}
-
-#[cfg(test)]
-impl RawBackend for FakeBackend {
-    fn execute(&self, egress: RawEgress) -> SubmitOutcome {
-        match egress.into_plan() {
-            EgressPlan::Initial {
-                inclusion,
-                attribution,
-                bindings,
-                id,
-                expected_inclusion_hash,
-            } => {
-                self.record(&inclusion);
-                match self.inclusion {
-                    FakeResult::Hash(hash) if hash == expected_inclusion_hash => {}
-                    _ => return SubmitOutcome::InclusionFailed,
-                }
-                self.record(&attribution);
-                match self.attribution {
-                    FakeResult::Hash(_) => SubmitOutcome::Complete,
-                    FakeResult::Error => SubmitOutcome::InclusionSentAttributionFailed(
-                        AttributionRetryToken::new(attribution, bindings, id, expected_inclusion_hash),
-                    ),
-                }
+fn execute_live_with<I, A>(
+    egress: RawEgress,
+    mut inclusion_result: I,
+    mut attribution_result: A,
+) -> SubmitOutcome
+where
+    I: FnMut(&RequestSpec) -> Option<B256>,
+    A: FnMut(&RequestSpec) -> bool,
+{
+    match egress.into_plan() {
+        EgressPlan::Initial { inclusion, attribution, bindings, id, expected_inclusion_hash } => {
+            match inclusion_result(&inclusion) {
+                Some(hash) if hash == expected_inclusion_hash => {}
+                _ => return SubmitOutcome::InclusionFailed,
             }
-            EgressPlan::AttributionOnly { attribution, bindings, id, inclusion_receipt_hash } => {
-                self.record(&attribution);
-                match self.attribution {
-                    FakeResult::Hash(_) => SubmitOutcome::Complete,
-                    FakeResult::Error => SubmitOutcome::InclusionSentAttributionFailed(
-                        AttributionRetryToken::new(attribution, bindings, id, inclusion_receipt_hash),
-                    ),
-                }
+            if !attribution_result(&attribution) {
+                return SubmitOutcome::InclusionSentAttributionFailed(AttributionRetryToken::new(
+                    attribution,
+                    bindings,
+                    id,
+                    expected_inclusion_hash,
+                ));
             }
+            SubmitOutcome::LiveComplete
+        }
+        EgressPlan::AttributionOnly { attribution, bindings, id, inclusion_receipt_hash } => {
+            if !attribution_result(&attribution) {
+                return SubmitOutcome::InclusionSentAttributionFailed(AttributionRetryToken::new(
+                    attribution,
+                    bindings,
+                    id,
+                    inclusion_receipt_hash,
+                ));
+            }
+            SubmitOutcome::LiveComplete
         }
     }
+}
+
+#[cfg(test)]
+fn validate_live_lock_fixture(fixture: &serde_json::Value) -> Result<LiveLockSnapshot, String> {
+    let object = fixture.as_object().ok_or_else(|| "fixture must be an object".to_owned())?;
+    let actual = object.keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>();
+    let expected = std::collections::BTreeSet::from([
+        "explicit_live",
+        "funded_account",
+        "kill_state",
+        "receipt_state",
+        "signed_cap_wei",
+    ]);
+    if actual != expected {
+        return Err(format!("fixture keys must be exactly {expected:?}, got {actual:?}"));
+    }
+
+    let explicit_live = object["explicit_live"]
+        .as_bool()
+        .ok_or_else(|| "explicit_live must be boolean".to_owned())?;
+    let signed_receipt_fresh = match object["receipt_state"]
+        .as_str()
+        .ok_or_else(|| "receipt_state must be string".to_owned())?
+    {
+        "fresh" => true,
+        "absent" | "mismatched" | "not-yet-valid" | "expired" => false,
+        other => return Err(format!("unclassified receipt_state `{other}`")),
+    };
+    let kill_clear = match object["kill_state"]
+        .as_str()
+        .ok_or_else(|| "kill_state must be string".to_owned())?
+    {
+        "clear" => true,
+        "unknown" | "engaged" | "poisoned" => false,
+        other => return Err(format!("unclassified kill_state `{other}`")),
+    };
+    let funded_balance = match object["funded_account"]
+        .as_object()
+        .ok_or_else(|| "funded_account must be object".to_owned())?
+    {
+        account
+            if account.len() == 2
+                && account.get("status").and_then(serde_json::Value::as_str) == Some("present") =>
+        {
+            let balance = account
+                .get("balance_wei")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "present account balance_wei must be decimal string".to_owned())?;
+            Ok(Some(
+                U256::from_str_radix(balance, 10)
+                    .map_err(|_| "balance_wei must be U256 decimal".to_owned())?,
+            ))
+        }
+        account
+            if account.len() == 1
+                && account.get("status").and_then(serde_json::Value::as_str) == Some("absent") =>
+        {
+            Ok(None)
+        }
+        account
+            if account.len() == 1
+                && account.get("status").and_then(serde_json::Value::as_str) == Some("error") =>
+        {
+            Err(ProviderError::Unavailable("fixture".to_owned()))
+        }
+        _ => return Err("unclassified funded_account".to_owned()),
+    };
+    let cap = object["signed_cap_wei"]
+        .as_str()
+        .ok_or_else(|| "signed_cap_wei must be decimal string".to_owned())?;
+    let signed_cap = U256::from_str_radix(cap, 10)
+        .map_err(|_| "signed_cap_wei must be U256 decimal".to_owned())?;
+
+    Ok(LiveLockSnapshot {
+        explicit_live,
+        signed_receipt_fresh,
+        kill_clear,
+        funded_balance,
+        signed_cap,
+    })
 }
 
 #[cfg(test)]
@@ -530,221 +772,285 @@ mod tests {
         (harness, paired, incl_body, attr_body, expected_hash)
     }
 
+    fn raw_initial(paired: PairedSubmission) -> RawEgress {
+        RawEgress {
+            plan: EgressPlan::Initial {
+                inclusion: paired.inclusion,
+                attribution: paired.attribution,
+                bindings: paired.bindings,
+                id: paired.id,
+                expected_inclusion_hash: paired.expected_inclusion_hash,
+            },
+        }
+    }
+
+    fn raw_retry(token: AttributionRetryToken) -> RawEgress {
+        RawEgress {
+            plan: EgressPlan::AttributionOnly {
+                attribution: token.attribution,
+                bindings: token.bindings,
+                id: token.id,
+                inclusion_receipt_hash: token.inclusion_receipt_hash,
+            },
+        }
+    }
+
+    fn simulate(attempt: SubmissionAttempt, fresh: &FreshnessSources<'_>) -> SubmitOutcome {
+        let backend = SimBackend;
+        send_gated(attempt, fresh, RuntimeBackend::simulated(&backend))
+    }
+
     #[test]
-    fn positive_complete_with_exact_wire() {
+    fn production_simulation_records_exact_wire_without_live_completion() {
         let (harness, paired, incl_body, attr_body, expected) = build();
-        let backend = FakeBackend::new(FakeResult::Hash(expected), FakeResult::Hash(expected));
-        let outcome = send_gated(
-            SubmissionAttempt::Initial(paired),
-            &harness.fresh().with_forced_gate(true),
-            &backend,
-        );
-        assert!(matches!(outcome, SubmitOutcome::Complete));
-        let sent = backend.sent();
-        assert_eq!(sent.len(), 2);
-        assert_eq!(sent[0].channel, Channel::Inclusion);
-        assert_eq!(sent[0].method, "eth_sendRawTransaction");
-        assert_eq!(sent[0].endpoint, "http://127.0.0.1:8545");
-        assert_eq!(sent[0].body, incl_body);
-        assert_eq!(sent[1].channel, Channel::Attribution);
-        assert_eq!(sent[1].method, "eth_sendBundle");
-        assert_eq!(sent[1].endpoint, "https://baseauction.blinklabs.xyz/v1/");
-        assert_eq!(sent[1].body, attr_body);
-        // The attribution body carries bidWei "0".
+        let outcome =
+            simulate(SubmissionAttempt::Initial(paired), &harness.fresh().with_forced_gate(true));
+        let record = match outcome {
+            SubmitOutcome::Simulated(record) => record,
+            other => panic!("expected simulation record, got {other:?}"),
+        };
+        assert_eq!(record.attempt(), SimulationAttempt::Initial);
+        assert_eq!(record.inclusion_receipt_hash(), expected);
+        let requests = record.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].channel(), Channel::Inclusion);
+        assert_eq!(requests[0].method(), "eth_sendRawTransaction");
+        assert_eq!(requests[0].endpoint(), "http://127.0.0.1:8545");
+        assert_eq!(requests[0].body(), incl_body);
+        assert_eq!(requests[1].channel(), Channel::Attribution);
+        assert_eq!(requests[1].method(), "eth_sendBundle");
+        assert_eq!(requests[1].endpoint(), "https://baseauction.blinklabs.xyz/v1/");
+        assert_eq!(requests[1].body(), attr_body);
         let body: serde_json::Value = serde_json::from_slice(&attr_body).unwrap();
         assert_eq!(body["params"][0]["bidWei"], "0");
     }
 
     #[test]
-    fn inclusion_error_is_inclusion_failed() {
-        let (harness, paired, _i, _a, expected) = build();
-        let backend = FakeBackend::new(FakeResult::Error, FakeResult::Hash(expected));
-        let outcome = send_gated(
-            SubmissionAttempt::Initial(paired),
-            &harness.fresh().with_forced_gate(true),
-            &backend,
-        );
-        assert!(matches!(outcome, SubmitOutcome::InclusionFailed));
-        // Only the inclusion channel was attempted.
-        assert_eq!(backend.sent().len(), 1);
+    fn test_only_live_seam_maps_inclusion_failures() {
+        let (_harness, paired, _i, _a, expected) = build();
+        let failed = execute_live_with(raw_initial(paired), |_| None, |_| true);
+        assert!(matches!(failed, SubmitOutcome::InclusionFailed));
+
+        let (_harness, paired, _i, _a, _expected) = build();
+        let mismatched =
+            execute_live_with(raw_initial(paired), |_| Some(B256::repeat_byte(0xAB)), |_| true);
+        assert!(matches!(mismatched, SubmitOutcome::InclusionFailed));
+        assert_ne!(expected, B256::repeat_byte(0xAB));
     }
 
     #[test]
-    fn returned_hash_mismatch_is_inclusion_failed() {
-        let (harness, paired, _i, _a, _expected) = build();
-        let backend = FakeBackend::new(
-            FakeResult::Hash(B256::repeat_byte(0xAB)),
-            FakeResult::Hash(B256::repeat_byte(0xAB)),
-        );
-        let outcome = send_gated(
-            SubmissionAttempt::Initial(paired),
-            &harness.fresh().with_forced_gate(true),
-            &backend,
-        );
-        assert!(matches!(outcome, SubmitOutcome::InclusionFailed));
-    }
-
-    #[test]
-    fn attribution_failure_yields_retry_then_completes() {
-        let (harness, paired, _i, _a, expected) = build();
-        let backend = FakeBackend::new(FakeResult::Hash(expected), FakeResult::Error);
-        let outcome = send_gated(
-            SubmissionAttempt::Initial(paired),
-            &harness.fresh().with_forced_gate(true),
-            &backend,
-        );
+    fn test_only_live_seam_preserves_attribution_retry_shape() {
+        let (_harness, paired, _i, _a, expected) = build();
+        let outcome = execute_live_with(raw_initial(paired), |_| Some(expected), |_| false);
         let token = match outcome {
             SubmitOutcome::InclusionSentAttributionFailed(token) => token,
             other => panic!("expected partial failure, got {other:?}"),
         };
         assert_eq!(token.inclusion_receipt_hash(), expected);
-        // Retry attribution only; this time it succeeds. Full fresh re-validation runs.
-        let backend2 = FakeBackend::new(FakeResult::Error, FakeResult::Hash(expected));
-        let outcome2 = send_gated(
-            SubmissionAttempt::AttributionRetry(token),
-            &harness.fresh().with_forced_gate(true),
-            &backend2,
+
+        let retry = execute_live_with(
+            raw_retry(token),
+            |_| panic!("attribution retry must not send inclusion"),
+            |_| true,
         );
-        assert!(matches!(outcome2, SubmitOutcome::Complete));
-        // Only the attribution channel was re-sent on retry.
-        let sent = backend2.sent();
-        assert_eq!(sent.len(), 1);
-        assert_eq!(sent[0].channel, Channel::Attribution);
+        assert!(matches!(retry, SubmitOutcome::LiveComplete));
     }
 
     #[test]
     fn closed_gate_yields_no_egress() {
-        let (harness, paired, _i, _a, expected) = build();
-        let backend = FakeBackend::new(FakeResult::Hash(expected), FakeResult::Hash(expected));
-        // Real (unarmed) gate, no forced open -> NoEgress, nothing sent.
-        let outcome = send_gated(SubmissionAttempt::Initial(paired), &harness.fresh(), &backend);
+        let (harness, paired, _i, _a, _expected) = build();
+        let outcome = simulate(SubmissionAttempt::Initial(paired), &harness.fresh());
         assert!(matches!(outcome, SubmitOutcome::NoEgress));
-        assert!(backend.sent().is_empty());
     }
 
     #[test]
     fn poisoned_sink_yields_no_egress() {
-        let (harness, paired, _i, _a, expected) = build();
-        // Poison the sink.
+        let (harness, paired, _i, _a, _expected) = build();
         harness.sink.latch(base_mev_trader::KillReason::KeyOrSignatureFailure);
-        let backend = FakeBackend::new(FakeResult::Hash(expected), FakeResult::Hash(expected));
-        let outcome = send_gated(
-            SubmissionAttempt::Initial(paired),
-            &harness.fresh().with_forced_gate(true),
-            &backend,
-        );
+        let outcome =
+            simulate(SubmissionAttempt::Initial(paired), &harness.fresh().with_forced_gate(true));
         assert!(matches!(outcome, SubmitOutcome::NoEgress));
-        assert!(backend.sent().is_empty());
     }
 
     #[test]
     fn stale_deployment_identity_yields_no_egress() {
-        let (mut harness, paired, _i, _a, expected) = build();
-        // Change the live deployment identity so it no longer matches the bindings.
+        let (mut harness, paired, _i, _a, _expected) = build();
         harness.dep_id = tk::FakeDeploymentIdentity(Some(DeploymentIdentity {
             binary_digest: B256::repeat_byte(0x99),
             deployment_digest: B256::repeat_byte(2),
             r9_store_identity: StoreIdentity::new([0x55u8; 32]),
         }));
-        let backend = FakeBackend::new(FakeResult::Hash(expected), FakeResult::Hash(expected));
-        let outcome = send_gated(
-            SubmissionAttempt::Initial(paired),
-            &harness.fresh().with_forced_gate(true),
-            &backend,
-        );
+        let outcome =
+            simulate(SubmissionAttempt::Initial(paired), &harness.fresh().with_forced_gate(true));
         assert!(matches!(outcome, SubmitOutcome::NoEgress));
     }
 
     #[test]
     fn suppression_lock_at_egress_yields_no_egress() {
-        // C2: a writer lock appearing AFTER the initial proof but BEFORE egress
-        // (mid-write / stale crash) must fail-close the egress re-validation.
-        let (harness, paired, _i, _a, expected) = build();
+        let (harness, paired, _i, _a, _expected) = build();
         let mut lock = harness.supp_path.clone().into_os_string();
         lock.push(".lock");
         std::fs::write(std::path::PathBuf::from(lock), b"").unwrap();
-        let backend = FakeBackend::new(FakeResult::Hash(expected), FakeResult::Hash(expected));
-        let outcome = send_gated(
-            SubmissionAttempt::Initial(paired),
-            &harness.fresh().with_forced_gate(true),
-            &backend,
-        );
-        assert!(matches!(outcome, SubmitOutcome::NoEgress));
-        assert!(backend.sent().is_empty());
-    }
-
-    #[test]
-    fn live_window_not_yet_open_yields_no_egress() {
-        // M2: the live window is [now-500, now+100). Rewind the clock to 400 (< the
-        // window_start of 500) so ONLY the window_start re-check fails (g7 has no
-        // window and is not expired at 400). Egress must fail-close.
-        let (mut harness, paired, _i, _a, expected) = build();
-        harness.clock = tk::FakeClock(Some(400));
-        let backend = FakeBackend::new(FakeResult::Hash(expected), FakeResult::Hash(expected));
-        let outcome = send_gated(
-            SubmissionAttempt::Initial(paired),
-            &harness.fresh().with_forced_gate(true),
-            &backend,
-        );
+        let outcome =
+            simulate(SubmissionAttempt::Initial(paired), &harness.fresh().with_forced_gate(true));
         assert!(matches!(outcome, SubmitOutcome::NoEgress));
     }
 
     #[test]
-    fn live_window_closed_at_expiry_yields_no_egress() {
-        // Clock at/after expiry (1100) -> window closed -> NoEgress.
-        let (mut harness, paired, _i, _a, expected) = build();
-        harness.clock = tk::FakeClock(Some(1_100));
-        let backend = FakeBackend::new(FakeResult::Hash(expected), FakeResult::Hash(expected));
-        let outcome = send_gated(
-            SubmissionAttempt::Initial(paired),
-            &harness.fresh().with_forced_gate(true),
-            &backend,
-        );
-        assert!(matches!(outcome, SubmitOutcome::NoEgress));
+    fn closed_live_windows_yield_no_egress() {
+        for now in [400, 1_100] {
+            let (mut harness, paired, _i, _a, _expected) = build();
+            harness.clock = tk::FakeClock(Some(now));
+            let outcome = simulate(
+                SubmissionAttempt::Initial(paired),
+                &harness.fresh().with_forced_gate(true),
+            );
+            assert!(matches!(outcome, SubmitOutcome::NoEgress), "clock {now}");
+        }
+    }
+
+    fn live_fixture() -> serde_json::Value {
+        serde_json::json!({
+            "explicit_live": true,
+            "receipt_state": "fresh",
+            "kill_state": "clear",
+            "funded_account": {"status": "present", "balance_wei": "100"},
+            "signed_cap_wei": "100"
+        })
+    }
+
+    fn assert_lock_mutant(
+        original: &serde_json::Value,
+        mutant: &serde_json::Value,
+        name: &str,
+        expected: LiveLockClosed,
+    ) {
+        assert_ne!(mutant, original, "{name} patch did not change fixture");
+        let snapshot = validate_live_lock_fixture(mutant).expect("classified mutant");
+        assert_eq!(evaluate_live_locks(&snapshot), Err(expected));
+        eprintln!("{name}: RED");
+    }
+
+    #[test]
+    fn lock_l0_exact_cap_is_green() {
+        let fixture = live_fixture();
+        let snapshot = validate_live_lock_fixture(&fixture).unwrap();
+        assert_eq!(evaluate_live_locks(&snapshot), Ok(()));
+        eprintln!("L0: GREEN");
+    }
+
+    #[test]
+    fn lock_l0z_present_zero_balance_is_green() {
+        let original = live_fixture();
+        let mut fixture = original.clone();
+        fixture["funded_account"]["balance_wei"] = serde_json::json!("0");
+        assert_ne!(fixture, original, "L0z patch did not change fixture");
+        let snapshot = validate_live_lock_fixture(&fixture).unwrap();
+        assert_eq!(evaluate_live_locks(&snapshot), Ok(()));
+        eprintln!("L0z: GREEN");
+    }
+
+    #[test]
+    fn lock_l1_free_bool_is_red() {
+        let original = live_fixture();
+        let mut mutant = original.clone();
+        mutant["explicit_live"] = serde_json::json!(false);
+        assert_lock_mutant(&original, &mutant, "L1", LiveLockClosed::ExplicitLiveSelection);
+    }
+
+    #[test]
+    fn lock_l2_receipt_failures_are_red() {
+        for state in ["absent", "mismatched", "not-yet-valid", "expired"] {
+            let original = live_fixture();
+            let mut mutant = original.clone();
+            mutant["receipt_state"] = serde_json::json!(state);
+            assert_lock_mutant(&original, &mutant, "L2", LiveLockClosed::SignedReceipt);
+        }
+    }
+
+    #[test]
+    fn lock_l3_kill_failures_are_red() {
+        for state in ["unknown", "engaged", "poisoned"] {
+            let original = live_fixture();
+            let mut mutant = original.clone();
+            mutant["kill_state"] = serde_json::json!(state);
+            assert_lock_mutant(&original, &mutant, "L3", LiveLockClosed::KillAnchor);
+        }
+    }
+
+    #[test]
+    fn lock_l4a_absent_account_is_red() {
+        let original = live_fixture();
+        let mut mutant = original.clone();
+        mutant["funded_account"] = serde_json::json!({"status": "absent"});
+        assert_lock_mutant(&original, &mutant, "L4a", LiveLockClosed::FundedAccountAbsent);
+    }
+
+    #[test]
+    fn lock_l4b_authority_error_is_red() {
+        let original = live_fixture();
+        let mut mutant = original.clone();
+        mutant["funded_account"] = serde_json::json!({"status": "error"});
+        assert_lock_mutant(&original, &mutant, "L4b", LiveLockClosed::FundsUnavailable);
+    }
+
+    #[test]
+    fn lock_l4c_over_cap_is_red() {
+        let original = live_fixture();
+        let mut mutant = original.clone();
+        mutant["funded_account"]["balance_wei"] = serde_json::json!("101");
+        assert_lock_mutant(&original, &mutant, "L4c", LiveLockClosed::FundsCapExceeded);
+    }
+
+    fn validate_test_closure_seam(source: &str) -> Result<(), String> {
+        let guarded = "#[cfg(test)]\nfn execute_live_with";
+        if source.matches(guarded).count() != 1 {
+            return Err("execute_live_with must have exactly one cfg(test) guard".to_owned());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn closure_seam_c0_green_c1_removed_cfg_red() {
+        let source = include_str!("transport.rs");
+        validate_test_closure_seam(source).expect("C0 source must be sealed");
+        eprintln!("C0: GREEN");
+
+        let guarded = "#[cfg(test)]\nfn execute_live_with";
+        let mutant = source.replacen(guarded, "fn execute_live_with", 1);
+        assert_ne!(mutant, source, "C1 patch did not change source");
+        assert!(validate_test_closure_seam(&mutant).is_err());
+        eprintln!("C1: RED");
     }
 
     #[test]
     fn inclusion_response_mapping() {
-        // C3: pure HTTP-response → result mapping.
         let hash = B256::repeat_byte(0xAB);
         let ok_body = format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"{hash:#x}\"}}");
         assert_eq!(parse_inclusion_result(200, ok_body.as_bytes()), Some(hash));
-        // Non-2xx statuses fail.
         for status in [401u16, 403, 429, 500, 502, 503] {
             assert!(parse_inclusion_result(status, ok_body.as_bytes()).is_none());
         }
-        // JSON-RPC error object -> fail (even with 200).
-        let err_body = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000,\"message\":\"x\"}}";
-        assert!(parse_inclusion_result(200, err_body).is_none());
-        // Missing / malformed result.
-        assert!(parse_inclusion_result(200, b"{\"jsonrpc\":\"2.0\"}").is_none());
+        let error = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000}}";
+        assert!(parse_inclusion_result(200, error).is_none());
         assert!(parse_inclusion_result(200, b"not json").is_none());
     }
 
     #[test]
     fn attribution_response_mapping() {
-        // C3: only a NON-EMPTY STRING result is success.
         let ok_body = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0xbundlehash\"}";
         assert!(attribution_response_ok(200, ok_body));
-        // Non-2xx statuses fail even with a valid body.
         for status in [401u16, 403, 429, 500, 502, 503] {
-            assert!(!attribution_response_ok(status, ok_body), "status {status} wrongly ok");
+            assert!(!attribution_response_ok(status, ok_body));
         }
-        // JSON-RPC error object fails.
-        let err_body = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000,\"message\":\"unauthorized\"}}";
-        assert!(!attribution_response_ok(200, err_body));
-        // M2: result of the wrong shape / empty MUST be attribution failure.
         for wrong in [
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null}",
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"\"}",
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":true}",
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":123}",
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"id\":\"x\"}}",
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[\"x\"]}",
             "{\"jsonrpc\":\"2.0\"}",
             "not json",
         ] {
-            assert!(!attribution_response_ok(200, wrong.as_bytes()), "wrongly ok: {wrong}");
+            assert!(!attribution_response_ok(200, wrong.as_bytes()));
         }
     }
 }

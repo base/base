@@ -29,6 +29,7 @@ clap.workspace = true
 
 [features]
 b5-dormant-presign = [ "base-execution-cli/b5-dormant-presign" ]
+arm-live-egress = [ "base-execution-cli/arm-live-egress" ]
 default = [ "jemalloc" ]
 edge-measurement = [ "base-execution-cli/edge-measurement" ]
 jemalloc = [ "base-execution-cli/jemalloc", "reth-cli-util/jemalloc" ]

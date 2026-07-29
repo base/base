@@ -32,13 +32,17 @@ pub use tx_authority::{
     ValidatedUnsignedAtomicTx,
 };
 
-// B3-arm tier — the real key loader, signer, proof, and transport implementation
-// remains private. Only the provisioning helper and its typed failure are exposed,
-// and only in provisioning builds; node builds cannot reach low-level arm APIs.
+// B3-arm tier remains private. The root exposes only reviewed handoff/provider,
+// provisioning, and S1-b runtime-backend selection types under their owning
+// features; raw permits, signing, custody, proof construction, and send stay private.
 #[cfg(feature = "arm")]
 mod arm;
+#[cfg(all(feature = "arm-live-egress", not(test)))]
+pub use arm::ProdBackend;
 #[cfg(feature = "t4e-handoff")]
 pub use arm::{CheckedCandidate, CodeHashProvider, ProviderError};
+#[cfg(feature = "arm")]
+pub use arm::{RuntimeBackend, SimBackend};
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
 pub use arm::{SuppressionRollbackError, provision_suppression_anchor};
 

@@ -52,12 +52,13 @@ pub use request::{Channel, RequestSpec};
 pub use suppression::SuppressionRollbackError;
 #[cfg(feature = "arm-provisioning")]
 pub use suppression::provision_suppression_anchor;
-#[cfg(all(feature = "arm-live-egress", not(test)))]
-pub use transport::ProdBackend;
 pub use transport::{
-    AttributionRetryToken, EgressPlan, RawBackend, RawEgress, SubmissionAttempt, SubmitOutcome,
-    send_gated,
+    AttributionRetryToken, BackendPermit, EgressPlan, LiveLockClosed, RawBackend, RawEgress,
+    RuntimeBackend, SimBackend, SimEgressPermit, SimulationAttempt, SimulationRecord,
+    SubmissionAttempt, SubmitOutcome, send_gated,
 };
+#[cfg(all(feature = "arm-live-egress", not(test)))]
+pub use transport::{LiveEgressPermit, ProdBackend};
 pub use witness::{
     ArmRuntime, ArmRuntimeOpenError, AuthorizedCandidate, AuthorizedSignedSubmission,
     CHAIN_ID_BASE, CheckedCandidate, DeploymentIdentity, DeploymentIdentitySource, DrawdownSource,
@@ -262,6 +263,17 @@ pub(crate) mod testkit {
                 Err(ProviderError::Unavailable("test".to_string()))
             } else {
                 Ok(self.block)
+            }
+        }
+
+        fn native_balance_at_latest_committed(
+            &self,
+            _address: Address,
+        ) -> Result<Option<U256>, ProviderError> {
+            if self.fail {
+                Err(ProviderError::Unavailable("test".to_string()))
+            } else {
+                Ok(Some(U256::ZERO))
             }
         }
     }

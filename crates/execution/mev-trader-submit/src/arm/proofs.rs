@@ -80,6 +80,14 @@ pub trait CodeHashProvider {
 
     /// The latest committed block number.
     fn current_block(&self) -> Result<u64, ProviderError>;
+
+    /// Native balance of a present account at the latest committed canonical head.
+    ///
+    /// `Ok(None)` means the account was absent and must fail closed; it is not a zero balance.
+    fn native_balance_at_latest_committed(
+        &self,
+        address: Address,
+    ) -> Result<Option<alloy_primitives::U256>, ProviderError>;
 }
 
 // -- G7Attestation ------------------------------------------------------------

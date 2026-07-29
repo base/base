@@ -161,3 +161,7 @@ b5-dormant-presign = [
   "dep:serde_json",
   "dep:libc",
 ]
+arm-live-egress = [
+    "dep:mev-trader-submit",
+    "mev-trader-submit/arm-live-egress",
+]
