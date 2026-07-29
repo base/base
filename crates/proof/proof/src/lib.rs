@@ -23,7 +23,7 @@ mod executor;
 pub use executor::*;
 
 mod schedule_id;
-pub use schedule_id::ScheduleId;
+pub use schedule_id::{ScheduleId, ScheduleIdError};
 
 mod hint;
 pub use hint::{Hint, HintType};
