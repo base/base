@@ -21,7 +21,7 @@ use eyre::Context;
 use reth_node_core::args::TraceArgs;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
@@ -375,6 +375,18 @@ impl ConsensusNodeArgs {
         Ok(())
     }
 
+    /// Validates that the dangerous DA batcher sender override is only used by validators.
+    pub fn validate_da_batcher_sender_override(&self) -> eyre::Result<()> {
+        if self.config.l1_rpc_args.l1_da_batcher_sender_override.is_some()
+            && !self.config.node_mode.is_validator()
+        {
+            eyre::bail!(
+                "--l1.dangerously-override-da-batcher-sender is only supported in validator mode"
+            );
+        }
+        Ok(())
+    }
+
     /// Builds a rollup node with default external endpoint configuration.
     pub async fn build_rollup_node(&self) -> eyre::Result<RollupNode> {
         self.build_rollup_node_with_overrides(
@@ -406,6 +418,13 @@ impl ConsensusNodeArgs {
         startup_mode: UpgradeSignalStartupMode,
     ) -> eyre::Result<RollupNode> {
         self.validate_sequencer_key()?;
+        self.validate_da_batcher_sender_override()?;
+        if let Some(sender) = self.config.l1_rpc_args.l1_da_batcher_sender_override {
+            warn!(
+                %sender,
+                "overriding the L1 data-availability batcher sender filter"
+            );
+        }
         let upgrade_signal_config = self.config.upgrade_signal.config();
         let upgrade_signal_l1_rpc = overrides.upgrade_signal_l1_rpc.clone();
         if let Some(signal_config) = &upgrade_signal_config
@@ -438,6 +457,7 @@ impl ConsensusNodeArgs {
             rpc_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
             slot_duration_override: self.config.l1_rpc_args.l1_slot_duration_override,
             verifier_l1_confs: self.config.l1_rpc_args.l1_verifier_confs,
+            da_batcher_sender_override: self.config.l1_rpc_args.l1_da_batcher_sender_override,
         };
 
         let l2_engine_rpc = overrides
@@ -663,6 +683,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parses_da_batcher_sender_override() {
+        let batcher = address!("2222222222222222222222222222222222222222");
+        let args = CommandParser::<ConsensusNodeConfigArgs>::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l2-engine-rpc",
+            "http://localhost:8551",
+            "--l1.dangerously-override-da-batcher-sender",
+            "0x2222222222222222222222222222222222222222",
+        ])
+        .args;
+
+        assert_eq!(args.l1_rpc_args.l1_da_batcher_sender_override, Some(batcher));
+    }
+
+    #[test]
+    fn embedded_consensus_preserves_da_batcher_sender_override() {
+        let batcher = address!("2222222222222222222222222222222222222222");
+        let args = CommandParser::<EmbeddedConsensusNodeConfigArgs>::parse_from([
+            "base",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l1.dangerously-override-da-batcher-sender",
+            "0x2222222222222222222222222222222222222222",
+        ])
+        .args;
+
+        let config = ConsensusNodeConfigArgs::from(args);
+        assert_eq!(config.l1_rpc_args.l1_da_batcher_sender_override, Some(batcher));
+    }
+
     fn upgrade_schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(
             signals
@@ -857,6 +914,25 @@ mod tests {
         );
 
         assert!(args.validate_sequencer_key().is_ok());
+    }
+
+    #[test]
+    fn da_batcher_sender_override_is_rejected_in_sequencer_mode() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                l1_rpc_args: L1ClientArgs {
+                    l1_da_batcher_sender_override: Some(address!(
+                        "2222222222222222222222222222222222222222"
+                    )),
+                    ..L1ClientArgs::default()
+                },
+                ..default_node_config_args()
+            },
+        );
+
+        assert!(args.validate_da_batcher_sender_override().is_err());
     }
 
     #[test]
