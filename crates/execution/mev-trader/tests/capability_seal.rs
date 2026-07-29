@@ -223,6 +223,9 @@ const OWNER_SCRIPT_EXECUTABLE_LINES: &[&str] = &[
 ];
 
 fn validate_owner_script_program(script: &str) -> Result<(), String> {
+    if !script.starts_with("#!/usr/bin/env bash\n") {
+        return Err("owner script interpreter line changed".to_owned());
+    }
     let executable_lines = script
         .lines()
         .enumerate()
@@ -473,6 +476,13 @@ if [ "${GOT_ADDR,,}" != "${EXPECT_ADDR,,}" ]; then
 fi"#;
     let m6 = replace_once(&script, address_gate, "");
     assert_owner_script_mutant_red("M6", &m6);
+
+    let n7 = replace_once(
+        &script,
+        "#!/usr/bin/env bash",
+        "#!/usr/bin/env -S bash -c 'id > /tmp/pr47-shebang' --",
+    );
+    assert_owner_script_mutant_red("N7", &n7);
 }
 
 #[test]
