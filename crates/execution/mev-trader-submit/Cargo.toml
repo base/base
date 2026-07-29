@@ -38,7 +38,7 @@ t4d-bridge = ["tx-authority"]
 # two-channel transport builders. Everything it adds lives in `src/arm/` behind
 # `#[cfg(feature="arm")]`. It does NOT compile a real network egress path — that
 # is the further-gated `arm-live-egress`. `arm` alone is broadcastability-0.
-arm = ["phase-b", "dep:zeroize", "dep:redb", "dep:serde_json"]
+arm = ["phase-b", "dep:zeroize", "dep:redb", "dep:serde_json", "dep:sha2"]
 
 # The ONLY configuration in which a real `reqwest` egress (`ProdBackend::execute`)
 # compiles. Even here the call is reachable only through the full proof witness and

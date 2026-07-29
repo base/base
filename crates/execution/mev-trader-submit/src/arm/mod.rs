@@ -30,6 +30,7 @@ mod custody;
 mod fail_sink;
 pub use fail_sink::ArmedFailSink;
 mod proofs;
+mod providers;
 mod request;
 mod suppression;
 mod transport;
@@ -40,6 +41,12 @@ pub use claim::try_claim_arm;
 pub use proofs::{
     CodeHashProvider, DeploymentEvidence, DeploymentPayload, G7Attestation, G7Payload,
     LiveRunAttestation, LiveRunPayload, ProviderError, SubmitSuppressionClear,
+};
+pub use providers::{
+    CommittedStateAuthority, DeploymentIdentityError, DrawdownAuthority, MAX_PROCESS_IMAGE_BYTES,
+    MAX_RUNTIME_CODE_BYTES, ProcessBinaryIdentity, ProductionB5Runtime,
+    ProductionB5RuntimeInstallError, ProductionCodeHashProvider,
+    ProductionDeploymentIdentitySource, ProductionDrawdownSource,
 };
 pub use request::{Channel, RequestSpec};
 pub use suppression::SuppressionRollbackError;
