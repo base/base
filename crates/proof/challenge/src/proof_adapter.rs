@@ -15,7 +15,7 @@ pub struct ChallengerProofAdapter;
 
 impl ChallengerProofAdapter {
     /// Namespace used to derive challenger proof session IDs.
-    const SESSION_NAMESPACE: &'static [u8] = b"base/challenger/proof-session/v1";
+    const SESSION_NAMESPACE: &'static [u8] = b"base/challenger/proof-session/v2";
 
     /// Derives an idempotent challenger SNARK proof session ID.
     pub fn snark_plonk_session_id(game_address: Address, invalid_index: u64) -> String {
@@ -179,6 +179,7 @@ mod tests {
             sequence_window: Some(10),
             l1_head: Some(l1_head),
             intermediate_root_interval: Some(150),
+            schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         };
@@ -209,6 +210,7 @@ mod tests {
             intermediate_block_interval: 300,
             l1_head_number: 1200,
             image_hash: B256::repeat_byte(0x05),
+            schedule_l2_block_number: None,
         };
         let session_id = ChallengerProofAdapter::tee_session_id(game_address, invalid_index);
 

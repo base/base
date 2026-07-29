@@ -93,6 +93,7 @@ mod tests {
             intermediate_block_interval: 300,
             l1_head_number: 1200,
             image_hash: B256::repeat_byte(0x05),
+            schedule_l2_block_number: None,
         }
     }
 

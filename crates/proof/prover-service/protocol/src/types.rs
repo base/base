@@ -185,6 +185,13 @@ pub struct ZkProofRequest {
     /// Optional intermediate output root interval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intermediate_root_interval: Option<u64>,
+    /// L2 block number whose timestamp determines the activated upgrade schedule.
+    ///
+    /// `None` means the schedule is pinned to the claimed L2 block (the last block in the
+    /// proven range). Set for challenger subrange proofs, which claim an earlier block than
+    /// the game's L2 block but must still pin to the game's L2 block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule_l2_block_number: Option<u64>,
     /// ZK virtual machine implementation to use.
     pub zk_vm: ZkVm,
     /// Proving backend that should execute this request.
@@ -538,6 +545,7 @@ mod tests {
                     sequence_window: None,
                     l1_head: Some(B256::repeat_byte(0xab)),
                     intermediate_root_interval: Some(128),
+                    schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
                 }),
@@ -639,6 +647,7 @@ mod tests {
                 intermediate_block_interval: 7,
                 l1_head_number: 8,
                 image_hash: B256::repeat_byte(9),
+                schedule_l2_block_number: None,
             },
             tee_kind: TeeKind::AwsNitro,
         };
@@ -803,6 +812,7 @@ mod tests {
             intermediate_block_interval: 7,
             l1_head_number: 8,
             image_hash: B256::repeat_byte(9),
+            schedule_l2_block_number: None,
         };
 
         let value = serde_json::to_value(request).expect("tee request payload should serialize");
@@ -881,10 +891,32 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 intermediate_root_interval: None,
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }
         );
+    }
+
+    #[test]
+    fn schedule_l2_block_number_round_trips_through_json() {
+        let request = ZkProofRequest {
+            start_block_number: 10,
+            number_of_blocks_to_prove: 20,
+            sequence_window: None,
+            l1_head: None,
+            intermediate_root_interval: None,
+            schedule_l2_block_number: Some(42),
+            zk_vm: ZkVm::Sp1,
+            zk_backend: ZkBackend::Cluster,
+        };
+
+        let value = serde_json::to_value(&request).expect("zk request should serialize");
+        assert_eq!(value["schedule_l2_block_number"], json!(42));
+
+        let round_tripped: ZkProofRequest =
+            serde_json::from_value(value).expect("zk request should deserialize");
+        assert_eq!(round_tripped, request);
     }
 
     #[test]
