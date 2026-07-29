@@ -42,10 +42,10 @@ impl UnsafePayloadGossipClient for QueuedUnsafePayloadGossipClient {
         &self,
         payload: BaseExecutionPayloadEnvelope,
     ) -> Result<(), UnsafePayloadGossipClientError> {
-        self.request_tx
-            .send(payload.clone())
-            .await
-            .map_err(|_| UnsafePayloadGossipClientError::RequestError("request channel closed".to_string()))
-            .inspect_err(|err| error!(target: "gossip_client", ?payload, ?err, "failed to request to gossip payload."))
+        self.request_tx.send(payload).await.map_err(|send_error| {
+            let err = UnsafePayloadGossipClientError::RequestError("request channel closed".to_string());
+            error!(target: "gossip_client", payload = ?send_error.0, ?err, "failed to request to gossip payload.");
+            err
+        })
     }
 }
