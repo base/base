@@ -31,7 +31,16 @@ use mev_trader_submit::assembler::{
 };
 use support::{EXECUTOR, backrun_plan, victim_with_priority};
 
-const PRODUCTION_FILES: [&str; 4] = ["lib.rs", "fee.rs", "assembler.rs", "signer.rs"];
+const PRODUCTION_FILES: [&str; 8] = [
+    "lib.rs",
+    "fee.rs",
+    "assembler.rs",
+    "signer.rs",
+    "calldata.rs",
+    "dormant.rs",
+    "economics.rs",
+    "tx_authority.rs",
+];
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -86,8 +95,137 @@ fn strip_comments(source: &str) -> String {
     out
 }
 
+fn is_terminal_test_module(item: &syn::ItemMod) -> bool {
+    item.ident == "tests"
+        && item.content.is_some()
+        && item.attrs.len() == 1
+        && matches!(
+            &item.attrs[0].meta,
+            syn::Meta::List(meta)
+                if meta.path.is_ident("cfg") && meta.tokens.to_string() == "test"
+        )
+}
+
+fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
+    match item {
+        syn::Item::Const(item) => &item.attrs,
+        syn::Item::Enum(item) => &item.attrs,
+        syn::Item::ExternCrate(item) => &item.attrs,
+        syn::Item::Fn(item) => &item.attrs,
+        syn::Item::ForeignMod(item) => &item.attrs,
+        syn::Item::Impl(item) => &item.attrs,
+        syn::Item::Macro(item) => &item.attrs,
+        syn::Item::Mod(item) => &item.attrs,
+        syn::Item::Static(item) => &item.attrs,
+        syn::Item::Struct(item) => &item.attrs,
+        syn::Item::Trait(item) => &item.attrs,
+        syn::Item::TraitAlias(item) => &item.attrs,
+        syn::Item::Type(item) => &item.attrs,
+        syn::Item::Union(item) => &item.attrs,
+        syn::Item::Use(item) => &item.attrs,
+        syn::Item::Verbatim(_) => &[],
+        _ => &[],
+    }
+}
+
+fn production_prefix(source: &str) -> Result<&str, String> {
+    let parsed = syn::parse_file(source).map_err(|error| format!("malformed Rust source: {error}"))?;
+    let test_items = parsed
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| {
+            item_attrs(item).iter().any(|attr| {
+                matches!(
+                    &attr.meta,
+                    syn::Meta::List(meta)
+                        if meta.path.is_ident("cfg") && meta.tokens.to_string() == "test"
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if test_items.is_empty() {
+        if source.contains("#[cfg(test)]") {
+            return Err("fake #[cfg(test)] marker outside a top-level item".to_owned());
+        }
+        return Ok(source);
+    }
+
+    if test_items.len() != 1 {
+        return Err("expected at most one top-level #[cfg(test)] item".to_owned());
+    }
+    let (index, item) = test_items[0];
+    if index + 1 != parsed.items.len() {
+        return Err("top-level #[cfg(test)] item must be the final Rust item".to_owned());
+    }
+    let syn::Item::Mod(module) = item else {
+        return Err("top-level #[cfg(test)] item must be `mod tests`".to_owned());
+    };
+    if !is_terminal_test_module(module) {
+        return Err("test tail must be exactly an inline `#[cfg(test)] mod tests`".to_owned());
+    }
+
+    let boundaries = source
+        .match_indices('#')
+        .filter_map(|(offset, _)| {
+            syn::parse_str::<syn::ItemMod>(&source[offset..])
+                .ok()
+                .filter(is_terminal_test_module)
+                .map(|_| offset)
+        })
+        .collect::<Vec<_>>();
+    let [boundary] = boundaries.as_slice() else {
+        return Err("could not uniquely locate the terminal test module".to_owned());
+    };
+    if source[..*boundary].contains("#[cfg(test)]") {
+        return Err("fake #[cfg(test)] marker before the terminal test module".to_owned());
+    }
+
+    Ok(&source[..*boundary])
+}
+
 fn read_production_code(file: &str) -> String {
-    strip_comments(&std::fs::read_to_string(manifest_dir().join("src").join(file)).expect("source"))
+    let source =
+        std::fs::read_to_string(manifest_dir().join("src").join(file)).expect("source");
+    let production = production_prefix(&source)
+        .unwrap_or_else(|error| panic!("invalid test tail in {file}: {error}"));
+    strip_comments(production)
+}
+
+#[test]
+fn production_prefix_accepts_only_a_structural_terminal_test_module() {
+    let source = "pub fn production() {}\n#[cfg(test)]\nmod tests { #[test] fn works() {} }\n";
+    assert_eq!(production_prefix(source).unwrap(), "pub fn production() {}\n");
+    assert_eq!(
+        production_prefix("pub fn production() {}\n").unwrap(),
+        "pub fn production() {}\n"
+    );
+}
+
+#[test]
+fn production_prefix_rejects_malformed_and_fake_test_markers() {
+    assert!(production_prefix("pub fn broken( {\n#[cfg(test)] mod tests {}").is_err());
+    assert!(
+        production_prefix("const MARKER: &str = \"#[cfg(test)]\";\npub fn production() {}").is_err()
+    );
+}
+
+#[test]
+fn production_prefix_rejects_multiple_or_nonterminal_test_modules() {
+    assert!(
+        production_prefix("#[cfg(test)] mod tests {}\n#[cfg(test)] mod tests {}").is_err()
+    );
+    assert!(
+        production_prefix("#[cfg(test)] mod tests {}\npub fn production_after_tests() {}").is_err()
+    );
+}
+
+#[test]
+fn production_prefix_rejects_forbidden_production_after_test_module() {
+    let adversarial =
+        "#[cfg(test)] mod tests {}\nconst FORBIDDEN_PRODUCTION_TOKEN: &str = \"https://egress\";";
+    assert!(production_prefix(adversarial).is_err());
 }
 
 fn read_production_source() -> String {
@@ -354,6 +492,10 @@ fn feature_surface_and_deps_are_pinned() {
         .expect("mev-trader-submit package");
 
     // The exact gate-feature surface. `phase-b` = assembler + ephemeral signer;
+    // `tx-authority` = unsigned transaction authority with no signer or egress;
+    // `t4d-bridge` = sealed candidate bridge values with no execution capability;
+    // `t4e-handoff` = checked handoff values plus the broadcastability-0 arm tier;
+    // `presign` = pure dormant digest/value construction with no I/O;
     // `arm` = the B3-arm tier (key loader + witness + transport builders, no real
     // egress); `arm-live-egress` = the ONLY config that compiles a real reqwest
     // egress; `arm-provisioning` = the SuppressionEpochStore bootstrap surface.
@@ -362,7 +504,16 @@ fn feature_surface_and_deps_are_pinned() {
     let feature_names: BTreeSet<&str> = features.keys().map(String::as_str).collect();
     assert_eq!(
         feature_names,
-        BTreeSet::from(["phase-b", "arm", "arm-live-egress", "arm-provisioning"]),
+        BTreeSet::from([
+            "phase-b",
+            "tx-authority",
+            "t4d-bridge",
+            "t4e-handoff",
+            "presign",
+            "arm",
+            "arm-live-egress",
+            "arm-provisioning",
+        ]),
         "unexpected feature surface"
     );
 
