@@ -250,6 +250,51 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct HeadAuthority {
+        result: Result<u64, ProviderError>,
+        reads: Cell<u64>,
+    }
+
+    impl CommittedStateAuthority for HeadAuthority {
+        fn code_at_latest_committed(&self, _address: Address) -> Result<Vec<u8>, ProviderError> {
+            Err(ProviderError::Invalid("code read not expected"))
+        }
+
+        fn latest_committed_block(&self) -> Result<u64, ProviderError> {
+            self.reads.set(self.reads.get() + 1);
+            self.result.clone()
+        }
+    }
+
+    fn consume_current_block(provider: &dyn CodeHashProvider) -> Result<u64, ProviderError> {
+        provider.current_block()
+    }
+
+    #[test]
+    fn production_current_block_forwards_each_committed_head_read_to_consumers() {
+        let provider = ProductionCodeHashProvider::install(HeadAuthority {
+            result: Ok(123),
+            reads: Cell::new(0),
+        });
+
+        assert_eq!(consume_current_block(&provider), Ok(123));
+        assert_eq!(consume_current_block(&provider), Ok(123));
+        assert_eq!(provider.authority.reads.get(), 2);
+    }
+
+    #[test]
+    fn production_current_block_preserves_unavailable_head_failure() {
+        let error = ProviderError::Unavailable("canonical head unavailable".to_string());
+        let provider = ProductionCodeHashProvider::install(HeadAuthority {
+            result: Err(error.clone()),
+            reads: Cell::new(0),
+        });
+
+        assert_eq!(consume_current_block(&provider), Err(error));
+        assert_eq!(provider.authority.reads.get(), 1);
+    }
+
     #[test]
     fn production_code_hashes_committed_code_and_classifies_invalid_values() {
         let code = vec![0x60, 0x00, 0x56];
