@@ -100,32 +100,92 @@ pub(crate) enum PriorityFilterError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PriorityEconomicsReceipt {
     /// Gross output-minus-input before the executor's mandatory kickback, in wei.
-    pub gross_profit_wei: U256,
+    gross_profit_wei: U256,
     /// On-chain `ceil(75% * gross)` kickback, in wei.
-    pub kickback_wei: U256,
+    kickback_wei: U256,
     /// Gross minus kickback, in wei.
-    pub retained_value_wei: U256,
+    retained_value_wei: U256,
     /// Authoritative candidate-specific execution gas estimate, in gas.
-    pub execution_gas_estimate: U256,
+    execution_gas_estimate: U256,
     /// L2 execution fee at the pinned effective gas price, in wei.
-    pub l2_execution_fee_wei: U256,
+    l2_execution_fee_wei: U256,
     /// OP-stack L1 data fee, in wei.
-    pub l1_data_fee_wei: U256,
+    l1_data_fee_wei: U256,
     /// L2 execution fee plus L1 data fee, in wei.
-    pub total_cost_wei: U256,
+    total_cost_wei: U256,
     /// Positive EV in wei, present only when the candidate is admitted.
-    pub expected_ev_wei: Option<U256>,
+    expected_ev_wei: Option<U256>,
     /// Block at which the economics authority was captured.
-    pub authority_block: u64,
+    authority_block: u64,
     /// Same-block Base fee authority, in wei/gas.
-    pub base_fee_per_gas_wei: U256,
+    base_fee_per_gas_wei: U256,
     /// Victim priority fee pinned onto the backrun, in wei/gas.
-    pub victim_priority_fee_per_gas_wei: U256,
+    victim_priority_fee_per_gas_wei: U256,
     /// Victim maximum fee, in wei/gas.
-    pub victim_max_fee_per_gas_wei: U256,
+    victim_max_fee_per_gas_wei: U256,
 }
 
 impl PriorityEconomicsReceipt {
+    /// Returns gross output-minus-input before the executor's mandatory kickback, in wei.
+    pub const fn gross_profit_wei(&self) -> U256 {
+        self.gross_profit_wei
+    }
+
+    /// Returns the on-chain `ceil(75% * gross)` kickback, in wei.
+    pub const fn kickback_wei(&self) -> U256 {
+        self.kickback_wei
+    }
+
+    /// Returns gross minus kickback, in wei.
+    pub const fn retained_value_wei(&self) -> U256 {
+        self.retained_value_wei
+    }
+
+    /// Returns the authoritative candidate-specific execution gas estimate.
+    pub const fn execution_gas_estimate(&self) -> U256 {
+        self.execution_gas_estimate
+    }
+
+    /// Returns the L2 execution fee at the pinned effective gas price, in wei.
+    pub const fn l2_execution_fee_wei(&self) -> U256 {
+        self.l2_execution_fee_wei
+    }
+
+    /// Returns the OP-stack L1 data fee, in wei.
+    pub const fn l1_data_fee_wei(&self) -> U256 {
+        self.l1_data_fee_wei
+    }
+
+    /// Returns the L2 execution fee plus L1 data fee, in wei.
+    pub const fn total_cost_wei(&self) -> U256 {
+        self.total_cost_wei
+    }
+
+    /// Returns strictly positive expected EV for admitted candidates.
+    pub const fn expected_ev_wei(&self) -> Option<U256> {
+        self.expected_ev_wei
+    }
+
+    /// Returns the block at which the economics authority was captured.
+    pub const fn authority_block(&self) -> u64 {
+        self.authority_block
+    }
+
+    /// Returns the same-block Base fee authority, in wei/gas.
+    pub const fn base_fee_per_gas_wei(&self) -> U256 {
+        self.base_fee_per_gas_wei
+    }
+
+    /// Returns the victim priority fee pinned onto the backrun, in wei/gas.
+    pub const fn victim_priority_fee_per_gas_wei(&self) -> U256 {
+        self.victim_priority_fee_per_gas_wei
+    }
+
+    /// Returns the victim maximum fee, in wei/gas.
+    pub const fn victim_max_fee_per_gas_wei(&self) -> U256 {
+        self.victim_max_fee_per_gas_wei
+    }
+
     /// Only a strictly positive checked EV is admissible.
     pub const fn admitted(&self) -> bool {
         self.expected_ev_wei.is_some()
@@ -241,9 +301,9 @@ mod tests {
         let above = evaluate(input(445, 10, 5, 5, 10)).unwrap();
         assert!(!below.admitted());
         assert!(!equal.admitted());
-        assert_eq!(equal.retained_value_wei, U256::from(110));
-        assert_eq!(equal.total_cost_wei, U256::from(110));
-        assert_eq!(above.expected_ev_wei, Some(U256::from(1)));
+        assert_eq!(equal.retained_value_wei(), U256::from(110));
+        assert_eq!(equal.total_cost_wei(), U256::from(110));
+        assert_eq!(above.expected_ev_wei(), Some(U256::from(1)));
     }
 
     #[test]
@@ -258,20 +318,20 @@ mod tests {
     #[test]
     fn exact_relationship_uses_every_economics_term() {
         let decision = evaluate(input(1_000_000, 2_000, 10, 10, 7_000)).unwrap();
-        assert_eq!(decision.kickback_wei, U256::from(750_000));
-        assert_eq!(decision.retained_value_wei, U256::from(250_000));
-        assert_eq!(decision.execution_gas_estimate, U256::from(2_000));
-        assert_eq!(decision.l2_execution_fee_wei, U256::from(40_000));
-        assert_eq!(decision.l1_data_fee_wei, U256::from(7_000));
-        assert_eq!(decision.total_cost_wei, U256::from(47_000));
+        assert_eq!(decision.kickback_wei(), U256::from(750_000));
+        assert_eq!(decision.retained_value_wei(), U256::from(250_000));
+        assert_eq!(decision.execution_gas_estimate(), U256::from(2_000));
+        assert_eq!(decision.l2_execution_fee_wei(), U256::from(40_000));
+        assert_eq!(decision.l1_data_fee_wei(), U256::from(7_000));
+        assert_eq!(decision.total_cost_wei(), U256::from(47_000));
         assert_eq!(
-            decision.expected_ev_wei,
-            decision.retained_value_wei.checked_sub(
+            decision.expected_ev_wei(),
+            decision.retained_value_wei().checked_sub(
                 decision
-                    .execution_gas_estimate
+                    .execution_gas_estimate()
                     .checked_mul(U256::from(20))
                     .unwrap()
-                    .checked_add(decision.l1_data_fee_wei)
+                    .checked_add(decision.l1_data_fee_wei())
                     .unwrap(),
             )
         );

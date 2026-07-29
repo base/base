@@ -169,7 +169,7 @@ impl SimulationRecord {
             deployment_digest: B256::repeat_byte(15),
             binary_digest: B256::repeat_byte(16),
             r9_store_identity: B256::repeat_byte(17),
-            proof_valid_until_block: economics.authority_block + 1,
+            proof_valid_until_block: economics.authority_block() + 1,
         }
     }
 }
@@ -205,6 +205,31 @@ pub enum LiveLockClosed {
     FundsCapExceeded,
 }
 
+/// Bounded, non-sensitive classification of production transport failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportFailure {
+    /// The attribution credential could not be loaded.
+    CredentialLoad,
+    /// The attribution credential was not valid UTF-8 for URL encoding.
+    CredentialEncoding,
+    /// The HTTP client could not be built or a request could not be sent.
+    RequestSend,
+    /// The response body could not be read.
+    ResponseBody,
+    /// The server returned a non-success HTTP status.
+    HttpStatus,
+    /// The response body was not valid JSON.
+    MalformedJson,
+    /// The response contained a JSON-RPC error.
+    JsonRpcError,
+    /// The inclusion response omitted or malformed its result hash.
+    ResultSchema,
+    /// The returned inclusion hash did not match the submitted transaction.
+    InclusionHashMismatch,
+    /// The attribution response did not acknowledge the submission.
+    AttributionAcknowledgement,
+}
+
 /// The typed outcome of a gated submission.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
@@ -215,10 +240,15 @@ pub enum SubmitOutcome {
     LiveLocksClosed(LiveLockClosed),
     /// No transport was attempted; exact inert requests are returned by value.
     Simulated(SimulationRecord),
-    /// The live inclusion channel failed.
-    InclusionFailed,
-    /// Live inclusion landed but attribution failed.
-    InclusionSentAttributionFailed(AttributionRetryToken),
+    /// The live inclusion channel failed with an exact bounded classification.
+    InclusionFailed(TransportFailure),
+    /// Live inclusion landed but attribution failed; the linear retry is preserved.
+    InclusionSentAttributionFailed {
+        /// Attribution-only retry capability.
+        token: AttributionRetryToken,
+        /// Exact bounded reason that attribution failed.
+        failure: TransportFailure,
+    },
     /// Both live channels succeeded.
     LiveComplete,
 }
@@ -236,16 +266,6 @@ pub struct AttributionRetryToken {
 }
 
 impl AttributionRetryToken {
-    /// Mint a retry permit (backend-only, on inclusion-sent + attribution-failed).
-    pub const fn new(
-        attribution: RequestSpec,
-        bindings: ProofBindings,
-        id: ValidatedExecutionIdentity,
-        inclusion_receipt_hash: B256,
-    ) -> Self {
-        Self { attribution, bindings, id, inclusion_receipt_hash }
-    }
-
     /// The inclusion receipt hash the retry is bound to.
     pub const fn inclusion_receipt_hash(&self) -> B256 {
         self.inclusion_receipt_hash
@@ -550,42 +570,45 @@ pub fn send_gated(
 
 // -- pure response mapping (testable offline) ---------------------------------
 
-/// Map an inclusion-channel HTTP response to the returned tx hash. `None` (→
-/// inclusion failure) on any non-2xx status, malformed JSON, a JSON-RPC `error`
-/// object, or a missing/invalid `result` hash. Pure: no network, unit-tested.
+/// Map an inclusion-channel HTTP response to the returned tx hash. Every failure
+/// is classified without retaining response text. Pure: no network, unit-tested.
 #[cfg(any(test, feature = "arm-live-egress"))]
-pub(crate) fn parse_inclusion_result(status: u16, body: &[u8]) -> Option<B256> {
+pub(crate) fn parse_inclusion_result(status: u16, body: &[u8]) -> Result<B256, TransportFailure> {
     if !(200..300).contains(&status) {
-        return None;
+        return Err(TransportFailure::HttpStatus);
     }
-    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let value: serde_json::Value =
+        serde_json::from_slice(body).map_err(|_| TransportFailure::MalformedJson)?;
     if value.get("error").is_some() {
-        return None;
+        return Err(TransportFailure::JsonRpcError);
     }
-    value.get("result")?.as_str()?.parse::<B256>().ok()
+    value
+        .get("result")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|result| result.parse::<B256>().ok())
+        .ok_or(TransportFailure::ResultSchema)
 }
 
-/// Whether an attribution-channel HTTP response is a SUCCESS. `false` (→
-/// attribution failure, retry token preserved) on any non-2xx status (401/403/429/
-/// 5xx …), malformed JSON, a JSON-RPC `error` object, or a `result` that is not a
-/// NON-EMPTY STRING (the bundle/submission id). `null` / `""` / boolean / number /
-/// object results are all failures. Pure: no network, unit-tested.
+/// Classify an attribution-channel HTTP response. A successful acknowledgement
+/// is a non-empty string result; all other result shapes fail closed without
+/// retaining arbitrary response text. Pure: no network, unit-tested.
 ///
 /// NOTE: the exact Blink success schema beyond "`result` is a non-empty string id"
 /// is a G7/Blink-BD residual to be confirmed at B6.
 #[cfg(any(test, feature = "arm-live-egress"))]
-pub(crate) fn attribution_response_ok(status: u16, body: &[u8]) -> bool {
+pub(crate) fn parse_attribution_response(status: u16, body: &[u8]) -> Result<(), TransportFailure> {
     if !(200..300).contains(&status) {
-        return false;
+        return Err(TransportFailure::HttpStatus);
     }
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
-        return false;
-    };
+    let value: serde_json::Value =
+        serde_json::from_slice(body).map_err(|_| TransportFailure::MalformedJson)?;
     if value.get("error").is_some() {
-        return false;
+        return Err(TransportFailure::JsonRpcError);
     }
-    // `result` must be a non-empty string id; every other shape is a failure.
-    value.get("result").and_then(serde_json::Value::as_str).is_some_and(|id| !id.is_empty())
+    match value.get("result").and_then(serde_json::Value::as_str) {
+        Some(id) if !id.is_empty() => Ok(()),
+        _ => Err(TransportFailure::AttributionAcknowledgement),
+    }
 }
 
 // -- production backend (SOLE real egress site) -------------------------------
@@ -608,51 +631,45 @@ impl sealed::Sealed for ProdBackend {}
 impl ProdBackend {
     /// Build the backend with a single reused blocking client. Constructed once by
     /// the B5 dedicated-egress worker.
-    pub fn new() -> Result<Self, ()> {
+    pub fn new() -> Result<Self, TransportFailure> {
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_millis(2_000))
             .build()
-            .map_err(|_| ())?;
+            .map_err(|_| TransportFailure::RequestSend)?;
         Ok(Self { client })
     }
 
-    /// POST `body` to `url`; return `(http_status, response_bytes)`.
-    fn post(&self, url: &str, body: &[u8]) -> Result<(u16, Vec<u8>), ()> {
+    /// POST `body` to `url`; classify send and response-body failures.
+    fn post(&self, url: &str, body: &[u8]) -> Result<(u16, Vec<u8>), TransportFailure> {
         let response = self
             .client
             .post(url)
             .header("content-type", "application/json")
             .body(body.to_vec())
             .send()
-            .map_err(|_| ())?;
+            .map_err(|_| TransportFailure::RequestSend)?;
         let status = response.status().as_u16();
-        let bytes = response.bytes().map_err(|_| ())?;
+        let bytes = response.bytes().map_err(|_| TransportFailure::ResponseBody)?;
         Ok((status, bytes.to_vec()))
     }
 
-    /// Send the inclusion channel; return the node-returned tx hash on success (a
-    /// non-2xx / RPC-error / bad-result response yields `None`).
-    fn send_inclusion(&self, spec: &RequestSpec) -> Option<B256> {
-        let (status, body) = self.post(spec.endpoint(), spec.body()).ok()?;
+    /// Send the inclusion channel and classify every failure.
+    fn send_inclusion(&self, spec: &RequestSpec) -> Result<B256, TransportFailure> {
+        let (status, body) = self.post(spec.endpoint(), spec.body())?;
         parse_inclusion_result(status, &body)
     }
 
     /// Send the attribution channel to the Blink auction. Per the MUST-USE contract
     /// the API key is a URL PATH segment (`{BLINK_AUCTION_HOST}{key}`), NOT a header.
-    /// The key-bearing URL is held in a `Zeroizing` buffer. A non-2xx status, a
-    /// JSON-RPC `error`, or a missing `result` all count as attribution failure.
-    fn send_attribution(&self, spec: &RequestSpec) -> bool {
-        let Ok(credential) = super::custody::BlinkCredential::load() else {
-            return false;
-        };
-        let Ok(key) = core::str::from_utf8(credential.expose()) else {
-            return false;
-        };
+    /// The key-bearing URL is held in a `Zeroizing` buffer.
+    fn send_attribution(&self, spec: &RequestSpec) -> Result<(), TransportFailure> {
+        let credential = super::custody::BlinkCredential::load()
+            .map_err(|_| TransportFailure::CredentialLoad)?;
+        let key = core::str::from_utf8(credential.expose())
+            .map_err(|_| TransportFailure::CredentialEncoding)?;
         let url = zeroize::Zeroizing::new(format!("{}{}", spec.endpoint(), key));
-        let Ok((status, body)) = self.post(&url, spec.body()) else {
-            return false;
-        };
-        attribution_response_ok(status, &body)
+        let (status, body) = self.post(&url, spec.body())?;
+        parse_attribution_response(status, &body)
     }
 }
 
@@ -680,33 +697,42 @@ fn execute_live_sequence<I, A>(
     mut attribution_result: A,
 ) -> SubmitOutcome
 where
-    I: FnMut(&RequestSpec) -> Option<B256>,
-    A: FnMut(&RequestSpec) -> bool,
+    I: FnMut(&RequestSpec) -> Result<B256, TransportFailure>,
+    A: FnMut(&RequestSpec) -> Result<(), TransportFailure>,
 {
     match egress.into_plan() {
         EgressPlan::Initial { inclusion, attribution, bindings, id, expected_inclusion_hash } => {
             match inclusion_result(&inclusion) {
-                Some(hash) if hash == expected_inclusion_hash => {}
-                _ => return SubmitOutcome::InclusionFailed,
+                Ok(hash) if hash == expected_inclusion_hash => {}
+                Ok(_) => {
+                    return SubmitOutcome::InclusionFailed(TransportFailure::InclusionHashMismatch);
+                }
+                Err(failure) => return SubmitOutcome::InclusionFailed(failure),
             }
-            if !attribution_result(&attribution) {
-                return SubmitOutcome::InclusionSentAttributionFailed(AttributionRetryToken::new(
-                    attribution,
-                    bindings,
-                    id,
-                    expected_inclusion_hash,
-                ));
+            if let Err(failure) = attribution_result(&attribution) {
+                return SubmitOutcome::InclusionSentAttributionFailed {
+                    token: AttributionRetryToken {
+                        attribution,
+                        bindings,
+                        id,
+                        inclusion_receipt_hash: expected_inclusion_hash,
+                    },
+                    failure,
+                };
             }
             SubmitOutcome::LiveComplete
         }
         EgressPlan::AttributionOnly { attribution, bindings, id, inclusion_receipt_hash } => {
-            if !attribution_result(&attribution) {
-                return SubmitOutcome::InclusionSentAttributionFailed(AttributionRetryToken::new(
-                    attribution,
-                    bindings,
-                    id,
-                    inclusion_receipt_hash,
-                ));
+            if let Err(failure) = attribution_result(&attribution) {
+                return SubmitOutcome::InclusionSentAttributionFailed {
+                    token: AttributionRetryToken {
+                        attribution,
+                        bindings,
+                        id,
+                        inclusion_receipt_hash,
+                    },
+                    failure,
+                };
             }
             SubmitOutcome::LiveComplete
         }
@@ -849,11 +875,8 @@ mod tests {
         let now = 1_000;
         let dir = tk::TempDir::new("tx");
         let code_hash = B256::repeat_byte(0x33);
-        let store = StoreIdentity::new([0x55u8; 32]);
         let (vtx, victim) = tk::validated_tx(tk::EXECUTOR);
         let cand = CheckedCandidate::new(vtx, campaign());
-        // Mint the claim, then re-anchor its identity by using the same StoreIdentity
-        // in the deployment. victim_claim bootstraps its own store; align identities.
         let (claim, claim_store) = tk::victim_claim(&dir.path, victim, campaign());
         let provider = tk::FakeProvider { code_hash, block: 100, fail: false };
         let deploy = tk::deployment(
@@ -864,7 +887,6 @@ mod tests {
             B256::repeat_byte(2),
             claim_store,
         );
-        let _ = store;
         let g7 = tk::g7(campaign(), now + 100, now);
         // Live window opens at `now - 500` and closes at `now + 100`, so the egress
         // window_start re-check is exercisable by rewinding the clock below 500.
@@ -958,42 +980,118 @@ mod tests {
     }
 
     #[test]
-    fn shared_live_sequence_maps_inclusion_failures() {
-        let (_harness, paired, _i, _a, expected) = build();
-        let failed = execute_live_sequence(raw_initial(paired), |_| None, |_| true);
-        assert!(matches!(failed, SubmitOutcome::InclusionFailed));
+    fn shared_live_sequence_carries_every_inclusion_failure_class() {
+        let failures = [
+            TransportFailure::CredentialLoad,
+            TransportFailure::CredentialEncoding,
+            TransportFailure::RequestSend,
+            TransportFailure::ResponseBody,
+            TransportFailure::HttpStatus,
+            TransportFailure::MalformedJson,
+            TransportFailure::JsonRpcError,
+            TransportFailure::ResultSchema,
+            TransportFailure::AttributionAcknowledgement,
+        ];
+        for failure in failures {
+            let (_harness, paired, _i, _a, _expected) = build();
+            let outcome = execute_live_sequence(raw_initial(paired), |_| Err(failure), |_| Ok(()));
+            assert!(matches!(outcome, SubmitOutcome::InclusionFailed(actual) if actual == failure));
+        }
 
-        let (_harness, paired, _i, _a, _expected) = build();
+        let (_harness, paired, _i, _a, expected) = build();
         let mismatched =
-            execute_live_sequence(raw_initial(paired), |_| Some(B256::repeat_byte(0xAB)), |_| true);
-        assert!(matches!(mismatched, SubmitOutcome::InclusionFailed));
+            execute_live_sequence(raw_initial(paired), |_| Ok(B256::repeat_byte(0xAB)), |_| Ok(()));
+        assert!(matches!(
+            mismatched,
+            SubmitOutcome::InclusionFailed(TransportFailure::InclusionHashMismatch)
+        ));
         assert_ne!(expected, B256::repeat_byte(0xAB));
     }
 
     #[test]
-    fn shared_live_sequence_preserves_attribution_retry_shape() {
+    fn shared_live_sequence_preserves_retry_and_exact_attribution_class() {
+        let failures = [
+            TransportFailure::CredentialLoad,
+            TransportFailure::CredentialEncoding,
+            TransportFailure::RequestSend,
+            TransportFailure::ResponseBody,
+            TransportFailure::HttpStatus,
+            TransportFailure::MalformedJson,
+            TransportFailure::JsonRpcError,
+            TransportFailure::ResultSchema,
+            TransportFailure::InclusionHashMismatch,
+            TransportFailure::AttributionAcknowledgement,
+        ];
+        for failure in failures {
+            let (_harness, paired, _i, _a, expected) = build();
+            let outcome =
+                execute_live_sequence(raw_initial(paired), |_| Ok(expected), |_| Err(failure));
+            let (token, actual) = match outcome {
+                SubmitOutcome::InclusionSentAttributionFailed { token, failure } => {
+                    (token, failure)
+                }
+                other => panic!("expected partial failure, got {other:?}"),
+            };
+            assert_eq!(actual, failure);
+            assert_eq!(token.inclusion_receipt_hash(), expected);
+        }
+
         let (_harness, paired, _i, _a, expected) = build();
-        let outcome = execute_live_sequence(raw_initial(paired), |_| Some(expected), |_| false);
+        let outcome = execute_live_sequence(
+            raw_initial(paired),
+            |_| Ok(expected),
+            |_| Err(TransportFailure::AttributionAcknowledgement),
+        );
         let token = match outcome {
-            SubmitOutcome::InclusionSentAttributionFailed(token) => token,
+            SubmitOutcome::InclusionSentAttributionFailed { token, .. } => token,
             other => panic!("expected partial failure, got {other:?}"),
         };
-        assert_eq!(token.inclusion_receipt_hash(), expected);
-
         let retry = execute_live_sequence(
             raw_retry(token),
             |_| panic!("attribution retry must not send inclusion"),
-            |_| true,
+            |_| Ok(()),
         );
         assert!(matches!(retry, SubmitOutcome::LiveComplete));
     }
 
     #[test]
+    fn retry_token_has_no_constructor_and_only_partial_failure_mints_it() {
+        let source = include_str!("transport.rs");
+        let token_impl = source
+            .split_once("impl AttributionRetryToken {")
+            .and_then(|(_, rest)| {
+                rest.split_once("/// A linear egress permit.").map(|(body, _)| body)
+            })
+            .expect("retry token implementation boundary");
+        assert!(!token_impl.contains("fn new("), "retry token constructor must remain unavailable");
+
+        let sequence = source
+            .split_once("fn execute_live_sequence<I, A>(")
+            .and_then(|(_, rest)| rest.split_once("#[cfg(test)]").map(|(body, _)| body))
+            .expect("live sequence boundary");
+        let mint = ["token: AttributionRetry", "Token {"].concat();
+        assert_eq!(
+            sequence.matches(&mint).count(),
+            2,
+            "only the two partial-failure branches may mint retry tokens",
+        );
+        assert_eq!(
+            source.matches(&mint).count(),
+            2,
+            "retry token construction escaped the reviewed live sequence",
+        );
+    }
+
+    #[test]
     fn send_gated_retry_revalidates_and_simulates_attribution_only() {
         let (harness, paired, _i, _a, expected) = build();
-        let initial = execute_live_sequence(raw_initial(paired), |_| Some(expected), |_| false);
+        let initial = execute_live_sequence(
+            raw_initial(paired),
+            |_| Ok(expected),
+            |_| Err(TransportFailure::AttributionAcknowledgement),
+        );
         let token = match initial {
-            SubmitOutcome::InclusionSentAttributionFailed(token) => token,
+            SubmitOutcome::InclusionSentAttributionFailed { token, .. } => token,
             other => panic!("expected retry token, got {other:?}"),
         };
         let outcome = simulate(
@@ -1010,10 +1108,13 @@ mod tests {
         assert_eq!(record.requests()[0].channel(), Channel::Attribution);
 
         let (mut stale_harness, stale_paired, _i, _a, stale_expected) = build();
-        let stale_initial =
-            execute_live_sequence(raw_initial(stale_paired), |_| Some(stale_expected), |_| false);
+        let stale_initial = execute_live_sequence(
+            raw_initial(stale_paired),
+            |_| Ok(stale_expected),
+            |_| Err(TransportFailure::AttributionAcknowledgement),
+        );
         let stale_token = match stale_initial {
-            SubmitOutcome::InclusionSentAttributionFailed(token) => token,
+            SubmitOutcome::InclusionSentAttributionFailed { token, .. } => token,
             other => panic!("expected stale retry token, got {other:?}"),
         };
         stale_harness.clock = tk::FakeClock(Some(1_100));
@@ -1254,7 +1355,7 @@ mod tests {
         if production.contains("match egress.into_plan()") {
             return Err("ProdBackend contains duplicated sequencing".to_owned());
         }
-        if source.matches(&call).count() != 7 {
+        if source.matches(&call).count() != 8 {
             return Err("shared sequence call-site count changed".to_owned());
         }
 
@@ -1293,33 +1394,58 @@ mod tests {
     }
 
     #[test]
-    fn inclusion_response_mapping() {
+    fn inclusion_response_mapping_is_typed() {
         let hash = B256::repeat_byte(0xAB);
         let ok_body = format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"{hash:#x}\"}}");
-        assert_eq!(parse_inclusion_result(200, ok_body.as_bytes()), Some(hash));
+        assert_eq!(parse_inclusion_result(200, ok_body.as_bytes()), Ok(hash));
         for status in [401u16, 403, 429, 500, 502, 503] {
-            assert!(parse_inclusion_result(status, ok_body.as_bytes()).is_none());
+            assert_eq!(
+                parse_inclusion_result(status, ok_body.as_bytes()),
+                Err(TransportFailure::HttpStatus)
+            );
         }
         let error = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000}}";
-        assert!(parse_inclusion_result(200, error).is_none());
-        assert!(parse_inclusion_result(200, b"not json").is_none());
+        assert_eq!(parse_inclusion_result(200, error), Err(TransportFailure::JsonRpcError));
+        assert_eq!(parse_inclusion_result(200, b"not json"), Err(TransportFailure::MalformedJson));
+        for wrong in [
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null}",
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":true}",
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"not-a-hash\"}",
+            "{\"jsonrpc\":\"2.0\"}",
+        ] {
+            assert_eq!(
+                parse_inclusion_result(200, wrong.as_bytes()),
+                Err(TransportFailure::ResultSchema)
+            );
+        }
     }
 
     #[test]
-    fn attribution_response_mapping() {
+    fn attribution_response_mapping_is_typed() {
         let ok_body = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0xbundlehash\"}";
-        assert!(attribution_response_ok(200, ok_body));
+        assert_eq!(parse_attribution_response(200, ok_body), Ok(()));
         for status in [401u16, 403, 429, 500, 502, 503] {
-            assert!(!attribution_response_ok(status, ok_body));
+            assert_eq!(
+                parse_attribution_response(status, ok_body),
+                Err(TransportFailure::HttpStatus)
+            );
         }
+        let error = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000}}";
+        assert_eq!(parse_attribution_response(200, error), Err(TransportFailure::JsonRpcError));
+        assert_eq!(
+            parse_attribution_response(200, b"not json"),
+            Err(TransportFailure::MalformedJson)
+        );
         for wrong in [
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null}",
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"\"}",
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":true}",
             "{\"jsonrpc\":\"2.0\"}",
-            "not json",
         ] {
-            assert!(!attribution_response_ok(200, wrong.as_bytes()));
+            assert_eq!(
+                parse_attribution_response(200, wrong.as_bytes()),
+                Err(TransportFailure::AttributionAcknowledgement)
+            );
         }
     }
 }

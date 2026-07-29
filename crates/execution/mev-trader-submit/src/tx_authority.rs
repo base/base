@@ -1301,8 +1301,8 @@ mod tests {
             plan: &base_mev_trader::BackrunPlan,
         ) -> Result<PriorityEconomicsAuthority, TxAuthorityNodeError> {
             Ok(PriorityEconomicsAuthority::new(
-                U256::from(1),
-                U256::from(1),
+                U256::from(7),
+                U256::from(13),
                 U256::from(100),
                 plan.block_number,
             ))
@@ -2161,6 +2161,40 @@ mod tests {
         ));
         assert!(!delayed.assembler.held.load(Ordering::Acquire));
         assert!(!production_source().contains("std::env"));
+    }
+    #[cfg(feature = "t4e-handoff")]
+    #[test]
+    fn validated_unsigned_tx_preserves_the_complete_checked_economics_receipt() {
+        let fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let gross = fixture.plan.gross_profit;
+        let authority_block = fixture.plan.block_number;
+        let output =
+            fixture.assembler.assemble_view(fixture.view()).expect("positive-EV checked candidate");
+        let economics = output.economics();
+
+        let retained = gross / U256::from(4);
+        let kickback = gross.checked_sub(retained).expect("kickback within gross");
+        let l2_execution_fee = U256::from(7 * (100 + 10));
+        let total_cost =
+            l2_execution_fee.checked_add(U256::from(13)).expect("bounded test economics");
+        let expected_ev = retained.checked_sub(total_cost).filter(|value| !value.is_zero());
+
+        assert_eq!(economics.gross_profit_wei(), gross);
+        assert_eq!(economics.kickback_wei(), kickback);
+        assert_eq!(economics.retained_value_wei(), retained);
+        assert_eq!(economics.execution_gas_estimate(), U256::from(7));
+        assert_eq!(economics.l2_execution_fee_wei(), l2_execution_fee);
+        assert_eq!(economics.l1_data_fee_wei(), U256::from(13));
+        assert_eq!(economics.total_cost_wei(), total_cost);
+        assert_eq!(economics.expected_ev_wei(), expected_ev);
+        assert_eq!(economics.authority_block(), authority_block);
+        assert_eq!(economics.base_fee_per_gas_wei(), U256::from(100));
+        assert_eq!(economics.victim_priority_fee_per_gas_wei(), U256::from(10));
+        assert_eq!(economics.victim_max_fee_per_gas_wei(), U256::from(110));
+        assert!(economics.admitted());
     }
 
     #[test]

@@ -3,11 +3,11 @@
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
-use alloy_primitives::{B256, keccak256};
+use alloy_primitives::{B256, U256, keccak256};
 use rand_08::{RngCore, rngs::OsRng};
 use serde_json::{Value, json};
 
@@ -45,6 +45,8 @@ pub enum SimulationStoreOpenError {
     Io(io::ErrorKind),
     /// Another process or handle owns the pinned ledger.
     AlreadyOpen,
+    /// The lease database could not be opened because it is corrupt or otherwise unusable.
+    Lease(redb::DatabaseError),
     /// Existing ledger structure is not classifiable as valid V1 data.
     InvalidExistingLedger(SimulationLedgerInvalid),
 }
@@ -221,66 +223,104 @@ impl SimulationStore {
     }
 
     fn open_directory(directory: &Path) -> Result<Self, SimulationStoreOpenError> {
-        fs::create_dir_all(directory)
-            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-        let metadata = fs::symlink_metadata(directory)
-            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-            return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::FileType,
-            ));
-        }
+        let initialized = match fs::symlink_metadata(directory) {
+            Ok(metadata) => {
+                if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+                    return Err(SimulationStoreOpenError::InvalidExistingLedger(
+                        SimulationLedgerInvalid::FileType,
+                    ));
+                }
+                false
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(directory)
+                    .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
+                true
+            }
+            Err(error) => return Err(SimulationStoreOpenError::Io(error.kind())),
+        };
+
+        let is_empty = fs::read_dir(directory)
+            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?
+            .next()
+            .transpose()
+            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?
+            .is_none();
+        let state = if initialized || is_empty {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+                .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
+            Self::initialize(directory)?
+        } else {
+            if !directory.join(EPOCH_FILE).exists() {
+                return Err(SimulationStoreOpenError::InvalidExistingLedger(
+                    SimulationLedgerInvalid::Epoch,
+                ));
+            }
+            Self::inspect(directory)?
+        };
+
         let directory_handle =
             File::open(directory).map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
         let lease_path = directory.join(LEASE_FILE);
-        let lease = redb::Database::create(&lease_path)
-            .map_err(|_| SimulationStoreOpenError::AlreadyOpen)?;
+        let lease = redb::Database::create(&lease_path).map_err(|error| match error {
+            redb::DatabaseError::DatabaseAlreadyOpen => SimulationStoreOpenError::AlreadyOpen,
+            other => SimulationStoreOpenError::Lease(other),
+        })?;
         fs::set_permissions(&lease_path, fs::Permissions::from_mode(0o600))
             .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
 
-        match Self::inspect(directory) {
-            Ok((epoch, next_sequence, prior_hash)) => Ok(Self {
-                directory: directory.to_path_buf(),
-                directory_handle,
-                _lease: lease,
-                epoch,
-                next_sequence,
-                prior_hash,
-            }),
-            Err(error) => Err(error),
+        Ok(Self {
+            directory: directory.to_path_buf(),
+            directory_handle,
+            _lease: lease,
+            epoch: state.0,
+            next_sequence: state.1,
+            prior_hash: state.2,
+        })
+    }
+
+    fn initialize(
+        directory: &Path,
+    ) -> Result<(SimulationLedgerEpoch, u64, B256), SimulationStoreOpenError> {
+        let mut bytes = [0_u8; 32];
+        while bytes.iter().all(|byte| *byte == 0) {
+            OsRng.fill_bytes(&mut bytes);
         }
+        let epoch = SimulationLedgerEpoch(B256::from(bytes));
+        let epoch_path = directory.join(EPOCH_FILE);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&epoch_path)
+            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
+        file.write_all(&bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
+        Self::initialize_head(directory)?;
+        File::open(directory)
+            .and_then(|handle| handle.sync_all())
+            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
+        Ok((epoch, 0, B256::ZERO))
     }
 
     fn inspect(
         directory: &Path,
     ) -> Result<(SimulationLedgerEpoch, u64, B256), SimulationStoreOpenError> {
-        let epoch_path = directory.join(EPOCH_FILE);
-        let epoch = if epoch_path.exists() {
-            let bytes = fs::read(&epoch_path)
-                .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-            let bytes: [u8; 32] = bytes.try_into().map_err(|_| {
-                SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Epoch)
-            })?;
-            SimulationLedgerEpoch(B256::from(bytes))
-        } else {
-            let mut bytes = [0_u8; 32];
-            OsRng.fill_bytes(&mut bytes);
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&epoch_path)
-                .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-            file.write_all(&bytes)
-                .and_then(|()| file.sync_all())
-                .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-            File::open(directory)
-                .and_then(|handle| handle.sync_all())
-                .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-            SimulationLedgerEpoch(B256::from(bytes))
-        };
+        let bytes = fs::read(directory.join(EPOCH_FILE))
+            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
+        let bytes: [u8; 32] = bytes.try_into().map_err(|_| {
+            SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Epoch)
+        })?;
+        if bytes.iter().all(|byte| *byte == 0) {
+            return Err(SimulationStoreOpenError::InvalidExistingLedger(
+                SimulationLedgerInvalid::Epoch,
+            ));
+        }
+        let epoch = SimulationLedgerEpoch(B256::from(bytes));
 
         let mut sequences = Vec::new();
         for entry in
@@ -291,6 +331,15 @@ impl SimulationStore {
             let name = name.to_str().ok_or(SimulationStoreOpenError::InvalidExistingLedger(
                 SimulationLedgerInvalid::UnknownEntry,
             ))?;
+            let file_type =
+                entry.file_type().map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
+            let metadata =
+                entry.metadata().map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
+            if !file_type.is_file() || metadata.nlink() != 1 {
+                return Err(SimulationStoreOpenError::InvalidExistingLedger(
+                    SimulationLedgerInvalid::FileType,
+                ));
+            }
             if name == EPOCH_FILE || name == HEAD_FILE || name == LEASE_FILE {
                 continue;
             }
@@ -308,13 +357,6 @@ impl SimulationStore {
                 .ok_or(SimulationStoreOpenError::InvalidExistingLedger(
                     SimulationLedgerInvalid::UnknownEntry,
                 ))?;
-            let metadata =
-                entry.metadata().map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-            if !metadata.is_file() || metadata.nlink() != 1 {
-                return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                    SimulationLedgerInvalid::FileType,
-                ));
-            }
             sequences.push(sequence);
         }
         sequences.sort_unstable();
@@ -355,50 +397,47 @@ impl SimulationStore {
                 SimulationLedgerInvalid::Sequence,
             ));
         }
-        Self::validate_or_initialize_head(directory, next_sequence, prior_hash)?;
+        Self::validate_head(directory, next_sequence, prior_hash)?;
         Ok((epoch, next_sequence, prior_hash))
     }
 
-    fn validate_or_initialize_head(
+    fn validate_head(
         directory: &Path,
         next_sequence: u64,
         prior_hash: B256,
     ) -> Result<(), SimulationStoreOpenError> {
-        let head_path = directory.join(HEAD_FILE);
-        if head_path.exists() {
-            let bytes =
-                fs::read(&head_path).map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-            if bytes.len() != 40 {
-                return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                    SimulationLedgerInvalid::HashChain,
-                ));
-            }
-            let observed_sequence = u64::from_be_bytes(bytes[..8].try_into().map_err(|_| {
+        let bytes = fs::read(directory.join(HEAD_FILE)).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
                 SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::HashChain)
-            })?);
-            if observed_sequence != next_sequence || bytes[8..] != prior_hash[..] {
-                return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                    SimulationLedgerInvalid::HashChain,
-                ));
+            } else {
+                SimulationStoreOpenError::Io(error.kind())
             }
-            return Ok(());
-        }
-        if next_sequence != 0 || prior_hash != B256::ZERO {
+        })?;
+        if bytes.len() != 40 {
             return Err(SimulationStoreOpenError::InvalidExistingLedger(
                 SimulationLedgerInvalid::HashChain,
             ));
         }
+        let observed_sequence = u64::from_be_bytes(bytes[..8].try_into().map_err(|_| {
+            SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::HashChain)
+        })?);
+        if observed_sequence != next_sequence || bytes[8..] != prior_hash[..] {
+            return Err(SimulationStoreOpenError::InvalidExistingLedger(
+                SimulationLedgerInvalid::HashChain,
+            ));
+        }
+        Ok(())
+    }
+
+    fn initialize_head(directory: &Path) -> Result<(), SimulationStoreOpenError> {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .open(&head_path)
+            .open(directory.join(HEAD_FILE))
             .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
         file.write_all(&Self::head_bytes(0, B256::ZERO))
             .and_then(|()| file.sync_all())
-            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-        File::open(directory)
-            .and_then(|handle| handle.sync_all())
             .map_err(|error| SimulationStoreOpenError::Io(error.kind()))
     }
     fn validate_existing(
@@ -407,13 +446,9 @@ impl SimulationStore {
         sequence: u64,
         prior_hash: B256,
     ) -> Result<(), SimulationStoreOpenError> {
-        let object = value.as_object().ok_or(SimulationStoreOpenError::InvalidExistingLedger(
-            SimulationLedgerInvalid::Schema,
-        ))?;
-        let version = object.get("version").and_then(Value::as_u64);
-        let observed_sequence = object.get("sequence").and_then(Value::as_u64);
-        let observed_epoch = object.get("ledgerEpoch").and_then(Value::as_str);
-        let observed_prior = object.get("priorRecordHash").and_then(Value::as_str);
+        let invalid =
+            || SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Schema);
+        let object = value.as_object().ok_or_else(invalid)?;
         let top_keys = [
             "attempt",
             "blockIdentity",
@@ -434,95 +469,276 @@ impl SimulationStore {
             "victimTxHash",
         ];
         if !Self::has_exact_keys(object, &top_keys)
-            || !matches!(
-                object.get("attempt").and_then(Value::as_str),
-                Some("initial" | "attribution-retry")
-            )
-            || !matches!(object.get("requestChannelCount").and_then(Value::as_u64), Some(1 | 2))
-            || !Self::nested_keys(value, "blockIdentity", &["number", "parentHash"])
-            || !Self::nested_keys(
-                value,
-                "economics",
-                &[
-                    "authorityBlock",
-                    "baseFeePerGasWei",
-                    "executionGasEstimate",
-                    "expectedEvWei",
-                    "grossProfitWei",
-                    "kickbackWei",
-                    "l1DataFeeWei",
-                    "l2ExecutionFeeWei",
-                    "retainedValueWei",
-                    "totalCostWei",
-                    "victimMaxFeePerGasWei",
-                    "victimPriorityFeePerGasWei",
-                ],
-            )
-            || !Self::nested_keys(
-                value,
-                "execution",
-                &[
-                    "chainId",
-                    "executor",
-                    "gasLimit",
-                    "maxFeePerGasWei",
-                    "maxPriorityFeePerGasWei",
-                    "nonce",
-                    "sender",
-                    "validUntilBlock",
-                ],
-            )
-            || !Self::nested_keys(
-                value,
-                "proofIdentity",
-                &[
-                    "binaryDigest",
-                    "deploymentCodeHash",
-                    "deploymentDigest",
-                    "r9StoreIdentity",
-                    "validUntilBlock",
-                ],
-            )
+            || object.get("version").and_then(Value::as_u64) != Some(VERSION)
+            || object.get("sequence").and_then(Value::as_u64) != Some(sequence)
+            || !Self::hash_field(object, "ledgerEpoch", false)
+            || object.get("ledgerEpoch").and_then(Value::as_str)
+                != Some(Self::hex(epoch.value()).as_str())
         {
-            return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::Schema,
-            ));
+            return Err(invalid());
         }
-        let route = object.get("route").and_then(Value::as_array).ok_or(
-            SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Schema),
-        )?;
-        if route.len() != 2
-            || route.iter().any(|hop| {
-                hop.as_object().is_none_or(|object| {
-                    !Self::has_exact_keys(object, &["adapter", "protocol", "runtimeHash"])
-                })
-            })
+        if !Self::hash_field(object, "priorRecordHash", true) {
+            return Err(invalid());
+        }
+        if object.get("priorRecordHash").and_then(Value::as_str)
+            != Some(Self::hex(prior_hash).as_str())
         {
-            return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::Schema,
-            ));
-        }
-        if version != Some(VERSION)
-            || observed_sequence != Some(sequence)
-            || observed_epoch != Some(Self::hex(epoch.value()).as_str())
-        {
-            return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::Schema,
-            ));
-        }
-        if observed_prior != Some(Self::hex(prior_hash).as_str()) {
             return Err(SimulationStoreOpenError::InvalidExistingLedger(
                 SimulationLedgerInvalid::HashChain,
             ));
         }
+
+        for field in [
+            "campaignId",
+            "correlationKey",
+            "expectedInclusionHash",
+            "planDigest",
+            "signedTxHash",
+            "victimTxHash",
+        ] {
+            if !Self::hash_field(object, field, false) {
+                return Err(invalid());
+            }
+        }
+        if object.get("signedTxHash") != object.get("expectedInclusionHash") {
+            return Err(invalid());
+        }
+
+        let attempt = object.get("attempt").and_then(Value::as_str).ok_or_else(invalid)?;
+        let channel_count =
+            object.get("requestChannelCount").and_then(Value::as_u64).ok_or_else(invalid)?;
+        if !matches!((attempt, channel_count), ("initial", 2) | ("attribution-retry", 1)) {
+            return Err(invalid());
+        }
+
+        let block = Self::exact_object(object, "blockIdentity", &["number", "parentHash"])?;
+        let block_number = block
+            .get("number")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or_else(invalid)?;
+        if !Self::hash_field(block, "parentHash", false) {
+            return Err(invalid());
+        }
+
+        let execution = Self::exact_object(
+            object,
+            "execution",
+            &[
+                "chainId",
+                "executor",
+                "gasLimit",
+                "maxFeePerGasWei",
+                "maxPriorityFeePerGasWei",
+                "nonce",
+                "sender",
+                "validUntilBlock",
+            ],
+        )?;
+        let gas_limit = execution
+            .get("gasLimit")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or_else(invalid)?;
+        let valid_until = execution
+            .get("validUntilBlock")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > block_number)
+            .ok_or_else(invalid)?;
+        if execution.get("chainId").and_then(Value::as_u64) != Some(super::CHAIN_ID_BASE)
+            || execution.get("nonce").and_then(Value::as_u64).is_none()
+            || !Self::address_field(execution, "executor", true)
+            || !Self::address_field(execution, "sender", false)
+        {
+            return Err(invalid());
+        }
+        let max_fee = Self::decimal_field(execution, "maxFeePerGasWei")?;
+        let max_priority = Self::decimal_field(execution, "maxPriorityFeePerGasWei")?;
+        if max_fee.is_zero() || max_priority.is_zero() || max_priority > max_fee {
+            return Err(invalid());
+        }
+
+        let proof = Self::exact_object(
+            object,
+            "proofIdentity",
+            &[
+                "binaryDigest",
+                "deploymentCodeHash",
+                "deploymentDigest",
+                "r9StoreIdentity",
+                "validUntilBlock",
+            ],
+        )?;
+        if proof.get("validUntilBlock").and_then(Value::as_u64) != Some(valid_until)
+            || ["binaryDigest", "deploymentCodeHash", "deploymentDigest", "r9StoreIdentity"]
+                .iter()
+                .any(|field| !Self::hash_field(proof, field, false))
+        {
+            return Err(invalid());
+        }
+
+        let route = object.get("route").and_then(Value::as_array).ok_or_else(invalid)?;
+        if route.len() != 2 {
+            return Err(invalid());
+        }
+        for hop in route {
+            let hop = hop.as_object().ok_or_else(invalid)?;
+            if !Self::has_exact_keys(hop, &["adapter", "protocol", "runtimeHash"])
+                || !Self::address_field(hop, "adapter", false)
+                || !Self::hash_field(hop, "runtimeHash", false)
+                || !matches!(
+                    hop.get("protocol").and_then(Value::as_str),
+                    Some("uniswap-v2" | "aerodrome-volatile" | "aerodrome-stable" | "uniswap-v3")
+                )
+            {
+                return Err(invalid());
+            }
+        }
+
+        let economics = Self::exact_object(
+            object,
+            "economics",
+            &[
+                "authorityBlock",
+                "baseFeePerGasWei",
+                "executionGasEstimate",
+                "expectedEvWei",
+                "grossProfitWei",
+                "kickbackWei",
+                "l1DataFeeWei",
+                "l2ExecutionFeeWei",
+                "retainedValueWei",
+                "totalCostWei",
+                "victimMaxFeePerGasWei",
+                "victimPriorityFeePerGasWei",
+            ],
+        )?;
+        if economics.get("authorityBlock").and_then(Value::as_u64) != Some(block_number) {
+            return Err(invalid());
+        }
+        let gross = Self::positive_decimal(economics, "grossProfitWei")?;
+        let kickback = Self::positive_decimal(economics, "kickbackWei")?;
+        let retained = Self::positive_decimal(economics, "retainedValueWei")?;
+        let gas = Self::positive_decimal(economics, "executionGasEstimate")?;
+        let l1_fee = Self::positive_decimal(economics, "l1DataFeeWei")?;
+        let l2_fee = Self::positive_decimal(economics, "l2ExecutionFeeWei")?;
+        let total = Self::positive_decimal(economics, "totalCostWei")?;
+        let expected = Self::positive_decimal(economics, "expectedEvWei")?;
+        let base_fee = Self::positive_decimal(economics, "baseFeePerGasWei")?;
+        let victim_priority = Self::positive_decimal(economics, "victimPriorityFeePerGasWei")?;
+        let victim_max = Self::positive_decimal(economics, "victimMaxFeePerGasWei")?;
+        let expected_kickback = (gross / U256::from(4)) * U256::from(3)
+            + ((gross % U256::from(4)) * U256::from(3) + U256::from(3)) / U256::from(4);
+        let effective_fee = base_fee.checked_add(victim_priority).ok_or_else(invalid)?;
+        if kickback != expected_kickback
+            || gross.checked_sub(kickback) != Some(retained)
+            || gas.checked_mul(effective_fee) != Some(l2_fee)
+            || l2_fee.checked_add(l1_fee) != Some(total)
+            || retained.checked_sub(total) != Some(expected)
+            || victim_max != max_fee
+            || victim_priority != max_priority
+            || victim_max < effective_fee
+            || U256::from(gas_limit) < gas
+        {
+            return Err(invalid());
+        }
+
+        let campaign = Self::parse_hash(object, "campaignId").ok_or_else(invalid)?;
+        let victim = Self::parse_hash(object, "victimTxHash").ok_or_else(invalid)?;
+        let plan = Self::parse_hash(object, "planDigest").ok_or_else(invalid)?;
+        let signed = Self::parse_hash(object, "signedTxHash").ok_or_else(invalid)?;
+        let mut correlation_input = Vec::with_capacity(32 * 4 + 30);
+        correlation_input.extend_from_slice(b"base-mev/simulation-correlation/v1");
+        correlation_input.extend_from_slice(campaign.as_slice());
+        correlation_input.extend_from_slice(victim.as_slice());
+        correlation_input.extend_from_slice(plan.as_slice());
+        correlation_input.extend_from_slice(signed.as_slice());
+        if object.get("correlationKey").and_then(Value::as_str)
+            != Some(Self::hex(keccak256(correlation_input)).as_str())
+        {
+            return Err(invalid());
+        }
         Ok(())
     }
 
-    fn nested_keys(value: &Value, field: &str, expected: &[&str]) -> bool {
-        value
+    fn exact_object<'a>(
+        object: &'a serde_json::Map<String, Value>,
+        field: &str,
+        expected: &[&str],
+    ) -> Result<&'a serde_json::Map<String, Value>, SimulationStoreOpenError> {
+        let object = object.get(field).and_then(Value::as_object).ok_or(
+            SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Schema),
+        )?;
+        if !Self::has_exact_keys(object, expected) {
+            return Err(SimulationStoreOpenError::InvalidExistingLedger(
+                SimulationLedgerInvalid::Schema,
+            ));
+        }
+        Ok(object)
+    }
+
+    fn fixed_hex(value: &str, digits: usize, allow_zero: bool) -> bool {
+        value.len() == digits + 2
+            && value.starts_with("0x")
+            && value[2..].bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            && (allow_zero || value[2..].bytes().any(|byte| byte != b'0'))
+    }
+
+    fn hash_field(object: &serde_json::Map<String, Value>, field: &str, allow_zero: bool) -> bool {
+        object
             .get(field)
-            .and_then(Value::as_object)
-            .is_some_and(|object| Self::has_exact_keys(object, expected))
+            .and_then(Value::as_str)
+            .is_some_and(|value| Self::fixed_hex(value, 64, allow_zero))
+    }
+
+    fn address_field(
+        object: &serde_json::Map<String, Value>,
+        field: &str,
+        allow_zero: bool,
+    ) -> bool {
+        object
+            .get(field)
+            .and_then(Value::as_str)
+            .is_some_and(|value| Self::fixed_hex(value, 40, allow_zero))
+    }
+
+    fn parse_hash(object: &serde_json::Map<String, Value>, field: &str) -> Option<B256> {
+        object.get(field).and_then(Value::as_str)?.parse().ok()
+    }
+
+    fn decimal_field(
+        object: &serde_json::Map<String, Value>,
+        field: &str,
+    ) -> Result<U256, SimulationStoreOpenError> {
+        let value = object.get(field).and_then(Value::as_str).ok_or(
+            SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Schema),
+        )?;
+        if value.is_empty()
+            || (value.len() > 1 && value.starts_with('0'))
+            || !value.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return Err(SimulationStoreOpenError::InvalidExistingLedger(
+                SimulationLedgerInvalid::Schema,
+            ));
+        }
+        value.parse().map_err(|_| {
+            SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Schema)
+        })
+    }
+
+    fn positive_decimal(
+        object: &serde_json::Map<String, Value>,
+        field: &str,
+    ) -> Result<U256, SimulationStoreOpenError> {
+        Self::decimal_field(object, field).and_then(|value| {
+            if value.is_zero() {
+                Err(SimulationStoreOpenError::InvalidExistingLedger(
+                    SimulationLedgerInvalid::Schema,
+                ))
+            } else {
+                Ok(value)
+            }
+        })
     }
 
     fn has_exact_keys(object: &serde_json::Map<String, Value>, expected: &[&str]) -> bool {
@@ -640,18 +856,18 @@ impl SimulationStore {
             },
             "correlationKey": Self::hex(input.correlation_key),
             "economics": {
-                "authorityBlock": economics.authority_block,
-                "baseFeePerGasWei": economics.base_fee_per_gas_wei.to_string(),
-                "executionGasEstimate": economics.execution_gas_estimate.to_string(),
-                "expectedEvWei": economics.expected_ev_wei.map(|value| value.to_string()),
-                "grossProfitWei": economics.gross_profit_wei.to_string(),
-                "kickbackWei": economics.kickback_wei.to_string(),
-                "l1DataFeeWei": economics.l1_data_fee_wei.to_string(),
-                "l2ExecutionFeeWei": economics.l2_execution_fee_wei.to_string(),
-                "retainedValueWei": economics.retained_value_wei.to_string(),
-                "totalCostWei": economics.total_cost_wei.to_string(),
-                "victimMaxFeePerGasWei": economics.victim_max_fee_per_gas_wei.to_string(),
-                "victimPriorityFeePerGasWei": economics.victim_priority_fee_per_gas_wei.to_string(),
+                "authorityBlock": economics.authority_block(),
+                "baseFeePerGasWei": economics.base_fee_per_gas_wei().to_string(),
+                "executionGasEstimate": economics.execution_gas_estimate().to_string(),
+                "expectedEvWei": economics.expected_ev_wei().map(|value| value.to_string()),
+                "grossProfitWei": economics.gross_profit_wei().to_string(),
+                "kickbackWei": economics.kickback_wei().to_string(),
+                "l1DataFeeWei": economics.l1_data_fee_wei().to_string(),
+                "l2ExecutionFeeWei": economics.l2_execution_fee_wei().to_string(),
+                "retainedValueWei": economics.retained_value_wei().to_string(),
+                "totalCostWei": economics.total_cost_wei().to_string(),
+                "victimMaxFeePerGasWei": economics.victim_max_fee_per_gas_wei().to_string(),
+                "victimPriorityFeePerGasWei": economics.victim_priority_fee_per_gas_wei().to_string(),
             },
             "execution": {
                 "chainId": input.chain_id,
@@ -750,6 +966,7 @@ impl Drop for SimulationStore {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use crate::economics::{PriorityEconomicsAuthority, PriorityFilterInput, evaluate};
     use alloy_primitives::U256;
 
     use super::*;
@@ -767,20 +984,47 @@ mod tests {
     }
 
     fn economics() -> PriorityEconomicsReceipt {
-        PriorityEconomicsReceipt {
-            gross_profit_wei: U256::from(1_000_000_u64),
-            kickback_wei: U256::from(750_000_u64),
-            retained_value_wei: U256::from(250_000_u64),
-            execution_gas_estimate: U256::from(100_u64),
-            l2_execution_fee_wei: U256::from(20_000_u64),
-            l1_data_fee_wei: U256::from(10_000_u64),
-            total_cost_wei: U256::from(30_000_u64),
-            expected_ev_wei: Some(U256::from(220_000_u64)),
-            authority_block: 100,
-            base_fee_per_gas_wei: U256::from(100_u64),
-            victim_priority_fee_per_gas_wei: U256::from(100_u64),
-            victim_max_fee_per_gas_wei: U256::from(300_u64),
-        }
+        evaluate(PriorityFilterInput {
+            gross_profit_wei: Some(U256::from(1_000_000_u64)),
+            authority: Some(PriorityEconomicsAuthority::new(
+                U256::from(100_u64),
+                U256::from(10_000_u64),
+                U256::from(100_u64),
+                100,
+            )),
+            victim_max_priority_fee_per_gas_wei: Some(U256::from(100_u64)),
+            victim_max_fee_per_gas_wei: Some(U256::from(300_u64)),
+            candidate_block: 100,
+        })
+        .unwrap()
+    }
+
+    fn snapshot(path: &Path) -> Vec<(String, Vec<u8>)> {
+        let mut entries = fs::read_dir(path)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (entry.file_name().into_string().unwrap(), fs::read(entry.path()).unwrap())
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.0.cmp(&right.0));
+        entries
+    }
+
+    fn assert_schema_rejected(mutate: impl FnOnce(&mut Value)) {
+        let path = temp();
+        let mut store = SimulationStore::open_at(&path).unwrap();
+        store.append(&SimulationRecord::for_store_test(economics())).unwrap();
+        drop(store);
+        let record_path = path.join(SimulationStore::record_name(0));
+        let mut value: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+        mutate(&mut value);
+        fs::write(&record_path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(matches!(
+            SimulationStore::open_at(&path),
+            Err(SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Schema))
+        ));
+        fs::remove_dir_all(path).unwrap();
     }
 
     #[test]
@@ -853,6 +1097,116 @@ mod tests {
             ))
         ));
         eprintln!("P3: RED");
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn nonempty_directory_without_epoch_is_rejected_without_mutation() {
+        let path = temp();
+        fs::write(path.join("operator-note"), b"preserve exactly").unwrap();
+        let before = snapshot(&path);
+        assert!(matches!(
+            SimulationStore::open_at(&path),
+            Err(SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Epoch))
+        ));
+        assert_eq!(snapshot(&path), before);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn closed_v1_schema_rejects_unclassified_and_cross_field_variants() {
+        assert_schema_rejected(|value| {
+            value.as_object_mut().unwrap().insert("futureField".into(), Value::Bool(true));
+        });
+        assert_schema_rejected(|value| {
+            value["campaignId"] = Value::String(format!("0X{}", "02".repeat(32)));
+        });
+        assert_schema_rejected(|value| {
+            value["execution"]["chainId"] = Value::from(1_u64);
+        });
+        assert_schema_rejected(|value| {
+            value["route"][0]["protocol"] = Value::String("unknown".into());
+        });
+        assert_schema_rejected(|value| {
+            value["route"].as_array_mut().unwrap().pop();
+        });
+        assert_schema_rejected(|value| {
+            value["requestChannelCount"] = Value::from(1_u64);
+        });
+        assert_schema_rejected(|value| {
+            value["economics"]["expectedEvWei"] = Value::String("0219999".into());
+        });
+        assert_schema_rejected(|value| {
+            value["economics"]["totalCostWei"] = Value::String("30001".into());
+        });
+        assert_schema_rejected(|value| {
+            value["proofIdentity"]["validUntilBlock"] = Value::from(102_u64);
+        });
+        assert_schema_rejected(|value| {
+            value["correlationKey"] = Value::String(format!("0x{}", "ff".repeat(32)));
+        });
+    }
+
+    #[test]
+    fn capacity_fails_closed_at_the_fixed_bound() {
+        let path = temp();
+        let mut store = SimulationStore::open_at(&path).unwrap();
+        store.next_sequence = SIMULATION_RECORD_CAPACITY;
+        assert!(!store.has_capacity());
+        assert!(matches!(
+            store.ensure_capacity(),
+            Err(SimulationPersistError::Full {
+                next_sequence: SIMULATION_RECORD_CAPACITY,
+                capacity: SIMULATION_RECORD_CAPACITY,
+                ..
+            })
+        ));
+        assert!(matches!(
+            store.append(&SimulationRecord::for_store_test(economics())),
+            Err(SimulationPersistError::Full { .. })
+        ));
+        drop(store);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn published_record_without_published_head_is_rejected() {
+        let path = temp();
+        let mut store = SimulationStore::open_at(&path).unwrap();
+        store.append(&SimulationRecord::for_store_test(economics())).unwrap();
+        drop(store);
+        fs::write(path.join(HEAD_FILE), SimulationStore::head_bytes(0, B256::ZERO)).unwrap();
+        assert!(matches!(
+            SimulationStore::open_at(&path),
+            Err(SimulationStoreOpenError::InvalidExistingLedger(
+                SimulationLedgerInvalid::HashChain
+            ))
+        ));
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn unpublished_head_is_rejected_as_stale_open() {
+        let path = temp();
+        let store = SimulationStore::open_at(&path).unwrap();
+        drop(store);
+        fs::write(path.join(HEAD_OPEN_FILE), SimulationStore::head_bytes(1, B256::ZERO)).unwrap();
+        assert!(matches!(
+            SimulationStore::open_at(&path),
+            Err(SimulationStoreOpenError::InvalidExistingLedger(
+                SimulationLedgerInvalid::StaleOpen
+            ))
+        ));
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn corrupt_lease_is_not_misclassified_as_contention() {
+        let path = temp();
+        let store = SimulationStore::open_at(&path).unwrap();
+        drop(store);
+        fs::write(path.join(LEASE_FILE), b"not-a-redb-database").unwrap();
+        assert!(matches!(SimulationStore::open_at(&path), Err(SimulationStoreOpenError::Lease(_))));
         fs::remove_dir_all(path).unwrap();
     }
 }

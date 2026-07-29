@@ -3083,8 +3083,8 @@ fn runtime_switch_and_funds_lock_sources_are_pinned() {
     let mut all_sequence_calls = SharedSequenceCalls::default();
     all_sequence_calls.visit_file(&parsed_full_transport);
     assert_eq!(
-        all_sequence_calls.0, 7,
-        "one production plus six test calls must share the sole sequence"
+        all_sequence_calls.0, 8,
+        "one production plus seven test calls must share the sole sequence"
     );
     let production_backend = transport
         .split_once("impl RawBackend for ProdBackend")

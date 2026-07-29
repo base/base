@@ -1,7 +1,11 @@
 //! S2 simulation-rung, unified-entrypoint, and local-persistence mutation seals.
 #![cfg(feature = "arm")]
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -65,34 +69,264 @@ fn feature_s0_green_s1_live_rung_s3_default_reachability_red() {
     eprintln!("S3: RED");
 }
 
-fn validate_submit_closure_fixture(value: &serde_json::Value) -> Result<(), String> {
-    let object = value.as_object().ok_or_else(|| "fixture must be object".to_owned())?;
-    if object.keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>()
-        != std::collections::BTreeSet::from(["dependencies", "features"])
-    {
-        return Err("fixture keys differ".to_owned());
+fn production_metadata() -> serde_json::Value {
+    let output = Command::new(env!("CARGO"))
+        .args(["metadata", "--format-version", "1", "--no-deps", "--offline"])
+        .current_dir(manifest_dir().join("../../.."))
+        .output()
+        .expect("execute offline cargo metadata");
+    assert!(
+        output.status.success(),
+        "offline cargo metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("cargo metadata JSON")
+}
+
+fn production_submit_arm_tree() -> String {
+    let output = Command::new(env!("CARGO"))
+        .args([
+            "tree",
+            "--edges",
+            "normal",
+            "--package",
+            "mev-trader-submit",
+            "--no-default-features",
+            "--features",
+            "arm",
+            "--offline",
+        ])
+        .current_dir(manifest_dir().join("../../.."))
+        .output()
+        .expect("execute offline cargo tree");
+    assert!(
+        output.status.success(),
+        "offline cargo tree failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("cargo tree UTF-8")
+}
+
+fn package<'a>(
+    metadata: &'a serde_json::Value,
+    name: &str,
+) -> Result<&'a serde_json::Value, String> {
+    let matches = metadata["packages"]
+        .as_array()
+        .ok_or_else(|| "metadata packages missing".to_owned())?
+        .iter()
+        .filter(|package| package["name"].as_str() == Some(name))
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [package] => Ok(*package),
+        _ => Err(format!("package {name} missing or duplicated")),
     }
-    let features = object["features"].as_array().ok_or_else(|| "features array".to_owned())?;
-    let dependencies =
-        object["dependencies"].as_array().ok_or_else(|| "dependencies array".to_owned())?;
-    if !features.iter().any(|value| value.as_str() == Some("arm"))
-        || features.iter().any(|value| value.as_str() == Some("arm-live-egress"))
-        || dependencies.iter().any(|value| value.as_str() == Some("reqwest"))
+}
+
+fn feature_edges(
+    metadata: &serde_json::Value,
+    package_name: &str,
+    feature: &str,
+) -> Result<BTreeSet<String>, String> {
+    package(metadata, package_name)?["features"][feature]
+        .as_array()
+        .ok_or_else(|| format!("{package_name}/{feature} missing or not an array"))?
+        .iter()
+        .map(|edge| {
+            edge.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{package_name}/{feature} contains a non-string edge"))
+        })
+        .collect()
+}
+
+fn exact_feature_edges(
+    metadata: &serde_json::Value,
+    package_name: &str,
+    feature: &str,
+    expected: &[&str],
+) -> Result<(), String> {
+    let actual = feature_edges(metadata, package_name, feature)?;
+    let expected = expected.iter().map(|edge| (*edge).to_owned()).collect::<BTreeSet<_>>();
+    if actual != expected {
+        return Err(format!("{package_name}/{feature} edges differ"));
+    }
+    Ok(())
+}
+
+fn validate_s2_metadata(metadata: &serde_json::Value) -> Result<(), String> {
+    exact_feature_edges(
+        metadata,
+        "mev-trader-submit",
+        "arm",
+        &["phase-b", "dep:zeroize", "dep:redb", "dep:serde_json", "dep:sha2"],
+    )?;
+    exact_feature_edges(metadata, "mev-trader-submit", "arm-live-egress", &["arm", "dep:reqwest"])?;
+    exact_feature_edges(
+        metadata,
+        "base-execution-cli",
+        "arm-sim",
+        &["t4e-handoff", "mev-trader-submit/arm"],
+    )?;
+    exact_feature_edges(
+        metadata,
+        "base-execution-cli",
+        "arm-live-egress",
+        &["arm-sim", "dep:mev-trader-submit", "mev-trader-submit/arm-live-egress"],
+    )?;
+    exact_feature_edges(metadata, "base-reth-node", "arm-sim", &["base-execution-cli/arm-sim"])?;
+    exact_feature_edges(
+        metadata,
+        "base-reth-node",
+        "arm-live-egress",
+        &["arm-sim", "base-execution-cli/arm-live-egress"],
+    )?;
+
+    let submit = package(metadata, "mev-trader-submit")?;
+    let dependencies = submit["dependencies"]
+        .as_array()
+        .ok_or_else(|| "submit dependencies missing".to_owned())?;
+    let actual = dependencies
+        .iter()
+        .filter(|dependency| dependency["kind"].is_null())
+        .map(|dependency| {
+            dependency["rename"]
+                .as_str()
+                .or_else(|| dependency["name"].as_str())
+                .ok_or_else(|| "submit dependency name missing".to_owned())
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let expected = BTreeSet::from([
+        "alloy-consensus",
+        "alloy-eips",
+        "alloy-primitives",
+        "alloy-sol-types",
+        "base-mev-trader",
+        "k256",
+        "rand_08",
+        "redb",
+        "reqwest",
+        "serde_json",
+        "sha2",
+        "zeroize",
+    ]);
+    if actual != expected {
+        return Err("submit direct dependency set differs".to_owned());
+    }
+    let reqwest = dependencies
+        .iter()
+        .filter(|dependency| dependency["name"].as_str() == Some("reqwest"))
+        .collect::<Vec<_>>();
+    if !matches!(reqwest.as_slice(), [dependency] if dependency["optional"].as_bool() == Some(true))
     {
-        return Err("submit sim closure is live-capable".to_owned());
+        return Err("reqwest must remain one optional live-only dependency".to_owned());
+    }
+    let features =
+        submit["features"].as_object().ok_or_else(|| "submit feature map missing".to_owned())?;
+    for (feature, edges) in features {
+        let edges =
+            edges.as_array().ok_or_else(|| format!("submit/{feature} edges are not an array"))?;
+        if feature != "arm-live-egress"
+            && edges.iter().any(|edge| edge.as_str() == Some("dep:reqwest"))
+        {
+            return Err(format!("submit/{feature} gained direct reqwest capability"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_submit_arm_tree(tree: &str) -> Result<(), String> {
+    if !tree.lines().any(|line| line.starts_with("mev-trader-submit ")) {
+        return Err("submit root missing from cargo tree".to_owned());
+    }
+    let reqwest = tree
+        .lines()
+        .filter_map(|line| {
+            let package = line
+                .trim_start_matches(|character: char| {
+                    matches!(character, ' ' | '│' | '├' | '└' | '─')
+                })
+                .strip_prefix("reqwest ")?;
+            Some(package)
+        })
+        .collect::<Vec<_>>();
+    if reqwest != ["v0.12.28", "v0.12.28 (*)"] {
+        return Err("arm simulation tree reqwest baseline changed".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_live_symbols_gated(source: &str) -> Result<(), String> {
+    for symbol in ["LiveEgressPermit", "ProdBackend"] {
+        let declaration = format!(
+            "#[cfg(all(feature = \"arm-live-egress\", not(test)))]\n#[derive(Debug)]\npub struct {symbol}"
+        );
+        if source.matches(&declaration).count() != 1 {
+            return Err(format!("{symbol} live-only cfg changed"));
+        }
     }
     Ok(())
 }
 
 #[test]
-fn closure_s2_reqwest_red() {
-    let original = serde_json::json!({"features": ["arm", "t4e-handoff"], "dependencies": []});
-    validate_submit_closure_fixture(&original).expect("sim closure control");
-    let mut mutant = original.clone();
-    mutant["dependencies"] = serde_json::json!(["reqwest"]);
-    assert_ne!(mutant, original, "S2 patch did not change fixture");
-    assert!(validate_submit_closure_fixture(&mutant).is_err());
+fn closure_s0_green_unknown_feature_dependency_and_live_tree_red() {
+    let metadata = production_metadata();
+    let tree = production_submit_arm_tree();
+    let transport = read(manifest_dir().join("src/arm/transport.rs"));
+    validate_s2_metadata(&metadata).expect("production S2 feature edges");
+    validate_submit_arm_tree(&tree).expect("production submit arm dependency closure");
+    validate_live_symbols_gated(&transport).expect("live symbols remain cfg-excluded from arm-sim");
+    eprintln!("S0: GREEN");
+
+    let mut mutant = metadata.clone();
+    package_mut(&mut mutant, "mev-trader-submit")["features"]["arm"]
+        .as_array_mut()
+        .expect("arm feature")
+        .push(serde_json::json!("unknown-feature"));
+    assert_ne!(mutant, metadata, "unknown feature mutant did not change metadata");
+    assert!(validate_s2_metadata(&mutant).is_err());
+
+    let mut mutant = metadata.clone();
+    package_mut(&mut mutant, "mev-trader-submit")["dependencies"]
+        .as_array_mut()
+        .expect("submit dependencies")
+        .push(serde_json::json!({
+            "name": "unknown-network",
+            "rename": null,
+            "kind": null,
+            "optional": true
+        }));
+    assert_ne!(mutant, metadata, "unknown dependency mutant did not change metadata");
+    assert!(validate_s2_metadata(&mutant).is_err());
+    let mut mutant = metadata.clone();
+    package_mut(&mut mutant, "mev-trader-submit")["features"]["phase-b"]
+        .as_array_mut()
+        .expect("phase-b feature")
+        .push(serde_json::json!("dep:reqwest"));
+    assert_ne!(mutant, metadata, "non-live reqwest mutant did not change metadata");
+    assert!(validate_s2_metadata(&mutant).is_err());
+
+    let mutant = format!("{tree}\nreqwest v999.0.0\n");
+    assert_ne!(mutant, tree, "live tree mutant did not change cargo tree");
+    assert!(validate_submit_arm_tree(&mutant).is_err());
+
+    let mutant = transport.replacen(
+        "#[cfg(all(feature = \"arm-live-egress\", not(test)))]\n#[derive(Debug)]\npub struct ProdBackend",
+        "#[derive(Debug)]\npub struct ProdBackend",
+        1,
+    );
+    assert_ne!(mutant, transport, "ProdBackend cfg mutant did not change source");
+    assert!(validate_live_symbols_gated(&mutant).is_err());
     eprintln!("S2: RED");
+}
+
+fn package_mut<'a>(metadata: &'a mut serde_json::Value, name: &str) -> &'a mut serde_json::Value {
+    metadata["packages"]
+        .as_array_mut()
+        .expect("metadata packages")
+        .iter_mut()
+        .find(|package| package["name"].as_str() == Some(name))
+        .expect("metadata package")
 }
 
 fn validate_unified_entrypoint(entrypoint: &str, authority: &str) -> Result<(), String> {
@@ -147,8 +381,8 @@ fn validate_worker_source(source: &str) -> Result<(), String> {
     for required in [
         "sync_channel(1)",
         ".name(\"base-mev-arm-egress\".to_owned())",
-        "sender.try_send(attempt)",
-        "while let Ok(attempt) = receiver.recv()",
+        "sender.try_send(AdmittedAttempt { attempt, _reservation: reservation })",
+        "while let Ok(admitted) = receiver.recv()",
         "runtime.freshness(&armed)",
     ] {
         if !source.contains(required) {
@@ -173,8 +407,8 @@ fn worker_q0_green_q1_unbounded_q3_per_candidate_thread_red() {
     eprintln!("Q1: RED");
 
     let mutant = source.replacen(
-        "while let Ok(attempt) = receiver.recv()",
-        "while let Ok(attempt) = receiver.recv() { let _per_candidate = std::thread::Builder::new();",
+        "while let Ok(admitted) = receiver.recv()",
+        "while let Ok(admitted) = receiver.recv() { let _per_candidate = std::thread::Builder::new();",
         1,
     );
     assert_ne!(mutant, source, "Q3 patch did not change source");

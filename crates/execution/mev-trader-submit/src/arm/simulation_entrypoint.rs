@@ -1,8 +1,10 @@
 //! High-level simulation-only submission entrypoint and typed unavailable sink.
 
 use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc, Mutex,
+        atomic::{AtomicU8, Ordering},
         mpsc::{SyncSender, TrySendError, sync_channel},
     },
     thread::JoinHandle,
@@ -20,21 +22,103 @@ use super::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationEntrypointUnavailable {
     /// Compile-pinned arm runtime could not open.
-    ArmRuntimeUnavailable,
-    /// No node-bound settled drawdown authority exists.
-    DrawdownAuthorityUnavailable,
+    ArmRuntimeUnavailable(ArmRuntimeOpenCause),
     /// No node-bound canonical committed-state authority exists.
     CommittedStateAuthorityUnavailable,
-    /// Verified campaign attestations are unavailable.
-    CampaignAttestationsUnavailable,
-    /// Attested R9 claim store is unavailable.
-    ClaimStoreUnavailable,
-    /// Process/store deployment identity could not install.
-    DeploymentIdentityUnavailable,
     /// Durable local ledger could not open.
     PersistenceUnavailable,
     /// Entrypoint status mutex was poisoned.
     StatusPoisoned,
+    /// The named worker terminated unexpectedly. `panicked` is bounded panic evidence.
+    WorkerClosed {
+        /// Whether unwinding, rather than a typed terminal outcome, closed the worker.
+        panicked: bool,
+    },
+}
+
+/// Bounded, copyable evidence preserving the exact typed `ArmRuntime::open` failure class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArmRuntimeOpenCause {
+    /// Runtime anchor identity was not compile-pinned.
+    AnchorIdentityUnpinned,
+    /// Persistent kill state was not clear at startup.
+    KillStateNotClear,
+    /// Anchor path validation or access failed.
+    AnchorPath,
+    /// Anchor creation found an existing anchor.
+    AnchorAlreadyExists,
+    /// The required anchor was missing.
+    AnchorMissing,
+    /// The anchor did not have a singleton writer.
+    AnchorNotSingletonWriter,
+    /// The anchor database operation failed.
+    AnchorDatabase,
+    /// The anchor contents were corrupt.
+    AnchorCorrupt,
+    /// The anchor had not been initialized.
+    AnchorUninitialized,
+    /// The persisted anchor identity did not match.
+    AnchorIdentityMismatch,
+    /// Persisted anchor evidence did not match.
+    AnchorEvidenceMismatch,
+    /// Secure randomness for anchor handling failed.
+    AnchorRandom,
+    /// An anchor update attempted to move behind the current sequence.
+    AnchorRollback {
+        /// Attempted anchor sequence.
+        attempted: u64,
+        /// Current anchor sequence.
+        current: u64,
+    },
+    /// A suppression epoch moved behind its persisted high-water mark.
+    SuppressionRollback {
+        /// Observed suppression epoch.
+        observed: u64,
+        /// Persisted suppression high-water mark.
+        high_water: u64,
+    },
+    /// Suppression high-water persistence failed.
+    SuppressionIo,
+}
+
+impl From<super::ArmRuntimeOpenError> for ArmRuntimeOpenCause {
+    fn from(error: super::ArmRuntimeOpenError) -> Self {
+        match error {
+            super::ArmRuntimeOpenError::Startup(
+                base_mev_trader::StartupError::AnchorIdentityUnpinned,
+            ) => Self::AnchorIdentityUnpinned,
+            super::ArmRuntimeOpenError::Startup(
+                base_mev_trader::StartupError::KillStateNotClear,
+            ) => Self::KillStateNotClear,
+            super::ArmRuntimeOpenError::Startup(base_mev_trader::StartupError::Anchor(error)) => {
+                match error {
+                    base_mev_trader::AnchorError::Path(_) => Self::AnchorPath,
+                    base_mev_trader::AnchorError::AlreadyExists => Self::AnchorAlreadyExists,
+                    base_mev_trader::AnchorError::Missing => Self::AnchorMissing,
+                    base_mev_trader::AnchorError::NotSingletonWriter => {
+                        Self::AnchorNotSingletonWriter
+                    }
+                    base_mev_trader::AnchorError::Database(_) => Self::AnchorDatabase,
+                    base_mev_trader::AnchorError::Corrupt(_) => Self::AnchorCorrupt,
+                    base_mev_trader::AnchorError::Uninitialized => Self::AnchorUninitialized,
+                    base_mev_trader::AnchorError::IdentityMismatch => Self::AnchorIdentityMismatch,
+                    base_mev_trader::AnchorError::EvidenceMismatch(_) => {
+                        Self::AnchorEvidenceMismatch
+                    }
+                    base_mev_trader::AnchorError::Random(_) => Self::AnchorRandom,
+                    base_mev_trader::AnchorError::Rollback(error) => {
+                        Self::AnchorRollback { attempted: error.attempted, current: error.current }
+                    }
+                }
+            }
+            super::ArmRuntimeOpenError::Suppression(
+                super::SuppressionRollbackError::Rollback { observed, high_water },
+            ) => Self::SuppressionRollback { observed, high_water },
+            super::ArmRuntimeOpenError::Suppression(super::SuppressionRollbackError::Io(_)) => {
+                Self::SuppressionIo
+            }
+        }
+    }
 }
 
 /// Sticky operator-visible ledger closure.
@@ -103,7 +187,7 @@ pub enum SimulationEntrypointStatus {
 }
 
 impl SimulationEntrypointStatus {
-    pub(crate) const fn from_store_open_error(error: super::SimulationStoreOpenError) -> Self {
+    pub(crate) fn from_store_open_error(error: super::SimulationStoreOpenError) -> Self {
         match error {
             super::SimulationStoreOpenError::InvalidExistingLedger(class) => {
                 Self::LedgerClosed(SimulationLedgerClosure::InvalidExistingLedger {
@@ -112,6 +196,7 @@ impl SimulationEntrypointStatus {
                 })
             }
             super::SimulationStoreOpenError::Io(_)
+            | super::SimulationStoreOpenError::Lease(_)
             | super::SimulationStoreOpenError::AlreadyOpen => {
                 Self::Unavailable(SimulationEntrypointUnavailable::PersistenceUnavailable)
             }
@@ -151,10 +236,11 @@ impl SimulationEntrypoint {
         ))
     }
 
-    /// Processes one already-authorized unified-path attempt on its owning OS worker.
+    /// Processes one admitted unified-path attempt on its owning OS worker.
     ///
-    /// The caller MUST be the dedicated bounded worker; this function is synchronous by design.
-    pub fn process(
+    /// The caller is the dedicated bounded worker and owns the linear reservation spanning
+    /// preparation through this synchronous terminal projection.
+    pub(crate) fn process(
         &self,
         attempt: SubmissionAttempt,
         freshness: &FreshnessSources<'_>,
@@ -175,13 +261,18 @@ impl SimulationEntrypoint {
         }
         match send_gated(attempt, freshness, RuntimeBackend::simulated(&self.backend)) {
             SubmitOutcome::Simulated(record) => match store.append(&record) {
-                Ok(persisted) => SimulationEntrypointTerminal::Persisted(persisted),
+                Ok(persisted) => {
+                    if let Err(error) = store.ensure_capacity() {
+                        self.set_closed(error);
+                    }
+                    SimulationEntrypointTerminal::Persisted(persisted)
+                }
                 Err(error) => self.close(error),
             },
             SubmitOutcome::NoEgress => SimulationEntrypointTerminal::FreshnessClosed,
             SubmitOutcome::LiveLocksClosed(_)
-            | SubmitOutcome::InclusionFailed
-            | SubmitOutcome::InclusionSentAttributionFailed(_)
+            | SubmitOutcome::InclusionFailed(_)
+            | SubmitOutcome::InclusionSentAttributionFailed { .. }
             | SubmitOutcome::LiveComplete => SimulationEntrypointTerminal::UnexpectedLiveOutcome,
         }
     }
@@ -193,21 +284,78 @@ impl SimulationEntrypoint {
         }
         SimulationEntrypointTerminal::LedgerClosed(reason)
     }
+
+    fn set_closed(&self, error: SimulationPersistError) {
+        let reason = SimulationLedgerClosure::from(error);
+        if let Ok(mut status) = self.status.lock() {
+            *status = SimulationEntrypointStatus::LedgerClosed(reason);
+        }
+    }
+
+    fn close_worker(&self, admission: &AtomicU8, panicked: bool) {
+        if let Ok(mut status) = self.status.lock() {
+            *status = SimulationEntrypointStatus::Unavailable(
+                SimulationEntrypointUnavailable::WorkerClosed { panicked },
+            );
+            admission.store(ADMISSION_CLOSED, Ordering::Release);
+        } else {
+            admission.store(ADMISSION_CLOSED, Ordering::Release);
+        }
+    }
 }
 
 /// Non-blocking capacity-one handoff into the sole simulation egress owner.
 #[derive(Debug)]
 pub(crate) struct SimulationWorker {
-    sender: Option<SyncSender<SubmissionAttempt>>,
+    sender: Option<SyncSender<AdmittedAttempt>>,
+    admission: Arc<AtomicU8>,
     entrypoint: Arc<SimulationEntrypoint>,
     thread: Option<JoinHandle<()>>,
 }
 
-/// Typed bounded queue refusal.
+/// Linear, non-forgeable ownership of the sole worker/ledger admission slot.
+///
+/// Claiming and signing may start only after this value has been obtained. Dropping an
+/// unused reservation returns admission; submitting it transfers that ownership to the worker.
+#[derive(Debug)]
+pub(crate) struct SimulationReservation {
+    admission: Arc<AtomicU8>,
+}
+
+/// Typed pre-preparation admission refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SimulationQueueError {
+pub(crate) enum SimulationReservationError {
     Busy,
     Closed,
+}
+
+/// A post-preparation submission can fail only because the worker closed or its invariant broke;
+/// queue fullness is deliberately not an exposed outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SimulationSubmitError {
+    Closed,
+    AdmissionInvariant,
+}
+
+#[derive(Debug)]
+struct AdmittedAttempt {
+    attempt: SubmissionAttempt,
+    _reservation: SimulationReservation,
+}
+
+const ADMISSION_FREE: u8 = 0;
+const ADMISSION_OCCUPIED: u8 = 1;
+const ADMISSION_CLOSED: u8 = 2;
+
+impl Drop for SimulationReservation {
+    fn drop(&mut self) {
+        let _ = self.admission.compare_exchange(
+            ADMISSION_OCCUPIED,
+            ADMISSION_FREE,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
 }
 
 impl SimulationWorker {
@@ -222,35 +370,90 @@ impl SimulationWorker {
         D: super::DrawdownAuthority + Send + Sync + 'static,
     {
         let (sender, receiver) = sync_channel(1);
+        let admission = Arc::new(AtomicU8::new(ADMISSION_FREE));
         let entrypoint = Arc::new(SimulationEntrypoint::ready());
+        if let Err(error) = store.ensure_capacity() {
+            entrypoint.set_closed(error);
+        }
         let worker_entrypoint = Arc::clone(&entrypoint);
+        let worker_admission = Arc::clone(&admission);
         let thread = std::thread::Builder::new().name("base-mev-arm-egress".to_owned()).spawn(
             move || {
-                while let Ok(attempt) = receiver.recv() {
-                    let freshness = runtime.freshness(&armed);
-                    let terminal = worker_entrypoint.process(attempt, &freshness, &mut store);
-                    if matches!(
-                        terminal,
-                        SimulationEntrypointTerminal::LedgerClosed(_)
-                            | SimulationEntrypointTerminal::UnexpectedLiveOutcome
-                    ) {
-                        break;
+                let outcome = catch_unwind(AssertUnwindSafe(|| {
+                    while let Ok(admitted) = receiver.recv() {
+                        let AdmittedAttempt { attempt, _reservation } = admitted;
+                        let terminal = match catch_unwind(AssertUnwindSafe(|| {
+                            let freshness = runtime.freshness(&armed);
+                            worker_entrypoint.process(attempt, &freshness, &mut store)
+                        })) {
+                            Ok(terminal) => terminal,
+                            Err(_) => {
+                                worker_entrypoint.close_worker(&worker_admission, true);
+                                drop(_reservation);
+                                return;
+                            }
+                        };
+                        if terminal == SimulationEntrypointTerminal::UnexpectedLiveOutcome {
+                            worker_entrypoint.close_worker(&worker_admission, false);
+                            drop(_reservation);
+                            return;
+                        }
+                        drop(_reservation);
+                        if worker_entrypoint.status() != SimulationEntrypointStatus::Ready
+                            || matches!(terminal, SimulationEntrypointTerminal::LedgerClosed(_))
+                        {
+                            break;
+                        }
                     }
+                }));
+                if outcome.is_err() {
+                    worker_entrypoint.close_worker(&worker_admission, true);
                 }
             },
         )?;
-        Ok(Self { sender: Some(sender), entrypoint, thread: Some(thread) })
+        Ok(Self { sender: Some(sender), admission, entrypoint, thread: Some(thread) })
     }
 
-    /// Never blocks, replaces, or queues more than one prepared submission.
-    pub(crate) fn try_submit(
+    /// Reserves the only running-or-queued slot before claim/signing starts.
+    pub(crate) fn try_reserve(&self) -> Result<SimulationReservation, SimulationReservationError> {
+        if self.sender.is_none() {
+            return Err(SimulationReservationError::Closed);
+        }
+        let status =
+            self.entrypoint.status.lock().map_err(|_| SimulationReservationError::Closed)?;
+        if *status != SimulationEntrypointStatus::Ready {
+            return Err(SimulationReservationError::Closed);
+        }
+        match self.admission.compare_exchange(
+            ADMISSION_FREE,
+            ADMISSION_OCCUPIED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => Ok(SimulationReservation { admission: Arc::clone(&self.admission) }),
+            Err(ADMISSION_OCCUPIED) => Err(SimulationReservationError::Busy),
+            Err(_) => Err(SimulationReservationError::Closed),
+        }
+    }
+
+    /// Transfers an admitted, already-prepared attempt without blocking.
+    ///
+    /// Because the reservation spans both the running and queued states, `Full` is an internal
+    /// invariant violation rather than an ordinary rejection of signed work.
+    pub(crate) fn submit(
         &self,
+        reservation: SimulationReservation,
         attempt: SubmissionAttempt,
-    ) -> Result<(), SimulationQueueError> {
-        let sender = self.sender.as_ref().ok_or(SimulationQueueError::Closed)?;
-        sender.try_send(attempt).map_err(|error| match error {
-            TrySendError::Full(_) => SimulationQueueError::Busy,
-            TrySendError::Disconnected(_) => SimulationQueueError::Closed,
+    ) -> Result<(), SimulationSubmitError> {
+        if !Arc::ptr_eq(&reservation.admission, &self.admission) {
+            return Err(SimulationSubmitError::AdmissionInvariant);
+        }
+        let sender = self.sender.as_ref().ok_or(SimulationSubmitError::Closed)?;
+        sender.try_send(AdmittedAttempt { attempt, _reservation: reservation }).map_err(|error| {
+            match error {
+                TrySendError::Full(_) => SimulationSubmitError::AdmissionInvariant,
+                TrySendError::Disconnected(_) => SimulationSubmitError::Closed,
+            }
         })
     }
 
@@ -262,8 +465,10 @@ impl SimulationWorker {
 impl Drop for SimulationWorker {
     fn drop(&mut self) {
         self.sender.take();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+        if let Some(thread) = self.thread.take()
+            && thread.join().is_err()
+        {
+            self.entrypoint.close_worker(&self.admission, true);
         }
     }
 }
@@ -293,7 +498,7 @@ impl UnavailableSimulationHandoff {
     pub fn probe_production() -> Self {
         let reason = match super::ArmRuntime::open() {
             Ok(_) => SimulationEntrypointUnavailable::CommittedStateAuthorityUnavailable,
-            Err(_) => SimulationEntrypointUnavailable::ArmRuntimeUnavailable,
+            Err(error) => SimulationEntrypointUnavailable::ArmRuntimeUnavailable(error.into()),
         };
         Self::new(reason)
     }
@@ -307,5 +512,328 @@ impl UnavailableSimulationHandoff {
 impl T4eCandidateHandoff for UnavailableSimulationHandoff {
     fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {
         Err(T4eHandoffError::Rejected)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc, Barrier,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    use super::*;
+
+    fn campaign() -> base_mev_trader::CampaignId {
+        base_mev_trader::CampaignId::new([0x0A; 32])
+    }
+
+    fn attempt() -> SubmissionAttempt {
+        use alloy_primitives::B256;
+
+        use crate::arm::{
+            custody::HotWalletKey,
+            proofs::SubmitSuppressionClear,
+            suppression::SuppressionFileStore,
+            testkit as tk,
+            witness::{AuthorizedCandidate, CheckedCandidate, PairedSubmission},
+        };
+
+        let now = 1_000;
+        let dir = tk::TempDir::new("simulation-worker-submit");
+        let code_hash = B256::repeat_byte(0x33);
+        let (validated, victim) = tk::validated_tx(tk::EXECUTOR);
+        let candidate = CheckedCandidate::new(validated, campaign());
+        let (claim, store_identity) = tk::victim_claim(&dir.path, victim, campaign());
+        let provider = tk::FakeProvider { code_hash, block: 100, fail: false };
+        let deployment = tk::deployment(
+            &provider,
+            tk::EXECUTOR,
+            code_hash,
+            B256::repeat_byte(1),
+            B256::repeat_byte(2),
+            store_identity,
+        );
+        let suppression_path = tk::write_suppression_file(&dir.path, 5, false);
+        let suppression_file = SuppressionFileStore::new(&suppression_path);
+        let epoch_store = tk::epoch_store(&dir.path);
+        let suppression =
+            SubmitSuppressionClear::read(&suppression_file, &epoch_store).expect("suppression");
+        let authorized = AuthorizedCandidate::issue_checked(
+            true,
+            suppression,
+            tk::g7(campaign(), now + 100, now),
+            claim,
+            tk::live_windowed(campaign(), now - 500, now + 100, now),
+            deployment,
+            candidate,
+        )
+        .expect("authorized candidate");
+        let (key, address) = tk::hot_wallet_key();
+        let wallet_path = tk::write_hot_wallet(&dir.path, &key);
+        let signed = authorized
+            .load_and_sign_with(&tk::sink(&dir.path), || {
+                HotWalletKey::load_from(&wallet_path, address)
+            })
+            .expect("signed submission");
+
+        SubmissionAttempt::Initial(PairedSubmission::assemble(signed))
+    }
+
+    fn gated_worker() -> (SimulationWorker, Arc<Barrier>, Arc<Barrier>) {
+        let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
+        let release = Arc::new(Barrier::new(2));
+        let consumed = Arc::new(Barrier::new(2));
+        let worker_release = Arc::clone(&release);
+        let worker_consumed = Arc::clone(&consumed);
+        let thread = std::thread::spawn(move || {
+            worker_release.wait();
+            if let Ok(admitted) = receiver.recv() {
+                drop(admitted);
+                worker_consumed.wait();
+            }
+            while receiver.recv().is_ok() {}
+        });
+        (
+            SimulationWorker {
+                sender: Some(sender),
+                admission: Arc::new(AtomicU8::new(ADMISSION_FREE)),
+                entrypoint: Arc::new(SimulationEntrypoint::ready()),
+                thread: Some(thread),
+            },
+            release,
+            consumed,
+        )
+    }
+
+    fn idle_worker() -> (SimulationWorker, Arc<AtomicBool>) {
+        let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
+        let terminated = Arc::new(AtomicBool::new(false));
+        let worker_terminated = Arc::clone(&terminated);
+        let thread = std::thread::spawn(move || {
+            while receiver.recv().is_ok() {}
+            worker_terminated.store(true, Ordering::Release);
+        });
+        (
+            SimulationWorker {
+                sender: Some(sender),
+                admission: Arc::new(AtomicU8::new(ADMISSION_FREE)),
+                entrypoint: Arc::new(SimulationEntrypoint::ready()),
+                thread: Some(thread),
+            },
+            terminated,
+        )
+    }
+
+    fn forced_panicking_worker() -> (SimulationWorker, Arc<Barrier>, Arc<Barrier>) {
+        let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
+        let admission = Arc::new(AtomicU8::new(ADMISSION_FREE));
+        let entrypoint = Arc::new(SimulationEntrypoint::ready());
+        let release = Arc::new(Barrier::new(2));
+        let closed = Arc::new(Barrier::new(2));
+        let worker_admission = Arc::clone(&admission);
+        let worker_entrypoint = Arc::clone(&entrypoint);
+        let worker_release = Arc::clone(&release);
+        let worker_closed = Arc::clone(&closed);
+        let thread = std::thread::spawn(move || {
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
+                worker_release.wait();
+                drop(receiver);
+                panic!("forced worker termination");
+            }));
+            assert!(outcome.is_err());
+            worker_entrypoint.close_worker(&worker_admission, true);
+            worker_closed.wait();
+        });
+        (
+            SimulationWorker { sender: Some(sender), admission, entrypoint, thread: Some(thread) },
+            release,
+            closed,
+        )
+    }
+
+    #[test]
+    fn busy_race_admits_exactly_one_preparation() {
+        const CONTENDERS: usize = 8;
+        let (worker, _) = idle_worker();
+        let worker = Arc::new(worker);
+        let start = Arc::new(Barrier::new(CONTENDERS + 1));
+        let release = Arc::new(Barrier::new(CONTENDERS + 1));
+        let mut contenders = Vec::new();
+        for _ in 0..CONTENDERS {
+            let worker = Arc::clone(&worker);
+            let start = Arc::clone(&start);
+            let release = Arc::clone(&release);
+            contenders.push(std::thread::spawn(move || {
+                start.wait();
+                let reservation = worker.try_reserve();
+                release.wait();
+                reservation
+            }));
+        }
+        start.wait();
+        release.wait();
+        let admitted = contenders
+            .into_iter()
+            .map(|thread| thread.join().expect("contender").is_ok())
+            .filter(|admitted| *admitted)
+            .count();
+        assert_eq!(admitted, 1);
+        drop(worker);
+    }
+
+    #[test]
+    fn closed_or_full_status_refuses_before_preparation() {
+        let (worker, _) = idle_worker();
+        *worker.entrypoint.status.lock().expect("status") =
+            SimulationEntrypointStatus::LedgerClosed(
+                SimulationLedgerClosure::InvalidExistingLedger {
+                    epoch: None,
+                    class: super::super::SimulationLedgerInvalid::Schema,
+                },
+            );
+        assert!(matches!(worker.try_reserve(), Err(SimulationReservationError::Closed)));
+    }
+
+    #[test]
+    fn closed_queue_refuses_before_preparation() {
+        let (mut worker, _) = idle_worker();
+        worker.sender.take();
+        assert!(matches!(worker.try_reserve(), Err(SimulationReservationError::Closed)));
+    }
+
+    #[test]
+    fn unused_reservation_releases_admission() {
+        let (worker, _) = idle_worker();
+        let reservation = worker.try_reserve().expect("reservation");
+        assert_eq!(worker.admission.load(Ordering::Acquire), ADMISSION_OCCUPIED);
+        drop(reservation);
+        assert_eq!(worker.admission.load(Ordering::Acquire), ADMISSION_FREE);
+    }
+
+    #[test]
+    fn submit_rejects_foreign_reservation_and_releases_it() {
+        let (worker, _) = idle_worker();
+        let foreign_admission = Arc::new(AtomicU8::new(ADMISSION_OCCUPIED));
+        let foreign = SimulationReservation { admission: Arc::clone(&foreign_admission) };
+
+        assert_eq!(
+            worker.submit(foreign, attempt()),
+            Err(SimulationSubmitError::AdmissionInvariant),
+        );
+        assert_eq!(foreign_admission.load(Ordering::Acquire), ADMISSION_FREE);
+        assert_eq!(worker.admission.load(Ordering::Acquire), ADMISSION_FREE);
+    }
+
+    #[test]
+    fn submit_classifies_disconnected_sender_and_releases_reservation() {
+        let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
+        drop(receiver);
+        let worker = SimulationWorker {
+            sender: Some(sender),
+            admission: Arc::new(AtomicU8::new(ADMISSION_FREE)),
+            entrypoint: Arc::new(SimulationEntrypoint::ready()),
+            thread: None,
+        };
+        let reservation = worker.try_reserve().expect("reservation");
+
+        assert_eq!(worker.submit(reservation, attempt()), Err(SimulationSubmitError::Closed));
+        assert_eq!(worker.admission.load(Ordering::Acquire), ADMISSION_FREE);
+    }
+
+    #[test]
+    fn submit_classifies_impossible_full_and_releases_failed_reservation() {
+        let (worker, release, consumed) = gated_worker();
+        let queued_reservation = worker.try_reserve().expect("reservation");
+        worker
+            .sender
+            .as_ref()
+            .expect("sender")
+            .try_send(AdmittedAttempt { attempt: attempt(), _reservation: queued_reservation })
+            .expect("prime capacity-one queue");
+        let impossible_second = SimulationReservation { admission: Arc::clone(&worker.admission) };
+
+        assert_eq!(
+            worker.submit(impossible_second, attempt()),
+            Err(SimulationSubmitError::AdmissionInvariant),
+        );
+        assert_eq!(worker.admission.load(Ordering::Acquire), ADMISSION_FREE);
+        release.wait();
+        consumed.wait();
+        drop(worker);
+    }
+
+    #[test]
+    fn successful_submit_holds_admission_until_worker_consumes_transfer() {
+        let (worker, release, consumed) = gated_worker();
+        let reservation = worker.try_reserve().expect("reservation");
+
+        assert_eq!(worker.submit(reservation, attempt()), Ok(()));
+        assert_eq!(worker.admission.load(Ordering::Acquire), ADMISSION_OCCUPIED);
+        release.wait();
+        consumed.wait();
+        assert_eq!(worker.admission.load(Ordering::Acquire), ADMISSION_FREE);
+        drop(worker);
+    }
+
+    #[test]
+    fn forced_worker_panic_closes_status_and_refuses_preparation() {
+        let (worker, release, closed) = forced_panicking_worker();
+        release.wait();
+        closed.wait();
+
+        assert_eq!(
+            worker.status(),
+            SimulationEntrypointStatus::Unavailable(
+                SimulationEntrypointUnavailable::WorkerClosed { panicked: true },
+            ),
+        );
+        assert_eq!(worker.admission.load(Ordering::Acquire), ADMISSION_CLOSED);
+        assert!(matches!(worker.try_reserve(), Err(SimulationReservationError::Closed)));
+    }
+
+    #[test]
+    fn join_panic_is_preserved_as_bounded_worker_evidence() {
+        let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
+        drop(receiver);
+        let admission = Arc::new(AtomicU8::new(ADMISSION_FREE));
+        let entrypoint = Arc::new(SimulationEntrypoint::ready());
+        let observed = Arc::clone(&entrypoint);
+        let thread = std::thread::spawn(|| panic!("forced uncaught worker termination"));
+        let worker =
+            SimulationWorker { sender: Some(sender), admission, entrypoint, thread: Some(thread) };
+
+        drop(worker);
+
+        assert_eq!(
+            observed.status(),
+            SimulationEntrypointStatus::Unavailable(
+                SimulationEntrypointUnavailable::WorkerClosed { panicked: true },
+            ),
+        );
+    }
+
+    #[test]
+    fn runtime_open_failures_keep_typed_cause_evidence() {
+        assert_eq!(
+            ArmRuntimeOpenCause::from(super::super::ArmRuntimeOpenError::Startup(
+                base_mev_trader::StartupError::AnchorIdentityUnpinned,
+            )),
+            ArmRuntimeOpenCause::AnchorIdentityUnpinned,
+        );
+        assert_eq!(
+            ArmRuntimeOpenCause::from(super::super::ArmRuntimeOpenError::Suppression(
+                super::super::SuppressionRollbackError::Rollback { observed: 4, high_water: 5 },
+            )),
+            ArmRuntimeOpenCause::SuppressionRollback { observed: 4, high_water: 5 },
+        );
+    }
+    #[test]
+    fn normal_owner_shutdown_joins_without_worker_failure_status() {
+        let (worker, terminated) = idle_worker();
+        let observed = Arc::clone(&worker.entrypoint);
+        drop(worker);
+        assert!(terminated.load(Ordering::Acquire));
+        assert_eq!(observed.status(), SimulationEntrypointStatus::Ready);
     }
 }
