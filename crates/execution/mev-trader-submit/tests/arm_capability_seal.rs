@@ -2943,8 +2943,6 @@ fn gate_and_custody_seams_are_test_only() {
     assert_seam_cfg_test(&witness, "issue_checked");
     assert_seam_cfg_test(&witness, "load_and_sign_with");
     assert_seam_cfg_test(&witness, "with_forced_gate");
-    let transport = arm_raw("transport.rs");
-    assert_seam_cfg_test(&transport, "execute_live_with");
     // The `force_gate_open` field is itself `#[cfg(test)]`.
     let start = witness.find("force_gate_open").expect("force_gate_open field");
     assert!(
@@ -2970,8 +2968,35 @@ fn runtime_switch_and_funds_lock_sources_are_pinned() {
         .and_then(|(_, rest)| rest.split_once("fn evaluate_live_locks"))
         .map(|(body, _)| body)
         .expect("live snapshot constructor");
-    assert!(!live_snapshot.contains("explicit_live: bool"));
     assert!(live_snapshot.contains("explicit_live: true"));
+    assert!(live_snapshot.contains("signed_receipt_fresh: freshness.signed_receipt_fresh()"));
+    assert!(live_snapshot.contains("kill_clear: freshness.kill_clear()"));
+    assert!(!live_snapshot.contains("signed_receipt_fresh: true"));
+    assert!(!live_snapshot.contains("kill_clear: true"));
+
+    let witness = arm_raw("witness.rs");
+    assert!(witness.contains("pub struct FreshnessProof {\n    signed_receipt: SignedReceiptFresh,\n    kill: KillClear,\n}"));
+    assert!(witness.contains(") -> Option<FreshnessProof> {"));
+    assert_eq!(
+        witness
+            .matches("Some(FreshnessProof {\n            signed_receipt: SignedReceiptFresh")
+            .count(),
+        1
+    );
+    assert!(!witness.contains("impl Clone for FreshnessProof"));
+    assert!(!witness.contains("impl Copy for FreshnessProof"));
+
+    let send_gated = transport
+        .split_once("pub fn send_gated")
+        .and_then(|(_, rest)| rest.split_once("// -- pure response mapping"))
+        .map(|(body, _)| body)
+        .expect("send_gated body");
+    assert_eq!(
+        send_gated.matches("let Some(freshness) = fresh.revalidate").count(),
+        2,
+        "both initial and retry branches must mint freshness proof"
+    );
+    assert!(!send_gated.contains("live_requested"));
     assert_eq!(
         transport
             .matches("native_balance_at_latest_committed(super::custody::FUNDED_WALLET)")
@@ -3006,6 +3031,55 @@ fn runtime_switch_and_funds_lock_sources_are_pinned() {
     );
     assert!(!transport.contains("impl Clone for LiveEgressPermit"));
     assert!(!transport.contains("impl Copy for LiveEgressPermit"));
+
+    #[derive(Default)]
+    struct SharedSequenceCalls(usize);
+    impl<'ast> Visit<'ast> for SharedSequenceCalls {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(path) = call.func.as_ref()
+                && path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| segment.ident == "execute_live_sequence")
+            {
+                self.0 += 1;
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+    }
+    let helper = parsed_transport
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(function) if function.sig.ident == "execute_live_sequence" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("shared live sequence");
+    assert!(matches!(helper.vis, syn::Visibility::Inherited));
+    assert!(helper.attrs.iter().all(|attribute| !attribute.path().is_ident("cfg")));
+    let mut sequence_calls = SharedSequenceCalls::default();
+    sequence_calls.visit_file(&parsed_transport);
+    assert_eq!(sequence_calls.0, 1, "production must have one shared-sequence call");
+
+    let raw_transport =
+        std::fs::read_to_string(arm_dir().join("transport.rs")).expect("raw transport source");
+    let parsed_full_transport = parse(&raw_transport);
+    let mut all_sequence_calls = SharedSequenceCalls::default();
+    all_sequence_calls.visit_file(&parsed_full_transport);
+    assert_eq!(
+        all_sequence_calls.0, 7,
+        "one production plus six test calls must share the sole sequence"
+    );
+    let production_backend = transport
+        .split_once("impl RawBackend for ProdBackend")
+        .and_then(|(_, rest)| rest.split_once("// -- shared live execution sequence"))
+        .map(|(body, _)| body)
+        .expect("ProdBackend execute body");
+    assert_eq!(production_backend.matches("execute_live_sequence(").count(), 1);
+    assert!(!production_backend.contains("match egress.into_plan()"));
 
     let proofs = arm_raw("proofs.rs");
     assert!(proofs.contains(

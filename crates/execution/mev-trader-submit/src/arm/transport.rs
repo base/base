@@ -9,6 +9,8 @@ use alloy_primitives::{B256, U256};
 
 use super::proofs::ProviderError;
 use super::request::RequestSpec;
+#[cfg(all(feature = "arm-live-egress", not(test)))]
+use super::witness::FreshnessProof;
 use super::witness::{
     FreshnessSources, PairedSubmission, ProofBindings, ValidatedExecutionIdentity,
 };
@@ -294,13 +296,14 @@ impl LiveLockSnapshot {
     #[cfg(all(feature = "arm-live-egress", not(test)))]
     fn from_live_selection(
         _selection: LiveSelectionProof,
+        freshness: FreshnessProof,
         funded_balance: Result<Option<U256>, ProviderError>,
         signed_cap: U256,
     ) -> Self {
         Self {
             explicit_live: true,
-            signed_receipt_fresh: true,
-            kill_clear: true,
+            signed_receipt_fresh: freshness.signed_receipt_fresh(),
+            kill_clear: freshness.kill_clear(),
             funded_balance,
             signed_cap,
         }
@@ -334,44 +337,52 @@ pub fn send_gated(
     fresh: &FreshnessSources<'_>,
     backend: RuntimeBackend<'_>,
 ) -> SubmitOutcome {
-    let egress = match attempt {
+    let (egress, freshness) = match attempt {
         SubmissionAttempt::Initial(paired) => {
-            if !fresh.revalidate(&paired.bindings, &paired.id) {
+            let Some(freshness) = fresh.revalidate(&paired.bindings, &paired.id) else {
                 return SubmitOutcome::NoEgress;
-            }
-            RawEgress {
-                plan: EgressPlan::Initial {
-                    inclusion: paired.inclusion,
-                    attribution: paired.attribution,
-                    bindings: paired.bindings,
-                    id: paired.id,
-                    expected_inclusion_hash: paired.expected_inclusion_hash,
+            };
+            (
+                RawEgress {
+                    plan: EgressPlan::Initial {
+                        inclusion: paired.inclusion,
+                        attribution: paired.attribution,
+                        bindings: paired.bindings,
+                        id: paired.id,
+                        expected_inclusion_hash: paired.expected_inclusion_hash,
+                    },
                 },
-            }
+                freshness,
+            )
         }
         SubmissionAttempt::AttributionRetry(token) => {
-            if !fresh.revalidate(&token.bindings, &token.id) {
+            let Some(freshness) = fresh.revalidate(&token.bindings, &token.id) else {
                 return SubmitOutcome::NoEgress;
-            }
-            RawEgress {
-                plan: EgressPlan::AttributionOnly {
-                    attribution: token.attribution,
-                    bindings: token.bindings,
-                    id: token.id,
-                    inclusion_receipt_hash: token.inclusion_receipt_hash,
+            };
+            (
+                RawEgress {
+                    plan: EgressPlan::AttributionOnly {
+                        attribution: token.attribution,
+                        bindings: token.bindings,
+                        id: token.id,
+                        inclusion_receipt_hash: token.inclusion_receipt_hash,
+                    },
                 },
-            }
+                freshness,
+            )
         }
     };
 
     match backend.inner {
         RuntimeBackendKind::Simulated(simulated) => {
+            let _ = freshness;
             simulated.execute(BackendPermit::Simulated(SimEgressPermit { private: () }), egress)
         }
         #[cfg(all(feature = "arm-live-egress", not(test)))]
         RuntimeBackendKind::Live { backend, selection } => {
             let snapshot = LiveLockSnapshot::from_live_selection(
                 selection,
+                freshness,
                 fresh.code_hash.native_balance_at_latest_committed(super::custody::FUNDED_WALLET),
                 fresh.armed.hot_wallet_cap_wei(),
             );
@@ -497,52 +508,19 @@ impl RawBackend for ProdBackend {
         if !matches!(permit, BackendPermit::Live(LiveEgressPermit { private: () })) {
             return SubmitOutcome::NoEgress;
         }
-        match egress.into_plan() {
-            EgressPlan::Initial {
-                inclusion,
-                attribution,
-                bindings,
-                id,
-                expected_inclusion_hash,
-            } => {
-                match self.send_inclusion(&inclusion) {
-                    Some(hash) if hash == expected_inclusion_hash => {}
-                    _ => return SubmitOutcome::InclusionFailed,
-                }
-                if !self.send_attribution(&attribution) {
-                    return SubmitOutcome::InclusionSentAttributionFailed(
-                        AttributionRetryToken::new(
-                            attribution,
-                            bindings,
-                            id,
-                            expected_inclusion_hash,
-                        ),
-                    );
-                }
-                SubmitOutcome::LiveComplete
-            }
-            EgressPlan::AttributionOnly { attribution, bindings, id, inclusion_receipt_hash } => {
-                if !self.send_attribution(&attribution) {
-                    return SubmitOutcome::InclusionSentAttributionFailed(
-                        AttributionRetryToken::new(
-                            attribution,
-                            bindings,
-                            id,
-                            inclusion_receipt_hash,
-                        ),
-                    );
-                }
-                SubmitOutcome::LiveComplete
-            }
-        }
+        execute_live_sequence(
+            egress,
+            |request| self.send_inclusion(request),
+            |request| self.send_attribution(request),
+        )
     }
 }
 
-// -- test-only live execution seam --------------------------------------------
+// -- shared live execution sequence -------------------------------------------
 
-/// Exercises live sequencing without compiling a socket-capable backend.
-#[cfg(test)]
-fn execute_live_with<I, A>(
+/// Module-private sequencing shared by production and tests. Channel operations
+/// are supplied only by this module; no caller can inject behavior.
+fn execute_live_sequence<I, A>(
     egress: RawEgress,
     mut inclusion_result: I,
     mut attribution_result: A,
@@ -826,34 +804,70 @@ mod tests {
     }
 
     #[test]
-    fn test_only_live_seam_maps_inclusion_failures() {
+    fn shared_live_sequence_maps_inclusion_failures() {
         let (_harness, paired, _i, _a, expected) = build();
-        let failed = execute_live_with(raw_initial(paired), |_| None, |_| true);
+        let failed = execute_live_sequence(raw_initial(paired), |_| None, |_| true);
         assert!(matches!(failed, SubmitOutcome::InclusionFailed));
 
         let (_harness, paired, _i, _a, _expected) = build();
         let mismatched =
-            execute_live_with(raw_initial(paired), |_| Some(B256::repeat_byte(0xAB)), |_| true);
+            execute_live_sequence(raw_initial(paired), |_| Some(B256::repeat_byte(0xAB)), |_| true);
         assert!(matches!(mismatched, SubmitOutcome::InclusionFailed));
         assert_ne!(expected, B256::repeat_byte(0xAB));
     }
 
     #[test]
-    fn test_only_live_seam_preserves_attribution_retry_shape() {
+    fn shared_live_sequence_preserves_attribution_retry_shape() {
         let (_harness, paired, _i, _a, expected) = build();
-        let outcome = execute_live_with(raw_initial(paired), |_| Some(expected), |_| false);
+        let outcome = execute_live_sequence(raw_initial(paired), |_| Some(expected), |_| false);
         let token = match outcome {
             SubmitOutcome::InclusionSentAttributionFailed(token) => token,
             other => panic!("expected partial failure, got {other:?}"),
         };
         assert_eq!(token.inclusion_receipt_hash(), expected);
 
-        let retry = execute_live_with(
+        let retry = execute_live_sequence(
             raw_retry(token),
             |_| panic!("attribution retry must not send inclusion"),
             |_| true,
         );
         assert!(matches!(retry, SubmitOutcome::LiveComplete));
+    }
+
+    #[test]
+    fn send_gated_retry_revalidates_and_simulates_attribution_only() {
+        let (harness, paired, _i, _a, expected) = build();
+        let initial = execute_live_sequence(raw_initial(paired), |_| Some(expected), |_| false);
+        let token = match initial {
+            SubmitOutcome::InclusionSentAttributionFailed(token) => token,
+            other => panic!("expected retry token, got {other:?}"),
+        };
+        let outcome = simulate(
+            SubmissionAttempt::AttributionRetry(token),
+            &harness.fresh().with_forced_gate(true),
+        );
+        let record = match outcome {
+            SubmitOutcome::Simulated(record) => record,
+            other => panic!("expected simulated retry, got {other:?}"),
+        };
+        assert_eq!(record.attempt(), SimulationAttempt::AttributionRetry);
+        assert_eq!(record.inclusion_receipt_hash(), expected);
+        assert_eq!(record.requests().len(), 1);
+        assert_eq!(record.requests()[0].channel(), Channel::Attribution);
+
+        let (mut stale_harness, stale_paired, _i, _a, stale_expected) = build();
+        let stale_initial =
+            execute_live_sequence(raw_initial(stale_paired), |_| Some(stale_expected), |_| false);
+        let stale_token = match stale_initial {
+            SubmitOutcome::InclusionSentAttributionFailed(token) => token,
+            other => panic!("expected stale retry token, got {other:?}"),
+        };
+        stale_harness.clock = tk::FakeClock(Some(1_100));
+        let stale = simulate(
+            SubmissionAttempt::AttributionRetry(stale_token),
+            &stale_harness.fresh().with_forced_gate(true),
+        );
+        assert!(matches!(stale, SubmitOutcome::NoEgress));
     }
 
     #[test]
@@ -1002,25 +1016,126 @@ mod tests {
         assert_lock_mutant(&original, &mutant, "L4c", LiveLockClosed::FundsCapExceeded);
     }
 
-    fn validate_test_closure_seam(source: &str) -> Result<(), String> {
-        let guarded = "#[cfg(test)]\nfn execute_live_with";
-        if source.matches(guarded).count() != 1 {
-            return Err("execute_live_with must have exactly one cfg(test) guard".to_owned());
+    fn validate_freshness_proof_source(transport: &str, witness: &str) -> Result<(), String> {
+        let proof_call = ["let Some(freshness) = fresh.", "revalidate"].concat();
+        if transport.matches(&proof_call).count() != 2 {
+            return Err("initial and retry branches must each mint freshness proof".to_owned());
+        }
+        let constructor = transport
+            .split_once("fn from_live_selection")
+            .and_then(|(_, rest)| rest.split_once("fn evaluate_live_locks"))
+            .map(|(body, _)| body)
+            .ok_or_else(|| "live snapshot constructor missing".to_owned())?;
+        if !constructor.contains("signed_receipt_fresh: freshness.signed_receipt_fresh()")
+            || !constructor.contains("kill_clear: freshness.kill_clear()")
+            || constructor.contains("signed_receipt_fresh: true")
+            || constructor.contains("kill_clear: true")
+        {
+            return Err("L2/L3 are not derived from freshness proof".to_owned());
+        }
+        if transport.contains(&["live_", "requested"].concat()) {
+            return Err("live-only freshness bypass present".to_owned());
+        }
+        if witness
+            .matches("Some(FreshnessProof {\n            signed_receipt: SignedReceiptFresh")
+            .count()
+            != 1
+        {
+            return Err("freshness proof must have one revalidate mint site".to_owned());
         }
         Ok(())
     }
 
     #[test]
-    fn closure_seam_c0_green_c1_removed_cfg_red() {
+    fn freshness_f0_green_f1_bypass_f2_receipt_literal_f3_kill_literal_red() {
+        let transport = include_str!("transport.rs");
+        let witness = include_str!("witness.rs");
+        validate_freshness_proof_source(transport, witness).expect("F0 source must be sealed");
+        eprintln!("F0: GREEN");
+
+        let proof_call = ["let Some(freshness) = fresh.", "revalidate"].concat();
+        let bypass =
+            ["if !live_", "requested { let Some(freshness) = fresh.", "revalidate"].concat();
+        let mutant = transport.replacen(&proof_call, &bypass, 1);
+        assert_ne!(mutant, transport, "F1 patch did not change source");
+        assert!(validate_freshness_proof_source(&mutant, witness).is_err());
+        eprintln!("F1: RED");
+
+        let mutant = transport.replacen(
+            "signed_receipt_fresh: freshness.signed_receipt_fresh()",
+            "signed_receipt_fresh: true",
+            1,
+        );
+        assert_ne!(mutant, transport, "F2 patch did not change source");
+        assert!(validate_freshness_proof_source(&mutant, witness).is_err());
+        eprintln!("F2: RED");
+
+        let mutant =
+            transport.replacen("kill_clear: freshness.kill_clear()", "kill_clear: true", 1);
+        assert_ne!(mutant, transport, "F3 patch did not change source");
+        assert!(validate_freshness_proof_source(&mutant, witness).is_err());
+        eprintln!("F3: RED");
+    }
+    fn validate_live_sequence_source(source: &str) -> Result<(), String> {
+        let definition = ["fn execute_live", "_sequence<I, A>("].concat();
+        let definition_index = source
+            .find(&definition)
+            .ok_or_else(|| "shared live sequence definition missing".to_owned())?;
+        let prefix = &source[definition_index.saturating_sub(160)..definition_index];
+        if prefix.contains("#[cfg(test)]") || prefix.ends_with("pub ") {
+            return Err(
+                "shared live sequence must be private and compile in both configs".to_owned()
+            );
+        }
+
+        let production = source
+            .split_once("impl RawBackend for ProdBackend")
+            .and_then(|(_, rest)| rest.split_once("// -- shared live execution sequence"))
+            .map(|(body, _)| body)
+            .ok_or_else(|| "ProdBackend execute body missing".to_owned())?;
+        let call = ["execute_live", "_sequence("].concat();
+        if production.matches(&call).count() != 1 {
+            return Err("ProdBackend must delegate exactly once to shared sequence".to_owned());
+        }
+        if production.contains("match egress.into_plan()") {
+            return Err("ProdBackend contains duplicated sequencing".to_owned());
+        }
+        if source.matches(&call).count() != 7 {
+            return Err("shared sequence call-site count changed".to_owned());
+        }
+
+        let helper = source[definition_index..]
+            .split_once("#[cfg(test)]\nfn validate_live_lock_fixture")
+            .map(|(body, _)| body)
+            .ok_or_else(|| "shared sequence boundary missing".to_owned())?;
+        if helper.matches("match egress.into_plan()").count() != 1 {
+            return Err("shared sequence must own the sole plan match".to_owned());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sequence_c0_green_c1_delegation_red_c2_test_gate_red() {
         let source = include_str!("transport.rs");
-        validate_test_closure_seam(source).expect("C0 source must be sealed");
+        validate_live_sequence_source(source).expect("C0 source must be sealed");
         eprintln!("C0: GREEN");
 
-        let guarded = "#[cfg(test)]\nfn execute_live_with";
-        let mutant = source.replacen(guarded, "fn execute_live_with", 1);
+        let production_call = ["execute_live", "_sequence(\n            egress,"].concat();
+        let mutant = source.replacen(
+            &production_call,
+            "execute_live_sequence_copy(\n            egress,",
+            1,
+        );
         assert_ne!(mutant, source, "C1 patch did not change source");
-        assert!(validate_test_closure_seam(&mutant).is_err());
+        assert!(validate_live_sequence_source(&mutant).is_err());
         eprintln!("C1: RED");
+
+        let definition = ["fn execute_live", "_sequence<I, A>("].concat();
+        let mutant =
+            source.replacen(&definition, "#[cfg(test)]\nfn execute_live_sequence<I, A>(", 1);
+        assert_ne!(mutant, source, "C2 patch did not change source");
+        assert!(validate_live_sequence_source(&mutant).is_err());
+        eprintln!("C2: RED");
     }
 
     #[test]

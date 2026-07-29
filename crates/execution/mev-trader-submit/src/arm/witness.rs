@@ -457,6 +457,35 @@ pub trait DeploymentIdentitySource {
     fn current(&self) -> Option<DeploymentIdentity>;
 }
 
+/// Linear proof that egress-moment receipt freshness and kill-clear checks both held.
+#[derive(Debug)]
+pub struct FreshnessProof {
+    signed_receipt: SignedReceiptFresh,
+    kill: KillClear,
+}
+
+#[derive(Debug)]
+struct SignedReceiptFresh {
+    private: (),
+}
+
+#[derive(Debug)]
+struct KillClear {
+    private: (),
+}
+
+impl FreshnessProof {
+    /// Whether this proof was minted after the signed live-run window check.
+    pub const fn signed_receipt_fresh(&self) -> bool {
+        matches!(self.signed_receipt, SignedReceiptFresh { private: () })
+    }
+
+    /// Whether this proof was minted after the authoritative kill-clear check.
+    pub const fn kill_clear(&self) -> bool {
+        matches!(self.kill, KillClear { private: () })
+    }
+}
+
 /// All authoritative freshness backings, re-read at the egress moment. Owns the
 /// shared [`ArmedFailSink`] so `send_gated` is a two-argument call.
 pub struct FreshnessSources<'a> {
@@ -520,12 +549,18 @@ impl<'a> FreshnessSources<'a> {
         self
     }
 
-    /// The full egress-moment re-validation conjunction (§3.3). `true` only when
-    /// EVERY source is fresh and every binding still holds.
-    pub fn revalidate(&self, bindings: &ProofBindings, id: &ValidatedExecutionIdentity) -> bool {
+    /// The full egress-moment re-validation conjunction (§3.3). Returns a
+    /// non-forgeable proof only when every source is fresh and every binding holds.
+    pub fn revalidate(
+        &self,
+        bindings: &ProofBindings,
+        id: &ValidatedExecutionIdentity,
+    ) -> Option<FreshnessProof> {
         // Kill observation is first and authoritative. In particular, the test-only forced-open
         // seam can never override a non-clear durable state or an already-poisoned process.
-        let Ok(kill) = self.sink.observe_kill() else { return false };
+        let Ok(kill) = self.sink.observe_kill() else {
+            return None;
+        };
         let ctx = SubmitContext {
             armed: self.armed,
             amount_in_wei: id.amount(),
@@ -535,7 +570,13 @@ impl<'a> FreshnessSources<'a> {
         let gate_open = matches!(submit_gate(ctx), SubmitDecision::Open);
         #[cfg(test)]
         let gate_open = gate_open || self.force_gate_open;
-        self.revalidate_gated(gate_open, bindings, id)
+        if !self.revalidate_gated(gate_open, bindings, id) {
+            return None;
+        }
+        Some(FreshnessProof {
+            signed_receipt: SignedReceiptFresh { private: () },
+            kill: KillClear { private: () },
+        })
     }
 
     /// The freshness conjunction with the gate decision reduced to a bool.
@@ -1052,7 +1093,7 @@ mod tests {
         .with_forced_gate(true);
 
         store.set(base_mev_trader::KillState::Unknown);
-        assert!(!sources.revalidate(&paired.bindings, &paired.id));
+        assert!(sources.revalidate(&paired.bindings, &paired.id).is_none());
         assert_eq!(drawdown.0.load(Ordering::SeqCst), 0);
         assert!(sink.is_poisoned());
     }
