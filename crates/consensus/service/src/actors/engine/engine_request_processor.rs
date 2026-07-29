@@ -930,11 +930,12 @@ where
                 Ok(Some(head)) => head.block_info.hash == self.processor.rollup.genesis.l2.hash,
                 Ok(None) => true,
                 Err(err) => {
-                    warn!(target: "engine", ?err, "Bootstrap: failed to query reth head, falling back to reset");
+                    warn!(target: "engine", ?err, "Bootstrap: failed to query reth head; treating EL head as unknown");
                     true
                 }
             };
 
+            let catchup_required = reth_head.is_err() || !at_genesis;
             let opt_head = reth_head.ok().flatten();
             let bootstrap_role = if self.is_shadow_sequencer() {
                 BootstrapRole::ConductorFollower
@@ -943,7 +944,7 @@ where
             };
             if bootstrap_role == BootstrapRole::ConductorFollower
                 && self.processor.node_mode.is_sequencer()
-                && !at_genesis
+                && catchup_required
                 && matches!(self.sequencer_state, SequencerEngineState::Regular)
             {
                 self.sequencer_state = SequencerEngineState::CatchingUp {
