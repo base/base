@@ -13,13 +13,17 @@
 
 use std::sync::Arc;
 
+#[cfg(test)]
+use alloy_consensus::SignableTransaction;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use base_mev_trader::{
     ArmedCriteria, CampaignId, DrawdownInput, KillReason, StartupError, StoreIdentity,
     SubmitContext, SubmitDecision, VictimClaim, open_anchored_killstate, submit_gate,
 };
 
-use crate::assembler::ValidatedUnsignedAtomicTx;
+use crate::assembler::ValidatedUnsignedAtomicTx as LegacyValidatedUnsignedAtomicTx;
+#[cfg(feature = "t4e-handoff")]
+use crate::tx_authority::{BridgeConversionSeal, ValidatedUnsignedAtomicTx};
 
 use super::custody::{CustodyError, HotWalletKey};
 use super::proofs::{
@@ -81,10 +85,67 @@ pub struct ProofBindings {
     valid_until_block: u64,
 }
 
+#[derive(Debug)]
+enum CheckedTx {
+    Legacy(LegacyValidatedUnsignedAtomicTx),
+    #[cfg(feature = "t4e-handoff")]
+    Authority(ValidatedUnsignedAtomicTx),
+}
+
+impl CheckedTx {
+    fn victim(&self) -> B256 {
+        match self {
+            Self::Legacy(tx) => tx.victim(),
+            #[cfg(feature = "t4e-handoff")]
+            Self::Authority(tx) => tx.observation().victim(),
+        }
+    }
+
+    fn plan_digest(&self) -> B256 {
+        match self {
+            Self::Legacy(tx) => tx.plan_digest(),
+            #[cfg(feature = "t4e-handoff")]
+            Self::Authority(tx) => tx.observation().plan_digest(),
+        }
+    }
+
+    fn amount(&self) -> U256 {
+        match self {
+            Self::Legacy(tx) => tx.amount(),
+            #[cfg(feature = "t4e-handoff")]
+            Self::Authority(tx) => tx.amount(),
+        }
+    }
+
+    fn executor(&self) -> Address {
+        match self {
+            Self::Legacy(tx) => tx.executor(),
+            #[cfg(feature = "t4e-handoff")]
+            Self::Authority(tx) => tx.observation().executor(),
+        }
+    }
+
+    fn valid_until_block(&self) -> u64 {
+        match self {
+            Self::Legacy(tx) => tx.valid_until_block(),
+            #[cfg(feature = "t4e-handoff")]
+            Self::Authority(tx) => tx.observation().valid_until_block(),
+        }
+    }
+
+    fn unsigned_tx(&self) -> &alloy_consensus::TxEip1559 {
+        match self {
+            Self::Legacy(tx) => tx.unsigned_tx(),
+            #[cfg(feature = "t4e-handoff")]
+            Self::Authority(tx) => tx.unsigned_tx(),
+        }
+    }
+}
+
 /// A validated candidate whose id is derived from the assembler-only tx witness.
 #[derive(Debug)]
 pub struct CheckedCandidate {
-    vtx: ValidatedUnsignedAtomicTx,
+    vtx: CheckedTx,
     id: ValidatedExecutionIdentity,
 }
 
@@ -92,7 +153,7 @@ impl CheckedCandidate {
     /// Derives the execution identity from the assembler-validated tx and the
     /// campaign being run. Because `vtx` can only be produced by the assembler,
     /// the id is guaranteed to describe those exact tx bytes.
-    pub const fn new(vtx: ValidatedUnsignedAtomicTx, campaign_id: CampaignId) -> Self {
+    pub const fn new(vtx: LegacyValidatedUnsignedAtomicTx, campaign_id: CampaignId) -> Self {
         let id = ValidatedExecutionIdentity {
             campaign_id,
             victim: vtx.victim(),
@@ -100,7 +161,41 @@ impl CheckedCandidate {
             amount: vtx.amount(),
             executor: vtx.executor(),
         };
-        Self { vtx, id }
+        Self { vtx: CheckedTx::Legacy(vtx), id }
+    }
+
+    /// Joins a freshly revalidated T4d authority witness through an unforgeable bridge seal.
+    #[cfg(feature = "t4e-handoff")]
+    pub fn from_authority(
+        vtx: ValidatedUnsignedAtomicTx,
+        campaign_id: CampaignId,
+        seal: BridgeConversionSeal,
+    ) -> Self {
+        seal.consume();
+        let source = CheckedTx::Authority(vtx);
+        let id = ValidatedExecutionIdentity {
+            campaign_id,
+            victim: source.victim(),
+            plan_digest: source.plan_digest(),
+            amount: source.amount(),
+            executor: source.executor(),
+        };
+        Self { vtx: source, id }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn identity(&self) -> ValidatedExecutionIdentity {
+        self.id
+    }
+
+    #[cfg(test)]
+    pub(crate) fn valid_until_block(&self) -> u64 {
+        self.vtx.valid_until_block()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unsigned_signing_hash(&self) -> B256 {
+        self.vtx.unsigned_tx().signature_hash()
     }
 }
 

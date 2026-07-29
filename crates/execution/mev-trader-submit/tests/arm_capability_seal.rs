@@ -192,10 +192,10 @@ fn arm_source_is_exactly_the_declared_set() {
 
 // -- b9: the crate's public `arm` surface is EXACTLY the curated allowlist ------
 
-/// The complete provisioning-only root API. Low-level candidate, signer, send,
-/// backend, runtime, provider, and proof APIs remain private to the arm module.
-const PUBLIC_API_ALLOWLIST: [&str; 2] =
-    ["SuppressionRollbackError", "provision_suppression_anchor"];
+/// The complete root API. The T4e feature adds only the unsigned `CheckedCandidate`
+/// handoff; signer, send, backend, runtime, provider, and proof APIs remain private.
+const PUBLIC_API_ALLOWLIST: [&str; 3] =
+    ["CheckedCandidate", "SuppressionRollbackError", "provision_suppression_anchor"];
 
 static MODULE_FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -1020,7 +1020,7 @@ fn arm_submodules_are_private() {
 // -- b10: exported surface == curated allowlist (normalized, glob-rejecting) ----
 
 #[test]
-fn t4d_legacy_arm_surface_has_no_public_candidate_sign_or_send_entrypoint() {
+fn t4d_arm_surface_has_only_the_reviewed_unsigned_candidate_handoff() {
     let (source, public) = arm_reexports_from_path(&manifest_dir().join("src").join("lib.rs"))
         .expect("no glob/deep arm re-export across the public module graph");
     let expected: BTreeSet<String> =
@@ -1054,17 +1054,25 @@ fn t4d_legacy_arm_surface_has_no_public_candidate_sign_or_send_entrypoint() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(arm_exports.len(), 1, "arm root surface must be one reviewed facade");
-    assert_eq!(arm_exports[0].attrs.len(), 1, "arm facade has ambiguous attributes");
-    assert!(
-        matches!(
-            &arm_exports[0].attrs[0].meta,
-            syn::Meta::List(list)
-                if list.path.is_ident("cfg")
-                    && list.tokens.to_string()
-                        == "all (feature = \"arm\" , feature = \"arm-provisioning\")"
-        ),
-        "the provisioning-only arm facade escaped its exact dual feature gate"
+    assert_eq!(arm_exports.len(), 2, "arm root surface must be two reviewed facades");
+    let gates = arm_exports
+        .iter()
+        .map(|item| {
+            assert_eq!(item.attrs.len(), 1, "arm facade has ambiguous attributes");
+            let syn::Meta::List(list) = &item.attrs[0].meta else {
+                panic!("arm facade must have one cfg list");
+            };
+            assert!(list.path.is_ident("cfg"), "arm facade attribute must be cfg");
+            list.tokens.to_string()
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        gates,
+        BTreeSet::from([
+            "all (feature = \"arm\" , feature = \"arm-provisioning\")".to_owned(),
+            "feature = \"t4e-handoff\"".to_owned(),
+        ]),
+        "arm facades escaped their exact feature gates"
     );
     #[derive(Default)]
     struct ExternalArmCallsites {

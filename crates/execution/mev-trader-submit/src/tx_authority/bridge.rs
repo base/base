@@ -6,7 +6,11 @@ use std::{
     time::Instant,
 };
 
+#[cfg(feature = "t4e-handoff")]
+use crate::CheckedCandidate;
 use alloy_primitives::{Address, B256};
+#[cfg(feature = "t4e-handoff")]
+use base_mev_trader::CampaignId;
 use base_mev_trader::{
     CancellationProbe, CandidateAssemblyView, ExactProtocol, GlobalState, MeasurementContext,
     TaskState,
@@ -117,6 +121,39 @@ impl Debug for SealedUnsignedCandidate {
 #[derive(Debug)]
 struct InstallationSeal;
 
+/// Unforgeable capability proving that a T4d candidate passed bridge revalidation.
+#[cfg(feature = "t4e-handoff")]
+#[derive(Debug)]
+pub struct BridgeConversionSeal {
+    private: (),
+}
+
+#[cfg(feature = "t4e-handoff")]
+impl BridgeConversionSeal {
+    pub(crate) fn consume(self) {
+        let _ = self.private;
+    }
+}
+
+/// Terminal failure from an unsigned T4e candidate handoff sink.
+#[cfg(feature = "t4e-handoff")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum T4eHandoffError {
+    /// The bounded sink already owns a candidate.
+    Busy,
+    /// The sink no longer accepts candidates.
+    Closed,
+    /// The sink rejected the candidate without retry.
+    Rejected,
+}
+
+/// Synchronous by-value boundary from T4d drain to the owner-supplied T4e consumer.
+#[cfg(feature = "t4e-handoff")]
+pub trait T4eCandidateHandoff: Debug + Send + Sync {
+    /// Consumes exactly one sealed candidate; errors are terminal and never return it.
+    fn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError>;
+}
+
 /// Submit-owned facade that keeps assembly and freshness on one node authority.
 #[derive(Debug)]
 pub struct InstalledSubmissionBridge {
@@ -166,6 +203,21 @@ impl InstalledSubmissionBridge {
         self.seal_unsigned(detail, probe)
     }
 
+    /// Consumes a sealed T4d candidate into the arm witness after one fresh bridge check.
+    #[cfg(feature = "t4e-handoff")]
+    pub fn into_checked_candidate(
+        &self,
+        candidate: SealedUnsignedCandidate,
+        campaign_id: CampaignId,
+    ) -> Result<CheckedCandidate, BridgeError> {
+        self.revalidate_for_handoff(&candidate)?;
+        let SealedUnsignedCandidate { detail, bindings: _, installation: _, probe: _ } = candidate;
+        Ok(CheckedCandidate::from_authority(
+            detail,
+            campaign_id,
+            BridgeConversionSeal { private: () },
+        ))
+    }
     /// Revalidates a sealed candidate for an immediate opaque handoff observation.
     pub fn revalidate_for_handoff<'a>(
         &self,
@@ -213,6 +265,9 @@ impl InstalledSubmissionBridge {
             return Err(BridgeError::ExecutionIdentityChanged);
         }
         Self::validate_bindings(bindings, execution)?;
+        if state.parent_number() >= bindings.valid_until_block {
+            return Err(BridgeError::DeadlineNoHandoff);
+        }
         Self::checkpoint(&candidate.probe)?;
         Ok(bindings)
     }

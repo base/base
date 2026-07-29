@@ -74,14 +74,14 @@ use base_mev_trader::{
 };
 use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, NodeHooks};
 #[cfg(feature = "t4d-shadow")]
-use mev_trader_submit::{
-    AdapterAwareProofBindings, BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate,
-};
+use mev_trader_submit::{BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate};
 #[cfg(feature = "t4b-shadow")]
 use mev_trader_submit::{
     SnapshotFreshnessToken, TxAuthorityAssembler, TxAuthorityError, TxAuthorityNodeError,
     TxAuthorityNodeView, TxAuthorityStateRead, ValidatedUnsignedAtomicTx,
 };
+#[cfg(feature = "t4e-handoff")]
+use mev_trader_submit::{T4eCandidateHandoff, T4eHandoffError};
 #[cfg(feature = "t4b-shadow")]
 use reth_provider::{AccountReader, BlockReaderIdExt, BytecodeReader};
 use reth_provider::{HeaderProvider, StateProviderBox, StateProviderFactory};
@@ -4364,7 +4364,7 @@ impl EdgeCanonicalWriterV1 {
                 "failure": Self::registration_failure_wire(reason),
             }),
         };
-        let send = match record.send {
+        let send_disposition = match record.send {
             PendingSendDispositionV2::Published { receiver_count } => json!({
                 "disposition": "Published",
                 "receiverCount": receiver_count.to_string(),
@@ -4381,7 +4381,7 @@ impl EdgeCanonicalWriterV1 {
             "pendingSnapshotSequence": record.metadata.identity.pending_snapshot_sequence.to_string(),
             "producerEpoch": record.metadata.identity.producer_epoch.to_string(),
             "registration": registration,
-            "send": send,
+            "send": send_disposition,
             "sourceGeneration": record.metadata.source_generation.map(|value| JsonValue::String(value.to_string())),
             "terminal": terminal,
         })
@@ -8383,6 +8383,8 @@ pub struct BaseNodeTraderConfig {
     t4a_shadow: bool,
     t4b_shadow: bool,
     t4d_shadow: bool,
+    #[cfg(feature = "t4e-handoff")]
+    t4e_handoff: Option<Arc<dyn T4eCandidateHandoff>>,
     #[cfg(feature = "edge-measurement")]
     edge_measurement: Result<Option<EdgeCliProducerConfigV1>, String>,
 }
@@ -8438,6 +8440,8 @@ impl BaseNodeTraderConfig {
             t4a_shadow: Self::t4a_shadow_enabled(),
             t4b_shadow: Self::t4b_shadow_enabled(),
             t4d_shadow: Self::t4d_shadow_enabled(),
+            #[cfg(feature = "t4e-handoff")]
+            t4e_handoff: None,
             #[cfg(feature = "edge-measurement")]
             edge_measurement: EdgeCliProducerConfigV1::from_environment(),
         })
@@ -8646,8 +8650,19 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                     if !self.config.t4a_shadow || !self.config.t4b_shadow {
                         eyre::bail!("T4d shadow requires exact T4a, T4b, and T4d opt-in");
                     }
-                    let observer =
-                        t4d_shadow::observer(Arc::clone(&port), chain_spec.chain().id())?;
+                    #[cfg(feature = "t4e-handoff")]
+                    let handoff = self
+                        .config
+                        .t4e_handoff
+                        .clone()
+                        .ok_or_else(|| eyre::eyre!("T4e handoff sink is not installed"))?;
+                    #[cfg(not(feature = "t4e-handoff"))]
+                    let handoff = ();
+                    let observer = t4d_shadow::observer(
+                        Arc::clone(&port),
+                        chain_spec.chain().id(),
+                        handoff,
+                    )?;
                     self.config.start_with_t4d_observer(observer)?
                 }
                 #[cfg(not(feature = "t4d-shadow"))]
@@ -9447,6 +9462,16 @@ mod t4b_shadow {
             sender: Address,
             contracts: [Address; 4],
         ) -> Result<TxAuthorityStateRead, TxAuthorityNodeError> {
+            let header = self
+                .port
+                .provider
+                .sealed_header_by_hash(parent_hash)
+                .map_err(|_| TxAuthorityNodeError::Unavailable)?
+                .ok_or(TxAuthorityNodeError::Unavailable)?;
+            if header.hash() != parent_hash {
+                return Err(TxAuthorityNodeError::Incoherent);
+            }
+            let parent_number = header.number;
             let state = self
                 .port
                 .provider
@@ -9471,7 +9496,12 @@ mod t4b_shadow {
             }
             let runtime_codes =
                 runtime_codes.try_into().map_err(|_| TxAuthorityNodeError::Incoherent)?;
-            Ok(TxAuthorityStateRead::new(parent_hash, committed_sender_nonce, runtime_codes))
+            Ok(TxAuthorityStateRead::new(
+                parent_hash,
+                parent_number,
+                committed_sender_nonce,
+                runtime_codes,
+            ))
         }
 
         fn is_current_authoritative(
@@ -9635,17 +9665,27 @@ mod t4d_shadow {
     };
 
     use super::{
-        AdapterAwareProofBindings, BlockReaderIdExt, BridgeError, CandidateAssemblyView,
-        CandidateTxShapeObserver, CliTraderSnapshotPort, Debug, Header, HeaderProvider,
-        InstalledSubmissionBridge, SealedUnsignedCandidate, ShadowLatestSlot, ShadowSubmit,
-        StateProviderFactory, T4bOutcome, T4bOutcomeCounters, TxAuthorityError, t4b_shadow,
+        BlockReaderIdExt, BridgeError, CandidateAssemblyView, CandidateTxShapeObserver,
+        CliTraderSnapshotPort, Debug, Header, HeaderProvider, InstalledSubmissionBridge,
+        SealedUnsignedCandidate, ShadowLatestSlot, ShadowSubmit, StateProviderFactory, T4bOutcome,
+        T4bOutcomeCounters, TxAuthorityError, t4b_shadow,
     };
+    #[cfg(feature = "t4e-handoff")]
+    use super::{T4eCandidateHandoff, T4eHandoffError};
+
+    #[cfg(feature = "t4e-handoff")]
+    type CandidateHandoff = Arc<dyn T4eCandidateHandoff>;
+    #[cfg(not(feature = "t4e-handoff"))]
+    type CandidateHandoff = ();
 
     #[derive(Debug, Clone, Copy)]
     pub(super) enum T4dTerminal {
         SealedFresh,
         AssemblyRejected,
         BindingRejected,
+        HandoffBusy,
+        HandoffClosed,
+        HandoffRejected,
         CrossInstallation,
         SnapshotStale,
         ExecutionStale,
@@ -9660,6 +9700,9 @@ mod t4d_shadow {
         sealed_fresh: AtomicU64,
         assembly_rejected: AtomicU64,
         binding_rejected: AtomicU64,
+        handoff_busy: AtomicU64,
+        handoff_closed: AtomicU64,
+        handoff_rejected: AtomicU64,
         cross_installation: AtomicU64,
         snapshot_stale: AtomicU64,
         execution_stale: AtomicU64,
@@ -9675,6 +9718,9 @@ mod t4d_shadow {
                 T4dTerminal::SealedFresh => &self.sealed_fresh,
                 T4dTerminal::AssemblyRejected => &self.assembly_rejected,
                 T4dTerminal::BindingRejected => &self.binding_rejected,
+                T4dTerminal::HandoffBusy => &self.handoff_busy,
+                T4dTerminal::HandoffClosed => &self.handoff_closed,
+                T4dTerminal::HandoffRejected => &self.handoff_rejected,
                 T4dTerminal::CrossInstallation => &self.cross_installation,
                 T4dTerminal::SnapshotStale => &self.snapshot_stale,
                 T4dTerminal::ExecutionStale => &self.execution_stale,
@@ -9691,6 +9737,8 @@ mod t4d_shadow {
     pub(super) struct T4dShadowAuthority {
         bridge: InstalledSubmissionBridge,
         slot: ShadowLatestSlot<SealedUnsignedCandidate>,
+        #[cfg(feature = "t4e-handoff")]
+        handoff: Arc<dyn T4eCandidateHandoff>,
         t4b_counters: T4bOutcomeCounters,
         terminal_counters: T4dTerminalCounters,
     }
@@ -9729,11 +9777,13 @@ mod t4d_shadow {
             self.terminal_counters.record(terminal);
         }
 
-        fn observe_bounded_bindings(bindings: &AdapterAwareProofBindings) {
-            tracing::debug!(
-                bindings = ?bindings,
-                "drained T4d bounded bindings"
-            );
+        #[cfg(feature = "t4e-handoff")]
+        fn handoff_terminal(error: T4eHandoffError) -> T4dTerminal {
+            match error {
+                T4eHandoffError::Busy => T4dTerminal::HandoffBusy,
+                T4eHandoffError::Closed => T4dTerminal::HandoffClosed,
+                T4eHandoffError::Rejected => T4dTerminal::HandoffRejected,
+            }
         }
     }
 
@@ -9770,8 +9820,18 @@ mod t4d_shadow {
                 return;
             };
             match self.bridge.revalidate_for_handoff(&candidate) {
-                Ok(bindings) => {
-                    Self::observe_bounded_bindings(bindings);
+                Ok(_) => {
+                    #[cfg(feature = "t4e-handoff")]
+                    match self.handoff.try_handoff(candidate) {
+                        Ok(()) => {
+                            self.record(T4bOutcome::SelectedUnsignedShape, T4dTerminal::SealedFresh)
+                        }
+                        Err(error) => self.record(
+                            T4bOutcome::DeploymentIdentityRejected,
+                            Self::handoff_terminal(error),
+                        ),
+                    }
+                    #[cfg(not(feature = "t4e-handoff"))]
                     self.record(T4bOutcome::SelectedUnsignedShape, T4dTerminal::SealedFresh);
                 }
                 Err(error) => {
@@ -9794,6 +9854,7 @@ mod t4d_shadow {
     pub(super) fn observer<Provider>(
         port: Arc<CliTraderSnapshotPort<Provider>>,
         chain_id: u64,
+        handoff: CandidateHandoff,
     ) -> Result<Arc<dyn CandidateTxShapeObserver>, BridgeError>
     where
         Provider: StateProviderFactory
@@ -9810,6 +9871,8 @@ mod t4d_shadow {
         Ok(Arc::new(T4dShadowAuthority {
             bridge,
             slot: ShadowLatestSlot::new(),
+            #[cfg(feature = "t4e-handoff")]
+            handoff,
             t4b_counters: T4bOutcomeCounters::default(),
             terminal_counters: T4dTerminalCounters::default(),
         }))

@@ -18,6 +18,8 @@ mod tx_authority;
 pub use tx_authority::{
     AdapterAwareProofBindings, BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate,
 };
+#[cfg(feature = "t4e-handoff")]
+pub use tx_authority::{BridgeConversionSeal, T4eCandidateHandoff, T4eHandoffError};
 #[cfg(feature = "tx-authority")]
 pub use tx_authority::{
     DeployedContractIdentity, InstalledExecutionIdentity, ProtocolAdapterMapping,
@@ -31,6 +33,8 @@ pub use tx_authority::{
 // and only in provisioning builds; node builds cannot reach low-level arm APIs.
 #[cfg(feature = "arm")]
 mod arm;
+#[cfg(feature = "t4e-handoff")]
+pub use arm::CheckedCandidate;
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
 pub use arm::{SuppressionRollbackError, provision_suppression_anchor};
 

@@ -149,6 +149,10 @@ t4d-shadow = [
 	"t4b-shadow",
 	"mev-trader-submit/t4d-bridge",
 ]
+t4e-handoff = [
+	"t4d-shadow",
+	"mev-trader-submit/t4e-handoff",
+]
 b5-dormant-presign = [
   "dep:mev-trader-submit",
   "mev-trader-submit/presign",

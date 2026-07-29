@@ -24,6 +24,8 @@ mod bridge;
 pub use bridge::{
     AdapterAwareProofBindings, BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate,
 };
+#[cfg(feature = "t4e-handoff")]
+pub use bridge::{BridgeConversionSeal, T4eCandidateHandoff, T4eHandoffError};
 
 const CHAIN_ID_BASE: u64 = 8_453;
 const T4B_EXECUTOR_GAS_LIMIT: u64 = 3_000_000;
@@ -182,6 +184,7 @@ impl InstalledExecutionIdentity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxAuthorityStateRead {
     parent_hash: B256,
+    parent_number: u64,
     committed_sender_nonce: Option<u64>,
     runtime_codes: [Option<Bytes>; 4],
 }
@@ -190,15 +193,21 @@ impl TxAuthorityStateRead {
     /// Constructs the result of one in-process hash-pinned state session.
     pub const fn new(
         parent_hash: B256,
+        parent_number: u64,
         committed_sender_nonce: Option<u64>,
         runtime_codes: [Option<Bytes>; 4],
     ) -> Self {
-        Self { parent_hash, committed_sender_nonce, runtime_codes }
+        Self { parent_hash, parent_number, committed_sender_nonce, runtime_codes }
     }
 
     /// Returns the parent hash pin used for every value in this batch.
     pub const fn parent_hash(&self) -> B256 {
         self.parent_hash
+    }
+
+    /// Returns the block number bound to the same parent hash as every state value.
+    pub const fn parent_number(&self) -> u64 {
+        self.parent_number
     }
 
     /// Returns the committed sender nonce, or `None` for an absent account.
@@ -452,6 +461,8 @@ impl UnsignedTxShapeObservation {
 /// Linear unsigned-only output that retains the single-observation guard.
 pub struct ValidatedUnsignedAtomicTx {
     unsigned_tx: TxEip1559,
+    #[cfg(feature = "t4e-handoff")]
+    amount: U256,
     observation: UnsignedTxShapeObservation,
     execution: InstalledExecutionIdentity,
     observation_guard: MeasurementNonceGuard,
@@ -488,6 +499,16 @@ impl ValidatedUnsignedAtomicTx {
         } else {
             Err(TxAuthorityError::SnapshotStaleAtDrain)
         }
+    }
+
+    #[cfg(feature = "t4e-handoff")]
+    pub(crate) const fn unsigned_tx(&self) -> &TxEip1559 {
+        &self.unsigned_tx
+    }
+
+    #[cfg(feature = "t4e-handoff")]
+    pub(crate) const fn amount(&self) -> U256 {
+        self.amount
     }
 }
 
@@ -638,6 +659,8 @@ impl TxAuthorityAssembler {
         Self::checkpoint(view.probe())?;
         Ok(ValidatedUnsignedAtomicTx {
             unsigned_tx,
+            #[cfg(feature = "t4e-handoff")]
+            amount: plan.amount_in,
             observation,
             execution,
             observation_guard,
@@ -1093,6 +1116,7 @@ mod tests {
         ) -> Result<TxAuthorityStateRead, TxAuthorityNodeError> {
             Ok(TxAuthorityStateRead::new(
                 parent_hash,
+                0,
                 Some(0),
                 std::array::from_fn(|_| Some(Bytes::from_static(b"code"))),
             ))
@@ -1116,6 +1140,7 @@ mod tests {
     #[derive(Debug)]
     struct TestNode {
         parent_hash: B256,
+        parent_number: Arc<AtomicU64>,
         sender: Address,
         contracts: [Address; 4],
         state: TxAuthorityStateRead,
@@ -1162,6 +1187,7 @@ mod tests {
                 std::thread::sleep(self.delay_on_read.expect("checked delay").1);
             }
             let mut state = self.state.clone();
+            state.parent_number = self.parent_number.load(Ordering::Acquire);
             if self.stale_on_read.is_some_and(|threshold| read >= threshold) {
                 state.committed_sender_nonce =
                     state.committed_sender_nonce.and_then(|nonce| nonce.checked_add(1));
@@ -1204,6 +1230,8 @@ mod tests {
         state_error: Arc<AtomicBool>,
         #[cfg(feature = "t4d-bridge")]
         head_flip_after_read: Arc<AtomicBool>,
+        #[cfg(feature = "t4d-bridge")]
+        parent_number: Arc<AtomicU64>,
         #[cfg(feature = "t4d-bridge")]
         stale_code_index: Arc<AtomicU64>,
     }
@@ -1372,12 +1400,15 @@ mod tests {
             },
         };
         let contracts = TxAuthorityAssembler::contract_addresses(&executor, &adapters);
-        let state = TxAuthorityStateRead::new(parent_hash, Some(4), codes.map(Some));
+        let parent_number = Arc::new(AtomicU64::new(block_number - 1));
+        let state =
+            TxAuthorityStateRead::new(parent_hash, block_number - 1, Some(4), codes.map(Some));
         let state_error = Arc::new(AtomicBool::new(false));
         let head_flip_after_read = Arc::new(AtomicBool::new(false));
         let stale_code_index = Arc::new(AtomicU64::new(u64::MAX));
         let node: Arc<dyn TxAuthorityNodeView> = Arc::new(TestNode {
             parent_hash,
+            parent_number: Arc::clone(&parent_number),
             sender,
             contracts,
             state,
@@ -1406,6 +1437,8 @@ mod tests {
             current,
             #[cfg(feature = "t4d-bridge")]
             state_error,
+            #[cfg(feature = "t4d-bridge")]
+            parent_number,
             #[cfg(feature = "t4d-bridge")]
             head_flip_after_read,
             #[cfg(feature = "t4d-bridge")]
@@ -1589,6 +1622,7 @@ mod tests {
             TxAuthorityAssembler::contract_addresses(&install_executor, &install_adapters);
         let install_state = TxAuthorityStateRead::new(
             install_parent,
+            0,
             Some(4),
             [
                 Some(Bytes::from_static(b"executor")),
@@ -1600,6 +1634,7 @@ mod tests {
         for (state_error, head_flip_after_read) in [(true, false), (false, true)] {
             let node = Arc::new(TestNode {
                 parent_hash: install_parent,
+                parent_number: Arc::new(AtomicU64::new(0)),
                 sender: install_sender,
                 contracts: install_contracts,
                 state: install_state.clone(),
@@ -1623,7 +1658,7 @@ mod tests {
         }
         let mapping = ProtocolAdapterMapping::base_mainnet_pins();
         let parent = B256::with_last_byte(1);
-        let missing = TxAuthorityStateRead::new(parent, Some(0), std::array::from_fn(|_| None));
+        let missing = TxAuthorityStateRead::new(parent, 0, Some(0), std::array::from_fn(|_| None));
         assert_eq!(
             TxAuthorityAssembler::validate_state_codes(
                 &missing,
@@ -1633,8 +1668,12 @@ mod tests {
             ),
             Err(TxAuthorityError::DeploymentIdentityRejected)
         );
-        let empty =
-            TxAuthorityStateRead::new(parent, Some(0), std::array::from_fn(|_| Some(Bytes::new())));
+        let empty = TxAuthorityStateRead::new(
+            parent,
+            0,
+            Some(0),
+            std::array::from_fn(|_| Some(Bytes::new())),
+        );
         assert_eq!(
             TxAuthorityAssembler::validate_state_codes(
                 &empty,
@@ -1646,6 +1685,7 @@ mod tests {
         );
         let wrong_hash = TxAuthorityStateRead::new(
             parent,
+            0,
             Some(0),
             std::array::from_fn(|_| Some(Bytes::from_static(b"wrong-runtime"))),
         );
@@ -1660,6 +1700,7 @@ mod tests {
         );
         let partial = TxAuthorityStateRead::new(
             parent,
+            0,
             Some(0),
             [
                 Some(Bytes::from_static(b"executor")),
@@ -1679,6 +1720,7 @@ mod tests {
         );
         let wrong_parent = TxAuthorityStateRead::new(
             B256::with_last_byte(2),
+            0,
             Some(0),
             std::array::from_fn(|_| Some(Bytes::from_static(b"code"))),
         );
@@ -2231,6 +2273,52 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "t4e-handoff")]
+    #[test]
+    fn t4e_bridge_join_preserves_identity_and_enforces_block_deadline() {
+        let fresh = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let bridge = fresh.bridge();
+        let candidate =
+            bridge.assemble_sealed_for_test(fresh.view()).expect("fresh sealed candidate");
+        let expected = candidate.bindings();
+        let victim = expected.victim();
+        let plan_digest = expected.plan_digest();
+        let executor = expected.executor().address();
+        let deadline = expected.valid_until_block();
+        let signing_hash = expected.unsigned_signing_hash();
+        let campaign_id = base_mev_trader::CampaignId::new([7; 32]);
+        let checked = bridge
+            .into_checked_candidate(candidate, campaign_id)
+            .expect("parent immediately before deadline");
+        let identity = checked.identity();
+        assert_eq!(identity.campaign_id(), campaign_id);
+        assert_eq!(identity.victim(), victim);
+        assert_eq!(identity.plan_digest(), plan_digest);
+        assert_eq!(identity.amount(), fresh.plan.amount_in);
+        assert_eq!(identity.executor(), executor);
+        assert_eq!(checked.valid_until_block(), deadline);
+        assert_eq!(checked.unsigned_signing_hash(), signing_hash);
+
+        for parent_number in [deadline, deadline + 1] {
+            let expired = assembly_fixture(
+                Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+                None,
+            );
+            let expired_bridge = expired.bridge();
+            let expired_candidate = expired_bridge
+                .assemble_sealed_for_test(expired.view())
+                .expect("deadline candidate");
+            expired.parent_number.store(parent_number, Ordering::Release);
+            assert!(matches!(
+                expired_bridge.into_checked_candidate(expired_candidate, campaign_id),
+                Err(bridge::BridgeError::DeadlineNoHandoff)
+            ));
+        }
+    }
+
     #[cfg(feature = "t4d-bridge")]
     #[test]
     fn t4d_facade_rejects_cross_installation_candidate_and_provider_reinjection() {
@@ -2247,6 +2335,19 @@ mod tests {
             other_bridge.revalidate_for_handoff(&candidate),
             Err(bridge::BridgeError::CrossInstallation)
         );
+        drop(candidate);
+
+        #[cfg(feature = "t4e-handoff")]
+        {
+            let candidate = issuing_bridge
+                .assemble_sealed_for_test(fixture.view())
+                .expect("second opaque sealed candidate");
+            assert!(matches!(
+                other_bridge
+                    .into_checked_candidate(candidate, base_mev_trader::CampaignId::new([9; 32]),),
+                Err(bridge::BridgeError::CrossInstallation)
+            ));
+        }
 
         let bridge_ast =
             syn::parse_file(include_str!("tx_authority/bridge.rs")).expect("bridge source parses");

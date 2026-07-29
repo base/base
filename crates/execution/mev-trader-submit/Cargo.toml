@@ -33,6 +33,7 @@ tx-authority = [
     "dep:alloy-sol-types",
 ]
 t4d-bridge = ["tx-authority"]
+t4e-handoff = ["arm", "t4d-bridge"]
 
 # B3-arm tier: the real hot-wallet key loader + real signer core + proof witness +
 # two-channel transport builders. Everything it adds lives in `src/arm/` behind
