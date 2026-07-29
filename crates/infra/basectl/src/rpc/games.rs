@@ -133,12 +133,12 @@ impl GamesClient {
     /// Connects a games client for the given factory address and L1 RPC URL.
     pub fn connect(factory: Address, l1_rpc: &Url) -> Result<Self, ProofsCommandError> {
         let factory_client = DisputeGameFactoryContractClient::new(factory, l1_rpc.clone())
-            .map_err(|error| ProofsCommandError::BuildClient {
+            .map_err(|error| ProofsCommandError::L1Contract {
                 endpoint: l1_rpc.to_string(),
                 message: error.to_string(),
             })?;
         let verifier = AggregateVerifierContractClient::new(l1_rpc.clone()).map_err(|error| {
-            ProofsCommandError::BuildClient {
+            ProofsCommandError::L1Contract {
                 endpoint: l1_rpc.to_string(),
                 message: error.to_string(),
             }

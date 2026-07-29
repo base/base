@@ -676,7 +676,9 @@ mod tests {
         let cli = try_parse(["basectl", "proofs", "finalize", "100", "5", "--yes"])
             .expect("finalize should parse");
         match cli.command {
-            Some(Commands::Proofs(crate::ProofsCommand { command: ProofsCommands::Finalize(args) })) => {
+            Some(Commands::Proofs(crate::ProofsCommand {
+                command: ProofsCommands::Finalize(args),
+            })) => {
                 assert_eq!(args.zk_backend, ZkBackendOption::Cluster);
             }
             other => panic!("unexpected command: {other:?}"),
