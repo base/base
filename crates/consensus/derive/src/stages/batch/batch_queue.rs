@@ -132,6 +132,9 @@ where
         // Go over all batches, in order of inclusion, and find the first batch we can accept.
         // Filter in-place by only remembering the batches that may be processed in the future, or
         // any undecided ones.
+        let is_holocene_active = self.cfg.is_holocene_active(origin.timestamp);
+        // Before Holocene, temporarily retain seen batches so a disallowed `Past` result can
+        // restore the queue to its pre-call state. Post-Holocene discards can be dropped eagerly.
         let mut processed = Vec::new();
         let mut batches = core::mem::take(&mut self.batches).into_iter();
         while let Some(batch) = batches.next() {
@@ -142,16 +145,17 @@ where
                     // Drop Future batches post-holocene.
                     //
                     // See: <https://specs.base.org/upgrades/holocene/derivation#batch_queue>
-                    if !self.cfg.is_holocene_active(origin.timestamp) {
+                    if !is_holocene_active {
                         processed.push((batch, true));
                     } else {
-                        processed.push((batch, false));
                         self.prev.flush();
                         warn!(target: "batch_queue", parent_block_num = parent.block_info.number, "[HOLOCENE] Dropping future batch");
                     }
                 }
                 BatchValidity::Drop(reason) => {
-                    processed.push((batch, false));
+                    if !is_holocene_active {
+                        processed.push((batch, false));
+                    }
                     // If we drop a batch, flush previous batches buffered in the BatchStream
                     // stage.
                     self.prev.flush();
@@ -174,7 +178,9 @@ where
                     return Err(PipelineError::Eof.temp());
                 }
                 BatchValidity::Past => {
-                    if !self.cfg.is_holocene_active(origin.timestamp) {
+                    if !is_holocene_active {
+                        // Preserve the pre-call queue on this critical error, including batches
+                        // already classified as `Drop`, matching the previous borrowed iteration.
                         self.batches = processed
                             .into_iter()
                             .map(|(batch, _)| batch)
@@ -185,7 +191,6 @@ where
                         return Err(PipelineError::InvalidBatchValidity.crit());
                     }
 
-                    processed.push((batch, false));
                     warn!(target: "batch_queue", parent_block_num = parent.block_info.number, "[HOLOCENE] Dropping outdated batch");
                     continue;
                 }
