@@ -131,15 +131,18 @@ pub enum OracleProviderError {
         /// The configured rollup genesis L2 block number.
         genesis_block: u64,
     },
-    /// Computing the claimed L2 block timestamp overflowed `u64`.
-    #[error("L2 claim block timestamp overflow for block {claim_block}")]
-    L2ClaimTimestampOverflow {
-        /// The claimed L2 block number.
-        claim_block: u64,
+    /// Computing the schedule L2 block timestamp overflowed `u64`.
+    #[error("L2 schedule block timestamp overflow for block {schedule_block}")]
+    L2ScheduleTimestampOverflow {
+        /// The L2 block number used to pin the upgrade schedule.
+        schedule_block: u64,
     },
     /// The rollup config has a zero L2 block time.
     #[error("L2 block time must be non-zero")]
     InvalidL2BlockTime,
+    /// The rollup config has a zero L2 genesis timestamp.
+    #[error("L2 genesis timestamp must be non-zero")]
+    InvalidL2GenesisTimestamp,
     /// The schedule block precedes the claimed L2 block.
     #[error("Schedule L2 block {schedule_block} precedes claimed L2 block {claim_block}")]
     ScheduleBlockBeforeClaim {
@@ -148,6 +151,9 @@ pub enum OracleProviderError {
         /// The claimed L2 block number.
         claim_block: u64,
     },
+    /// The rollup config enables Zenith, which is not committed by the proof schedule ID.
+    #[error("Configured Zenith upgrade is not committed by the proof schedule ID")]
+    UncommittedZenithUpgrade,
     /// A Beryl-enabled chain is missing a trusted activation registry admin address.
     ///
     /// This error occurs when proof boot data resolves a rollup config with Beryl scheduled but no
