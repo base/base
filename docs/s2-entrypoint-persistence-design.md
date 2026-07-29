@@ -168,13 +168,16 @@ Each record is published as one sequence-addressed file:
 Publication is:
 
 1. strict bounded canonical encoding in memory;
-2. create-new `.open` under a pinned directory descriptor with mode `0600` and no symlink following;
+2. create-new `.open` in the private pinned directory with mode `0600`;
 3. `write_all`, then `sync_all` on the file;
-4. atomic rename to `.record` without replacement;
+4. publish `.record` with a same-directory hard link, which fails if that sequence already exists, then remove `.open`;
 5. `sync_all` on the directory;
-6. only then report `Persisted` and accept the next candidate.
+6. write and sync a fixed 40-byte `head.open` containing `next_sequence || latest_record_hash`, atomically replace `head`, and sync the directory again;
+7. only then report `Persisted` and accept the next candidate.
 
-Startup takes an exclusive non-blocking directory lease, rejects non-regular/hard-linked entries, unknown names, duplicate sequences, gaps, unknown schema versions, oversize records, hash-chain mismatch, and a pre-existing `.open`. It does not guess, truncate, delete, skip, or `unwrap_or` malformed state. An empty existing/private directory is sequence zero. Directory creation is allowed only at the compile-pinned path with mode `0700`; it is persistence setup, not arming or suppression provisioning.
+`head` is the durable external anchor for the unsigned record chain. The startup scan must equal both its sequence and latest hash, so deleting even the trailing record or the complete record set is visible rather than becoming a shorter apparently valid chain.
+
+Startup takes an exclusive non-blocking directory lease, rejects non-regular/hard-linked published entries, unknown names, duplicate sequences, gaps, unknown schema versions, oversize records, hash-chain/head mismatch, and a pre-existing `.open` (including `head.open`). It does not guess, truncate, delete, skip, or `unwrap_or` malformed state. An empty existing/private directory is sequence zero and receives a zero head. Directory creation is allowed only at the compile-pinned path with mode `0700`; it is persistence setup, not arming or suppression provisioning.
 
 Capacity is preflighted before the irreversible R9 claim. Any I/O error after preflight but before durable publication is a typed `PersistenceFailed`; because the claim/signing outcome may already be irreversible, the worker closes and does not retry that candidate.
 
