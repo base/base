@@ -161,7 +161,12 @@ b5-dormant-presign = [
   "dep:serde_json",
   "dep:libc",
 ]
+arm-sim = [
+    "t4e-handoff",
+    "mev-trader-submit/arm",
+]
 arm-live-egress = [
+    "arm-sim",
     "dep:mev-trader-submit",
     "mev-trader-submit/arm-live-egress",
 ]

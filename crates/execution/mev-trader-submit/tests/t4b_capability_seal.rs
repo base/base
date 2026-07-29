@@ -693,8 +693,9 @@ impl<'a> AuthoritySurfaceInventory<'a> {
                 let authority_export = leaf.source.first().map(String::as_str)
                     == Some("tx_authority")
                     && leaf.source.len() == 2;
-                let economics_export =
-                    leaf.source.as_slice() == ["economics", "PriorityEconomicsAuthority"];
+                let economics_export = leaf.source.as_slice()
+                    == ["economics", "PriorityEconomicsAuthority"]
+                    || leaf.source.as_slice() == ["economics", "PriorityEconomicsReceipt"];
                 if (!authority_export && !economics_export) || leaf.renamed || leaf.glob {
                     violations.insert(format!("{:?} as {}", leaf.source, leaf.public_name));
                 } else {
@@ -1367,6 +1368,7 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
             "InstalledExecutionIdentity".to_owned(),
             "ProtocolAdapterMapping".to_owned(),
             "PriorityEconomicsAuthority".to_owned(),
+            "PriorityEconomicsReceipt".to_owned(),
             "SnapshotFreshnessToken".to_owned(),
             "TxAuthorityAssembler".to_owned(),
             "TxAuthorityError".to_owned(),
@@ -1789,7 +1791,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
             internal_consumers.push((path, imports.imports, uses, slot_uses));
         }
     }
-    assert_eq!(internal_consumers.len(), 2, "unreviewed submit-private consumer count");
+    assert_eq!(internal_consumers.len(), 3, "unreviewed submit-private consumer count");
     let internal_by_file = internal_consumers
         .iter()
         .map(|(path, imports, uses, slot_uses)| {
@@ -1801,10 +1803,12 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
         .collect::<BTreeMap<_, _>>();
     assert_eq!(
         internal_by_file,
-        BTreeMap::from(
-            [("bridge.rs".to_owned(), (1, 2, 0)), ("witness.rs".to_owned(), (1, 2, 0)),]
-        ),
-        "only the bridge and exhaustive arm witness may consume T4b authority"
+        BTreeMap::from([
+            ("bridge.rs".to_owned(), (1, 2, 0)),
+            ("simulation_entrypoint.rs".to_owned(), (1, 1, 0)),
+            ("witness.rs".to_owned(), (1, 2, 0)),
+        ]),
+        "only the bridge, simulation entrypoint, and exhaustive arm witness may consume T4b authority"
     );
     let authority_source = read(crate_dir.join("src/tx_authority.rs"));
     let authority_ast = parse_production(&authority_source);

@@ -14,13 +14,15 @@ use syn::{ext::IdentExt, visit::Visit};
 
 /// The exact production files under `src/arm/`. A NEW arm file must be added here
 /// (and re-reviewed) before it can ship (b7, fail-closed).
-const ARM_FILES: [&str; 10] = [
+const ARM_FILES: [&str; 12] = [
     "claim.rs",
     "custody.rs",
     "fail_sink.rs",
     "mod.rs",
     "proofs.rs",
     "providers.rs",
+    "simulation_entrypoint.rs",
+    "simulation_store.rs",
     "request.rs",
     "suppression.rs",
     "transport.rs",
@@ -196,14 +198,21 @@ fn arm_source_is_exactly_the_declared_set() {
 /// The complete root API. T4e adds the unsigned handoff/provider contract; S1-b
 /// adds only the sealed runtime selection and its two reviewed backends. Signing,
 /// raw permits, concrete freshness providers, and proof APIs remain private.
-const PUBLIC_API_ALLOWLIST: [&str; 8] = [
+const PUBLIC_API_ALLOWLIST: [&str; 15] = [
     "CheckedCandidate",
     "CodeHashProvider",
     "ProdBackend",
     "ProviderError",
     "RuntimeBackend",
     "SimBackend",
+    "SimulationEntrypointStatus",
+    "SimulationEntrypointUnavailable",
+    "SimulationLedgerClosure",
+    "SimulationLedgerEpoch",
+    "SimulationLedgerInvalid",
+    "SimulationStoreOperation",
     "SuppressionRollbackError",
+    "UnavailableSimulationHandoff",
     "provision_suppression_anchor",
 ];
 
@@ -343,6 +352,8 @@ fn reviewed_arm_module_tree(root: &Path) -> Result<(), String> {
         "fail_sink",
         "proofs",
         "providers",
+        "simulation_entrypoint",
+        "simulation_store",
         "request",
         "suppression",
         "transport",
@@ -1126,6 +1137,8 @@ fn arm_submodules_are_private() {
         "fail_sink",
         "proofs",
         "providers",
+        "simulation_entrypoint",
+        "simulation_store",
         "request",
         "suppression",
         "transport",
@@ -1175,7 +1188,7 @@ fn t4d_arm_surface_has_only_the_reviewed_unsigned_candidate_handoff() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(arm_exports.len(), 4, "arm root surface must be four reviewed facades");
+    assert_eq!(arm_exports.len(), 6, "arm root surface must be six reviewed facades");
     let gates = arm_exports
         .iter()
         .map(|item| {
@@ -3101,13 +3114,21 @@ fn runtime_switch_and_funds_lock_sources_are_pinned() {
         assert!(!flag_block.contains(forbidden), "live flag gained forbidden source `{forbidden}`");
     }
     let cli_manifest = std::fs::read_to_string(cli_dir.join("Cargo.toml")).expect("CLI manifest");
+    assert!(
+        cli_manifest
+            .contains("arm-sim = [\n    \"t4e-handoff\",\n    \"mev-trader-submit/arm\",\n]")
+    );
     assert!(cli_manifest.contains(
-        "arm-live-egress = [\n    \"dep:mev-trader-submit\",\n    \"mev-trader-submit/arm-live-egress\",\n]"
+        "arm-live-egress = [\n    \"arm-sim\",\n    \"dep:mev-trader-submit\",\n    \"mev-trader-submit/arm-live-egress\",\n]"
     ));
     let node_manifest =
         std::fs::read_to_string(manifest_dir().join("../../../bin/node/Cargo.toml"))
             .expect("node manifest");
-    assert!(node_manifest.contains("arm-live-egress = [ \"base-execution-cli/arm-live-egress\" ]"));
+    assert!(node_manifest.contains("arm-sim = [ \"base-execution-cli/arm-sim\" ]"));
+    assert!(
+        node_manifest
+            .contains("arm-live-egress = [ \"arm-sim\", \"base-execution-cli/arm-live-egress\" ]")
+    );
 }
 
 #[test]

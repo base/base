@@ -13,6 +13,8 @@ mod economics;
 pub mod fee;
 #[cfg(feature = "tx-authority")]
 pub use economics::PriorityEconomicsAuthority;
+#[cfg(feature = "tx-authority")]
+pub use economics::PriorityEconomicsReceipt;
 #[cfg(feature = "phase-b")]
 pub mod signer;
 
@@ -40,9 +42,16 @@ mod arm;
 #[cfg(all(feature = "arm-live-egress", not(test)))]
 pub use arm::ProdBackend;
 #[cfg(feature = "t4e-handoff")]
+pub use arm::UnavailableSimulationHandoff;
+#[cfg(feature = "t4e-handoff")]
 pub use arm::{CheckedCandidate, CodeHashProvider, ProviderError};
 #[cfg(feature = "arm")]
 pub use arm::{RuntimeBackend, SimBackend};
+#[cfg(feature = "arm")]
+pub use arm::{
+    SimulationEntrypointStatus, SimulationEntrypointUnavailable, SimulationLedgerClosure,
+    SimulationLedgerEpoch, SimulationLedgerInvalid, SimulationStoreOperation,
+};
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
 pub use arm::{SuppressionRollbackError, provision_suppression_anchor};
 

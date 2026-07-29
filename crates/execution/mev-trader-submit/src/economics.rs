@@ -96,9 +96,9 @@ pub(crate) enum PriorityFilterError {
     ArithmeticOverflow,
 }
 
-/// Checked economics for one candidate.
+/// Immutable checked economics receipt retained with an admitted candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PriorityFilterDecision {
+pub struct PriorityEconomicsReceipt {
     /// Gross output-minus-input before the executor's mandatory kickback, in wei.
     pub gross_profit_wei: U256,
     /// On-chain `ceil(75% * gross)` kickback, in wei.
@@ -115,11 +115,19 @@ pub(crate) struct PriorityFilterDecision {
     pub total_cost_wei: U256,
     /// Positive EV in wei, present only when the candidate is admitted.
     pub expected_ev_wei: Option<U256>,
+    /// Block at which the economics authority was captured.
+    pub authority_block: u64,
+    /// Same-block Base fee authority, in wei/gas.
+    pub base_fee_per_gas_wei: U256,
+    /// Victim priority fee pinned onto the backrun, in wei/gas.
+    pub victim_priority_fee_per_gas_wei: U256,
+    /// Victim maximum fee, in wei/gas.
+    pub victim_max_fee_per_gas_wei: U256,
 }
 
-impl PriorityFilterDecision {
+impl PriorityEconomicsReceipt {
     /// Only a strictly positive checked EV is admissible.
-    pub(crate) const fn admitted(&self) -> bool {
+    pub const fn admitted(&self) -> bool {
         self.expected_ev_wei.is_some()
     }
 }
@@ -143,7 +151,7 @@ fn ceil_kickback(gross: U256) -> Result<U256, PriorityFilterError> {
 /// Evaluates Blink pinned-priority economics with checked integer arithmetic.
 pub(crate) fn evaluate(
     input: PriorityFilterInput,
-) -> Result<PriorityFilterDecision, PriorityFilterError> {
+) -> Result<PriorityEconomicsReceipt, PriorityFilterError> {
     let gross = input.gross_profit_wei.ok_or(PriorityFilterError::MissingGrossProfit)?;
     let authority = input.authority.ok_or(PriorityFilterError::MissingEconomicsAuthority)?;
     let gas = authority.execution_gas_estimate();
@@ -190,7 +198,7 @@ pub(crate) fn evaluate(
         l2_execution_fee.checked_add(l1_data_fee).ok_or(PriorityFilterError::ArithmeticOverflow)?;
     let expected_ev = retained.checked_sub(total_cost).filter(|ev| !ev.is_zero());
 
-    Ok(PriorityFilterDecision {
+    Ok(PriorityEconomicsReceipt {
         gross_profit_wei: gross,
         kickback_wei: kickback,
         retained_value_wei: retained,
@@ -199,6 +207,10 @@ pub(crate) fn evaluate(
         l1_data_fee_wei: l1_data_fee,
         total_cost_wei: total_cost,
         expected_ev_wei: expected_ev,
+        authority_block: authority.block(),
+        base_fee_per_gas_wei: base_fee,
+        victim_priority_fee_per_gas_wei: priority,
+        victim_max_fee_per_gas_wei: max_fee,
     })
 }
 

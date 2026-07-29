@@ -5,7 +5,7 @@
 //! [`ProdBackend::execute`] remains the sole real network call site and compiles
 //! only under `arm-live-egress` + `not(test)`.
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{B256, U256, keccak256};
 
 use super::proofs::ProviderError;
 use super::request::RequestSpec;
@@ -37,12 +37,35 @@ pub enum SimulationAttempt {
     AttributionRetry,
 }
 
+/// Stable join key for one candidate and signed simulation attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SimulationCorrelationKey(B256);
+
+impl SimulationCorrelationKey {
+    /// Returns the domain-separated key bytes.
+    pub const fn value(self) -> B256 {
+        self.0
+    }
+}
+
 /// Inert requests produced by the production simulation backend.
 #[derive(Debug)]
 pub struct SimulationRecord {
     attempt: SimulationAttempt,
     requests: Vec<RequestSpec>,
     inclusion_receipt_hash: B256,
+    correlation_key: SimulationCorrelationKey,
+    campaign_id: base_mev_trader::CampaignId,
+    victim_tx_hash: B256,
+    plan_digest: B256,
+    executor: alloy_primitives::Address,
+    economics: Option<crate::PriorityEconomicsReceipt>,
+    simulation_evidence: Option<super::witness::SimulationIdentityEvidence>,
+    deployment_code_hash: B256,
+    deployment_digest: B256,
+    binary_digest: B256,
+    r9_store_identity: B256,
+    proof_valid_until_block: u64,
 }
 
 impl SimulationRecord {
@@ -60,6 +83,109 @@ impl SimulationRecord {
     pub const fn inclusion_receipt_hash(&self) -> B256 {
         self.inclusion_receipt_hash
     }
+
+    /// Stable key joining this attempt to its candidate and signed transaction.
+    pub const fn correlation_key(&self) -> SimulationCorrelationKey {
+        self.correlation_key
+    }
+
+    /// Campaign that produced this attempt.
+    pub const fn campaign_id(&self) -> base_mev_trader::CampaignId {
+        self.campaign_id
+    }
+
+    /// Victim transaction hash bound by the candidate.
+    pub const fn victim_tx_hash(&self) -> B256 {
+        self.victim_tx_hash
+    }
+
+    pub(crate) const fn executor(&self) -> alloy_primitives::Address {
+        self.executor
+    }
+
+    /// Plan digest bound by the candidate.
+    pub const fn plan_digest(&self) -> B256 {
+        self.plan_digest
+    }
+
+    /// Checked economics from the sole positive-EV evaluator.
+    pub const fn economics(&self) -> Option<crate::PriorityEconomicsReceipt> {
+        self.economics
+    }
+
+    pub(crate) const fn simulation_evidence(
+        &self,
+    ) -> Option<super::witness::SimulationIdentityEvidence> {
+        self.simulation_evidence
+    }
+
+    pub(crate) const fn deployment_code_hash(&self) -> B256 {
+        self.deployment_code_hash
+    }
+
+    pub(crate) const fn deployment_digest(&self) -> B256 {
+        self.deployment_digest
+    }
+
+    pub(crate) const fn binary_digest(&self) -> B256 {
+        self.binary_digest
+    }
+
+    pub(crate) const fn r9_store_identity(&self) -> B256 {
+        self.r9_store_identity
+    }
+
+    pub(crate) const fn proof_valid_until_block(&self) -> u64 {
+        self.proof_valid_until_block
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_store_test(economics: crate::PriorityEconomicsReceipt) -> Self {
+        let campaign_id = base_mev_trader::CampaignId::new([2_u8; 32]);
+        let victim_tx_hash = B256::repeat_byte(3);
+        let plan_digest = B256::repeat_byte(4);
+        let inclusion_receipt_hash = B256::repeat_byte(5);
+        let id = ValidatedExecutionIdentity::for_simulation_store_test(
+            campaign_id,
+            victim_tx_hash,
+            plan_digest,
+            economics,
+        );
+        Self {
+            attempt: SimulationAttempt::Initial,
+            requests: vec![
+                RequestSpec::for_simulation_store_test(super::request::Channel::Inclusion),
+                RequestSpec::for_simulation_store_test(super::request::Channel::Attribution),
+            ],
+            inclusion_receipt_hash,
+            correlation_key: simulation_correlation(&id, inclusion_receipt_hash),
+            campaign_id,
+            victim_tx_hash,
+            plan_digest,
+            executor: alloy_primitives::Address::ZERO,
+            economics: Some(economics),
+            simulation_evidence: id.simulation_evidence(),
+            deployment_code_hash: B256::repeat_byte(14),
+            deployment_digest: B256::repeat_byte(15),
+            binary_digest: B256::repeat_byte(16),
+            r9_store_identity: B256::repeat_byte(17),
+            proof_valid_until_block: economics.authority_block + 1,
+        }
+    }
+}
+
+fn simulation_correlation(
+    id: &ValidatedExecutionIdentity,
+    signed_tx_hash: B256,
+) -> SimulationCorrelationKey {
+    const DOMAIN: &[u8] = b"base-mev/simulation-correlation/v1";
+    let mut bytes = Vec::with_capacity(DOMAIN.len() + 32 * 4);
+    bytes.extend_from_slice(DOMAIN);
+    bytes.extend_from_slice(id.campaign_id().as_bytes());
+    bytes.extend_from_slice(id.victim().as_slice());
+    bytes.extend_from_slice(id.plan_digest().as_slice());
+    bytes.extend_from_slice(signed_tx_hash.as_slice());
+    SimulationCorrelationKey(keccak256(bytes))
 }
 
 /// A closed live lock.
@@ -216,18 +342,46 @@ impl RawBackend for SimBackend {
             return SubmitOutcome::NoEgress;
         }
         let record = match egress.into_plan() {
-            EgressPlan::Initial { inclusion, attribution, expected_inclusion_hash, .. } => {
-                SimulationRecord {
-                    attempt: SimulationAttempt::Initial,
-                    requests: vec![inclusion, attribution],
-                    inclusion_receipt_hash: expected_inclusion_hash,
-                }
-            }
-            EgressPlan::AttributionOnly { attribution, inclusion_receipt_hash, .. } => {
+            EgressPlan::Initial {
+                inclusion,
+                attribution,
+                bindings,
+                id,
+                expected_inclusion_hash,
+            } => SimulationRecord {
+                attempt: SimulationAttempt::Initial,
+                requests: vec![inclusion, attribution],
+                inclusion_receipt_hash: expected_inclusion_hash,
+                correlation_key: simulation_correlation(&id, expected_inclusion_hash),
+                campaign_id: id.campaign_id(),
+                victim_tx_hash: id.victim(),
+                plan_digest: id.plan_digest(),
+                executor: id.executor(),
+                economics: id.economics(),
+                simulation_evidence: id.simulation_evidence(),
+                deployment_code_hash: bindings.deployment_code_hash(),
+                deployment_digest: bindings.deployment_digest(),
+                binary_digest: bindings.binary_digest(),
+                r9_store_identity: B256::from(*bindings.r9_store_identity().as_bytes()),
+                proof_valid_until_block: bindings.valid_until_block(),
+            },
+            EgressPlan::AttributionOnly { attribution, bindings, id, inclusion_receipt_hash } => {
                 SimulationRecord {
                     attempt: SimulationAttempt::AttributionRetry,
                     requests: vec![attribution],
                     inclusion_receipt_hash,
+                    correlation_key: simulation_correlation(&id, inclusion_receipt_hash),
+                    campaign_id: id.campaign_id(),
+                    victim_tx_hash: id.victim(),
+                    plan_digest: id.plan_digest(),
+                    executor: id.executor(),
+                    economics: id.economics(),
+                    simulation_evidence: id.simulation_evidence(),
+                    deployment_code_hash: bindings.deployment_code_hash(),
+                    deployment_digest: bindings.deployment_digest(),
+                    binary_digest: bindings.binary_digest(),
+                    r9_store_identity: B256::from(*bindings.r9_store_identity().as_bytes()),
+                    proof_valid_until_block: bindings.valid_until_block(),
                 }
             }
         };

@@ -32,9 +32,27 @@ use super::proofs::{
 use super::request::{self, RequestSpec};
 use super::suppression::{SuppressionEpochStore, SuppressionFileStore, SuppressionRollbackError};
 use super::{ArmError, ArmedFailSink};
+use crate::PriorityEconomicsReceipt;
 
 /// Base chain id (compile-pinned).
 pub const CHAIN_ID_BASE: u64 = 8453;
+
+/// Bounded T4e shape evidence retained for durable simulation projection.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SimulationIdentityEvidence {
+    pub(crate) parent_hash: B256,
+    pub(crate) block_number: u64,
+    pub(crate) sender: Address,
+    pub(crate) nonce: u64,
+    pub(crate) chain_id: u64,
+    pub(crate) gas_limit: u64,
+    pub(crate) max_fee_per_gas: u128,
+    pub(crate) max_priority_fee_per_gas: u128,
+    pub(crate) valid_until_block: u64,
+    pub(crate) hop_protocols: [u8; 2],
+    pub(crate) hop_adapters: [Address; 2],
+    pub(crate) hop_runtime_hashes: [B256; 2],
+}
 
 /// The identity a candidate is bound to, derived from the validated tx + campaign.
 /// Private: constructed only by [`CheckedCandidate::new`].
@@ -45,6 +63,8 @@ pub struct ValidatedExecutionIdentity {
     plan_digest: B256,
     amount: U256,
     executor: Address,
+    economics: Option<PriorityEconomicsReceipt>,
+    simulation: Option<SimulationIdentityEvidence>,
 }
 
 impl ValidatedExecutionIdentity {
@@ -68,6 +88,46 @@ impl ValidatedExecutionIdentity {
     pub const fn plan_digest(&self) -> B256 {
         self.plan_digest
     }
+
+    /// Checked economics retained from the sole positive-EV evaluator.
+    pub const fn economics(&self) -> Option<PriorityEconomicsReceipt> {
+        self.economics
+    }
+
+    /// Bounded T4e transaction and route evidence.
+    pub(crate) const fn simulation_evidence(&self) -> Option<SimulationIdentityEvidence> {
+        self.simulation
+    }
+    #[cfg(test)]
+    pub(crate) fn for_simulation_store_test(
+        campaign_id: CampaignId,
+        victim: B256,
+        plan_digest: B256,
+        economics: PriorityEconomicsReceipt,
+    ) -> Self {
+        Self {
+            campaign_id,
+            victim,
+            plan_digest,
+            amount: U256::from_limbs([1, 0, 0, 0]),
+            executor: Address::ZERO,
+            economics: Some(economics),
+            simulation: Some(SimulationIdentityEvidence {
+                parent_hash: B256::repeat_byte(7),
+                block_number: economics.authority_block,
+                sender: Address::repeat_byte(8),
+                nonce: 9,
+                chain_id: CHAIN_ID_BASE,
+                gas_limit: 100_000,
+                max_fee_per_gas: 300,
+                max_priority_fee_per_gas: 100,
+                valid_until_block: economics.authority_block + 1,
+                hop_protocols: [0, 3],
+                hop_adapters: [Address::repeat_byte(10), Address::repeat_byte(11)],
+                hop_runtime_hashes: [B256::repeat_byte(12), B256::repeat_byte(13)],
+            }),
+        }
+    }
 }
 
 /// The proof-derived bindings captured at issue time and re-checked for equality
@@ -83,6 +143,28 @@ pub struct ProofBindings {
     binary_digest: B256,
     r9_store_identity: StoreIdentity,
     valid_until_block: u64,
+}
+
+impl ProofBindings {
+    pub(crate) const fn deployment_code_hash(&self) -> B256 {
+        self.deployment_code_hash
+    }
+
+    pub(crate) const fn deployment_digest(&self) -> B256 {
+        self.deployment_digest
+    }
+
+    pub(crate) const fn binary_digest(&self) -> B256 {
+        self.binary_digest
+    }
+
+    pub(crate) const fn r9_store_identity(&self) -> StoreIdentity {
+        self.r9_store_identity
+    }
+
+    pub(crate) const fn valid_until_block(&self) -> u64 {
+        self.valid_until_block
+    }
 }
 
 #[derive(Debug)]
@@ -128,6 +210,14 @@ impl CheckedTx {
         }
     }
 
+    fn economics(&self) -> Option<PriorityEconomicsReceipt> {
+        match self {
+            Self::Legacy(_) => None,
+            #[cfg(feature = "t4e-handoff")]
+            Self::Authority { tx, access: _ } => Some(tx.economics()),
+        }
+    }
+
     fn valid_until_block(&self) -> u64 {
         match self {
             Self::Legacy(tx) => tx.valid_until_block(),
@@ -163,6 +253,8 @@ impl CheckedCandidate {
             plan_digest: vtx.plan_digest(),
             amount: vtx.amount(),
             executor: vtx.executor(),
+            economics: None,
+            simulation: None,
         };
         Self { vtx: CheckedTx::Legacy(vtx), id }
     }
@@ -174,6 +266,22 @@ impl CheckedCandidate {
         campaign_id: CampaignId,
         access: BridgeConversionSeal,
     ) -> Self {
+        let observation = vtx.observation();
+        let frame = observation.frame();
+        let simulation = Some(SimulationIdentityEvidence {
+            parent_hash: frame.parent_hash,
+            block_number: frame.block_number,
+            sender: observation.sender(),
+            nonce: observation.nonce(),
+            chain_id: observation.chain_id(),
+            gas_limit: observation.gas_limit(),
+            max_fee_per_gas: observation.max_fee_per_gas(),
+            max_priority_fee_per_gas: observation.max_priority_fee_per_gas(),
+            valid_until_block: observation.valid_until_block(),
+            hop_protocols: observation.hop_protocols().map(|protocol| protocol as u8),
+            hop_adapters: observation.hop_adapters(),
+            hop_runtime_hashes: observation.hop_runtime_hashes(),
+        });
         let source = CheckedTx::Authority { tx: vtx, access };
         let id = ValidatedExecutionIdentity {
             campaign_id,
@@ -181,6 +289,8 @@ impl CheckedCandidate {
             plan_digest: source.plan_digest(),
             amount: source.amount(),
             executor: source.executor(),
+            economics: source.economics(),
+            simulation,
         };
         Self { vtx: source, id }
     }

@@ -49,6 +49,15 @@ impl RequestSpec {
     pub fn body(&self) -> &[u8] {
         &self.body
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_simulation_store_test(channel: Channel) -> Self {
+        let method = match channel {
+            Channel::Inclusion => "eth_sendRawTransaction",
+            Channel::Attribution => "eth_sendBundle",
+        };
+        Self { channel, endpoint: BASE_NODE_RPC, method, body: Vec::new() }
+    }
 }
 
 /// Build the inclusion-channel `eth_sendRawTransaction` request for the backrun.

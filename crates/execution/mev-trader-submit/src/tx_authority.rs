@@ -17,6 +17,8 @@ use base_mev_trader::{
     PreparedPoolState, SnapshotHandle, WETH,
 };
 
+#[cfg(feature = "t4e-handoff")]
+use crate::PriorityEconomicsReceipt;
 use crate::{
     PriorityEconomicsAuthority,
     calldata::AtomicCalldataEncoder,
@@ -469,6 +471,8 @@ pub struct ValidatedUnsignedAtomicTx {
     unsigned_tx: TxEip1559,
     #[cfg(feature = "t4e-handoff")]
     amount: U256,
+    #[cfg(feature = "t4e-handoff")]
+    economics: PriorityEconomicsReceipt,
     observation: UnsignedTxShapeObservation,
     execution: InstalledExecutionIdentity,
     observation_guard: MeasurementNonceGuard,
@@ -519,6 +523,11 @@ impl ValidatedUnsignedAtomicTx {
     #[cfg(feature = "t4e-handoff")]
     pub(crate) const fn amount(&self) -> U256 {
         self.amount
+    }
+
+    #[cfg(feature = "t4e-handoff")]
+    pub(crate) const fn economics(&self) -> PriorityEconomicsReceipt {
+        self.economics
     }
 }
 
@@ -692,6 +701,8 @@ impl TxAuthorityAssembler {
             unsigned_tx,
             #[cfg(feature = "t4e-handoff")]
             amount: plan.amount_in,
+            #[cfg(feature = "t4e-handoff")]
+            economics: decision,
             observation,
             execution,
             observation_guard,
