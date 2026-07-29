@@ -10,7 +10,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use syn::ext::IdentExt;
+use syn::{ext::IdentExt, visit::Visit};
 
 /// The exact production files under `src/arm/`. A NEW arm file must be added here
 /// (and re-reviewed) before it can ship (b7, fail-closed).
@@ -193,13 +193,16 @@ fn arm_source_is_exactly_the_declared_set() {
 
 // -- b9: the crate's public `arm` surface is EXACTLY the curated allowlist ------
 
-/// The complete root API. The T4e feature adds only the unsigned `CheckedCandidate`
-/// handoff and its committed-head provider contract; signer, send, backend, runtime,
-/// concrete provider, and proof APIs remain private.
-const PUBLIC_API_ALLOWLIST: [&str; 5] = [
+/// The complete root API. T4e adds the unsigned handoff/provider contract; S1-b
+/// adds only the sealed runtime selection and its two reviewed backends. Signing,
+/// raw permits, concrete freshness providers, and proof APIs remain private.
+const PUBLIC_API_ALLOWLIST: [&str; 8] = [
     "CheckedCandidate",
     "CodeHashProvider",
+    "ProdBackend",
     "ProviderError",
+    "RuntimeBackend",
+    "SimBackend",
     "SuppressionRollbackError",
     "provision_suppression_anchor",
 ];
@@ -1172,7 +1175,7 @@ fn t4d_arm_surface_has_only_the_reviewed_unsigned_candidate_handoff() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(arm_exports.len(), 2, "arm root surface must be two reviewed facades");
+    assert_eq!(arm_exports.len(), 4, "arm root surface must be four reviewed facades");
     let gates = arm_exports
         .iter()
         .map(|item| {
@@ -1189,6 +1192,8 @@ fn t4d_arm_surface_has_only_the_reviewed_unsigned_candidate_handoff() {
         BTreeSet::from([
             "all (feature = \"arm\" , feature = \"arm-provisioning\")".to_owned(),
             "feature = \"t4e-handoff\"".to_owned(),
+            "feature = \"arm\"".to_owned(),
+            "all (feature = \"arm-live-egress\" , not (test))".to_owned(),
         ]),
         "arm facades escaped their exact feature gates"
     );
@@ -2859,20 +2864,46 @@ fn reqwest_is_confined_to_gated_prodbackend() {
     // `RawBackend` is SEALED: it has a private-supertrait bound, so no external
     // crate can implement another egress backend.
     assert!(transport.contains("pub trait RawBackend: sealed::Sealed"), "RawBackend is not sealed");
-    // The ONLY `impl RawBackend for` blocks are ProdBackend (gated) and FakeBackend
-    // (test) — no third egress backend.
-    let backends: BTreeSet<&str> = transport
+    // The ONLY production `impl RawBackend for` blocks are the production simulator
+    // and the feature-gated live backend. Keep counts so duplicate impls cannot hide.
+    let mut backends: Vec<&str> = transport
         .match_indices("impl RawBackend for ")
         .map(|(index, _)| {
             let rest = &transport[index + "impl RawBackend for ".len()..];
             rest.split_whitespace().next().unwrap_or("")
         })
         .collect();
+    backends.sort_unstable();
     assert_eq!(
         backends,
-        BTreeSet::from(["ProdBackend", "FakeBackend"]),
+        ["ProdBackend", "SimBackend"],
         "unexpected RawBackend implementor(s): {backends:?}"
     );
+
+    assert!(
+        transport.contains("#[derive(Debug, Default)]\npub struct SimBackend;"),
+        "production SimBackend missing or test-gated"
+    );
+    let sim_impl = transport
+        .split_once("impl RawBackend for SimBackend")
+        .and_then(|(_, rest)| rest.split_once("#[derive(Debug)]\npub struct RuntimeBackend<'a>"))
+        .map(|(body, _)| body)
+        .expect("SimBackend impl");
+    for forbidden in [
+        "reqwest",
+        ".send()",
+        "std::net",
+        "std::fs",
+        "std::env",
+        "println!",
+        "eprintln!",
+        "SubmitOutcome::LiveComplete",
+    ] {
+        assert!(!sim_impl.contains(forbidden), "simulation backend contains `{forbidden}`");
+    }
+    assert!(sim_impl.contains("SubmitOutcome::Simulated(record)"));
+    assert!(!transport.contains("\n    Complete,"), "ambiguous SubmitOutcome::Complete restored");
+    assert!(transport.contains("\n    LiveComplete,"));
 }
 
 // -- C1: gate-widening / arbitrary-load seams are `#[cfg(test)]` ---------------
@@ -2921,6 +2952,162 @@ fn gate_and_custody_seams_are_test_only() {
     let custody = arm_raw("custody.rs");
     // Arbitrary-path/address key + credential loaders must be test-only.
     assert_seam_cfg_test(&custody, "load_from");
+}
+
+#[test]
+fn runtime_switch_and_funds_lock_sources_are_pinned() {
+    let transport = arm_raw("transport.rs");
+    assert!(transport.contains("#[derive(Debug)]\npub struct RuntimeBackend<'a>"));
+    assert!(!transport.contains("pub struct RuntimeBackend<'a> {\n    pub"));
+    assert!(transport.contains(
+        "#[cfg(all(feature = \"arm-live-egress\", not(test)))]\n    pub fn from_explicit_flag"
+    ));
+    assert!(transport.contains("selection: LiveSelectionProof { private: () }"));
+    let live_snapshot = transport
+        .split_once("fn from_live_selection")
+        .and_then(|(_, rest)| rest.split_once("fn evaluate_live_locks"))
+        .map(|(body, _)| body)
+        .expect("live snapshot constructor");
+    assert!(live_snapshot.contains("explicit_live: true"));
+    assert!(live_snapshot.contains("signed_receipt_fresh: freshness.signed_receipt_fresh()"));
+    assert!(live_snapshot.contains("kill_clear: freshness.kill_clear()"));
+    assert!(!live_snapshot.contains("signed_receipt_fresh: true"));
+    assert!(!live_snapshot.contains("kill_clear: true"));
+
+    let witness = arm_raw("witness.rs");
+    assert!(witness.contains("pub struct FreshnessProof {\n    signed_receipt: SignedReceiptFresh,\n    kill: KillClear,\n}"));
+    assert!(witness.contains(") -> Option<FreshnessProof> {"));
+    assert_eq!(
+        witness
+            .matches("Some(FreshnessProof {\n            signed_receipt: SignedReceiptFresh")
+            .count(),
+        1
+    );
+    assert!(!witness.contains("impl Clone for FreshnessProof"));
+    assert!(!witness.contains("impl Copy for FreshnessProof"));
+
+    let send_gated = transport
+        .split_once("pub fn send_gated")
+        .and_then(|(_, rest)| rest.split_once("// -- pure response mapping"))
+        .map(|(body, _)| body)
+        .expect("send_gated body");
+    assert_eq!(
+        send_gated.matches("let Some(freshness) = fresh.revalidate").count(),
+        2,
+        "both initial and retry branches must mint freshness proof"
+    );
+    assert!(!send_gated.contains("live_requested"));
+    assert_eq!(
+        transport
+            .matches("native_balance_at_latest_committed(super::custody::FUNDED_WALLET)")
+            .count(),
+        1
+    );
+    assert_eq!(transport.matches("fresh.armed.hot_wallet_cap_wei()").count(), 1);
+    assert!(transport.contains(".ok_or(LiveLockClosed::FundedAccountAbsent)?"));
+    assert!(transport.contains(".map_err(|_| LiveLockClosed::FundsUnavailable)?"));
+
+    #[derive(Default)]
+    struct LivePermitConstructions(usize);
+    impl<'ast> Visit<'ast> for LivePermitConstructions {
+        fn visit_expr_struct(&mut self, expression: &'ast syn::ExprStruct) {
+            if expression
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "LiveEgressPermit")
+            {
+                self.0 += 1;
+            }
+            syn::visit::visit_expr_struct(self, expression);
+        }
+    }
+    let parsed_transport = parse(&transport);
+    let mut constructions = LivePermitConstructions::default();
+    constructions.visit_file(&parsed_transport);
+    assert_eq!(constructions.0, 1, "LiveEgressPermit must have one construction expression");
+    assert!(
+        transport.contains("#[derive(Debug)]\npub struct LiveEgressPermit {\n    private: (),\n}")
+    );
+    assert!(!transport.contains("impl Clone for LiveEgressPermit"));
+    assert!(!transport.contains("impl Copy for LiveEgressPermit"));
+
+    #[derive(Default)]
+    struct SharedSequenceCalls(usize);
+    impl<'ast> Visit<'ast> for SharedSequenceCalls {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(path) = call.func.as_ref()
+                && path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| segment.ident == "execute_live_sequence")
+            {
+                self.0 += 1;
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+    }
+    let helper = parsed_transport
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(function) if function.sig.ident == "execute_live_sequence" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("shared live sequence");
+    assert!(matches!(helper.vis, syn::Visibility::Inherited));
+    assert!(helper.attrs.iter().all(|attribute| !attribute.path().is_ident("cfg")));
+    let mut sequence_calls = SharedSequenceCalls::default();
+    sequence_calls.visit_file(&parsed_transport);
+    assert_eq!(sequence_calls.0, 1, "production must have one shared-sequence call");
+
+    let raw_transport =
+        std::fs::read_to_string(arm_dir().join("transport.rs")).expect("raw transport source");
+    let parsed_full_transport = parse(&raw_transport);
+    let mut all_sequence_calls = SharedSequenceCalls::default();
+    all_sequence_calls.visit_file(&parsed_full_transport);
+    assert_eq!(
+        all_sequence_calls.0, 7,
+        "one production plus six test calls must share the sole sequence"
+    );
+    let production_backend = transport
+        .split_once("impl RawBackend for ProdBackend")
+        .and_then(|(_, rest)| rest.split_once("// -- shared live execution sequence"))
+        .map(|(body, _)| body)
+        .expect("ProdBackend execute body");
+    assert_eq!(production_backend.matches("execute_live_sequence(").count(), 1);
+    assert!(!production_backend.contains("match egress.into_plan()"));
+
+    let proofs = arm_raw("proofs.rs");
+    assert!(proofs.contains(
+        "fn native_balance_at_latest_committed(\n        &self,\n        address: Address,\n    ) -> Result<Option<alloy_primitives::U256>, ProviderError>;"
+    ));
+    let providers = arm_raw("providers.rs");
+    assert!(providers.contains(
+        "fn native_balance_at_latest_committed(\n        &self,\n        address: Address,\n    ) -> Result<Option<alloy_primitives::U256>, ProviderError>;"
+    ));
+
+    let cli_dir = manifest_dir().join("../cli");
+    let cli = std::fs::read_to_string(cli_dir.join("src/standard_node.rs")).expect("CLI source");
+    let flag_index = cli.find("long = \"mev-live-egress\"").expect("live flag");
+    assert_eq!(cli.matches("long = \"mev-live-egress\"").count(), 1);
+    let flag_block = &cli[flag_index.saturating_sub(160)..(flag_index + 240).min(cli.len())];
+    assert!(flag_block.contains("#[cfg(feature = \"arm-live-egress\")]"));
+    assert!(flag_block.contains("default_value_t = false"));
+    for forbidden in ["env =", "MEV_LIVE_EGRESS", "default_value_t = true"] {
+        assert!(!flag_block.contains(forbidden), "live flag gained forbidden source `{forbidden}`");
+    }
+    let cli_manifest = std::fs::read_to_string(cli_dir.join("Cargo.toml")).expect("CLI manifest");
+    assert!(cli_manifest.contains(
+        "arm-live-egress = [\n    \"dep:mev-trader-submit\",\n    \"mev-trader-submit/arm-live-egress\",\n]"
+    ));
+    let node_manifest =
+        std::fs::read_to_string(manifest_dir().join("../../../bin/node/Cargo.toml"))
+            .expect("node manifest");
+    assert!(node_manifest.contains("arm-live-egress = [ \"base-execution-cli/arm-live-egress\" ]"));
 }
 
 #[test]

@@ -35,6 +35,14 @@ pub trait CommittedStateAuthority {
 
     /// Returns the latest committed canonical block number.
     fn latest_committed_block(&self) -> Result<u64, ProviderError>;
+
+    /// Returns the native balance when the account is present at the latest committed head.
+    ///
+    /// Account absence is distinct from a present account with zero balance.
+    fn native_balance_at_latest_committed(
+        &self,
+        address: Address,
+    ) -> Result<Option<alloy_primitives::U256>, ProviderError>;
 }
 
 /// Production adapter from the node's committed-state authority to arm code-hash freshness.
@@ -68,6 +76,13 @@ impl<A: CommittedStateAuthority> CodeHashProvider for ProductionCodeHashProvider
 
     fn current_block(&self) -> Result<u64, ProviderError> {
         self.authority.latest_committed_block()
+    }
+
+    fn native_balance_at_latest_committed(
+        &self,
+        address: Address,
+    ) -> Result<Option<alloy_primitives::U256>, ProviderError> {
+        self.authority.native_balance_at_latest_committed(address)
     }
 }
 
@@ -331,6 +346,13 @@ mod tests {
         fn latest_committed_block(&self) -> Result<u64, ProviderError> {
             self.block.clone()
         }
+
+        fn native_balance_at_latest_committed(
+            &self,
+            _address: Address,
+        ) -> Result<Option<U256>, ProviderError> {
+            Ok(Some(U256::ZERO))
+        }
     }
 
     #[derive(Debug)]
@@ -347,6 +369,35 @@ mod tests {
         fn latest_committed_block(&self) -> Result<u64, ProviderError> {
             self.reads.set(self.reads.get() + 1);
             self.result.clone()
+        }
+
+        fn native_balance_at_latest_committed(
+            &self,
+            _address: Address,
+        ) -> Result<Option<U256>, ProviderError> {
+            Err(ProviderError::Invalid("balance read not expected"))
+        }
+    }
+
+    #[derive(Debug)]
+    struct BalanceAuthority {
+        balance: Result<Option<U256>, ProviderError>,
+    }
+
+    impl CommittedStateAuthority for BalanceAuthority {
+        fn code_at_latest_committed(&self, _address: Address) -> Result<Vec<u8>, ProviderError> {
+            Err(ProviderError::Invalid("code read not expected"))
+        }
+
+        fn latest_committed_block(&self) -> Result<u64, ProviderError> {
+            Err(ProviderError::Invalid("head read not expected"))
+        }
+
+        fn native_balance_at_latest_committed(
+            &self,
+            _address: Address,
+        ) -> Result<Option<U256>, ProviderError> {
+            self.balance.clone()
         }
     }
 
@@ -376,6 +427,29 @@ mod tests {
 
         assert_eq!(consume_current_block(&provider), Err(error));
         assert_eq!(provider.authority.reads.get(), 1);
+    }
+
+    #[test]
+    fn production_balance_preserves_present_zero_absence_and_error() {
+        let zero =
+            ProductionCodeHashProvider::install(BalanceAuthority { balance: Ok(Some(U256::ZERO)) });
+        assert_eq!(
+            zero.native_balance_at_latest_committed(crate::arm::custody::FUNDED_WALLET),
+            Ok(Some(U256::ZERO))
+        );
+
+        let absent = ProductionCodeHashProvider::install(BalanceAuthority { balance: Ok(None) });
+        assert_eq!(
+            absent.native_balance_at_latest_committed(crate::arm::custody::FUNDED_WALLET),
+            Ok(None)
+        );
+
+        let error = ProductionCodeHashProvider::install(BalanceAuthority {
+            balance: Err(ProviderError::Unavailable("canonical state".to_owned())),
+        });
+        assert!(
+            error.native_balance_at_latest_committed(crate::arm::custody::FUNDED_WALLET).is_err()
+        );
     }
 
     #[test]

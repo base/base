@@ -1035,6 +1035,13 @@ mod tests {
                 Ok(self.current_block.load(Ordering::Acquire))
             }
         }
+
+        fn native_balance_at_latest_committed(
+            &self,
+            _address: Address,
+        ) -> Result<Option<U256>, ProviderError> {
+            panic!("deadline revalidation must not read balance")
+        }
     }
 
     #[derive(Debug)]
