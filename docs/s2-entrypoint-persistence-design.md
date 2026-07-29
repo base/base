@@ -133,7 +133,7 @@ A simulated attempt has no observed inclusion outcome. The durable schema theref
 `SimulationDurableRecordV1` contains only bounded scalar/enum/fixed-byte data:
 
 - schema version and monotonically increasing ledger sequence;
-- prior-record hash and current canonical-record hash;
+- prior-record hash; the current canonical-record hash is retained in the durable `head` anchor;
 - correlation key;
 - simulation attempt kind (`Initial` or `AttributionRetry`);
 - campaign ID, victim hash, plan digest, parent/block identity, and signed transaction hash;
