@@ -76,6 +76,13 @@ pub struct ProofRequest {
     /// accept and ignore this field.
     #[cfg_attr(feature = "serde", serde(default))]
     pub image_hash: B256,
+    /// L2 block number whose timestamp determines the activated upgrade schedule.
+    ///
+    /// Subrange (challenger) proofs claim an earlier L2 block than the game's L2 block, but must
+    /// still pin the schedule to the game's L2 block. `None` means the schedule is pinned to
+    /// `claimed_l2_block_number` (the common case: full-game/proposer proofs).
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub schedule_l2_block_number: Option<u64>,
 }
 
 /// A proof request bundled with the witness data needed to fulfill it.

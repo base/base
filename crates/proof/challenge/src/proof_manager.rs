@@ -296,6 +296,9 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             proposer,
             intermediate_block_interval: candidate.intermediate_block_interval,
             l1_head_number,
+            // A subrange proof's claimed block may precede the game's L2 block, but the schedule
+            // must still pin to the game's L2 block.
+            schedule_l2_block_number: Some(candidate.info.l2_block_number),
             ..Default::default()
         })
     }
@@ -315,6 +318,9 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                 sequence_window: None,
                 l1_head: Some(candidate.l1_head),
                 intermediate_root_interval: Some(candidate.intermediate_block_interval),
+                // A subrange proof's claimed block may precede the game's L2 block, but the
+                // schedule must still pin to the game's L2 block.
+                schedule_l2_block_number: Some(candidate.info.l2_block_number),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },
@@ -645,6 +651,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: Some(B256::repeat_byte(0xAA)),
                 intermediate_root_interval: Some(10),
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },

@@ -140,6 +140,14 @@ pub enum OracleProviderError {
     /// The rollup config has a zero L2 block time.
     #[error("L2 block time must be non-zero")]
     InvalidL2BlockTime,
+    /// The schedule block precedes the claimed L2 block.
+    #[error("Schedule L2 block {schedule_block} precedes claimed L2 block {claim_block}")]
+    ScheduleBlockBeforeClaim {
+        /// The L2 block number used to pin the upgrade schedule.
+        schedule_block: u64,
+        /// The claimed L2 block number.
+        claim_block: u64,
+    },
     /// A Beryl-enabled chain is missing a trusted activation registry admin address.
     ///
     /// This error occurs when proof boot data resolves a rollup config with Beryl scheduled but no

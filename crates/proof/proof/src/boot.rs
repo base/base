@@ -79,6 +79,13 @@ pub const INTERMEDIATE_BLOCK_INTERVAL_KEY: U256 = uint!(9_U256);
 /// the enclave to reference the L1 head number without an extra lookup.
 pub const L1_HEAD_NUMBER_KEY: U256 = uint!(10_U256);
 
+/// The local key identifier for the L2 block number used to pin the upgrade schedule.
+///
+/// Optional — proposer (full-game) proofs omit this and the schedule pins to
+/// `claimed_l2_block_number`. Challenger subrange proofs set this to the game's L2 block number,
+/// since a subrange proof's claimed block may precede the game's L2 block.
+pub const L2_SCHEDULE_BLOCK_NUMBER_KEY: U256 = uint!(11_U256);
+
 /// The boot information for the client program.
 ///
 /// [`BootInfo`] contains all the essential parameters needed to initialize the fault proof
@@ -184,9 +191,9 @@ pub struct BootInfo {
     pub l1_head_number: u64,
     /// The locally derived schedule ID for this proof attempt.
     ///
-    /// Commits to the schedule prefix through the highest upgrade activated at the claimed L2
-    /// block's deterministic timestamp. Entries above that prefix are cleared from
-    /// [`Self::rollup_config`].
+    /// Commits to the schedule prefix through the highest upgrade activated at the schedule
+    /// block's deterministic L2 timestamp (see [`L2_SCHEDULE_BLOCK_NUMBER_KEY`]). Entries above
+    /// that prefix are cleared from [`Self::rollup_config`].
     #[serde(default)]
     pub schedule_id: B256,
 }
@@ -357,28 +364,61 @@ impl BootInfo {
             }
         };
 
+        // Load schedule L2 block number (optional — defaults to the claimed L2 block for
+        // proposer/full-game proofs). Challenger subrange proofs set this to the game's L2 block.
+        // 0 is the "unset" sentinel, matching how the host serves this key.
+        let schedule_l2_block_number = match oracle
+            .get(PreimageKey::new_local(L2_SCHEDULE_BLOCK_NUMBER_KEY.to()))
+            .await
+        {
+            Ok(bytes) => {
+                let value = u64::from_be_bytes(
+                    bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
+                );
+                if value == 0 { l2_claim_block } else { value }
+            }
+            Err(e) => {
+                debug!(
+                    target: "boot_loader",
+                    error = %e,
+                    "Schedule L2 block number preimage not found, defaulting to claimed L2 block number"
+                );
+                l2_claim_block
+            }
+        };
+
         // L2 block timestamps are fixed by the rollup genesis timestamp and block time. Deriving
-        // the cutoff from the claim keeps the proof journal aligned with the AggregateVerifier
-        // regardless of the L1 heads used for proof generation and game creation.
+        // the cutoff from the schedule block keeps the proof journal aligned with the
+        // AggregateVerifier regardless of the L1 heads used for proof generation and game
+        // creation.
         if rollup_config.block_time == 0 {
             return Err(OracleProviderError::InvalidL2BlockTime);
         }
-        let blocks_since_genesis = l2_claim_block
-            .checked_sub(rollup_config.genesis.l2.number)
-            .ok_or(OracleProviderError::L2ClaimBeforeGenesis {
+        if l2_claim_block < rollup_config.genesis.l2.number {
+            return Err(OracleProviderError::L2ClaimBeforeGenesis {
                 claim_block: l2_claim_block,
                 genesis_block: rollup_config.genesis.l2.number,
-            })?;
-        let l2_claim_timestamp = blocks_since_genesis
+            });
+        }
+        if schedule_l2_block_number < l2_claim_block {
+            return Err(OracleProviderError::ScheduleBlockBeforeClaim {
+                schedule_block: schedule_l2_block_number,
+                claim_block: l2_claim_block,
+            });
+        }
+        let blocks_since_genesis = schedule_l2_block_number - rollup_config.genesis.l2.number;
+        let l2_schedule_timestamp = blocks_since_genesis
             .checked_mul(rollup_config.block_time)
             .and_then(|offset| rollup_config.genesis.l2_time.checked_add(offset))
-            .ok_or(OracleProviderError::L2ClaimTimestampOverflow { claim_block: l2_claim_block })?;
+            .ok_or(OracleProviderError::L2ClaimTimestampOverflow {
+                claim_block: schedule_l2_block_number,
+            })?;
 
         // Entries above the activated prefix do not contribute to the game commitment and
         // therefore must not be able to influence derivation for this proof.
         let genesis_timestamp = rollup_config.genesis.l2_time;
         let schedule_id =
-            ScheduleId::pin(&mut rollup_config.upgrades, l2_claim_timestamp, genesis_timestamp);
+            ScheduleId::pin(&mut rollup_config.upgrades, l2_schedule_timestamp, genesis_timestamp);
 
         Ok(Self {
             l1_head,
@@ -546,6 +586,82 @@ mod tests {
             200,
         );
         assert_eq!(boot_info.schedule_id, expected);
+    }
+
+    #[tokio::test]
+    async fn pins_schedule_to_schedule_block_override() {
+        let chain_config = BaseChainConfig::MAINNET;
+        let mut rollup_config = chain_config.rollup_config();
+        rollup_config.genesis.l2.number = 50;
+        rollup_config.genesis.l2_time = 100;
+        rollup_config.block_time = 2;
+        rollup_config.upgrades =
+            UpgradeConfig { regolith_time: Some(0), canyon_time: Some(350), ..Default::default() };
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 100u64.to_be_bytes().to_vec());
+        oracle.insert(L2_SCHEDULE_BLOCK_NUMBER_KEY, 200u64.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, chain_config.chain_id.to_be_bytes().to_vec());
+        oracle.insert(
+            L2_ROLLUP_CONFIG_KEY,
+            serde_json::to_vec(&rollup_config).expect("rollup config should serialize"),
+        );
+
+        let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
+
+        assert_eq!(boot_info.rollup_config.upgrades.canyon_time, Some(350));
+        let expected = ScheduleId::next_link(ScheduleId::next_link(B256::ZERO, 0, 100), 1, 350);
+        assert_eq!(boot_info.schedule_id, expected);
+    }
+
+    #[tokio::test]
+    async fn treats_explicit_zero_schedule_block_as_unset() {
+        let chain_config = BaseChainConfig::MAINNET;
+        let rollup_config = chain_config.rollup_config();
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 100u64.to_be_bytes().to_vec());
+        oracle.insert(L2_SCHEDULE_BLOCK_NUMBER_KEY, 0u64.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, chain_config.chain_id.to_be_bytes().to_vec());
+        oracle.insert(
+            L2_ROLLUP_CONFIG_KEY,
+            serde_json::to_vec(&rollup_config).expect("rollup config should serialize"),
+        );
+
+        let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
+
+        assert_eq!(boot_info.claimed_l2_block_number, 100);
+    }
+
+    #[tokio::test]
+    async fn rejects_schedule_block_before_claim_block() {
+        let chain_config = BaseChainConfig::MAINNET;
+        let rollup_config = chain_config.rollup_config();
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 100u64.to_be_bytes().to_vec());
+        oracle.insert(L2_SCHEDULE_BLOCK_NUMBER_KEY, 99u64.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, chain_config.chain_id.to_be_bytes().to_vec());
+        oracle.insert(
+            L2_ROLLUP_CONFIG_KEY,
+            serde_json::to_vec(&rollup_config).expect("rollup config should serialize"),
+        );
+
+        let err =
+            BootInfo::load(&oracle).await.expect_err("schedule block before claim should fail");
+        assert!(matches!(
+            err,
+            OracleProviderError::ScheduleBlockBeforeClaim { schedule_block: 99, claim_block: 100 }
+        ));
     }
 
     #[tokio::test]
