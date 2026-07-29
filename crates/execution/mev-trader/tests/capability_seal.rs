@@ -246,6 +246,85 @@ fn metadata_has_exact_target_and_dependency_shape() {
 }
 
 #[test]
+fn every_workspace_binary_linking_trader_is_dependency_and_source_sealed() {
+    let metadata = metadata();
+    let packages = metadata["packages"].as_array().expect("packages");
+    let mut linked_binary_count = 0;
+
+    for package in packages {
+        let targets = package["targets"].as_array().expect("targets");
+        let binary_targets: Vec<_> = targets
+            .iter()
+            .filter(|target| {
+                target["kind"].as_array().expect("target kind").iter().any(|kind| kind == "bin")
+            })
+            .collect();
+        if binary_targets.is_empty() {
+            continue;
+        }
+
+        let dependencies = package["dependencies"].as_array().expect("dependencies");
+        let links_trader = dependencies.iter().any(|dependency| {
+            dependency["kind"].is_null() && dependency["name"].as_str() == Some("base-mev-trader")
+        });
+        if !links_trader {
+            continue;
+        }
+        linked_binary_count += 1;
+
+        let dependency_names: BTreeSet<_> = dependencies
+            .iter()
+            .map(|dependency| dependency["name"].as_str().expect("dependency name"))
+            .collect();
+        assert_eq!(
+            dependency_names,
+            BTreeSet::from(["base-mev-trader"]),
+            "binary package {} linking the trader must remain capability-minimal",
+            package["name"]
+        );
+        assert!(
+            dependencies.iter().all(|dependency| dependency["kind"].is_null()),
+            "binary package {} linking the trader cannot add dev or build dependencies",
+            package["name"]
+        );
+
+        for target in binary_targets {
+            let source_path = target["src_path"].as_str().expect("binary source path");
+            let source = fs::read_to_string(source_path).expect("binary source");
+            let found = identifiers(&source)
+                .unwrap_or_else(|error| panic!("malformed binary source {source_path}: {error}"));
+            for forbidden in FORBIDDEN_IDENTIFIERS {
+                assert!(
+                    !found.contains(forbidden),
+                    "forbidden identifier {forbidden} in trader-linked binary {source_path}"
+                );
+            }
+        }
+    }
+
+    assert!(linked_binary_count > 0, "seal must cover at least one trader-linked binary");
+}
+
+#[test]
+fn owner_kill_reset_script_is_interactive_and_consumes_binary_context() {
+    let script = fs::read_to_string(workspace_root().join("scripts/owner-kill-reset-sign.sh"))
+        .expect("owner kill-reset script");
+
+    for forbidden in [
+        "attest.key",
+        "--private-key",
+        "KEY_FILE",
+        "base-mev:p2-killreset:",
+        "0x581F5c5EC1d63BA08d6024E8b1cF88b83D57285b",
+    ] {
+        assert!(!script.contains(forbidden), "owner script contains forbidden {forbidden}");
+    }
+    assert_eq!(script.matches("--interactive").count(), 2);
+    assert_eq!(script.matches("--prepare").count(), 1);
+    assert!(script.contains("base-kill-reset-bin"));
+}
+
+#[test]
 fn lockfile_contains_exact_resolved_pins() {
     let lock = fs::read_to_string(workspace_root().join("Cargo.lock")).expect("Cargo.lock");
     let packages = lock.split("[[package]]").skip(1).collect::<Vec<_>>();

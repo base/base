@@ -15,23 +15,31 @@ if ! [[ "$EPOCH" =~ ^[0-9]+$ && "$NONCE" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
-KEY_FILE="$HOME/.config/mev-owner-attest/attest.key"
-EXPECT_ADDR="0x581F5c5EC1d63BA08d6024E8b1cF88b83D57285b"
-MSG="base-mev:p2-killreset:${EPOCH}:${NONCE}"
-
-KEY="$(tr -d '[:space:]' < "$KEY_FILE")"
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+RESET_CONTEXT="$(
+  cargo run --quiet --manifest-path "$ROOT_DIR/Cargo.toml" \
+    -p base-kill-reset-bin -- --prepare "$EPOCH" "$NONCE"
+)"
+mapfile -t RESET_LINES <<< "$RESET_CONTEXT"
+if [ "${#RESET_LINES[@]}" -ne 2 ]; then
+  echo "kill-reset binary returned an invalid preparation response" >&2
+  exit 1
+fi
+MSG="${RESET_LINES[0]}"
+EXPECT_ADDR="${RESET_LINES[1]}"
+echo "  message: $MSG"
 
 echo "== [1/3] derive and compare owner address =="
-GOT_ADDR="$(cast wallet address --private-key "$KEY")"
+GOT_ADDR="$(cast wallet address --interactive)"
 echo "  derived: $GOT_ADDR"
 echo "  expect : $EXPECT_ADDR"
-if [ "$GOT_ADDR" != "$EXPECT_ADDR" ]; then
+if [ "${GOT_ADDR,,}" != "${EXPECT_ADDR,,}" ]; then
   echo "  owner address mismatch; aborting" >&2
   exit 1
 fi
 
 echo "== [2/3] sign =="
-SIG="$(cast wallet sign --private-key "$KEY" "$MSG")"
+SIG="$(cast wallet sign --interactive "$MSG")"
 
 echo "== [3/3] verify =="
 cast wallet verify --address "$EXPECT_ADDR" "$MSG" "$SIG"

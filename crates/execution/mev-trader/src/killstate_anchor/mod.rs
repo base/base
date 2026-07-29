@@ -121,8 +121,13 @@ impl AnchoredKillStateStore {
         self.kill_dir.join(LOCAL_HWM_FILE)
     }
 
-    fn read_record(&self) -> Option<PersistedRecord> {
-        serde_json::from_slice(&std::fs::read(self.record_path()).ok()?).ok()
+    fn read_record(&self) -> Result<Option<PersistedRecord>, KillStoreError> {
+        let bytes = match std::fs::read(self.record_path()) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(KillStoreError::RecordUnreadable),
+        };
+        serde_json::from_slice(&bytes).map(Some).map_err(|_| KillStoreError::RecordMalformed)
     }
 
     fn read_local_hwm(&self) -> Option<u64> {
@@ -237,7 +242,7 @@ impl AnchoredKillStateStore {
 impl KillStateStore for AnchoredKillStateStore {
     fn load(&self) -> KillState {
         let Ok(_guard) = self.transition.lock() else { return KillState::Unknown };
-        let Some(record) = self.read_record() else { return KillState::Unknown };
+        let Ok(Some(record)) = self.read_record() else { return KillState::Unknown };
         let Some(local) = self.read_local_hwm() else { return KillState::Unknown };
         let Ok(external) = self.external.read_hwm() else { return KillState::Unknown };
         let epoch = record.epoch();
@@ -266,7 +271,7 @@ impl KillStateStore for AnchoredKillStateStore {
 
     fn engage(&self, reason: KillReason) -> Result<(), KillStoreError> {
         let _guard = self.transition.lock().map_err(|_| KillStoreError::Io)?;
-        let record_epoch = self.read_record().ok_or(KillStoreError::EpochAnchorInvalid)?.epoch();
+        let record_epoch = self.read_record()?.ok_or(KillStoreError::EpochAnchorInvalid)?.epoch();
         let local = self.read_local_hwm().ok_or(KillStoreError::EpochAnchorInvalid)?;
         let external = self.external.read_hwm().map_err(|_| KillStoreError::EpochAnchorInvalid)?;
         let next = record_epoch
@@ -284,7 +289,7 @@ impl KillStateStore for AnchoredKillStateStore {
 
     fn owner_reset(&self, attestation: &ResetAttestation) -> Result<(), KillStoreError> {
         let _guard = self.transition.lock().map_err(|_| KillStoreError::Io)?;
-        let Some(PersistedRecord::Engaged { epoch, .. }) = self.read_record() else {
+        let Some(PersistedRecord::Engaged { epoch, .. }) = self.read_record()? else {
             return Err(KillStoreError::NotEngaged);
         };
         let local = self.read_local_hwm().ok_or(KillStoreError::EpochAnchorInvalid)?;
@@ -510,7 +515,7 @@ mod tests {
         assert!(matches!(store.engage(KillReason::KeyOrSignatureFailure), Err(KillStoreError::Io)));
         assert_eq!(store.external.read_hwm().expect("external"), 2);
         assert_eq!(store.read_local_hwm(), Some(1));
-        assert!(matches!(store.read_record(), Some(PersistedRecord::Engaged { epoch: 1, .. })));
+        assert!(matches!(store.read_record(), Ok(Some(PersistedRecord::Engaged { epoch: 1, .. }))));
         assert_eq!(store.load(), KillState::Unknown);
     }
 
@@ -521,7 +526,7 @@ mod tests {
         assert!(matches!(store.engage(KillReason::KeyOrSignatureFailure), Err(KillStoreError::Io)));
         assert_eq!(store.external.read_hwm().expect("external"), 2);
         assert_eq!(store.read_local_hwm(), Some(2));
-        assert!(matches!(store.read_record(), Some(PersistedRecord::Engaged { epoch: 1, .. })));
+        assert!(matches!(store.read_record(), Ok(Some(PersistedRecord::Engaged { epoch: 1, .. }))));
         assert_eq!(store.load(), KillState::Unknown);
     }
 
@@ -659,7 +664,7 @@ mod tests {
         store.engage(KillReason::KeyOrSignatureFailure).expect("engage");
         assert_eq!(store.external.read_hwm().expect("external"), 1);
         assert_eq!(store.read_local_hwm(), Some(1));
-        assert!(matches!(store.read_record(), Some(PersistedRecord::Engaged { epoch: 1, .. })));
+        assert!(matches!(store.read_record(), Ok(Some(PersistedRecord::Engaged { epoch: 1, .. }))));
         assert!(matches!(store.load(), KillState::Engaged { .. }));
     }
 
@@ -734,7 +739,39 @@ mod tests {
         let store = fixture.open();
         store.external.observe(2).expect("ahead");
         assert!(matches!(store.owner_reset(&reset(1)), Err(KillStoreError::EpochAnchorInvalid)));
-        assert!(matches!(store.read_record(), Some(PersistedRecord::Engaged { .. })));
+        assert!(matches!(store.read_record(), Ok(Some(PersistedRecord::Engaged { .. }))));
+    }
+
+    #[test]
+    fn reset_distinguishes_absent_unreadable_and_malformed_records() {
+        let missing = Fixture::new(1);
+        let missing_store = missing.open();
+        fs::remove_file(missing_store.record_path()).expect("remove record");
+        assert!(matches!(missing_store.owner_reset(&reset(1)), Err(KillStoreError::NotEngaged)));
+        assert_eq!(missing_store.load(), KillState::Unknown);
+
+        let unreadable = Fixture::new(1);
+        let unreadable_store = unreadable.open();
+        fs::remove_file(unreadable_store.record_path()).expect("remove record");
+        fs::create_dir(unreadable_store.record_path()).expect("replace record with directory");
+        assert!(matches!(
+            unreadable_store.owner_reset(&reset(1)),
+            Err(KillStoreError::RecordUnreadable)
+        ));
+        assert_eq!(unreadable_store.load(), KillState::Unknown);
+
+        for bytes in
+            [br#"{"state":"engaged""#.as_slice(), br#"{"state":"unknown","epoch":1}"#.as_slice()]
+        {
+            let malformed = Fixture::new(1);
+            let malformed_store = malformed.open();
+            fs::write(malformed_store.record_path(), bytes).expect("write malformed record");
+            assert!(matches!(
+                malformed_store.owner_reset(&reset(1)),
+                Err(KillStoreError::RecordMalformed)
+            ));
+            assert_eq!(malformed_store.load(), KillState::Unknown);
+        }
     }
 
     #[test]
@@ -748,7 +785,7 @@ mod tests {
         ));
         assert_eq!(store.external.read_hwm().expect("external"), 1);
         assert_eq!(store.read_local_hwm(), Some(1));
-        assert!(matches!(store.read_record(), Some(PersistedRecord::Engaged { epoch: 1, .. })));
+        assert!(matches!(store.read_record(), Ok(Some(PersistedRecord::Engaged { epoch: 1, .. }))));
         assert!(matches!(store.load(), KillState::Engaged { .. }));
     }
 
@@ -763,7 +800,7 @@ mod tests {
         ));
         assert_eq!(store.external.read_hwm().expect("external"), 2);
         assert_eq!(store.read_local_hwm(), Some(1));
-        assert!(matches!(store.read_record(), Some(PersistedRecord::Engaged { epoch: 1, .. })));
+        assert!(matches!(store.read_record(), Ok(Some(PersistedRecord::Engaged { epoch: 1, .. }))));
         assert_eq!(store.load(), KillState::Unknown);
     }
 
@@ -816,7 +853,7 @@ mod tests {
         assert!(matches!(store.engage(KillReason::KeyOrSignatureFailure), Err(KillStoreError::Io)));
         assert_eq!(store.external.read_hwm().expect("external"), 2);
         assert_eq!(store.read_local_hwm(), Some(2));
-        assert!(matches!(store.read_record(), Some(PersistedRecord::Clear { epoch: 1, .. })));
+        assert!(matches!(store.read_record(), Ok(Some(PersistedRecord::Clear { epoch: 1, .. }))));
         assert_eq!(store.load(), KillState::Unknown);
     }
 
@@ -858,7 +895,8 @@ mod tests {
         let store = fixture.open();
         assert!(matches!(store.load(), KillState::Engaged { .. }));
         store.owner_reset(&reset(1)).expect("reset");
-        let PersistedRecord::Clear { reset, .. } = store.read_record().expect("clear record")
+        let PersistedRecord::Clear { reset, .. } =
+            store.read_record().expect("read record").expect("clear record")
         else {
             panic!("expected persisted Clear")
         };
@@ -874,7 +912,7 @@ mod tests {
         assert!(matches!(store.engage(KillReason::KeyOrSignatureFailure), Err(KillStoreError::Io)));
         assert_eq!(store.external.read_hwm().expect("external"), 2);
         assert_eq!(store.read_local_hwm(), Some(2));
-        assert!(matches!(store.read_record(), Some(PersistedRecord::Engaged { epoch: 1, .. })));
+        assert!(matches!(store.read_record(), Ok(Some(PersistedRecord::Engaged { epoch: 1, .. }))));
         assert_eq!(store.load(), KillState::Unknown);
     }
 
@@ -921,7 +959,7 @@ mod tests {
         assert_eq!(store.read_local_hwm(), Some(1 + THREADS as u64));
         assert!(matches!(
             store.read_record(),
-            Some(PersistedRecord::Engaged { epoch, .. }) if epoch == 1 + THREADS as u64
+            Ok(Some(PersistedRecord::Engaged { epoch, .. })) if epoch == 1 + THREADS as u64
         ));
     }
 
@@ -949,7 +987,7 @@ mod tests {
         );
         assert_eq!(store.external.read_hwm().expect("external"), 2);
         assert_eq!(store.read_local_hwm(), Some(2));
-        assert!(matches!(store.read_record(), Some(PersistedRecord::Engaged { epoch: 2, .. })));
+        assert!(matches!(store.read_record(), Ok(Some(PersistedRecord::Engaged { epoch: 2, .. }))));
         assert!(matches!(store.load(), KillState::Engaged { .. }));
     }
 

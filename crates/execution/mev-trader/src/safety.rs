@@ -698,6 +698,12 @@ pub enum KillStoreError {
     /// Atomic persistence I/O failed (temp write / fsync / rename).
     #[error("kill-state persistence failed")]
     Io,
+    /// The kill-state record exists but cannot be read.
+    #[error("kill-state record is unreadable")]
+    RecordUnreadable,
+    /// The kill-state record bytes are not a recognized persisted record.
+    #[error("kill-state record is malformed")]
+    RecordMalformed,
     /// The trust-root owner address is unset.
     #[error("owner attestation address is unset")]
     OwnerAddressUnset,
