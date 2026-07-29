@@ -56,12 +56,6 @@ mod tests {
     const V2_ABI_FINGERPRINT: B256 =
         b256!("047d1fceaa9beac82fd473d474bb7f3b6dcd720c9e62c86facc75ef6dd611631");
 
-    /// These two surfaces pass no enum ordinals to [`AbiFingerprint`], so the pinned constants
-    /// above keep the values they were blessed with. `PolicyType` ordinals *are* load-bearing —
-    /// the discriminant rides the top byte of every policy ID via `PolicyRegistryV1::make_id` —
-    /// and `shared_policy_type_discriminants_agree_across_surfaces` below only catches a reorder
-    /// of one surface, not a simultaneous reorder of both. Feeding the ordinals in here would
-    /// close that, at the cost of re-blessing both constants; deliberately left as a follow-up.
     fn v1_abi_fingerprint() -> B256 {
         AbiFingerprint::compute(
             IPolicyRegistryV1::IPolicyRegistryCalls::selectors(),
