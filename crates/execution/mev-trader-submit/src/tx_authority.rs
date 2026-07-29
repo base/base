@@ -14,10 +14,15 @@ use alloy_eips::{eip2718::Decodable2718, eip2930::AccessList};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, keccak256};
 use base_mev_trader::{
     BackrunHop, CandidateAssemblyView, ExactProtocol, MeasurementContext, MeasurementEncoder,
-    PreparedPoolState, SnapshotHandle,
+    PreparedPoolState, SnapshotHandle, WETH,
 };
 
-use crate::{calldata::AtomicCalldataEncoder, fee::fee_bps_for_executor};
+use crate::{
+    PriorityEconomicsAuthority,
+    calldata::AtomicCalldataEncoder,
+    economics::{PriorityFilterInput, evaluate},
+    fee::fee_bps_for_executor,
+};
 #[cfg(feature = "t4d-bridge")]
 mod bridge;
 #[cfg(feature = "t4d-bridge")]
@@ -263,6 +268,12 @@ pub trait TxAuthorityNodeView: Debug + Send + Sync {
         &self,
         snapshot: &SnapshotHandle,
     ) -> Result<Box<dyn SnapshotFreshnessToken>, TxAuthorityNodeError>;
+    /// Returns candidate-specific simulated gas and OP-stack L1 data fee from the same block.
+    fn priority_economics(
+        &self,
+        snapshot: &SnapshotHandle,
+        plan: &base_mev_trader::BackrunPlan,
+    ) -> Result<PriorityEconomicsAuthority, TxAuthorityNodeError>;
 }
 
 /// Typed fail-closed reason for producing no unsigned T4b shape.
@@ -272,6 +283,8 @@ pub enum TxAuthorityError {
     PlanOrFrameRejected,
     /// Raw victim type, hash, chain, or fee fields were rejected.
     FeeAuthorityRejected,
+    /// Candidate economics were missing, invalid, stale, overflowed, or not strictly positive.
+    PriorityEconomicsRejected,
     /// Same-frame route re-quote was missing, ambiguous, or unequal to the plan.
     RequoteRejected,
     /// Executor or adapter deployment identity was unavailable or mismatched.
@@ -576,6 +589,27 @@ impl TxAuthorityAssembler {
         let frame = view.frame;
         Self::validate_frame(snapshot, plan, frame)?;
         let (victim_priority, base_fee, max_fee) = Self::derive_fees(&view, frame)?;
+        if plan.route[0].token_in != WETH || plan.route[1].token_out != WETH {
+            return Err(TxAuthorityError::PriorityEconomicsRejected);
+        }
+        let authority = self
+            .node
+            .priority_economics(snapshot, plan)
+            .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?;
+        if authority.base_fee_per_gas_wei() != U256::from(base_fee) {
+            return Err(TxAuthorityError::PriorityEconomicsRejected);
+        }
+        let decision = evaluate(PriorityFilterInput {
+            gross_profit_wei: Some(plan.gross_profit),
+            authority: Some(authority),
+            victim_max_priority_fee_per_gas_wei: Some(U256::from(victim_priority)),
+            victim_max_fee_per_gas_wei: Some(U256::from(max_fee)),
+            candidate_block: plan.block_number,
+        })
+        .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?;
+        if !decision.admitted() {
+            return Err(TxAuthorityError::PriorityEconomicsRejected);
+        }
         let floors = Self::requote(&view)?;
         Self::checkpoint(view.probe())?;
         let (execution, committed_nonce) = self.validate_execution(snapshot, frame.parent_hash)?;
@@ -1154,6 +1188,19 @@ mod tests {
         ) -> Result<Box<dyn SnapshotFreshnessToken>, TxAuthorityNodeError> {
             Ok(Box::new(TestFreshness(Arc::new(AtomicBool::new(true)))))
         }
+
+        fn priority_economics(
+            &self,
+            _snapshot: &SnapshotHandle,
+            plan: &base_mev_trader::BackrunPlan,
+        ) -> Result<PriorityEconomicsAuthority, TxAuthorityNodeError> {
+            Ok(PriorityEconomicsAuthority::new(
+                U256::from(1),
+                U256::from(1),
+                U256::from(1),
+                plan.block_number,
+            ))
+        }
     }
 
     #[derive(Debug)]
@@ -1229,6 +1276,19 @@ mod tests {
         ) -> Result<Box<dyn SnapshotFreshnessToken>, TxAuthorityNodeError> {
             Ok(Box::new(TestFreshness(Arc::clone(&self.current))))
         }
+
+        fn priority_economics(
+            &self,
+            _snapshot: &SnapshotHandle,
+            plan: &base_mev_trader::BackrunPlan,
+        ) -> Result<PriorityEconomicsAuthority, TxAuthorityNodeError> {
+            Ok(PriorityEconomicsAuthority::new(
+                U256::from(1),
+                U256::from(1),
+                U256::from(100),
+                plan.block_number,
+            ))
+        }
     }
 
     #[derive(Debug)]
@@ -1286,6 +1346,7 @@ mod tests {
             }
         }
     }
+    #[cfg(feature = "t4d-bridge")]
     fn revalidate_for_test<'a>(
         fixture: &AssemblyFixture,
         bridge: &bridge::InstalledSubmissionBridge,
@@ -1306,7 +1367,7 @@ mod tests {
         let parent_hash = B256::with_last_byte(21);
         let block_number = 22;
         let sender = Address::with_last_byte(23);
-        let token_a = Address::with_last_byte(24);
+        let token_a = WETH;
         let token_b = Address::with_last_byte(25);
         let probe = probe();
         let prepared = vec![
@@ -1319,8 +1380,8 @@ mod tests {
                 decimals1: 18,
                 fee_pips: 3_000,
                 quote: PreparedPoolQuote::constant_product(
-                    U256::from(1_000_000u64),
-                    U256::from(2_000_000u64),
+                    U256::from(1_000_000_000_000_000_000u128),
+                    U256::from(2_000_000_000_000_000_000u128),
                 ),
             },
             PreparedPoolState {
@@ -1332,12 +1393,12 @@ mod tests {
                 decimals1: 18,
                 fee_pips: 3_000,
                 quote: PreparedPoolQuote::constant_product(
-                    U256::from(3_000_000u64),
-                    U256::from(1_000_000u64),
+                    U256::from(3_000_000_000_000_000_000u128),
+                    U256::from(1_000_000_000_000_000_000u128),
                 ),
             },
         ];
-        let amount_in = U256::from(1_000u64);
+        let amount_in = U256::from(1_000_000_000_000_000u64);
         let first_out =
             prepared[0].quote_exact_in(token_a, amount_in, &probe).expect("first quote");
         let amount_out =
@@ -2012,6 +2073,13 @@ mod tests {
             derive_fixture_fees(&fixture, &fixture.snapshot, &cap_limited, cap_frame),
             Err(TxAuthorityError::FeeAuthorityRejected)
         );
+        let zero_priority = encoded_victim(CHAIN_ID_BASE, 100, 0);
+        let mut zero_priority_frame = fixture.frame;
+        zero_priority_frame.victim = keccak256(&zero_priority);
+        assert_eq!(
+            derive_fixture_fees(&fixture, &fixture.snapshot, &zero_priority, zero_priority_frame,),
+            Err(TxAuthorityError::FeeAuthorityRejected)
+        );
 
         let wrong_chain = encoded_victim(1, 110, 10);
         let mut wrong_chain_frame = fixture.frame;
@@ -2077,6 +2145,37 @@ mod tests {
         assert!(!production_source().contains("std::env"));
     }
 
+    #[test]
+    fn t4b_positive_ev_gate_precedes_execution_and_unsigned_submission_choice() {
+        let mut fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let pinned_priority = u128::MAX - 100;
+        fixture.victim_raw = encoded_victim(CHAIN_ID_BASE, pinned_priority + 100, pinned_priority);
+        let victim_hash = keccak256(&fixture.victim_raw);
+        fixture.frame.victim = victim_hash;
+        fixture.plan.victim = victim_hash;
+        fixture.plan.digest =
+            MeasurementEncoder::digest(&fixture.plan).expect("updated plan digest");
+        fixture.current.store(false, Ordering::Release);
+
+        assert!(
+            matches!(
+                fixture.assembler.assemble_view(fixture.view()),
+                Err(TxAuthorityError::PriorityEconomicsRejected)
+            ),
+            "economics must reject before stale execution authority is consulted"
+        );
+
+        let source = production_source();
+        assert!(
+            source.find("let decision = evaluate").unwrap()
+                < source.find("self.validate_execution").unwrap(),
+            "positive-EV gate must remain before execution/submission choice"
+        );
+        assert!(!source.contains("send_gated"));
+    }
     #[test]
     fn t4b_assemble_validated_binds_every_unsigned_field_and_rejects_tamper() {
         let mut fixture = assembly_fixture(
@@ -2230,11 +2329,15 @@ mod tests {
             None,
         );
         fixture.prepared[0].protocol = ExactProtocol::AerodromeVolatile;
-        fixture.prepared[0].quote =
-            PreparedPoolQuote::constant_product(U256::from(1_000_000u64), U256::from(4_000_000u64));
+        fixture.prepared[0].quote = PreparedPoolQuote::constant_product(
+            U256::from(1_000_000_000_000_000_000u128),
+            U256::from(4_000_000_000_000_000_000u128),
+        );
         fixture.prepared[1].protocol = ExactProtocol::AerodromeStable;
-        fixture.prepared[1].quote =
-            PreparedPoolQuote::stable(U256::from(4_000_000u64), U256::from(1_000_000u64));
+        fixture.prepared[1].quote = PreparedPoolQuote::stable(
+            U256::from(4_000_000_000_000_000_000u128),
+            U256::from(1_000_000_000_000_000_000u128),
+        );
         fixture.plan.route[0].protocol = ExactProtocol::AerodromeVolatile;
         fixture.plan.route[1].protocol = ExactProtocol::AerodromeStable;
         let first_out = fixture.prepared[0]

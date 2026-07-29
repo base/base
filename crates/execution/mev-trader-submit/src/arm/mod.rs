@@ -125,6 +125,7 @@ pub(crate) mod testkit {
     };
     use k256::ecdsa::SigningKey;
 
+    use crate::PriorityEconomicsAuthority;
     use crate::assembler::{
         AssembleInput, HopExecutionParams, ValidatedUnsignedAtomicTx, assemble_validated,
     };
@@ -480,6 +481,12 @@ pub(crate) mod testkit {
             victim_raw_tx: &victim_raw,
             victim_tx_hash: victim_hash,
             expected_victim_priority_fee: Some(37),
+            priority_economics: Some(PriorityEconomicsAuthority::new(
+                U256::from(1),
+                U256::from(1),
+                U256::from(1),
+                plan.block_number,
+            )),
         };
         let vtx = assemble_validated(&input).expect("validated tx");
         (vtx, victim_hash)

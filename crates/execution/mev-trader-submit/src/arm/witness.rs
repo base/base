@@ -827,6 +827,7 @@ mod tests {
             victim_raw_tx: &victim_raw,
             victim_tx_hash: victim_hash,
             expected_victim_priority_fee: Some(37),
+            priority_economics: None,
         };
         assert!(assemble_validated(&input).is_err(), "non-Base chain must be rejected");
     }

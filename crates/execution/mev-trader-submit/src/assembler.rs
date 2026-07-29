@@ -16,7 +16,10 @@ use alloy_eips::{
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, b256, keccak256};
 use base_mev_trader::{BackrunPlan, MeasurementContext, MeasurementEncoder};
 
+#[cfg(feature = "arm")]
+use crate::economics::{PriorityFilterInput, evaluate};
 use crate::{
+    PriorityEconomicsAuthority,
     calldata::{AtomicCalldataEncoder, LegacyAuthorityHop},
     fee::{FeeParityError, fee_bps_for_executor},
 };
@@ -95,6 +98,8 @@ pub struct AssembleInput<'a> {
     pub victim_tx_hash: B256,
     /// Optional feed priority fee used only to cross-check the raw envelope.
     pub expected_victim_priority_fee: Option<u128>,
+    /// Candidate-specific execution-gas and OP-stack L1-data-fee authority.
+    pub priority_economics: Option<PriorityEconomicsAuthority>,
 }
 
 /// The rung-1 output: the unsigned tx (for rung-2 to sign) plus its
@@ -144,6 +149,8 @@ pub enum AssembleError {
     FrameIdentityMismatch,
     /// A per-hop fee-parity conversion failed (§3.4 guard).
     FeeParity(FeeParityError),
+    /// Candidate economics authority was missing, stale, invalid, overflowing, or non-positive.
+    PriorityEconomicsRejected,
 }
 
 impl core::fmt::Display for AssembleError {
@@ -176,6 +183,7 @@ impl core::fmt::Display for AssembleError {
                 write!(formatter, "plan frame identity does not match the current frame")
             }
             Self::FeeParity(error) => write!(formatter, "fee parity: {error}"),
+            Self::PriorityEconomicsRejected => formatter.write_str("priority economics rejected"),
         }
     }
 }
@@ -437,6 +445,19 @@ pub fn assemble_validated(
     let assembled = assemble_unsigned_atomic_tx(input)?;
     if assembled.unsigned_tx.chain_id != CHAIN_ID_BASE {
         return Err(AssembleError::InvalidField("chainId"));
+    }
+    let decision = evaluate(PriorityFilterInput {
+        gross_profit_wei: Some(input.plan.gross_profit),
+        authority: input.priority_economics,
+        victim_max_priority_fee_per_gas_wei: Some(U256::from(
+            assembled.unsigned_tx.max_priority_fee_per_gas,
+        )),
+        victim_max_fee_per_gas_wei: Some(U256::from(assembled.unsigned_tx.max_fee_per_gas)),
+        candidate_block: input.plan.block_number,
+    })
+    .map_err(|_| AssembleError::PriorityEconomicsRejected)?;
+    if !decision.admitted() {
+        return Err(AssembleError::PriorityEconomicsRejected);
     }
     let executor = match assembled.unsigned_tx.to {
         TxKind::Call(address) => address,

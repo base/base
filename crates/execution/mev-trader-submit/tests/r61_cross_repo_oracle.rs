@@ -304,6 +304,7 @@ fn calldata_for(
         victim_raw_tx: &victim_raw,
         victim_tx_hash: victim,
         expected_victim_priority_fee: Some(1),
+        priority_economics: None,
     })
     .expect("production executor calldata encoding must succeed")
 }

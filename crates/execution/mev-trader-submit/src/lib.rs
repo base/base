@@ -7,8 +7,12 @@
 pub mod assembler;
 #[cfg(feature = "tx-authority")]
 mod calldata;
+#[cfg(any(feature = "phase-b", feature = "tx-authority"))]
+mod economics;
 #[cfg(feature = "tx-authority")]
 pub mod fee;
+#[cfg(feature = "tx-authority")]
+pub use economics::PriorityEconomicsAuthority;
 #[cfg(feature = "phase-b")]
 pub mod signer;
 
@@ -62,5 +66,5 @@ pub const BLINK_OFA_KICKBACK_RECIPIENT: alloy_primitives::Address =
 /// The minimum kickback share (basis points) the executor pays to the recipient.
 /// Mirrors `BLINK_OFA_MIN_KICKBACK_BPS` in the TS prototype; the executor pays
 /// `ceil(75%)` of realized profit, i.e. at least this share.
-#[cfg(feature = "phase-b")]
+#[cfg(any(feature = "phase-b", feature = "tx-authority"))]
 pub const BLINK_OFA_MIN_KICKBACK_BPS: u32 = 7_500;
