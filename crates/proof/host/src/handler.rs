@@ -1734,7 +1734,9 @@ mod tests {
 
         let err = handle_hint(hint, &test_cfg(), &providers, Arc::clone(&kv)).await.unwrap_err();
 
-        assert!(matches!(err, HostError::Custom(msg) if msg.contains("no da-server is configured")));
+        assert!(
+            matches!(err, HostError::Custom(msg) if msg.contains("no da-server is configured"))
+        );
         assert!(kv.read().await.get(preimage_key_for_commitment(&commitment).into()).is_none());
     }
 }
