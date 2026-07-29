@@ -9,6 +9,8 @@ pub mod assembler;
 mod calldata;
 #[cfg(feature = "tx-authority")]
 pub mod fee;
+#[cfg(feature = "tx-authority")]
+mod priority_filter;
 #[cfg(feature = "phase-b")]
 pub mod signer;
 

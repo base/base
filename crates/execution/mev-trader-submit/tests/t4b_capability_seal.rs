@@ -1967,6 +1967,7 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
     let assembler_source = read(crate_dir.join("src/assembler.rs"));
     let calldata_source = read(crate_dir.join("src/calldata.rs"));
     let fee_source = read(crate_dir.join("src/fee.rs"));
+    let priority_filter_source = read(crate_dir.join("src/priority_filter.rs"));
     let authority_source = read(crate_dir.join("src/tx_authority.rs"));
     let bridge_source = read(crate_dir.join("src/tx_authority/bridge.rs"));
     let cli_manifest = read(root.join("crates/execution/cli/Cargo.toml"));
@@ -2117,13 +2118,24 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
     let (imports, _, _) = authoritative_uses(&path_consumer, true);
     assert!(imports.violations.contains("path module authority redirect"));
 
-    for source in [&submit_lib, &assembler_source, &calldata_source, &fee_source, &authority_source]
-    {
+    for source in [
+        &submit_lib,
+        &assembler_source,
+        &calldata_source,
+        &fee_source,
+        &priority_filter_source,
+        &authority_source,
+    ] {
         syn::parse_file(source).expect("submit source parses as Rust AST");
     }
     assert_eq!(
         tx_authority_modules(&submit_lib),
-        BTreeSet::from(["calldata".to_owned(), "fee".to_owned(), "tx_authority".to_owned()])
+        BTreeSet::from([
+            "calldata".to_owned(),
+            "fee".to_owned(),
+            "priority_filter".to_owned(),
+            "tx_authority".to_owned(),
+        ])
     );
     let authority_ast = parse_production(&authority_source);
     assert_private_fields(

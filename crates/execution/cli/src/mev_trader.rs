@@ -9526,6 +9526,7 @@ mod t4b_shadow {
                 T4bOutcome::PlanOrFrameRejected
             }
             TxAuthorityError::FeeAuthorityRejected => T4bOutcome::FeeAuthorityRejected,
+            TxAuthorityError::PriorityEconomicsRejected => T4bOutcome::PriorityEconomicsRejected,
             TxAuthorityError::RequoteRejected => T4bOutcome::RequoteRejected,
             TxAuthorityError::DeploymentIdentityRejected => T4bOutcome::DeploymentIdentityRejected,
             TxAuthorityError::NonceWitnessUnavailable => T4bOutcome::NonceWitnessUnavailable,

@@ -163,6 +163,8 @@ pub enum T4bOutcome {
     DeploymentIdentityRejected,
     /// Node-local fee authority validation failed.
     FeeAuthorityRejected,
+    /// Candidate did not have strictly positive checked EV at Blink's pinned priority.
+    PriorityEconomicsRejected,
     /// A coherent snapshot-local nonce witness was unavailable.
     NonceWitnessUnavailable,
     /// Another unsigned-shape observation already holds the single guard.
@@ -187,7 +189,7 @@ pub enum T4bOutcome {
 #[cfg(feature = "t4b-shadow")]
 #[derive(Debug, Default)]
 pub struct T4bOutcomeCounters {
-    counts: [AtomicU64; 14],
+    counts: [AtomicU64; 15],
 }
 
 #[cfg(feature = "t4b-shadow")]
