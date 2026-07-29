@@ -1346,6 +1346,7 @@ mod tests {
             }
         }
     }
+    #[cfg(feature = "t4d-bridge")]
     fn revalidate_for_test<'a>(
         fixture: &AssemblyFixture,
         bridge: &bridge::InstalledSubmissionBridge,

@@ -2363,7 +2363,7 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
     let cli_ast = parse_production(&cli_source);
     let mut cli_seal = AstSeal::unsigned_handoff();
     cli_seal.visit_file(&cli_ast);
-    assert_eq!(cli_seal.violations, BTreeSet::from(["OpenOptions".to_owned(), "send".to_owned()]));
+    assert_eq!(cli_seal.violations, BTreeSet::from(["OpenOptions".to_owned()]));
     assert_eq!(cli_seal.node_view_impls, 1);
     assert_eq!(cli_seal.observer_impls, 2);
     assert_eq!(cli_seal.pending_view_impls, 1);
