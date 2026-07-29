@@ -35,7 +35,7 @@ The record is returned by value to the caller in `SubmitOutcome::Simulated(Simul
 - `LiveComplete` means both live channels completed;
 - the existing no-egress and live partial/failure outcomes remain explicit.
 
-Tests for live partial failures use the existing pure response-mapping/execution helper with injected test closures. They do not add configurable behavior to `SimBackend` and do not add another `RawBackend` implementation.
+Tests for live partial failures use a helper that exists only under `#[cfg(test)]` and accepts injected test closures only in that configuration. The production `ProdBackend` call path takes no caller-supplied behavior. Removing the test-only cfg is a committed RED mutant. This does not add configurable behavior to `SimBackend` or another `RawBackend` implementation.
 
 ## 3. Runtime switch source
 
@@ -68,12 +68,12 @@ The signed receipt is the existing owner-verified `LiveRunAttestation`, not a ne
 
 The live locks are:
 
-- **L1 — explicit live selection:** the startup value came from the present `--mev-live-egress` flag. Simulation is the default.
+- **L1 — explicit live selection:** evidence is derived only by consuming the non-`Clone` live `RuntimeBackend` selection produced from the present `--mev-live-egress` startup flag. It is not a caller-supplied boolean. Simulation is the default.
 - **L2 — signed arm receipt:** the private bindings came from a verified `LiveRunAttestation`, cover the same campaign, and remain inside their signed time window at the egress recheck.
 - **L3 — kill anchor:** the existing authoritative `ArmedFailSink::observe_kill` returned `KillState::Clear` during that same freshness recheck. Unknown, engaged, read failure, or process poison closes the attempt.
 - **L4 — funds cap:** a fresh canonical committed-state read of the compile-pinned funded hot wallet succeeds and reports a native ETH balance less than or equal to the signed `ArmedCriteria::hot_wallet_cap_wei()`.
 
-The private evaluator receives an inspectable `LiveLockSnapshot` and returns either all-open or a typed closed reason. It is pure and total. Production code alone gathers the snapshot; tests mutate cloned snapshots.
+The private evaluator receives an inspectable `LiveLockSnapshot` and returns either all-open or a typed closed reason. It is pure and total. Production code gathers L1 only by consuming the non-`Clone` live runtime selection; there is no constructor that accepts a free boolean. Tests mutate cloned serialized fixtures, not production capability values.
 
 Evaluation belongs after freshness revalidation because L2 and L3 are already authoritative members of that egress-moment conjunction. Moving it earlier would create a stale authorization window. It belongs before `RawEgress` reaches `ProdBackend` so no network-capable function can receive an attempt without the linear live permit.
 
@@ -86,9 +86,9 @@ The cap and balance are both denominated in wei of native ETH:
 - **Cap:** `hot_wallet_cap_wei` from the already owner-signed, compile-SHA-pinned `ArmedCriteria` payload. There is no CLI, environment, file, or API override, so runtime code cannot widen it.
 - **Balance:** native balance of the compile-pinned `FUNDED_WALLET` at the latest committed canonical head.
 
-`CommittedStateAuthority` gains a node-local `native_balance_at_latest_committed(Address) -> Result<U256, ProviderError>` operation. The existing `ProductionCodeHashProvider` is also the funds source, so code hash, head height, and balance use the same canonical database authority; no RPC/network balance reader is introduced. `FreshnessSources` borrows this source.
+`CommittedStateAuthority` gains a node-local `native_balance_at_latest_committed(Address) -> Result<Option<U256>, ProviderError>` operation. `Some(balance)` proves that the compile-pinned account was present at the latest committed canonical head; `None` is absence, not zero. The existing `ProductionCodeHashProvider` is also the funds source, so code hash, head height, account presence, and balance use the same canonical database authority; no RPC/network balance reader is introduced. `FreshnessSources` borrows this source.
 
-A missing account is its canonical zero balance. Authority unavailability, decode/provider errors, a non-canonical read, arithmetic/type failure, or a balance above the signed cap closes live egress. The check does not truncate or clamp.
+Account absence closes live egress alongside authority unavailability, decode/provider errors, a non-canonical read, arithmetic/type failure, or a present balance above the signed cap. A present account with a genuine zero balance may pass L4 and is pinned by a GREEN seal case. L4 intentionally caps total hot-wallet exposure, not trade size: holding more than the signed cap stops live egress, while signed `per_tx_cap_wei` separately bounds each trade. The check does not truncate or clamp.
 
 ## 6. Positive-EV dust filter
 
@@ -117,12 +117,14 @@ The unnameable `sealed::Sealed` supertrait remains. The only production `RawBack
 | Case | Mutation | Expected |
 |---|---|---|
 | L0 | all four locks open, balance exactly at cap | GREEN |
+| L0z | all four locks open, account present with zero balance | GREEN |
 | L1 | explicit-live false | RED |
 | L2 | signed receipt absent, mismatched, not-yet-valid, or expired | RED |
 | L3a | kill unknown | RED |
 | L3b | kill engaged/poisoned | RED |
-| L4a | balance authority error | RED |
-| L4b | balance is cap + 1 wei | RED |
+| L4a | funded account absent | RED |
+| L4b | balance authority error | RED |
+| L4c | balance is cap + 1 wei | RED |
 
 An additional GREEN case pins default simulation with no live evaluation and a typed `Simulated` outcome. This distinguishes a safe default from an evaluator that rejects everything.
 
@@ -130,7 +132,7 @@ An additional GREEN case pins default simulation with no live evaluation and a t
 
 The live `arm_capability_seal` and T4b closure seals assert:
 
-1. `cargo tree --workspace -i mev-trader-submit -e features` contains none of `arm`, `arm-provisioning`, or `arm-live-egress` beyond the already reviewed default-only workspace node.
+1. `cargo tree --workspace -i mev-trader-submit -e features` positively contains `mev-trader-submit feature "default"` and contains none of `arm`, `arm-provisioning`, or `arm-live-egress`.
 2. `ProdBackend`, its `RawBackend` impl, `reqwest`, `.send()`, and the live runtime variant remain behind the exact outer feature gate.
 3. `SimBackend` has no network/process/filesystem/logging token and returns only `SubmitOutcome::Simulated`.
 4. `SubmitOutcome` has distinct simulated and live completion variants; an ambiguous `Complete` variant is forbidden.
@@ -140,7 +142,7 @@ The live `arm_capability_seal` and T4b closure seals assert:
 8. The funds address is `FUNDED_WALLET`; the cap comes only from `ArmedCriteria::hot_wallet_cap_wei`; balance errors and over-cap values close.
 9. Both runtime branches remain downstream of the existing positive-EV authority and cannot accept pre-validation candidate types.
 
-Committed structural mutants remove each cfg, introduce a socket token in simulation, add an ambiguous completion, add a backend impl, duplicate a linker/impl entry, make the live permit constructible or cloneable, add a cap override, change the funded address, bypass the priority filter, or make the live flag default true. Every mutant must be RED and must assert that its source/metadata fixture actually changed. Unmodified fixtures are GREEN.
+Committed structural mutants remove each production cfg, remove the `#[cfg(test)]` from the closure-injection seam, introduce a socket token in simulation, add an ambiguous completion, add a backend impl, duplicate a linker/impl entry, make the live permit constructible or cloneable, add a free-bool L1 constructor, add a cap override, change the funded address, bypass the priority filter, or make the live flag default true. Every mutant must be RED and must assert that its source/metadata fixture actually changed. Unmodified fixtures are GREEN.
 
 The structural harness likewise normalizes Cargo metadata and `syn` inventories into a `serde_json::Value` consumed by `validate_runtime_switch_seal(&Value) -> Result<(), String>`. Missing, mistyped, duplicate, target-scoped, or unclassified package/target/impl entries return `Err`; they are never ignored with `continue`.
 
@@ -164,3 +166,5 @@ This package adds source code and tests only. It does not:
 - start a node, open a socket, submit a transaction, or contact a relay.
 
 Before a real live attempt, the owner still must build the explicitly live-capable artifact, provide the existing signed arming and live-run evidence, ensure suppression and deployment evidence are fresh, keep the kill anchor clear, fund no more than the signed cap, start with `--mev-live-egress`, and separately authorize deployment/restart. Those operational acts are outside both S1-b PRs.
+
+S1-b deliberately leaves `send_gated` without a production caller and returns simulation records without persistence. The named follow-up package is **simulation entrypoint + record persistence**: wire the existing unified path to call the default simulation backend and persist `SimulationRecord` at an owner-reviewed bounded sink. Until that package lands, S1-b produces no simulation datum.
