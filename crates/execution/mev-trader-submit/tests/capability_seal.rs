@@ -3,16 +3,20 @@
 //! `capability_seal.rs`). Author ≠ reviewer: these are machine-checks a reviewer
 //! can re-run.
 //!
-//! It enforces, by construction:
-//!   (a) NO real private-key loader — no file/env/argv/keystore/mnemonic/homedir
-//!       path; the ONLY key material is `SigningKey::random`.
-//!   (b) NO real submission sink — production code opens no socket/URL; the only
-//!       network egress anywhere is the e2e test's spawned loopback anvil.
+//! It enforces, by construction, for the scanned default/phase-b safe-prefix files:
+//!   (a) no persistent private-key loader — no file/env/argv/keystore/mnemonic/homedir
+//!       path; its only locally generated key material is `SigningKey::random`.
+//!   (b) no submission sink — those files open no socket/URL; the phase-b e2e test's
+//!       spawned loopback anvil is their only network exercise.
 //!   (c) the ephemeral key never escapes or is logged.
-//!   (d) the rung-2/rung-3 blocked boundaries are present and error.
-//!   (e) the default build is clean — every dependency is optional, and the sole
-//!       unconditional workspace linker is a capability-minimal provisioning leaf.
-//!       The existing CLI declaration remains optional and separately feature-sealed.
+//!   (d) the legacy rung-2/rung-3 blocked helpers remain present and return errors.
+//!   (e) the default build is clean — every dependency is optional, both declared
+//!       workspace linkers remain optional, and the provisioning linker is a
+//!       capability-minimal leaf.
+//!
+//! The separately feature-gated arm tree contains the reviewed custody and live-egress
+//! capabilities and is covered by `arm_capability_seal`; this safe-prefix seal does not
+//! claim that those capabilities are absent from the crate.
 #![cfg(feature = "phase-b")]
 
 use std::{collections::BTreeSet, path::PathBuf, process::Command};
@@ -255,9 +259,9 @@ fn production_source_is_exactly_the_scanned_set() {
 #[test]
 fn no_real_key_loader_or_persistence_in_production() {
     let source = read_production_source();
-    // The ephemeral generator must be present and is the ONLY key source.
+    // The ephemeral generator must be present and is the safe-prefix's only local key source.
     assert!(source.contains("SigningKey::random("), "ephemeral key generator missing");
-    // No key-import / wallet / keystore / mnemonic loader of any kind.
+    // No key-import / wallet / keystore / mnemonic loader in the scanned safe-prefix.
     for forbidden in [
         "SigningKey::from",
         "SecretKey::from",
@@ -283,8 +287,8 @@ fn no_real_key_loader_or_persistence_in_production() {
             "forbidden key-loader token in production: {forbidden}"
         );
     }
-    // No filesystem / environment / argv access — a persistent key can enter only
-    // through one of these, and the safe-prefix touches none of them.
+    // No filesystem / environment / argv access in the safe-prefix; persistent key loading
+    // is confined to the separately feature-gated arm custody module.
     for forbidden in [
         "std::fs",
         "std::env",
@@ -310,7 +314,7 @@ fn no_real_key_loader_or_persistence_in_production() {
 #[test]
 fn no_real_submission_sink_in_production() {
     let source = read_production_source();
-    // No socket / HTTP / websocket transport primitive of any kind.
+    // No socket / HTTP / websocket transport primitive in the scanned safe-prefix.
     for forbidden in [
         "std::net",
         "TcpStream",
@@ -331,17 +335,17 @@ fn no_real_submission_sink_in_production() {
             "forbidden network/process sink in production: {forbidden}"
         );
     }
-    // No real endpoints. `://` catches any URL scheme in a real string literal
-    // (comments are stripped, so the doc text is not scanned). The struct
-    // method-name literal "eth_sendBundle" is a payload field, not a call; there
-    // is no transport to carry it.
+    // No real endpoints in the scanned safe-prefix. `://` catches any URL scheme in a
+    // real string literal (comments are stripped, so the doc text is not scanned).
+    // The struct method-name literal "eth_sendBundle" is a payload field, not a call;
+    // this safe-prefix has no transport to carry it.
     for forbidden in ["://", "blinklabs", "baseauction", "SEQUENCER_URL", "BLINK_ENDPOINT"] {
         assert!(
             !source.contains(forbidden),
             "forbidden endpoint literal in production: {forbidden}"
         );
     }
-    // No logging surface at all — nothing can leak the key or bytes to a log.
+    // No logging surface in the scanned safe-prefix, so it cannot log the ephemeral key or bytes.
     for forbidden in ["println!", "print!", "eprintln!", "eprint!", "dbg!", "tracing::", "log::"] {
         assert!(
             !source.contains(forbidden),

@@ -3,8 +3,8 @@
 //!
 //! ## Red-line (the whole point)
 //!
-//! This module holds the FIRST real fund-submission machinery in the codebase,
-//! but it is inert by construction:
+//! This module holds the FIRST real fund-submission machinery in the codebase.
+//! Its capabilities are progressively gated by construction:
 //!
 //! * The default and `--features phase-b` builds never compile any of it (the
 //!   `arm` feature is off, so `#[cfg(feature="arm")] mod arm;` is absent).
@@ -17,9 +17,10 @@
 //!   custody loader ([`custody`]), assembled into a [`witness::PairedSubmission`],
 //!   and passed through [`transport::send_gated`], which re-validates the ENTIRE
 //!   freshness conjunction at the egress moment.
-//! * The owner trust root ([`base_mev_trader::OWNER_ATTEST_ADDRESS`]) is `None`
-//!   in every non-test build, so every proof `verify` fails closed: no proof can
-//!   be minted, so `issue`/`send_gated` can never reach egress.
+//! * The owner trust root ([`base_mev_trader::OWNER_ATTEST_ADDRESS`]) is compile-pinned
+//!   in non-test builds. That pin removes the former proof-verification blocker but
+//!   grants no send capability by itself: egress still requires the explicit live
+//!   feature, the full proof/claim chain above, custody signing, and fresh re-validation.
 
 // All sub-modules are PRIVATE: the crate exposes ONLY the curated forward-B5
 // surface re-exported below. Low-level constructors (arbitrary suppression paths,
