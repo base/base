@@ -132,9 +132,9 @@ where
         // Go over all batches, in order of inclusion, and find the first batch we can accept.
         // Filter in-place by only remembering the batches that may be processed in the future, or
         // any undecided ones.
-        let mut remaining = Vec::new();
-        for i in 0..self.batches.len() {
-            let batch = &self.batches[i];
+        let mut processed = Vec::new();
+        let mut batches = core::mem::take(&mut self.batches).into_iter();
+        while let Some(batch) = batches.next() {
             let validity =
                 batch.check_batch(&self.cfg, &self.l1_blocks, parent, &mut self.fetcher).await;
             match validity {
@@ -143,13 +143,15 @@ where
                     //
                     // See: <https://specs.base.org/upgrades/holocene/derivation#batch_queue>
                     if !self.cfg.is_holocene_active(origin.timestamp) {
-                        remaining.push(batch.clone());
+                        processed.push((batch, true));
                     } else {
+                        processed.push((batch, false));
                         self.prev.flush();
                         warn!(target: "batch_queue", parent_block_num = parent.block_info.number, "[HOLOCENE] Dropping future batch");
                     }
                 }
                 BatchValidity::Drop(reason) => {
+                    processed.push((batch, false));
                     // If we drop a batch, flush previous batches buffered in the BatchStream
                     // stage.
                     self.prev.flush();
@@ -157,29 +159,43 @@ where
                     continue;
                 }
                 BatchValidity::Accept => {
-                    next_batch = Some(batch.clone());
+                    next_batch = Some(batch);
                     // Don't keep the current batch in the remaining items since we are processing
                     // it now, but retain every batch we didn't get to yet.
-                    remaining.extend_from_slice(&self.batches[i + 1..]);
                     break;
                 }
                 BatchValidity::Undecided => {
-                    remaining.extend_from_slice(&self.batches[i..]);
-                    self.batches = remaining;
+                    self.batches = processed
+                        .into_iter()
+                        .filter_map(|(batch, keep)| keep.then_some(batch))
+                        .chain(core::iter::once(batch))
+                        .chain(batches)
+                        .collect();
                     return Err(PipelineError::Eof.temp());
                 }
                 BatchValidity::Past => {
                     if !self.cfg.is_holocene_active(origin.timestamp) {
+                        self.batches = processed
+                            .into_iter()
+                            .map(|(batch, _)| batch)
+                            .chain(core::iter::once(batch))
+                            .chain(batches)
+                            .collect();
                         error!(target: "batch_queue", "BatchValidity::Past is not allowed pre-holocene");
                         return Err(PipelineError::InvalidBatchValidity.crit());
                     }
 
+                    processed.push((batch, false));
                     warn!(target: "batch_queue", parent_block_num = parent.block_info.number, "[HOLOCENE] Dropping outdated batch");
                     continue;
                 }
             }
         }
-        self.batches = remaining;
+        self.batches = processed
+            .into_iter()
+            .filter_map(|(batch, keep)| keep.then_some(batch))
+            .chain(batches)
+            .collect();
 
         if let Some(nb) = next_batch {
             info!(target: "batch_queue", timestamp = nb.batch.timestamp(), "Next batch found");
