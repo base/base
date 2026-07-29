@@ -44,7 +44,8 @@ pub use proofs::{
 };
 pub use providers::{
     CommittedStateAuthority, DeploymentIdentityError, DrawdownAuthority, MAX_PROCESS_IMAGE_BYTES,
-    MAX_RUNTIME_CODE_BYTES, ProcessBinaryIdentity, ProductionCodeHashProvider,
+    MAX_RUNTIME_CODE_BYTES, ProcessBinaryIdentity, ProductionB5Runtime,
+    ProductionB5RuntimeInstallError, ProductionCodeHashProvider,
     ProductionDeploymentIdentitySource, ProductionDrawdownSource,
 };
 pub use request::{Channel, RequestSpec};

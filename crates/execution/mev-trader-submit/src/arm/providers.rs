@@ -7,12 +7,15 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, keccak256};
-use base_mev_trader::{DrawdownInput, StoreIdentity, VictimClaimStore};
+use base_mev_trader::{ArmedCriteria, DrawdownInput, StoreIdentity, VictimClaimStore};
 use sha2::{Digest, Sha256};
 
 use super::{
     proofs::{CodeHashProvider, DeploymentEvidence, ProviderError},
-    witness::{DeploymentIdentity, DeploymentIdentitySource, DrawdownSource},
+    witness::{
+        ArmRuntime, ArmRuntimeOpenError, DeploymentIdentity, DeploymentIdentitySource,
+        DrawdownSource, FreshnessSources,
+    },
 };
 
 /// Maximum runtime bytecode accepted from the committed-state authority.
@@ -224,6 +227,75 @@ impl DeploymentIdentitySource for ProductionDeploymentIdentitySource {
     }
 }
 
+/// Fail-closed installation error for the production B5 freshness runtime.
+#[derive(Debug)]
+pub enum ProductionB5RuntimeInstallError {
+    /// The running process image or open R9 store did not match signed deployment evidence.
+    DeploymentIdentity(DeploymentIdentityError),
+    /// The compile-pinned arm stores or kill-state anchor could not be opened.
+    ArmRuntime(ArmRuntimeOpenError),
+}
+
+impl core::fmt::Display for ProductionB5RuntimeInstallError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::DeploymentIdentity(error) => {
+                write!(formatter, "production deployment identity rejected: {error}")
+            }
+            Self::ArmRuntime(error) => {
+                write!(formatter, "production arm runtime rejected: {error}")
+            }
+        }
+    }
+}
+
+impl core::error::Error for ProductionB5RuntimeInstallError {}
+
+/// Installed production owner of all three keyless B5 freshness providers.
+#[derive(Debug)]
+pub struct ProductionB5Runtime<C, D> {
+    arm: ArmRuntime,
+    code_hash: ProductionCodeHashProvider<C>,
+    drawdown: ProductionDrawdownSource<D>,
+    deployment_identity: ProductionDeploymentIdentitySource,
+}
+
+impl<C: CommittedStateAuthority, D: DrawdownAuthority> ProductionB5Runtime<C, D> {
+    /// Installs only after the running image and open R9 store match signed deployment evidence.
+    ///
+    /// The process image is measured from `/proc/self/exe`; callers cannot inject a path or digest.
+    /// Provider authorities remain node-local and keyless.
+    pub fn install(
+        evidence: &DeploymentEvidence,
+        claim_store: &VictimClaimStore,
+        committed_state: C,
+        drawdown: D,
+    ) -> Result<Self, ProductionB5RuntimeInstallError> {
+        let process = ProcessBinaryIdentity::install()
+            .map_err(ProductionB5RuntimeInstallError::DeploymentIdentity)?;
+        let deployment_identity =
+            ProductionDeploymentIdentitySource::install(evidence, process, claim_store)
+                .map_err(ProductionB5RuntimeInstallError::DeploymentIdentity)?;
+        let arm = ArmRuntime::open().map_err(ProductionB5RuntimeInstallError::ArmRuntime)?;
+        Ok(Self {
+            arm,
+            code_hash: ProductionCodeHashProvider::install(committed_state),
+            drawdown: ProductionDrawdownSource::install(drawdown),
+            deployment_identity,
+        })
+    }
+
+    /// Returns the committed-head provider used by T4e deadline and arm code-hash checks.
+    pub const fn code_hash_provider(&self) -> &ProductionCodeHashProvider<C> {
+        &self.code_hash
+    }
+
+    /// Builds one egress-moment freshness view from the installed production providers.
+    pub fn freshness<'a>(&'a self, armed: &'a ArmedCriteria) -> FreshnessSources<'a> {
+        self.arm.freshness(armed, &self.drawdown, &self.code_hash, &self.deployment_identity)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::Cell, fs};
@@ -397,6 +469,13 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn production_process_binary_install_hashes_proc_self_exe() {
+        let identity = ProcessBinaryIdentity::install().expect("hash running executable");
+        let image = fs::read("/proc/self/exe").expect("read running executable independently");
+        assert_eq!(identity.binary_digest(), B256::from_slice(&Sha256::digest(image)));
+    }
+
     fn claim_store(path: &Path) -> VictimClaimStore {
         VictimClaimStore::bootstrap(&VictimClaimConfig { db_path: path.to_path_buf() })
             .expect("bootstrap claim store")
@@ -436,6 +515,35 @@ mod tests {
         assert!(matches!(
             ProductionDeploymentIdentitySource::install(&evidence, process, &other_store),
             Err(DeploymentIdentityError::StoreIdentityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn production_b5_install_fails_before_arm_open_on_binary_mismatch() {
+        let dir = tk::TempDir::new("production-b5-runtime");
+        let store = claim_store(&dir.path.join("claims.redb"));
+        let provider =
+            tk::FakeProvider { code_hash: B256::repeat_byte(0x33), block: 100, fail: false };
+        let evidence = tk::deployment(
+            &provider,
+            tk::EXECUTOR,
+            B256::repeat_byte(0x33),
+            B256::ZERO,
+            B256::repeat_byte(0x44),
+            store.store_identity(),
+        );
+
+        let result = ProductionB5Runtime::install(
+            &evidence,
+            &store,
+            StateAuthority { code: Ok(vec![0x60, 0x00, 0x56]), block: Ok(100) },
+            Drawdown { fail: false, calls: Cell::new(0) },
+        );
+        assert!(matches!(
+            result,
+            Err(ProductionB5RuntimeInstallError::DeploymentIdentity(
+                DeploymentIdentityError::BinaryDigestMismatch { .. }
+            ))
         ));
     }
 }
