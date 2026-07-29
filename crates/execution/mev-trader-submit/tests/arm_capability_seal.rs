@@ -989,6 +989,115 @@ fn inherent_method_surface(src: &str, ty_name: &str) -> BTreeSet<String> {
     out
 }
 
+fn inherent_methods<'a>(file: &'a syn::File, type_name: &str) -> Vec<&'a syn::ImplItemFn> {
+    file.items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Impl(implementation) if implementation.trait_.is_none() => {
+                Some(implementation)
+            }
+            _ => None,
+        })
+        .filter(|implementation| {
+            let syn::Type::Path(type_path) = &*implementation.self_ty else {
+                return false;
+            };
+            type_path.path.segments.last().map(|segment| ident_name(&segment.ident))
+                == Some(type_name.to_owned())
+        })
+        .flat_map(|implementation| {
+            implementation.items.iter().filter_map(|item| match item {
+                syn::ImplItem::Fn(method) if !has_cfg_test(&method.attrs) => Some(method),
+                _ => None,
+            })
+        })
+        .collect()
+}
+
+fn inherent_method<'a>(
+    file: &'a syn::File,
+    type_name: &str,
+    method_name: &str,
+) -> &'a syn::ImplItemFn {
+    inherent_methods(file, type_name)
+        .into_iter()
+        .find(|method| ident_name(&method.sig.ident) == method_name)
+        .unwrap_or_else(|| panic!("missing {type_name}::{method_name}"))
+}
+
+fn simple_path(expression: &syn::Expr) -> Option<String> {
+    let syn::Expr::Path(path) = expression else {
+        return None;
+    };
+    Some(
+        path.path
+            .segments
+            .iter()
+            .map(|segment| ident_name(&segment.ident))
+            .collect::<Vec<_>>()
+            .join("::"),
+    )
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CallRecord {
+    path: String,
+    arguments: Vec<Option<String>>,
+    string_argument: Option<String>,
+}
+
+#[derive(Default)]
+struct ProductionCallInventory {
+    calls: Vec<CallRecord>,
+    function_names: Vec<String>,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for ProductionCallInventory {
+    fn visit_impl_item_fn(&mut self, method: &'ast syn::ImplItemFn) {
+        if has_cfg_test(&method.attrs) {
+            return;
+        }
+        self.function_names.push(ident_name(&method.sig.ident));
+        syn::visit::visit_impl_item_fn(self, method);
+    }
+
+    fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+        if has_cfg_test(&function.attrs) {
+            return;
+        }
+        self.function_names.push(ident_name(&function.sig.ident));
+        syn::visit::visit_item_fn(self, function);
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let Some(path) = simple_path(&call.func) {
+            let string_argument = call.args.first().and_then(|argument| match argument {
+                syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(value), .. }) => {
+                    Some(value.value())
+                }
+                _ => None,
+            });
+            self.calls.push(CallRecord {
+                path,
+                arguments: call.args.iter().map(simple_path).collect(),
+                string_argument,
+            });
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+}
+
+fn fallible_local_name(statement: &syn::Stmt) -> Option<String> {
+    let syn::Stmt::Local(local) = statement else {
+        return None;
+    };
+    let syn::Pat::Ident(pattern) = &local.pat else {
+        return None;
+    };
+    let initializer = local.init.as_ref()?;
+    matches!(&*initializer.expr, syn::Expr::Try(_)).then(|| ident_name(&pattern.ident))
+}
+
 // -- b9: facade — private module + private sub-modules -------------------------
 
 #[test]
@@ -2798,6 +2907,110 @@ fn gate_and_custody_seams_are_test_only() {
     let custody = arm_raw("custody.rs");
     // Arbitrary-path/address key + credential loaders must be test-only.
     assert_seam_cfg_test(&custody, "load_from");
+}
+
+#[test]
+fn production_process_image_open_is_fixed_and_arbitrary_paths_are_test_only() {
+    let providers = arm_raw("providers.rs");
+    let parsed = parse(&providers);
+    let mut inventory = ProductionCallInventory::default();
+    syn::visit::visit_file(&mut inventory, &parsed);
+
+    assert!(
+        !inventory.function_names.iter().any(|name| name == "from_path"),
+        "arbitrary-path process identity constructor reached production"
+    );
+    let file_opens: Vec<&CallRecord> =
+        inventory.calls.iter().filter(|call| call.path.ends_with("File::open")).collect();
+    assert_eq!(file_opens.len(), 1, "production must open exactly one process image");
+    assert_eq!(
+        file_opens[0].string_argument.as_deref(),
+        Some("/proc/self/exe"),
+        "production process-image open must use the fixed procfs path"
+    );
+    assert_eq!(
+        file_opens[0].arguments,
+        vec![None],
+        "production process-image open must take a literal, never a caller expression"
+    );
+
+    assert_seam_cfg_test(&providers, "from_path");
+    let process_methods = inherent_methods(&parsed, "ProcessBinaryIdentity");
+    assert_eq!(
+        process_methods.iter().map(|method| ident_name(&method.sig.ident)).collect::<Vec<_>>(),
+        ["install", "from_open_file", "binary_digest"],
+        "production ProcessBinaryIdentity methods must not gain an arbitrary-input seam"
+    );
+    let from_open_file = inherent_method(&parsed, "ProcessBinaryIdentity", "from_open_file");
+    assert!(
+        from_open_file.sig.inputs.len() == 1
+            && matches!(
+                from_open_file.sig.inputs.first(),
+                Some(syn::FnArg::Typed(argument))
+                    if matches!(
+                        &*argument.ty,
+                        syn::Type::Path(path)
+                            if path.path.segments.last().is_some_and(|segment| segment.ident == "File")
+                    )
+            ),
+        "the private hashing helper may accept only an already-open File"
+    );
+    let install = inherent_method(&parsed, "ProcessBinaryIdentity", "install");
+    assert_eq!(
+        fallible_local_name(install.block.stmts.first().expect("install open statement")),
+        Some("file".to_owned()),
+        "the fixed process image must be opened fallibly before hashing"
+    );
+}
+
+#[test]
+fn production_deployment_validation_precedes_arm_runtime_open_at_install_sink() {
+    let providers = parse(&arm_raw("providers.rs"));
+    let install = inherent_method(&providers, "ProductionB5Runtime", "install");
+
+    let mut relevant = Vec::new();
+    for (statement_index, statement) in install.block.stmts.iter().enumerate() {
+        let mut inventory = ProductionCallInventory::default();
+        syn::visit::visit_stmt(&mut inventory, statement);
+        for call in inventory.calls {
+            if call.path.ends_with("ProcessBinaryIdentity::install")
+                || call.path.ends_with("ProductionDeploymentIdentitySource::install")
+                || call.path.ends_with("ArmRuntime::open")
+            {
+                relevant.push((statement_index, call));
+            }
+        }
+    }
+
+    assert_eq!(relevant.len(), 3, "production install authority call inventory changed");
+    assert!(
+        relevant[0].1.path.ends_with("ProcessBinaryIdentity::install")
+            && relevant[1].1.path.ends_with("ProductionDeploymentIdentitySource::install")
+            && relevant[2].1.path.ends_with("ArmRuntime::open"),
+        "process measurement and signed deployment/store validation must precede ArmRuntime::open"
+    );
+    assert_eq!(
+        relevant[1].1.arguments,
+        vec![
+            Some("evidence".to_owned()),
+            Some("process".to_owned()),
+            Some("claim_store".to_owned()),
+        ],
+        "deployment validation must bind signed evidence, measured process, and the opened claim store"
+    );
+    assert_eq!(
+        [
+            fallible_local_name(&install.block.stmts[relevant[0].0]),
+            fallible_local_name(&install.block.stmts[relevant[1].0]),
+            fallible_local_name(&install.block.stmts[relevant[2].0]),
+        ],
+        [
+            Some("process".to_owned()),
+            Some("deployment_identity".to_owned()),
+            Some("arm".to_owned()),
+        ],
+        "each authority must fail closed before execution can reach the next install statement"
+    );
 }
 
 // -- M1: the assembler-only witness is not duplicable --------------------------

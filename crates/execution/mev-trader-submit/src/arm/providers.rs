@@ -3,8 +3,10 @@
 use std::{
     fs::File,
     io::{self, Read},
-    path::Path,
 };
+
+#[cfg(test)]
+use std::path::Path;
 
 use alloy_primitives::{Address, B256, keccak256};
 use base_mev_trader::{ArmedCriteria, DrawdownInput, StoreIdentity, VictimClaimStore};
@@ -132,13 +134,22 @@ pub struct ProcessBinaryIdentity(B256);
 impl ProcessBinaryIdentity {
     /// Opens `/proc/self/exe` once and hashes that opened image with bounded streaming I/O.
     pub fn install() -> Result<Self, DeploymentIdentityError> {
-        Self::from_path(Path::new("/proc/self/exe"))
-    }
-
-    fn from_path(path: &Path) -> Result<Self, DeploymentIdentityError> {
-        let mut file = File::open(path).map_err(|error| {
+        let file = File::open("/proc/self/exe").map_err(|error| {
             DeploymentIdentityError::ProcessImageIo { operation: "open", kind: error.kind() }
         })?;
+        Self::from_open_file(file)
+    }
+
+    #[cfg(test)]
+    fn from_path(path: &Path) -> Result<Self, DeploymentIdentityError> {
+        let file = File::open(path).map_err(|error| DeploymentIdentityError::ProcessImageIo {
+            operation: "open",
+            kind: error.kind(),
+        })?;
+        Self::from_open_file(file)
+    }
+
+    fn from_open_file(mut file: File) -> Result<Self, DeploymentIdentityError> {
         let metadata = file.metadata().map_err(|error| {
             DeploymentIdentityError::ProcessImageIo { operation: "metadata", kind: error.kind() }
         })?;
@@ -519,7 +530,7 @@ mod tests {
     }
 
     #[test]
-    fn production_b5_install_fails_before_arm_open_on_binary_mismatch() {
+    fn production_b5_install_rejects_binary_mismatch() {
         let dir = tk::TempDir::new("production-b5-runtime");
         let store = claim_store(&dir.path.join("claims.redb"));
         let provider =
