@@ -10,9 +10,9 @@
 //!       network egress anywhere is the e2e test's spawned loopback anvil.
 //!   (c) the ephemeral key never escapes or is logged.
 //!   (d) the rung-2/rung-3 blocked boundaries are present and error.
-//!   (e) the default build is clean — every dependency is optional and no crate
-//!       in the workspace links this crate, so the node binary can never contain
-//!       a signer/submit code path.
+//!   (e) the default build is clean — every dependency is optional, and the sole
+//!       unconditional workspace linker is a capability-minimal provisioning leaf.
+//!       The existing CLI declaration remains optional and separately feature-sealed.
 #![cfg(feature = "phase-b")]
 
 use std::{collections::BTreeSet, path::PathBuf, process::Command};
@@ -21,6 +21,7 @@ use mev_trader_submit::{
     assembler::{BlockedBoundary, sign_blocked, submit_blocked},
     signer::{SignerError, sign_ephemeral_atomic_tx, verify_ephemeral_signed_tx},
 };
+use serde_json::Value;
 
 mod support;
 use alloy_primitives::{U256, keccak256};
@@ -381,20 +382,269 @@ fn feature_surface_and_deps_are_pinned() {
     }
 }
 
-#[test]
-fn no_workspace_crate_links_the_submit_crate() {
-    let metadata = workspace_metadata();
-    let packages = metadata["packages"].as_array().expect("packages");
+const SUBMIT_PACKAGE: &str = "mev-trader-submit";
+const PROVISION_PACKAGE: &str = "base-suppression-provision-bin";
+const EXISTING_OPTIONAL_LINKER: &str = "base-execution-cli";
+
+fn required_array<'a>(
+    value: &'a Value,
+    field: &str,
+    context: &str,
+) -> Result<&'a Vec<Value>, String> {
+    value
+        .get(field)
+        .ok_or_else(|| format!("{context} is missing `{field}`"))?
+        .as_array()
+        .ok_or_else(|| format!("{context}.`{field}` is not an array"))
+}
+
+fn required_string<'a>(value: &'a Value, field: &str, context: &str) -> Result<&'a str, String> {
+    value
+        .get(field)
+        .ok_or_else(|| format!("{context} is missing `{field}`"))?
+        .as_str()
+        .ok_or_else(|| format!("{context}.`{field}` is not a string"))
+}
+
+fn required_bool(value: &Value, field: &str, context: &str) -> Result<bool, String> {
+    value
+        .get(field)
+        .ok_or_else(|| format!("{context} is missing `{field}`"))?
+        .as_bool()
+        .ok_or_else(|| format!("{context}.`{field}` is not a boolean"))
+}
+
+fn require_null(value: &Value, field: &str, context: &str) -> Result<(), String> {
+    let field_value = value.get(field).ok_or_else(|| format!("{context} is missing `{field}`"))?;
+    if field_value.is_null() {
+        Ok(())
+    } else {
+        Err(format!("{context}.`{field}` must be null, got {field_value}"))
+    }
+}
+
+fn validate_submit_linkers(metadata: &Value) -> Result<(), String> {
+    let packages = required_array(metadata, "packages", "metadata")?;
+    let mut declared_submit_dependers = BTreeSet::new();
+    let mut unconditional_linkers = BTreeSet::new();
+    let mut provisioning_package = None;
+    let mut provisioning_dependers = BTreeSet::new();
+
     for package in packages {
-        let name = package["name"].as_str().expect("name");
-        if name == "mev-trader-submit" {
-            continue;
+        let name = required_string(package, "name", "package")?;
+        let dependencies = required_array(package, "dependencies", &format!("package `{name}`"))?;
+        if name == PROVISION_PACKAGE {
+            if provisioning_package.replace(package).is_some() {
+                return Err(format!("duplicate workspace package `{PROVISION_PACKAGE}`"));
+            }
         }
-        for dependency in package["dependencies"].as_array().expect("dependencies") {
-            assert_ne!(
-                dependency["name"], "mev-trader-submit",
-                "{name} depends on mev-trader-submit — it could reach the node binary"
-            );
+
+        for dependency in dependencies {
+            let dependency_context = format!("dependency of `{name}`");
+            let dependency_name = required_string(dependency, "name", &dependency_context)?;
+            if dependency_name == SUBMIT_PACKAGE {
+                declared_submit_dependers.insert(name.to_owned());
+                if !required_bool(dependency, "optional", &dependency_context)? {
+                    unconditional_linkers.insert(name.to_owned());
+                }
+            }
+            if dependency_name == PROVISION_PACKAGE {
+                provisioning_dependers.insert(name.to_owned());
+            }
         }
     }
+
+    let expected_declared =
+        BTreeSet::from([EXISTING_OPTIONAL_LINKER.to_owned(), PROVISION_PACKAGE.to_owned()]);
+    if declared_submit_dependers != expected_declared {
+        return Err(format!(
+            "workspace packages declaring `{SUBMIT_PACKAGE}` must be exactly \
+             {expected_declared:?}, got {declared_submit_dependers:?}"
+        ));
+    }
+    let expected_linkers = BTreeSet::from([PROVISION_PACKAGE.to_owned()]);
+    if unconditional_linkers != expected_linkers {
+        return Err(format!(
+            "unconditional workspace linkers of `{SUBMIT_PACKAGE}` must be exactly \
+             {expected_linkers:?}, got {unconditional_linkers:?}"
+        ));
+    }
+    if !provisioning_dependers.is_empty() {
+        return Err(format!(
+            "`{PROVISION_PACKAGE}` must be a leaf package, depended on by \
+             {provisioning_dependers:?}"
+        ));
+    }
+
+    let package = provisioning_package
+        .ok_or_else(|| format!("workspace package `{PROVISION_PACKAGE}` is missing"))?;
+    let dependencies =
+        required_array(package, "dependencies", &format!("package `{PROVISION_PACKAGE}`"))?;
+    if dependencies.len() != 1 {
+        return Err(format!(
+            "`{PROVISION_PACKAGE}` must have exactly one dependency, got {}",
+            dependencies.len()
+        ));
+    }
+
+    let dependency = &dependencies[0];
+    let context = format!("`{PROVISION_PACKAGE}` dependency");
+    let dependency_name = required_string(dependency, "name", &context)?;
+    if dependency_name != SUBMIT_PACKAGE {
+        return Err(format!(
+            "`{PROVISION_PACKAGE}` must depend only on `{SUBMIT_PACKAGE}`, got `{dependency_name}`"
+        ));
+    }
+
+    let features = required_array(dependency, "features", &context)?;
+    let feature_names: Result<Vec<&str>, String> = features
+        .iter()
+        .map(|feature| {
+            feature
+                .as_str()
+                .ok_or_else(|| format!("{context}.`features` contains a non-string entry"))
+        })
+        .collect();
+    let feature_names = feature_names?;
+    if feature_names.contains(&"arm-live-egress") {
+        return Err(format!("`{PROVISION_PACKAGE}` must never enable `arm-live-egress`"));
+    }
+    if feature_names != ["arm-provisioning"] {
+        return Err(format!(
+            "`{PROVISION_PACKAGE}` must enable exactly [\"arm-provisioning\"], got {feature_names:?}"
+        ));
+    }
+    if !required_bool(dependency, "uses_default_features", &context)? {
+        return Err(format!("`{PROVISION_PACKAGE}` must use default features"));
+    }
+    if required_bool(dependency, "optional", &context)? {
+        return Err(format!("`{PROVISION_PACKAGE}` dependency must not be optional"));
+    }
+    for field in ["kind", "rename", "target"] {
+        require_null(dependency, field, &context)?;
+    }
+
+    Ok(())
+}
+
+fn package_mut<'a>(metadata: &'a mut Value, name: &str) -> &'a mut Value {
+    metadata["packages"]
+        .as_array_mut()
+        .expect("packages")
+        .iter_mut()
+        .find(|package| package["name"] == name)
+        .unwrap_or_else(|| panic!("package `{name}`"))
+}
+
+fn provision_dependency_mut(metadata: &mut Value) -> &mut Value {
+    package_mut(metadata, PROVISION_PACKAGE)["dependencies"]
+        .as_array_mut()
+        .expect("dependencies")
+        .first_mut()
+        .expect("provision dependency")
+}
+
+fn submit_dependency(metadata: &Value) -> Value {
+    metadata["packages"]
+        .as_array()
+        .expect("packages")
+        .iter()
+        .find(|package| package["name"] == PROVISION_PACKAGE)
+        .expect("provision package")["dependencies"][0]
+        .clone()
+}
+
+fn add_dependency_to_other_package(metadata: &mut Value, dependency: Value) {
+    let package = metadata["packages"]
+        .as_array_mut()
+        .expect("packages")
+        .iter_mut()
+        .find(|package| package["name"] != PROVISION_PACKAGE && package["name"] != SUBMIT_PACKAGE)
+        .expect("other workspace package");
+    package["dependencies"].as_array_mut().expect("dependencies").push(dependency);
+}
+
+fn assert_mutant_rejected(original: &Value, mutant: &Value, mutant_name: &str) {
+    assert_ne!(mutant, original, "{mutant_name} patch did not change metadata");
+    let error = match validate_submit_linkers(mutant) {
+        Ok(()) => panic!("{mutant_name} unexpectedly passed the linker seal"),
+        Err(error) => error,
+    };
+    eprintln!("{mutant_name}: RED ({error})");
+}
+
+#[test]
+fn submit_linker_seal_m0_unmodified_metadata_is_green() {
+    let metadata = workspace_metadata();
+    validate_submit_linkers(&metadata).expect("M0 metadata must satisfy the linker seal");
+    eprintln!("M0: GREEN");
+}
+
+#[test]
+fn submit_linker_seal_m1_rejects_a_second_linker() {
+    let original = workspace_metadata();
+    let mut mutant = original.clone();
+    add_dependency_to_other_package(&mut mutant, submit_dependency(&original));
+    assert_mutant_rejected(&original, &mutant, "M1");
+}
+
+#[test]
+fn submit_linker_seal_m2_rejects_live_egress_feature() {
+    let original = workspace_metadata();
+    let mut mutant = original.clone();
+    provision_dependency_mut(&mut mutant)["features"]
+        .as_array_mut()
+        .expect("features")
+        .push(Value::String("arm-live-egress".to_owned()));
+    assert_mutant_rejected(&original, &mutant, "M2");
+}
+
+#[test]
+fn submit_linker_seal_m3_rejects_any_additional_feature() {
+    let original = workspace_metadata();
+    let mut mutant = original.clone();
+    provision_dependency_mut(&mut mutant)["features"]
+        .as_array_mut()
+        .expect("features")
+        .push(Value::String("arm".to_owned()));
+    assert_mutant_rejected(&original, &mutant, "M3");
+}
+
+#[test]
+fn submit_linker_seal_m4_rejects_optional_dependency() {
+    let original = workspace_metadata();
+    let mut mutant = original.clone();
+    provision_dependency_mut(&mut mutant)["optional"] = Value::Bool(true);
+    assert_mutant_rejected(&original, &mutant, "M4");
+}
+
+#[test]
+fn submit_linker_seal_m5_rejects_renamed_dependency() {
+    let original = workspace_metadata();
+    let mut mutant = original.clone();
+    provision_dependency_mut(&mut mutant)["rename"] = Value::String("renamed-submit".to_owned());
+    assert_mutant_rejected(&original, &mutant, "M5");
+}
+
+#[test]
+fn submit_linker_seal_m6_rejects_non_leaf_provisioner() {
+    let original = workspace_metadata();
+    let mut mutant = original.clone();
+    let mut dependency = submit_dependency(&original);
+    dependency["name"] = Value::String(PROVISION_PACKAGE.to_owned());
+    add_dependency_to_other_package(&mut mutant, dependency);
+    assert_mutant_rejected(&original, &mutant, "M6");
+}
+
+#[test]
+fn submit_linker_seal_m7_rejects_a_second_provisioner_dependency() {
+    let original = workspace_metadata();
+    let mut mutant = original.clone();
+    let mut dependency = submit_dependency(&original);
+    dependency["name"] = Value::String("mutant-extra-dependency".to_owned());
+    package_mut(&mut mutant, PROVISION_PACKAGE)["dependencies"]
+        .as_array_mut()
+        .expect("dependencies")
+        .push(dependency);
+    assert_mutant_rejected(&original, &mutant, "M7");
 }

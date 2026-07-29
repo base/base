@@ -1,0 +1,19 @@
+[package]
+name = "base-suppression-provision-bin"
+description = "Provision the compile-pinned MEV suppression rollback anchor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-mev-suppression-provision"
+path = "main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+mev-trader-submit = { workspace = true, features = ["arm-provisioning"] }

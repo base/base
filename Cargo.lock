@@ -6285,6 +6285,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-suppression-provision-bin"
+version = "1.1.1"
+dependencies = [
+ "mev-trader-submit",
+]
+
+[[package]]
 name = "base-system-tests"
 version = "1.1.1"
 dependencies = [

@@ -3130,7 +3130,7 @@ fn arm_source_never_self_loads_production_arming_criteria() {
     }
 }
 
-// -- b8: no workspace crate links the submit crate (re-run) --------------------
+// -- b8: only reviewed workspace edges link the submit crate (re-run) ----------
 
 fn workspace_metadata() -> serde_json::Value {
     let output = Command::new(env!("CARGO"))
@@ -3143,10 +3143,10 @@ fn workspace_metadata() -> serde_json::Value {
 }
 
 #[test]
-fn only_reviewed_optional_cli_t4b_edge_links_the_submit_crate() {
+fn only_reviewed_workspace_edges_link_the_submit_crate() {
     let metadata = workspace_metadata();
     let packages = metadata["packages"].as_array().expect("packages");
-    let mut linkers = Vec::new();
+    let mut linkers = BTreeSet::new();
     for package in packages {
         let name = package["name"].as_str().expect("name");
         if name == "mev-trader-submit" {
@@ -3156,14 +3156,29 @@ fn only_reviewed_optional_cli_t4b_edge_links_the_submit_crate() {
             if dependency["name"] != "mev-trader-submit" {
                 continue;
             }
-            assert_eq!(name, "base-execution-cli", "unreviewed submit linker");
-            assert_eq!(dependency["optional"], true, "CLI submit edge must remain optional");
-            assert_eq!(dependency["kind"], serde_json::Value::Null);
-            assert_eq!(dependency["features"], serde_json::json!([]));
-            linkers.push(name);
+            match name {
+                "base-execution-cli" => {
+                    assert_eq!(
+                        dependency["optional"], true,
+                        "CLI submit edge must remain optional"
+                    );
+                    assert_eq!(dependency["kind"], serde_json::Value::Null);
+                    assert_eq!(dependency["features"], serde_json::json!([]));
+                }
+                "base-suppression-provision-bin" => {
+                    assert_eq!(dependency["optional"], false);
+                    assert_eq!(dependency["uses_default_features"], true);
+                    assert_eq!(dependency["kind"], serde_json::Value::Null);
+                    assert_eq!(dependency["rename"], serde_json::Value::Null);
+                    assert_eq!(dependency["target"], serde_json::Value::Null);
+                    assert_eq!(dependency["features"], serde_json::json!(["arm-provisioning"]));
+                }
+                other => panic!("unreviewed submit linker: {other}"),
+            }
+            linkers.insert(name);
         }
     }
-    assert_eq!(linkers, ["base-execution-cli"]);
+    assert_eq!(linkers, BTreeSet::from(["base-execution-cli", "base-suppression-provision-bin"]));
 
     let cli =
         std::fs::read_to_string(manifest_dir().join("../cli/Cargo.toml")).expect("CLI manifest");
