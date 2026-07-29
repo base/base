@@ -74,6 +74,7 @@ impl ProofFinalizeRequest {
                     sequence_window: self.sequence_window,
                     l1_head: self.l1_head,
                     intermediate_root_interval: self.intermediate_root_interval,
+                    schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
                 }),
