@@ -25,7 +25,10 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
     /// error in performing the reset.
     async fn reset_engine_forkchoice(&self) -> EngineClientResult<()>;
 
-    /// Resets forkchoice as part of a shadow cycle that the caller will explicitly rebuild.
+    /// Coordinates the engine boundary for a shadow cycle that the caller will explicitly rebuild.
+    ///
+    /// During initial catch-up, success activates shadow production after catch-up has already
+    /// advanced the engine. Once shadow production is active, this performs an actual reset.
     async fn reset_engine_forkchoice_coordinated(&self) -> EngineClientResult<()> {
         self.reset_engine_forkchoice().await
     }

@@ -375,8 +375,26 @@ mod tests {
 
         assert_eq!(catchup.payloads.len(), CanonicalUnsafeCatchup::MAX_PAYLOADS);
         assert_eq!(catchup.payloads.first_key_value().map(|(number, _)| *number), Some(3));
+        assert_eq!(catchup.observations.len(), CanonicalUnsafeCatchup::MAX_PAYLOADS);
+        assert_eq!(catchup.observations.first_key_value().map(|(number, _)| *number), Some(3));
         let anchor = head(2, B256::from(U256::from(2)));
         assert_eq!(catchup.contiguous_payloads(anchor).len(), CanonicalUnsafeCatchup::MAX_PAYLOADS);
+    }
+
+    #[test]
+    fn conflict_at_oldest_retained_observation_faults_catchup() {
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        for number in 1..=CanonicalUnsafeCatchup::MAX_PAYLOADS as u64 {
+            catchup.buffer_payload(payload(number, B256::ZERO, B256::from(U256::from(number))));
+        }
+        catchup.commit(head(
+            CanonicalUnsafeCatchup::MAX_PAYLOADS as u64,
+            B256::from(U256::from(CanonicalUnsafeCatchup::MAX_PAYLOADS as u64)),
+        ));
+
+        catchup.buffer_payload(payload(1, B256::ZERO, B256::with_last_byte(0xff)));
+
+        assert!(catchup.is_faulted());
     }
 
     #[test]

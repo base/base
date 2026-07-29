@@ -1167,81 +1167,69 @@ where
                         let ResetRequest { result_tx, origin } = *reset_request;
                         let sync_state = self.processor.engine.state().sync_state;
                         let head = sync_state.unsafe_head();
-                        if origin != ResetOrigin::Derivation {
-                            let catchup = match &self.sequencer_state {
-                                SequencerEngineState::CatchingUp { shadow, catchup } => Some((
-                                    *shadow,
-                                    catchup.is_faulted(),
-                                    catchup.is_complete(head, sync_state.safe_head()),
-                                )),
-                                _ => None,
-                            };
-                            match catchup {
-                                Some((_, true, _)) => {
-                                    error!(target: "engine", "Canonical catch-up payload buffer is faulted");
+                        if origin != ResetOrigin::Derivation
+                            && let SequencerEngineState::CatchingUp { shadow, catchup } =
+                                &self.sequencer_state
+                        {
+                            let shadow = *shadow;
+                            if catchup.is_faulted() {
+                                error!(target: "engine", "Canonical catch-up payload buffer is faulted");
+                                if result_tx
+                                    .send(Err(EngineClientError::ShadowBufferFaulted))
+                                    .await
+                                    .is_err()
+                                {
+                                    warn!(target: "engine", "Sending catch-up fault response failed");
+                                }
+                                continue;
+                            }
+                            if !catchup.is_complete(head, sync_state.safe_head()) {
+                                warn!(target: "engine", "Deferring sequencer reset until canonical catch-up completes");
+                                if result_tx.send(Err(EngineClientError::ELSyncing)).await.is_err()
+                                {
+                                    warn!(target: "engine", "Sending ELSyncing response failed");
+                                }
+                                continue;
+                            }
+                            if shadow {
+                                if origin != ResetOrigin::ShadowCycleCoordinated {
                                     if result_tx
-                                        .send(Err(EngineClientError::ShadowBufferFaulted))
+                                        .send(Err(EngineClientError::ShadowReconciliationDisabled))
                                         .await
                                         .is_err()
                                     {
-                                        warn!(target: "engine", "Sending catch-up fault response failed");
-                                    }
-                                    continue;
-                                }
-                                Some((_, false, false)) => {
-                                    warn!(target: "engine", "Deferring sequencer reset until canonical catch-up completes");
-                                    if result_tx
-                                        .send(Err(EngineClientError::ELSyncing))
-                                        .await
-                                        .is_err()
-                                    {
-                                        warn!(target: "engine", "Sending ELSyncing response failed");
-                                    }
-                                    continue;
-                                }
-                                Some((true, false, true)) => {
-                                    if origin != ResetOrigin::ShadowCycleCoordinated {
-                                        if result_tx
-                                            .send(Err(
-                                                EngineClientError::ShadowReconciliationDisabled,
-                                            ))
-                                            .await
-                                            .is_err()
-                                        {
-                                            warn!(target: "engine", "Sending shadow activation response failed");
-                                        }
-                                        continue;
-                                    }
-                                    info!(
-                                        target: "engine",
-                                        canonical_head = head.block_info.number,
-                                        canonical_hash = %head.block_info.hash,
-                                        "Shadow canonical catch-up completed"
-                                    );
-                                    self.sequencer_state = SequencerEngineState::ShadowActive(
-                                        Box::new(ShadowReconciliationGate::new(head)),
-                                    );
-                                    if let Some(unsafe_head_tx) =
-                                        self.processor.unsafe_head_tx.as_ref()
-                                    {
-                                        unsafe_head_tx.send_replace(head);
-                                    }
-                                    if result_tx.send(Ok(())).await.is_err() {
                                         warn!(target: "engine", "Sending shadow activation response failed");
                                     }
                                     continue;
                                 }
-                                Some((false, false, true)) => {
-                                    info!(
-                                        target: "engine",
-                                        canonical_head = head.block_info.number,
-                                        canonical_hash = %head.block_info.hash,
-                                        "Sequencer canonical catch-up completed"
-                                    );
-                                    self.sequencer_state = SequencerEngineState::Regular;
+                                info!(
+                                    target: "engine",
+                                    canonical_head = head.block_info.number,
+                                    canonical_hash = %head.block_info.hash,
+                                    "Shadow canonical catch-up completed"
+                                );
+                                // Catch-up already advanced the EL to this canonical head. This
+                                // coordinated request activates shadow production rather than
+                                // issuing a second forkchoice reset that could rewind it.
+                                self.sequencer_state = SequencerEngineState::ShadowActive(
+                                    Box::new(ShadowReconciliationGate::new(head)),
+                                );
+                                if let Some(unsafe_head_tx) = self.processor.unsafe_head_tx.as_ref()
+                                {
+                                    unsafe_head_tx.send_replace(head);
                                 }
-                                None => {}
+                                if result_tx.send(Ok(())).await.is_err() {
+                                    warn!(target: "engine", "Sending shadow activation response failed");
+                                }
+                                continue;
                             }
+                            info!(
+                                target: "engine",
+                                canonical_head = head.block_info.number,
+                                canonical_hash = %head.block_info.hash,
+                                "Sequencer canonical catch-up completed"
+                            );
+                            self.sequencer_state = SequencerEngineState::Regular;
                         }
                         // Do not reset the engine while the EL is still syncing. A Reset sends a
                         // forkchoice_updated to reth pointing at the sync-start block, which will

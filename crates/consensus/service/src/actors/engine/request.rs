@@ -112,7 +112,7 @@ pub struct BuildRequest {
     pub otel_cx: Context,
 }
 
-/// A request to reset the engine forkchoice.
+/// A request to reset engine forkchoice or complete coordinated shadow activation.
 /// Optionally contains a channel to send back the response if the caller would like to know that
 /// the request was successfully processed.
 #[derive(Debug)]
@@ -130,7 +130,7 @@ pub enum ResetOrigin {
     Derivation,
     /// The sequencer requested its ordinary startup or recovery reset.
     Sequencer,
-    /// The shadow sequencer coordinated its private-cycle state around the reset.
+    /// The shadow sequencer coordinated initial activation or its private-cycle reset.
     ShadowCycleCoordinated,
 }
 
