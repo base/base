@@ -184,7 +184,6 @@ impl InstalledExecutionIdentity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxAuthorityStateRead {
     parent_hash: B256,
-    parent_number: u64,
     committed_sender_nonce: Option<u64>,
     runtime_codes: [Option<Bytes>; 4],
 }
@@ -193,21 +192,15 @@ impl TxAuthorityStateRead {
     /// Constructs the result of one in-process hash-pinned state session.
     pub const fn new(
         parent_hash: B256,
-        parent_number: u64,
         committed_sender_nonce: Option<u64>,
         runtime_codes: [Option<Bytes>; 4],
     ) -> Self {
-        Self { parent_hash, parent_number, committed_sender_nonce, runtime_codes }
+        Self { parent_hash, committed_sender_nonce, runtime_codes }
     }
 
     /// Returns the parent hash pin used for every value in this batch.
     pub const fn parent_hash(&self) -> B256 {
         self.parent_hash
-    }
-
-    /// Returns the block number bound to the same parent hash as every state value.
-    pub const fn parent_number(&self) -> u64 {
-        self.parent_number
     }
 
     /// Returns the committed sender nonce, or `None` for an absent account.
@@ -973,6 +966,8 @@ mod tests {
     use reth_provider::StateProviderBox;
 
     use super::*;
+    #[cfg(feature = "t4e-handoff")]
+    use crate::arm::{CodeHashProvider, ProviderError};
 
     #[derive(Debug)]
     struct TestFreshness(Arc<AtomicBool>);
@@ -980,6 +975,27 @@ mod tests {
     impl SnapshotFreshnessToken for TestFreshness {
         fn is_current(&self) -> Result<bool, TxAuthorityNodeError> {
             Ok(self.0.load(Ordering::Acquire))
+        }
+    }
+    #[cfg(feature = "t4e-handoff")]
+    #[derive(Debug)]
+    struct TestBlockProvider {
+        current_block: Arc<AtomicU64>,
+        unavailable: Arc<AtomicBool>,
+    }
+
+    #[cfg(feature = "t4e-handoff")]
+    impl CodeHashProvider for TestBlockProvider {
+        fn code_hash_at_latest_committed(&self, _addr: Address) -> Result<B256, ProviderError> {
+            panic!("deadline revalidation must not read code hash")
+        }
+
+        fn current_block(&self) -> Result<u64, ProviderError> {
+            if self.unavailable.load(Ordering::Acquire) {
+                Err(ProviderError::Unavailable("committed head unavailable".to_string()))
+            } else {
+                Ok(self.current_block.load(Ordering::Acquire))
+            }
         }
     }
 
@@ -1116,7 +1132,6 @@ mod tests {
         ) -> Result<TxAuthorityStateRead, TxAuthorityNodeError> {
             Ok(TxAuthorityStateRead::new(
                 parent_hash,
-                0,
                 Some(0),
                 std::array::from_fn(|_| Some(Bytes::from_static(b"code"))),
             ))
@@ -1140,7 +1155,6 @@ mod tests {
     #[derive(Debug)]
     struct TestNode {
         parent_hash: B256,
-        parent_number: Arc<AtomicU64>,
         sender: Address,
         contracts: [Address; 4],
         state: TxAuthorityStateRead,
@@ -1187,7 +1201,6 @@ mod tests {
                 std::thread::sleep(self.delay_on_read.expect("checked delay").1);
             }
             let mut state = self.state.clone();
-            state.parent_number = self.parent_number.load(Ordering::Acquire);
             if self.stale_on_read.is_some_and(|threshold| read >= threshold) {
                 state.committed_sender_nonce =
                     state.committed_sender_nonce.and_then(|nonce| nonce.checked_add(1));
@@ -1230,8 +1243,10 @@ mod tests {
         state_error: Arc<AtomicBool>,
         #[cfg(feature = "t4d-bridge")]
         head_flip_after_read: Arc<AtomicBool>,
-        #[cfg(feature = "t4d-bridge")]
-        parent_number: Arc<AtomicU64>,
+        #[cfg(feature = "t4e-handoff")]
+        current_block: Arc<AtomicU64>,
+        #[cfg(feature = "t4e-handoff")]
+        block_unavailable: Arc<AtomicBool>,
         #[cfg(feature = "t4d-bridge")]
         stale_code_index: Arc<AtomicU64>,
     }
@@ -1258,6 +1273,25 @@ mod tests {
             )
             .expect("same-provider bridge install")
         }
+
+        #[cfg(feature = "t4e-handoff")]
+        fn block_provider(&self) -> TestBlockProvider {
+            TestBlockProvider {
+                current_block: Arc::clone(&self.current_block),
+                unavailable: Arc::clone(&self.block_unavailable),
+            }
+        }
+    }
+    fn revalidate_for_test<'a>(
+        fixture: &AssemblyFixture,
+        bridge: &bridge::InstalledSubmissionBridge,
+        candidate: &'a bridge::SealedUnsignedCandidate,
+    ) -> Result<&'a bridge::AdapterAwareProofBindings, bridge::BridgeError> {
+        bridge.revalidate_for_handoff(
+            candidate,
+            #[cfg(feature = "t4e-handoff")]
+            &fixture.block_provider(),
+        )
     }
 
     fn assembly_fixture_with_read_delay(
@@ -1400,15 +1434,16 @@ mod tests {
             },
         };
         let contracts = TxAuthorityAssembler::contract_addresses(&executor, &adapters);
-        let parent_number = Arc::new(AtomicU64::new(block_number - 1));
-        let state =
-            TxAuthorityStateRead::new(parent_hash, block_number - 1, Some(4), codes.map(Some));
+        #[cfg(feature = "t4e-handoff")]
+        let current_block = Arc::new(AtomicU64::new(block_number - 1));
+        #[cfg(feature = "t4e-handoff")]
+        let block_unavailable = Arc::new(AtomicBool::new(false));
+        let state = TxAuthorityStateRead::new(parent_hash, Some(4), codes.map(Some));
         let state_error = Arc::new(AtomicBool::new(false));
         let head_flip_after_read = Arc::new(AtomicBool::new(false));
         let stale_code_index = Arc::new(AtomicU64::new(u64::MAX));
         let node: Arc<dyn TxAuthorityNodeView> = Arc::new(TestNode {
             parent_hash,
-            parent_number: Arc::clone(&parent_number),
             sender,
             contracts,
             state,
@@ -1437,8 +1472,10 @@ mod tests {
             current,
             #[cfg(feature = "t4d-bridge")]
             state_error,
-            #[cfg(feature = "t4d-bridge")]
-            parent_number,
+            #[cfg(feature = "t4e-handoff")]
+            current_block,
+            #[cfg(feature = "t4e-handoff")]
+            block_unavailable,
             #[cfg(feature = "t4d-bridge")]
             head_flip_after_read,
             #[cfg(feature = "t4d-bridge")]
@@ -1622,7 +1659,6 @@ mod tests {
             TxAuthorityAssembler::contract_addresses(&install_executor, &install_adapters);
         let install_state = TxAuthorityStateRead::new(
             install_parent,
-            0,
             Some(4),
             [
                 Some(Bytes::from_static(b"executor")),
@@ -1634,7 +1670,6 @@ mod tests {
         for (state_error, head_flip_after_read) in [(true, false), (false, true)] {
             let node = Arc::new(TestNode {
                 parent_hash: install_parent,
-                parent_number: Arc::new(AtomicU64::new(0)),
                 sender: install_sender,
                 contracts: install_contracts,
                 state: install_state.clone(),
@@ -1658,7 +1693,7 @@ mod tests {
         }
         let mapping = ProtocolAdapterMapping::base_mainnet_pins();
         let parent = B256::with_last_byte(1);
-        let missing = TxAuthorityStateRead::new(parent, 0, Some(0), std::array::from_fn(|_| None));
+        let missing = TxAuthorityStateRead::new(parent, Some(0), std::array::from_fn(|_| None));
         assert_eq!(
             TxAuthorityAssembler::validate_state_codes(
                 &missing,
@@ -1668,12 +1703,8 @@ mod tests {
             ),
             Err(TxAuthorityError::DeploymentIdentityRejected)
         );
-        let empty = TxAuthorityStateRead::new(
-            parent,
-            0,
-            Some(0),
-            std::array::from_fn(|_| Some(Bytes::new())),
-        );
+        let empty =
+            TxAuthorityStateRead::new(parent, Some(0), std::array::from_fn(|_| Some(Bytes::new())));
         assert_eq!(
             TxAuthorityAssembler::validate_state_codes(
                 &empty,
@@ -1685,7 +1716,6 @@ mod tests {
         );
         let wrong_hash = TxAuthorityStateRead::new(
             parent,
-            0,
             Some(0),
             std::array::from_fn(|_| Some(Bytes::from_static(b"wrong-runtime"))),
         );
@@ -1700,7 +1730,6 @@ mod tests {
         );
         let partial = TxAuthorityStateRead::new(
             parent,
-            0,
             Some(0),
             [
                 Some(Bytes::from_static(b"executor")),
@@ -1720,7 +1749,6 @@ mod tests {
         );
         let wrong_parent = TxAuthorityStateRead::new(
             B256::with_last_byte(2),
-            0,
             Some(0),
             std::array::from_fn(|_| Some(Bytes::from_static(b"code"))),
         );
@@ -2241,20 +2269,20 @@ mod tests {
         let bridge = fixture.bridge();
         let candidate =
             bridge.assemble_sealed_for_test(fixture.view()).expect("opaque sealed candidate");
-        assert!(bridge.revalidate_for_handoff(&candidate).is_ok());
+        assert!(revalidate_for_test(&fixture, &bridge, &candidate).is_ok());
         assert!(
             fixture.probe.token().complete(Instant::now(), true, fixture.probe.global()),
             "runtime completion should win before the control-task drain"
         );
         assert!(
-            bridge.revalidate_for_handoff(&candidate).is_ok(),
+            revalidate_for_test(&fixture, &bridge, &candidate).is_ok(),
             "a successfully completed producer lifecycle remains valid for shadow drain"
         );
 
         for identity in 0..4 {
             fixture.stale_code_index.store(identity, Ordering::Release);
             assert_eq!(
-                bridge.revalidate_for_handoff(&candidate),
+                revalidate_for_test(&fixture, &bridge, &candidate),
                 Err(bridge::BridgeError::ExecutionIdentityChanged)
             );
             fixture.stale_code_index.store(u64::MAX, Ordering::Release);
@@ -2262,13 +2290,13 @@ mod tests {
 
         fixture.state_error.store(true, Ordering::Release);
         assert_eq!(
-            bridge.revalidate_for_handoff(&candidate),
+            revalidate_for_test(&fixture, &bridge, &candidate),
             Err(bridge::BridgeError::ExecutionFreshnessUnavailable)
         );
         fixture.state_error.store(false, Ordering::Release);
         fixture.head_flip_after_read.store(true, Ordering::Release);
         assert_eq!(
-            bridge.revalidate_for_handoff(&candidate),
+            revalidate_for_test(&fixture, &bridge, &candidate),
             Err(bridge::BridgeError::ExecutionIdentityChanged)
         );
     }
@@ -2290,9 +2318,11 @@ mod tests {
         let deadline = expected.valid_until_block();
         let signing_hash = expected.unsigned_signing_hash();
         let campaign_id = base_mev_trader::CampaignId::new([7; 32]);
+        fresh.current_block.store(deadline - 1, Ordering::Release);
+        let provider = fresh.block_provider();
         let checked = bridge
-            .into_checked_candidate(candidate, campaign_id)
-            .expect("parent immediately before deadline");
+            .into_checked_candidate(candidate, campaign_id, &provider)
+            .expect("committed head immediately before deadline");
         let identity = checked.identity();
         assert_eq!(identity.campaign_id(), campaign_id);
         assert_eq!(identity.victim(), victim);
@@ -2302,7 +2332,7 @@ mod tests {
         assert_eq!(checked.valid_until_block(), deadline);
         assert_eq!(checked.unsigned_signing_hash(), signing_hash);
 
-        for parent_number in [deadline, deadline + 1] {
+        for current_block in [deadline, deadline + 1] {
             let expired = assembly_fixture(
                 Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
                 None,
@@ -2311,12 +2341,33 @@ mod tests {
             let expired_candidate = expired_bridge
                 .assemble_sealed_for_test(expired.view())
                 .expect("deadline candidate");
-            expired.parent_number.store(parent_number, Ordering::Release);
+            expired.current_block.store(current_block, Ordering::Release);
             assert!(matches!(
-                expired_bridge.into_checked_candidate(expired_candidate, campaign_id),
+                expired_bridge.into_checked_candidate(
+                    expired_candidate,
+                    campaign_id,
+                    &expired.block_provider(),
+                ),
                 Err(bridge::BridgeError::DeadlineNoHandoff)
             ));
         }
+    }
+
+    #[cfg(feature = "t4e-handoff")]
+    #[test]
+    fn t4e_revalidation_fails_closed_when_committed_head_is_unavailable() {
+        let fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let bridge = fixture.bridge();
+        let candidate = bridge.assemble_sealed_for_test(fixture.view()).expect("sealed candidate");
+        fixture.block_unavailable.store(true, Ordering::Release);
+
+        assert_eq!(
+            bridge.revalidate_for_handoff(&candidate, &fixture.block_provider()),
+            Err(bridge::BridgeError::ExecutionFreshnessUnavailable)
+        );
     }
 
     #[cfg(feature = "t4d-bridge")]
@@ -2332,7 +2383,7 @@ mod tests {
             .assemble_sealed_for_test(fixture.view())
             .expect("opaque sealed candidate");
         assert_eq!(
-            other_bridge.revalidate_for_handoff(&candidate),
+            revalidate_for_test(&fixture, &other_bridge, &candidate),
             Err(bridge::BridgeError::CrossInstallation)
         );
         drop(candidate);
@@ -2343,8 +2394,11 @@ mod tests {
                 .assemble_sealed_for_test(fixture.view())
                 .expect("second opaque sealed candidate");
             assert!(matches!(
-                other_bridge
-                    .into_checked_candidate(candidate, base_mev_trader::CampaignId::new([9; 32]),),
+                other_bridge.into_checked_candidate(
+                    candidate,
+                    base_mev_trader::CampaignId::new([9; 32]),
+                    &fixture.block_provider(),
+                ),
                 Err(bridge::BridgeError::CrossInstallation)
             ));
         }
@@ -2424,7 +2478,7 @@ mod tests {
             stale_bridge.assemble_sealed_for_test(stale.view()).expect("stale candidate setup");
         stale.current.store(false, Ordering::Release);
         assert_eq!(
-            stale_bridge.revalidate_for_handoff(&stale_candidate),
+            revalidate_for_test(&stale, &stale_bridge, &stale_candidate),
             Err(bridge::BridgeError::SnapshotStale)
         );
 
@@ -2438,7 +2492,7 @@ mod tests {
             .expect("cancelled candidate setup");
         cancelled.probe.token().request_cancel();
         assert_eq!(
-            cancelled_bridge.revalidate_for_handoff(&cancelled_candidate),
+            revalidate_for_test(&cancelled, &cancelled_bridge, &cancelled_candidate),
             Err(bridge::BridgeError::Cancelled)
         );
 
@@ -2456,7 +2510,7 @@ mod tests {
             .expect("expiring candidate setup");
         std::thread::sleep(Duration::from_millis(60));
         assert_eq!(
-            expired_bridge.revalidate_for_handoff(&expired_candidate),
+            revalidate_for_test(&expired, &expired_bridge, &expired_candidate),
             Err(bridge::BridgeError::DeadlineNoHandoff)
         );
     }

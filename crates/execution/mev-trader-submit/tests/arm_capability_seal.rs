@@ -193,9 +193,15 @@ fn arm_source_is_exactly_the_declared_set() {
 // -- b9: the crate's public `arm` surface is EXACTLY the curated allowlist ------
 
 /// The complete root API. The T4e feature adds only the unsigned `CheckedCandidate`
-/// handoff; signer, send, backend, runtime, provider, and proof APIs remain private.
-const PUBLIC_API_ALLOWLIST: [&str; 3] =
-    ["CheckedCandidate", "SuppressionRollbackError", "provision_suppression_anchor"];
+/// handoff and its committed-head provider contract; signer, send, backend, runtime,
+/// concrete provider, and proof APIs remain private.
+const PUBLIC_API_ALLOWLIST: [&str; 5] = [
+    "CheckedCandidate",
+    "CodeHashProvider",
+    "ProviderError",
+    "SuppressionRollbackError",
+    "provision_suppression_anchor",
+];
 
 static MODULE_FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
 

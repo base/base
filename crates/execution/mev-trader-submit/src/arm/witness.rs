@@ -169,9 +169,8 @@ impl CheckedCandidate {
     pub fn from_authority(
         vtx: ValidatedUnsignedAtomicTx,
         campaign_id: CampaignId,
-        seal: BridgeConversionSeal,
+        _seal: BridgeConversionSeal,
     ) -> Self {
-        seal.consume();
         let source = CheckedTx::Authority(vtx);
         let id = ValidatedExecutionIdentity {
             campaign_id,

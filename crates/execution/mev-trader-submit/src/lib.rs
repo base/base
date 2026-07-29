@@ -34,7 +34,7 @@ pub use tx_authority::{
 #[cfg(feature = "arm")]
 mod arm;
 #[cfg(feature = "t4e-handoff")]
-pub use arm::CheckedCandidate;
+pub use arm::{CheckedCandidate, CodeHashProvider, ProviderError};
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
 pub use arm::{SuppressionRollbackError, provision_suppression_anchor};
 

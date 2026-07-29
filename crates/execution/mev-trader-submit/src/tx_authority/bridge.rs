@@ -7,7 +7,7 @@ use std::{
 };
 
 #[cfg(feature = "t4e-handoff")]
-use crate::CheckedCandidate;
+use crate::{CheckedCandidate, CodeHashProvider};
 use alloy_primitives::{Address, B256};
 #[cfg(feature = "t4e-handoff")]
 use base_mev_trader::CampaignId;
@@ -128,13 +128,6 @@ pub struct BridgeConversionSeal {
     private: (),
 }
 
-#[cfg(feature = "t4e-handoff")]
-impl BridgeConversionSeal {
-    pub(crate) fn consume(self) {
-        let _ = self.private;
-    }
-}
-
 /// Terminal failure from an unsigned T4e candidate handoff sink.
 #[cfg(feature = "t4e-handoff")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,8 +202,9 @@ impl InstalledSubmissionBridge {
         &self,
         candidate: SealedUnsignedCandidate,
         campaign_id: CampaignId,
+        provider: &dyn CodeHashProvider,
     ) -> Result<CheckedCandidate, BridgeError> {
-        self.revalidate_for_handoff(&candidate)?;
+        self.revalidate_for_handoff(&candidate, provider)?;
         let SealedUnsignedCandidate { detail, bindings: _, installation: _, probe: _ } = candidate;
         Ok(CheckedCandidate::from_authority(
             detail,
@@ -222,6 +216,7 @@ impl InstalledSubmissionBridge {
     pub fn revalidate_for_handoff<'a>(
         &self,
         candidate: &'a SealedUnsignedCandidate,
+        #[cfg(feature = "t4e-handoff")] provider: &dyn CodeHashProvider,
     ) -> Result<&'a AdapterAwareProofBindings, BridgeError> {
         Self::checkpoint(&candidate.probe)?;
         if !Arc::ptr_eq(&self.installation, &candidate.installation) {
@@ -265,8 +260,13 @@ impl InstalledSubmissionBridge {
             return Err(BridgeError::ExecutionIdentityChanged);
         }
         Self::validate_bindings(bindings, execution)?;
-        if state.parent_number() >= bindings.valid_until_block {
-            return Err(BridgeError::DeadlineNoHandoff);
+        #[cfg(feature = "t4e-handoff")]
+        {
+            let current_block =
+                provider.current_block().map_err(|_| BridgeError::ExecutionFreshnessUnavailable)?;
+            if current_block >= bindings.valid_until_block {
+                return Err(BridgeError::DeadlineNoHandoff);
+            }
         }
         Self::checkpoint(&candidate.probe)?;
         Ok(bindings)

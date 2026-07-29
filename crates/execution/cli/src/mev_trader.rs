@@ -9462,16 +9462,6 @@ mod t4b_shadow {
             sender: Address,
             contracts: [Address; 4],
         ) -> Result<TxAuthorityStateRead, TxAuthorityNodeError> {
-            let header = self
-                .port
-                .provider
-                .sealed_header_by_hash(parent_hash)
-                .map_err(|_| TxAuthorityNodeError::Unavailable)?
-                .ok_or(TxAuthorityNodeError::Unavailable)?;
-            if header.hash() != parent_hash {
-                return Err(TxAuthorityNodeError::Incoherent);
-            }
-            let parent_number = header.number;
             let state = self
                 .port
                 .provider
@@ -9496,12 +9486,7 @@ mod t4b_shadow {
             }
             let runtime_codes =
                 runtime_codes.try_into().map_err(|_| TxAuthorityNodeError::Incoherent)?;
-            Ok(TxAuthorityStateRead::new(
-                parent_hash,
-                parent_number,
-                committed_sender_nonce,
-                runtime_codes,
-            ))
+            Ok(TxAuthorityStateRead::new(parent_hash, committed_sender_nonce, runtime_codes))
         }
 
         fn is_current_authoritative(
@@ -9819,19 +9804,15 @@ mod t4d_shadow {
             let Some(candidate) = self.slot.try_take() else {
                 return;
             };
+            #[cfg(feature = "t4e-handoff")]
+            match self.handoff.try_handoff(candidate) {
+                Ok(()) => self.record(T4bOutcome::SelectedUnsignedShape, T4dTerminal::SealedFresh),
+                Err(error) => self
+                    .record(T4bOutcome::DeploymentIdentityRejected, Self::handoff_terminal(error)),
+            }
+            #[cfg(not(feature = "t4e-handoff"))]
             match self.bridge.revalidate_for_handoff(&candidate) {
                 Ok(_) => {
-                    #[cfg(feature = "t4e-handoff")]
-                    match self.handoff.try_handoff(candidate) {
-                        Ok(()) => {
-                            self.record(T4bOutcome::SelectedUnsignedShape, T4dTerminal::SealedFresh)
-                        }
-                        Err(error) => self.record(
-                            T4bOutcome::DeploymentIdentityRejected,
-                            Self::handoff_terminal(error),
-                        ),
-                    }
-                    #[cfg(not(feature = "t4e-handoff"))]
                     self.record(T4bOutcome::SelectedUnsignedShape, T4dTerminal::SealedFresh);
                 }
                 Err(error) => {

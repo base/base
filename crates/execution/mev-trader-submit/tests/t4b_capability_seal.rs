@@ -2051,6 +2051,7 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
             "base_mev_trader::GlobalState".to_owned(),
             "base_mev_trader::TaskState".to_owned(),
             "crate::CheckedCandidate".to_owned(),
+            "crate::CodeHashProvider".to_owned(),
             "super::DeployedContractIdentity".to_owned(),
             "super::InstalledExecutionIdentity".to_owned(),
             "super::TxAuthorityAssembler".to_owned(),
