@@ -100,7 +100,7 @@ where
     }
 
     /// Overrides the batcher sender used only to filter L1 data-availability transactions.
-    pub fn da_batcher_sender_override(
+    pub const fn da_batcher_sender_override(
         mut self,
         da_batcher_sender_override: Option<Address>,
     ) -> Self {
