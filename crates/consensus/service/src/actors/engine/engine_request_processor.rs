@@ -1165,12 +1165,14 @@ where
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
                         let ResetRequest { result_tx, origin } = *reset_request;
-                        let head = self.processor.engine.state().sync_state.unsafe_head();
+                        let sync_state = self.processor.engine.state().sync_state;
+                        let head = sync_state.unsafe_head();
                         if origin != ResetOrigin::Derivation {
                             let catchup = match &self.sequencer_state {
-                                SequencerEngineState::CatchingUp { shadow, catchup } => {
-                                    Some((*shadow, catchup.is_complete(head)))
-                                }
+                                SequencerEngineState::CatchingUp { shadow, catchup } => Some((
+                                    *shadow,
+                                    catchup.is_complete(head, sync_state.safe_head()),
+                                )),
                                 _ => None,
                             };
                             match catchup {

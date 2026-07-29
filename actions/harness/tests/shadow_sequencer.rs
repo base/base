@@ -68,5 +68,5 @@ async fn late_shadow_catches_up_safe_then_unsafe() {
 
     assert_eq!(shadow.l2_safe_number(), SAFE_BLOCKS as u64);
     assert_eq!(shadow.l2_unsafe_number(), (SAFE_BLOCKS + UNSAFE_BLOCKS) as u64);
-    assert!(catchup.is_complete(shadow.l2_unsafe()));
+    assert!(catchup.is_complete(shadow.l2_unsafe(), shadow.l2_safe()));
 }

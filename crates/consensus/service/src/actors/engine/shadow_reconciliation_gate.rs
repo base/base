@@ -91,13 +91,14 @@ impl CanonicalUnsafeCatchup {
         self.payloads.retain(|number, _| *number > head.block_info.number);
     }
 
-    /// Returns whether the acknowledged engine head covers the latest observed canonical payload.
-    pub fn is_complete(&self, head: L2BlockInfo) -> bool {
+    /// Returns whether the engine has reached or safely overtaken the latest observed payload.
+    pub fn is_complete(&self, unsafe_head: L2BlockInfo, safe_head: L2BlockInfo) -> bool {
         self.highest_observed.is_some_and(|(number, hash)| {
             !self.faulted
                 && self.payloads.is_empty()
-                && head.block_info.number == number
-                && head.block_info.hash == hash
+                && ((unsafe_head.block_info.number == number
+                    && unsafe_head.block_info.hash == hash)
+                    || (unsafe_head == safe_head && safe_head.block_info.number > number))
         })
     }
 }
@@ -235,6 +236,11 @@ impl ShadowReconciliationGate {
                 );
                 return Ok(None);
             };
+            if payload.execution_payload.parent_hash() != parent
+                && (local_payload_needs_canonical_witness || !self.payloads.contains_key(&number))
+            {
+                return Ok(None);
+            }
             if payload.execution_payload.parent_hash() != parent {
                 return Err(EngineClientError::InvalidShadowReconciliation(
                     "payload parent continuity mismatch".into(),
@@ -344,11 +350,11 @@ mod tests {
         assert_eq!(payloads.len(), 2);
         assert_eq!(payloads[0].execution_payload.block_number(), 11);
         assert_eq!(payloads[1].execution_payload.block_number(), 12);
-        assert!(!catchup.is_complete(safe));
+        assert!(!catchup.is_complete(safe, safe));
 
         let canonical_head = head(12, B256::with_last_byte(12));
         catchup.commit(canonical_head);
-        assert!(catchup.is_complete(canonical_head));
+        assert!(catchup.is_complete(canonical_head, safe));
     }
 
     #[test]
@@ -368,12 +374,23 @@ mod tests {
     }
 
     #[test]
-    fn safe_head_beyond_last_observed_payload_does_not_complete_catchup() {
+    fn safe_head_beyond_last_observed_payload_completes_catchup() {
         let mut catchup = CanonicalUnsafeCatchup::default();
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
-        catchup.commit(head(12, B256::with_last_byte(12)));
+        let safe = head(12, B256::with_last_byte(12));
+        assert!(catchup.contiguous_payloads(safe).is_empty());
 
-        assert!(!catchup.is_complete(head(12, B256::with_last_byte(12))));
+        assert!(catchup.is_complete(safe, safe));
+    }
+
+    #[test]
+    fn private_head_beyond_last_observed_payload_does_not_complete_catchup() {
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
+        let private = head(12, B256::with_last_byte(99));
+        assert!(catchup.contiguous_payloads(private).is_empty());
+
+        assert!(!catchup.is_complete(private, head(10, B256::with_last_byte(10))));
     }
 
     #[test]
@@ -382,12 +399,12 @@ mod tests {
         let original = head(11, B256::with_last_byte(11));
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), original.block_info.hash));
         catchup.commit(original);
-        assert!(catchup.is_complete(original));
+        assert!(catchup.is_complete(original, L2BlockInfo::default()));
 
         catchup.buffer_payload(payload(11, B256::with_last_byte(10), B256::with_last_byte(99)));
 
         assert!(catchup.faulted);
-        assert!(!catchup.is_complete(original));
+        assert!(!catchup.is_complete(original, L2BlockInfo::default()));
     }
 
     #[test]
@@ -436,16 +453,13 @@ mod tests {
     }
 
     #[test]
-    fn divergent_local_payload_is_rejected_by_canonical_child() {
+    fn divergent_local_payload_waits_for_canonical_replacement() {
         let anchor = head(10, B256::with_last_byte(10));
         let mut gate = ShadowReconciliationGate::new(anchor);
         gate.buffer_local_payload(payload(11, anchor.block_info.hash, B256::with_last_byte(99)));
         gate.buffer_payload(payload(12, B256::with_last_byte(11), B256::with_last_byte(12)));
 
-        assert!(matches!(
-            gate.prepare(head(12, B256::with_last_byte(12))),
-            Err(EngineClientError::InvalidShadowReconciliation(_))
-        ));
+        assert!(gate.prepare(head(12, B256::with_last_byte(12))).unwrap().is_none());
     }
 
     #[test]
