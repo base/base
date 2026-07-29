@@ -1047,7 +1047,7 @@ async fn handle_hint_inner(
             // Current generic commitments use a trusted GlobalGeneric key; see
             // `preimage_key_for_commitment` for the keying rules.
             let key = preimage_key_for_commitment(commitment);
-            kv.write().await.set(key.into(), bytes.to_vec())?;
+            kv.write().await.set(key.into(), bytes.into())?;
         }
         HintType::L1Precompile => {
             if hint.data.len() < 28 {
@@ -1316,8 +1316,10 @@ mod tests {
     use alloy_genesis::ChainConfig;
     use alloy_provider::{RootProvider, builder as provider_builder, mock::Asserter};
     use alloy_rlp::Encodable;
+    use async_trait::async_trait;
     use base_common_genesis::RollupConfig;
     use base_common_network::Base;
+    use base_consensus_derive::{AltDaCommitmentResolver, AltDaResolverError, DynAltDaResolver};
     use base_consensus_providers::{L1BlobProvider, OnlineBeaconClient, OnlineBlobProvider};
     use base_proof_primitives::ProofRequest;
     use tokio::sync::RwLock;
@@ -1379,6 +1381,25 @@ mod tests {
     fn test_providers(l2: RootProvider<Base>) -> HostProviders {
         let l1 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
         test_providers_with_l1(l1, l2)
+    }
+
+    /// Stands in for the da-server: serves fixed bytes for any commitment and records the
+    /// commitments it was asked to resolve.
+    #[derive(Debug)]
+    struct StubAltDaResolver {
+        bytes: Bytes,
+        seen: Mutex<Vec<Vec<u8>>>,
+    }
+
+    #[async_trait]
+    impl AltDaCommitmentResolver for StubAltDaResolver {
+        async fn resolve(
+            &self,
+            commitment: &[u8],
+        ) -> std::result::Result<Bytes, AltDaResolverError> {
+            self.seen.lock().unwrap().push(commitment.to_vec());
+            Ok(self.bytes.clone())
+        }
     }
 
     fn test_prefetcher() -> PayloadWitnessPrefetcher {
@@ -1678,5 +1699,42 @@ mod tests {
         let err = handle_hint(hint, &test_cfg(), &providers, kv).await.unwrap_err();
 
         assert!(matches!(err, HostError::InvalidHintDataLength));
+    }
+
+    /// The host must store resolved bytes under exactly the key the guest's
+    /// `OracleAltDaResolver` reads back, and hand the da-server the bare commitment.
+    #[tokio::test]
+    async fn test_alt_da_stores_resolved_bytes_under_the_key_the_guest_reads() {
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let stored = Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef, 0x01, 0x02]);
+        let resolver =
+            Arc::new(StubAltDaResolver { bytes: stored.clone(), seen: Mutex::new(Vec::new()) });
+        let mut providers = test_providers(l2);
+        providers.alt_da = Some(Arc::clone(&resolver) as DynAltDaResolver);
+
+        let commitment = [0x11u8; GENERIC_COMMITMENT_LEN];
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        let hint = HintType::AltDaCommitment.with_data(&[&commitment]);
+
+        handle_hint(hint, &test_cfg(), &providers, Arc::clone(&kv)).await.unwrap();
+
+        let key = preimage_key_for_commitment(&commitment);
+        assert_eq!(key.key_type(), PreimageKeyType::GlobalGeneric);
+        assert_eq!(kv.read().await.get(key.into()), Some(stored.to_vec()));
+        assert_eq!(resolver.seen.lock().unwrap().as_slice(), &[commitment.to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn test_alt_da_errors_when_no_da_server_is_configured() {
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let providers = test_providers(l2);
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        let commitment = [0x11u8; GENERIC_COMMITMENT_LEN];
+        let hint = HintType::AltDaCommitment.with_data(&[&commitment]);
+
+        let err = handle_hint(hint, &test_cfg(), &providers, Arc::clone(&kv)).await.unwrap_err();
+
+        assert!(matches!(err, HostError::Custom(msg) if msg.contains("no da-server is configured")));
+        assert!(kv.read().await.get(preimage_key_for_commitment(&commitment).into()).is_none());
     }
 }

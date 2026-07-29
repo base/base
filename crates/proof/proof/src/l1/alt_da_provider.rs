@@ -5,7 +5,7 @@ use alloc::{boxed::Box, string::ToString, sync::Arc};
 use alloy_primitives::{Bytes, keccak256};
 use async_trait::async_trait;
 use base_consensus_derive::{AltDaCommitmentResolver, AltDaResolverError};
-use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};
+use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType, errors::PreimageOracleError};
 
 use crate::HintType;
 
@@ -80,8 +80,10 @@ impl<T: CommsClient + Send + Sync + core::fmt::Debug> AltDaCommitmentResolver
         // `preimage_key_for_commitment`). Objects are variable-length (up to MAX_DA_OBJECT_BYTES),
         // so use `get` rather than `get_exact`.
         let key = preimage_key_for_commitment(commitment);
-        let bytes =
-            self.oracle.get(key).await.map_err(|e| AltDaResolverError::Resolve(e.to_string()))?;
+        let bytes = self.oracle.get(key).await.map_err(|error| match error {
+            PreimageOracleError::KeyNotFound => AltDaResolverError::NotFound,
+            other => AltDaResolverError::Resolve(other.to_string()),
+        })?;
 
         Ok(Bytes::from(bytes))
     }
@@ -241,12 +243,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_preimage_is_an_error() {
+    async fn missing_preimage_is_not_found() {
         let resolver = OracleAltDaResolver::new(Arc::new(MockOracle {
             key: PreimageKey::new_keccak256([0u8; 32]),
             value: vec![],
         }));
         let err = resolver.resolve(&generic_commitment()).await.unwrap_err();
-        assert!(matches!(err, AltDaResolverError::Resolve(_)));
+        assert!(matches!(err, AltDaResolverError::NotFound));
     }
 }
