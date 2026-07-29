@@ -79,11 +79,7 @@ pub const INTERMEDIATE_BLOCK_INTERVAL_KEY: U256 = uint!(9_U256);
 /// the enclave to reference the L1 head number without an extra lookup.
 pub const L1_HEAD_NUMBER_KEY: U256 = uint!(10_U256);
 
-/// The local key identifier for the L2 block number used to pin the upgrade schedule.
-///
-/// Optional — proposer (full-game) proofs omit this and the schedule pins to
-/// `claimed_l2_block_number`. Challenger subrange proofs set this to the game's L2 block number,
-/// since a subrange proof's claimed block may precede the game's L2 block.
+/// L2 block number used to pin the activated upgrade schedule.
 pub const L2_SCHEDULE_BLOCK_NUMBER_KEY: U256 = uint!(11_U256);
 
 /// The boot information for the client program.
@@ -190,10 +186,6 @@ pub struct BootInfo {
     #[serde(default)]
     pub l1_head_number: u64,
     /// The locally derived schedule ID for this proof attempt.
-    ///
-    /// Commits to the schedule prefix through the highest upgrade activated at the schedule
-    /// block's deterministic L2 timestamp (see [`L2_SCHEDULE_BLOCK_NUMBER_KEY`]). Entries above
-    /// that prefix are cleared from [`Self::rollup_config`].
     #[serde(default)]
     pub schedule_id: B256,
 }
@@ -356,9 +348,7 @@ impl BootInfo {
             }
         };
 
-        // Load schedule L2 block number (optional — defaults to the claimed L2 block for
-        // proposer/full-game proofs). Challenger subrange proofs set this to the game's L2 block.
-        // 0 is the "unset" sentinel, matching how the host serves this key.
+        // Missing or zero values default to the claimed block.
         let schedule_l2_block_number = match oracle
             .get(PreimageKey::new_local(L2_SCHEDULE_BLOCK_NUMBER_KEY.to()))
             .await
@@ -379,10 +369,6 @@ impl BootInfo {
             }
         };
 
-        // L2 block timestamps are fixed by the rollup genesis timestamp and block time. Deriving
-        // the cutoff from the schedule block keeps the proof journal aligned with the
-        // AggregateVerifier regardless of the L1 heads used for proof generation and game
-        // creation.
         if rollup_config.block_time == 0 {
             return Err(OracleProviderError::InvalidL2BlockTime);
         }
@@ -413,13 +399,9 @@ impl BootInfo {
             return Err(OracleProviderError::UncommittedZenithUpgrade);
         }
 
-        // Entries above the activated prefix do not contribute to the game commitment and
-        // therefore must not be able to influence derivation for this proof.
         let schedule_id = ScheduleId::pin(&mut rollup_config.upgrades, l2_schedule_timestamp)?;
 
-        // The activation registry is installed at Beryl. Require its admin only when Beryl remains
-        // in the pinned schedule; pre-Beryl games clear it above. The admin is sourced from the
-        // trusted binary keyed by the committed chain ID, never from the node-served rollup config.
+        // Only a pinned Beryl schedule requires its trusted built-in admin.
         if activation_admin_address.is_none() && rollup_config.upgrades.base.beryl.is_some() {
             return Err(OracleProviderError::MissingActivationAdminAddress { chain_id });
         }
@@ -473,8 +455,6 @@ mod tests {
     fn contract_rollup_config(chain_config: &BaseChainConfig) -> RollupConfig {
         let mut rollup_config = chain_config.rollup_config();
         let genesis_timestamp = rollup_config.genesis.l2_time;
-        // Contract seeding represents genesis-active static upgrades with the non-zero genesis
-        // timestamp rather than the local `Some(0)` convention.
         for upgrade in BaseUpgrade::CONTRACT_VARIANTS {
             if rollup_config.upgrades.activation_timestamp(upgrade) == Some(0) {
                 rollup_config.upgrades.set_activation_timestamp(upgrade, genesis_timestamp);

@@ -18,11 +18,7 @@ pub enum ScheduleIdError {
 pub struct ScheduleId;
 
 impl ScheduleId {
-    /// Returns the number of schedule links pinned at `l2_timestamp`.
-    ///
-    /// Searches the registration ladder from newest to oldest and returns the highest active
-    /// upgrade index plus one. This mirrors `ProtocolVersions.activatedScheduleId(uint64)`, which
-    /// returns the cached cumulative link through that upgrade.
+    /// Returns the activated schedule prefix length at `l2_timestamp`.
     pub fn activated_count(
         upgrades: &UpgradeConfig,
         l2_timestamp: u64,
@@ -42,10 +38,7 @@ impl ScheduleId {
             .unwrap_or_default())
     }
 
-    /// Derives the schedule ID from the first `count` upgrades in registration order.
-    ///
-    /// Every registered entry in the prefix contributes a link, including unscheduled zero-valued
-    /// entries and future timestamps below the highest active upgrade.
+    /// Derives the schedule ID from the first `count` registered upgrades.
     ///
     /// # Panics
     ///
@@ -68,11 +61,7 @@ impl ScheduleId {
         Ok(schedule_id)
     }
 
-    /// Removes entries above the highest active upgrade and returns the pinned schedule ID.
-    ///
-    /// Entries within the prefix remain in the derivation config because their timestamps are
-    /// committed by the returned hash, even when they are unscheduled or activate after the
-    /// supplied L2 timestamp.
+    /// Clears upgrades above the activated prefix and returns its schedule ID.
     pub fn pin(upgrades: &mut UpgradeConfig, l2_timestamp: u64) -> Result<B256, ScheduleIdError> {
         let pinned_count = Self::activated_count(upgrades, l2_timestamp)?;
         for &upgrade in &BaseUpgrade::CONTRACT_VARIANTS[pinned_count..] {
@@ -102,9 +91,7 @@ mod tests {
 
     #[test]
     fn schedule_id_matches_contract_golden_value() {
-        // Cross-implementation golden shared with ProtocolVersions: ids 0 and 1 activate at 10
-        // and 20, ids 2 through 9 are unscheduled, and id 10 activates at 30. The commitment
-        // contains the complete prefix through id 10.
+        // ProtocolVersions schedule: [10, 20, 0, ..., 0, 30].
         let upgrades = UpgradeConfig {
             regolith_time: Some(10),
             canyon_time: Some(20),

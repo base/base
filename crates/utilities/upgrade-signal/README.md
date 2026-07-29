@@ -87,22 +87,3 @@ The timestamp semantics are:
 
 The crate validates timestamps and protocol versions together. A positive timestamp without a
 minimum protocol version is rejected.
-
-## Finalized Reads and Proof Games
-
-The default `finalized` L1 block tag is deliberate: it prevents a short L1 reorganization from
-installing a schedule that later disappears. A newly submitted schedule is therefore visible to
-nodes only after L1 finalization and the next observer poll.
-
-Proof games do not commit to unscheduled or future upgrades above the highest active registration.
-Each game derives its activation cutoff from the deterministic timestamp of its ending L2 block and
-commits to the schedule prefix through the highest upgrade active at that timestamp. Operators
-should register runtime upgrades with timestamp `0`, deploy supporting node and prover releases,
-and then schedule activation through the notice-enforcing contract path. Under normal L1 finality,
-the notice window allows finalized readers to install the schedule before the first activating L2
-block.
-
-If L1 finality stalls beyond the activation notice window, nodes may temporarily retain the older
-schedule and proofs for post-activation L2 blocks will fail until the finalized read catches up.
-Already-created pre-activation games remain provable because their L2-derived commitment excludes
-the later activation.
