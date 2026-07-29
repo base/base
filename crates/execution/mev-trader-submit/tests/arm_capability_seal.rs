@@ -3130,7 +3130,7 @@ fn arm_source_never_self_loads_production_arming_criteria() {
     }
 }
 
-// -- b8: no workspace crate links the submit crate (re-run) --------------------
+// -- b8: only reviewed workspace edges link the submit crate (re-run) ----------
 
 fn workspace_metadata() -> serde_json::Value {
     let output = Command::new(env!("CARGO"))
@@ -3143,7 +3143,7 @@ fn workspace_metadata() -> serde_json::Value {
 }
 
 #[test]
-fn only_reviewed_optional_cli_t4b_edge_links_the_submit_crate() {
+fn only_reviewed_workspace_edges_link_the_submit_crate() {
     let metadata = workspace_metadata();
     let packages = metadata["packages"].as_array().expect("packages");
     let mut linkers = Vec::new();
@@ -3156,14 +3156,45 @@ fn only_reviewed_optional_cli_t4b_edge_links_the_submit_crate() {
             if dependency["name"] != "mev-trader-submit" {
                 continue;
             }
-            assert_eq!(name, "base-execution-cli", "unreviewed submit linker");
-            assert_eq!(dependency["optional"], true, "CLI submit edge must remain optional");
-            assert_eq!(dependency["kind"], serde_json::Value::Null);
-            assert_eq!(dependency["features"], serde_json::json!([]));
+            match name {
+                "base-execution-cli" => {
+                    assert_eq!(
+                        dependency["optional"], true,
+                        "CLI submit edge must remain optional"
+                    );
+                    assert_eq!(dependency["kind"], serde_json::Value::Null);
+                    assert_eq!(dependency["features"], serde_json::json!([]));
+                    assert_eq!(dependency["rename"], serde_json::Value::Null);
+                    assert_eq!(dependency["target"], serde_json::Value::Null);
+                }
+                "base-suppression-provision-bin" => {
+                    assert_eq!(dependency["optional"], true);
+                    assert_eq!(dependency["uses_default_features"], true);
+                    assert_eq!(dependency["kind"], serde_json::Value::Null);
+                    assert_eq!(dependency["rename"], serde_json::Value::Null);
+                    assert_eq!(dependency["target"], serde_json::Value::Null);
+                    assert_eq!(dependency["features"], serde_json::json!(["arm-provisioning"]));
+                }
+                other => panic!("unreviewed submit linker: {other}"),
+            }
             linkers.push(name);
         }
     }
-    assert_eq!(linkers, ["base-execution-cli"]);
+    linkers.sort_unstable();
+    assert_eq!(linkers, ["base-execution-cli", "base-suppression-provision-bin"]);
+
+    let provisioner = packages
+        .iter()
+        .find(|package| package["name"] == "base-suppression-provision-bin")
+        .expect("provisioning package");
+    assert_eq!(provisioner["features"]["provision"], serde_json::json!(["dep:mev-trader-submit"]));
+    let provisioning_bin = provisioner["targets"]
+        .as_array()
+        .expect("provisioning targets")
+        .iter()
+        .find(|target| target["name"] == "base-mev-suppression-provision")
+        .expect("provisioning binary target");
+    assert_eq!(provisioning_bin["required-features"], serde_json::json!(["provision"]));
 
     let cli =
         std::fs::read_to_string(manifest_dir().join("../cli/Cargo.toml")).expect("CLI manifest");
@@ -3177,5 +3208,30 @@ fn only_reviewed_optional_cli_t4b_edge_links_the_submit_crate() {
     assert!(t4b.contains("\"mev-trader-submit/tx-authority\""));
     for forbidden in ["phase-b", "arm", "arm-live-egress", "reqwest", "signer"] {
         assert!(!t4b.contains(forbidden), "T4b CLI edge enables {forbidden}");
+    }
+}
+
+#[test]
+fn workspace_build_keeps_submit_arm_features_disabled() {
+    let output = Command::new(env!("CARGO"))
+        .args(["tree", "--workspace", "-i", "mev-trader-submit", "-e", "features", "--offline"])
+        .current_dir(manifest_dir().join("../../.."))
+        .output()
+        .expect("cargo tree runs");
+    assert!(
+        output.status.success(),
+        "cargo tree failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let tree = String::from_utf8(output.stdout).expect("cargo tree output");
+    assert!(
+        tree.contains("mev-trader-submit feature \"default\""),
+        "workspace closure no longer contains the expected default-only submit node: {tree}"
+    );
+    for forbidden in ["arm", "arm-provisioning", "arm-live-egress"] {
+        assert!(
+            !tree.contains(&format!("mev-trader-submit feature \"{forbidden}\"")),
+            "workspace closure activates forbidden submit feature `{forbidden}`:\n{tree}"
+        );
     }
 }

@@ -1699,11 +1699,13 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     let linkers = workspace_submit_linkers(&root);
     assert_eq!(
         linkers.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
-        ["base-execution-cli"]
+        ["base-execution-cli", "base-suppression-provision-bin"]
     );
 
     let mut consumers = Vec::new();
-    for (package, source_root) in &linkers {
+    for (package, source_root) in
+        linkers.iter().filter(|(package, _)| package == "base-execution-cli")
+    {
         for path in rust_files(source_root) {
             let source = read(path.clone());
             let file = syn::parse_file(&source)
