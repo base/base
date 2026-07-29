@@ -11,9 +11,9 @@ use std::{
 use base_mev_trader::ExactProtocol;
 use mev_trader_submit::ProtocolAdapterMapping;
 use syn::{
-    Attribute, Expr, ExprCall, ExprMethodCall, ExprPath, ExprStruct, File, Ident, ImplItem,
-    ImplItemFn, Item, ItemFn, ItemImpl, ItemStruct, Lit, Macro, Member, Meta, Pat, Path, Stmt,
-    Token, Type, TypePath, UseTree, Visibility, parse::Parser, punctuated::Punctuated,
+    Attribute, Expr, ExprCall, ExprField, ExprMethodCall, ExprPath, ExprStruct, File, Ident,
+    ImplItem, ImplItemFn, Item, ItemFn, ItemImpl, ItemStruct, Lit, Macro, Member, Meta, Pat, Path,
+    Stmt, Token, Type, TypePath, UseTree, Visibility, parse::Parser, punctuated::Punctuated,
     visit::Visit,
 };
 
@@ -177,6 +177,9 @@ impl AstSeal {
             "assemble_sealed" => self.assemble_sealed_calls += 1,
             "encode_validated" => self.encode_validated_calls += 1,
             "observe_candidate" | "try_observe" => self.observe_candidate_calls += 1,
+            "send" => {
+                self.violations.insert("send".to_owned());
+            }
             "spawn" | "spawn_blocking" => self.spawn_calls += 1,
             "subscribe_to_flashblocks" => self.subscription_calls += 1,
             "with_t4b_observer" | "start_with_t4b_observer" | "start_with_t4d_observer" => {
@@ -268,6 +271,14 @@ impl<'ast> Visit<'ast> for AstSeal {
     fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
         self.count_call(&call.method.to_string());
         syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_field(&mut self, field: &'ast ExprField) {
+        if matches!(&field.member, Member::Named(name) if name == "send") {
+            self.visit_expr(&field.base);
+            return;
+        }
+        syn::visit::visit_expr_field(self, field);
     }
 
     fn visit_item_impl(&mut self, item: &'ast ItemImpl) {
@@ -607,17 +618,26 @@ fn public_item_attrs(item: &Item) -> Option<&[Attribute]> {
     }
 }
 
+fn meta_requires_test(meta: &Meta) -> bool {
+    match meta {
+        Meta::Path(path) => path.is_ident("test"),
+        Meta::List(list) if list.path.is_ident("all") => {
+            nested_meta(list).iter().any(meta_requires_test)
+        }
+        Meta::List(list) if list.path.is_ident("any") => {
+            let nested = nested_meta(list);
+            !nested.is_empty() && nested.iter().all(meta_requires_test)
+        }
+        Meta::List(_) | Meta::NameValue(_) => false,
+    }
+}
+
 fn has_cfg_test(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
         let Meta::List(cfg) = &attr.meta else {
             return false;
         };
-        if !cfg.path.is_ident("cfg") {
-            return false;
-        }
-        let nested = nested_meta(cfg);
-        nested.len() == 1
-            && matches!(nested.first(), Some(Meta::Path(path)) if path.is_ident("test"))
+        cfg.path.is_ident("cfg") && nested_meta(cfg).iter().any(meta_requires_test)
     })
 }
 
@@ -940,6 +960,121 @@ impl<'ast> Visit<'ast> for WitnessConstructionSeal {
     }
 }
 
+#[derive(Default)]
+struct RawTxCapabilitySeal {
+    token_definitions: usize,
+    token_private_fields: usize,
+    token_constructions: usize,
+    accessor_definitions: usize,
+    valid_accessor_signatures: usize,
+    accessor_calls: usize,
+    macro_escapes: usize,
+}
+
+impl RawTxCapabilitySeal {
+    fn is_capability_type(ty: &Type) -> bool {
+        let Type::Reference(reference) = ty else {
+            return false;
+        };
+        let Type::Path(path) = reference.elem.as_ref() else {
+            return false;
+        };
+        path.path.segments.last().is_some_and(|segment| segment.ident == "BridgeConversionSeal")
+    }
+}
+
+impl<'ast> Visit<'ast> for RawTxCapabilitySeal {
+    fn visit_item_struct(&mut self, item: &'ast ItemStruct) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
+        if item.ident == "BridgeConversionSeal" {
+            self.token_definitions += 1;
+            self.token_private_fields += item
+                .fields
+                .iter()
+                .filter(|field| matches!(field.vis, Visibility::Inherited))
+                .count();
+        }
+        syn::visit::visit_item_struct(self, item);
+    }
+
+    fn visit_expr_struct(&mut self, item: &'ast ExprStruct) {
+        if item.path.segments.last().is_some_and(|segment| segment.ident == "BridgeConversionSeal")
+        {
+            self.token_constructions += 1;
+        }
+        syn::visit::visit_expr_struct(self, item);
+    }
+
+    fn visit_expr_method_call(&mut self, item: &'ast ExprMethodCall) {
+        if item.method == "unsigned_tx_with_bridge_access" {
+            self.accessor_calls += 1;
+        }
+        syn::visit::visit_expr_method_call(self, item);
+    }
+
+    fn visit_impl_item_fn(&mut self, item: &'ast ImplItemFn) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
+        if item.sig.ident == "unsigned_tx_with_bridge_access" {
+            self.accessor_definitions += 1;
+            let mut inputs = item.sig.inputs.iter();
+            let receiver_is_shared = inputs.next().is_some_and(|input| {
+                matches!(
+                    input,
+                    syn::FnArg::Receiver(receiver)
+                        if receiver.reference.is_some() && receiver.mutability.is_none()
+                )
+            });
+            let capability_is_shared = inputs.next().is_some_and(|input| {
+                matches!(
+                    input,
+                    syn::FnArg::Typed(argument) if Self::is_capability_type(&argument.ty)
+                )
+            });
+            if matches!(item.vis, Visibility::Restricted(_))
+                && item.sig.constness.is_some()
+                && receiver_is_shared
+                && capability_is_shared
+                && inputs.next().is_none()
+            {
+                self.valid_accessor_signatures += 1;
+            }
+        }
+        syn::visit::visit_impl_item_fn(self, item);
+    }
+
+    fn visit_item_fn(&mut self, item: &'ast ItemFn) {
+        if !has_cfg_test(&item.attrs) {
+            syn::visit::visit_item_fn(self, item);
+        }
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast ItemImpl) {
+        if !has_cfg_test(&item.attrs) {
+            syn::visit::visit_item_impl(self, item);
+        }
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if !has_cfg_test(&item.attrs) {
+            syn::visit::visit_item_mod(self, item);
+        }
+    }
+
+    fn visit_macro(&mut self, item: &'ast Macro) {
+        let tokens = item.tokens.to_string();
+        if tokens.contains("BridgeConversionSeal")
+            || tokens.contains("unsigned_tx_with_bridge_access")
+        {
+            self.macro_escapes += 1;
+        }
+        syn::visit::visit_macro(self, item);
+    }
+}
+
 fn rust_files(root: &FsPath) -> Vec<PathBuf> {
     fn collect(path: &FsPath, files: &mut Vec<PathBuf>) {
         let mut entries = fs::read_dir(path)
@@ -1256,8 +1391,12 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
     );
     let bridge = parse_production(&read(crate_dir.join("src/tx_authority/bridge.rs")));
     let bridge_inventory = AuthoritySurfaceInventory::new(&submit_lib, &bridge);
-    let bridge_types =
-        ["AdapterAwareProofBindings", "InstalledSubmissionBridge", "SealedUnsignedCandidate"];
+    let bridge_types = [
+        "AdapterAwareProofBindings",
+        "BridgeConversionSeal",
+        "InstalledSubmissionBridge",
+        "SealedUnsignedCandidate",
+    ];
     assert_private_fields(&bridge, &bridge_types);
     let bridge_methods = BTreeMap::from([
         (
@@ -1278,7 +1417,12 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
         ),
         (
             "InstalledSubmissionBridge",
-            method_set(&["assemble_sealed", "base_mainnet", "revalidate_for_handoff"]),
+            method_set(&[
+                "assemble_sealed",
+                "base_mainnet",
+                "into_checked_candidate",
+                "revalidate_for_handoff",
+            ]),
         ),
         ("SealedUnsignedCandidate", method_set(&["bindings"])),
     ]);
@@ -1336,9 +1480,12 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
             continue;
         }
         assert_eq!(item.attrs.len(), 1, "authority root export has ambiguous attributes");
-        assert!(
-            has_cfg_feature(&item.attrs, "tx-authority")
-                ^ has_cfg_feature(&item.attrs, "t4d-bridge"),
+        let exact_authority_gate_count = ["tx-authority", "t4d-bridge", "t4e-handoff"]
+            .into_iter()
+            .filter(|feature| has_cfg_feature(&item.attrs, feature))
+            .count();
+        assert_eq!(
+            exact_authority_gate_count, 1,
             "authority root export escaped the exact reviewed feature gates"
         );
     }
@@ -1416,6 +1563,67 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
     let serialized = BTreeSet::from(["Serialize".to_owned(), "Deserialize".to_owned()]);
     assert!(inventory.implemented_traits("ValidatedUnsignedAtomicTx").is_disjoint(&serialized));
     assert!(inventory.derived_traits("ValidatedUnsignedAtomicTx").is_disjoint(&serialized));
+}
+
+#[test]
+fn t4e_raw_tx_access_requires_the_unique_bridge_capability() {
+    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_dir = crate_dir.join("src");
+    let mut constructor_files = BTreeMap::new();
+    let mut accessor_definition_files = BTreeMap::new();
+    let mut accessor_call_files = BTreeMap::new();
+    let mut totals = RawTxCapabilitySeal::default();
+
+    for path in rust_files(&source_dir) {
+        let source = read(path.clone());
+        let file = parse_production(&source);
+        let mut seal = RawTxCapabilitySeal::default();
+        seal.visit_file(&file);
+        let relative = path
+            .strip_prefix(&source_dir)
+            .expect("submit source is below src")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if seal.token_constructions != 0 {
+            constructor_files.insert(relative.clone(), seal.token_constructions);
+        }
+        if seal.accessor_definitions != 0 {
+            accessor_definition_files.insert(relative.clone(), seal.accessor_definitions);
+        }
+        if seal.accessor_calls != 0 {
+            accessor_call_files.insert(relative, seal.accessor_calls);
+        }
+        totals.token_definitions += seal.token_definitions;
+        totals.token_private_fields += seal.token_private_fields;
+        totals.token_constructions += seal.token_constructions;
+        totals.accessor_definitions += seal.accessor_definitions;
+        totals.valid_accessor_signatures += seal.valid_accessor_signatures;
+        totals.accessor_calls += seal.accessor_calls;
+        totals.macro_escapes += seal.macro_escapes;
+    }
+
+    assert_eq!(totals.token_definitions, 1, "bridge access token type count changed");
+    assert_eq!(totals.token_private_fields, 1, "bridge access token must remain unforgeable");
+    assert_eq!(
+        constructor_files,
+        BTreeMap::from([("tx_authority/bridge.rs".to_owned(), 1)]),
+        "only bridge revalidation may mint raw-tx access"
+    );
+    assert_eq!(
+        accessor_definition_files,
+        BTreeMap::from([("tx_authority.rs".to_owned(), 1)]),
+        "raw-tx accessor definition inventory changed"
+    );
+    assert_eq!(
+        totals.valid_accessor_signatures, 1,
+        "raw-tx accessor must require shared access to the unforgeable token"
+    );
+    assert_eq!(
+        accessor_call_files,
+        BTreeMap::from([("arm/witness.rs".to_owned(), 1)]),
+        "only the arm witness may consume authority raw-tx access"
+    );
+    assert_eq!(totals.macro_escapes, 0, "raw-tx capability escaped through a macro");
 }
 
 #[test]
@@ -1551,7 +1759,9 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     }
     assert_eq!(
         global_topology,
-        [2, 1, 2, 2, 4, 2, 1, 1, 4, 0, 1],
+        // Seven pre-existing production task spawns live outside the T4d module.
+        // The module-local seal below remains pinned to zero for this handoff.
+        [2, 1, 2, 2, 4, 2, 1, 1, 7, 0, 1],
         "CLI-wide T4d observer topology changed"
     );
     let submit_src = crate_dir.join("src");
@@ -1575,10 +1785,23 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
             internal_consumers.push((path, imports.imports, uses, slot_uses));
         }
     }
-    assert_eq!(internal_consumers.len(), 1, "unreviewed submit-private consumer");
-    let (path, imports, uses, slot_uses) = &internal_consumers[0];
-    assert!(path.ends_with("src/tx_authority/bridge.rs"));
-    assert_eq!((*imports, *uses, *slot_uses), (1, 2, 0));
+    assert_eq!(internal_consumers.len(), 2, "unreviewed submit-private consumer count");
+    let internal_by_file = internal_consumers
+        .iter()
+        .map(|(path, imports, uses, slot_uses)| {
+            (
+                path.file_name().expect("consumer file name").to_string_lossy().into_owned(),
+                (*imports, *uses, *slot_uses),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        internal_by_file,
+        BTreeMap::from(
+            [("bridge.rs".to_owned(), (1, 2, 0)), ("witness.rs".to_owned(), (1, 2, 0)),]
+        ),
+        "only the bridge and exhaustive arm witness may consume T4b authority"
+    );
     let authority_source = read(crate_dir.join("src/tx_authority.rs"));
     let authority_ast = parse_production(&authority_source);
     let bridge_modules = authority_ast
@@ -1649,7 +1872,6 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
             "std::sync::Arc".to_owned(),
             "std::sync::atomic::AtomicU64".to_owned(),
             "std::sync::atomic::Ordering".to_owned(),
-            "super::AdapterAwareProofBindings".to_owned(),
             "super::BlockReaderIdExt".to_owned(),
             "super::BridgeError".to_owned(),
             "super::CandidateAssemblyView".to_owned(),
@@ -1665,6 +1887,8 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
             "super::StateProviderFactory".to_owned(),
             "super::T4bOutcome".to_owned(),
             "super::T4bOutcomeCounters".to_owned(),
+            "super::T4eCandidateHandoff".to_owned(),
+            "super::T4eHandoffError".to_owned(),
             "super::TxAuthorityError".to_owned(),
             "super::t4b_shadow".to_owned(),
         ])
@@ -1691,12 +1915,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     );
     assert_eq!(
         import_leaves.iter().map(|leaf| leaf.public_name.as_str()).collect::<BTreeSet<_>>(),
-        BTreeSet::from([
-            "AdapterAwareProofBindings",
-            "BridgeError",
-            "InstalledSubmissionBridge",
-            "SealedUnsignedCandidate",
-        ])
+        BTreeSet::from(["BridgeError", "InstalledSubmissionBridge", "SealedUnsignedCandidate",])
     );
     let mut t4d_ast = AstSeal::unsigned_handoff();
     t4d_ast.visit_item_mod(t4d_module);
@@ -1719,7 +1938,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     assert_eq!(cli_inventory.t4d_observer_calls, 1);
     assert_eq!(cli_inventory.assemble_sealed_calls, 1);
     assert_eq!(cli_inventory.slot_constructions, 2);
-    assert_eq!(cli_inventory.spawn_calls, 4);
+    assert_eq!(cli_inventory.spawn_calls, 7);
     assert_eq!(cli_inventory.thread_calls, 0);
     assert_eq!(cli_inventory.subscription_calls, 1);
 
@@ -2004,12 +2223,15 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
             "std::time::Instant".to_owned(),
             "alloy_primitives::Address".to_owned(),
             "alloy_primitives::B256".to_owned(),
+            "base_mev_trader::CampaignId".to_owned(),
             "base_mev_trader::CancellationProbe".to_owned(),
             "base_mev_trader::CandidateAssemblyView".to_owned(),
             "base_mev_trader::ExactProtocol".to_owned(),
             "base_mev_trader::MeasurementContext".to_owned(),
             "base_mev_trader::GlobalState".to_owned(),
             "base_mev_trader::TaskState".to_owned(),
+            "crate::CheckedCandidate".to_owned(),
+            "crate::CodeHashProvider".to_owned(),
             "super::DeployedContractIdentity".to_owned(),
             "super::InstalledExecutionIdentity".to_owned(),
             "super::TxAuthorityAssembler".to_owned(),
@@ -2140,7 +2362,7 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
     assert_eq!(cli_seal.assemble_sealed_calls, 1);
     assert_eq!(cli_seal.observe_candidate_calls, 0);
     assert_eq!(cli_seal.subscription_calls, 1);
-    assert_eq!(cli_seal.spawn_calls, 4);
+    assert_eq!(cli_seal.spawn_calls, 7);
     assert_eq!(cli_seal.thread_calls, 0);
     assert_eq!(cli_seal.pending_adapter_constructions, 1);
     assert_eq!(cli_seal.node_view_constructions, 1);

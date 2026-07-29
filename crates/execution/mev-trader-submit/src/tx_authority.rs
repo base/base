@@ -24,6 +24,8 @@ mod bridge;
 pub use bridge::{
     AdapterAwareProofBindings, BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate,
 };
+#[cfg(feature = "t4e-handoff")]
+pub use bridge::{BridgeConversionSeal, T4eCandidateHandoff, T4eHandoffError};
 
 const CHAIN_ID_BASE: u64 = 8_453;
 const T4B_EXECUTOR_GAS_LIMIT: u64 = 3_000_000;
@@ -452,6 +454,8 @@ impl UnsignedTxShapeObservation {
 /// Linear unsigned-only output that retains the single-observation guard.
 pub struct ValidatedUnsignedAtomicTx {
     unsigned_tx: TxEip1559,
+    #[cfg(feature = "t4e-handoff")]
+    amount: U256,
     observation: UnsignedTxShapeObservation,
     execution: InstalledExecutionIdentity,
     observation_guard: MeasurementNonceGuard,
@@ -488,6 +492,20 @@ impl ValidatedUnsignedAtomicTx {
         } else {
             Err(TxAuthorityError::SnapshotStaleAtDrain)
         }
+    }
+
+    /// Borrows the raw unsigned transaction under the bridge-issued access capability.
+    #[cfg(feature = "t4e-handoff")]
+    pub(crate) const fn unsigned_tx_with_bridge_access(
+        &self,
+        _access: &BridgeConversionSeal,
+    ) -> &TxEip1559 {
+        &self.unsigned_tx
+    }
+
+    #[cfg(feature = "t4e-handoff")]
+    pub(crate) const fn amount(&self) -> U256 {
+        self.amount
     }
 }
 
@@ -638,6 +656,8 @@ impl TxAuthorityAssembler {
         Self::checkpoint(view.probe())?;
         Ok(ValidatedUnsignedAtomicTx {
             unsigned_tx,
+            #[cfg(feature = "t4e-handoff")]
+            amount: plan.amount_in,
             observation,
             execution,
             observation_guard,
@@ -950,6 +970,8 @@ mod tests {
     use reth_provider::StateProviderBox;
 
     use super::*;
+    #[cfg(feature = "t4e-handoff")]
+    use crate::arm::{CodeHashProvider, ProviderError};
 
     #[derive(Debug)]
     struct TestFreshness(Arc<AtomicBool>);
@@ -957,6 +979,27 @@ mod tests {
     impl SnapshotFreshnessToken for TestFreshness {
         fn is_current(&self) -> Result<bool, TxAuthorityNodeError> {
             Ok(self.0.load(Ordering::Acquire))
+        }
+    }
+    #[cfg(feature = "t4e-handoff")]
+    #[derive(Debug)]
+    struct TestBlockProvider {
+        current_block: Arc<AtomicU64>,
+        unavailable: Arc<AtomicBool>,
+    }
+
+    #[cfg(feature = "t4e-handoff")]
+    impl CodeHashProvider for TestBlockProvider {
+        fn code_hash_at_latest_committed(&self, _addr: Address) -> Result<B256, ProviderError> {
+            panic!("deadline revalidation must not read code hash")
+        }
+
+        fn current_block(&self) -> Result<u64, ProviderError> {
+            if self.unavailable.load(Ordering::Acquire) {
+                Err(ProviderError::Unavailable("committed head unavailable".to_string()))
+            } else {
+                Ok(self.current_block.load(Ordering::Acquire))
+            }
         }
     }
 
@@ -1204,6 +1247,10 @@ mod tests {
         state_error: Arc<AtomicBool>,
         #[cfg(feature = "t4d-bridge")]
         head_flip_after_read: Arc<AtomicBool>,
+        #[cfg(feature = "t4e-handoff")]
+        current_block: Arc<AtomicU64>,
+        #[cfg(feature = "t4e-handoff")]
+        block_unavailable: Arc<AtomicBool>,
         #[cfg(feature = "t4d-bridge")]
         stale_code_index: Arc<AtomicU64>,
     }
@@ -1230,6 +1277,25 @@ mod tests {
             )
             .expect("same-provider bridge install")
         }
+
+        #[cfg(feature = "t4e-handoff")]
+        fn block_provider(&self) -> TestBlockProvider {
+            TestBlockProvider {
+                current_block: Arc::clone(&self.current_block),
+                unavailable: Arc::clone(&self.block_unavailable),
+            }
+        }
+    }
+    fn revalidate_for_test<'a>(
+        fixture: &AssemblyFixture,
+        bridge: &bridge::InstalledSubmissionBridge,
+        candidate: &'a bridge::SealedUnsignedCandidate,
+    ) -> Result<&'a bridge::AdapterAwareProofBindings, bridge::BridgeError> {
+        bridge.revalidate_for_handoff(
+            candidate,
+            #[cfg(feature = "t4e-handoff")]
+            &fixture.block_provider(),
+        )
     }
 
     fn assembly_fixture_with_read_delay(
@@ -1372,6 +1438,10 @@ mod tests {
             },
         };
         let contracts = TxAuthorityAssembler::contract_addresses(&executor, &adapters);
+        #[cfg(feature = "t4e-handoff")]
+        let current_block = Arc::new(AtomicU64::new(block_number - 1));
+        #[cfg(feature = "t4e-handoff")]
+        let block_unavailable = Arc::new(AtomicBool::new(false));
         let state = TxAuthorityStateRead::new(parent_hash, Some(4), codes.map(Some));
         let state_error = Arc::new(AtomicBool::new(false));
         let head_flip_after_read = Arc::new(AtomicBool::new(false));
@@ -1406,6 +1476,10 @@ mod tests {
             current,
             #[cfg(feature = "t4d-bridge")]
             state_error,
+            #[cfg(feature = "t4e-handoff")]
+            current_block,
+            #[cfg(feature = "t4e-handoff")]
+            block_unavailable,
             #[cfg(feature = "t4d-bridge")]
             head_flip_after_read,
             #[cfg(feature = "t4d-bridge")]
@@ -2199,20 +2273,20 @@ mod tests {
         let bridge = fixture.bridge();
         let candidate =
             bridge.assemble_sealed_for_test(fixture.view()).expect("opaque sealed candidate");
-        assert!(bridge.revalidate_for_handoff(&candidate).is_ok());
+        assert!(revalidate_for_test(&fixture, &bridge, &candidate).is_ok());
         assert!(
             fixture.probe.token().complete(Instant::now(), true, fixture.probe.global()),
             "runtime completion should win before the control-task drain"
         );
         assert!(
-            bridge.revalidate_for_handoff(&candidate).is_ok(),
+            revalidate_for_test(&fixture, &bridge, &candidate).is_ok(),
             "a successfully completed producer lifecycle remains valid for shadow drain"
         );
 
         for identity in 0..4 {
             fixture.stale_code_index.store(identity, Ordering::Release);
             assert_eq!(
-                bridge.revalidate_for_handoff(&candidate),
+                revalidate_for_test(&fixture, &bridge, &candidate),
                 Err(bridge::BridgeError::ExecutionIdentityChanged)
             );
             fixture.stale_code_index.store(u64::MAX, Ordering::Release);
@@ -2220,14 +2294,83 @@ mod tests {
 
         fixture.state_error.store(true, Ordering::Release);
         assert_eq!(
-            bridge.revalidate_for_handoff(&candidate),
+            revalidate_for_test(&fixture, &bridge, &candidate),
             Err(bridge::BridgeError::ExecutionFreshnessUnavailable)
         );
         fixture.state_error.store(false, Ordering::Release);
         fixture.head_flip_after_read.store(true, Ordering::Release);
         assert_eq!(
-            bridge.revalidate_for_handoff(&candidate),
+            revalidate_for_test(&fixture, &bridge, &candidate),
             Err(bridge::BridgeError::ExecutionIdentityChanged)
+        );
+    }
+
+    #[cfg(feature = "t4e-handoff")]
+    #[test]
+    fn t4e_bridge_join_preserves_identity_and_enforces_block_deadline() {
+        let fresh = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let bridge = fresh.bridge();
+        let candidate =
+            bridge.assemble_sealed_for_test(fresh.view()).expect("fresh sealed candidate");
+        let expected = candidate.bindings();
+        let victim = expected.victim();
+        let plan_digest = expected.plan_digest();
+        let executor = expected.executor().address();
+        let deadline = expected.valid_until_block();
+        let signing_hash = expected.unsigned_signing_hash();
+        let campaign_id = base_mev_trader::CampaignId::new([7; 32]);
+        fresh.current_block.store(deadline - 1, Ordering::Release);
+        let provider = fresh.block_provider();
+        let checked = bridge
+            .into_checked_candidate(candidate, campaign_id, &provider)
+            .expect("committed head immediately before deadline");
+        let identity = checked.identity();
+        assert_eq!(identity.campaign_id(), campaign_id);
+        assert_eq!(identity.victim(), victim);
+        assert_eq!(identity.plan_digest(), plan_digest);
+        assert_eq!(identity.amount(), fresh.plan.amount_in);
+        assert_eq!(identity.executor(), executor);
+        assert_eq!(checked.valid_until_block(), deadline);
+        assert_eq!(checked.unsigned_signing_hash(), signing_hash);
+
+        for current_block in [deadline, deadline + 1] {
+            let expired = assembly_fixture(
+                Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+                None,
+            );
+            let expired_bridge = expired.bridge();
+            let expired_candidate = expired_bridge
+                .assemble_sealed_for_test(expired.view())
+                .expect("deadline candidate");
+            expired.current_block.store(current_block, Ordering::Release);
+            assert!(matches!(
+                expired_bridge.into_checked_candidate(
+                    expired_candidate,
+                    campaign_id,
+                    &expired.block_provider(),
+                ),
+                Err(bridge::BridgeError::DeadlineNoHandoff)
+            ));
+        }
+    }
+
+    #[cfg(feature = "t4e-handoff")]
+    #[test]
+    fn t4e_revalidation_fails_closed_when_committed_head_is_unavailable() {
+        let fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let bridge = fixture.bridge();
+        let candidate = bridge.assemble_sealed_for_test(fixture.view()).expect("sealed candidate");
+        fixture.block_unavailable.store(true, Ordering::Release);
+
+        assert_eq!(
+            bridge.revalidate_for_handoff(&candidate, &fixture.block_provider()),
+            Err(bridge::BridgeError::ExecutionFreshnessUnavailable)
         );
     }
 
@@ -2244,9 +2387,25 @@ mod tests {
             .assemble_sealed_for_test(fixture.view())
             .expect("opaque sealed candidate");
         assert_eq!(
-            other_bridge.revalidate_for_handoff(&candidate),
+            revalidate_for_test(&fixture, &other_bridge, &candidate),
             Err(bridge::BridgeError::CrossInstallation)
         );
+        drop(candidate);
+
+        #[cfg(feature = "t4e-handoff")]
+        {
+            let candidate = issuing_bridge
+                .assemble_sealed_for_test(fixture.view())
+                .expect("second opaque sealed candidate");
+            assert!(matches!(
+                other_bridge.into_checked_candidate(
+                    candidate,
+                    base_mev_trader::CampaignId::new([9; 32]),
+                    &fixture.block_provider(),
+                ),
+                Err(bridge::BridgeError::CrossInstallation)
+            ));
+        }
 
         let bridge_ast =
             syn::parse_file(include_str!("tx_authority/bridge.rs")).expect("bridge source parses");
@@ -2323,7 +2482,7 @@ mod tests {
             stale_bridge.assemble_sealed_for_test(stale.view()).expect("stale candidate setup");
         stale.current.store(false, Ordering::Release);
         assert_eq!(
-            stale_bridge.revalidate_for_handoff(&stale_candidate),
+            revalidate_for_test(&stale, &stale_bridge, &stale_candidate),
             Err(bridge::BridgeError::SnapshotStale)
         );
 
@@ -2337,7 +2496,7 @@ mod tests {
             .expect("cancelled candidate setup");
         cancelled.probe.token().request_cancel();
         assert_eq!(
-            cancelled_bridge.revalidate_for_handoff(&cancelled_candidate),
+            revalidate_for_test(&cancelled, &cancelled_bridge, &cancelled_candidate),
             Err(bridge::BridgeError::Cancelled)
         );
 
@@ -2355,7 +2514,7 @@ mod tests {
             .expect("expiring candidate setup");
         std::thread::sleep(Duration::from_millis(60));
         assert_eq!(
-            expired_bridge.revalidate_for_handoff(&expired_candidate),
+            revalidate_for_test(&expired, &expired_bridge, &expired_candidate),
             Err(bridge::BridgeError::DeadlineNoHandoff)
         );
     }
