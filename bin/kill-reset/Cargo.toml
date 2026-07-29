@@ -1,0 +1,19 @@
+[package]
+name = "base-kill-reset-bin"
+description = "Verify-only owner kill-state reset entrypoint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-mev-kill-reset"
+path = "main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+base-mev-trader.workspace = true

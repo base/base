@@ -4884,6 +4884,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-kill-reset-bin"
+version = "1.1.1"
+dependencies = [
+ "base-mev-trader",
+]
+
+[[package]]
 name = "base-load-tester-bin"
 version = "1.1.1"
 dependencies = [

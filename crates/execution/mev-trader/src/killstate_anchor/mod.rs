@@ -206,16 +206,7 @@ impl AnchoredKillStateStore {
         epoch: u64,
         attestation: &ResetAttestation,
     ) -> Result<(), KillStoreError> {
-        let mut signature_hex = String::with_capacity(130);
-        for byte in attestation.signature {
-            write!(&mut signature_hex, "{byte:02x}").map_err(|_| KillStoreError::Io)?;
-        }
-        debug_assert_eq!(signature_hex.len(), 130);
-        let reset = PersistedReset {
-            engagement_epoch: attestation.engagement_epoch,
-            nonce: attestation.nonce,
-            signature_hex,
-        };
+        let reset = PersistedReset::from(attestation);
         let bytes = serde_json::to_vec(&PersistedRecord::Clear { epoch, reset })
             .map_err(|_| KillStoreError::Io)?;
         let record = self.record_path();
@@ -336,6 +327,21 @@ struct PersistedReset {
     engagement_epoch: u64,
     nonce: u64,
     signature_hex: String,
+}
+
+impl From<&ResetAttestation> for PersistedReset {
+    fn from(attestation: &ResetAttestation) -> Self {
+        let mut signature_hex = String::with_capacity(130);
+        for byte in attestation.signature {
+            write!(&mut signature_hex, "{byte:02x}").expect("writing to String cannot fail");
+        }
+        debug_assert_eq!(signature_hex.len(), 130);
+        Self {
+            engagement_epoch: attestation.engagement_epoch,
+            nonce: attestation.nonce,
+            signature_hex,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

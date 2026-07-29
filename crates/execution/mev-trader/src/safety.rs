@@ -630,7 +630,30 @@ pub struct ResetAttestation {
     /// Owner EIP-191 signature over the killreset domain message (r‖s‖v).
     pub signature: [u8; 65],
 }
+
 impl ResetAttestation {
+    /// Constructs an owner reset attestation from an exactly 130-character lowercase-hex
+    /// EIP-191 signature. No signing key material is accepted or constructed.
+    pub fn from_signature_hex(
+        engagement_epoch: u64,
+        nonce: u64,
+        signature_hex: &str,
+    ) -> Result<Self, KillStoreError> {
+        let signature =
+            decode_signature_hex(signature_hex).ok_or(KillStoreError::SignatureMalformed)?;
+        Ok(Self { engagement_epoch, nonce, signature })
+    }
+
+    /// Builds the byte-exact message an owner must sign for an epoch and nonce.
+    pub fn message_for(engagement_epoch: u64, nonce: u64) -> String {
+        killreset_message(engagement_epoch, nonce)
+    }
+
+    /// Returns the byte-exact EIP-191 message verified by this attestation.
+    pub fn message(&self) -> String {
+        Self::message_for(self.engagement_epoch, self.nonce)
+    }
+
     /// Verifies this attestation against the compile-time owner using recovery only.
     ///
     /// This method never accepts or constructs signing key material.
@@ -641,7 +664,7 @@ impl ResetAttestation {
         let Some(owner) = OWNER_ATTEST_ADDRESS else {
             return Err(KillStoreError::OwnerAddressUnset);
         };
-        let message = killreset_message(self.engagement_epoch, self.nonce);
+        let message = self.message();
         let signature = Signature::from_raw_array(&self.signature)
             .map_err(|_| KillStoreError::SignatureMalformed)?;
         let recovered = signature
@@ -1041,7 +1064,6 @@ fn killreset_message(engagement_epoch: u64, nonce: u64) -> String {
 }
 
 /// Decodes an exactly-130-char lowercase-hex string into a 65-byte signature.
-#[cfg(test)]
 fn decode_signature_hex(hex: &str) -> Option<[u8; 65]> {
     let bytes = hex.as_bytes();
     if bytes.len() != 130 {
@@ -1429,6 +1451,29 @@ mod tests {
         assert!(parse_commit_sha("4f789f2e85a9dfdaff990d505b3793a4fa23a4766").is_none()); // 41
         assert!(parse_commit_sha("4F789F2E85A9DFDAFF990D505B3793A4FA23A476").is_none()); // upper
         assert!(parse_commit_sha("0x789f2e85a9dfdaff990d505b3793a4fa23a476").is_none()); // 0x
+    }
+
+    #[test]
+    fn reset_attestation_input_enforces_lowercase_hex_and_exact_message() {
+        let signature_hex = "00".repeat(65);
+        let attestation =
+            ResetAttestation::from_signature_hex(7, 42, &signature_hex).expect("valid hex");
+        assert_eq!(attestation.signature, [0u8; 65]);
+        assert_eq!(attestation.message(), "base-mev:p2-killreset:7:42");
+
+        assert!(matches!(
+            ResetAttestation::from_signature_hex(7, 42, &signature_hex[..129]),
+            Err(KillStoreError::SignatureMalformed)
+        ));
+        let uppercase = format!("A{}", &signature_hex[1..]);
+        assert!(matches!(
+            ResetAttestation::from_signature_hex(7, 42, &uppercase),
+            Err(KillStoreError::SignatureMalformed)
+        ));
+        assert!(matches!(
+            ResetAttestation::from_signature_hex(7, 42, &format!("0x{}", &signature_hex[..128])),
+            Err(KillStoreError::SignatureMalformed)
+        ));
     }
 
     // ---------------------------------------------------------------------
