@@ -9,7 +9,7 @@
 
 use base_common_genesis::BaseUpgrade;
 
-use crate::{Asset, AssetAccounting, AssetV1, AssetV2, PolicyAccounting};
+use crate::{Asset, AssetAccounting, AssetV1, AssetV2, B20Abi, PolicyAccounting};
 
 /// An activated version of the asset B-20 precompile logic.
 ///
@@ -37,6 +37,14 @@ impl AssetVersion {
         match self {
             Self::V1 => &V1,
             Self::V2 => &V2,
+        }
+    }
+
+    /// Returns the shared `IB20` wire surface frozen for this version.
+    pub const fn abi(self) -> B20Abi {
+        match self {
+            Self::V1 => B20Abi::V1,
+            Self::V2 => B20Abi::V2,
         }
     }
 }

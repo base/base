@@ -23,7 +23,6 @@ use crate::{
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
-    macros::decode_precompile_call,
 };
 
 impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
@@ -136,8 +135,9 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             });
         }
 
-        // Fall through to inherited IB20 selectors.
-        let call = decode_precompile_call!(calldata, IB20::IB20Calls);
+        // Inherited IB20 selectors, decoded against the wire surface frozen for this version so
+        // historical forks see exactly the surface they shipped with.
+        let call = version.abi().decode(calldata)?;
         let label = call.as_label();
 
         observer.observe(label, || self.handle_b20_call(ctx, call, version, privileged))

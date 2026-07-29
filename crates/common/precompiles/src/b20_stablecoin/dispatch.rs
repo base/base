@@ -21,7 +21,6 @@ use crate::{
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
     StablecoinAccounting, StablecoinV1, StablecoinVersion, StablecoinVersions,
-    macros::decode_precompile_call,
 };
 
 impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
@@ -119,7 +118,9 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
             });
         }
 
-        let call = decode_precompile_call!(calldata, IB20::IB20Calls);
+        // Inherited IB20 selectors, decoded against the wire surface frozen for this version so
+        // historical forks see exactly the surface they shipped with.
+        let call = version.abi().decode(calldata)?;
         let label = call.as_label();
 
         observer.observe(label, || {

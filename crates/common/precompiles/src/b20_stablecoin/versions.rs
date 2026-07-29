@@ -9,7 +9,9 @@
 
 use base_common_genesis::BaseUpgrade;
 
-use crate::{PolicyAccounting, Stablecoin, StablecoinAccounting, StablecoinV1, StablecoinV2};
+use crate::{
+    B20Abi, PolicyAccounting, Stablecoin, StablecoinAccounting, StablecoinV1, StablecoinV2,
+};
 
 /// An activated version of the stablecoin B-20 precompile logic.
 ///
@@ -35,6 +37,18 @@ impl StablecoinVersion {
         match self {
             Self::V1 => &V1,
             Self::V2 => &V2,
+        }
+    }
+
+    /// Returns the shared `IB20` wire surface frozen for this version.
+    ///
+    /// The seize surface — the `SEIZE` pause feature and the seize functions/getters — arrived at
+    /// Cobalt with `V2`. `V1` decodes against the frozen Beryl surface so that discriminant and
+    /// those selectors stay unreachable, matching the pre-Cobalt binary.
+    pub const fn abi(self) -> B20Abi {
+        match self {
+            Self::V1 => B20Abi::V1,
+            Self::V2 => B20Abi::V2,
         }
     }
 }
