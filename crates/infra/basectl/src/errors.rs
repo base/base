@@ -263,6 +263,14 @@ pub enum ProofsCommandError {
         /// The proof session identifier.
         session_id: String,
     },
+    /// The PLONK result could not be decoded into an on-chain SP1 proof.
+    #[error("proof session {session_id} returned an invalid SP1 PLONK receipt: {message}")]
+    InvalidProposalProof {
+        /// The proof session identifier.
+        session_id: String,
+        /// The receipt decoding error.
+        message: String,
+    },
     /// The L1 transaction manager could not be constructed.
     #[error("failed to build L1 transaction manager for {endpoint}: {message}")]
     BuildTxManager {

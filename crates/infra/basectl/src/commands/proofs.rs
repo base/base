@@ -308,7 +308,6 @@ pub enum ProofStatusFilter {
     Failed,
 }
 
-
 impl From<ProofStatusFilter> for ProofStatus {
     fn from(filter: ProofStatusFilter) -> Self {
         match filter {
@@ -1415,7 +1414,7 @@ fn print_propose_pretty_to<W: Write>(writer: &mut W, outcome: &ProofsProposeJson
             "intermediate root interval",
             format!("every {} block(s)", outcome.intermediate_root_interval),
         )
-        .row("status", outcome.status);
+        .row("status", outcome.status.as_str());
     if let Some(error_message) = &outcome.error_message {
         table.row("error", error_message);
     }
@@ -1481,7 +1480,7 @@ fn print_finalize_pretty_to<W: Write>(writer: &mut W, outcome: &ProofsFinalizeJs
                 outcome.start_block, outcome.end_block, outcome.num_blocks
             ),
         )
-        .row("status", outcome.status);
+        .row("status", outcome.status.as_str());
     if let Some(error_message) = &outcome.error_message {
         table.row("error", error_message);
     }
@@ -1501,7 +1500,7 @@ fn print_status_pretty_to<W: Write>(writer: &mut W, status: &ProofsStatusJson) -
         .row("network", &status.network)
         .row("prover rpc", &status.prover_rpc)
         .row("session id", &status.session_id)
-        .row("status", status.status);
+        .row("status", status.status.as_str());
     if let Some(error_message) = &status.error_message {
         table.row("error", error_message);
     }
@@ -1536,7 +1535,7 @@ fn print_list_pretty_to<W: Write>(writer: &mut W, list: &ProofsListJson) -> Resu
             format!("{} (offset {}, limit {})", list.proofs.len(), list.offset, list.limit),
         );
     if let Some(status_filter) = list.status_filter {
-        table.row("status filter", status_filter);
+        table.row("status filter", status_filter.as_str());
     }
     table.render(writer)?;
 
@@ -1570,9 +1569,6 @@ mod tests {
         GetProofResponse, ProofResult, ProofStatus, ProofSummary, ProofType, ZkBackend,
         ZkProofResult, ZkVm,
     };
-    use crate::{
-        EXPECTED_RESOLUTION_NEVER, GameDetails, GameStatus, GameSummary, ProofProposeRequest,
-    };
     use url::Url;
 
     use super::{
@@ -1580,6 +1576,9 @@ mod tests {
         ProofsProposeJson, ProofsStatusJson, ProofsSubmitJson, print_finalize_pretty_to,
         print_game_details_pretty_to, print_games_list_pretty_to, print_list_pretty_to,
         print_propose_pretty_to, print_status_pretty_to, print_submit_pretty_to,
+    };
+    use crate::{
+        EXPECTED_RESOLUTION_NEVER, GameDetails, GameStatus, GameSummary, ProofProposeRequest,
     };
 
     fn prover_rpc() -> Url {

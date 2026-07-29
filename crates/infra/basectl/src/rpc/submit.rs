@@ -5,9 +5,11 @@ use std::{fmt, sync::Arc};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
+use base_proof_primitives::ProofEncoder;
 use base_proof_submission::AggregateProofSubmitter;
 use base_prover_service_protocol::{GetProofResponse, ProofResult, ProofStatus};
 use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManager, TxManagerConfig};
+use sp1_sdk::SP1ProofWithPublicValues;
 use url::Url;
 
 use crate::errors::ProofsCommandError;
@@ -106,7 +108,15 @@ impl SnarkPlonkProofBytes {
         if plonk.proof.proof.is_empty() {
             return Err(ProofsCommandError::EmptyProofBytes { session_id: session_id.to_string() });
         }
-        Ok(Self { proof: plonk.proof.proof.clone() })
+        let (receipt, _): (SP1ProofWithPublicValues, _) =
+            bincode::serde::decode_from_slice(&plonk.proof.proof, bincode::config::standard())
+                .map_err(|error| ProofsCommandError::InvalidProposalProof {
+                    session_id: session_id.to_string(),
+                    message: error.to_string(),
+                })?;
+        Ok(Self {
+            proof: ProofEncoder::encode_zk_dispute_proof_bytes(Bytes::from(receipt.bytes())),
+        })
     }
 }
 
@@ -185,6 +195,7 @@ impl ProposalProofSubmitter {
 mod tests {
     use alloy_primitives::{Bytes, address};
     use base_prover_service_protocol::{SnarkPlonkProofResult, ZkProofResult, ZkVm};
+    use sp1_sdk::{SP1Proof, SP1ProofWithPublicValues, SP1PublicValues};
 
     use super::*;
 
@@ -198,6 +209,24 @@ mod tests {
         ProofResult::SnarkPlonk(SnarkPlonkProofResult {
             proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof, execution_stats: None },
         })
+    }
+
+    fn encoded_plonk_receipt() -> Bytes {
+        let mut plonk_vkey_hash = [0u8; 32];
+        plonk_vkey_hash[..4].copy_from_slice(&[0x5a, 0x09, 0x3a, 0x2f]);
+        let mut receipt = SP1ProofWithPublicValues {
+            proof: SP1Proof::Plonk(Default::default()),
+            public_values: SP1PublicValues::new(),
+            sp1_version: "test".to_owned(),
+            tee_proof: None,
+        };
+        let SP1Proof::Plonk(plonk) = &mut receipt.proof else {
+            unreachable!();
+        };
+        plonk.encoded_proof = "abcd".to_owned();
+        plonk.plonk_vkey_hash = plonk_vkey_hash;
+
+        Bytes::from(bincode::serde::encode_to_vec(&receipt, bincode::config::standard()).unwrap())
     }
 
     #[test]
@@ -225,11 +254,10 @@ mod tests {
 
     #[test]
     fn from_response_extracts_plonk_bytes() {
-        let bytes = Bytes::from_static(b"plonk-proof");
-        let response = succeeded_response(Some(plonk_result(bytes.clone())));
+        let response = succeeded_response(Some(plonk_result(encoded_plonk_receipt())));
         let extracted =
             SnarkPlonkProofBytes::from_response("session", &response).expect("proof extracts");
-        assert_eq!(extracted.proof, bytes);
+        assert_eq!(extracted.proof.as_ref(), &[1, 0x5a, 0x09, 0x3a, 0x2f, 0xab, 0xcd]);
     }
 
     #[test]
@@ -293,5 +321,14 @@ mod tests {
         let error = SnarkPlonkProofBytes::from_response("session", &response)
             .expect_err("empty proof bytes must fail");
         assert!(matches!(error, ProofsCommandError::EmptyProofBytes { .. }));
+    }
+
+    #[test]
+    fn from_response_rejects_invalid_plonk_receipt() {
+        let response =
+            succeeded_response(Some(plonk_result(Bytes::from_static(b"not-an-sp1-receipt"))));
+        let error = SnarkPlonkProofBytes::from_response("session", &response)
+            .expect_err("invalid receipt must fail");
+        assert!(matches!(error, ProofsCommandError::InvalidProposalProof { .. }));
     }
 }

@@ -14,6 +14,7 @@ anyhow = { workspace = true }
 ratatui = { workspace = true }
 arboard = { workspace = true }
 futures = { workspace = true }
+sp1-sdk = { workspace = true }
 crossterm = { workspace = true }
 serde_yaml = { workspace = true }
 alloy-contract = { workspace = true }
@@ -24,6 +25,7 @@ alloy-signer-local = { workspace = true }
 base-common-chains = { workspace = true }
 base-common-network = { workspace = true }
 base-consensus-peers = { workspace = true }
+base-proof-primitives = { workspace = true }
 base-proof-contracts = { workspace = true }
 alloy-transport-http = { workspace = true }
 base-consensus-gossip = { workspace = true }
@@ -33,6 +35,7 @@ base-common-precompiles = { workspace = true }
 base-common-flashblocks = { workspace = true }
 base-prover-service-client = { workspace = true }
 base-prover-service-protocol = { workspace = true }
+bincode = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive", "env"] }
 toml = { workspace = true, features = ["parse", "serde"] }
 url = { workspace = true, features = ["serde"] }
