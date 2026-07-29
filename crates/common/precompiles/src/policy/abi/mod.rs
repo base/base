@@ -1,0 +1,206 @@
+//! Wire (ABI) surfaces for the `PolicyRegistry` precompile, one per hardfork that moved them.
+//!
+//! The latest surface is always named `IPolicyRegistry` in its `vN` module, then re-exported here
+//! as both [`IPolicyRegistry`] (canonical) and `IPolicyRegistryVN`. Older forks keep the same
+//! Rust name inside their module so truncated-calldata revert bytes stay stable, and are re-exported
+//! as [`IPolicyRegistryV1`], [`IPolicyRegistryV2`], etc.
+
+mod v1;
+pub use v1::IPolicyRegistry as IPolicyRegistryV1;
+
+mod v2;
+pub use v2::{IPolicyRegistry, IPolicyRegistry as IPolicyRegistryV2};
+
+impl IPolicyRegistry::IPolicyRegistryCalls {
+    /// Returns the stable metric label for this decoded policy-registry call.
+    pub const fn as_label(&self) -> &'static str {
+        match self {
+            Self::createPolicy(_) => "policy.createPolicy",
+            Self::createPolicyWithAccounts(_) => "policy.createPolicyWithAccounts",
+            Self::createCompositePolicy(_) => "policy.createCompositePolicy",
+            Self::updateComposite(_) => "policy.updateComposite",
+            Self::stageUpdateAdmin(_) => "policy.stageUpdateAdmin",
+            Self::finalizeUpdateAdmin(_) => "policy.finalizeUpdateAdmin",
+            Self::renounceAdmin(_) => "policy.renounceAdmin",
+            Self::updateAllowlist(_) => "policy.updateAllowlist",
+            Self::updateBlocklist(_) => "policy.updateBlocklist",
+            Self::isAuthorized(_) => "policy.isAuthorized",
+            Self::policyExists(_) => "policy.policyExists",
+            Self::policyAdmin(_) => "policy.policyAdmin",
+            Self::pendingPolicyAdmin(_) => "policy.pendingPolicyAdmin",
+        }
+    }
+}
+
+impl IPolicyRegistry::PolicyType {
+    /// Returns the raw `u8` discriminant for this policy type.
+    pub const fn as_discriminant(self) -> u8 {
+        self as u8
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use alloy_primitives::{Address, B256, b256, keccak256};
+    use alloy_sol_types::{SolEnum, SolError, SolEvent, SolInterface};
+
+    use super::{IPolicyRegistry, IPolicyRegistryV1};
+
+    /// Absolute wire fingerprint for Beryl's surface. Catches both-sides drift that relative
+    /// V1==V2 asserts miss (alloy Display / signature changes that move every copy together).
+    const V1_ABI_FINGERPRINT: B256 =
+        b256!("1ae189209c8c4875de2caa707322ea74f0d1f3e74a1104ecee6884e8984415da");
+
+    /// Absolute wire fingerprint for Cobalt's (canonical) surface.
+    const V2_ABI_FINGERPRINT: B256 =
+        b256!("047d1fceaa9beac82fd473d474bb7f3b6dcd720c9e62c86facc75ef6dd611631");
+
+    /// Keccak of sorted call selectors, then sorted event topic0s, then sorted error selectors,
+    /// then `PolicyType::COUNT`. Order is fixed so a single pin catches any wire-surface edit.
+    fn abi_fingerprint(
+        selectors: impl IntoIterator<Item = [u8; 4]>,
+        event_hashes: impl IntoIterator<Item = B256>,
+        error_selectors: impl IntoIterator<Item = [u8; 4]>,
+        policy_type_count: usize,
+    ) -> B256 {
+        let mut selectors: Vec<[u8; 4]> = selectors.into_iter().collect();
+        selectors.sort_unstable();
+
+        let mut event_hashes: Vec<B256> = event_hashes.into_iter().collect();
+        event_hashes.sort_unstable();
+
+        let mut error_selectors: Vec<[u8; 4]> = error_selectors.into_iter().collect();
+        error_selectors.sort_unstable();
+
+        let mut buf = Vec::with_capacity(
+            selectors.len() * 4 + event_hashes.len() * 32 + error_selectors.len() * 4 + 1,
+        );
+        for selector in &selectors {
+            buf.extend_from_slice(selector);
+        }
+        for hash in &event_hashes {
+            buf.extend_from_slice(hash.as_slice());
+        }
+        for selector in &error_selectors {
+            buf.extend_from_slice(selector);
+        }
+        buf.push(policy_type_count as u8);
+        keccak256(&buf)
+    }
+
+    fn v1_abi_fingerprint() -> B256 {
+        abi_fingerprint(
+            IPolicyRegistryV1::IPolicyRegistryCalls::selectors(),
+            IPolicyRegistryV1::IPolicyRegistryEvents::SELECTORS.iter().copied().map(B256::new),
+            IPolicyRegistryV1::IPolicyRegistryErrors::selectors(),
+            IPolicyRegistryV1::PolicyType::COUNT,
+        )
+    }
+
+    fn v2_abi_fingerprint() -> B256 {
+        abi_fingerprint(
+            IPolicyRegistry::IPolicyRegistryCalls::selectors(),
+            IPolicyRegistry::IPolicyRegistryEvents::SELECTORS.iter().copied().map(B256::new),
+            IPolicyRegistry::IPolicyRegistryErrors::selectors(),
+            IPolicyRegistry::PolicyType::COUNT,
+        )
+    }
+
+    #[test]
+    fn v1_abi_fingerprint_is_pinned() {
+        assert_eq!(v1_abi_fingerprint(), V1_ABI_FINGERPRINT);
+    }
+
+    #[test]
+    fn v2_abi_fingerprint_is_pinned() {
+        assert_eq!(v2_abi_fingerprint(), V2_ABI_FINGERPRINT);
+    }
+
+    #[test]
+    fn every_policy_type_discriminant_decodes() {
+        for discriminant in 0..IPolicyRegistry::PolicyType::COUNT {
+            IPolicyRegistry::PolicyType::try_from(discriminant as u8)
+                .expect("generated PolicyType discriminant should decode");
+        }
+    }
+
+    #[test]
+    fn policy_call_labels_are_stable() {
+        assert_eq!(
+            IPolicyRegistry::IPolicyRegistryCalls::isAuthorized(
+                IPolicyRegistry::isAuthorizedCall { policyId: 0, account: Address::ZERO },
+            )
+            .as_label(),
+            "policy.isAuthorized"
+        );
+    }
+
+    /// The leaf discriminants must mean the same thing on both surfaces. `PolicyType` rides the
+    /// top byte of every policy ID (`PolicyRegistryV1::make_id`), so a reordering would silently
+    /// reinterpret every stored policy.
+    #[test]
+    fn shared_policy_type_discriminants_agree_across_surfaces() {
+        assert_eq!(
+            IPolicyRegistryV1::PolicyType::BLOCKLIST as u8,
+            IPolicyRegistry::PolicyType::BLOCKLIST as u8
+        );
+        assert_eq!(
+            IPolicyRegistryV1::PolicyType::ALLOWLIST as u8,
+            IPolicyRegistry::PolicyType::ALLOWLIST as u8
+        );
+    }
+
+    /// Events and errors carried over from Beryl keep their topic0 / selector. A signature drift
+    /// here would change the logs and revert data of ops that both surfaces share.
+    #[test]
+    fn shared_events_and_errors_keep_their_signatures() {
+        assert_eq!(
+            IPolicyRegistryV1::PolicyCreated::SIGNATURE_HASH,
+            IPolicyRegistry::PolicyCreated::SIGNATURE_HASH
+        );
+        assert_eq!(
+            IPolicyRegistryV1::PolicyAdminStaged::SIGNATURE_HASH,
+            IPolicyRegistry::PolicyAdminStaged::SIGNATURE_HASH
+        );
+        assert_eq!(
+            IPolicyRegistryV1::PolicyAdminUpdated::SIGNATURE_HASH,
+            IPolicyRegistry::PolicyAdminUpdated::SIGNATURE_HASH
+        );
+        assert_eq!(
+            IPolicyRegistryV1::AllowlistUpdated::SIGNATURE_HASH,
+            IPolicyRegistry::AllowlistUpdated::SIGNATURE_HASH
+        );
+        assert_eq!(
+            IPolicyRegistryV1::BlocklistUpdated::SIGNATURE_HASH,
+            IPolicyRegistry::BlocklistUpdated::SIGNATURE_HASH
+        );
+
+        assert_eq!(IPolicyRegistryV1::NonPayable::SELECTOR, IPolicyRegistry::NonPayable::SELECTOR);
+        assert_eq!(
+            IPolicyRegistryV1::Unauthorized::SELECTOR,
+            IPolicyRegistry::Unauthorized::SELECTOR
+        );
+        assert_eq!(
+            IPolicyRegistryV1::PolicyNotFound::SELECTOR,
+            IPolicyRegistry::PolicyNotFound::SELECTOR
+        );
+        assert_eq!(
+            IPolicyRegistryV1::IncompatiblePolicyType::SELECTOR,
+            IPolicyRegistry::IncompatiblePolicyType::SELECTOR
+        );
+        assert_eq!(
+            IPolicyRegistryV1::ZeroAddress::SELECTOR,
+            IPolicyRegistry::ZeroAddress::SELECTOR
+        );
+        assert_eq!(
+            IPolicyRegistryV1::BatchSizeTooLarge::SELECTOR,
+            IPolicyRegistry::BatchSizeTooLarge::SELECTOR
+        );
+        assert_eq!(
+            IPolicyRegistryV1::NoPendingAdmin::SELECTOR,
+            IPolicyRegistry::NoPendingAdmin::SELECTOR
+        );
+    }
+}
