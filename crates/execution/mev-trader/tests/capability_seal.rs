@@ -173,6 +173,43 @@ fn dependency_features() -> BTreeMap<&'static str, (&'static [&'static str], boo
     ])
 }
 
+fn validate_owner_script_process_arguments(script: &str) -> Result<(), String> {
+    let mut commands = Vec::new();
+    for (line_index, line) in script.lines().enumerate() {
+        let sensitive_wallet_command =
+            line.contains("wallet address") || line.contains("wallet sign");
+        let Some(start) = line.find("cast wallet ") else {
+            if sensitive_wallet_command {
+                return Err(format!("indirect wallet command on line {}", line_index + 1));
+            }
+            continue;
+        };
+        let invocation = &line[start..];
+        if invocation["cast wallet ".len()..].contains("cast wallet ") {
+            return Err(format!("multiple cast wallet commands on line {}", line_index + 1));
+        }
+        let end = invocation.find(')').unwrap_or(invocation.len());
+        commands.push(
+            invocation[..end].split_ascii_whitespace().map(str::to_owned).collect::<Vec<_>>(),
+        );
+    }
+
+    let expected = [
+        vec!["cast", "wallet", "address", "--interactive"],
+        vec!["cast", "wallet", "sign", "--interactive", "\"$MSG\""],
+        vec!["cast", "wallet", "verify", "--address", "\"$EXPECT_ADDR\"", "\"$MSG\"", "\"$SIG\""],
+    ];
+    if commands != expected {
+        return Err(format!("cast wallet argv shape changed: {commands:?}"));
+    }
+    Ok(())
+}
+
+fn replace_once(source: &str, from: &str, to: &str) -> String {
+    assert_eq!(source.matches(from).count(), 1, "mutant source must have one match");
+    source.replacen(from, to, 1)
+}
+
 #[test]
 fn metadata_has_exact_target_and_dependency_shape() {
     let metadata = metadata();
@@ -264,9 +301,10 @@ fn every_workspace_binary_linking_trader_is_dependency_and_source_sealed() {
         }
 
         let dependencies = package["dependencies"].as_array().expect("dependencies");
-        let links_trader = dependencies.iter().any(|dependency| {
+        let trader_dependency = dependencies.iter().find(|dependency| {
             dependency["kind"].is_null() && dependency["name"].as_str() == Some("base-mev-trader")
         });
+        let links_trader = trader_dependency.is_some();
         if !links_trader {
             continue;
         }
@@ -287,6 +325,15 @@ fn every_workspace_binary_linking_trader_is_dependency_and_source_sealed() {
             "binary package {} linking the trader cannot add dev or build dependencies",
             package["name"]
         );
+        let trader_dependency = trader_dependency.expect("trader dependency");
+        assert!(
+            trader_dependency["features"].as_array().expect("trader features").is_empty(),
+            "trader-linked binary cannot enable capability features"
+        );
+        assert_eq!(trader_dependency["uses_default_features"], true);
+        assert_eq!(trader_dependency["optional"], false);
+        assert!(trader_dependency["rename"].is_null());
+        assert!(trader_dependency["target"].is_null());
 
         for target in binary_targets {
             let source_path = target["src_path"].as_str().expect("binary source path");
@@ -306,22 +353,25 @@ fn every_workspace_binary_linking_trader_is_dependency_and_source_sealed() {
 }
 
 #[test]
-fn owner_kill_reset_script_is_interactive_and_consumes_binary_context() {
+fn owner_kill_reset_script_pins_process_argument_property_with_mutants() {
     let script = fs::read_to_string(workspace_root().join("scripts/owner-kill-reset-sign.sh"))
         .expect("owner kill-reset script");
+    validate_owner_script_process_arguments(&script).expect("reviewed argv shape");
 
-    for forbidden in [
-        "attest.key",
-        "--private-key",
-        "KEY_FILE",
-        "base-mev:p2-killreset:",
-        "0x581F5c5EC1d63BA08d6024E8b1cF88b83D57285b",
-    ] {
-        assert!(!script.contains(forbidden), "owner script contains forbidden {forbidden}");
-    }
-    assert_eq!(script.matches("--interactive").count(), 2);
-    assert_eq!(script.matches("--prepare").count(), 1);
-    assert!(script.contains("base-kill-reset-bin"));
+    let positional =
+        replace_once(&script, "cast wallet address --interactive", "cast wallet address \"$K\"");
+    assert!(validate_owner_script_process_arguments(&positional).is_err());
+
+    let short_interactive =
+        replace_once(&script, "cast wallet address --interactive", "cast wallet address -i");
+    assert!(validate_owner_script_process_arguments(&short_interactive).is_err());
+
+    let read_and_interpolate = replace_once(
+        &script,
+        "GOT_ADDR=\"$(cast wallet address --interactive)\"",
+        "K=\"$(cat \"$HOME/.config/mev-owner-attest/attest.key\")\"\nGOT_ADDR=\"$(cast wallet address --interactive \"$K\")\"",
+    );
+    assert!(validate_owner_script_process_arguments(&read_and_interpolate).is_err());
 }
 
 #[test]
