@@ -185,11 +185,7 @@ pub struct ZkProofRequest {
     /// Optional intermediate output root interval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intermediate_root_interval: Option<u64>,
-    /// L2 block number whose timestamp determines the activated upgrade schedule.
-    ///
-    /// `None` means the schedule is pinned to the claimed L2 block (the last block in the
-    /// proven range). Set for challenger subrange proofs, which claim an earlier block than
-    /// the game's L2 block but must still pin to the game's L2 block.
+    /// L2 block used to pin the upgrade schedule; defaults to the claimed block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule_l2_block_number: Option<u64>,
     /// ZK virtual machine implementation to use.
