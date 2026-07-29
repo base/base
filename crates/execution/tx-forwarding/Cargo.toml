@@ -15,6 +15,7 @@ workspace = true
 # workspace
 base-node-runner.workspace = true
 base-execution-txpool.workspace = true
+base-bundles.workspace = true
 
 # misc
 url.workspace = true

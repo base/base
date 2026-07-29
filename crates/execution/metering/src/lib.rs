@@ -38,6 +38,12 @@ pub use meter::{
 mod rpc;
 pub use rpc::MeteringApiImpl;
 
+mod inline;
+pub use inline::{
+    DEFAULT_INLINE_METERING_CACHE_CAPACITY, DEFAULT_INLINE_METERING_CACHE_TTL,
+    DEFAULT_INLINE_METERING_MAX_CONCURRENT, InlineMeteringService,
+};
+
 mod traits;
 pub use traits::MeteringApiServer;
 

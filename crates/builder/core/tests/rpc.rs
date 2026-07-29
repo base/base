@@ -12,7 +12,7 @@ use base_test_utils::Account;
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.
 async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
-    let harness = TestHarness::builder().with_ext::<BuilderApiExtension>(()).build().await?;
+    let harness = TestHarness::builder().with_ext::<BuilderApiExtension>(None).build().await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))
 }
@@ -69,6 +69,7 @@ async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        meter_bundle_response: None,
     };
 
     let result: Result<(), _> =
@@ -99,6 +100,7 @@ async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        meter_bundle_response: None,
     };
 
     // EIP-1559 transactions are supported by the pool
@@ -122,6 +124,7 @@ async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        meter_bundle_response: None,
     };
 
     let result: Result<(), _> =

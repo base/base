@@ -1,4 +1,5 @@
 use alloy_primitives::{Address, Bytes};
+use base_bundles::MeterBundleResponse;
 use serde::{Deserialize, Serialize};
 
 /// Pre-validated transaction for the builder RPC wire format.
@@ -23,4 +24,7 @@ pub struct ValidatedTransaction {
     /// Milliseconds since Unix epoch.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub max_timestamp: Option<u64>,
+    /// In-process meterBundle result from the mempool node.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub meter_bundle_response: Option<MeterBundleResponse>,
 }

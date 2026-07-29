@@ -55,6 +55,7 @@ parking_lot.workspace = true
 derive_more.workspace = true
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
+moka = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 # workspace

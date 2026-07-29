@@ -10,8 +10,9 @@ use parking_lot::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::{
-    MeteredOpcodes, MeteringApiImpl, MeteringApiServer, MeteringCache, MeteringCollector,
-    PriorityFeeEstimator, ResourceLimits, estimator::assert_valid_percentile,
+    DEFAULT_INLINE_METERING_MAX_CONCURRENT, InlineMeteringService, MeteredOpcodes, MeteringApiImpl,
+    MeteringApiServer, MeteringCache, MeteringCollector, PriorityFeeEstimator, ResourceLimits,
+    estimator::assert_valid_percentile,
 };
 
 const TARGET_FLASHBLOCKS_PER_BLOCK_NON_ZERO_MSG: &str =
@@ -67,6 +68,11 @@ pub struct MeteringExtension {
     pub target_flashblocks_per_block: Option<usize>,
     /// Opcodes and precompiles to track for gas metering.
     pub metered_opcodes: MeteredOpcodes,
+    /// Max concurrent in-process meterBundle workers for mempool inline simulation.
+    pub inline_max_concurrent: usize,
+    /// Slot shared with `EthApi` / tx-forwarding for the inline metering handle.
+    pub inline_metering_slot:
+        Option<std::sync::Arc<std::sync::OnceLock<base_bundles::SharedInlineMetering>>>,
 }
 
 impl Default for MeteringExtension {
@@ -80,6 +86,8 @@ impl Default for MeteringExtension {
             cache_size: 12,
             target_flashblocks_per_block: None,
             metered_opcodes: MeteredOpcodes::default(),
+            inline_max_concurrent: DEFAULT_INLINE_METERING_MAX_CONCURRENT,
+            inline_metering_slot: None,
         }
     }
 }
@@ -96,7 +104,24 @@ impl MeteringExtension {
             cache_size: 12,
             target_flashblocks_per_block: None,
             metered_opcodes: MeteredOpcodes::default(),
+            inline_max_concurrent: DEFAULT_INLINE_METERING_MAX_CONCURRENT,
+            inline_metering_slot: None,
         }
+    }
+
+    /// Sets the max concurrent inline meterBundle workers.
+    pub const fn with_inline_max_concurrent(mut self, max: usize) -> Self {
+        self.inline_max_concurrent = max;
+        self
+    }
+
+    /// Sets the shared slot used to publish the inline metering handle.
+    pub fn with_inline_metering_slot(
+        mut self,
+        slot: std::sync::Arc<std::sync::OnceLock<base_bundles::SharedInlineMetering>>,
+    ) -> Self {
+        self.inline_metering_slot = Some(slot);
+        self
     }
 
     /// Sets the resource limits.
@@ -180,6 +205,8 @@ impl BaseNodeExtension for MeteringExtension {
             .then(|| self.resolved_target_flashblocks_per_block(requires_target_flashblocks));
         let flashblocks_config = self.flashblocks_config;
         let metered_opcodes = Arc::new(self.metered_opcodes);
+        let inline_max_concurrent = self.inline_max_concurrent;
+        let inline_metering_slot = self.inline_metering_slot;
 
         hooks.add_rpc_module(move |ctx| {
             let fb_state: Arc<FlashblocksState> =
@@ -238,7 +265,26 @@ impl BaseNodeExtension for MeteringExtension {
                 MeteringApiImpl::new(ctx.provider().clone(), fb_state, Arc::clone(&metered_opcodes))
             };
 
-            ctx.modules.merge_configured(metering_api.into_rpc())?;
+            let metering_api_for_rpc = metering_api.clone();
+            let metering_api = Arc::new(metering_api);
+            let inline_service = Arc::new(InlineMeteringService::new(
+                Arc::clone(&metering_api),
+                inline_max_concurrent,
+            ));
+            let inline_handle: base_bundles::SharedInlineMetering =
+                Arc::clone(&inline_service) as _;
+
+            info!(
+                max_concurrent = inline_max_concurrent,
+                "inline mempool metering service started"
+            );
+
+            ctx.registry.eth_api().set_inline_metering(Arc::clone(&inline_handle));
+            if let Some(slot) = inline_metering_slot.as_ref() {
+                let _ = slot.set(inline_handle);
+            }
+
+            ctx.modules.merge_configured(metering_api_for_rpc.into_rpc())?;
 
             Ok(())
         })
@@ -269,6 +315,11 @@ pub struct MeteringConfig {
     pub target_flashblocks_per_block: Option<usize>,
     /// Opcodes and precompiles to track for gas metering.
     pub metered_opcodes: MeteredOpcodes,
+    /// Max concurrent in-process meterBundle workers for mempool inline simulation.
+    pub inline_max_concurrent: usize,
+    /// Slot shared with `EthApi` / tx-forwarding for the inline metering handle.
+    pub inline_metering_slot:
+        Option<std::sync::Arc<std::sync::OnceLock<base_bundles::SharedInlineMetering>>>,
 }
 
 impl MeteringConfig {
@@ -288,6 +339,8 @@ impl MeteringConfig {
             cache_size: 12,
             target_flashblocks_per_block: None,
             metered_opcodes: MeteredOpcodes::default(),
+            inline_max_concurrent: DEFAULT_INLINE_METERING_MAX_CONCURRENT,
+            inline_metering_slot: None,
         }
     }
 
@@ -302,6 +355,8 @@ impl MeteringConfig {
             cache_size: 12,
             target_flashblocks_per_block: None,
             metered_opcodes: MeteredOpcodes::default(),
+            inline_max_concurrent: DEFAULT_INLINE_METERING_MAX_CONCURRENT,
+            inline_metering_slot: None,
         }
     }
 
@@ -341,6 +396,21 @@ impl MeteringConfig {
         self.metered_opcodes = opcodes;
         self
     }
+
+    /// Sets the max concurrent inline meterBundle workers.
+    pub const fn with_inline_max_concurrent(mut self, max: usize) -> Self {
+        self.inline_max_concurrent = max;
+        self
+    }
+
+    /// Sets the shared slot used to publish the inline metering handle.
+    pub fn with_inline_metering_slot(
+        mut self,
+        slot: std::sync::Arc<std::sync::OnceLock<base_bundles::SharedInlineMetering>>,
+    ) -> Self {
+        self.inline_metering_slot = Some(slot);
+        self
+    }
 }
 
 impl FromExtensionConfig for MeteringExtension {
@@ -357,6 +427,8 @@ impl FromExtensionConfig for MeteringExtension {
             cache_size: config.cache_size,
             target_flashblocks_per_block: config.target_flashblocks_per_block,
             metered_opcodes: config.metered_opcodes,
+            inline_max_concurrent: config.inline_max_concurrent,
+            inline_metering_slot: config.inline_metering_slot,
         }
     }
 }

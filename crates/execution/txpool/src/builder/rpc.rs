@@ -17,7 +17,9 @@ use serde_json::{Map, json};
 use tracing::debug;
 
 use super::metrics::Metrics as BuilderApiMetrics;
-use crate::{BasePooledTransaction, PoolRejectionLabel, ValidatedTransaction};
+use crate::{
+    BasePooledTransaction, PoolRejectionLabel, SharedMeteringResponseSink, ValidatedTransaction,
+};
 
 /// RPC interface for submitting pre-validated transactions to a block builder.
 #[rpc(server, namespace = "base")]
@@ -41,12 +43,18 @@ pub trait BuilderApi {
 #[derive(Debug)]
 pub struct BuilderApiImpl<P> {
     pool: P,
+    metering: Option<SharedMeteringResponseSink>,
 }
 
 impl<P> BuilderApiImpl<P> {
     /// Creates a new handler backed by the given transaction pool.
     pub const fn new(pool: P) -> Self {
-        Self { pool }
+        Self { pool, metering: None }
+    }
+
+    /// Creates a handler that also inserts metering responses into the builder store.
+    pub fn with_metering(pool: P, metering: SharedMeteringResponseSink) -> Self {
+        Self { pool, metering: Some(metering) }
     }
 }
 
@@ -58,9 +66,11 @@ where
     async fn insert_validated_transaction(&self, tx: ValidatedTransaction) -> RpcResult<()> {
         debug!(
             sender = %tx.sender,
+            has_metering = tx.meter_bundle_response.is_some(),
             "rpc::insert_validated_transaction"
         );
         let sender = tx.sender;
+        let meter_bundle_response = tx.meter_bundle_response;
 
         // Decode the EIP-2718 transaction bytes
         let consensus_tx =
@@ -74,6 +84,10 @@ where
             })?;
         let tx_hash = *consensus_tx.hash();
         let encoded_len = tx.raw.len();
+
+        if let (Some(metering), Some(response)) = (self.metering.as_ref(), meter_bundle_response) {
+            metering.insert(tx_hash, response);
+        }
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
         let pool_tx = BasePooledTransaction::new(recovered, encoded_len).with_bundle_metadata(
@@ -145,6 +159,8 @@ impl<P> BuilderApiImpl<P> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use alloy_consensus::TxEip1559;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
@@ -215,6 +231,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
         };
 
         let result = handler.insert_validated_transaction(tx).await;
@@ -244,6 +261,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
         };
 
         let result = handler.insert_validated_transaction(tx).await;
@@ -272,6 +290,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
         };
 
         let result = handler.insert_validated_transaction(tx).await;
@@ -297,6 +316,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
         };
 
         let result = handler.insert_validated_transaction(tx).await;
@@ -317,6 +337,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
         };
 
         let result = handler.insert_validated_transaction(tx).await;
@@ -338,6 +359,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
         };
 
         let result = handler.insert_validated_transaction(tx).await;
@@ -357,6 +379,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
         };
 
         let result = handler.insert_validated_transaction(tx).await;
@@ -364,5 +387,77 @@ mod tests {
         // Decode should succeed, but the txpool is a noop so it will reject the tx
         // This error code should be InternalError
         assert_eq!(err.code(), ErrorCode::InternalError.code());
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingMeteringSink {
+        inserted: std::sync::Mutex<Vec<(TxHash, base_bundles::MeterBundleResponse)>>,
+    }
+
+    impl crate::MeteringResponseSink for RecordingMeteringSink {
+        fn insert(&self, tx_hash: TxHash, metering: base_bundles::MeterBundleResponse) {
+            self.inserted.lock().unwrap().push((tx_hash, metering));
+        }
+    }
+
+    #[tokio::test]
+    async fn insert_with_metering_response_stores_metering() {
+        let sink = Arc::new(RecordingMeteringSink::default());
+        let handler = BuilderApiImpl::with_metering(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            sink.clone(),
+        );
+
+        let (sender, raw) = create_eip1559_tx();
+        let consensus =
+            BaseTransactionSigned::decode_2718(&mut raw.as_ref()).expect("valid eip1559");
+        let tx_hash = *consensus.hash();
+        let response = base_bundles::MeterBundleResponse {
+            total_execution_time_us: 1234,
+            ..Default::default()
+        };
+
+        let tx = ValidatedTransaction {
+            sender,
+            raw,
+            min_block_number: None,
+            max_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+            meter_bundle_response: Some(response.clone()),
+        };
+
+        let _ = handler.insert_validated_transaction(tx).await;
+
+        let inserted = sink.inserted.lock().unwrap();
+        assert_eq!(inserted.len(), 1, "exactly one metering insert");
+        assert_eq!(inserted[0].0, tx_hash, "metering keyed by tx hash");
+        assert_eq!(inserted[0].1.total_execution_time_us, 1234, "metering response preserved");
+    }
+
+    #[tokio::test]
+    async fn insert_without_metering_response_skips_sink() {
+        let sink = std::sync::Arc::new(RecordingMeteringSink::default());
+        let handler = BuilderApiImpl::with_metering(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            sink.clone(),
+        );
+
+        let (sender, raw) = create_eip1559_tx();
+        let tx = ValidatedTransaction {
+            sender,
+            raw,
+            min_block_number: None,
+            max_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+            meter_bundle_response: None,
+        };
+
+        let _ = handler.insert_validated_transaction(tx).await;
+        assert!(
+            sink.inserted.lock().unwrap().is_empty(),
+            "no metering insert when response absent"
+        );
     }
 }

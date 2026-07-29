@@ -4467,6 +4467,7 @@ dependencies = [
  "axum 0.8.9",
  "backon",
  "base-bundle-extension",
+ "base-bundles",
  "base-cli-utils",
  "base-common-chains",
  "base-common-consensus",
@@ -4737,6 +4738,7 @@ dependencies = [
  "alloy-transport 2.2.0",
  "alloy-transport-http 2.2.0",
  "async-trait",
+ "base-bundles",
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
@@ -4849,6 +4851,7 @@ dependencies = [
  "alloy-signer 2.2.0",
  "alloy-signer-local 2.2.0",
  "async-trait",
+ "base-bundles",
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
@@ -5145,6 +5148,7 @@ dependencies = [
  "derive_more 2.1.1",
  "eyre",
  "jsonrpsee",
+ "moka",
  "parking_lot",
  "rand 0.9.5",
  "reth-db",
@@ -6512,6 +6516,7 @@ dependencies = [
 name = "base-tx-forwarding"
 version = "0.0.0"
 dependencies = [
+ "base-bundles",
  "base-execution-txpool",
  "base-node-runner",
  "tracing",

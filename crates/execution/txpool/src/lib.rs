@@ -55,7 +55,10 @@ mod pool_error_label;
 pub use pool_error_label::PoolRejectionLabel;
 
 mod builder;
-pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer};
+pub use builder::{
+    BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, MeteringResponseSink,
+    SharedMeteringResponseSink,
+};
 
 mod bundle;
 pub use bundle::{

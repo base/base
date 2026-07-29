@@ -1,11 +1,12 @@
 use std::time::Duration;
 
+use base_bundles::SharedInlineMetering;
 use url::Url;
 
 /// Configuration for the transaction forwarder.
 ///
 /// One forwarder is spawned per builder URL. Each subscribes to the consumer's
-/// broadcast channel and forwards transactions via `base_insertValidatedTransactions`.
+/// broadcast channel and forwards transactions via `base_insertValidatedTransaction`.
 /// Under normal load, transactions are sent immediately (batch of 1). When the
 /// sliding window rate limit is hit, incoming transactions buffer and flush as
 /// a single batch once the window opens.
@@ -23,6 +24,10 @@ pub struct ForwarderConfig {
     pub retry_backoff: Duration,
     /// Per-request timeout for the HTTP client.
     pub request_timeout: Duration,
+    /// When set with [`Self::require_metering`], gates forwarding on inline meterBundle results.
+    pub inline_metering: Option<SharedInlineMetering>,
+    /// When true, transactions are not forwarded until a meterBundle response exists.
+    pub require_metering: bool,
 }
 
 impl Default for ForwarderConfig {
@@ -34,6 +39,8 @@ impl Default for ForwarderConfig {
             max_retries: 3,
             retry_backoff: Duration::from_millis(100),
             request_timeout: Duration::from_secs(1),
+            inline_metering: None,
+            require_metering: false,
         }
     }
 }
@@ -74,6 +81,18 @@ impl ForwarderConfig {
         self.request_timeout = timeout;
         self
     }
+
+    /// Sets the shared inline metering handle.
+    pub fn with_inline_metering(mut self, metering: SharedInlineMetering) -> Self {
+        self.inline_metering = Some(metering);
+        self
+    }
+
+    /// Requires a meterBundle response before forwarding.
+    pub const fn with_require_metering(mut self, require: bool) -> Self {
+        self.require_metering = require;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -89,6 +108,8 @@ mod tests {
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_backoff, Duration::from_millis(100));
         assert_eq!(config.request_timeout, Duration::from_secs(1));
+        assert!(!config.require_metering);
+        assert!(config.inline_metering.is_none());
     }
 
     #[test]
@@ -100,7 +121,8 @@ mod tests {
             .with_max_batch_size(200)
             .with_max_retries(5)
             .with_retry_backoff(Duration::from_millis(250))
-            .with_request_timeout(Duration::from_millis(500));
+            .with_request_timeout(Duration::from_millis(500))
+            .with_require_metering(true);
 
         assert_eq!(config.builder_urls, vec![url]);
         assert_eq!(config.max_rps, 500);
@@ -108,6 +130,7 @@ mod tests {
         assert_eq!(config.max_retries, 5);
         assert_eq!(config.retry_backoff, Duration::from_millis(250));
         assert_eq!(config.request_timeout, Duration::from_millis(500));
+        assert!(config.require_metering);
     }
 
     #[test]

@@ -38,6 +38,17 @@ pub struct MeteringApiImpl<Provider, FB> {
     metered_opcodes: Arc<crate::MeteredOpcodes>,
 }
 
+impl<Provider: Clone, FB> Clone for MeteringApiImpl<Provider, FB> {
+    fn clone(&self) -> Self {
+        Self {
+            provider: self.provider.clone(),
+            flashblocks_api: Arc::clone(&self.flashblocks_api),
+            priority_fee_estimator: self.priority_fee_estimator.clone(),
+            metered_opcodes: Arc::clone(&self.metered_opcodes),
+        }
+    }
+}
+
 impl<Provider, FB> std::fmt::Debug for MeteringApiImpl<Provider, FB> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MeteringApiImpl").finish_non_exhaustive()

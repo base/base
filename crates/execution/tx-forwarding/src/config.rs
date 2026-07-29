@@ -1,7 +1,11 @@
 //! Configuration for the transaction forwarding extension.
 
-use std::time::Duration;
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
+use base_bundles::SharedInlineMetering;
 use base_execution_txpool::{
     ConsumerConfig as TxpoolConsumerConfig, ForwarderConfig as TxpoolForwarderConfig,
 };
@@ -13,6 +17,7 @@ pub const DEFAULT_RESEND_AFTER_MS: u64 = 4000;
 pub const DEFAULT_MAX_BATCH_SIZE: usize = 100;
 /// Default maximum RPC requests per second per forwarder.
 pub const DEFAULT_MAX_RPS: u32 = 200;
+
 /// Full configuration for the transaction forwarding extension.
 #[derive(Debug, Clone)]
 pub struct TxForwardingConfig {
@@ -26,6 +31,10 @@ pub struct TxForwardingConfig {
     pub max_batch_size: usize,
     /// Maximum RPC requests per second per forwarder (0 = unlimited).
     pub max_rps: u32,
+    /// Require Ready meterBundle before forwarding when inline metering is available.
+    pub require_metering: bool,
+    /// Slot populated by [`MeteringExtension`] with the shared inline metering handle.
+    pub inline_metering_slot: Option<Arc<OnceLock<SharedInlineMetering>>>,
 }
 
 impl Default for TxForwardingConfig {
@@ -37,6 +46,8 @@ impl Default for TxForwardingConfig {
             resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             max_batch_size: DEFAULT_MAX_BATCH_SIZE,
             max_rps: DEFAULT_MAX_RPS,
+            require_metering: false,
+            inline_metering_slot: None,
         }
     }
 }
@@ -70,6 +81,18 @@ impl TxForwardingConfig {
         self
     }
 
+    /// Requires Ready meterBundle responses before forwarding.
+    pub const fn with_require_metering(mut self, require: bool) -> Self {
+        self.require_metering = require;
+        self
+    }
+
+    /// Sets the shared slot for the inline metering handle.
+    pub fn with_inline_metering_slot(mut self, slot: Arc<OnceLock<SharedInlineMetering>>) -> Self {
+        self.inline_metering_slot = Some(slot);
+        self
+    }
+
     /// Converts to the consumer config used by `base-txpool`.
     pub fn to_consumer_config(&self) -> TxpoolConsumerConfig {
         TxpoolConsumerConfig::default()
@@ -78,9 +101,16 @@ impl TxForwardingConfig {
 
     /// Converts to the forwarder config used by `base-txpool`.
     pub fn to_forwarder_config(&self) -> TxpoolForwarderConfig {
-        TxpoolForwarderConfig::default()
+        let mut config = TxpoolForwarderConfig::default()
             .with_builder_urls(self.builder_urls.clone())
             .with_max_batch_size(self.max_batch_size)
             .with_max_rps(self.max_rps)
+            .with_require_metering(self.require_metering);
+        if let Some(slot) = self.inline_metering_slot.as_ref()
+            && let Some(metering) = slot.get()
+        {
+            config = config.with_inline_metering(Arc::clone(metering));
+        }
+        config
     }
 }

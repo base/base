@@ -66,6 +66,12 @@ where
             return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
         }
 
+        // Kick off in-process meterBundle before pool insert so the forwarder can
+        // wait on a MeterBundleResponse without delaying the RPC response.
+        if let Some(metering) = self.inline_metering() {
+            metering.submit(*pool_transaction.hash(), tx.clone());
+        }
+
         // broadcast raw transaction to subscribers if there is any.
         self.eth_api().broadcast_raw_transaction(tx.clone());
 

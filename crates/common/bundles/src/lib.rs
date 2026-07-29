@@ -19,6 +19,9 @@ pub use cancel::{BundleHash, CancelBundle};
 mod meter;
 pub use meter::{MeterBundleResponse, OpcodeGas, TransactionResult};
 
+mod inline_metering;
+pub use inline_metering::{InlineMetering, SharedInlineMetering};
+
 mod parsed;
 pub use parsed::ParsedBundle;
 
