@@ -72,8 +72,8 @@ pub use b20_stablecoin::{
 
 mod b20_factory;
 pub use b20_factory::{
-    B20Factory, B20FactoryStorage, B20Variant, CommonParams, Factory, FactoryV1, FactoryVersion,
-    FactoryVersions, IB20Factory, TokenCreateParams,
+    B20Factory, B20FactoryStorage, B20Variant, CommonParams, Factory, FactoryAbi, FactoryV1,
+    FactoryVersion, FactoryVersions, IB20Factory, IB20FactoryV1, TokenCreateParams,
 };
 
 mod policy;
