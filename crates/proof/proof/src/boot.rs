@@ -415,9 +415,7 @@ impl BootInfo {
 
         // Entries above the activated prefix do not contribute to the game commitment and
         // therefore must not be able to influence derivation for this proof.
-        let genesis_timestamp = rollup_config.genesis.l2_time;
-        let schedule_id =
-            ScheduleId::pin(&mut rollup_config.upgrades, l2_schedule_timestamp, genesis_timestamp);
+        let schedule_id = ScheduleId::pin(&mut rollup_config.upgrades, l2_schedule_timestamp)?;
 
         // The activation registry is installed at Beryl. Require its admin only when Beryl remains
         // in the pinned schedule; pre-Beryl games clear it above. The admin is sourced from the
@@ -450,7 +448,7 @@ mod tests {
     use alloy_primitives::B256;
     use async_trait::async_trait;
     use base_common_chains::ChainConfig as BaseChainConfig;
-    use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
+    use base_common_genesis::{BaseUpgrade, BaseUpgradeConfig, RollupConfig, UpgradeConfig};
     use base_proof_preimage::{
         PreimageKey, PreimageOracleClient,
         errors::{PreimageOracleError, PreimageOracleResult},
@@ -470,6 +468,19 @@ mod tests {
         fn insert(&mut self, key: U256, value: Vec<u8>) {
             self.data.push((PreimageKey::new_local(key.to()), value));
         }
+    }
+
+    fn contract_rollup_config(chain_config: &BaseChainConfig) -> RollupConfig {
+        let mut rollup_config = chain_config.rollup_config();
+        let genesis_timestamp = rollup_config.genesis.l2_time;
+        // Contract seeding represents genesis-active static upgrades with the non-zero genesis
+        // timestamp rather than the local `Some(0)` convention.
+        for upgrade in BaseUpgrade::CONTRACT_VARIANTS {
+            if rollup_config.upgrades.activation_timestamp(upgrade) == Some(0) {
+                rollup_config.upgrades.set_activation_timestamp(upgrade, genesis_timestamp);
+            }
+        }
+        rollup_config
     }
 
     #[async_trait]
@@ -495,7 +506,7 @@ mod tests {
     #[tokio::test]
     async fn loads_activation_admin_address_from_builtin_chain_id() {
         let chain_config = BaseChainConfig::ZERONET;
-        let rollup_config = chain_config.rollup_config();
+        let rollup_config = contract_rollup_config(chain_config);
 
         let mut oracle = MockOracle::new();
         oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
@@ -547,10 +558,10 @@ mod tests {
         let claim_timestamp = rollup_config.genesis.l2_time
             + (CLAIM_BLOCK - rollup_config.genesis.l2.number) * rollup_config.block_time;
         let activated_count =
-            ScheduleId::activated_count(&upgrades, claim_timestamp, rollup_config.genesis.l2_time);
+            ScheduleId::activated_count(&upgrades, claim_timestamp).expect("valid schedule");
         assert_eq!(
             boot_info.schedule_id,
-            ScheduleId::from_upgrades(&upgrades, activated_count, rollup_config.genesis.l2_time,)
+            ScheduleId::from_upgrades(&upgrades, activated_count).expect("valid schedule")
         );
     }
 
@@ -562,7 +573,7 @@ mod tests {
         rollup_config.genesis.l2_time = 100;
         rollup_config.block_time = 2;
         rollup_config.upgrades = UpgradeConfig {
-            regolith_time: Some(0),
+            regolith_time: Some(100),
             canyon_time: Some(500),
             delta_time: Some(200),
             base: BaseUpgradeConfig { azul: Some(1_000), ..Default::default() },
@@ -582,7 +593,7 @@ mod tests {
 
         let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
 
-        assert_eq!(boot_info.rollup_config.upgrades.regolith_time, Some(0));
+        assert_eq!(boot_info.rollup_config.upgrades.regolith_time, Some(100));
         assert_eq!(boot_info.rollup_config.upgrades.canyon_time, Some(500));
         assert_eq!(boot_info.rollup_config.upgrades.delta_time, Some(200));
         assert_eq!(boot_info.rollup_config.upgrades.base.azul, None);
@@ -601,8 +612,11 @@ mod tests {
         rollup_config.genesis.l2.number = 50;
         rollup_config.genesis.l2_time = 100;
         rollup_config.block_time = 2;
-        rollup_config.upgrades =
-            UpgradeConfig { regolith_time: Some(0), canyon_time: Some(350), ..Default::default() };
+        rollup_config.upgrades = UpgradeConfig {
+            regolith_time: Some(100),
+            canyon_time: Some(350),
+            ..Default::default()
+        };
 
         let mut oracle = MockOracle::new();
         oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
@@ -626,7 +640,7 @@ mod tests {
     #[tokio::test]
     async fn treats_explicit_zero_schedule_block_as_unset() {
         let chain_config = BaseChainConfig::MAINNET;
-        let rollup_config = chain_config.rollup_config();
+        let rollup_config = contract_rollup_config(chain_config);
 
         let mut oracle = MockOracle::new();
         oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
@@ -818,7 +832,7 @@ mod tests {
     async fn accepts_oracle_rollup_config_with_matching_chain_id() {
         const ORACLE_CHAIN_ID: u64 = 999_999_999;
 
-        let rollup_config = base_common_chains::rollup_config!(BaseChainConfig::SEPOLIA);
+        let rollup_config = contract_rollup_config(BaseChainConfig::SEPOLIA);
         let mut rollup_config_value =
             serde_json::to_value(&rollup_config).expect("rollup config should convert to value");
         rollup_config_value["l2_chain_id"] = serde_json::json!(ORACLE_CHAIN_ID);
@@ -846,7 +860,7 @@ mod tests {
     async fn accepts_pre_beryl_oracle_chain_without_activation_admin() {
         const ORACLE_CHAIN_ID: u64 = 999_999_999;
 
-        let rollup_config = base_common_chains::rollup_config!(BaseChainConfig::SEPOLIA);
+        let rollup_config = contract_rollup_config(BaseChainConfig::SEPOLIA);
         let mut rollup_config_value =
             serde_json::to_value(&rollup_config).expect("rollup config should convert to value");
         rollup_config_value["l2_chain_id"] = serde_json::json!(ORACLE_CHAIN_ID);
@@ -873,11 +887,11 @@ mod tests {
     async fn rejects_oracle_rollup_config_with_beryl_and_no_activation_admin() {
         const ORACLE_CHAIN_ID: u64 = 999_999_999;
 
-        let rollup_config = base_common_chains::rollup_config!(BaseChainConfig::SEPOLIA);
+        let rollup_config = contract_rollup_config(BaseChainConfig::SEPOLIA);
         let mut rollup_config_value =
             serde_json::to_value(&rollup_config).expect("rollup config should convert to value");
         rollup_config_value["l2_chain_id"] = serde_json::json!(ORACLE_CHAIN_ID);
-        rollup_config_value["base"] = serde_json::json!({ "beryl": 0 });
+        rollup_config_value["base"] = serde_json::json!({ "beryl": 1 });
 
         let mut oracle = MockOracle::new();
         oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
