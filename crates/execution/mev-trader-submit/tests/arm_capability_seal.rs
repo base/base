@@ -14,12 +14,13 @@ use syn::ext::IdentExt;
 
 /// The exact production files under `src/arm/`. A NEW arm file must be added here
 /// (and re-reviewed) before it can ship (b7, fail-closed).
-const ARM_FILES: [&str; 9] = [
+const ARM_FILES: [&str; 10] = [
     "claim.rs",
     "custody.rs",
     "fail_sink.rs",
     "mod.rs",
     "proofs.rs",
+    "providers.rs",
     "request.rs",
     "suppression.rs",
     "transport.rs",
@@ -332,6 +333,7 @@ fn reviewed_arm_module_tree(root: &Path) -> Result<(), String> {
         "custody",
         "fail_sink",
         "proofs",
+        "providers",
         "request",
         "suppression",
         "transport",
@@ -1005,6 +1007,7 @@ fn arm_submodules_are_private() {
         "custody",
         "fail_sink",
         "proofs",
+        "providers",
         "request",
         "suppression",
         "transport",

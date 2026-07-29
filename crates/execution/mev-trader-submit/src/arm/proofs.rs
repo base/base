@@ -39,16 +39,31 @@ fn recover_matches(preimage: &[u8], signature: &[u8; 65], owner: Address) -> boo
 // -- CodeHashProvider (keyless, in-process) -----------------------------------
 
 /// A code-hash lookup error from the in-node state reader.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderError {
     /// The underlying state read failed / was unavailable.
     Unavailable(String),
+    /// The authority returned a value that cannot authorize submission.
+    Invalid(&'static str),
+    /// An authority value exceeded its explicit resource bound.
+    TooLarge {
+        /// Bounded value being read.
+        subject: &'static str,
+        /// Maximum accepted bytes/value.
+        limit: u64,
+        /// Observed bytes/value.
+        actual: u64,
+    },
 }
 
 impl core::fmt::Display for ProviderError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Unavailable(message) => write!(formatter, "code-hash provider unavailable: {message}"),
+            Self::Unavailable(message) => write!(formatter, "provider unavailable: {message}"),
+            Self::Invalid(message) => write!(formatter, "provider value invalid: {message}"),
+            Self::TooLarge { subject, limit, actual } => {
+                write!(formatter, "{subject} exceeds bound {limit}: {actual}")
+            }
         }
     }
 }
@@ -59,8 +74,8 @@ impl core::error::Error for ProviderError {}
 /// reader implementation; this is NOT an HTTP/RPC client, so the arm crate keeps
 /// its single-egress-site seal (`ProdBackend::execute`) intact.
 pub trait CodeHashProvider {
-    /// `keccak256(code_bytes)` of `addr` at the latest committed block. Empty code
-    /// hashes to `keccak256([])` by convention.
+    /// `keccak256(code_bytes)` of `addr` at the latest committed block. Production
+    /// implementations reject absent/empty code rather than authorizing its conventional hash.
     fn code_hash_at_latest_committed(&self, addr: Address) -> Result<B256, ProviderError>;
 
     /// The latest committed block number.
