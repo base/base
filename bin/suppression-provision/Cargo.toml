@@ -11,9 +11,13 @@ repository.workspace = true
 [[bin]]
 name = "base-mev-suppression-provision"
 path = "main.rs"
+required-features = ["provision"]
 
 [lints]
 workspace = true
 
 [dependencies]
-mev-trader-submit = { workspace = true, features = ["arm-provisioning"] }
+mev-trader-submit = { workspace = true, optional = true, features = ["arm-provisioning"] }
+
+[features]
+provision = ["dep:mev-trader-submit"]

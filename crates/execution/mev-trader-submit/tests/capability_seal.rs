@@ -423,10 +423,23 @@ fn require_null(value: &Value, field: &str, context: &str) -> Result<(), String>
     }
 }
 
+fn require_exact_strings(values: &[Value], expected: &[&str], context: &str) -> Result<(), String> {
+    let actual: Result<Vec<&str>, String> = values
+        .iter()
+        .map(|value| value.as_str().ok_or_else(|| format!("{context} contains a non-string entry")))
+        .collect();
+    let actual = actual?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!("{context} must be exactly {expected:?}, got {actual:?}"))
+    }
+}
+
 fn validate_submit_linkers(metadata: &Value) -> Result<(), String> {
     let packages = required_array(metadata, "packages", "metadata")?;
-    let mut declared_submit_dependers = BTreeSet::new();
-    let mut unconditional_linkers = BTreeSet::new();
+    let mut declared_submit_dependers = Vec::new();
+    let mut unconditional_linkers = Vec::new();
     let mut provisioning_package = None;
     let mut provisioning_dependers = BTreeSet::new();
 
@@ -443,9 +456,9 @@ fn validate_submit_linkers(metadata: &Value) -> Result<(), String> {
             let dependency_context = format!("dependency of `{name}`");
             let dependency_name = required_string(dependency, "name", &dependency_context)?;
             if dependency_name == SUBMIT_PACKAGE {
-                declared_submit_dependers.insert(name.to_owned());
+                declared_submit_dependers.push(name.to_owned());
                 if !required_bool(dependency, "optional", &dependency_context)? {
-                    unconditional_linkers.insert(name.to_owned());
+                    unconditional_linkers.push(name.to_owned());
                 }
             }
             if dependency_name == PROVISION_PACKAGE {
@@ -453,20 +466,20 @@ fn validate_submit_linkers(metadata: &Value) -> Result<(), String> {
             }
         }
     }
+    declared_submit_dependers.sort();
+    unconditional_linkers.sort();
 
-    let expected_declared =
-        BTreeSet::from([EXISTING_OPTIONAL_LINKER.to_owned(), PROVISION_PACKAGE.to_owned()]);
+    let expected_declared = vec![EXISTING_OPTIONAL_LINKER.to_owned(), PROVISION_PACKAGE.to_owned()];
     if declared_submit_dependers != expected_declared {
         return Err(format!(
             "workspace packages declaring `{SUBMIT_PACKAGE}` must be exactly \
              {expected_declared:?}, got {declared_submit_dependers:?}"
         ));
     }
-    let expected_linkers = BTreeSet::from([PROVISION_PACKAGE.to_owned()]);
-    if unconditional_linkers != expected_linkers {
+    if !unconditional_linkers.is_empty() {
         return Err(format!(
-            "unconditional workspace linkers of `{SUBMIT_PACKAGE}` must be exactly \
-             {expected_linkers:?}, got {unconditional_linkers:?}"
+            "unconditional workspace linkers of `{SUBMIT_PACKAGE}` must be empty, got \
+             {unconditional_linkers:?}"
         ));
     }
     if !provisioning_dependers.is_empty() {
@@ -517,12 +530,53 @@ fn validate_submit_linkers(metadata: &Value) -> Result<(), String> {
     if !required_bool(dependency, "uses_default_features", &context)? {
         return Err(format!("`{PROVISION_PACKAGE}` must use default features"));
     }
-    if required_bool(dependency, "optional", &context)? {
-        return Err(format!("`{PROVISION_PACKAGE}` dependency must not be optional"));
+    if !required_bool(dependency, "optional", &context)? {
+        return Err(format!("`{PROVISION_PACKAGE}` dependency must remain optional"));
     }
     for field in ["kind", "rename", "target"] {
         require_null(dependency, field, &context)?;
     }
+
+    let package_features = package
+        .get("features")
+        .ok_or_else(|| format!("package `{PROVISION_PACKAGE}` is missing `features`"))?
+        .as_object()
+        .ok_or_else(|| format!("package `{PROVISION_PACKAGE}`.`features` is not an object"))?;
+    let provision_feature = package_features
+        .get("provision")
+        .ok_or_else(|| format!("package `{PROVISION_PACKAGE}` is missing feature `provision`"))?
+        .as_array()
+        .ok_or_else(|| {
+            format!("package `{PROVISION_PACKAGE}` feature `provision` is not an array")
+        })?;
+    require_exact_strings(
+        provision_feature,
+        &["dep:mev-trader-submit"],
+        &format!("`{PROVISION_PACKAGE}` feature `provision`"),
+    )?;
+
+    let targets = required_array(package, "targets", &format!("package `{PROVISION_PACKAGE}`"))?;
+    let mut provisioning_bins = Vec::new();
+    for target in targets {
+        let target_name = required_string(target, "name", "provisioning package target")?;
+        if target_name == "base-mev-suppression-provision" {
+            provisioning_bins.push(target);
+        }
+    }
+    if provisioning_bins.len() != 1 {
+        return Err(format!(
+            "`{PROVISION_PACKAGE}` must have exactly one `base-mev-suppression-provision` target, \
+             got {}",
+            provisioning_bins.len()
+        ));
+    }
+    let required_features =
+        required_array(provisioning_bins[0], "required-features", "provisioning binary target")?;
+    require_exact_strings(
+        required_features,
+        &["provision"],
+        "provisioning binary `required-features`",
+    )?;
 
     Ok(())
 }
@@ -542,6 +596,15 @@ fn provision_dependency_mut(metadata: &mut Value) -> &mut Value {
         .expect("dependencies")
         .first_mut()
         .expect("provision dependency")
+}
+
+fn cli_dependency_mut(metadata: &mut Value) -> &mut Value {
+    package_mut(metadata, EXISTING_OPTIONAL_LINKER)["dependencies"]
+        .as_array_mut()
+        .expect("dependencies")
+        .iter_mut()
+        .find(|dependency| dependency["name"] == SUBMIT_PACKAGE)
+        .expect("CLI submit dependency")
 }
 
 fn submit_dependency(metadata: &Value) -> Value {
@@ -611,10 +674,10 @@ fn submit_linker_seal_m3_rejects_any_additional_feature() {
 }
 
 #[test]
-fn submit_linker_seal_m4_rejects_optional_dependency() {
+fn submit_linker_seal_m4_rejects_unconditional_dependency() {
     let original = workspace_metadata();
     let mut mutant = original.clone();
-    provision_dependency_mut(&mut mutant)["optional"] = Value::Bool(true);
+    provision_dependency_mut(&mut mutant)["optional"] = Value::Bool(false);
     assert_mutant_rejected(&original, &mutant, "M4");
 }
 
@@ -647,4 +710,17 @@ fn submit_linker_seal_m7_rejects_a_second_provisioner_dependency() {
         .expect("dependencies")
         .push(dependency);
     assert_mutant_rejected(&original, &mutant, "M7");
+}
+
+#[test]
+fn submit_linker_seal_m8_rejects_target_scoped_duplicate_edge() {
+    let original = workspace_metadata();
+    let mut mutant = original.clone();
+    let mut duplicate = cli_dependency_mut(&mut mutant).clone();
+    duplicate["target"] = Value::String("cfg(target_os = \"linux\")".to_owned());
+    package_mut(&mut mutant, EXISTING_OPTIONAL_LINKER)["dependencies"]
+        .as_array_mut()
+        .expect("dependencies")
+        .push(duplicate);
+    assert_mutant_rejected(&original, &mutant, "M8");
 }
