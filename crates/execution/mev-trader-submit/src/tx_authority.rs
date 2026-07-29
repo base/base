@@ -18,9 +18,10 @@ use base_mev_trader::{
 };
 
 use crate::{
+    PriorityEconomicsAuthority,
     calldata::AtomicCalldataEncoder,
+    economics::{PriorityFilterInput, evaluate},
     fee::fee_bps_for_executor,
-    priority_filter::{PriorityFilterInput, evaluate},
 };
 #[cfg(feature = "t4d-bridge")]
 mod bridge;
@@ -267,6 +268,12 @@ pub trait TxAuthorityNodeView: Debug + Send + Sync {
         &self,
         snapshot: &SnapshotHandle,
     ) -> Result<Box<dyn SnapshotFreshnessToken>, TxAuthorityNodeError>;
+    /// Returns candidate-specific simulated gas and OP-stack L1 data fee from the same block.
+    fn priority_economics(
+        &self,
+        snapshot: &SnapshotHandle,
+        plan: &base_mev_trader::BackrunPlan,
+    ) -> Result<PriorityEconomicsAuthority, TxAuthorityNodeError>;
 }
 
 /// Typed fail-closed reason for producing no unsigned T4b shape.
@@ -585,17 +592,19 @@ impl TxAuthorityAssembler {
         if plan.route[0].token_in != WETH || plan.route[1].token_out != WETH {
             return Err(TxAuthorityError::PriorityEconomicsRejected);
         }
-        // Use the transaction's pre-existing executor gas limit as the only Rust-path
-        // gas authority. The external path-verifier sample is merely a proxy for
-        // executor gas and is intentionally not converted into a fitted constant.
+        let authority = self
+            .node
+            .priority_economics(snapshot, plan)
+            .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?;
+        if authority.base_fee_per_gas_wei() != U256::from(base_fee) {
+            return Err(TxAuthorityError::PriorityEconomicsRejected);
+        }
         let decision = evaluate(PriorityFilterInput {
-            candidate_value_wei: Some(plan.gross_profit),
-            gas_estimate: Some(U256::from(T4B_EXECUTOR_GAS_LIMIT)),
-            base_fee_per_gas_wei: Some(U256::from(base_fee)),
+            gross_profit_wei: Some(plan.gross_profit),
+            authority: Some(authority),
             victim_max_priority_fee_per_gas_wei: Some(U256::from(victim_priority)),
             victim_max_fee_per_gas_wei: Some(U256::from(max_fee)),
             candidate_block: plan.block_number,
-            fee_block: snapshot.latest_header().number,
         })
         .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?;
         if !decision.admitted() {
@@ -1179,6 +1188,19 @@ mod tests {
         ) -> Result<Box<dyn SnapshotFreshnessToken>, TxAuthorityNodeError> {
             Ok(Box::new(TestFreshness(Arc::new(AtomicBool::new(true)))))
         }
+
+        fn priority_economics(
+            &self,
+            _snapshot: &SnapshotHandle,
+            plan: &base_mev_trader::BackrunPlan,
+        ) -> Result<PriorityEconomicsAuthority, TxAuthorityNodeError> {
+            Ok(PriorityEconomicsAuthority::new(
+                U256::from(1),
+                U256::from(1),
+                U256::from(1),
+                plan.block_number,
+            ))
+        }
     }
 
     #[derive(Debug)]
@@ -1253,6 +1275,19 @@ mod tests {
             _snapshot: &SnapshotHandle,
         ) -> Result<Box<dyn SnapshotFreshnessToken>, TxAuthorityNodeError> {
             Ok(Box::new(TestFreshness(Arc::clone(&self.current))))
+        }
+
+        fn priority_economics(
+            &self,
+            _snapshot: &SnapshotHandle,
+            plan: &base_mev_trader::BackrunPlan,
+        ) -> Result<PriorityEconomicsAuthority, TxAuthorityNodeError> {
+            Ok(PriorityEconomicsAuthority::new(
+                U256::from(1),
+                U256::from(1),
+                U256::from(100),
+                plan.block_number,
+            ))
         }
     }
 
@@ -2115,7 +2150,7 @@ mod tests {
             Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
             None,
         );
-        let pinned_priority = 1_000_000_000_000_000u128;
+        let pinned_priority = u128::MAX - 100;
         fixture.victim_raw = encoded_victim(CHAIN_ID_BASE, pinned_priority + 100, pinned_priority);
         let victim_hash = keccak256(&fixture.victim_raw);
         fixture.frame.victim = victim_hash;

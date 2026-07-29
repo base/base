@@ -77,8 +77,8 @@ use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, N
 use mev_trader_submit::{BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate};
 #[cfg(feature = "t4b-shadow")]
 use mev_trader_submit::{
-    SnapshotFreshnessToken, TxAuthorityAssembler, TxAuthorityError, TxAuthorityNodeError,
-    TxAuthorityNodeView, TxAuthorityStateRead, ValidatedUnsignedAtomicTx,
+    PriorityEconomicsAuthority, SnapshotFreshnessToken, TxAuthorityAssembler, TxAuthorityError,
+    TxAuthorityNodeError, TxAuthorityNodeView, TxAuthorityStateRead, ValidatedUnsignedAtomicTx,
 };
 #[cfg(feature = "t4e-handoff")]
 use mev_trader_submit::{T4eCandidateHandoff, T4eHandoffError};
@@ -9384,10 +9384,10 @@ mod t4b_shadow {
     use super::{
         AccountReader, Address, B256, BlockReaderIdExt, BytecodeReader, CandidateAssemblyView,
         CandidateTxShapeObserver, CliTraderSnapshotPort, Debug, Header, HeaderProvider,
-        PendingSnapshotRecord, ShadowLatestSlot, ShadowSubmit, SnapshotFreshnessToken,
-        SnapshotHandle, StateProviderFactory, T4bOutcome, T4bOutcomeCounters, TraderSnapshotPort,
-        TxAuthorityAssembler, TxAuthorityError, TxAuthorityNodeError, TxAuthorityNodeView,
-        TxAuthorityStateRead, ValidatedUnsignedAtomicTx,
+        PendingSnapshotRecord, PriorityEconomicsAuthority, ShadowLatestSlot, ShadowSubmit,
+        SnapshotFreshnessToken, SnapshotHandle, StateProviderFactory, T4bOutcome,
+        T4bOutcomeCounters, TraderSnapshotPort, TxAuthorityAssembler, TxAuthorityError,
+        TxAuthorityNodeError, TxAuthorityNodeView, TxAuthorityStateRead, ValidatedUnsignedAtomicTx,
     };
 
     #[derive(Debug)]
@@ -9510,6 +9510,17 @@ mod t4b_shadow {
                 port: Arc::downgrade(&self.port),
                 record: Arc::downgrade(&record),
             }))
+        }
+
+        fn priority_economics(
+            &self,
+            _snapshot: &SnapshotHandle,
+            _plan: &base_mev_trader::BackrunPlan,
+        ) -> Result<PriorityEconomicsAuthority, TxAuthorityNodeError> {
+            // Integration boundary: the live candidate simulator and OP fee oracle do not yet
+            // publish same-block gas/L1-fee authority. Missing authority must reject, never use
+            // the transaction gas limit or a fitted sample constant.
+            Err(TxAuthorityNodeError::Unavailable)
         }
     }
 

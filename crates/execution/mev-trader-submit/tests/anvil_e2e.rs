@@ -415,6 +415,7 @@ fn build_unsigned(
         victim_raw_tx: victim_raw,
         victim_tx_hash: victim_hash,
         expected_victim_priority_fee: Some(VICTIM_PRIORITY_FEE),
+        priority_economics: None,
     };
     let calldata = encode_executor_calldata(&input).expect("calldata");
     TxEip1559 {
@@ -619,6 +620,7 @@ fn aerodrome_volatile_fee_parity_and_passthrough_revert() {
         victim_raw_tx: &[],
         victim_tx_hash: plan.victim,
         expected_victim_priority_fee: None,
+        priority_economics: None,
     };
     let calldata = encode_executor_calldata(&input).expect("aero fee-source calldata");
 

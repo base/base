@@ -52,6 +52,7 @@ fn calldata_matches_ts_encode_function_data() {
         victim_raw_tx: &victim_raw,
         victim_tx_hash: victim_hash,
         expected_victim_priority_fee: Some(37),
+        priority_economics: None,
     };
     let calldata = encode_executor_calldata(&input).expect("calldata");
     assert_eq!(hex::encode_prefixed(&calldata), CALLDATA_GOLDEN);
@@ -77,6 +78,7 @@ fn v3_first_hop_canonicalizes_fee_bps_to_zero() {
         victim_raw_tx: &victim_raw,
         victim_tx_hash: keccak256(&victim_raw),
         expected_victim_priority_fee: Some(37),
+        priority_economics: None,
     };
     let calldata = encode_executor_calldata(&input).expect("calldata");
     assert_eq!(hex::encode_prefixed(&calldata), V3_CALLDATA_GOLDEN);
@@ -99,6 +101,7 @@ fn dummy_raw_tx_matches_ts_serialize_measurement_tx_bytes() {
         victim_raw_tx: &victim_raw,
         victim_tx_hash: victim_hash,
         expected_victim_priority_fee: Some(37),
+        priority_economics: None,
     };
     let assembled = assemble_unsigned_atomic_tx(&input).expect("assembled");
     assert!(assembled.non_broadcastable);
@@ -129,6 +132,7 @@ fn two_channel_dummy_assembly_puts_victim_hash_first_with_zero_bid() {
         victim_raw_tx: &victim_raw,
         victim_tx_hash: victim_hash,
         expected_victim_priority_fee: Some(37),
+        priority_economics: None,
     };
     let assembled = assemble_unsigned_atomic_tx(&input).expect("assembled");
     let two_channel = build_two_channel_dummy_assembly(&TwoChannelInput {

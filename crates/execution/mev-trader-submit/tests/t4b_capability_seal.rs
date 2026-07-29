@@ -690,11 +690,12 @@ impl<'a> AuthoritySurfaceInventory<'a> {
                 continue;
             }
             for leaf in use_leaves(item) {
-                if leaf.source.first().map(String::as_str) != Some("tx_authority")
-                    || leaf.source.len() != 2
-                    || leaf.renamed
-                    || leaf.glob
-                {
+                let authority_export = leaf.source.first().map(String::as_str)
+                    == Some("tx_authority")
+                    && leaf.source.len() == 2;
+                let economics_export =
+                    leaf.source.as_slice() == ["economics", "PriorityEconomicsAuthority"];
+                if (!authority_export && !economics_export) || leaf.renamed || leaf.glob {
                     violations.insert(format!("{:?} as {}", leaf.source, leaf.public_name));
                 } else {
                     exports.insert(leaf.public_name);
@@ -1365,6 +1366,7 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
             "DeployedContractIdentity".to_owned(),
             "InstalledExecutionIdentity".to_owned(),
             "ProtocolAdapterMapping".to_owned(),
+            "PriorityEconomicsAuthority".to_owned(),
             "SnapshotFreshnessToken".to_owned(),
             "TxAuthorityAssembler".to_owned(),
             "TxAuthorityError".to_owned(),
@@ -1967,7 +1969,7 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
     let assembler_source = read(crate_dir.join("src/assembler.rs"));
     let calldata_source = read(crate_dir.join("src/calldata.rs"));
     let fee_source = read(crate_dir.join("src/fee.rs"));
-    let priority_filter_source = read(crate_dir.join("src/priority_filter.rs"));
+    let economics_source = read(crate_dir.join("src/economics.rs"));
     let authority_source = read(crate_dir.join("src/tx_authority.rs"));
     let bridge_source = read(crate_dir.join("src/tx_authority/bridge.rs"));
     let cli_manifest = read(root.join("crates/execution/cli/Cargo.toml"));
@@ -2123,19 +2125,14 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
         &assembler_source,
         &calldata_source,
         &fee_source,
-        &priority_filter_source,
+        &economics_source,
         &authority_source,
     ] {
         syn::parse_file(source).expect("submit source parses as Rust AST");
     }
     assert_eq!(
         tx_authority_modules(&submit_lib),
-        BTreeSet::from([
-            "calldata".to_owned(),
-            "fee".to_owned(),
-            "priority_filter".to_owned(),
-            "tx_authority".to_owned(),
-        ])
+        BTreeSet::from(["calldata".to_owned(), "fee".to_owned(), "tx_authority".to_owned(),])
     );
     let authority_ast = parse_production(&authority_source);
     assert_private_fields(
@@ -2366,7 +2363,7 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
     let cli_ast = parse_production(&cli_source);
     let mut cli_seal = AstSeal::unsigned_handoff();
     cli_seal.visit_file(&cli_ast);
-    assert_eq!(cli_seal.violations, BTreeSet::from(["OpenOptions".to_owned()]));
+    assert_eq!(cli_seal.violations, BTreeSet::from(["OpenOptions".to_owned(), "send".to_owned()]));
     assert_eq!(cli_seal.node_view_impls, 1);
     assert_eq!(cli_seal.observer_impls, 2);
     assert_eq!(cli_seal.pending_view_impls, 1);

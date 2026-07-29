@@ -277,6 +277,7 @@ fn each_ephemeral_sign_uses_a_fresh_unfunded_keypair() {
         victim_raw_tx: &victim_raw,
         victim_tx_hash: victim_hash,
         expected_victim_priority_fee: Some(37),
+        priority_economics: None,
     };
     let assembled = assemble_unsigned_atomic_tx(&input).expect("assembled");
 

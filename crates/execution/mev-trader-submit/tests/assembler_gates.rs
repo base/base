@@ -12,9 +12,10 @@ use alloy_rpc_types_engine::PayloadId;
 use alloy_sol_types::SolCall;
 use base_mev_trader::{BackrunPlan, ExactProtocol, MeasurementContext};
 use mev_trader_submit::{
+    PriorityEconomicsAuthority,
     assembler::{
         AssembleError, AssembleInput, HopExecutionParams, assemble_unsigned_atomic_tx,
-        encode_executor_calldata,
+        assemble_validated, encode_executor_calldata,
     },
     fee::{FeeParityError, fee_bps_for_executor},
 };
@@ -67,6 +68,7 @@ fn calldata_input<'a>(
         victim_raw_tx: &[],
         victim_tx_hash: plan.victim,
         expected_victim_priority_fee: None,
+        priority_economics: None,
     }
 }
 
@@ -307,6 +309,7 @@ fn wrong_frame_victim_fails_the_identity_gate_on_both_paths() {
         victim_raw_tx: &victim_raw,
         victim_tx_hash: victim_b,
         expected_victim_priority_fee: Some(41),
+        priority_economics: None,
     };
     assert_eq!(
         assemble_unsigned_atomic_tx(&reject).unwrap_err(),
@@ -335,4 +338,41 @@ fn self_applying_hop_with_fractional_fee_emits_zero_feebps() {
         .expect("decode executor calldata");
     assert_eq!(decoded.firstHop.feeBps, U24::ZERO, "V3 fractional fee did not canonicalize to 0");
     assert_eq!(decoded.secondHop.feeBps, U24::from(30u32), "UniV2 hop feeBps not 30");
+}
+
+#[test]
+fn arm_validated_path_requires_fresh_gas_and_l1_fee_authority() {
+    let (victim_raw, victim_hash) = victim_with_priority(37);
+    let plan = backrun_plan([ExactProtocol::UniswapV2, ExactProtocol::UniswapV2], victim_hash);
+    let mut input = calldata_input(&plan, matching_frame(&plan));
+    input.victim_raw_tx = &victim_raw;
+    input.victim_tx_hash = victim_hash;
+    input.expected_victim_priority_fee = Some(37);
+
+    assert_eq!(assemble_validated(&input).unwrap_err(), AssembleError::PriorityEconomicsRejected);
+
+    input.priority_economics = Some(PriorityEconomicsAuthority::new(
+        U256::from(1),
+        U256::from(1),
+        U256::from(1),
+        plan.block_number + 1,
+    ));
+    assert_eq!(assemble_validated(&input).unwrap_err(), AssembleError::PriorityEconomicsRejected);
+
+    input.priority_economics = Some(PriorityEconomicsAuthority::new(
+        U256::from(1),
+        U256::from(1),
+        U256::from(1),
+        plan.block_number,
+    ));
+    assert!(assemble_validated(&input).is_ok());
+
+    let source = include_str!("../src/assembler.rs");
+    let validated =
+        source.split("pub fn assemble_validated").nth(1).expect("validated assembly sink");
+    assert!(
+        validated.find("let decision = evaluate").unwrap()
+            < validated.find("Ok(LegacyValidatedUnsignedAtomicTx").unwrap(),
+        "economics gate must precede the arm witness consumed by signing"
+    );
 }
