@@ -28,6 +28,7 @@ impl IPolicyRegistry::IPolicyRegistryCalls {
             Self::policyExists(_) => "policy.policyExists",
             Self::policyAdmin(_) => "policy.policyAdmin",
             Self::pendingPolicyAdmin(_) => "policy.pendingPolicyAdmin",
+            Self::compositePolicyChildIds(_) => "policy.compositePolicyChildIds",
         }
     }
 }
@@ -54,8 +55,13 @@ mod tests {
         b256!("1ae189209c8c4875de2caa707322ea74f0d1f3e74a1104ecee6884e8984415da");
 
     /// Absolute wire fingerprint for Cobalt's (canonical) surface.
+    ///
+    /// Re-blessed when `compositePolicyChildIds` joined the surface. Legitimate only because
+    /// Cobalt has never activated on any network (`BaseUpgrade::LATEST` is Beryl, and every real
+    /// chain config leaves `cobalt` unset), so no historical execution depends on the old value.
+    /// Once Cobalt ships, a change here means a new `abi/v3.rs` instead.
     const V2_ABI_FINGERPRINT: B256 =
-        b256!("047d1fceaa9beac82fd473d474bb7f3b6dcd720c9e62c86facc75ef6dd611631");
+        b256!("cc5f508d2cacd9b729ddbd7a7d9ed3788929fdbb237c286e5a9d8961a90cf656");
 
     /// Keccak of sorted call selectors, then sorted event topic0s, then sorted error selectors,
     /// then `PolicyType::COUNT`. Order is fixed so a single pin catches any wire-surface edit.
