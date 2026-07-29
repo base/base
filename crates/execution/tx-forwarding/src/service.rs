@@ -285,6 +285,7 @@ mod tests {
                 max_block_number: None,
                 min_timestamp: None,
                 max_timestamp: None,
+                meter_bundle_response: None,
                 extensions: Default::default(),
             },
             tx_hash: B256::repeat_byte(byte),

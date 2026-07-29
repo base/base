@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use base_bundles::SharedInlineMetering;
+
 use crate::config::{DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS};
 
 /// Configuration for transaction forwarders.
@@ -21,6 +23,10 @@ pub(crate) struct ForwarderConfig {
     pub(crate) retry_backoff: Duration,
     /// Per-request timeout for the HTTP client.
     pub(crate) request_timeout: Duration,
+    /// When set with [`Self::require_metering`], gates forwarding on inline meterBundle results.
+    pub(crate) inline_metering: Option<SharedInlineMetering>,
+    /// When true, transactions are not forwarded until a meterBundle response exists.
+    pub(crate) require_metering: bool,
 }
 
 impl Default for ForwarderConfig {
@@ -31,6 +37,8 @@ impl Default for ForwarderConfig {
             max_retries: 3,
             retry_backoff: Duration::from_millis(100),
             request_timeout: Duration::from_secs(1),
+            inline_metering: None,
+            require_metering: false,
         }
     }
 }
@@ -47,6 +55,8 @@ mod tests {
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_backoff, Duration::from_millis(100));
         assert_eq!(config.request_timeout, Duration::from_secs(1));
+        assert!(!config.require_metering);
+        assert!(config.inline_metering.is_none());
     }
 
     #[test]

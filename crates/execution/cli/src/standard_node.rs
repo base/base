@@ -3,11 +3,16 @@
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
 use base_bundle_extension::BundleExtension;
+use base_bundles::SharedInlineMetering;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
-use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
+use base_metering::{
+    DEFAULT_INLINE_METERING_MAX_CONCURRENT, MeteredOpcodes, MeteringConfig, MeteringExtension,
+    MeteringResourceLimits,
+};
 use base_node_core::{HasRollupArgs, RollupArgs};
+
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
@@ -72,6 +77,14 @@ pub struct MeteringArgs {
     /// (e.g., "SSTORE,SLOAD,KECCAK256"). Precompile gas is always tracked.
     #[arg(long = "metering.metered-opcodes", requires = "enable_metering", value_delimiter = ',')]
     pub metering_metered_opcodes: Vec<String>,
+
+    /// Max concurrent in-process meterBundle workers for mempool inline simulation.
+    #[arg(
+        long = "inline-metering-max-concurrent",
+        requires = "enable_metering",
+        default_value_t = DEFAULT_INLINE_METERING_MAX_CONCURRENT
+    )]
+    pub inline_metering_max_concurrent: usize,
 }
 
 /// CLI arguments for a standard Base execution node.
@@ -257,6 +270,7 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
             .with_resend_after_ms(args.tx_forwarding_resend_after_ms)
             .with_max_batch_size(args.tx_forwarding_batch_size)
             .with_max_rps(args.tx_forwarding_max_rps)
+            .with_require_metering(args.metering.enable_metering)
     }
 }
 
@@ -407,6 +421,10 @@ impl StandardBaseRethNode {
             gas_limit: args.metering.metering_gas_limit,
             da_bytes: args.metering.metering_da_bytes,
         };
+        let inline_metering_slot = args
+            .metering
+            .enable_metering
+            .then(|| Arc::new(std::sync::OnceLock::<SharedInlineMetering>::new()));
         let metering_config = if args.metering.enable_metering {
             let metered_opcodes = if args.metering.metering_metered_opcodes.is_empty() {
                 MeteredOpcodes::default()
@@ -419,19 +437,26 @@ impl StandardBaseRethNode {
                 .clone()
                 .map_or_else(MeteringConfig::enabled, MeteringConfig::with_flashblocks)
                 .with_resource_limits(resource_limits)
-                .with_metered_opcodes(metered_opcodes);
+                .with_metered_opcodes(metered_opcodes)
+                .with_inline_max_concurrent(args.metering.inline_metering_max_concurrent);
             if let Some(target_flashblocks_per_block) =
                 args.metering.metering_target_flashblocks_per_block
             {
                 config = config.with_target_flashblocks_per_block(target_flashblocks_per_block);
             }
+            if let Some(slot) = inline_metering_slot.as_ref() {
+                config = config.with_inline_metering_slot(Arc::clone(slot));
+            }
             config
         } else {
             MeteringConfig::disabled()
         };
+        let mut tx_forwarding_config: TxForwardingConfig = (&args).into();
+        if let Some(slot) = inline_metering_slot {
+            tx_forwarding_config = tx_forwarding_config.with_inline_metering_slot(slot);
+        }
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<BundleExtension>(());
-        let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.enable_experimental_validity_transactions {
             if !tx_forwarding_config.enabled || tx_forwarding_config.builder_urls.is_empty() {
                 eyre::bail!(

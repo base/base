@@ -18,8 +18,8 @@ use tracing::debug;
 
 use super::metrics::Metrics as BuilderApiMetrics;
 use crate::{
-    BasePooledTransaction, NoExtensions, PoolRejectionLabel, ValidatedTransaction,
-    ValidatedTransactionExtensions,
+    BasePooledTransaction, NoExtensions, PoolRejectionLabel, SharedMeteringResponseSink,
+    ValidatedTransaction, ValidatedTransactionExtensions,
 };
 
 /// RPC interface for submitting pre-validated transactions to a block builder.
@@ -47,6 +47,7 @@ pub trait BuilderApi<E> {
 pub struct BuilderApiImpl<P, E = NoExtensions> {
     pool: P,
     accept_extensions: bool,
+    metering: Option<SharedMeteringResponseSink>,
     _extensions: PhantomData<E>,
 }
 
@@ -59,7 +60,12 @@ impl<P> BuilderApiImpl<P, NoExtensions> {
     /// call site (`E0282`), because type-parameter defaults do not participate
     /// in inference for associated-function calls.
     pub const fn new(pool: P) -> Self {
-        Self { pool, accept_extensions: false, _extensions: PhantomData }
+        Self { pool, accept_extensions: false, metering: None, _extensions: PhantomData }
+    }
+
+    /// Creates a handler that also inserts metering responses into the builder store.
+    pub fn with_metering(pool: P, metering: SharedMeteringResponseSink) -> Self {
+        Self { pool, accept_extensions: false, metering: Some(metering), _extensions: PhantomData }
     }
 }
 
@@ -69,7 +75,16 @@ impl<P, E> BuilderApiImpl<P, E> {
     /// Non-empty extension payloads are rejected unless `accept_extensions` is
     /// explicitly enabled.
     pub const fn with_extensions(pool: P, accept_extensions: bool) -> Self {
-        Self { pool, accept_extensions, _extensions: PhantomData }
+        Self { pool, accept_extensions, metering: None, _extensions: PhantomData }
+    }
+
+    /// Like [`Self::with_extensions`], and also inserts metering responses into the builder store.
+    pub fn with_extensions_and_metering(
+        pool: P,
+        accept_extensions: bool,
+        metering: SharedMeteringResponseSink,
+    ) -> Self {
+        Self { pool, accept_extensions, metering: Some(metering), _extensions: PhantomData }
     }
 }
 
@@ -82,10 +97,12 @@ where
     async fn insert_validated_transaction(&self, tx: ValidatedTransaction<E>) -> RpcResult<()> {
         debug!(
             sender = %tx.sender,
+            has_metering = tx.meter_bundle_response.is_some(),
             "rpc::insert_validated_transaction"
         );
         let sender = tx.sender;
         let has_extensions = !tx.extensions.is_empty();
+        let meter_bundle_response = tx.meter_bundle_response;
 
         if has_extensions && !self.accept_extensions {
             BuilderApiMetrics::extension_errors().increment(1);
@@ -108,6 +125,10 @@ where
             })?;
         let tx_hash = *consensus_tx.hash();
         let encoded_len = tx.raw.len();
+
+        if let (Some(metering), Some(response)) = (self.metering.as_ref(), meter_bundle_response) {
+            metering.insert(tx_hash, response);
+        }
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
         let pool_tx = BasePooledTransaction::new(recovered, encoded_len).with_bundle_metadata(
@@ -192,7 +213,7 @@ impl<P, E> BuilderApiImpl<P, E> {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::TxEip1559;
-    use alloy_eips::eip2718::Encodable2718;
+    use alloy_eips::{Decodable2718, eip2718::Encodable2718};
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use reth_transaction_pool::noop::NoopTransactionPool;
@@ -258,6 +279,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
             extensions,
         }
     }
@@ -501,5 +523,66 @@ mod tests {
         // Decode should succeed, but the txpool is a noop so it will reject the tx
         // This error code should be InternalError
         assert_eq!(err.code(), ErrorCode::InternalError.code());
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingMeteringSink {
+        inserted: std::sync::Mutex<Vec<(TxHash, base_bundles::MeterBundleResponse)>>,
+    }
+
+    impl crate::MeteringResponseSink for RecordingMeteringSink {
+        fn insert(&self, tx_hash: TxHash, metering: base_bundles::MeterBundleResponse) {
+            self.inserted.lock().unwrap().push((tx_hash, metering));
+        }
+    }
+
+    #[tokio::test]
+    async fn insert_with_metering_response_stores_metering() {
+        use std::sync::Arc;
+
+        let sink = Arc::new(RecordingMeteringSink::default());
+        let handler = BuilderApiImpl::with_metering(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            sink.clone(),
+        );
+
+        let (sender, raw) = create_eip1559_tx();
+        let consensus =
+            BaseTransactionSigned::decode_2718(&mut raw.as_ref()).expect("valid eip1559");
+        let tx_hash = *consensus.hash();
+        let response = base_bundles::MeterBundleResponse {
+            total_execution_time_us: 1234,
+            ..Default::default()
+        };
+
+        let mut tx = validated_transaction(sender, raw, NoExtensions {});
+        tx.meter_bundle_response = Some(response.clone());
+
+        let _ = handler.insert_validated_transaction(tx).await;
+
+        let inserted = sink.inserted.lock().unwrap();
+        assert_eq!(inserted.len(), 1, "exactly one metering insert");
+        assert_eq!(inserted[0].0, tx_hash, "metering keyed by tx hash");
+        assert_eq!(inserted[0].1.total_execution_time_us, 1234, "metering response preserved");
+    }
+
+    #[tokio::test]
+    async fn insert_without_metering_response_skips_sink() {
+        use std::sync::Arc;
+
+        let sink = Arc::new(RecordingMeteringSink::default());
+        let handler = BuilderApiImpl::with_metering(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            sink.clone(),
+        );
+
+        let (sender, raw) = create_eip1559_tx();
+        let tx = validated_transaction(sender, raw, NoExtensions {});
+
+        let _ = handler.insert_validated_transaction(tx).await;
+        assert!(
+            sink.inserted.lock().unwrap().is_empty(),
+            "no metering insert when response absent"
+        );
     }
 }

@@ -1,7 +1,11 @@
 //! Configuration for the transaction forwarding extension.
 
-use std::time::Duration;
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
+use base_bundles::SharedInlineMetering;
 use url::Url;
 
 use crate::{forwarder::ForwarderConfig, reader::ReaderConfig};
@@ -12,6 +16,7 @@ pub const DEFAULT_RESEND_AFTER_MS: u64 = 4000;
 pub const DEFAULT_MAX_BATCH_SIZE: usize = 100;
 /// Default maximum RPC requests per second per forwarder.
 pub const DEFAULT_MAX_RPS: u32 = 200;
+
 /// Full configuration for the transaction forwarding extension.
 #[derive(Debug, Clone)]
 pub struct TxForwardingConfig {
@@ -25,6 +30,10 @@ pub struct TxForwardingConfig {
     pub max_batch_size: usize,
     /// Maximum RPC requests per second per forwarder (0 = unlimited).
     pub max_rps: u32,
+    /// Require Ready meterBundle before forwarding when inline metering is available.
+    pub require_metering: bool,
+    /// Slot populated by [`MeteringExtension`] with the shared inline metering handle.
+    pub inline_metering_slot: Option<Arc<OnceLock<SharedInlineMetering>>>,
 }
 
 impl Default for TxForwardingConfig {
@@ -36,6 +45,8 @@ impl Default for TxForwardingConfig {
             resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             max_batch_size: DEFAULT_MAX_BATCH_SIZE,
             max_rps: DEFAULT_MAX_RPS,
+            require_metering: false,
+            inline_metering_slot: None,
         }
     }
 }
@@ -69,6 +80,18 @@ impl TxForwardingConfig {
         self
     }
 
+    /// Requires Ready meterBundle responses before forwarding.
+    pub const fn with_require_metering(mut self, require: bool) -> Self {
+        self.require_metering = require;
+        self
+    }
+
+    /// Sets the shared slot for the inline metering handle.
+    pub fn with_inline_metering_slot(mut self, slot: Arc<OnceLock<SharedInlineMetering>>) -> Self {
+        self.inline_metering_slot = Some(slot);
+        self
+    }
+
     /// Builds the per-destination reader configuration.
     pub(crate) fn reader_config(&self) -> ReaderConfig {
         ReaderConfig {
@@ -79,10 +102,17 @@ impl TxForwardingConfig {
 
     /// Builds the destination forwarder configuration.
     pub(crate) fn forwarder_config(&self) -> ForwarderConfig {
-        ForwarderConfig {
+        let mut config = ForwarderConfig {
             max_batch_size: self.max_batch_size,
             max_rps: self.max_rps,
+            require_metering: self.require_metering,
             ..Default::default()
+        };
+        if let Some(slot) = self.inline_metering_slot.as_ref()
+            && let Some(metering) = slot.get()
+        {
+            config.inline_metering = Some(Arc::clone(metering));
         }
+        config
     }
 }

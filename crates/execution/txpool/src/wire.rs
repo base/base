@@ -1,6 +1,7 @@
 use core::fmt::Debug;
 
 use alloy_primitives::{Address, Bytes};
+use base_bundles::MeterBundleResponse;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -96,6 +97,9 @@ pub struct ValidatedTransaction<E = NoExtensions> {
     /// Milliseconds since Unix epoch.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub max_timestamp: Option<u64>,
+    /// In-process meterBundle result from the mempool node.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub meter_bundle_response: Option<MeterBundleResponse>,
     /// Extension fields, inlined into the top-level JSON object.
     ///
     /// Deliberately not `#[serde(default)]`: that would force an `E: Default`
@@ -159,6 +163,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: Some(7),
+            meter_bundle_response: None,
             extensions: NoExtensions {},
         };
 
@@ -230,6 +235,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
             extensions: NoExtensions {},
         };
 
@@ -250,6 +256,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
             extensions: TestExtensions { extra: Some(9) },
         };
 
@@ -266,6 +273,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
             extensions: TestExtensions { extra: Some(9) },
         };
         let json = serde_json::to_string(&extended).unwrap();
@@ -302,6 +310,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            meter_bundle_response: None,
             extensions: NoExtensions {},
         };
         let json = serde_json::to_string(&tx).unwrap();

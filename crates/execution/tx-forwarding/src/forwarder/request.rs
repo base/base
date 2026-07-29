@@ -1,6 +1,7 @@
 //! What a forwarder sends: one JSON-RPC call to one destination.
 
 use alloy_primitives::TxHash;
+use base_bundles::SharedInlineMetering;
 use base_execution_txpool::{NoExtensions, ValidatedTransaction};
 use jsonrpsee::core::params::ArrayParams;
 use serde::Serialize;
@@ -34,6 +35,17 @@ pub trait ForwardRequest: Send + Sync + 'static {
     ///
     /// [`None`] for a call not attributable to a single transaction.
     fn tx_hash(&self) -> Option<TxHash>;
+
+    /// Attaches inline metering when required, returning whether this request is ready to send.
+    ///
+    /// Default: always ready (no metering gate).
+    fn prepare_metering(
+        &mut self,
+        _require_metering: bool,
+        _metering: Option<&SharedInlineMetering>,
+    ) -> bool {
+        true
+    }
 }
 
 /// A `base_insertValidatedTransaction` call.
@@ -66,6 +78,29 @@ where
     fn tx_hash(&self) -> Option<TxHash> {
         Some(self.tx_hash)
     }
+
+    fn prepare_metering(
+        &mut self,
+        require_metering: bool,
+        metering: Option<&SharedInlineMetering>,
+    ) -> bool {
+        if !require_metering {
+            return true;
+        }
+        let Some(metering) = metering else {
+            return true;
+        };
+        match metering.get(&self.tx_hash) {
+            Some(response) => {
+                self.transaction.meter_bundle_response = Some(response);
+                true
+            }
+            None => {
+                metering.submit(self.tx_hash, self.transaction.raw.clone());
+                false
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -85,6 +120,7 @@ mod tests {
                 max_block_number: Some(42),
                 min_timestamp: None,
                 max_timestamp: None,
+                meter_bundle_response: None,
                 extensions: NoExtensions {},
             },
             tx_hash,

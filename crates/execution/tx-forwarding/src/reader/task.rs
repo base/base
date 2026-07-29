@@ -156,6 +156,7 @@ where
                 max_block_number: transaction.transaction.max_block_number(),
                 min_timestamp: transaction.transaction.min_timestamp_millis(),
                 max_timestamp: transaction.transaction.max_timestamp_millis(),
+                meter_bundle_response: None,
                 extensions: E::extract(transaction),
             },
             tx_hash: *transaction.transaction.hash(),

@@ -14,8 +14,10 @@ use base_test_utils::Account;
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.
 async fn setup(accept_validity: bool) -> eyre::Result<(TestHarness, RpcClient)> {
-    let harness =
-        TestHarness::builder().with_ext::<BuilderApiExtension>(accept_validity).build().await?;
+    let harness = TestHarness::builder()
+        .with_ext::<BuilderApiExtension>(BuilderApiExtension::new(accept_validity))
+        .build()
+        .await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))
 }
@@ -72,6 +74,7 @@ async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        meter_bundle_response: None,
         extensions: NoExtensions {},
     };
 
@@ -103,6 +106,7 @@ async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        meter_bundle_response: None,
         extensions: NoExtensions {},
     };
 
@@ -127,6 +131,7 @@ async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        meter_bundle_response: None,
         extensions: NoExtensions {},
     };
 
@@ -162,6 +167,7 @@ async fn test_validity_transactions_require_explicit_opt_in() -> eyre::Result<()
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        meter_bundle_response: None,
         extensions: validity.clone(),
     };
     let disabled: Result<(), _> =
@@ -182,6 +188,7 @@ async fn test_validity_transactions_require_explicit_opt_in() -> eyre::Result<()
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        meter_bundle_response: None,
         extensions: validity,
     };
     let enabled: Result<(), _> =

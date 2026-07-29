@@ -1,6 +1,7 @@
 use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use alloy_primitives::TxHash;
+use base_bundles::SharedInlineMetering;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -88,6 +89,9 @@ pub(crate) struct DestinationForwarder<R> {
     client: HttpClient,
     receiver: mpsc::Receiver<R>,
     config: Arc<ForwarderConfig>,
+    /// Cached from config at construction so flushes do not re-clone the Arc.
+    inline_metering: Option<SharedInlineMetering>,
+    require_metering: bool,
     limiter: RateLimiter,
     buffer: Vec<R>,
     buffer_limit: usize,
@@ -109,7 +113,20 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         };
         let buffer = Vec::with_capacity(buffer_limit);
         let url_label: Arc<str> = builder_url.to_string().into();
-        Self { builder_url, url_label, client, receiver, config, limiter, buffer, buffer_limit }
+        let inline_metering = config.inline_metering.clone();
+        let require_metering = config.require_metering;
+        Self {
+            builder_url,
+            url_label,
+            client,
+            receiver,
+            inline_metering,
+            require_metering,
+            config,
+            limiter,
+            buffer,
+            buffer_limit,
+        }
     }
 
     /// Runs the forwarder loop until the destination queue closes.
@@ -118,6 +135,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
             builder_url = %self.builder_url,
             max_rps = self.config.max_rps,
             max_batch_size = self.config.max_batch_size,
+            require_metering = self.require_metering,
             "starting transaction forwarder",
         );
 
@@ -181,32 +199,63 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
 
     async fn flush_remaining(&mut self) {
         while !self.buffer.is_empty() {
+            let before = self.buffer.len();
             self.flush_buffer().await;
+            if self.buffer.len() == before {
+                // Still waiting on metering; stop draining on shutdown.
+                break;
+            }
         }
     }
 
     async fn flush_buffer(&mut self) {
-        let batch_size = if self.config.max_batch_size == 0 {
-            self.buffer.len()
-        } else {
-            self.buffer.len().min(self.config.max_batch_size)
-        };
-        let batch: Vec<R> = self.buffer.drain(..batch_size).collect();
+        let (ready, waiting) = self.split_ready_for_forward();
+        self.buffer = waiting;
         ForwarderMetrics::buffer_size(Arc::clone(&self.url_label)).set(self.buffer.len() as f64);
 
-        if batch.is_empty() {
+        let batch_size = if self.config.max_batch_size == 0 {
+            ready.len()
+        } else {
+            ready.len().min(self.config.max_batch_size)
+        };
+        if batch_size == 0 {
             return;
         }
 
+        let mut ready = ready;
+        let rest = ready.split_off(batch_size);
+        self.buffer.extend(rest);
+        ForwarderMetrics::buffer_size(Arc::clone(&self.url_label)).set(self.buffer.len() as f64);
+
         trace!(
             builder_url = %self.builder_url,
-            txs = batch.len(),
+            txs = ready.len(),
             remaining = self.buffer.len(),
             "flushing batch",
         );
 
-        self.send_with_retries(batch).await;
+        self.send_with_retries(ready).await;
         self.limiter.record_send();
+    }
+
+    /// Splits buffered requests into those ready to send and those still waiting on metering.
+    fn split_ready_for_forward(&mut self) -> (Vec<R>, Vec<R>) {
+        let pending: Vec<R> = self.buffer.drain(..).collect();
+        if !self.require_metering {
+            return (pending, Vec::new());
+        }
+
+        let mut ready = Vec::new();
+        let mut waiting = Vec::new();
+        for mut request in pending {
+            if request.prepare_metering(self.require_metering, self.inline_metering.as_ref()) {
+                ready.push(request);
+            } else {
+                ForwarderMetrics::txs_deferred_metering(Arc::clone(&self.url_label)).increment(1);
+                waiting.push(request);
+            }
+        }
+        (ready, waiting)
     }
 
     async fn send_with_retries(&self, batch: Vec<R>) {
@@ -420,6 +469,7 @@ mod tests {
                 max_block_number: None,
                 min_timestamp: None,
                 max_timestamp: None,
+                meter_bundle_response: None,
                 extensions: E::default(),
             },
             tx_hash: B256::with_last_byte(nonce as u8),

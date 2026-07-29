@@ -50,9 +50,11 @@ fn main() {
             .with_gas_limit_config(gas_limit_config)
             .with_manifest_precheck_enabled(manifest_precheck_enabled)
             .with_service_builder(FlashblocksServiceBuilder::new(builder_config));
-        runner.install_ext::<MeteringStoreExtension>(metering_provider);
+        runner.install_ext::<MeteringStoreExtension>(Arc::clone(&metering_provider));
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
-        runner.install_ext::<BuilderApiExtension>(accept_validity_transactions);
+        runner.install_ext::<BuilderApiExtension>(
+            BuilderApiExtension::new(accept_validity_transactions).with_metering(metering_provider),
+        );
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {
             base_cli_utils::register_version_metrics!();

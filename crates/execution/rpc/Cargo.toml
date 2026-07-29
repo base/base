@@ -62,6 +62,7 @@ base-common-network = { workspace = true, features = ["reth"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
+base-bundles.workspace = true
 
 # async
 serde.workspace = true

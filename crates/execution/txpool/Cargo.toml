@@ -38,6 +38,7 @@ base-precompile-storage.workspace = true
 base-common-precompiles.workspace = true
 base-execution-eip8130.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
+base-bundles.workspace = true
 
 # metrics
 base-metrics.workspace = true

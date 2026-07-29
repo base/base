@@ -24,6 +24,9 @@ base_metrics::define_metrics! {
     #[describe("Current number of transactions buffered and awaiting send")]
     #[label(builder_url)]
     buffer_size: gauge,
+    #[describe("Transactions deferred because meterBundle is not ready yet")]
+    #[label(builder_url)]
+    txs_deferred_metering: counter,
 }
 
 impl ForwarderMetrics {

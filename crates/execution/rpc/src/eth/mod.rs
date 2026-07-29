@@ -12,10 +12,11 @@ mod pubsub;
 use std::{
     fmt::{self, Formatter},
     marker::PhantomData,
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use alloy_primitives::U256;
+use base_bundles::SharedInlineMetering;
 use base_common_network::Base;
 use eyre::WrapErr;
 pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
@@ -75,8 +76,12 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
         sequencer_client: Option<SequencerClient>,
         min_suggested_priority_fee: U256,
     ) -> Self {
-        let inner =
-            Arc::new(BaseEthApiInner { eth_api, sequencer_client, min_suggested_priority_fee });
+        let inner = Arc::new(BaseEthApiInner {
+            eth_api,
+            sequencer_client,
+            min_suggested_priority_fee,
+            inline_metering: OnceLock::new(),
+        });
         Self { inner }
     }
 
@@ -92,6 +97,18 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
     /// Returns the configured sequencer client, if any.
     pub fn sequencer_client(&self) -> Option<&SequencerClient> {
         self.inner.sequencer_client()
+    }
+
+    /// Installs the shared inline metering handle used by `eth_sendRawTransaction`.
+    ///
+    /// No-ops if a handle was already installed.
+    pub fn set_inline_metering(&self, metering: SharedInlineMetering) {
+        let _ = self.inner.inline_metering.set(metering);
+    }
+
+    /// Returns the inline metering handle, if installed.
+    pub fn inline_metering(&self) -> Option<&SharedInlineMetering> {
+        self.inner.inline_metering.get()
     }
 }
 
@@ -276,6 +293,8 @@ pub struct BaseEthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     ///
     /// See also <https://github.com/ethereum-optimism/op-geth/blob/d4e0fe9bb0c2075a9bff269fb975464dd8498f75/eth/gasprice/optimism-gasprice.go#L38-L38>
     min_suggested_priority_fee: U256,
+    /// Optional in-process meterBundle runner for mempool inline simulation.
+    inline_metering: OnceLock<SharedInlineMetering>,
 }
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for BaseEthApiInner<N, Rpc> {
