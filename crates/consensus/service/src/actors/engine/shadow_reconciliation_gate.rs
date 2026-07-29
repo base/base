@@ -87,6 +87,9 @@ impl CanonicalUnsafeCatchup {
     }
 
     /// Removes payloads acknowledged by the execution engine.
+    ///
+    /// Recent observations remain bounded separately so conflicting gossip for an acknowledged
+    /// height still faults catch-up.
     pub fn commit(&mut self, head: L2BlockInfo) {
         self.payloads.retain(|number, _| *number > head.block_info.number);
     }
@@ -236,12 +239,10 @@ impl ShadowReconciliationGate {
                 );
                 return Ok(None);
             };
-            if payload.execution_payload.parent_hash() != parent
-                && (local_payload_needs_canonical_witness || !self.payloads.contains_key(&number))
-            {
-                return Ok(None);
-            }
             if payload.execution_payload.parent_hash() != parent {
+                if local_payload_needs_canonical_witness || !self.payloads.contains_key(&number) {
+                    return Ok(None);
+                }
                 return Err(EngineClientError::InvalidShadowReconciliation(
                     "payload parent continuity mismatch".into(),
                 ));
