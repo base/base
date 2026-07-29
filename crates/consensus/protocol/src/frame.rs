@@ -166,7 +166,8 @@ pub struct Frame {
 }
 
 impl Frame {
-    /// Number of metadata bytes in an encoded frame.
+    /// Number of metadata bytes in an encoded frame: 16-byte channel ID, 2-byte frame number,
+    /// 4-byte payload length, and 1-byte final-frame flag.
     pub const ENCODED_OVERHEAD: usize = 16 + 2 + 4 + 1;
 
     /// Overhead estimation for frame metadata and tagging information.
