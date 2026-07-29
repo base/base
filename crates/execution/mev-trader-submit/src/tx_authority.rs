@@ -494,8 +494,12 @@ impl ValidatedUnsignedAtomicTx {
         }
     }
 
+    /// Borrows the raw unsigned transaction under the bridge-issued access capability.
     #[cfg(feature = "t4e-handoff")]
-    pub(crate) const fn unsigned_tx(&self) -> &TxEip1559 {
+    pub(crate) const fn unsigned_tx_with_bridge_access(
+        &self,
+        _access: &BridgeConversionSeal,
+    ) -> &TxEip1559 {
         &self.unsigned_tx
     }
 

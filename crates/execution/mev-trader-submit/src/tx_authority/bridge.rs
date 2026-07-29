@@ -121,7 +121,7 @@ impl Debug for SealedUnsignedCandidate {
 #[derive(Debug)]
 struct InstallationSeal;
 
-/// Unforgeable capability proving that a T4d candidate passed bridge revalidation.
+/// Unforgeable capability proving bridge revalidation and granting witness-owned raw-tx access.
 #[cfg(feature = "t4e-handoff")]
 pub struct BridgeConversionSeal {
     private: (),

@@ -89,7 +89,10 @@ pub struct ProofBindings {
 enum CheckedTx {
     Legacy(LegacyValidatedUnsignedAtomicTx),
     #[cfg(feature = "t4e-handoff")]
-    Authority(ValidatedUnsignedAtomicTx),
+    Authority {
+        tx: ValidatedUnsignedAtomicTx,
+        access: BridgeConversionSeal,
+    },
 }
 
 impl CheckedTx {
@@ -97,7 +100,7 @@ impl CheckedTx {
         match self {
             Self::Legacy(tx) => tx.victim(),
             #[cfg(feature = "t4e-handoff")]
-            Self::Authority(tx) => tx.observation().victim(),
+            Self::Authority { tx, access: _ } => tx.observation().victim(),
         }
     }
 
@@ -105,7 +108,7 @@ impl CheckedTx {
         match self {
             Self::Legacy(tx) => tx.plan_digest(),
             #[cfg(feature = "t4e-handoff")]
-            Self::Authority(tx) => tx.observation().plan_digest(),
+            Self::Authority { tx, access: _ } => tx.observation().plan_digest(),
         }
     }
 
@@ -113,7 +116,7 @@ impl CheckedTx {
         match self {
             Self::Legacy(tx) => tx.amount(),
             #[cfg(feature = "t4e-handoff")]
-            Self::Authority(tx) => tx.amount(),
+            Self::Authority { tx, access: _ } => tx.amount(),
         }
     }
 
@@ -121,7 +124,7 @@ impl CheckedTx {
         match self {
             Self::Legacy(tx) => tx.executor(),
             #[cfg(feature = "t4e-handoff")]
-            Self::Authority(tx) => tx.observation().executor(),
+            Self::Authority { tx, access: _ } => tx.observation().executor(),
         }
     }
 
@@ -129,7 +132,7 @@ impl CheckedTx {
         match self {
             Self::Legacy(tx) => tx.valid_until_block(),
             #[cfg(feature = "t4e-handoff")]
-            Self::Authority(tx) => tx.observation().valid_until_block(),
+            Self::Authority { tx, access: _ } => tx.observation().valid_until_block(),
         }
     }
 
@@ -137,7 +140,7 @@ impl CheckedTx {
         match self {
             Self::Legacy(tx) => tx.unsigned_tx(),
             #[cfg(feature = "t4e-handoff")]
-            Self::Authority(tx) => tx.unsigned_tx(),
+            Self::Authority { tx, access } => tx.unsigned_tx_with_bridge_access(access),
         }
     }
 }
@@ -169,9 +172,9 @@ impl CheckedCandidate {
     pub fn from_authority(
         vtx: ValidatedUnsignedAtomicTx,
         campaign_id: CampaignId,
-        _seal: BridgeConversionSeal,
+        access: BridgeConversionSeal,
     ) -> Self {
-        let source = CheckedTx::Authority(vtx);
+        let source = CheckedTx::Authority { tx: vtx, access };
         let id = ValidatedExecutionIdentity {
             campaign_id,
             victim: source.victim(),

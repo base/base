@@ -960,6 +960,121 @@ impl<'ast> Visit<'ast> for WitnessConstructionSeal {
     }
 }
 
+#[derive(Default)]
+struct RawTxCapabilitySeal {
+    token_definitions: usize,
+    token_private_fields: usize,
+    token_constructions: usize,
+    accessor_definitions: usize,
+    valid_accessor_signatures: usize,
+    accessor_calls: usize,
+    macro_escapes: usize,
+}
+
+impl RawTxCapabilitySeal {
+    fn is_capability_type(ty: &Type) -> bool {
+        let Type::Reference(reference) = ty else {
+            return false;
+        };
+        let Type::Path(path) = reference.elem.as_ref() else {
+            return false;
+        };
+        path.path.segments.last().is_some_and(|segment| segment.ident == "BridgeConversionSeal")
+    }
+}
+
+impl<'ast> Visit<'ast> for RawTxCapabilitySeal {
+    fn visit_item_struct(&mut self, item: &'ast ItemStruct) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
+        if item.ident == "BridgeConversionSeal" {
+            self.token_definitions += 1;
+            self.token_private_fields += item
+                .fields
+                .iter()
+                .filter(|field| matches!(field.vis, Visibility::Inherited))
+                .count();
+        }
+        syn::visit::visit_item_struct(self, item);
+    }
+
+    fn visit_expr_struct(&mut self, item: &'ast ExprStruct) {
+        if item.path.segments.last().is_some_and(|segment| segment.ident == "BridgeConversionSeal")
+        {
+            self.token_constructions += 1;
+        }
+        syn::visit::visit_expr_struct(self, item);
+    }
+
+    fn visit_expr_method_call(&mut self, item: &'ast ExprMethodCall) {
+        if item.method == "unsigned_tx_with_bridge_access" {
+            self.accessor_calls += 1;
+        }
+        syn::visit::visit_expr_method_call(self, item);
+    }
+
+    fn visit_impl_item_fn(&mut self, item: &'ast ImplItemFn) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
+        if item.sig.ident == "unsigned_tx_with_bridge_access" {
+            self.accessor_definitions += 1;
+            let mut inputs = item.sig.inputs.iter();
+            let receiver_is_shared = inputs.next().is_some_and(|input| {
+                matches!(
+                    input,
+                    syn::FnArg::Receiver(receiver)
+                        if receiver.reference.is_some() && receiver.mutability.is_none()
+                )
+            });
+            let capability_is_shared = inputs.next().is_some_and(|input| {
+                matches!(
+                    input,
+                    syn::FnArg::Typed(argument) if Self::is_capability_type(&argument.ty)
+                )
+            });
+            if matches!(item.vis, Visibility::Restricted(_))
+                && item.sig.constness.is_some()
+                && receiver_is_shared
+                && capability_is_shared
+                && inputs.next().is_none()
+            {
+                self.valid_accessor_signatures += 1;
+            }
+        }
+        syn::visit::visit_impl_item_fn(self, item);
+    }
+
+    fn visit_item_fn(&mut self, item: &'ast ItemFn) {
+        if !has_cfg_test(&item.attrs) {
+            syn::visit::visit_item_fn(self, item);
+        }
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast ItemImpl) {
+        if !has_cfg_test(&item.attrs) {
+            syn::visit::visit_item_impl(self, item);
+        }
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if !has_cfg_test(&item.attrs) {
+            syn::visit::visit_item_mod(self, item);
+        }
+    }
+
+    fn visit_macro(&mut self, item: &'ast Macro) {
+        let tokens = item.tokens.to_string();
+        if tokens.contains("BridgeConversionSeal")
+            || tokens.contains("unsigned_tx_with_bridge_access")
+        {
+            self.macro_escapes += 1;
+        }
+        syn::visit::visit_macro(self, item);
+    }
+}
+
 fn rust_files(root: &FsPath) -> Vec<PathBuf> {
     fn collect(path: &FsPath, files: &mut Vec<PathBuf>) {
         let mut entries = fs::read_dir(path)
@@ -1276,8 +1391,12 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
     );
     let bridge = parse_production(&read(crate_dir.join("src/tx_authority/bridge.rs")));
     let bridge_inventory = AuthoritySurfaceInventory::new(&submit_lib, &bridge);
-    let bridge_types =
-        ["AdapterAwareProofBindings", "InstalledSubmissionBridge", "SealedUnsignedCandidate"];
+    let bridge_types = [
+        "AdapterAwareProofBindings",
+        "BridgeConversionSeal",
+        "InstalledSubmissionBridge",
+        "SealedUnsignedCandidate",
+    ];
     assert_private_fields(&bridge, &bridge_types);
     let bridge_methods = BTreeMap::from([
         (
@@ -1444,6 +1563,67 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
     let serialized = BTreeSet::from(["Serialize".to_owned(), "Deserialize".to_owned()]);
     assert!(inventory.implemented_traits("ValidatedUnsignedAtomicTx").is_disjoint(&serialized));
     assert!(inventory.derived_traits("ValidatedUnsignedAtomicTx").is_disjoint(&serialized));
+}
+
+#[test]
+fn t4e_raw_tx_access_requires_the_unique_bridge_capability() {
+    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_dir = crate_dir.join("src");
+    let mut constructor_files = BTreeMap::new();
+    let mut accessor_definition_files = BTreeMap::new();
+    let mut accessor_call_files = BTreeMap::new();
+    let mut totals = RawTxCapabilitySeal::default();
+
+    for path in rust_files(&source_dir) {
+        let source = read(path.clone());
+        let file = parse_production(&source);
+        let mut seal = RawTxCapabilitySeal::default();
+        seal.visit_file(&file);
+        let relative = path
+            .strip_prefix(&source_dir)
+            .expect("submit source is below src")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if seal.token_constructions != 0 {
+            constructor_files.insert(relative.clone(), seal.token_constructions);
+        }
+        if seal.accessor_definitions != 0 {
+            accessor_definition_files.insert(relative.clone(), seal.accessor_definitions);
+        }
+        if seal.accessor_calls != 0 {
+            accessor_call_files.insert(relative, seal.accessor_calls);
+        }
+        totals.token_definitions += seal.token_definitions;
+        totals.token_private_fields += seal.token_private_fields;
+        totals.token_constructions += seal.token_constructions;
+        totals.accessor_definitions += seal.accessor_definitions;
+        totals.valid_accessor_signatures += seal.valid_accessor_signatures;
+        totals.accessor_calls += seal.accessor_calls;
+        totals.macro_escapes += seal.macro_escapes;
+    }
+
+    assert_eq!(totals.token_definitions, 1, "bridge access token type count changed");
+    assert_eq!(totals.token_private_fields, 1, "bridge access token must remain unforgeable");
+    assert_eq!(
+        constructor_files,
+        BTreeMap::from([("tx_authority/bridge.rs".to_owned(), 1)]),
+        "only bridge revalidation may mint raw-tx access"
+    );
+    assert_eq!(
+        accessor_definition_files,
+        BTreeMap::from([("tx_authority.rs".to_owned(), 1)]),
+        "raw-tx accessor definition inventory changed"
+    );
+    assert_eq!(
+        totals.valid_accessor_signatures, 1,
+        "raw-tx accessor must require shared access to the unforgeable token"
+    );
+    assert_eq!(
+        accessor_call_files,
+        BTreeMap::from([("arm/witness.rs".to_owned(), 1)]),
+        "only the arm witness may consume authority raw-tx access"
+    );
+    assert_eq!(totals.macro_escapes, 0, "raw-tx capability escaped through a macro");
 }
 
 #[test]
