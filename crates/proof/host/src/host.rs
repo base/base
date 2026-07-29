@@ -4,7 +4,10 @@ use alloy_provider::{Network, RootProvider};
 use base_common_evm::BaseEvmFactory;
 use base_common_genesis::{L1TxFormat, RollupConfig};
 use base_common_network::{Base, L1RpcProvider};
-use base_consensus_providers::{L1BlobProvider, OnlineBeaconClient, OnlineBlobProvider};
+use base_consensus_derive::DynAltDaResolver;
+use base_consensus_providers::{
+    HttpAltDaResolver, L1BlobProvider, OnlineBeaconClient, OnlineBlobProvider,
+};
 use base_optimism_rpc::OptimismRollupProviderExt;
 use base_proof::HintType;
 use base_proof_client::{FaultProofProgramError, Prologue};
@@ -270,11 +273,32 @@ impl Host {
         let l2_provider = rpc_provider::<Base>(&self.config.prover.l2_eth_url).await?;
         let l2_node_provider = rpc_provider(&self.config.prover.l2_node_url).await?;
 
+        let alt_da = match self
+            .config
+            .prover
+            .da_server_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+        {
+            Some(url) => {
+                let parsed = url.parse().map_err(|error| {
+                    HostError::Custom(format!("invalid da-server url {url:?}: {error}"))
+                })?;
+                let resolver = HttpAltDaResolver::new(parsed).map_err(|error| {
+                    HostError::Custom(format!("da-server client init failed: {error}"))
+                })?;
+                Some(Arc::new(resolver) as DynAltDaResolver)
+            }
+            None => None,
+        };
+
         Ok(HostProviders {
             l1: l1_provider,
             blobs: blob_provider,
             l2: l2_provider,
             l2_node: l2_node_provider,
+            alt_da,
         })
     }
 }
@@ -306,6 +330,7 @@ mod tests {
                 rollup_config: RollupConfig::default(),
                 l1_config,
                 enable_experimental_witness_endpoint: false,
+                da_server_url: None,
             },
             data_dir: None,
         }

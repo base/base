@@ -5257,6 +5257,7 @@ dependencies = [
  "base-common-genesis",
  "base-common-network",
  "base-common-rpc-types-engine",
+ "base-consensus-derive",
  "base-consensus-providers",
  "base-metrics",
  "base-optimism-rpc",

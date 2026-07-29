@@ -43,6 +43,9 @@ where
             return Err(anyhow!("Failed to load boot info: {e:?}"));
         }
     };
+    if boot.alt_da_enabled {
+        return Err(anyhow!("alt-DA is not supported by the Succinct witness and range pipelines"));
+    }
 
     let boot_clone = boot.clone();
 

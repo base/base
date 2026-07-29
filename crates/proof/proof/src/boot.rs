@@ -83,6 +83,15 @@ pub const L1_HEAD_NUMBER_KEY: U256 = uint!(10_U256);
 /// L2 block number used to pin the activated upgrade schedule.
 pub const L2_SCHEDULE_BLOCK_NUMBER_KEY: U256 = uint!(11_U256);
 
+/// The local key identifier for the alt-DA enablement flag.
+///
+/// A single byte (`1` = enabled, `0`/absent = disabled). When enabled, the client
+/// resolves `DERIVATION_VERSION_1` generic commitments posted to L1 through the
+/// preimage oracle (backed host-side by the da-server) instead of treating the
+/// commitment bytes as inline frames. Set by the host only when a da-server URL is
+/// configured, so calldata/blob chains are unaffected.
+pub const ALT_DA_ENABLED_KEY: U256 = uint!(12_U256);
+
 /// The boot information for the client program.
 ///
 /// [`BootInfo`] contains all the essential parameters needed to initialize the fault proof
@@ -190,6 +199,13 @@ pub struct BootInfo {
     /// The locally derived schedule ID for this proof attempt.
     #[serde(default)]
     pub schedule_id: B256,
+    /// Whether this chain uses alt-DA (off-chain data availability).
+    ///
+    /// When `true`, the derivation pipeline resolves `DERIVATION_VERSION_1` generic
+    /// commitments from L1 into their off-chain batch bytes via the preimage oracle.
+    /// Defaults to `false` (inline calldata/blob DA) when not set.
+    #[serde(default)]
+    pub alt_da_enabled: bool,
 }
 
 impl BootInfo {
@@ -395,6 +411,21 @@ impl BootInfo {
             }
         };
 
+        // Load the alt-DA enablement flag (optional — defaults to false for
+        // backwards compatibility and for calldata/blob chains).
+        let alt_da_enabled = match oracle.get(PreimageKey::new_local(ALT_DA_ENABLED_KEY.to())).await
+        {
+            Ok(bytes) => bytes.first().is_some_and(|b| *b != 0),
+            Err(e) => {
+                debug!(
+                    target: "boot_loader",
+                    error = %e,
+                    "Alt-DA flag preimage not found, defaulting to disabled"
+                );
+                false
+            }
+        };
+
         if rollup_config.block_time == 0 {
             return Err(OracleProviderError::InvalidL2BlockTime);
         }
@@ -450,6 +481,7 @@ impl BootInfo {
             intermediate_block_interval,
             l1_head_number,
             schedule_id,
+            alt_da_enabled,
         })
     }
 }

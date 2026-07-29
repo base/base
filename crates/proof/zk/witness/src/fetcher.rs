@@ -841,6 +841,7 @@ impl OPSuccinctDataFetcher {
             rollup_config: rollup_config.clone(),
             l1_config,
             enable_experimental_witness_endpoint: true,
+            da_server_url: None,
         };
 
         Ok(HostConfig { request, prover, data_dir: None })

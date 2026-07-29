@@ -6,10 +6,10 @@ use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use alloy_primitives::B256;
 use base_common_evm::{BaseEvmFactory, BaseTxEnv};
 use base_common_genesis::L1TxFormat;
-use base_consensus_derive::EthereumDataSource;
+use base_consensus_derive::{AltDaDataSource, DynAltDaResolver, EthereumDataSource};
 use base_proof::{
-    BootInfo, CachingOracle, HintType, OracleBlobProvider, OracleL1ChainProvider,
-    OracleL2ChainProvider, OraclePipeline, new_oracle_pipeline_cursor,
+    BootInfo, CachingOracle, HintType, OracleAltDaResolver, OracleBlobProvider,
+    OracleL1ChainProvider, OracleL2ChainProvider, OraclePipeline, new_oracle_pipeline_cursor,
 };
 use base_proof_executor::TrieDBProvider;
 use base_proof_preimage::{CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient};
@@ -53,6 +53,7 @@ where
             self.hint_writer.clone(),
         ));
         let boot = BootInfo::load(oracle.as_ref()).await?;
+        let alt_da_enabled = boot.alt_da_enabled;
         let evm_factory =
             self.evm_factory.with_activation_admin_address(boot.activation_admin_address);
         let l1_tx_format = L1TxFormat::from_l1_config(&boot.l1_config);
@@ -122,8 +123,14 @@ where
         })?;
         l2_provider.set_cursor(Arc::clone(&cursor));
 
-        let da_provider =
+        let eth_da_provider =
             EthereumDataSource::new_from_parts(l1_provider.clone(), beacon, &rollup_config);
+        // Wrap the calldata/blob source in an alt-DA source. With alt-DA disabled the resolver is
+        // `None` (transparent pass-through); with it enabled, `DERIVATION_VERSION_1` generic
+        // commitments are resolved to off-chain batch bytes via the preimage oracle.
+        let alt_da_resolver: Option<DynAltDaResolver> = alt_da_enabled
+            .then(|| Arc::new(OracleAltDaResolver::new(Arc::clone(&oracle))) as DynAltDaResolver);
+        let da_provider = AltDaDataSource::new(eth_da_provider, alt_da_resolver);
         let pipeline = OraclePipeline::new(
             Arc::clone(&rollup_config),
             l1_config.into(),

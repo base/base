@@ -78,11 +78,11 @@ enum Command {
 
     /// Claim Nitro TEE jobs from prover-service and forward them to the enclave over vsock.
     #[cfg(target_os = "linux")]
-    Server(ServerArgs),
+    Server(Box<ServerArgs>),
 
     /// Claim Nitro TEE jobs from prover-service using in-process local enclave instances.
     #[cfg(feature = "local")]
-    Local(LocalArgs),
+    Local(Box<LocalArgs>),
 }
 
 /// Arguments for the `config-hash` subcommand.
@@ -127,6 +127,12 @@ struct ProverRuntimeArgs {
     /// Run proving without an L1 beacon API (calldata-only / appchain mode).
     #[arg(long, env = "L1_CALLDATA_ONLY")]
     l1_calldata_only: bool,
+
+    /// Alt-DA (da-server) URL, e.g. `http://base-da-server:2583`. When set, the prover
+    /// resolves `DERIVATION_VERSION_1` generic commitments posted to L1 calldata against
+    /// this server (off-chain DA). Additive to calldata-only mode.
+    #[arg(long, env = "DA_SERVER_URL")]
+    da_server_url: Option<String>,
 
     /// L2 chain ID.
     #[arg(long, env = "L2_CHAIN_ID")]
@@ -179,6 +185,16 @@ impl ProverRuntimeArgs {
     fn prover_config(self) -> eyre::Result<ProverConfig> {
         let l1_beacon_url = self.l1_beacon_url()?;
 
+        let da_server_url =
+            self.da_server_url.as_deref().map(str::trim).filter(|url| !url.is_empty());
+        if da_server_url.is_some() && l1_beacon_url.is_some() {
+            return Err(eyre!(
+                "conflicting DA modes: --da-server-url (alt-DA) requires calldata-based L1 \
+                 derivation and cannot be combined with --l1-beacon-url"
+            ));
+        }
+        let da_server_url = da_server_url.map(str::to_string);
+
         let rollup_config = if let Some(path) = self.rollup_config.as_deref() {
             let cfg = load_rollup_config(path)?;
 
@@ -224,6 +240,7 @@ impl ProverRuntimeArgs {
             l2_eth_url: self.l2_eth_url,
             l2_node_url: self.l2_node_url,
             l1_beacon_url,
+            da_server_url,
             l2_chain_id: self.l2_chain_id,
             rollup_config,
             l1_config,
@@ -556,6 +573,7 @@ mod tests {
                 l2_node_url: "http://localhost:9546".to_string(),
                 l1_beacon_url: l1_beacon_url.map(str::to_string),
                 l1_calldata_only,
+                da_server_url: None,
                 l2_chain_id: 8453,
                 enable_experimental_witness_endpoint: false,
                 tee_prover_registry_address: None,

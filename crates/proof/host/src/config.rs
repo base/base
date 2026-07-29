@@ -7,6 +7,7 @@ use alloy_provider::RootProvider;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, L1RpcProvider};
+use base_consensus_derive::DynAltDaResolver;
 use base_consensus_providers::L1BlobProvider;
 use base_proof_primitives::ProofRequest;
 use serde::Serialize;
@@ -22,6 +23,9 @@ pub struct HostProviders {
     pub l2: RootProvider<Base>,
     /// The L2 rollup RPC provider.
     pub l2_node: RootProvider,
+    /// The alt-DA resolver, present only when a da-server URL is configured. Used to
+    /// resolve `DERIVATION_VERSION_1` generic commitments into off-chain batch bytes.
+    pub alt_da: Option<DynAltDaResolver>,
 }
 
 /// Supplies raw L1 data needed to populate preimage storage.
@@ -65,6 +69,10 @@ pub struct ProverConfig {
     pub l2_node_url: String,
     /// L1 beacon API URL, or `None` when the L1 parent has no beacon/blob DA endpoint.
     pub l1_beacon_url: Option<String>,
+    /// Alt-DA (da-server) URL, or `None` when the chain uses inline calldata/blob DA.
+    /// When set, the host resolves `DERIVATION_VERSION_1` generic commitments against
+    /// this server and the client derives from off-chain DA.
+    pub da_server_url: Option<String>,
     /// L2 chain ID.
     pub l2_chain_id: u64,
     /// Rollup configuration.

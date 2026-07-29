@@ -17,9 +17,9 @@ use base_common_consensus::{HoloceneExtraData, JovianExtraData, Predeploys};
 use base_common_network::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_providers::BlobWithCommitmentAndProof;
-use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
+use base_proof::{Hint, HintType, ROOTS_OF_UNITY, preimage_key_for_commitment};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
-use base_protocol::{BlockInfo, OutputRoot};
+use base_protocol::{BlockInfo, GENERIC_COMMITMENT_LEN, OutputRoot};
 use futures::FutureExt;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, warn};
@@ -1023,6 +1023,33 @@ async fn handle_hint_inner(
                 proof.to_vec(),
             )?;
         }
+        HintType::AltDaCommitment => {
+            // The current derivation protocol defines `DERIVATION_VERSION_1` as a fixed-size
+            // generic commitment, and `AltDaDataSource` enforces the same length before sending
+            // this hint. `preimage_key_for_commitment` also understands 33-byte keccak256
+            // commitments for a future protocol, but accepting them only here would leave the
+            // derivation source and host inconsistent, so this path intentionally fails closed.
+            if hint.data.len() != GENERIC_COMMITMENT_LEN {
+                return Err(HostError::InvalidHintDataLength);
+            }
+            let commitment = hint.data.as_ref();
+
+            let client = providers.alt_da.as_ref().ok_or_else(|| {
+                HostError::Custom(
+                    "alt-da commitment hint received but no da-server is configured".into(),
+                )
+            })?;
+            let bytes = client
+                .resolve(commitment)
+                .await
+                .map_err(|error| HostError::Custom(format!("alt-da fetch failed: {error}")))?;
+
+            // Store under the same key the client program derives (single source of truth).
+            // Current generic commitments use a trusted GlobalGeneric key; see
+            // `preimage_key_for_commitment` for the keying rules.
+            let key = preimage_key_for_commitment(commitment);
+            kv.write().await.set(key.into(), bytes.into())?;
+        }
         HintType::L1Precompile => {
             if hint.data.len() < 28 {
                 return Err(HostError::InvalidHintDataLength);
@@ -1292,8 +1319,10 @@ mod tests {
     use alloy_genesis::ChainConfig;
     use alloy_provider::{RootProvider, builder as provider_builder, mock::Asserter};
     use alloy_rlp::Encodable;
+    use async_trait::async_trait;
     use base_common_genesis::RollupConfig;
     use base_common_network::Base;
+    use base_consensus_derive::{AltDaCommitmentResolver, AltDaResolverError, DynAltDaResolver};
     use base_consensus_providers::{L1BlobProvider, OnlineBeaconClient, OnlineBlobProvider};
     use base_proof_primitives::ProofRequest;
     use tokio::sync::RwLock;
@@ -1329,6 +1358,7 @@ mod tests {
                 rollup_config: RollupConfig::default(),
                 l1_config: ChainConfig::default(),
                 enable_experimental_witness_endpoint: false,
+                da_server_url: None,
             },
             data_dir: None,
         }
@@ -1347,12 +1377,32 @@ mod tests {
             blobs,
             l2,
             l2_node,
+            alt_da: None,
         }
     }
 
     fn test_providers(l2: RootProvider<Base>) -> HostProviders {
         let l1 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
         test_providers_with_l1(l1, l2)
+    }
+
+    /// Stands in for the da-server: serves fixed bytes for any commitment and records the
+    /// commitments it was asked to resolve.
+    #[derive(Debug)]
+    struct StubAltDaResolver {
+        bytes: Bytes,
+        seen: Mutex<Vec<Vec<u8>>>,
+    }
+
+    #[async_trait]
+    impl AltDaCommitmentResolver for StubAltDaResolver {
+        async fn resolve(
+            &self,
+            commitment: &[u8],
+        ) -> std::result::Result<Bytes, AltDaResolverError> {
+            self.seen.lock().unwrap().push(commitment.to_vec());
+            Ok(self.bytes.clone())
+        }
     }
 
     fn test_prefetcher() -> PayloadWitnessPrefetcher {
@@ -1638,5 +1688,58 @@ mod tests {
         }
         assert!(kv.read().await.get(PreimageKey::new_keccak256(*requested_hash).into()).is_none());
         assert!(kv.read().await.get(PreimageKey::new_keccak256(*actual_hash).into()).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_alt_da_rejects_keccak_commitment_until_protocol_supports_it() {
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let providers = test_providers(l2);
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        let mut commitment = [0u8; 33];
+        commitment[0] = 0x00;
+        let hint = HintType::AltDaCommitment.with_data(&[&commitment]);
+
+        let err = handle_hint(hint, &test_cfg(), &providers, kv).await.unwrap_err();
+
+        assert!(matches!(err, HostError::InvalidHintDataLength));
+    }
+
+    /// The host must store resolved bytes under exactly the key the guest's
+    /// `OracleAltDaResolver` reads back, and hand the da-server the bare commitment.
+    #[tokio::test]
+    async fn test_alt_da_stores_resolved_bytes_under_the_key_the_guest_reads() {
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let stored = Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef, 0x01, 0x02]);
+        let resolver =
+            Arc::new(StubAltDaResolver { bytes: stored.clone(), seen: Mutex::new(Vec::new()) });
+        let mut providers = test_providers(l2);
+        providers.alt_da = Some(Arc::clone(&resolver) as DynAltDaResolver);
+
+        let commitment = [0x11u8; GENERIC_COMMITMENT_LEN];
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        let hint = HintType::AltDaCommitment.with_data(&[&commitment]);
+
+        handle_hint(hint, &test_cfg(), &providers, Arc::clone(&kv)).await.unwrap();
+
+        let key = preimage_key_for_commitment(&commitment);
+        assert_eq!(key.key_type(), PreimageKeyType::GlobalGeneric);
+        assert_eq!(kv.read().await.get(key.into()), Some(stored.to_vec()));
+        assert_eq!(resolver.seen.lock().unwrap().as_slice(), &[commitment.to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn test_alt_da_errors_when_no_da_server_is_configured() {
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let providers = test_providers(l2);
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        let commitment = [0x11u8; GENERIC_COMMITMENT_LEN];
+        let hint = HintType::AltDaCommitment.with_data(&[&commitment]);
+
+        let err = handle_hint(hint, &test_cfg(), &providers, Arc::clone(&kv)).await.unwrap_err();
+
+        assert!(
+            matches!(err, HostError::Custom(msg) if msg.contains("no da-server is configured"))
+        );
+        assert!(kv.read().await.get(preimage_key_for_commitment(&commitment).into()).is_none());
     }
 }

@@ -96,6 +96,7 @@ mod tests {
             intermediate_block_interval: 0,
             l1_head_number: 0,
             schedule_id: B256::repeat_byte(0x44),
+            alt_da_enabled: false,
         }
     }
 
