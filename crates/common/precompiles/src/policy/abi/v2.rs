@@ -1,19 +1,6 @@
-//! The `PolicyRegistry` wire surface frozen at Cobalt.
-//!
-//! Extends [Beryl's surface](super) with composite policies: the `UNION`/`INTERSECT` discriminants,
-//! `createCompositePolicy`/`updateComposite`, their two errors, and `CompositePolicyUpdated`.
-//! Selected on the execution path by [`crate::PolicyAbi::V2`].
-//!
-//! This is also the *canonical* live surface: [`super`] re-exports it unqualified as
-//! `IPolicyRegistry`, so the two can never drift. Editing this file therefore un-freezes Cobalt and
-//! moves canonical in one stroke. When a later fork changes the wire, add `abi/v3.rs` and retarget
-//! the canonical alias in [`super`] rather than editing here.
-//!
-//! # Frozen — do not edit
-//!
-//! The same consensus constraints as [Beryl's surface](super) apply. In particular the interface
-//! must stay named `IPolicyRegistry`: `SolInterface::NAME` is `"{interface}Calls"` and reaches the
-//! wire through `AbiDecodeFailed` on short calldata.
+//! The `PolicyRegistry` wire surface frozen at Cobalt, which added composite policies. Also the
+//! canonical live surface, re-exported unqualified by [`super`].
+//! A new wire surface goes in a new `abi/vN.rs`; see [`super`].
 
 use alloy_sol_types::sol;
 

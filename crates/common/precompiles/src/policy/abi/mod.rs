@@ -37,14 +37,6 @@ impl IPolicyRegistry::PolicyType {
     pub const fn as_discriminant(self) -> u8 {
         self as u8
     }
-
-    /// Returns whether this value is a supported *simple* policy type.
-    ///
-    /// Only `BLOCKLIST`/`ALLOWLIST` are simple types accepted by `createPolicy`; composite
-    /// gates (`UNION`/`INTERSECT`) are created via `createCompositePolicy` and are not valid here.
-    pub const fn is_valid(self) -> bool {
-        matches!(self, Self::BLOCKLIST | Self::ALLOWLIST)
-    }
 }
 
 #[cfg(test)]
@@ -127,16 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn simple_policy_types_are_valid_composites_are_not() {
-        // Simple leaf types are valid for `createPolicy`.
-        assert!(IPolicyRegistry::PolicyType::BLOCKLIST.is_valid());
-        assert!(IPolicyRegistry::PolicyType::ALLOWLIST.is_valid());
-
-        // Composite gates are created via `createCompositePolicy`, not `createPolicy`.
-        assert!(!IPolicyRegistry::PolicyType::UNION.is_valid());
-        assert!(!IPolicyRegistry::PolicyType::INTERSECT.is_valid());
-
-        // Every generated discriminant still decodes to a variant.
+    fn every_policy_type_discriminant_decodes() {
         for discriminant in 0..IPolicyRegistry::PolicyType::COUNT {
             IPolicyRegistry::PolicyType::try_from(discriminant as u8)
                 .expect("generated PolicyType discriminant should decode");

@@ -1,24 +1,4 @@
 //! The `PolicyRegistry` wire surface frozen at Beryl, the fork where the precompile activates.
-//!
-//! A literal copy of the interface as it shipped at base/base `a16c5a639` (pre-Cobalt). Selected on
-//! the execution path by [`crate::PolicyAbi::V1`], which decodes Beryl calldata against *this*
-//! surface rather than the canonical one so that a pre-Cobalt block replays byte for byte.
-//!
-//! # Frozen — do not edit
-//!
-//! Every byte here is consensus data for blocks in Beryl's range:
-//!
-//! - The two-variant `PolicyType` is what makes `createPolicy(admin, 2)` fail ABI decoding at
-//!   Beryl. Appending a variant would make it decode, changing the revert payload of historical
-//!   blocks. `abi_decode_validate` range-checks enums against the variant count.
-//! - The interface's Rust name reaches the wire. `SolInterface::abi_decode_validate` short-circuits
-//!   on `data.len() < MIN_DATA_LENGTH + 4` with `Error::type_check_fail(data, Self::NAME)`, and
-//!   `BasePrecompileError::AbiDecodeFailed` encodes as `selector || utf8(error)`. `NAME` is
-//!   `"{interface}Calls"`, so this interface must stay named `IPolicyRegistry` — renaming it to
-//!   `IPolicyRegistryV1` would change the revert bytes of every truncated-calldata call at Beryl.
-//! - The absent `createCompositePolicy`/`updateComposite` selectors are how Beryl rejects them as
-//!   `UnknownFunctionSelector`. That rejection is structural here, not a hand-written fork gate.
-//!
 //! A new wire surface goes in a new `abi/vN.rs`; see [`super`].
 
 use alloy_sol_types::sol;

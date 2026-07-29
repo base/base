@@ -185,8 +185,13 @@ impl PolicyRegistryV2 {
     }
 
     /// Validates policy-creation inputs and returns the raw policy type discriminator.
+    ///
+    /// Only the simple leaf types are admissible here; `UNION`/`INTERSECT` must go through
+    /// [`Self::create_composite_policy`], which is the only path that writes a child set. Inlined
+    /// rather than shared with [`super::PolicyRegistryV1`] so that widening the rule for a later
+    /// fork cannot reach back and change what that frozen version accepts.
     fn validate_create_policy_inputs(admin: Address, policy_type: PolicyType) -> Result<u8> {
-        if !policy_type.is_valid() {
+        if !matches!(policy_type, PolicyType::BLOCKLIST | PolicyType::ALLOWLIST) {
             return Err(BasePrecompileError::enum_conversion_error());
         }
         if admin == Address::ZERO {
@@ -1056,6 +1061,18 @@ mod tests {
             .create_policy_with_accounts(&mut rt, ADMIN, PolicyType::__Invalid, accounts)
             .unwrap_err();
         assert_eq!(err, BasePrecompileError::enum_conversion_error());
+    }
+
+    /// `createPolicy` admits only simple leaf types. `create_composite_policy` is the sole path
+    /// that validates children and writes a child set, so admitting a composite here would mint a
+    /// gate whose ID says UNION/INTERSECT over an empty child list.
+    #[test]
+    fn create_policy_rejects_composite_types() {
+        let mut rt = initialized();
+        for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
+            let err = LOGIC.create_policy(&mut rt, ADMIN, policy_type).unwrap_err();
+            assert_eq!(err, BasePrecompileError::enum_conversion_error());
+        }
     }
 
     #[test]
