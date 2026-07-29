@@ -44,7 +44,7 @@ pub use arm::ProdBackend;
 #[cfg(feature = "t4e-handoff")]
 pub use arm::UnavailableSimulationHandoff;
 #[cfg(feature = "t4e-handoff")]
-pub use arm::{CheckedCandidate, CodeHashProvider, ProviderError};
+pub use arm::{CheckedCandidate, CodeHashProvider, CommittedStateAuthority, ProviderError};
 #[cfg(feature = "arm")]
 pub use arm::{RuntimeBackend, SimBackend};
 #[cfg(feature = "arm")]

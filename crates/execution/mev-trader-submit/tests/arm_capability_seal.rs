@@ -198,9 +198,10 @@ fn arm_source_is_exactly_the_declared_set() {
 /// The complete root API. T4e adds the unsigned handoff/provider contract; S1-b
 /// adds only the sealed runtime selection and its two reviewed backends. Signing,
 /// raw permits, concrete freshness providers, and proof APIs remain private.
-const PUBLIC_API_ALLOWLIST: [&str; 17] = [
+const PUBLIC_API_ALLOWLIST: [&str; 18] = [
     "CheckedCandidate",
     "CodeHashProvider",
+    "CommittedStateAuthority",
     "ProdBackend",
     "ProviderError",
     "RuntimeBackend",
