@@ -166,6 +166,9 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Number of metadata bytes in an encoded frame.
+    pub const ENCODED_OVERHEAD: usize = 16 + 2 + 4 + 1;
+
     /// Overhead estimation for frame metadata and tagging information.
     ///
     /// This constant provides an estimate of the additional bytes required
@@ -193,13 +196,23 @@ impl Frame {
 
     /// Encode the frame into a byte vector.
     pub fn encode(&self) -> Vec<u8> {
-        let mut encoded = Vec::with_capacity(16 + 2 + 4 + self.data.len() + 1);
+        let mut encoded = Vec::with_capacity(self.encoded_len());
+        self.encode_into(&mut encoded);
+        encoded
+    }
+
+    /// Returns the encoded length of the frame.
+    pub const fn encoded_len(&self) -> usize {
+        Self::ENCODED_OVERHEAD + self.data.len()
+    }
+
+    /// Appends the encoded frame to an existing byte vector.
+    pub fn encode_into(&self, encoded: &mut Vec<u8>) {
         encoded.extend_from_slice(&self.id);
         encoded.extend_from_slice(&self.number.to_be_bytes());
         encoded.extend_from_slice(&(self.data.len() as u32).to_be_bytes());
         encoded.extend_from_slice(&self.data);
         encoded.push(self.is_last as u8);
-        encoded
     }
 
     /// Decode a frame from a byte vector.
