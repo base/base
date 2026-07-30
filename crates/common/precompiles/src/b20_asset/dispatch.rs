@@ -15,13 +15,12 @@ use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
-    B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
-    BerylSelector,
+    AssetAccounting, AssetCall, AssetV1, AssetVersion, AssetVersions, B20AssetStorage,
+    B20AssetToken, B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder,
+    BerylMetricLabels,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
-    macros::decode_precompile_call,
 };
 
 impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
@@ -101,31 +100,25 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        // Asset-specific and overridden selectors are caught here first, decoded against the wire
-        // surface frozen at this version's fork. The ERC-8056 scheduled-multiplier selectors were
-        // introduced at Cobalt with `AssetV2`, so they are simply absent from the Beryl (`AssetV1`)
-        // surface: at V1 `asset_valid_selector` is false for them, this branch is skipped, and they
-        // fall through to the inherited `IB20` decode which rejects them as `UnknownFunctionSelector`
-        // (the two surfaces are disjoint). That keeps pre-Cobalt calldata returning the exact bytes
-        // it did at that version's activation fork — the structural replacement for the old
-        // hand-written fork gate.
-        let abi = version.abi();
-        if let Some(selector) = BerylSelector::selector(calldata)
-            && abi.asset_valid_selector(selector)
-        {
-            let call = abi.decode_asset(calldata)?;
-            let label = call.as_label();
-            let asset_observer = observer.clone();
-            return observer.observe(label, move || {
-                self.handle_asset_call(ctx, call, version, privileged, asset_observer)
-            });
-        }
-
-        // Fall through to inherited IB20 selectors (unchanged, shared surface).
-        let call = decode_precompile_call!(calldata, IB20::IB20Calls);
+        // Decode against the composite surface frozen at this version's fork: asset-specific
+        // selectors first, then the frozen common `B20Abi` surface. The ERC-8056
+        // scheduled-multiplier selectors were introduced at Cobalt with `AssetV2`, so they are
+        // simply absent from the Beryl (`AssetV1`) surface and decode as `UnknownFunctionSelector`.
+        // That keeps pre-Cobalt calldata returning the exact bytes it did at that version's
+        // activation fork — the structural replacement for the old hand-written fork gate.
+        let call = version.abi().decode(calldata)?;
         let label = call.as_label();
-
-        observer.observe(label, || self.handle_b20_call(ctx, call, version, privileged))
+        match call {
+            AssetCall::Asset(call) => {
+                let asset_observer = observer.clone();
+                observer.observe(label, move || {
+                    self.handle_asset_call(ctx, call, version, privileged, asset_observer)
+                })
+            }
+            AssetCall::Common(call) => {
+                observer.observe(label, || self.handle_b20_call(ctx, call, version, privileged))
+            }
+        }
     }
 
     fn handle_b20_call(

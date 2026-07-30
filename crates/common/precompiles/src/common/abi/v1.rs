@@ -1,4 +1,12 @@
-//! ABI definition for the `IB20` interface.
+//! The shared B-20 wire surface frozen at Beryl, the fork where native B-20 tokens activate.
+//! Also the canonical live surface, re-exported unqualified by [`super`].
+//! A new wire surface goes in a new `abi/vN.rs`; see [`super`].
+//!
+//! # Frozen — do not edit
+//!
+//! The interface stays named `IB20`, because `SolInterface::NAME` reaches the wire through
+//! `AbiDecodeFailed` on short calldata. `PausableFeature` ordinals are also consensus data:
+//! `B20PausableFeature::mask` derives pause storage bits as `1 << (feature as u8)`.
 
 use alloy_sol_types::sol;
 
@@ -225,12 +233,8 @@ mod tests {
         );
     }
 
-    /// The inherited `IB20` surface is shared across every asset/stablecoin version rather than
-    /// frozen per fork (see `b20_asset::abi`), because it has not moved across a hardfork. This pin
-    /// is the tripwire that keeps that decision honest: the first time `IB20` — or its
-    /// `PausableFeature` enum, the live `PolicyType`-class widening risk — grows, this fingerprint
-    /// changes and CI fails, forcing `IB20` to be split into frozen per-fork surfaces (as
-    /// `IB20Asset`/`IPolicyRegistry` already are) before the shared surface can move.
+    /// Absolute wire fingerprint for Beryl's (canonical) common surface. Catches both-sides drift
+    /// that relative V1==V2 asserts would miss once a later surface lands.
     ///
     /// Keccak of sorted call selectors, then sorted event topic0s, then sorted error selectors,
     /// then `PausableFeature::COUNT`, then each `PausableFeature` ordinal. Order is fixed so a
@@ -240,9 +244,7 @@ mod tests {
     /// `B20PausableFeature::mask` derives the pause storage bit as `1 << (feature as u8)`, so a
     /// `sol!` reorder of `TRANSFER`/`MINT`/`BURN` would silently remap which bit each feature
     /// toggles while leaving every selector, topic0, error selector and `COUNT` identical. Hashing
-    /// the ordinals is what makes that reorder visible. This mirrors the `enum_ordinals` term of the
-    /// shared `AbiFingerprint::compute` helper introduced in #4206; once that lands this test should
-    /// call it directly (the byte layout here is chosen to match, so no re-bless is needed).
+    /// the ordinals is what makes that reorder visible.
     #[test]
     fn ib20_abi_fingerprint_is_pinned() {
         let mut selectors: Vec<[u8; 4]> = IB20::IB20Calls::selectors().collect();
@@ -275,5 +277,13 @@ mod tests {
         ]);
 
         assert_eq!(keccak256(&buf), IB20_ABI_FINGERPRINT);
+    }
+
+    /// `SolInterface::NAME` lands in consensus data: the short-calldata branch of
+    /// `abi_decode_validate` builds its error from it, and `AbiDecodeFailed` puts that string on
+    /// the wire. Renaming the frozen interface would change historical revert payloads.
+    #[test]
+    fn interface_name_is_frozen() {
+        assert_eq!(IB20::IB20Calls::NAME, "IB20Calls");
     }
 }

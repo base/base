@@ -39,9 +39,9 @@ pub use bls12_381::{
 
 mod common;
 pub use common::{
-    B20_MAX_SUPPLY_CAP, B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole,
-    Burnable, Configurable, Eip712Domain, IB20, Mintable, Pausable, PermitArgs, Permittable,
-    RoleManaged, Token, TokenAccounting, Transferable,
+    B20_MAX_SUPPLY_CAP, B20Abi, B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType,
+    B20TokenRole, Burnable, Configurable, Eip712Domain, IB20, IB20V1, Mintable, Pausable,
+    PermitArgs, Permittable, RoleManaged, Token, TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use common::{FakePolicyAccounting, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
@@ -57,8 +57,9 @@ pub use metrics::{
 };
 
 mod b20_asset;
+pub(crate) use b20_asset::AssetCall;
 pub use b20_asset::{
-    Asset, AssetAbi, AssetAccounting, AssetV1, AssetV2, AssetVersion, AssetVersions,
+    Asset, AssetAbi, AssetAccounting, AssetV1, AssetV2, AssetVersion, AssetVersions, AssetAbiPair,
     B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage, B20AssetToken,
     ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset, IB20AssetV1, IB20AssetV2,
 };

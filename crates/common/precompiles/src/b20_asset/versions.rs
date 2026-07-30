@@ -3,9 +3,16 @@
 //! This module is the single owner of fork routing: which version is active at a
 //! given hardfork ([`AssetVersions::from_base_upgrade`]), which concrete
 //! implementation backs a version ([`AssetVersion::implementation`]), and which
-//! wire surface it decodes against ([`AssetVersion::abi`]). Centralizing fork
-//! routing here keeps hardfork logic auditable and off the execution path, and
+//! composite wire surface it decodes against ([`AssetVersion::abi`]). Centralizing
+//! fork routing here keeps hardfork logic auditable and off the execution path, and
 //! lets the dispatcher route calls without ever matching on the version itself.
+//!
+//! # Gate then decode
+//!
+//! [`AssetAbiPair::decode`] owns the full dialable surface for a version: the
+//! versioned asset-specific [`IB20Asset`] selectors first, then the frozen common
+//! [`B20Abi`] surface. Once a selector belongs to a surface, decode failure stays
+//! on that surface — there is no fallthrough after a malformed known call.
 
 use alloc::string::ToString;
 
@@ -14,13 +21,14 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    Asset, AssetAccounting, AssetV1, AssetV2, IB20Asset, IB20AssetV1, IB20AssetV2, PolicyAccounting,
+    Asset, AssetAccounting, AssetV1, AssetV2, B20Abi, IB20, IB20Asset, IB20AssetV1, IB20AssetV2,
+    PolicyAccounting,
 };
 
 /// An activated version of the asset B-20 precompile logic.
 ///
-/// Each variant maps to an immutable implementation via [`Self::implementation`] and to the wire
-/// surface frozen at its fork via [`Self::abi`].
+/// Each variant maps to an immutable implementation via [`Self::implementation`] and to the
+/// composite wire surface frozen at its fork via [`Self::abi`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetVersion {
     /// Introduced at Beryl, the asset's activation fork.
@@ -44,21 +52,23 @@ impl AssetVersion {
         }
     }
 
-    /// Returns the wire (ABI) surface frozen for this version.
-    pub const fn abi(self) -> AssetAbi {
+    /// Returns the composite dialable surface frozen for this version.
+    ///
+    /// The join is exhaustive over [`AssetVersion`]: every logic version declares both its
+    /// asset-extension ABI and the common [`B20Abi`] it decodes against. There is no independent
+    /// common fork ladder.
+    pub const fn abi(self) -> AssetAbiPair {
         match self {
-            Self::V1 => AssetAbi::V1,
-            Self::V2 => AssetAbi::V2,
+            Self::V1 => AssetAbiPair { asset: AssetAbi::V1, common_b20: B20Abi::V1 },
+            Self::V2 => AssetAbiPair { asset: AssetAbi::V2, common_b20: B20Abi::V1 },
         }
     }
 }
 
-/// A frozen wire (ABI) surface of the asset B-20 precompile. Reached only through
-/// [`AssetVersion::abi`].
+/// A frozen wire (ABI) surface of the asset-specific B-20 extension.
 ///
-/// Covers only the asset-specific [`IB20Asset`] surface; the inherited [`crate::IB20`] surface is
-/// shared across versions (see `b20_asset::abi`) and is decoded directly in the dispatcher's
-/// fallthrough, not through this enum.
+/// Reached only through [`AssetVersion::abi`]. Covers only asset-extension selectors;
+/// the inherited common surface is selected separately as [`B20Abi`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetAbi {
     /// Wire surface activated at Beryl.
@@ -68,8 +78,8 @@ pub enum AssetAbi {
 }
 
 impl AssetAbi {
-    /// Returns whether `selector` was dialable on this version's asset surface.
-    pub fn asset_valid_selector(self, selector: [u8; 4]) -> bool {
+    /// Returns whether `selector` was dialable on this version's asset-specific surface.
+    pub fn valid_selector(self, selector: [u8; 4]) -> bool {
         match self {
             Self::V1 => IB20AssetV1::IB20AssetCalls::valid_selector(selector),
             Self::V2 => IB20AssetV2::IB20AssetCalls::valid_selector(selector),
@@ -78,7 +88,7 @@ impl AssetAbi {
 
     /// Validates `calldata` against this version's asset surface, mapping failures to
     /// `AbiDecodeFailed`.
-    pub fn abi_decode_validate_asset(self, calldata: &[u8], selector: [u8; 4]) -> Result<()> {
+    fn abi_decode_validate(self, calldata: &[u8], selector: [u8; 4]) -> Result<()> {
         match self {
             Self::V1 => IB20AssetV1::IB20AssetCalls::abi_decode_validate(calldata).map(|_| ()),
             Self::V2 => IB20AssetV2::IB20AssetCalls::abi_decode_validate(calldata).map(|_| ()),
@@ -89,20 +99,72 @@ impl AssetAbi {
         })
     }
 
-    /// Gates `calldata` on this version's asset surface, then decodes it into the canonical
-    /// routable enum.
-    pub fn decode_asset(self, calldata: &[u8]) -> Result<IB20Asset::IB20AssetCalls> {
+    /// Decodes `calldata` into a routable asset call, gated on this extension surface.
+    fn decode(self, calldata: &[u8]) -> Result<IB20Asset::IB20AssetCalls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
         };
-        if !self.asset_valid_selector(selector) {
+        if !self.valid_selector(selector) {
             return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }
-        self.abi_decode_validate_asset(calldata, selector)?;
+        self.abi_decode_validate(calldata, selector)?;
 
         IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
             BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
         })
+    }
+}
+
+/// The complete dialable surface for an asset token version: extension + common.
+///
+/// Produced only by [`AssetVersion::abi`]. Asset selectors are tried first; common
+/// selectors are the fallthrough. The two surfaces are disjoint, so a selector never
+/// lands in both arms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssetAbiPair {
+    /// Frozen asset-extension surface for this version.
+    pub asset: AssetAbi,
+    /// Frozen common B-20 surface for this version.
+    pub common_b20: B20Abi,
+}
+
+/// A call decoded against the composite surface selected by [`AssetAbiPair`].
+///
+/// Crate-private routing envelope; not part of the public precompile API.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum AssetCall {
+    /// An asset-specific call from the frozen [`IB20Asset`] surface.
+    Asset(IB20Asset::IB20AssetCalls),
+    /// An inherited call from the frozen [`IB20`] surface.
+    Common(IB20::IB20Calls),
+}
+
+impl AssetCall {
+    /// Returns the stable metric label for this decoded call.
+    pub(crate) const fn as_label(&self) -> &'static str {
+        match self {
+            Self::Asset(call) => call.as_label(),
+            Self::Common(call) => call.as_label(),
+        }
+    }
+}
+
+impl AssetAbiPair {
+    /// Decodes `calldata` into a routable call for this composite surface.
+    pub(crate) fn decode(self, calldata: &[u8]) -> Result<AssetCall> {
+        let Some(selector) = calldata.first_chunk::<4>().copied() else {
+            return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
+        };
+
+        if self.asset.valid_selector(selector) {
+            return self.asset.decode(calldata).map(AssetCall::Asset);
+        }
+
+        if self.common_b20.valid_selector(selector) {
+            return self.common_b20.decode(calldata).map(AssetCall::Common);
+        }
+
+        Err(BasePrecompileError::UnknownFunctionSelector(selector))
     }
 }
 
@@ -135,10 +197,15 @@ impl AssetVersions {
 mod tests {
     use alloc::vec::Vec;
 
+    use alloy_primitives::{Address, U256};
     use alloy_sol_types::{SolCall, SolInterface};
     use base_common_genesis::BaseUpgrade;
+    use base_precompile_storage::BasePrecompileError;
 
-    use crate::{AssetAbi, AssetVersion, AssetVersions, IB20Asset, IB20AssetV1, IB20AssetV2};
+    use super::{AssetCall, AssetAbiPair};
+    use crate::{
+        AssetAbi, AssetVersion, AssetVersions, B20Abi, IB20, IB20Asset, IB20AssetV1, IB20AssetV2,
+    };
 
     #[test]
     fn resolves_none_before_beryl() {
@@ -155,17 +222,25 @@ mod tests {
         assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(AssetVersion::V2));
     }
 
-    /// The logic axis and the wire axis meet only here. Driven from the fork ladder so the whole
-    /// chain (upgrade -> version -> surface) is pinned, not just the inner lookup.
+    /// The logic axis and both wire axes meet only here. Driven from the fork ladder so the whole
+    /// chain (upgrade -> version -> composite surface) is pinned, not just the inner lookups.
     #[test]
     fn each_fork_resolves_to_its_wire_surface() {
-        assert_eq!(AssetVersion::V1.abi(), AssetAbi::V1);
-        assert_eq!(AssetVersion::V2.abi(), AssetAbi::V2);
+        assert_eq!(
+            AssetVersion::V1.abi(),
+            AssetAbiPair { asset: AssetAbi::V1, common_b20: B20Abi::V1 }
+        );
+        assert_eq!(
+            AssetVersion::V2.abi(),
+            AssetAbiPair { asset: AssetAbi::V2, common_b20: B20Abi::V1 }
+        );
 
         let beryl = AssetVersions::from_base_upgrade(BaseUpgrade::Beryl).unwrap();
         let cobalt = AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt).unwrap();
-        assert_eq!(beryl.abi(), AssetAbi::V1);
-        assert_eq!(cobalt.abi(), AssetAbi::V2);
+        assert_eq!(beryl.abi().asset, AssetAbi::V1);
+        assert_eq!(beryl.abi().common_b20, B20Abi::V1);
+        assert_eq!(cobalt.abi().asset, AssetAbi::V2);
+        assert_eq!(cobalt.abi().common_b20, B20Abi::V1);
     }
 
     /// `SolInterface::NAME` lands in consensus data: the short-calldata branch of
@@ -197,13 +272,13 @@ mod tests {
         let v1: Vec<[u8; 4]> = IB20AssetV1::IB20AssetCalls::selectors().collect();
         for selector in &v1 {
             assert!(
-                AssetAbi::V2.asset_valid_selector(*selector),
+                AssetAbi::V2.valid_selector(*selector),
                 "V1 selector {selector:?} missing from the V2 surface"
             );
         }
 
         let added: Vec<[u8; 4]> = IB20AssetV2::IB20AssetCalls::selectors()
-            .filter(|selector| !AssetAbi::V1.asset_valid_selector(*selector))
+            .filter(|selector| !AssetAbi::V1.valid_selector(*selector))
             .collect();
         assert_eq!(added.len(), 8);
         for selector in [
@@ -221,5 +296,115 @@ mod tests {
                 "expected scheduled selector {selector:?} in the V2 delta"
             );
         }
+    }
+
+    #[test]
+    fn asset_and_common_selectors_are_disjoint_on_each_wire() {
+        for wire in [AssetVersion::V1.abi(), AssetVersion::V2.abi()] {
+            for selector in IB20Asset::IB20AssetCalls::selectors() {
+                if wire.asset.valid_selector(selector) {
+                    assert!(
+                        !wire.common_b20.valid_selector(selector),
+                        "selector {selector:?} owned by both asset and common"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn decode_rejects_cobalt_asset_selector_at_v1() {
+        let calldata = IB20Asset::uiMultiplierCall {}.abi_encode();
+        assert_eq!(
+            AssetVersion::V1.abi().decode(&calldata),
+            Err(BasePrecompileError::UnknownFunctionSelector(
+                IB20Asset::uiMultiplierCall::SELECTOR
+            ))
+        );
+    }
+
+    #[test]
+    fn decode_accepts_cobalt_asset_selector_at_v2() {
+        let calldata = IB20Asset::uiMultiplierCall {}.abi_encode();
+        assert!(matches!(
+            AssetVersion::V2.abi().decode(&calldata),
+            Ok(AssetCall::Asset(IB20Asset::IB20AssetCalls::uiMultiplier(_)))
+        ));
+    }
+
+    #[test]
+    fn decode_accepts_common_selector_at_both_versions() {
+        let calldata = IB20::nameCall {}.abi_encode();
+        for version in [AssetVersion::V1, AssetVersion::V2] {
+            assert!(matches!(
+                version.abi().decode(&calldata),
+                Ok(AssetCall::Common(IB20::IB20Calls::name(_)))
+            ));
+        }
+    }
+
+    #[test]
+    fn decode_malformed_known_common_call_is_abi_decode_failed() {
+        // `transfer(address,uint256)` with only the selector: owned by common, not asset.
+        let calldata = IB20::transferCall::SELECTOR.to_vec();
+        let err = AssetVersion::V1.abi().decode(&calldata).unwrap_err();
+        assert!(matches!(
+            err,
+            BasePrecompileError::AbiDecodeFailed {
+                selector,
+                ..
+            } if selector == IB20::transferCall::SELECTOR
+        ));
+        // Same bytes at V2: both versions map onto B20Abi::V1 today.
+        assert_eq!(AssetVersion::V2.abi().decode(&calldata), Err(err));
+    }
+
+    #[test]
+    fn decode_malformed_known_asset_call_does_not_fall_through_to_common() {
+        // Truncated `setUIMultiplier` args: V2 owns the selector, so failure stays on asset.
+        let mut calldata = IB20Asset::setUIMultiplierCall::SELECTOR.to_vec();
+        calldata.extend_from_slice(&[0u8; 8]);
+        let err = AssetVersion::V2.abi().decode(&calldata).unwrap_err();
+        assert!(matches!(
+            err,
+            BasePrecompileError::AbiDecodeFailed {
+                selector,
+                ..
+            } if selector == IB20Asset::setUIMultiplierCall::SELECTOR
+        ));
+    }
+
+    #[test]
+    fn decode_unknown_selector_is_rejected() {
+        let calldata = [0xde, 0xad, 0xbe, 0xef];
+        assert_eq!(
+            AssetVersion::V1.abi().decode(&calldata),
+            Err(BasePrecompileError::UnknownFunctionSelector(calldata))
+        );
+        assert_eq!(
+            AssetVersion::V2.abi().decode(&calldata),
+            Err(BasePrecompileError::UnknownFunctionSelector(calldata))
+        );
+    }
+
+    #[test]
+    fn decode_empty_calldata_is_unknown_selector() {
+        assert_eq!(
+            AssetVersion::V1.abi().decode(&[]),
+            Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]))
+        );
+    }
+
+    #[test]
+    fn asset_call_labels_delegate_to_surface() {
+        let asset =
+            AssetCall::Asset(IB20Asset::IB20AssetCalls::multiplier(IB20Asset::multiplierCall {}));
+        assert_eq!(asset.as_label(), "precompile-b20-asset-multiplier");
+
+        let common = AssetCall::Common(IB20::IB20Calls::transfer(IB20::transferCall {
+            to: Address::ZERO,
+            amount: U256::ZERO,
+        }));
+        assert_eq!(common.as_label(), "precompile-b20-transfer");
     }
 }

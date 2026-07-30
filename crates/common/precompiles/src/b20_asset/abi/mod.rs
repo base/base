@@ -5,9 +5,8 @@
 //! their module so truncated-calldata revert bytes stay stable, and are re-exported as
 //! [`IB20AssetV1`], [`IB20AssetV2`], etc.
 //!
-//! Only the asset-specific surface is versioned here. The inherited [`crate::IB20`] surface has
-//! not moved across forks, so it stays shared; a fingerprint pin in `common/abi.rs` is the
-//! tripwire that forces splitting it the first time it (or `PausableFeature`) grows.
+//! Only the asset-specific surface is versioned here. The inherited common surface lives under
+//! [`crate::B20Abi`] and is joined with this extension by [`crate::AssetVersion::abi`].
 //!
 //! This module is pure glue: surface definitions, the `as_label` mapping, the ERC-165 ids, and all
 //! tests live in the `vN` modules; the canonical (newest) surface owns anything keyed to it.

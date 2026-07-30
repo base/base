@@ -12,9 +12,9 @@
 /// a silent hardfork.
 ///
 /// The `[0u8; 4]` is a placeholder: a version's frozen wire surface does not declare these
-/// selectors, so `route` rejects them (via fallthrough to the disjoint inherited `IB20` decode)
-/// before any version method is reached, and a reachable call never actually returns this value.
-/// Pinned by `golden_v2_selectors_unknown_at_v1`.
+/// selectors, so [`AssetAbiPair::decode`](crate::AssetAbiPair::decode) rejects them as
+/// `UnknownFunctionSelector` before any version method is reached, and a reachable call never
+/// actually returns this value. Pinned by `golden_v2_selectors_unknown_at_v1`.
 macro_rules! reject_frozen_selector {
     () => {
         ::core::result::Result::Err(
@@ -32,7 +32,8 @@ pub use accounting::AssetAccounting;
 mod dispatch;
 
 mod versions;
-pub use versions::{AssetAbi, AssetVersion, AssetVersions};
+pub(crate) use versions::AssetCall;
+pub use versions::{AssetAbi, AssetVersion, AssetVersions, AssetAbiPair};
 
 mod logic;
 pub use logic::{Asset, AssetV1, AssetV2, B20AssetToken};
