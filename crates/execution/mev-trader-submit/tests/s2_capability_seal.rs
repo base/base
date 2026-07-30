@@ -2604,14 +2604,15 @@ fn validate_installed_production_handoff(
     cli: &str,
     source_override: Option<(&Path, &str)>,
 ) -> Result<(), String> {
-    validate_install_error_taxonomy(handoff)?;
-    validate_installed_handoff_constructor(handoff)?;
-    for forbidden in [
+    const FORBIDDEN_DEFERRAL_EDGES: [&str; 4] = [
         "ProductionInstallationDeferred",
         "deferred_production",
         "arm_sim_status:",
         "production installation deferred",
-    ] {
+    ];
+    validate_install_error_taxonomy(handoff)?;
+    validate_installed_handoff_constructor(handoff)?;
+    for forbidden in FORBIDDEN_DEFERRAL_EDGES {
         if handoff.contains(forbidden) || cli.contains(forbidden) {
             return Err(format!("installed production retained deferral edge: {forbidden}"));
         }
@@ -2649,6 +2650,14 @@ fn validate_installed_production_handoff(
         } else {
             source.as_str()
         };
+        for forbidden in FORBIDDEN_DEFERRAL_EDGES {
+            if analyzed_source.contains(forbidden) {
+                return Err(format!(
+                    "submit source {} retained deferral edge: {forbidden}",
+                    path.display()
+                ));
+            }
+        }
         let module_root = module_root_for_source(&path, &submit_source_root)?;
         let canonical_source = matches!(
             module_root.as_slice(),
