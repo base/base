@@ -349,6 +349,22 @@ fn golden_create_reverts_zero_admin() {
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::ZeroAddress {}.abi_encode()));
 }
 
+/// A composite discriminant (UNION/INTERSECT) decodes at V2 (the enum widened at Cobalt) and
+/// reaches the logic, which rejects it with `IncompatiblePolicyType` rather than a `Panic(0x21)`.
+/// The revert body is exactly the 4-byte selector (no args); this is a revert-only path, so no
+/// state-root golden moves.
+#[test]
+fn golden_create_policy_composite_type_is_incompatible_policy_type_in_v2() {
+    for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
+        let calldata = IPolicyRegistry::createPolicyCall { admin: ADMIN, policyType: policy_type }
+            .abi_encode();
+        let mut s = fresh();
+        let (rev, bytes) = call_policy(&mut s, ADMIN, calldata);
+        assert!(rev);
+        assert_eq!(bytes, Bytes::from(IPolicyRegistry::IncompatiblePolicyType::SELECTOR.as_ref()));
+    }
+}
+
 // ============================================================================
 // composite policies (V2: UNION / INTERSECT)
 // ============================================================================
@@ -971,6 +987,7 @@ fn v2_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
             golden_create_blocklist,
             golden_create_allowlist,
             golden_create_reverts_zero_admin,
+            golden_create_policy_composite_type_is_incompatible_policy_type_in_v2,
         ]),
         C::createPolicyWithAccounts(_) => covered(&[
             golden_create_with_accounts,
