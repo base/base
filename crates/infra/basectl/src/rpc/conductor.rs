@@ -107,6 +107,14 @@ pub struct ConductorClusterSnapshot {
     pub discovered: bool,
 }
 
+impl ConductorClusterSnapshot {
+    /// Machine-readable label describing how the snapshot nodes were sourced,
+    /// used in JSON output and status tables.
+    pub const fn source_label(&self) -> &'static str {
+        if self.discovered { "discovered" } else { "static" }
+    }
+}
+
 /// Result of running a conductor control RPC across several nodes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConductorFanoutReport {
@@ -133,15 +141,12 @@ impl ConductorFanoutReport {
         self.total > 0 && self.failures.is_empty()
     }
 
-    /// Formats the same summary string used by the TUI toast path.
-    ///
-    /// `verb` is the past-tense action used for success and partial-failure
-    /// summaries. Add new verbs to [`empty_fanout_verb`] so the zero-target
-    /// branch can render the infinitive form.
-    pub fn summary(&self, verb: &str) -> String {
+    /// Formats the fanout summary string shared by the CLI and the TUI toast path.
+    pub fn summary(&self, action: ConductorFanoutAction) -> String {
         if self.total == 0 {
-            return format!("no conductor nodes to {}", empty_fanout_verb(verb));
+            return format!("no conductor nodes to {}", action.infinitive());
         }
+        let verb = action.past_tense();
         let ok_count = self.successes.len();
         if self.failures.is_empty() {
             format!("conductor {verb} on {ok_count}/{} nodes", self.total)
@@ -157,16 +162,35 @@ impl ConductorFanoutReport {
     }
 
     /// Converts the report into the TUI's success-or-warning result shape.
-    pub fn to_result(&self, verb: &str) -> Result<String, String> {
-        if self.is_success() { Ok(self.summary(verb)) } else { Err(self.summary(verb)) }
+    pub fn to_result(&self, action: ConductorFanoutAction) -> Result<String, String> {
+        if self.is_success() { Ok(self.summary(action)) } else { Err(self.summary(action)) }
     }
 }
 
-fn empty_fanout_verb(verb: &str) -> &str {
-    match verb {
-        "paused" => "pause",
-        "resumed" => "resume",
-        other => other,
+/// Cluster-wide conductor operation summarized by [`ConductorFanoutReport`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConductorFanoutAction {
+    /// `conductor_pause` fanned out to every node.
+    Pause,
+    /// `conductor_resume` fanned out to every node.
+    Resume,
+}
+
+impl ConductorFanoutAction {
+    /// Infinitive verb used when no nodes were targeted.
+    pub const fn infinitive(self) -> &'static str {
+        match self {
+            Self::Pause => "pause",
+            Self::Resume => "resume",
+        }
+    }
+
+    /// Past-tense verb used for success and partial-failure summaries.
+    pub const fn past_tense(self) -> &'static str {
+        match self {
+            Self::Pause => "paused",
+            Self::Resume => "resumed",
+        }
     }
 }
 
@@ -707,7 +731,7 @@ pub async fn conductor_pause_all_nodes(
     nodes: Vec<ConductorNodeConfig>,
     result_tx: mpsc::Sender<Result<String, String>>,
 ) {
-    let summary = ConductorControl::pause_all(nodes).await.to_result("paused");
+    let summary = ConductorControl::pause_all(nodes).await.to_result(ConductorFanoutAction::Pause);
     let _ = result_tx.send(summary).await;
 }
 
@@ -718,7 +742,8 @@ pub async fn conductor_resume_all_nodes(
     nodes: Vec<ConductorNodeConfig>,
     result_tx: mpsc::Sender<Result<String, String>>,
 ) {
-    let summary = ConductorControl::resume_all(nodes).await.to_result("resumed");
+    let summary =
+        ConductorControl::resume_all(nodes).await.to_result(ConductorFanoutAction::Resume);
     let _ = result_tx.send(summary).await;
 }
 
@@ -1101,8 +1126,8 @@ mod tests {
     use url::Url;
 
     use super::{
-        ConductorControl, ConductorFanoutReport, ConductorNodeFailure, LeaderLookup,
-        StableLeaderGoal, is_stale_leader_error,
+        ConductorControl, ConductorFanoutAction, ConductorFanoutReport, ConductorNodeFailure,
+        LeaderLookup, StableLeaderGoal, is_stale_leader_error,
     };
     use crate::config::{ConductorNodeConfig, ConductorSource};
 
@@ -1144,8 +1169,11 @@ mod tests {
         };
 
         assert!(report.is_success());
-        assert_eq!(report.summary("paused"), "conductor paused on 2/2 nodes");
-        assert_eq!(report.to_result("paused").unwrap(), "conductor paused on 2/2 nodes");
+        assert_eq!(report.summary(ConductorFanoutAction::Pause), "conductor paused on 2/2 nodes");
+        assert_eq!(
+            report.to_result(ConductorFanoutAction::Pause).unwrap(),
+            "conductor paused on 2/2 nodes"
+        );
     }
 
     #[test]
@@ -1161,10 +1189,10 @@ mod tests {
 
         assert!(!report.is_success());
         assert_eq!(
-            report.summary("paused"),
+            report.summary(ConductorFanoutAction::Pause),
             "conductor paused on 1/2 nodes; failures: b: request timed out"
         );
-        assert!(report.to_result("paused").is_err());
+        assert!(report.to_result(ConductorFanoutAction::Pause).is_err());
     }
 
     #[test]
@@ -1173,7 +1201,8 @@ mod tests {
             ConductorFanoutReport { total: 0, successes: Vec::new(), failures: Vec::new() };
 
         assert!(!report.is_success());
-        assert_eq!(report.summary("paused"), "no conductor nodes to pause");
+        assert_eq!(report.summary(ConductorFanoutAction::Pause), "no conductor nodes to pause");
+        assert_eq!(report.summary(ConductorFanoutAction::Resume), "no conductor nodes to resume");
     }
 
     #[test]

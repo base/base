@@ -1,6 +1,9 @@
 //! Implementation of the `basectl proofs` command group.
 
-use std::io::{self, Write};
+use std::{
+    fmt,
+    io::{self, Write},
+};
 
 use alloy_primitives::B256;
 use anyhow::Result;
@@ -9,7 +12,7 @@ use base_prover_service_protocol::{
     TeeKind, ZkVm,
 };
 use clap::{Args, Subcommand, ValueEnum};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use tracing::info;
 use url::Url;
 
@@ -237,7 +240,7 @@ async fn run_finalize(
         network = %config.name,
         prover_rpc = %endpoint,
         session_id = %accepted_session_id,
-        status = ProofsClient::status_label(response.status),
+        status = %ProofOutputStatus::from(response.status),
         "proofs finalize wait completed"
     );
     Ok(CommandOutcome::from_failures(failed))
@@ -306,6 +309,61 @@ async fn run_list(config: MonitoringConfig, args: ProofsListArgs) -> Result<Comm
     Ok(CommandOutcome::Success)
 }
 
+/// Proof request status reported by `basectl proofs` machine-readable and pretty output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofOutputStatus {
+    /// The request was accepted but completion was not awaited.
+    Submitted,
+    /// The proof request is queued.
+    Queued,
+    /// The proof request is running.
+    Running,
+    /// The proof request succeeded.
+    Succeeded,
+    /// The proof request failed.
+    Failed,
+}
+
+impl ProofOutputStatus {
+    /// Returns the stable CLI label for this status.
+    ///
+    /// Delegates to `ProofsClient::status_label` so the wire-status labels have
+    /// a single source of truth; only `Submitted` is local to the CLI. `Serialize`
+    /// routes through here too, so JSON, pretty output, and tracing cannot drift.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Submitted => "submitted",
+            Self::Queued => ProofsClient::status_label(ProofStatus::Queued),
+            Self::Running => ProofsClient::status_label(ProofStatus::Running),
+            Self::Succeeded => ProofsClient::status_label(ProofStatus::Succeeded),
+            Self::Failed => ProofsClient::status_label(ProofStatus::Failed),
+        }
+    }
+}
+
+impl fmt::Display for ProofOutputStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for ProofOutputStatus {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl From<ProofStatus> for ProofOutputStatus {
+    fn from(status: ProofStatus) -> Self {
+        match status {
+            ProofStatus::Queued => Self::Queued,
+            ProofStatus::Running => Self::Running,
+            ProofStatus::Succeeded => Self::Succeeded,
+            ProofStatus::Failed => Self::Failed,
+        }
+    }
+}
+
 /// Humanized JSON shape for a `basectl proofs finalize` outcome.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -323,7 +381,7 @@ pub struct ProofsFinalizeJson {
     /// Number of consecutive L2 blocks in the proof range.
     pub num_blocks: u64,
     /// Current proof request status.
-    pub status: &'static str,
+    pub status: ProofOutputStatus,
     /// Prover-service failure message, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
@@ -348,7 +406,7 @@ impl ProofsFinalizeJson {
             start_block,
             end_block: start_block.saturating_add(num_blocks.saturating_sub(1)),
             num_blocks,
-            status: "submitted",
+            status: ProofOutputStatus::Submitted,
             error_message: None,
             result: None,
         }
@@ -364,7 +422,7 @@ impl ProofsFinalizeJson {
         response: &GetProofResponse,
     ) -> Self {
         Self {
-            status: ProofsClient::status_label(response.status),
+            status: response.status.into(),
             error_message: response.error_message.clone(),
             result: response.result.as_ref().map(ProofResultJson::from_result),
             ..Self::submitted(network, prover_rpc, session_id, start_block, num_blocks)
@@ -383,7 +441,7 @@ pub struct ProofsStatusJson {
     /// Prover-service session identifier.
     pub session_id: String,
     /// Current proof request status.
-    pub status: &'static str,
+    pub status: ProofOutputStatus,
     /// Prover-service failure message, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
@@ -404,7 +462,7 @@ impl ProofsStatusJson {
             network: network.to_string(),
             prover_rpc: prover_rpc.to_string(),
             session_id: session_id.to_string(),
-            status: ProofsClient::status_label(response.status),
+            status: response.status.into(),
             error_message: response.error_message.clone(),
             result: response.result.as_ref().map(ProofResultJson::from_result),
         }
@@ -482,7 +540,7 @@ pub struct ProofsListJson {
     pub limit: u32,
     /// Requested proof status filter, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub status_filter: Option<&'static str>,
+    pub status_filter: Option<ProofOutputStatus>,
     /// Total number of matching proof requests.
     pub total_count: u64,
     /// Humanized summaries returned for this page.
@@ -505,7 +563,7 @@ impl ProofsListJson {
             prover_rpc: prover_rpc.to_string(),
             offset,
             limit,
-            status_filter: status_filter.map(ProofsClient::status_label),
+            status_filter: status_filter.map(ProofOutputStatus::from),
             total_count,
             proofs: proofs.iter().map(ProofSummaryJson::from_summary).collect(),
         }
@@ -521,7 +579,7 @@ pub struct ProofSummaryJson {
     /// Requested proof type.
     pub proof_type: &'static str,
     /// Current proof request status.
-    pub status: &'static str,
+    pub status: ProofOutputStatus,
     /// Request creation timestamp in RFC 3339 format.
     pub created_at: String,
     /// Most recent update timestamp in RFC 3339 format.
@@ -546,7 +604,7 @@ impl ProofSummaryJson {
         Self {
             session_id: summary.session_id.clone(),
             proof_type: Self::proof_type_label(summary.proof_type),
-            status: ProofsClient::status_label(summary.status),
+            status: summary.status.into(),
             created_at: summary.created_at.to_rfc3339(),
             updated_at: summary.updated_at.to_rfc3339(),
             completed_at: summary.completed_at.map(|at| at.to_rfc3339()),
@@ -589,7 +647,7 @@ fn print_finalize_pretty_to<W: Write>(writer: &mut W, outcome: &ProofsFinalizeJs
                 outcome.start_block, outcome.end_block, outcome.num_blocks
             ),
         )
-        .row("status", outcome.status);
+        .row("status", outcome.status.as_str());
     if let Some(error_message) = &outcome.error_message {
         table.row("error", error_message);
     }
@@ -597,7 +655,7 @@ fn print_finalize_pretty_to<W: Write>(writer: &mut W, outcome: &ProofsFinalizeJs
         append_result_rows(&mut table, result);
     }
     table.render(writer)?;
-    if outcome.status == "submitted" {
+    if outcome.status == ProofOutputStatus::Submitted {
         writeln!(writer, "check progress with `basectl proofs status {}`", outcome.session_id)?;
     }
     Ok(())
@@ -609,7 +667,7 @@ fn print_status_pretty_to<W: Write>(writer: &mut W, status: &ProofsStatusJson) -
         .row("network", &status.network)
         .row("prover rpc", &status.prover_rpc)
         .row("session id", &status.session_id)
-        .row("status", status.status);
+        .row("status", status.status.as_str());
     if let Some(error_message) = &status.error_message {
         table.row("error", error_message);
     }
@@ -644,7 +702,7 @@ fn print_list_pretty_to<W: Write>(writer: &mut W, list: &ProofsListJson) -> Resu
             format!("{} (offset {}, limit {})", list.proofs.len(), list.offset, list.limit),
         );
     if let Some(status_filter) = list.status_filter {
-        table.row("status filter", status_filter);
+        table.row("status filter", status_filter.as_str());
     }
     table.render(writer)?;
 

@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloy_primitives::U256;
 use base_precompile_storage::Result;
 
-use crate::TokenAccounting;
+use crate::{TokenAccounting, macros::reject_frozen_selector};
 
 /// Extends [`TokenAccounting`] with asset-token-specific storage slots.
 ///

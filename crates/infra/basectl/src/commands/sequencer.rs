@@ -1,25 +1,84 @@
 //! Implementation of the `basectl sequencer` command group.
 
-use std::{
-    future::Future,
-    io::{self, Write},
-    str::FromStr,
-    time::Duration,
-};
+use std::{future::Future, str::FromStr, time::Duration};
 
 use alloy_primitives::B256;
 use anyhow::Result;
-use basectl_cli::{
-    CommandOutcome, ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig,
-    ConductorNodeStatus, ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig,
-    SequencerCommandError, SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs,
-    SequencerStatusArgs, StateConvergenceTimeoutError, fetch_sequencer_active, find_conductor_node,
-    fmt_bool, fmt_u32, fmt_u64, resolve_conductor_source, start_sequencer, stop_sequencer,
-};
+use clap::{Args, Subcommand};
 use serde::Serialize;
 use tokio::time::{Instant, sleep, timeout};
 use tracing::{debug, info, warn};
 use url::Url;
+
+use crate::{
+    ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig, ConductorNodeStatus,
+    ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig, NodeMetricsJson,
+    OptionalValue, SequencerCommandError, StateConvergenceTimeoutError, fetch_sequencer_active,
+    start_sequencer, stop_sequencer,
+};
+
+/// Inspect and control sequencer activity on HA conductor nodes.
+#[derive(Debug, Args)]
+pub struct SequencerCommand {
+    /// Sequencer operation to run.
+    #[command(subcommand)]
+    pub command: SequencerCommands,
+}
+
+/// Sequencer inspection and control commands.
+#[derive(Debug, Subcommand)]
+pub enum SequencerCommands {
+    /// Show sequencer state for every node or one selected node.
+    Status(SequencerStatusArgs),
+    /// Start sequencing on one node.
+    Start(SequencerStartArgs),
+    /// Stop sequencing on one node.
+    Stop(SequencerNodeActionArgs),
+}
+
+/// Flags for `basectl sequencer status`.
+#[derive(Debug, Args)]
+pub struct SequencerStatusArgs {
+    /// Optional node name from the selected config or discovered raft server ID.
+    #[arg(value_name = "NODE")]
+    pub node: Option<String>,
+    /// Emit a structured JSON status summary instead of pretty text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Flags for `basectl sequencer start`.
+#[derive(Debug, Args)]
+pub struct SequencerStartArgs {
+    /// Sequencer node name from the selected config or discovered raft server ID.
+    #[arg(value_name = "NODE")]
+    pub node: String,
+    /// Unsafe head hash to pass to `admin_startSequencer`.
+    ///
+    /// If omitted, basectl uses the node's currently observed unsafe L2 hash.
+    #[arg(value_name = "UNSAFE_HEAD")]
+    pub unsafe_head: Option<String>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub json: bool,
+}
+
+/// Flags for `basectl sequencer stop`.
+#[derive(Debug, Args)]
+pub struct SequencerNodeActionArgs {
+    /// Sequencer node name from the selected config or discovered raft server ID.
+    #[arg(value_name = "NODE")]
+    pub node: String,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub json: bool,
+}
 
 // Allow two full `admin_sequencerActive` polls plus the stabilization sleep,
 // with a little slack for scheduling jitter and connection setup.
@@ -27,26 +86,26 @@ const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(12);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const REQUIRED_OBSERVATIONS: usize = 2;
 
+/// Leadership knowledge available during start preflight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LeadershipStatus {
+pub enum LeadershipStatus {
+    /// The target is the confirmed leader.
     ConfirmedLeader,
+    /// Leadership could not be established locally.
     Unknown,
 }
 
-/// Runs the `basectl sequencer` command group.
-pub(crate) async fn run(
-    config: MonitoringConfig,
-    conductor_rpc: Option<Url>,
-    command: SequencerCommands,
-) -> Result<CommandOutcome> {
-    let source =
-        resolve_conductor_source(&config, conductor_rpc).map_err(SequencerCommandError::from)?;
-    match command {
-        SequencerCommands::Status(args) => run_status(config, source, args).await,
-        SequencerCommands::Start(args) => run_start(config, source, args).await,
-        SequencerCommands::Stop(args) => run_stop(config, source, args).await,
-    }?;
-    Ok(CommandOutcome::Success)
+impl SequencerCommand {
+    /// Runs the selected sequencer subcommand.
+    pub async fn run(self, config: MonitoringConfig, conductor_rpc: Option<Url>) -> Result<()> {
+        let source =
+            config.resolve_conductor_source(conductor_rpc).map_err(SequencerCommandError::from)?;
+        match self.command {
+            SequencerCommands::Status(args) => run_status(config, source, args).await,
+            SequencerCommands::Start(args) => run_start(config, source, args).await,
+            SequencerCommands::Stop(args) => run_stop(config, source, args).await,
+        }
+    }
 }
 
 async fn run_status(
@@ -89,8 +148,8 @@ async fn run_start(
         "running sequencer start command"
     );
     let snapshot = ConductorControl::snapshot(source).await?;
-    let node =
-        find_conductor_node(&snapshot.nodes, &args.node).map_err(SequencerCommandError::from)?;
+    let node = ConductorNodeConfig::find(&snapshot.nodes, &args.node)
+        .map_err(SequencerCommandError::from)?;
     let status = snapshot_node_status(&snapshot, &node.name);
     debug!(
         node = %node.name,
@@ -171,10 +230,9 @@ async fn run_start(
     );
 
     let message = format!("sequencer started on {} at {}", node.name, unsafe_head);
-    print_action(
-        &SequencerActionJson::start(&config.name, node, unsafe_head, unsafe_head_source, message),
-        args.json,
-    )?;
+    let outcome =
+        SequencerActionJson::start(&config.name, node, unsafe_head, unsafe_head_source, message);
+    JsonOutput::print_or_ok(&outcome, &outcome.message, args.json)?;
     Ok(())
 }
 
@@ -189,8 +247,8 @@ async fn run_stop(
         "running sequencer stop command"
     );
     let snapshot = ConductorControl::snapshot(source).await?;
-    let node =
-        find_conductor_node(&snapshot.nodes, &args.node).map_err(SequencerCommandError::from)?;
+    let node = ConductorNodeConfig::find(&snapshot.nodes, &args.node)
+        .map_err(SequencerCommandError::from)?;
     let status = snapshot_node_status(&snapshot, &node.name);
     debug!(
         node = %node.name,
@@ -237,10 +295,8 @@ async fn run_stop(
         || format!("sequencer stopped on {} (unsafe head unavailable)", node.name),
         |unsafe_head| format!("sequencer stopped on {} at {unsafe_head}", node.name),
     );
-    print_action(
-        &SequencerActionJson::stop(&config.name, node, captured_head, message),
-        args.json,
-    )?;
+    let outcome = SequencerActionJson::stop(&config.name, node, captured_head, message);
+    JsonOutput::print_or_ok(&outcome, &outcome.message, args.json)?;
     Ok(())
 }
 
@@ -309,13 +365,13 @@ fn ensure_leader_target(
         return Err(SequencerCommandError::NotCurrentLeader {
             requested_node: node.name.clone(),
             current_leader: leader.to_string(),
-            action: action.infinitive().to_string(),
+            action: action.infinitive(),
         });
     }
     if status.and_then(|status| status.is_leader) == Some(false) {
         return Err(SequencerCommandError::NotLeader {
             requested_node: node.name.clone(),
-            action: action.infinitive().to_string(),
+            action: action.infinitive(),
         });
     }
     Ok(LeadershipStatus::Unknown)
@@ -326,8 +382,11 @@ fn ensure_start_request_matches_observed_head(
     unsafe_head: B256,
     unsafe_head_source: UnsafeHeadSource,
 ) -> Result<(), SequencerCommandError> {
-    if !matches!(unsafe_head_source, UnsafeHeadSource::Explicit) {
-        return Ok(());
+    // Exhaustive match so a new source variant is forced to decide whether it
+    // needs observed-head validation instead of silently skipping it.
+    match unsafe_head_source {
+        UnsafeHeadSource::Observed => return Ok(()),
+        UnsafeHeadSource::Explicit => {}
     }
 
     let Some(observed_head) = status.and_then(|status| status.unsafe_l2_hash) else {
@@ -513,40 +572,36 @@ fn print_status_pretty(status: &SequencerStatusJson) -> Result<()> {
     Ok(())
 }
 
-fn print_action(action: &SequencerActionJson, json: bool) -> Result<()> {
-    if json {
-        JsonOutput::print(action)?;
-    } else {
-        let mut stdout = io::stdout().lock();
-        writeln!(stdout, "OK {}", action.message)?;
-    }
-    Ok(())
-}
-
+/// Sequencer mutation represented in command output.
 #[derive(Debug, Clone, Copy, Serialize)]
-enum SequencerAction {
+pub enum SequencerAction {
+    /// Start sequencing.
     #[serde(rename = "start")]
     Start,
+    /// Stop sequencing.
     #[serde(rename = "stop")]
     Stop,
 }
 
 impl SequencerAction {
-    const fn expected_active(self) -> bool {
+    /// The `admin_sequencerActive` state this action converges toward.
+    pub const fn expected_active(self) -> bool {
         match self {
             Self::Start => true,
             Self::Stop => false,
         }
     }
 
-    const fn infinitive(self) -> &'static str {
+    /// Machine-readable action name for JSON output, errors, and tracing fields.
+    pub const fn infinitive(self) -> &'static str {
         match self {
             Self::Start => "start",
             Self::Stop => "stop",
         }
     }
 
-    fn timeout_error(
+    /// Builds the convergence-timeout error for this action.
+    pub fn timeout_error(
         self,
         node: &ConductorNodeConfig,
         unsafe_head: Option<B256>,
@@ -567,15 +622,19 @@ impl SequencerAction {
     }
 }
 
+/// Source of the unsafe head used to start sequencing.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum UnsafeHeadSource {
+pub enum UnsafeHeadSource {
+    /// Supplied by the operator.
     Explicit,
+    /// Read from the target node.
     Observed,
 }
 
 impl UnsafeHeadSource {
-    const fn as_str(self) -> &'static str {
+    /// Machine-readable source name for tracing fields.
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Explicit => "explicit",
             Self::Observed => "observed",
@@ -583,22 +642,31 @@ impl UnsafeHeadSource {
     }
 }
 
+/// JSON result for a sequencer action.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SequencerActionJson {
-    network: String,
-    action: SequencerAction,
-    node: String,
-    cl_rpc: String,
+pub struct SequencerActionJson {
+    /// Network name.
+    pub network: String,
+    /// Action performed.
+    pub action: SequencerAction,
+    /// Target node name.
+    pub node: String,
+    /// Target consensus-layer RPC URL.
+    pub cl_rpc: String,
+    /// Unsafe head associated with the action.
     #[serde(skip_serializing_if = "Option::is_none")]
-    unsafe_head: Option<String>,
+    pub unsafe_head: Option<String>,
+    /// Source of the unsafe head.
     #[serde(skip_serializing_if = "Option::is_none")]
-    unsafe_head_source: Option<UnsafeHeadSource>,
-    message: String,
+    pub unsafe_head_source: Option<UnsafeHeadSource>,
+    /// Human-readable result.
+    pub message: String,
 }
 
 impl SequencerActionJson {
-    fn start(
+    /// Builds the outcome for a completed sequencer start.
+    pub fn start(
         network: &str,
         node: &ConductorNodeConfig,
         unsafe_head: B256,
@@ -616,7 +684,8 @@ impl SequencerActionJson {
         }
     }
 
-    fn stop(
+    /// Builds the outcome for a completed sequencer stop.
+    pub fn stop(
         network: &str,
         node: &ConductorNodeConfig,
         unsafe_head: Option<B256>,
@@ -634,29 +703,38 @@ impl SequencerActionJson {
     }
 }
 
+/// JSON sequencer cluster status.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SequencerStatusJson {
-    network: String,
-    source: &'static str,
+pub struct SequencerStatusJson {
+    /// Network name.
+    pub network: String,
+    /// Membership source.
+    pub source: &'static str,
+    /// Selected node filter.
     #[serde(skip_serializing_if = "Option::is_none")]
-    selected_node: Option<String>,
+    pub selected_node: Option<String>,
+    /// Raft membership version.
     #[serde(skip_serializing_if = "Option::is_none")]
-    membership_version: Option<u64>,
+    pub membership_version: Option<u64>,
+    /// Membership lookup error.
     #[serde(skip_serializing_if = "Option::is_none")]
-    membership_error: Option<String>,
-    leader: Option<String>,
-    nodes: Vec<SequencerNodeJson>,
+    pub membership_error: Option<String>,
+    /// Current leader node.
+    pub leader: Option<String>,
+    /// Per-node statuses.
+    pub nodes: Vec<SequencerNodeJson>,
 }
 
 impl SequencerStatusJson {
-    fn from_snapshot(
+    /// Builds the status summary from a cluster snapshot, optionally filtered to one node.
+    pub fn from_snapshot(
         network: &str,
         snapshot: &ConductorClusterSnapshot,
         selected_node: Option<&str>,
     ) -> Result<Self, SequencerCommandError> {
         if let Some(selected_node) = selected_node {
-            find_conductor_node(&snapshot.nodes, selected_node)
+            ConductorNodeConfig::find(&snapshot.nodes, selected_node)
                 .map_err(SequencerCommandError::from)?;
         }
 
@@ -672,7 +750,7 @@ impl SequencerStatusJson {
 
         Ok(Self {
             network: network.to_string(),
-            source: if snapshot.discovered { "discovered" } else { "static" },
+            source: snapshot.source_label(),
             selected_node: selected_node.map(str::to_owned),
             membership_version: snapshot.membership.as_ref().map(|membership| membership.version),
             membership_error: snapshot.membership_error.clone(),
@@ -686,16 +764,21 @@ impl SequencerStatusJson {
     }
 }
 
+/// Sequencer node role derived from leadership status.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum SequencerRole {
+pub enum SequencerRole {
+    /// Current raft leader.
     Leader,
+    /// Confirmed follower.
     Follower,
+    /// Leadership status unavailable.
     Unknown,
 }
 
 impl SequencerRole {
-    const fn from_is_leader(is_leader: Option<bool>) -> Self {
+    /// Derives the role from an optionally known leadership flag.
+    pub const fn from_is_leader(is_leader: Option<bool>) -> Self {
         match is_leader {
             Some(true) => Self::Leader,
             Some(false) => Self::Follower,
@@ -703,7 +786,8 @@ impl SequencerRole {
         }
     }
 
-    const fn as_str(self) -> &'static str {
+    /// Machine-readable role name for pretty output.
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Leader => "leader",
             Self::Follower => "follower",
@@ -712,78 +796,55 @@ impl SequencerRole {
     }
 }
 
+/// JSON status for one sequencer node.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SequencerNodeJson {
-    name: String,
-    cl_rpc: String,
-    role: SequencerRole,
-    is_leader: Option<bool>,
-    sequencer_active: Option<bool>,
-    sequencer_healthy: Option<bool>,
-    conductor_paused: Option<bool>,
-    unsafe_l2_block: Option<u64>,
-    unsafe_l2_hash: Option<String>,
-    safe_l2_block: Option<u64>,
-    safe_l2_hash: Option<String>,
-    finalized_l2_block: Option<u64>,
-    current_l1_block: Option<u64>,
-    head_l1_block: Option<u64>,
-    cl_peer_count: Option<u32>,
-    el_block: Option<u64>,
-    el_syncing: Option<bool>,
-    el_peer_count: Option<u32>,
-    discovered: bool,
+pub struct SequencerNodeJson {
+    /// Node name.
+    pub name: String,
+    /// Consensus-layer RPC URL.
+    pub cl_rpc: String,
+    /// Derived sequencer role.
+    pub role: SequencerRole,
+    /// Metrics shared with conductor node output.
+    #[serde(flatten)]
+    pub metrics: NodeMetricsJson,
+    /// Whether runtime discovery produced this node.
+    pub discovered: bool,
 }
 
 impl SequencerNodeJson {
-    fn from_node_status(
+    /// Builds the node entry from its configuration and polled status.
+    pub fn from_node_status(
         node: &ConductorNodeConfig,
         status: Option<&ConductorNodeStatus>,
         discovered: bool,
     ) -> Self {
-        let is_leader = status.and_then(|status| status.is_leader);
+        let metrics = NodeMetricsJson::from_status(status);
         Self {
             name: node.name.clone(),
             cl_rpc: node.cl_rpc.to_string(),
-            role: SequencerRole::from_is_leader(is_leader),
-            is_leader,
-            sequencer_active: status.and_then(|status| status.sequencer_active),
-            sequencer_healthy: status.and_then(|status| status.sequencer_healthy),
-            conductor_paused: status.and_then(|status| status.conductor_paused),
-            unsafe_l2_block: status.and_then(|status| status.unsafe_l2_block),
-            unsafe_l2_hash: status
-                .and_then(|status| status.unsafe_l2_hash)
-                .map(|unsafe_l2_hash| unsafe_l2_hash.to_string()),
-            safe_l2_block: status.and_then(|status| status.safe_l2_block),
-            safe_l2_hash: status
-                .and_then(|status| status.safe_l2_hash)
-                .map(|safe_l2_hash| safe_l2_hash.to_string()),
-            finalized_l2_block: status.and_then(|status| status.finalized_l2_block),
-            current_l1_block: status.and_then(|status| status.current_l1_block),
-            head_l1_block: status.and_then(|status| status.head_l1_block),
-            cl_peer_count: status.and_then(|status| status.cl_peer_count),
-            el_block: status.and_then(|status| status.el_block),
-            el_syncing: status.and_then(|status| status.el_syncing),
-            el_peer_count: status.and_then(|status| status.el_peer_count),
+            role: SequencerRole::from_is_leader(metrics.is_leader),
+            metrics,
             discovered,
         }
     }
 
-    fn compact_status(&self) -> String {
+    /// Renders a single-line status summary for pretty output.
+    pub fn compact_status(&self) -> String {
         format!(
             "role={} active={} healthy={} paused={} unsafe={} safe={} finalized={} current_l1={} head_l1={} cl_peers={} el_peers={}",
             self.role.as_str(),
-            fmt_bool(self.sequencer_active),
-            fmt_bool(self.sequencer_healthy),
-            fmt_bool(self.conductor_paused),
-            fmt_u64(self.unsafe_l2_block),
-            fmt_u64(self.safe_l2_block),
-            fmt_u64(self.finalized_l2_block),
-            fmt_u64(self.current_l1_block),
-            fmt_u64(self.head_l1_block),
-            fmt_u32(self.cl_peer_count),
-            fmt_u32(self.el_peer_count),
+            OptionalValue::boolean(self.metrics.sequencer_active),
+            OptionalValue::boolean(self.metrics.sequencer_healthy),
+            OptionalValue::boolean(self.metrics.conductor_paused),
+            OptionalValue::u64(self.metrics.unsafe_l2_block),
+            OptionalValue::u64(self.metrics.safe_l2_block),
+            OptionalValue::u64(self.metrics.finalized_l2_block),
+            OptionalValue::u64(self.metrics.current_l1_block),
+            OptionalValue::u64(self.metrics.head_l1_block),
+            OptionalValue::u32(self.metrics.cl_peer_count),
+            OptionalValue::u32(self.metrics.el_peer_count),
         )
     }
 }
@@ -791,20 +852,20 @@ impl SequencerNodeJson {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use basectl_cli::{
-        ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus,
-        SEQUENCER_ACTIVE_RPC_TIMEOUT, SequencerCommandError, find_conductor_node,
-    };
     use serde_json::json;
     use tokio::time::{Duration, Instant};
     use url::Url;
 
     use super::{
         LeadershipStatus, OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS,
-        SequencerAction, SequencerActionJson, SequencerStatusJson, UnsafeHeadSource,
-        ensure_leader_target, ensure_start_allowed, ensure_start_request_matches_observed_head,
-        ensure_stop_allowed, parse_unsafe_head, resolve_start_hash,
-        wait_for_expected_state_with_fetch,
+        SequencerAction, SequencerActionJson, SequencerNodeJson, SequencerStatusJson,
+        UnsafeHeadSource, ensure_leader_target, ensure_start_allowed,
+        ensure_start_request_matches_observed_head, ensure_stop_allowed, parse_unsafe_head,
+        resolve_start_hash, wait_for_expected_state_with_fetch,
+    };
+    use crate::{
+        ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus, NodeLookupError,
+        SEQUENCER_ACTIVE_RPC_TIMEOUT, SequencerCommandError,
     };
 
     fn node(name: &str) -> ConductorNodeConfig {
@@ -1140,6 +1201,41 @@ mod tests {
     }
 
     #[test]
+    fn node_json_flattens_shared_metrics_at_top_level() {
+        let value = serde_json::to_value(SequencerNodeJson::from_node_status(
+            &node("op-conductor-0"),
+            Some(&status("op-conductor-0", true, true)),
+            false,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            value,
+            json!({
+                "name": "op-conductor-0",
+                "clRpc": "http://127.0.0.1:7545/",
+                "role": "leader",
+                "isLeader": true,
+                "sequencerActive": true,
+                "sequencerHealthy": true,
+                "conductorPaused": false,
+                "unsafeL2Block": 10,
+                "unsafeL2Hash": B256::with_last_byte(1).to_string(),
+                "safeL2Block": 8,
+                "safeL2Hash": B256::with_last_byte(2).to_string(),
+                "finalizedL2Block": 6,
+                "currentL1Block": 100,
+                "headL1Block": 101,
+                "clPeerCount": 3,
+                "elBlock": 10,
+                "elSyncing": false,
+                "elPeerCount": 4,
+                "discovered": false,
+            })
+        );
+    }
+
+    #[test]
     fn status_json_filters_selected_node() {
         let snapshot = ConductorClusterSnapshot {
             nodes: vec![node("op-conductor-0"), node("op-conductor-1")],
@@ -1187,16 +1283,16 @@ mod tests {
     fn find_node_reports_missing_name() {
         let nodes = vec![node("op-conductor-0")];
 
-        let err = find_conductor_node(&nodes, "op-conductor-1")
+        let err = ConductorNodeConfig::find(&nodes, "op-conductor-1")
             .map_err(SequencerCommandError::from)
             .expect_err("missing node should error");
 
         assert!(matches!(
             err,
-            SequencerCommandError::MissingNode {
+            SequencerCommandError::NodeLookup(NodeLookupError::MissingNode {
                 requested_node,
                 available_nodes,
-            } if requested_node == "op-conductor-1"
+            }) if requested_node == "op-conductor-1"
                 && available_nodes == vec!["op-conductor-0".to_string()]
         ));
     }

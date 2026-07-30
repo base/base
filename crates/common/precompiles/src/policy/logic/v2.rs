@@ -569,6 +569,13 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV2 {
         }
         storage.read_pending_admin(policy_id)
     }
+
+    fn composite_policy_child_ids(&self, storage: &S, policy_id: u64) -> Result<Vec<u64>> {
+        if !Self::is_composite(policy_id) {
+            return Ok(Vec::new());
+        }
+        storage.read_children(policy_id)
+    }
 }
 
 #[cfg(test)]
@@ -1371,6 +1378,66 @@ mod tests {
         LOGIC.update_composite(&mut rt, id, vec![b, c]).unwrap();
         assert!(!LOGIC.is_authorized(&rt, id, ALICE).unwrap());
         assert!(LOGIC.is_authorized(&rt, id, BOB).unwrap());
+    }
+
+    #[test]
+    fn composite_policy_child_ids_returns_the_set_in_creation_order() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let c = create_allowlist(&mut rt);
+        let id = create_union(&mut rt, vec![c, a, b]);
+        // Order is preserved verbatim; the registry never sorts or dedupes the child set.
+        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), vec![c, a, b]);
+    }
+
+    #[test]
+    fn composite_policy_child_ids_tracks_update_composite() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let c = create_allowlist(&mut rt);
+        let id = create_intersect(&mut rt, vec![a, b]);
+        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), vec![a, b]);
+        set_caller(&mut rt, ADMIN);
+        LOGIC.update_composite(&mut rt, id, vec![b, c]).unwrap();
+        // Full replacement, not a merge — `a` is gone rather than retained as a stale tail.
+        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), vec![b, c]);
+    }
+
+    #[test]
+    fn composite_policy_child_ids_matches_the_emitted_event() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let before = rt.events.len();
+        let id = create_union(&mut rt, vec![a, b]);
+        let emitted =
+            IPolicyRegistry::CompositePolicyUpdated::decode_log_data(&rt.events[before + 2])
+                .unwrap()
+                .childPolicyIds;
+        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), emitted);
+    }
+
+    #[test]
+    fn composite_policy_child_ids_returns_empty_for_non_composites() {
+        let mut rt = initialized();
+        let simple = create_allowlist(&mut rt);
+        let malformed = PolicyRegistryV2::make_id(9, 1);
+        let uncreated_union = PolicyRegistryV2::make_id(PolicyType::UNION as u8, 999);
+
+        for policy_id in [
+            simple,
+            PolicyRegistryV2::ALWAYS_ALLOW_ID,
+            PolicyRegistryV2::ALWAYS_BLOCK_ID,
+            malformed,
+            uncreated_union,
+        ] {
+            assert!(
+                LOGIC.composite_policy_child_ids(&rt, policy_id).unwrap().is_empty(),
+                "expected an empty child set for policy {policy_id}"
+            );
+        }
     }
 
     #[test]
