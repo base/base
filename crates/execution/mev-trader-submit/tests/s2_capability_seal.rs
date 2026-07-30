@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+use syn::visit::Visit;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
