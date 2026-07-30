@@ -1,6 +1,8 @@
+use core::fmt::Debug;
+
 use alloy_eips::Decodable2718;
 use alloy_primitives::{Bytes, TxHash};
-use base_common_consensus::BaseTransactionSigned;
+use base_common_consensus::{BasePooledTransaction as BasePooled, BaseTransactionSigned};
 use jsonrpsee::{
     core::RpcResult,
     proc_macros::rpc,
@@ -201,9 +203,14 @@ fn validate_bundle_request(
 }
 
 #[async_trait::async_trait]
-impl<P> SendBundleApiServer for SendBundleApiImpl<P>
+impl<P, Extension> SendBundleApiServer for SendBundleApiImpl<P>
 where
-    P: TransactionPool<Transaction = BasePooledTransaction> + Send + Sync + 'static,
+    P: TransactionPool<
+            Transaction = BasePooledTransaction<BaseTransactionSigned, BasePooled, Extension>,
+        > + Send
+        + Sync
+        + 'static,
+    Extension: Debug + Clone + Send + Sync + 'static,
 {
     async fn send_bundle(&self, bundle: SendBundleRequest) -> RpcResult<TxHash> {
         if !self.enabled {

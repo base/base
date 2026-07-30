@@ -54,6 +54,7 @@ pub fn unix_time_millis() -> u128 {
 pub struct BasePooledTransaction<
     Cons = BaseTransactionSigned,
     Pooled = base_common_consensus::BasePooledTransaction,
+    Extension = (),
 > {
     #[deref]
     inner: EthPooledTransaction<Cons>,
@@ -88,9 +89,14 @@ pub struct BasePooledTransaction<
     /// EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
     watch_manifest: OnceLock<crate::WatchManifest>,
+    /// Opaque per-transaction extension data attached at admission and read
+    /// during payload building. Defaults to `()`, which carries nothing;
+    /// downstream node builds substitute their own type. Unset until written;
+    /// see [`BasePooledTx::set_extension`].
+    extension: OnceLock<Extension>,
 }
 
-impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
+impl<Cons: SignedTransaction, Pooled, Extension> BasePooledTransaction<Cons, Pooled, Extension> {
     /// Create new instance of [Self].
     pub fn new(transaction: Recovered<Cons>, encoded_length: usize) -> Self {
         Self::new_with_received_at(transaction, encoded_length, unix_time_millis())
@@ -117,6 +123,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             watch_manifest: OnceLock::new(),
+            extension: OnceLock::new(),
         }
     }
 
@@ -151,18 +158,20 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     }
 }
 
-impl<Cons: SignedTransaction, Pooled> DataAvailabilitySized
-    for BasePooledTransaction<Cons, Pooled>
+impl<Cons: SignedTransaction, Pooled, Extension> DataAvailabilitySized
+    for BasePooledTransaction<Cons, Pooled, Extension>
 {
     fn estimated_da_size(&self) -> u64 {
         self.estimated_compressed_size()
     }
 }
 
-impl<Pooled> PoolTransaction for BasePooledTransaction<BaseTransactionSigned, Pooled>
+impl<Pooled, Extension> PoolTransaction
+    for BasePooledTransaction<BaseTransactionSigned, Pooled, Extension>
 where
     BaseTransactionSigned: From<Pooled>,
     Pooled: SignedTransaction + TryFrom<BaseTransactionSigned, Error: core::error::Error>,
+    Extension: Debug + Clone + Send + Sync + 'static,
 {
     type TryFromConsensusError = <Pooled as TryFrom<BaseTransactionSigned>>::Error;
     type Consensus = BaseTransactionSigned;
@@ -215,13 +224,17 @@ where
     }
 }
 
-impl<Cons: Typed2718, Pooled> Typed2718 for BasePooledTransaction<Cons, Pooled> {
+impl<Cons: Typed2718, Pooled, Extension> Typed2718
+    for BasePooledTransaction<Cons, Pooled, Extension>
+{
     fn ty(&self) -> u8 {
         self.inner.ty()
     }
 }
 
-impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Pooled> {
+impl<Cons: InMemorySize, Pooled, Extension> InMemorySize
+    for BasePooledTransaction<Cons, Pooled, Extension>
+{
     fn size(&self) -> usize {
         let watch_keys_size =
             self.watch_set.get().map_or(0, |watch_set| core::mem::size_of_val(watch_set.keys()));
@@ -237,13 +250,16 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             + core::mem::size_of::<OnceLock<crate::LimitClass>>()
             + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
             + manifest_slots_size
+            + core::mem::size_of::<OnceLock<Extension>>()
     }
 }
 
-impl<Cons, Pooled> alloy_consensus::Transaction for BasePooledTransaction<Cons, Pooled>
+impl<Cons, Pooled, Extension> alloy_consensus::Transaction
+    for BasePooledTransaction<Cons, Pooled, Extension>
 where
     Cons: alloy_consensus::Transaction,
     Pooled: Debug + Send + Sync + 'static,
+    Extension: Debug + Send + Sync + 'static,
 {
     fn chain_id(&self) -> Option<u64> {
         self.inner.chain_id()
@@ -314,11 +330,13 @@ where
     }
 }
 
-impl<Pooled> EthPoolTransaction for BasePooledTransaction<BaseTransactionSigned, Pooled>
+impl<Pooled, Extension> EthPoolTransaction
+    for BasePooledTransaction<BaseTransactionSigned, Pooled, Extension>
 where
     BaseTransactionSigned: From<Pooled>,
     Pooled: SignedTransaction + TryFrom<BaseTransactionSigned>,
     <Pooled as TryFrom<BaseTransactionSigned>>::Error: core::error::Error,
+    Extension: Debug + Clone + Send + Sync + 'static,
 {
     fn take_blob(&mut self) -> EthBlobTransactionSidecar {
         EthBlobTransactionSidecar::None
@@ -350,6 +368,26 @@ where
 /// Helper trait to provide payload builder with access to encoded bytes of
 /// transaction.
 pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
+    /// Opaque per-transaction extension data attached at admission and read
+    /// during payload building.
+    ///
+    /// Defaults to `()` on [`BasePooledTransaction`], which carries nothing.
+    /// Downstream node builds substitute their own type to thread additional
+    /// data from the RPC ingress path through to block building.
+    type Extension;
+
+    /// Returns the extension data attached during admission, if any.
+    ///
+    /// Must be read before [`PoolTransaction::into_consensus`] or
+    /// [`PoolTransaction::into_consensus_with2718`], which discard the pooled
+    /// wrapper along with this extension data.
+    fn extension(&self) -> Option<&Self::Extension>;
+
+    /// Records the extension data. Takes `&self` because the pool stores
+    /// transactions behind an [`Arc`]. Writes once; subsequent calls are
+    /// ignored.
+    fn set_extension(&self, extension: Self::Extension);
+
     /// Returns the EIP-2718 encoded bytes of the transaction.
     fn encoded_2718(&self) -> Cow<'_, Bytes>;
 
@@ -415,11 +453,13 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     }
 }
 
-impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
+impl<Pooled, Extension> BasePooledTx
+    for BasePooledTransaction<BaseTransactionSigned, Pooled, Extension>
 where
     BaseTransactionSigned: From<Pooled>,
     Pooled: SignedTransaction + TryFrom<BaseTransactionSigned>,
     <Pooled as TryFrom<BaseTransactionSigned>>::Error: core::error::Error,
+    Extension: Debug + Clone + Send + Sync + 'static,
 {
     fn encoded_2718(&self) -> Cow<'_, Bytes> {
         Cow::Borrowed(self.encoded_2718())
@@ -447,6 +487,16 @@ where
             return None;
         }
         Some(signed.tx().replay_id(self.sender()))
+    }
+
+    type Extension = Extension;
+
+    fn extension(&self) -> Option<&Self::Extension> {
+        self.extension.get()
+    }
+
+    fn set_extension(&self, extension: Self::Extension) {
+        let _ = self.extension.set(extension);
     }
 
     fn watch_set(&self) -> Option<&crate::WatchSet> {
@@ -480,10 +530,12 @@ pub trait TimestampedTransaction {
     fn received_at(&self) -> u128;
 }
 
-impl<Cons, Pooled> TimestampedTransaction for BasePooledTransaction<Cons, Pooled>
+impl<Cons, Pooled, Extension> TimestampedTransaction
+    for BasePooledTransaction<Cons, Pooled, Extension>
 where
     Cons: SignedTransaction,
     Pooled: Send + Sync + 'static,
+    Extension: Send + Sync + 'static,
 {
     fn received_at(&self) -> u128 {
         self.received_at
@@ -548,10 +600,11 @@ pub trait BundleTransaction {
     }
 }
 
-impl<Cons, Pooled> BundleTransaction for BasePooledTransaction<Cons, Pooled>
+impl<Cons, Pooled, Extension> BundleTransaction for BasePooledTransaction<Cons, Pooled, Extension>
 where
     Cons: Send + Sync,
     Pooled: Send + Sync + 'static,
+    Extension: Send + Sync + 'static,
 {
     fn min_block_number(&self) -> Option<u64> {
         self.min_block_number
@@ -623,6 +676,103 @@ mod tests {
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
         let pooled = ConsensusPooledTransaction::Eip8130(signed);
         BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+    }
+
+    // ==========================================================================
+    // Extension slot
+    // ==========================================================================
+
+    /// Stand-in for a downstream node build's per-transaction extension data.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct TestExtension {
+        marker: u64,
+    }
+
+    /// `BasePooledTransaction` with a non-unit extension slot.
+    type ExtensionPooledTransaction =
+        BasePooledTransaction<BaseTransactionSigned, ConsensusPooledTransaction, TestExtension>;
+
+    fn extension_pooled() -> ExtensionPooledTransaction {
+        let signer = signer();
+        let tx = TxDeposit {
+            source_hash: Default::default(),
+            from: signer.address(),
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 21_000,
+            is_system_transaction: false,
+            input: Default::default(),
+        };
+        let signed: BaseTransactionSigned = tx.into();
+        let encoded_len = signed.encoded_2718().len();
+        ExtensionPooledTransaction::new(
+            Recovered::new_unchecked(signed, signer.address()),
+            encoded_len,
+        )
+    }
+
+    #[test]
+    fn extension_defaults_to_unset() {
+        let tx = extension_pooled();
+        assert!(BasePooledTx::extension(&tx).is_none(), "extension data must start unset");
+    }
+
+    #[test]
+    fn extension_round_trips_through_the_trait() {
+        let tx = extension_pooled();
+        BasePooledTx::set_extension(&tx, TestExtension { marker: 42 });
+
+        assert_eq!(
+            BasePooledTx::extension(&tx),
+            Some(&TestExtension { marker: 42 }),
+            "extension data written at admission must be readable later"
+        );
+    }
+
+    #[test]
+    fn extension_writes_once() {
+        let tx = extension_pooled();
+        BasePooledTx::set_extension(&tx, TestExtension { marker: 1 });
+        BasePooledTx::set_extension(&tx, TestExtension { marker: 2 });
+
+        assert_eq!(
+            BasePooledTx::extension(&tx),
+            Some(&TestExtension { marker: 1 }),
+            "a second write must not clobber the first"
+        );
+    }
+
+    #[test]
+    fn extension_survives_cloning() {
+        let tx = extension_pooled();
+        BasePooledTx::set_extension(&tx, TestExtension { marker: 7 });
+
+        let cloned = tx.clone();
+        assert_eq!(
+            BasePooledTx::extension(&cloned),
+            Some(&TestExtension { marker: 7 }),
+            "the pool clones transactions; extension data must come along"
+        );
+        assert_eq!(
+            BasePooledTx::extension(&tx),
+            Some(&TestExtension { marker: 7 }),
+            "cloning must not move the extension data out of the original"
+        );
+    }
+
+    #[test]
+    fn default_extension_is_unset_and_costs_one_word() {
+        let tx = eip8130_pooled(U256::ZERO);
+        // The stock alias carries `Extension = ()`, so the slot is present but empty.
+        assert!(BasePooledTx::extension(&tx).is_none());
+
+        // `OnceLock<()>` is not zero-sized: it still carries the `Once` state
+        // word. The default therefore costs one word per pooled transaction,
+        // which is the price of `set_extension` taking `&self` (the pool stores
+        // transactions behind an `Arc`, so the slot needs interior mutability).
+        // Pinned here so a regression in that cost is visible in review.
+        assert_eq!(core::mem::size_of::<std::sync::OnceLock<()>>(), 8);
     }
 
     #[tokio::test]

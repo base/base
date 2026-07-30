@@ -45,6 +45,30 @@ modules.merge_configured(api.into_rpc())?;
 Extension payloads must serialize as a JSON map (a braced struct, not a unit struct) and must avoid
 `u128`/`i128` fields, which `serde_json` cannot represent through `#[serde(flatten)]`.
 
+### Per-transaction extension data
+
+For extension data that must outlive the RPC hop and be readable during block building,
+`BasePooledTransaction` carries an extension slot: `BasePooledTransaction<Cons, Pooled, Extension = ()>`,
+exposed through `BasePooledTx::Extension` with `extension()` / `set_extension()`. `set_extension`
+takes `&self` because the pool stores transactions behind an `Arc`, and writes once.
+
+```rust,ignore
+// At admission, from the RPC ingress path:
+tx.set_extension(MyExtension { .. });
+
+// During block building, wherever `T: BasePooledTx` is in scope:
+if let Some(extension) = tx.extension() { /* ... */ }
+```
+
+The default `Extension = ()` costs one word per pooled transaction.
+
+> **Read the extension data before `into_consensus()`.** The payload builder converts each pooled
+> transaction to its consensus form partway through the build loop (see
+> `crates/execution/payload/src/builder.rs`). That discards the pooled wrapper and everything
+> reachable through `BasePooledTx`, including `extension()`. Reads placed after the conversion will
+> not compile against the pooled type — but reads that are simply *omitted* before it will silently
+> see nothing.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

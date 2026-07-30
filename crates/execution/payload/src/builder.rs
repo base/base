@@ -775,6 +775,10 @@ where
                 None => 0,
             };
 
+            // Everything below this line sees only the consensus transaction:
+            // `into_consensus` discards the pooled wrapper, and with it anything
+            // reachable through `BasePooledTx` — including `extension()`. Read pooled
+            // state above this point, not after it.
             let tx = tx.into_consensus();
 
             let da_footprint_gas_scalar = self

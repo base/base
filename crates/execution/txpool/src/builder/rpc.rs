@@ -1,9 +1,10 @@
+use core::fmt::Debug;
 use std::{marker::PhantomData, time::Instant};
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Decodable2718;
 use alloy_primitives::TxHash;
-use base_common_consensus::BaseTransactionSigned;
+use base_common_consensus::{BasePooledTransaction as BasePooled, BaseTransactionSigned};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -72,10 +73,17 @@ impl<P, E> BuilderApiImpl<P, E> {
 }
 
 #[async_trait::async_trait]
-impl<P, E> BuilderApiServer<E> for BuilderApiImpl<P, E>
+impl<P, E, Extension> BuilderApiServer<E> for BuilderApiImpl<P, E>
 where
-    P: TransactionPool<Transaction = BasePooledTransaction> + Send + Sync + 'static,
-    E: ValidatedTransactionExtensions<BasePooledTransaction>,
+    P: TransactionPool<
+            Transaction = BasePooledTransaction<BaseTransactionSigned, BasePooled, Extension>,
+        > + Send
+        + Sync
+        + 'static,
+    E: ValidatedTransactionExtensions<
+        BasePooledTransaction<BaseTransactionSigned, BasePooled, Extension>,
+    >,
+    Extension: Debug + Clone + Send + Sync + 'static,
 {
     async fn insert_validated_transaction(&self, tx: ValidatedTransaction<E>) -> RpcResult<()> {
         debug!(
