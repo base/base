@@ -28,6 +28,7 @@ use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics,
     InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, StateDiffInvalidation,
     best::MergeBestTransactions,
+    sidecar_pool::{RemovalReason, SidecarInsert, SidecarPool},
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
 
@@ -87,6 +88,7 @@ pub struct BaseTransactionPool<
         Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>,
     ordering: O,
     nonce_pool: Arc<RwLock<TwoDNoncePool<T>>>,
+    sidecars: Arc<Vec<Arc<dyn SidecarPool<T>>>>,
     listeners: Arc<RwLock<SidecarListeners<T>>>,
     /// Shared admission and invalidation ledger for EIP-8130 transactions.
     guard: Arc<RwLock<MempoolGuard>>,
@@ -124,6 +126,7 @@ where
             protocol_pool: self.protocol_pool.clone(),
             ordering: self.ordering.clone(),
             nonce_pool: Arc::clone(&self.nonce_pool),
+            sidecars: Arc::clone(&self.sidecars),
             listeners: Arc::clone(&self.listeners),
             guard: Arc::clone(&self.guard),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
@@ -165,6 +168,7 @@ where
             protocol_pool,
             ordering,
             nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
+            sidecars: Arc::new(Vec::new()),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
@@ -212,8 +216,121 @@ where
         self.protocol_pool.validator()
     }
 
+    /// Registers out-of-tree sidecar sub-pools. Call before sharing the pool.
+    #[must_use]
+    pub fn with_sidecar_pools(mut self, pools: Vec<Arc<dyn SidecarPool<T>>>) -> Self {
+        self.sidecars = Arc::new(pools);
+        self
+    }
+
     fn is_sidecar_transaction(&self, transaction: &T) -> bool {
         transaction.is_eip8130_sidecar_transaction()
+    }
+
+    fn sidecar_for(&self, transaction: &T) -> Option<&Arc<dyn SidecarPool<T>>> {
+        self.sidecars.iter().find(|pool| pool.claims(transaction))
+    }
+
+    fn sidecar_owning(&self, hash: &TxHash) -> Option<&Arc<dyn SidecarPool<T>>> {
+        self.sidecars.iter().find(|pool| pool.contains(hash))
+    }
+
+    /// Splits `hashes` into (registered-sidecar-owned, rest).
+    fn drain_registered_sidecar_hashes(
+        &self,
+        hashes: Vec<TxHash>,
+    ) -> (Vec<(usize, TxHash)>, Vec<TxHash>) {
+        if self.sidecars.is_empty() {
+            return (Vec::new(), hashes);
+        }
+        let mut owned = Vec::new();
+        let mut rest = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            match self.sidecars.iter().position(|pool| pool.contains(&hash)) {
+                Some(index) => owned.push((index, hash)),
+                None => rest.push(hash),
+            }
+        }
+        (owned, rest)
+    }
+
+    fn remove_from_registered_sidecars(
+        &self,
+        owned: Vec<(usize, TxHash)>,
+        reason: RemovalReason,
+    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        let mut removed = Vec::new();
+        for (index, pool) in self.sidecars.iter().enumerate() {
+            let hashes: Vec<_> =
+                owned.iter().filter(|(i, _)| *i == index).map(|(_, h)| *h).collect();
+            if hashes.is_empty() {
+                continue;
+            }
+            removed.extend(pool.remove_transactions(&hashes, reason));
+        }
+        removed
+    }
+
+    async fn add_registered_sidecar_transaction(
+        &self,
+        pool_index: usize,
+        origin: TransactionOrigin,
+        transaction: T,
+    ) -> PoolResult<AddedTransactionOutcome> {
+        let validated = self.validator().validate_transaction(origin, transaction).await;
+        match validated {
+            TransactionValidationOutcome::Valid {
+                transaction, propagate, authorities, state_nonce, ..
+            } => {
+                let validated = {
+                    let mut nonce_pool = self.nonce_pool.write();
+                    self.validated_pool_transaction(
+                        transaction,
+                        origin,
+                        propagate,
+                        authorities,
+                        &mut nonce_pool,
+                    )
+                };
+                let admission = Self::admission_for(&validated.transaction);
+                let insert =
+                    self.sidecars[pool_index].insert_validated(origin, validated, state_nonce)?;
+                let mut listeners = self.listeners.write();
+                let mut guard = self.guard.write();
+                match (&insert.replaced, admission) {
+                    (Some(replaced), Some(admission)) => {
+                        guard.release(replaced.hash());
+                        guard.insert_forced(admission);
+                    }
+                    (Some(replaced), None) => {
+                        guard.release(replaced.hash());
+                    }
+                    (None, Some(admission)) => {
+                        if let Err(rejection) = guard.try_admit(admission) {
+                            let hash = insert.outcome.hash;
+                            drop(guard);
+                            let removed = self.sidecars[pool_index]
+                                .remove_transactions(&[hash], RemovalReason::Discarded);
+                            listeners.on_discarded(&removed);
+                            return Err(Self::limit_rejection_error(hash, rejection));
+                        }
+                    }
+                    (None, None) => {}
+                }
+                drop(guard);
+                listeners.on_sidecar_inserted(&insert);
+                Ok(insert.outcome)
+            }
+            TransactionValidationOutcome::Invalid(transaction, error) => {
+                Err(reth_transaction_pool::error::PoolError::new(
+                    *transaction.hash(),
+                    reth_transaction_pool::error::PoolErrorKind::InvalidTransaction(error),
+                ))
+            }
+            TransactionValidationOutcome::Error(hash, error) => {
+                Err(reth_transaction_pool::error::PoolError::other(hash, error.to_string()))
+            }
+        }
     }
 
     fn limit_rejection_error(
@@ -284,6 +401,7 @@ where
         if dropped.is_empty() {
             return Vec::new();
         }
+        let (registered, dropped) = self.drain_registered_sidecar_hashes(dropped);
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(dropped);
         let mut removed = if protocol_hashes.is_empty() {
             Vec::new()
@@ -297,6 +415,12 @@ where
             }
             removed.extend(sidecar_removed);
         }
+        let registered_removed =
+            self.remove_from_registered_sidecars(registered, RemovalReason::Discarded);
+        if !registered_removed.is_empty() {
+            self.listeners.write().on_discarded(&registered_removed);
+        }
+        removed.extend(registered_removed);
         removed
     }
 
@@ -342,7 +466,11 @@ where
         let nonce_pool = self.nonce_pool.read();
         let stale: Vec<_> = tracked
             .into_iter()
-            .filter(|hash| self.protocol_pool.get(hash).is_none() && !nonce_pool.contains(hash))
+            .filter(|hash| {
+                self.protocol_pool.get(hash).is_none()
+                    && !nonce_pool.contains(hash)
+                    && self.sidecar_owning(hash).is_none()
+            })
             .collect();
         drop(nonce_pool);
         if stale.is_empty() {
@@ -356,7 +484,11 @@ where
         let nonce_pool = self.nonce_pool.read();
         let stale: Vec<_> = stale
             .into_iter()
-            .filter(|hash| self.protocol_pool.get(hash).is_none() && !nonce_pool.contains(hash))
+            .filter(|hash| {
+                self.protocol_pool.get(hash).is_none()
+                    && !nonce_pool.contains(hash)
+                    && self.sidecar_owning(hash).is_none()
+            })
             .collect();
         drop(nonce_pool);
         if stale.is_empty() {
@@ -669,6 +801,31 @@ where
         }
     }
 
+    fn merged_best(
+        &self,
+        protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+        base_fee: u64,
+    ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>> {
+        let mut merged: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>> =
+            Box::new(MergeBestTransactions::new(
+                protocol,
+                Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
+                self.ordering.clone(),
+                base_fee,
+            ));
+        for sidecar in self.sidecars.iter() {
+            let claims = Arc::clone(sidecar);
+            merged = Box::new(MergeBestTransactions::with_discriminator(
+                merged,
+                sidecar.best_transactions(base_fee),
+                Box::new(move |tx: &T| claims.claims(tx)),
+                self.ordering.clone(),
+                base_fee,
+            ));
+        }
+        merged
+    }
+
     fn merged_pending_listener(&self, kind: TransactionListenerKind) -> mpsc::Receiver<TxHash> {
         let protocol = self.protocol_pool.pending_transactions_listener_for(kind);
         let sidecar = self.listeners.write().subscribe_pending(kind);
@@ -758,6 +915,16 @@ where
         size.queued += queued;
         size.queued_size += queued_size;
         size.total += pending + queued;
+        for sidecar in self.sidecars.iter() {
+            let (p, q) = sidecar.pending_and_queued_txn_count();
+            size.pending += p;
+            size.queued += q;
+            size.total += p + q;
+            size.pending_size +=
+                sidecar.pending_transactions().iter().map(|tx| tx.encoded_length()).sum::<usize>();
+            size.queued_size +=
+                sidecar.queued_transactions().iter().map(|tx| tx.encoded_length()).sum::<usize>();
+        }
         size
     }
 
@@ -770,6 +937,17 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<TransactionEvents> {
+        if let Some(index) = self.sidecars.iter().position(|pool| pool.claims(&transaction)) {
+            let hash = *transaction.hash();
+            let (events, listener) = self.listeners.write().subscribe_hash(hash);
+            if let Err(error) =
+                self.add_registered_sidecar_transaction(index, origin, transaction).await
+            {
+                self.listeners.write().unsubscribe_hash_listener(&hash, &listener);
+                return Err(error);
+            }
+            return Ok(events);
+        }
         if !self.is_sidecar_transaction(&transaction) {
             let hash = *transaction.hash();
             let sender = transaction.sender();
@@ -807,6 +985,9 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<AddedTransactionOutcome> {
+        if let Some(index) = self.sidecars.iter().position(|pool| pool.claims(&transaction)) {
+            return self.add_registered_sidecar_transaction(index, origin, transaction).await;
+        }
         if self.is_sidecar_transaction(&transaction) {
             self.add_sidecar_transaction(origin, transaction).await
         } else {
@@ -842,12 +1023,18 @@ where
     }
 
     fn transaction_event_listener(&self, tx_hash: TxHash) -> Option<TransactionEvents> {
-        self.protocol_pool.transaction_event_listener(tx_hash).or_else(|| {
-            self.nonce_pool
-                .read()
-                .contains(&tx_hash)
-                .then(|| self.listeners.write().subscribe_hash(tx_hash).0)
-        })
+        self.protocol_pool
+            .transaction_event_listener(tx_hash)
+            .or_else(|| {
+                self.nonce_pool
+                    .read()
+                    .contains(&tx_hash)
+                    .then(|| self.listeners.write().subscribe_hash(tx_hash).0)
+            })
+            .or_else(|| {
+                self.sidecar_owning(&tx_hash)
+                    .map(|_| self.listeners.write().subscribe_hash(tx_hash).0)
+            })
     }
 
     fn all_transactions_event_listener(&self) -> AllTransactionsEvents<Self::Transaction> {
@@ -882,6 +1069,15 @@ where
                 .filter(|transaction| transaction.propagate)
                 .map(|transaction| *transaction.hash()),
         );
+        for sidecar in self.sidecars.iter() {
+            hashes.extend(
+                sidecar
+                    .all_transactions()
+                    .into_iter()
+                    .filter(|transaction| transaction.propagate)
+                    .map(|transaction| *transaction.hash()),
+            );
+        }
         hashes
     }
 
@@ -896,7 +1092,18 @@ where
             if transaction.propagate {
                 hashes.push(*transaction.hash());
                 if hashes.len() >= max {
-                    break;
+                    return hashes;
+                }
+            }
+        }
+        drop(nonce_pool);
+        for sidecar in self.sidecars.iter() {
+            for transaction in sidecar.all_transactions() {
+                if transaction.propagate {
+                    hashes.push(*transaction.hash());
+                    if hashes.len() >= max {
+                        return hashes;
+                    }
                 }
             }
         }
@@ -912,6 +1119,11 @@ where
                 .into_iter()
                 .filter(|transaction| transaction.propagate),
         );
+        for sidecar in self.sidecars.iter() {
+            transactions.extend(
+                sidecar.all_transactions().into_iter().filter(|transaction| transaction.propagate),
+            );
+        }
         transactions
     }
 
@@ -929,7 +1141,18 @@ where
             if transaction.propagate {
                 transactions.push(transaction);
                 if transactions.len() >= max {
-                    break;
+                    return transactions;
+                }
+            }
+        }
+        drop(nonce_pool);
+        for sidecar in self.sidecars.iter() {
+            for transaction in sidecar.all_transactions() {
+                if transaction.propagate {
+                    transactions.push(transaction);
+                    if transactions.len() >= max {
+                        return transactions;
+                    }
                 }
             }
         }
@@ -966,7 +1189,12 @@ where
                 continue;
             }
 
-            let Some(transaction) = self.nonce_pool.read().get(hash) else {
+            let Some(transaction) = self
+                .nonce_pool
+                .read()
+                .get(hash)
+                .or_else(|| self.sidecar_owning(hash).and_then(|pool| pool.get(hash)))
+            else {
                 continue;
             };
             let Some((pooled, encoded_length)) = pooled_element(&transaction) else {
@@ -988,6 +1216,7 @@ where
             self.nonce_pool
                 .read()
                 .get(&tx_hash)
+                .or_else(|| self.sidecar_owning(&tx_hash).and_then(|pool| pool.get(&tx_hash)))
                 .and_then(|transaction| transaction.transaction.clone().try_into_pooled().ok())
         })
     }
@@ -1001,12 +1230,10 @@ where
             block_info.pending_blob_fee.map(|fee| u64::try_from(fee).unwrap_or(u64::MAX)),
         );
         let base_fee = best_transactions_attributes.basefee;
-        Box::new(MergeBestTransactions::new(
+        self.merged_best(
             self.protocol_pool.best_transactions_with_attributes(best_transactions_attributes),
-            Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
-            self.ordering.clone(),
             base_fee,
-        ))
+        )
     }
 
     fn best_transactions_with_attributes(
@@ -1014,17 +1241,18 @@ where
         best_transactions_attributes: BestTransactionsAttributes,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
         let base_fee = best_transactions_attributes.basefee;
-        Box::new(MergeBestTransactions::new(
+        self.merged_best(
             self.protocol_pool.best_transactions_with_attributes(best_transactions_attributes),
-            Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
-            self.ordering.clone(),
             base_fee,
-        ))
+        )
     }
 
     fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.pending_transactions();
         transactions.extend(self.nonce_pool.read().pending_transactions());
+        for sidecar in self.sidecars.iter() {
+            transactions.extend(sidecar.pending_transactions());
+        }
         transactions
     }
 
@@ -1051,12 +1279,22 @@ where
         let remaining = max - transactions.len();
         transactions
             .extend(self.nonce_pool.read().pending_transactions().into_iter().take(remaining));
+        for sidecar in self.sidecars.iter() {
+            if transactions.len() >= max {
+                break;
+            }
+            let remaining = max - transactions.len();
+            transactions.extend(sidecar.pending_transactions().into_iter().take(remaining));
+        }
         transactions
     }
 
     fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.queued_transactions();
         transactions.extend(self.nonce_pool.read().queued_transactions());
+        for sidecar in self.sidecars.iter() {
+            transactions.extend(sidecar.queued_transactions());
+        }
         transactions
     }
 
@@ -1064,7 +1302,14 @@ where
         let (pending, queued) = self.protocol_pool.pending_and_queued_txn_count();
         let (sidecar_pending, sidecar_queued) =
             self.nonce_pool.read().pending_and_queued_txn_count();
-        (pending + sidecar_pending, queued + sidecar_queued)
+        let mut pending = pending + sidecar_pending;
+        let mut queued = queued + sidecar_queued;
+        for sidecar in self.sidecars.iter() {
+            let (p, q) = sidecar.pending_and_queued_txn_count();
+            pending += p;
+            queued += q;
+        }
+        (pending, queued)
     }
 
     fn all_transactions(&self) -> AllPoolTransactions<Self::Transaction> {
@@ -1072,12 +1317,20 @@ where
         let nonce_pool = self.nonce_pool.read();
         transactions.pending.extend(nonce_pool.pending_transactions());
         transactions.queued.extend(nonce_pool.queued_transactions());
+        drop(nonce_pool);
+        for sidecar in self.sidecars.iter() {
+            transactions.pending.extend(sidecar.pending_transactions());
+            transactions.queued.extend(sidecar.queued_transactions());
+        }
         transactions
     }
 
     fn all_transaction_hashes(&self) -> Vec<TxHash> {
         let mut hashes = self.protocol_pool.all_transaction_hashes();
         hashes.extend(self.nonce_pool.read().all_hashes());
+        for sidecar in self.sidecars.iter() {
+            hashes.extend(sidecar.all_hashes());
+        }
         hashes
     }
 
@@ -1085,6 +1338,7 @@ where
         &self,
         hashes: Vec<TxHash>,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        let (registered, hashes) = self.drain_registered_sidecar_hashes(hashes);
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions(protocol_hashes);
         self.release_from_guard(&removed);
@@ -1094,6 +1348,13 @@ where
         }
         self.release_from_guard(&sidecar_removed);
         removed.extend(sidecar_removed);
+        let registered_removed =
+            self.remove_from_registered_sidecars(registered, RemovalReason::Discarded);
+        if !registered_removed.is_empty() {
+            self.listeners.write().on_discarded(&registered_removed);
+        }
+        self.release_from_guard(&registered_removed);
+        removed.extend(registered_removed);
         removed
     }
 
@@ -1101,6 +1362,7 @@ where
         &self,
         hashes: Vec<TxHash>,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        let (registered, hashes) = self.drain_registered_sidecar_hashes(hashes);
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions_and_descendants(protocol_hashes);
         self.release_from_guard(&removed);
@@ -1111,6 +1373,19 @@ where
         }
         self.release_from_guard(&sidecar_removed);
         removed.extend(sidecar_removed);
+        let mut registered_removed = Vec::new();
+        for (index, pool) in self.sidecars.iter().enumerate() {
+            let hashes: Vec<_> =
+                registered.iter().filter(|(i, _)| *i == index).map(|(_, h)| *h).collect();
+            if !hashes.is_empty() {
+                registered_removed.extend(pool.remove_transactions_and_descendants(&hashes));
+            }
+        }
+        if !registered_removed.is_empty() {
+            self.listeners.write().on_discarded(&registered_removed);
+        }
+        self.release_from_guard(&registered_removed);
+        removed.extend(registered_removed);
         removed
     }
 
@@ -1126,6 +1401,15 @@ where
         }
         self.release_from_guard(&sidecar_removed);
         removed.extend(sidecar_removed);
+        let mut registered_removed = Vec::new();
+        for pool in self.sidecars.iter() {
+            registered_removed.extend(pool.remove_transactions_by_sender(sender));
+        }
+        if !registered_removed.is_empty() {
+            self.listeners.write().on_discarded(&registered_removed);
+        }
+        self.release_from_guard(&registered_removed);
+        removed.extend(registered_removed);
         removed
     }
 
@@ -1133,12 +1417,17 @@ where
         &self,
         hashes: Vec<TxHash>,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        let (registered, hashes) = self.drain_registered_sidecar_hashes(hashes);
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.prune_transactions(protocol_hashes);
         self.release_from_guard(&removed);
         let pruned = self.nonce_pool.write().prune_mined(&sidecar_hashes);
         self.release_from_guard(&pruned.removed);
         removed.extend(pruned.removed);
+        let registered_removed =
+            self.remove_from_registered_sidecars(registered, RemovalReason::Mined);
+        self.release_from_guard(&registered_removed);
+        removed.extend(registered_removed);
         removed
     }
 
@@ -1153,6 +1442,11 @@ where
 
         let nonce_pool = self.nonce_pool.read();
         announcement.retain_by_hash(|hash| !nonce_pool.contains(hash));
+        drop(nonce_pool);
+        if announcement.is_empty() || self.sidecars.is_empty() {
+            return;
+        }
+        announcement.retain_by_hash(|hash| self.sidecar_owning(hash).is_none());
     }
 
     fn retain_contains<A>(&self, announcement: &mut A)
@@ -1161,25 +1455,40 @@ where
     {
         let nonce_pool = self.nonce_pool.read();
         announcement.retain_by_hash(|hash| {
-            self.protocol_pool.get(hash).is_some() || nonce_pool.contains(hash)
+            self.protocol_pool.get(hash).is_some()
+                || nonce_pool.contains(hash)
+                || self.sidecar_owning(hash).is_some()
         });
     }
 
     fn get(&self, tx_hash: &TxHash) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        self.protocol_pool.get(tx_hash).or_else(|| self.nonce_pool.read().get(tx_hash))
+        self.protocol_pool
+            .get(tx_hash)
+            .or_else(|| self.nonce_pool.read().get(tx_hash))
+            .or_else(|| self.sidecar_owning(tx_hash).and_then(|pool| pool.get(tx_hash)))
     }
 
     fn get_all(&self, txs: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let nonce_pool = self.nonce_pool.read();
         txs.into_iter()
-            .filter_map(|tx| self.protocol_pool.get(&tx).or_else(|| nonce_pool.get(&tx)))
+            .filter_map(|tx| {
+                self.protocol_pool
+                    .get(&tx)
+                    .or_else(|| nonce_pool.get(&tx))
+                    .or_else(|| self.sidecar_owning(&tx).and_then(|pool| pool.get(&tx)))
+            })
             .collect()
     }
 
     fn on_propagated(&self, txs: PropagatedTransactions) {
         let nonce_pool = self.nonce_pool.read();
         let protocol_txs = PropagatedTransactions(
-            txs.0.into_iter().filter(|(hash, _)| !nonce_pool.contains(hash)).collect(),
+            txs.0
+                .into_iter()
+                .filter(|(hash, _)| {
+                    !nonce_pool.contains(hash) && self.sidecar_owning(hash).is_none()
+                })
+                .collect(),
         );
         drop(nonce_pool);
         self.protocol_pool.on_propagated(protocol_txs)
@@ -1191,6 +1500,9 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.get_transactions_by_sender(sender);
         transactions.extend(self.nonce_pool.read().transactions_by_sender(sender));
+        for sidecar in self.sidecars.iter() {
+            transactions.extend(sidecar.transactions_by_sender(sender));
+        }
         transactions
     }
 
@@ -1207,6 +1519,14 @@ where
                 .into_iter()
                 .filter(|transaction| predicate(transaction)),
         );
+        for sidecar in self.sidecars.iter() {
+            transactions.extend(
+                sidecar
+                    .pending_transactions()
+                    .into_iter()
+                    .filter(|transaction| predicate(transaction)),
+            );
+        }
         transactions
     }
 
@@ -1216,6 +1536,9 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.get_pending_transactions_by_sender(sender);
         transactions.extend(self.nonce_pool.read().pending_transactions_by_sender(sender));
+        for sidecar in self.sidecars.iter() {
+            transactions.extend(sidecar.pending_transactions_by_sender(sender));
+        }
         transactions
     }
 
@@ -1225,6 +1548,9 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.get_queued_transactions_by_sender(sender);
         transactions.extend(self.nonce_pool.read().queued_transactions_by_sender(sender));
+        for sidecar in self.sidecars.iter() {
+            transactions.extend(sidecar.queued_transactions_by_sender(sender));
+        }
         transactions
     }
 
@@ -1263,6 +1589,14 @@ where
                 .into_iter()
                 .filter(|transaction| transaction.origin == origin),
         );
+        for sidecar in self.sidecars.iter() {
+            transactions.extend(
+                sidecar
+                    .all_transactions()
+                    .into_iter()
+                    .filter(|transaction| transaction.origin == origin),
+            );
+        }
         transactions
     }
 
@@ -1278,6 +1612,14 @@ where
                 .into_iter()
                 .filter(|transaction| transaction.origin == origin),
         );
+        for sidecar in self.sidecars.iter() {
+            transactions.extend(
+                sidecar
+                    .pending_transactions()
+                    .into_iter()
+                    .filter(|transaction| transaction.origin == origin),
+            );
+        }
         transactions
     }
 
@@ -1285,6 +1627,11 @@ where
         let mut senders = self.protocol_pool.unique_senders();
         for sender in self.nonce_pool.read().unique_senders() {
             senders.insert(sender);
+        }
+        for sidecar in self.sidecars.iter() {
+            for sender in sidecar.unique_senders() {
+                senders.insert(sender);
+            }
         }
         senders
     }
@@ -1402,6 +1749,22 @@ where
             }
             for transaction in &expired {
                 guard.release(transaction.hash());
+            }
+        }
+        if !self.sidecars.is_empty() {
+            let mut listeners = self.listeners.write();
+            let mut guard = self.guard.write();
+            for sidecar in self.sidecars.iter() {
+                let (mined, discarded) = sidecar.on_canonical_state_change(&mined_transactions, now);
+                if !mined.is_empty() {
+                    listeners.on_mined(&mined, block_hash);
+                }
+                if !discarded.is_empty() {
+                    listeners.on_discarded(&discarded);
+                }
+                for transaction in mined.iter().chain(discarded.iter()) {
+                    guard.release(transaction.hash());
+                }
             }
         }
         self.expire_due_buckets(now);
@@ -1561,6 +1924,33 @@ impl<T: BasePooledTx> SidecarListeners<T> {
         }
 
         for promoted in &outcome.promoted {
+            self.broadcast_pending_transaction(promoted);
+        }
+    }
+
+    fn on_sidecar_inserted(&mut self, insert: &SidecarInsert<T>) {
+        let hash = insert.outcome.hash;
+        if let Some(replaced) = &insert.replaced {
+            self.broadcast_hash_event(replaced.hash(), TransactionEvent::Replaced(hash));
+            self.broadcast_all(FullTransactionEvent::Replaced {
+                transaction: Arc::clone(replaced),
+                replaced_by: hash,
+            });
+        }
+        match &insert.outcome.state {
+            AddedTransactionState::Pending => {
+                self.broadcast_pending_transaction(&insert.inserted);
+            }
+            AddedTransactionState::Queued(reason) => {
+                self.broadcast_hash_event(&hash, TransactionEvent::Queued);
+                self.broadcast_all(FullTransactionEvent::Queued(hash, Some(reason.clone())));
+                self.broadcast_new(NewTransactionEvent {
+                    subpool: SubPool::Queued,
+                    transaction: Arc::clone(&insert.inserted),
+                });
+            }
+        }
+        for promoted in &insert.promoted {
             self.broadcast_pending_transaction(promoted);
         }
     }

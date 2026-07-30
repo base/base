@@ -152,6 +152,11 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             base_node = base_node.with_gas_limit_config(gas_limit_config);
         }
         base_node = base_node.with_manifest_precheck_enabled(manifest_precheck_enabled);
+        // Collect sidecar sub-pools by reference before the fold below consumes the boxed
+        // extensions, and before `build_components` constructs the pool builder.
+        let sidecar_pools =
+            extensions.iter().flat_map(|ext| ext.sidecar_pools()).collect::<Vec<_>>();
+        base_node = base_node.with_sidecar_pools(sidecar_pools);
         let components = service_builder.build_components(&base_node);
 
         let builder = builder
@@ -171,7 +176,129 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use base_execution_txpool::{
+        BasePooledTransaction, RemovalReason, SidecarInsert, SidecarPool,
+    };
+
     use super::*;
+
+    /// Stands in for an out-of-tree sidecar pool defined in another crate.
+    #[derive(Debug, Default)]
+    struct ProbePool;
+
+    impl SidecarPool<BasePooledTransaction> for ProbePool {
+        fn name(&self) -> &'static str {
+            "probe"
+        }
+        fn claims(&self, _transaction: &BasePooledTransaction) -> bool {
+            false
+        }
+        fn insert_validated(
+            &self,
+            _origin: reth_transaction_pool::TransactionOrigin,
+            _transaction: reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>,
+            _state_nonce: u64,
+        ) -> reth_transaction_pool::PoolResult<SidecarInsert<BasePooledTransaction>> {
+            unimplemented!()
+        }
+        fn best_transactions(
+            &self,
+            _base_fee: u64,
+        ) -> Box<
+            dyn reth_transaction_pool::BestTransactions<
+                    Item = Arc<
+                        reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>,
+                    >,
+                >,
+        > {
+            unimplemented!()
+        }
+        fn contains(&self, _hash: &alloy_primitives::TxHash) -> bool {
+            false
+        }
+        fn get(
+            &self,
+            _hash: &alloy_primitives::TxHash,
+        ) -> Option<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>
+        {
+            None
+        }
+        fn all_transactions(
+            &self,
+        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>
+        {
+            Vec::new()
+        }
+        fn pending_transactions(
+            &self,
+        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>
+        {
+            Vec::new()
+        }
+        fn queued_transactions(
+            &self,
+        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>
+        {
+            Vec::new()
+        }
+        fn pending_and_queued_txn_count(&self) -> (usize, usize) {
+            (0, 0)
+        }
+        fn all_hashes(&self) -> Vec<alloy_primitives::TxHash> {
+            Vec::new()
+        }
+        fn remove_transactions(
+            &self,
+            _hashes: &[alloy_primitives::TxHash],
+            _reason: RemovalReason,
+        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>
+        {
+            Vec::new()
+        }
+        fn remove_transactions_by_sender(
+            &self,
+            _sender: alloy_primitives::Address,
+        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>
+        {
+            Vec::new()
+        }
+    }
+
+    #[derive(Debug)]
+    struct ProbeExtension {
+        pool: Arc<ProbePool>,
+    }
+
+    impl BaseNodeExtension for ProbeExtension {
+        fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
+            hooks
+        }
+
+        fn sidecar_pools(&self) -> Vec<Arc<dyn SidecarPool<BasePooledTransaction>>> {
+            vec![self.pool.clone()]
+        }
+    }
+
+    #[test]
+    fn extensions_contribute_sidecar_pools_before_boxes_are_consumed() {
+        let extensions: Vec<Box<dyn BaseNodeExtension>> =
+            vec![Box::new(ProbeExtension { pool: Arc::new(ProbePool) })];
+
+        // exactly the lines added to `launch_node`
+        let sidecar_pools =
+            extensions.iter().flat_map(|ext| ext.sidecar_pools()).collect::<Vec<_>>();
+        let base_node =
+            BaseNode::new(RollupArgs::default()).with_sidecar_pools(sidecar_pools.clone());
+
+        assert_eq!(sidecar_pools.len(), 1);
+        assert_eq!(base_node.sidecar_pools.len(), 1);
+        assert_eq!(base_node.sidecar_pools[0].name(), "probe");
+
+        // the fold still consumes the same `extensions` afterwards
+        let _hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
+    }
 
     #[derive(Debug)]
     struct TestPayloadServiceBuilder;

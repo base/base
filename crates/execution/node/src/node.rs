@@ -28,7 +28,7 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
-    BaseTransactionValidator, GuardLimits, TimestampedTransaction,
+    BaseTransactionValidator, GuardLimits, SidecarPool, TimestampedTransaction,
     maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
@@ -879,6 +879,8 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub guard_limits: GuardLimits,
     /// Additional trusted EIP-7702 delegation targets for locked payers.
     pub additional_trusted_delegation_targets: AddressSet,
+    /// Out-of-tree sidecar sub-pools to register on the constructed pool.
+    pub sidecar_pools: Vec<Arc<dyn SidecarPool<T>>>,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -891,6 +893,7 @@ impl<T> Default for BasePoolBuilder<T> {
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
+            sidecar_pools: Vec::new(),
             _pd: Default::default(),
         }
     }
@@ -906,6 +909,7 @@ impl<T> Clone for BasePoolBuilder<T> {
             additional_trusted_delegation_targets: self
                 .additional_trusted_delegation_targets
                 .clone(),
+            sidecar_pools: self.sidecar_pools.clone(),
             _pd: core::marker::PhantomData,
         }
     }
@@ -947,6 +951,13 @@ impl<T> BasePoolBuilder<T> {
         self.additional_trusted_delegation_targets = targets.into_iter().collect();
         self
     }
+
+    /// Registers out-of-tree sidecar sub-pools on the pool this builder constructs.
+    #[must_use]
+    pub fn with_sidecar_pools(mut self, pools: Vec<Arc<dyn SidecarPool<T>>>) -> Self {
+        self.sidecar_pools = pools;
+        self
+    }
 }
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for BasePoolBuilder<T>
@@ -968,6 +979,7 @@ where
             max_inflight_delegated_slots,
             guard_limits,
             additional_trusted_delegation_targets,
+            sidecar_pools,
             ..
         } = self;
 
@@ -1005,8 +1017,9 @@ where
             blob_store,
             final_pool_config.clone(),
         );
-        let transaction_pool =
-            BaseTransactionPool::new(transaction_pool, ordering).with_guard_limits(guard_limits);
+        let transaction_pool = BaseTransactionPool::new(transaction_pool, ordering)
+            .with_guard_limits(guard_limits)
+            .with_sidecar_pools(sidecar_pools);
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
         let state_diff_events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
         ctx.task_executor().spawn_critical_task(

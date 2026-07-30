@@ -1,10 +1,12 @@
 //! Base Node types config.
 
+use std::sync::Arc;
+
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_rpc::eth::BaseEthApiBuilder;
-use base_execution_txpool::GuardLimits;
+use base_execution_txpool::{BasePooledTransaction, GuardLimits, SidecarPool};
 use base_node_core::{
     BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes, BaseExecutorBuilder,
     BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
@@ -43,6 +45,8 @@ pub struct BaseNode {
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
+    /// Sidecar sub-pools contributed by extensions, installed on the transaction pool.
+    pub sidecar_pools: Vec<Arc<dyn SidecarPool<BasePooledTransaction>>>,
 }
 
 impl Default for BaseNode {
@@ -59,6 +63,7 @@ impl BaseNode {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
+            sidecar_pools: Vec::new(),
         }
     }
 
@@ -77,6 +82,16 @@ impl BaseNode {
     /// Configure whether EIP-8130 authorization manifests are checked before execution.
     pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
         self.manifest_precheck_enabled = enabled;
+        self
+    }
+
+    /// Registers sidecar sub-pools to install on the transaction pool.
+    #[must_use]
+    pub fn with_sidecar_pools(
+        mut self,
+        pools: Vec<Arc<dyn SidecarPool<BasePooledTransaction>>>,
+    ) -> Self {
+        self.sidecar_pools = pools;
         self
     }
 
@@ -105,7 +120,8 @@ impl BaseNode {
                     })
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    ),
+                    )
+                    .with_sidecar_pools(self.sidecar_pools.clone()),
             )
             .executor(BaseExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(

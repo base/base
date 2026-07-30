@@ -15,6 +15,7 @@ where
 {
     protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
     sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+    owns_sidecar: Box<dyn Fn(&T) -> bool + Send>,
     ordering: O,
     base_fee: u64,
     next_protocol: Option<Arc<ValidPoolTransaction<T>>>,
@@ -32,7 +33,32 @@ where
         ordering: O,
         base_fee: u64,
     ) -> Self {
-        Self { protocol, sidecar, ordering, base_fee, next_protocol: None, next_sidecar: None }
+        Self::with_discriminator(
+            protocol,
+            sidecar,
+            Box::new(T::is_eip8130_sidecar_transaction),
+            ordering,
+            base_fee,
+        )
+    }
+
+    /// Creates a merged iterator with a caller-supplied ownership predicate.
+    pub(crate) fn with_discriminator(
+        protocol: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+        sidecar: Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>,
+        owns_sidecar: Box<dyn Fn(&T) -> bool + Send>,
+        ordering: O,
+        base_fee: u64,
+    ) -> Self {
+        Self {
+            protocol,
+            sidecar,
+            owns_sidecar,
+            ordering,
+            base_fee,
+            next_protocol: None,
+            next_sidecar: None,
+        }
     }
 
     fn protocol_is_better(
@@ -108,7 +134,7 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
-        if transaction.transaction.is_eip8130_sidecar_transaction() {
+        if (self.owns_sidecar)(&transaction.transaction) {
             self.next_sidecar = None;
             self.sidecar.mark_invalid(transaction, kind);
         } else {
@@ -366,3 +392,328 @@ mod tests {
         assert!(merged.next().is_none());
     }
 }
+
+// ===PROBE-START===
+#[cfg(test)]
+mod nest_probe {
+    use std::{collections::VecDeque, time::Instant};
+
+    use alloy_consensus::{Transaction, transaction::Recovered};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Bytes, U256};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+    use base_common_chains::ChainConfig;
+    use base_common_consensus::{
+        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
+    };
+    use reth_transaction_pool::{TransactionOrigin, identifier::TransactionId};
+
+    use super::*;
+    use crate::{BaseOrdering, BasePooledTransaction};
+
+    // ---- PROBE A: does a nested merge coerce, generically? ----
+    fn assert_nests_generic<T: BasePooledTx, O: TransactionOrdering<Transaction = T>>(
+        inner: MergeBestTransactions<T, O>,
+    ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>> {
+        Box::new(inner)
+    }
+
+    // ---- fixtures (copied from `mod tests`) ----
+    #[derive(Debug)]
+    struct StaticBest<T: BasePooledTx> {
+        transactions: VecDeque<Arc<ValidPoolTransaction<T>>>,
+        marked: Vec<alloy_primitives::TxHash>,
+    }
+
+    impl<T: BasePooledTx> StaticBest<T> {
+        fn new(transactions: Vec<Arc<ValidPoolTransaction<T>>>) -> Self {
+            Self { transactions: transactions.into(), marked: Vec::new() }
+        }
+    }
+
+    impl<T: BasePooledTx> Iterator for StaticBest<T> {
+        type Item = Arc<ValidPoolTransaction<T>>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.transactions.pop_front()
+        }
+    }
+
+    impl<T: BasePooledTx> BestTransactions for StaticBest<T> {
+        fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
+            self.marked.push(*transaction.hash());
+            self.transactions.retain(|c| c.sender() != transaction.sender());
+        }
+
+        fn no_updates(&mut self) {}
+
+        fn set_skip_blobs(&mut self, _skip_blobs: bool) {}
+    }
+
+    fn signed_tx(
+        signer: &PrivateKeySigner,
+        nonce_key: U256,
+        nonce_sequence: u64,
+        max_priority_fee_per_gas: u128,
+        max_fee_per_gas: u128,
+        received_at: u128,
+    ) -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            chain_id: ChainConfig::mainnet().chain_id,
+            sender: None,
+            nonce_key,
+            nonce_sequence,
+            expiry: 0,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        let encoded_length = pooled.encode_2718_len();
+        BasePooledTransaction::new_with_received_at(
+            Recovered::new_unchecked(pooled.into(), signer.address()),
+            encoded_length,
+            received_at,
+        )
+    }
+
+    fn vpt(
+        transaction: BasePooledTransaction,
+        timestamp: Instant,
+    ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        Arc::new(ValidPoolTransaction {
+            transaction_id: TransactionId::new(0u64.into(), transaction.nonce()),
+            transaction,
+            propagate: true,
+            timestamp,
+            origin: TransactionOrigin::External,
+            authority_ids: None,
+        })
+    }
+
+    // ---- PROBE B: concrete 3-way nest, does it run and order correctly? ----
+    #[test]
+    fn probe_nested_three_way_orders_by_priority() {
+        let now = Instant::now();
+        let a = vpt(signed_tx(&PrivateKeySigner::random(), U256::ZERO, 0, 30, 1000, 0), now);
+        let b = vpt(signed_tx(&PrivateKeySigner::random(), U256::from(1), 0, 20, 1000, 0), now);
+        let c = vpt(signed_tx(&PrivateKeySigner::random(), U256::from(2), 0, 40, 1000, 0), now);
+        let (ha, hb, hc) = (*a.hash(), *b.hash(), *c.hash());
+
+        let inner = MergeBestTransactions::new(
+            Box::new(StaticBest::new(vec![a])),
+            Box::new(StaticBest::new(vec![b])),
+            BaseOrdering::coinbase_tip(),
+            10,
+        );
+        let mut outer = MergeBestTransactions::new(
+            Box::new(inner),
+            Box::new(StaticBest::new(vec![c])),
+            BaseOrdering::coinbase_tip(),
+            10,
+        );
+
+        let got: Vec<_> = std::iter::from_fn(|| outer.next()).map(|t| *t.hash()).collect();
+        assert_eq!(got, vec![hc, ha, hb], "expected priority order 40, 30, 20");
+    }
+
+    // ---- PROBE C: nested tie-break: which arm wins an exact tie? ----
+    #[test]
+    fn probe_nested_tie_break_position_dependence() {
+        let now = Instant::now();
+        // three transactions with IDENTICAL priority + identical timestamp; only hashes differ
+        let x = vpt(signed_tx(&PrivateKeySigner::random(), U256::ZERO, 0, 10, 1000, 0), now);
+        let y = vpt(signed_tx(&PrivateKeySigner::random(), U256::from(1), 0, 10, 1000, 0), now);
+        let z = vpt(signed_tx(&PrivateKeySigner::random(), U256::from(2), 0, 10, 1000, 0), now);
+        let mut hashes = [*x.hash(), *y.hash(), *z.hash()];
+        hashes.sort();
+        let max_hash = hashes[2];
+
+        let inner = MergeBestTransactions::new(
+            Box::new(StaticBest::new(vec![x])),
+            Box::new(StaticBest::new(vec![y])),
+            BaseOrdering::coinbase_tip(),
+            10,
+        );
+        let mut outer = MergeBestTransactions::new(
+            Box::new(inner),
+            Box::new(StaticBest::new(vec![z])),
+            BaseOrdering::coinbase_tip(),
+            10,
+        );
+        let first = *outer.next().unwrap().hash();
+        assert_eq!(first, max_hash, "nested merge must still yield global max by hash tiebreak");
+    }
+
+    // ---- PROBE D: nested mark_invalid routing with an explicit discriminator ----
+    #[test]
+    fn probe_nested_mark_invalid_routes_through_inner() {
+        let now = Instant::now();
+        let signer_p = PrivateKeySigner::random();
+        let protocol = vec![
+            vpt(signed_tx(&signer_p, U256::ZERO, 0, 1200, 1200, 0), now),
+            vpt(signed_tx(&signer_p, U256::ZERO, 1, 900, 900, 0), now),
+        ];
+        let sidecar =
+            vec![vpt(signed_tx(&PrivateKeySigner::random(), U256::from(1), 0, 1000, 1000, 0), now)];
+        let extra =
+            vec![vpt(signed_tx(&PrivateKeySigner::random(), U256::from(2), 0, 1100, 1100, 0), now)];
+        let extra_hash = *extra[0].hash();
+
+        let inner = MergeBestTransactions::new(
+            Box::new(StaticBest::new(protocol)),
+            Box::new(StaticBest::new(sidecar)),
+            BaseOrdering::coinbase_tip(),
+            0,
+        );
+        // outer discriminator: "extra" arm owns nonce_key == 2
+        let mut outer = MergeBestTransactions::with_discriminator(
+            Box::new(inner),
+            Box::new(StaticBest::new(extra)),
+            Box::new(|t: &BasePooledTransaction| {
+                t.eip8130_nonce_channel_key() == Some(U256::from(2))
+            }),
+            BaseOrdering::coinbase_tip(),
+            0,
+        );
+
+        // 1200 (protocol, innermost) wins first
+        let first = outer.next().expect("first");
+        assert_eq!(first.transaction.eip8130_nonce_channel_key(), None, "innermost protocol first");
+        assert_eq!(first.nonce(), 0);
+
+        // 1100 (extra, outer arm) next
+        let second = outer.next().expect("second");
+        assert_eq!(*second.hash(), extra_hash, "outer arm second");
+
+        // 1000 (sidecar, inner arm) next
+        let third = outer.next().expect("third");
+        assert_eq!(third.transaction.eip8130_nonce_channel_key(), Some(U256::from(1)));
+
+        // marking the protocol tx invalid must reach the INNERMOST protocol arm and
+        // drain the same-sender descendant (nonce 1 / 900).
+        outer.mark_invalid(&first, InvalidPoolTransactionError::Underpriced);
+        assert!(outer.next().is_none(), "descendant must be drained through two merge levels");
+    }
+
+    // ---- PROBE E: does `max_by_key` pick the FIRST or the LAST maximum? ----
+    #[test]
+    fn probe_max_by_key_returns_last_maximum() {
+        let heads = vec![("protocol", 5u64), ("sidecar", 5u64), ("extra", 5u64)];
+        let picked = heads.iter().max_by_key(|(_, p)| *p).unwrap();
+        assert_eq!(picked.0, "extra", "std max_by_key returns the LAST maximum");
+
+        let picked_first = heads.iter().rev().max_by_key(|(_, p)| *p).unwrap();
+        assert_eq!(picked_first.0, "protocol", "reversing restores first-wins bias");
+    }
+
+    // ---- PROBE F: is the merge key a strict total order (i.e. is `>=` bias reachable)? ----
+    #[test]
+    fn probe_merge_key_is_total_order_so_ge_bias_is_unreachable() {
+        let now = Instant::now();
+        // identical fee, identical timestamp, different senders -> only the hash differs
+        let p = vpt(signed_tx(&PrivateKeySigner::random(), U256::ZERO, 0, 10, 1000, 0), now);
+        let s = vpt(signed_tx(&PrivateKeySigner::random(), U256::ZERO, 0, 10, 1000, 0), now);
+        assert_ne!(*p.hash(), *s.hash());
+
+        let ordering = BaseOrdering::coinbase_tip();
+        let key = |t: &Arc<ValidPoolTransaction<BasePooledTransaction>>| {
+            (ordering.priority(&t.transaction, 10), Reverse(t.timestamp), *t.hash())
+        };
+        assert_ne!(key(&p), key(&s), "hash breaks every tie; exact equality is unreachable");
+    }
+
+    #[allow(dead_code)]
+    fn use_a(x: MergeBestTransactions<BasePooledTransaction, BaseOrdering<BasePooledTransaction>>) {
+        let _ = assert_nests_generic(x);
+    }
+
+    // ---- PROBE G: randomized equivalence, nested-pairwise vs reference N-way max_by_key ----
+    fn reference_nway(
+        mut arms: Vec<VecDeque<Arc<ValidPoolTransaction<BasePooledTransaction>>>>,
+        base_fee: u64,
+    ) -> Vec<alloy_primitives::TxHash> {
+        let ordering = BaseOrdering::coinbase_tip();
+        let mut heads: Vec<Option<Arc<ValidPoolTransaction<BasePooledTransaction>>>> =
+            vec![None; arms.len()];
+        let mut out = Vec::new();
+        loop {
+            for (i, head) in heads.iter_mut().enumerate() {
+                if head.is_none() {
+                    *head = arms[i].pop_front();
+                }
+            }
+            let key = |t: &Arc<ValidPoolTransaction<BasePooledTransaction>>| {
+                (ordering.priority(&t.transaction, base_fee), Reverse(t.timestamp), *t.hash())
+            };
+            let Some(best_idx) = heads
+                .iter()
+                .enumerate()
+                .filter_map(|(i, h)| h.as_ref().map(|t| (i, key(t))))
+                .max_by_key(|(_, k)| k.clone())
+                .map(|(i, _)| i)
+            else {
+                return out;
+            };
+            let tx = heads[best_idx].take().expect("head");
+            if tx.effective_tip_per_gas(base_fee).is_some() {
+                out.push(*tx.hash());
+            }
+        }
+    }
+
+    #[test]
+    fn probe_nested_matches_reference_nway_on_randomized_input() {
+        for seed in 0u128..40 {
+            let now = Instant::now();
+            let mut arms: Vec<Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>> =
+                vec![Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+            let mut x = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            for i in 0..24u128 {
+                x = x.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+                let arm = (x >> 33) as usize % 4;
+                let tip = 1 + ((x >> 7) % 60) as u128;
+                let ts = now + std::time::Duration::from_micros(((x >> 17) % 5) as u64);
+                let key = if arm == 0 { U256::ZERO } else { U256::from(arm) };
+                arms[arm].push(vpt(
+                    signed_tx(&PrivateKeySigner::random(), key, i as u64, tip, 1000, 0),
+                    ts,
+                ));
+            }
+
+            let expected = reference_nway(
+                arms.iter().cloned().map(VecDeque::from).collect::<Vec<_>>(),
+                10,
+            );
+
+            let mut merged: Box<
+                dyn BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+            > = Box::new(MergeBestTransactions::new(
+                Box::new(StaticBest::new(arms[0].clone())),
+                Box::new(StaticBest::new(arms[1].clone())),
+                BaseOrdering::coinbase_tip(),
+                10,
+            ));
+            for arm in arms.iter().skip(2) {
+                merged = Box::new(MergeBestTransactions::with_discriminator(
+                    merged,
+                    Box::new(StaticBest::new(arm.clone())),
+                    Box::new(|_: &BasePooledTransaction| false),
+                    BaseOrdering::coinbase_tip(),
+                    10,
+                ));
+            }
+            let got: Vec<_> = std::iter::from_fn(|| merged.next()).map(|t| *t.hash()).collect();
+            assert_eq!(got, expected, "seed {seed}: nested != reference N-way");
+        }
+    }
+}
+// ===PROBE-END===
