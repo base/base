@@ -9,6 +9,39 @@ Vector tails these same JSONL files and ships newline-delimited event records to
 `audit-archiver`. The audit HTTP ingest endpoint is collector-facing and expects
 one event JSON object per line, not a wrapped JSON batch.
 
+## Postgres Retention
+
+`audit-archiver` stores events in Postgres for operational queries. Postgres is
+not the long-term archive. At ingest, the archiver assigns a `retention_class`
+from a fixed event-type map:
+
+| Class | Keep | Families |
+| --- | --- | --- |
+| `hot` | 7 days | Proxy success-path hops; `BUILDER_CONSIDERED`, `BUILDER_ACCEPTED`, `BUILDER_REJECTED` |
+| `warm` | 30 days | Default for remaining arrival, simulation, and forwarding events |
+| `cold` | 90 days | Inclusion, finalization, flashblock lifecycle, rejection, and drop events |
+
+Unknown or newly added event types default to `warm`. Prefer changing the map
+deliberately when a new type is high-churn (`hot`) or high-value (`cold`).
+
+At the measured mainnet send rates (ingress sendRaw ≈ 696/s, builder decisions ≈
+272/s, proxyd ≈ 6 events/send), a tiered 7/30/90 policy is roughly an order of
+magnitude smaller than a uniform 90-day TTL, but full enablement of proxy and
+ingress families can still exceed the current 5 Ti RDS ceiling. Treat the
+windows as tunable and re-check hot/warm GiB/day before locking mainnet
+producer enablement.
+
+The table is list-partitioned by `retention_class` and range-partitioned by UTC
+`ingested_at` day. An app-owned maintenance worker creates upcoming partitions
+and drops expired ones with `DROP TABLE` rather than row `DELETE`. Configure the
+windows with:
+
+- `TIPS_AUDIT_TRANSACTION_EVENT_HOT_RETENTION_DAYS`
+- `TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS`
+- `TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS`
+- `TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_PREMAKE_DAYS`
+- `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS`
+
 ## Configuration Fields
 
 Rust producers should expose these config fields directly or with a

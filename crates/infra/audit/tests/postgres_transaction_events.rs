@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use audit_archiver_lib::{
     MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink,
+    TransactionEventRetentionClass, TransactionEventRetentionConfig,
     TransactionEventSchemaReadinessError, TransactionEventSink,
 };
 use base_observability_events::TransactionEvent;
@@ -99,7 +100,7 @@ async fn transaction_events_unready_when_migration_version_is_missing() -> anyho
             required_version
         } if required_version == expected_version
     ));
-    assert!(err.to_string().contains("001_transaction_events.sql"));
+    assert!(err.to_string().contains("002_transaction_event_retention.sql"));
 
     Ok(())
 }
@@ -108,8 +109,8 @@ async fn transaction_events_unready_when_migration_version_is_missing() -> anyho
 fn transaction_events_migration_version_matches_sqlx_migration_metadata() -> anyhow::Result<()> {
     assert_eq!(
         PgTransactionEventSink::required_migration_version().map_err(anyhow::Error::msg)?,
-        1,
-        "001_transaction_events.sql should resolve to sqlx migration version 1"
+        2,
+        "002_transaction_event_retention.sql should resolve to sqlx migration version 2"
     );
     Ok(())
 }
@@ -124,6 +125,18 @@ async fn transaction_events_ready_after_required_migration() -> anyhow::Result<(
     sink.check_schema_ready().await?;
 
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let schema: (String, bool) = sqlx::query_as(
+        "SELECT c.relkind::TEXT, \
+         to_regprocedure( \
+             'maintain_transaction_event_partitions(timestamptz,integer,integer,integer,integer)' \
+         ) IS NOT NULL \
+         FROM pg_class AS c \
+         WHERE c.oid = 'transaction_events'::regclass",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(schema, ("p".to_string(), true));
+
     let applied: (bool,) =
         sqlx::query_as("SELECT success FROM _sqlx_migrations WHERE version = $1")
             .bind(PgTransactionEventSink::required_migration_version().map_err(anyhow::Error::msg)?)
@@ -155,6 +168,48 @@ async fn postgres_sink_chunks_large_direct_inserts() -> anyhow::Result<()> {
             .fetch_one(&pool)
             .await?;
     assert_eq!(count.0, i64::try_from(event_count)?);
+    let placement: (String, String) = sqlx::query_as(
+        "SELECT retention_class, tableoid::regclass::TEXT \
+         FROM transaction_events \
+         WHERE event_id = $1",
+    )
+    .bind(format!("{event_prefix}-0"))
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(placement.0, TransactionEventRetentionClass::Hot.to_string());
+    assert!(placement.1.starts_with("transaction_events_hot_"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_partition_maintenance_creates_and_drops_class_windows() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+
+    let outcomes = sink
+        .maintain_partitions(TransactionEventRetentionConfig {
+            premake_days: 2,
+            hot_days: 1,
+            warm_days: 2,
+            cold_days: 3,
+        })
+        .await?;
+    assert_eq!(outcomes.len(), 3);
+
+    let counts: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT retention_class, count(*) \
+         FROM transaction_event_partition_registry \
+         GROUP BY retention_class \
+         ORDER BY retention_class",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert!(counts.iter().any(|(class, count)| class == "hot" && *count >= 3));
+    assert!(counts.iter().any(|(class, count)| class == "warm" && *count >= 3));
+    assert!(counts.iter().any(|(class, count)| class == "cold" && *count >= 3));
 
     Ok(())
 }

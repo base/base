@@ -1,6 +1,6 @@
 //! HTTP ingest path for transaction observability events.
 
-use std::{collections::HashSet, sync::Arc, time::Instant};
+use std::{collections::HashSet, fmt, sync::Arc, time::Instant};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -45,9 +45,122 @@ pub const DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 
 /// Maximum events inserted in one Postgres statement.
 ///
-/// Each row uses 12 bind parameters, so this stays below Postgres' 65,535 bind
+/// Each row uses 14 bind parameters, so this stays below Postgres' 65,535 bind
 /// parameter limit with room for future columns.
-pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 5_000;
+pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 4_000;
+
+/// Default number of UTC daily partitions to create ahead of ingest.
+pub const DEFAULT_TRANSACTION_EVENT_PARTITION_PREMAKE_DAYS: u32 = 7;
+/// Default retention for high-volume transaction event families.
+pub const DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS: u32 = 7;
+/// Default retention for ordinary transaction event families.
+pub const DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS: u32 = 30;
+/// Default retention for high-value transaction event families.
+pub const DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS: u32 = 90;
+
+/// Bounded retention class persisted with every transaction event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TransactionEventRetentionClass {
+    /// High-volume success-path and repeated builder-decision events.
+    Hot,
+    /// Default class for ordinary arrival, simulation, and forwarding events.
+    Warm,
+    /// High-value inclusion, finalization, rejection, and drop events.
+    Cold,
+}
+
+impl TransactionEventRetentionClass {
+    /// Stable lowercase value stored in Postgres and used as a bounded metric label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hot => "hot",
+            Self::Warm => "warm",
+            Self::Cold => "cold",
+        }
+    }
+
+    /// Classifies a transaction event at ingest.
+    ///
+    /// Event types not explicitly assigned to hot or cold default to warm. This
+    /// makes additions safe by default while keeping exceptional volume and
+    /// diagnostic-value choices visible in this fixed map.
+    pub const fn for_event_type(event_type: TransactionEventType) -> Self {
+        match event_type {
+            TransactionEventType::ProxyReceived
+            | TransactionEventType::ProxyValidationAccepted
+            | TransactionEventType::ProxyRoutedToBackend
+            | TransactionEventType::ProxyBackendSuccess
+            | TransactionEventType::ProxyIngressRpcAttempt
+            | TransactionEventType::ProxyIngressRpcSuccess
+            | TransactionEventType::BuilderConsidered
+            | TransactionEventType::BuilderAccepted
+            | TransactionEventType::BuilderRejected => Self::Hot,
+            TransactionEventType::ProxyRejected
+            | TransactionEventType::ProxyValidationRejected
+            | TransactionEventType::ProxyBackendFailure
+            | TransactionEventType::ProxyIngressRpcFailure
+            | TransactionEventType::SimulationFailed
+            | TransactionEventType::IngressMeteringSendFailure
+            | TransactionEventType::IngressMeteringSendDropped
+            | TransactionEventType::Dropped
+            | TransactionEventType::Replaced
+            | TransactionEventType::Overflowed
+            | TransactionEventType::TxpoolBuilderForwardFailure
+            | TransactionEventType::TxpoolBuilderForwardDropped
+            | TransactionEventType::TxpoolValidatedInsertRejected
+            | TransactionEventType::BuilderIncluded
+            | TransactionEventType::BuilderPayloadFinalized
+            | TransactionEventType::BuilderFlashblockStarted
+            | TransactionEventType::BuilderFlashblockPublished
+            | TransactionEventType::BuilderFlashblockBuildStopped => Self::Cold,
+            _ => Self::Warm,
+        }
+    }
+}
+
+impl fmt::Display for TransactionEventRetentionClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Configuration for one transaction event partition-maintenance pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransactionEventRetentionConfig {
+    /// Number of future UTC daily partitions to create.
+    pub premake_days: u32,
+    /// Hot event retention in days.
+    pub hot_days: u32,
+    /// Warm event retention in days.
+    pub warm_days: u32,
+    /// Cold event retention in days.
+    pub cold_days: u32,
+}
+
+impl Default for TransactionEventRetentionConfig {
+    fn default() -> Self {
+        Self {
+            premake_days: DEFAULT_TRANSACTION_EVENT_PARTITION_PREMAKE_DAYS,
+            hot_days: DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
+            warm_days: DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS,
+            cold_days: DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS,
+        }
+    }
+}
+
+/// Result for one retention class from a partition-maintenance pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransactionEventPartitionMaintenanceOutcome {
+    /// Retention class maintained.
+    pub retention_class: TransactionEventRetentionClass,
+    /// Future/current partitions created.
+    pub partitions_created: u64,
+    /// Expired partitions dropped.
+    pub partitions_dropped: u64,
+    /// Start of the oldest retained daily partition.
+    pub oldest_partition_start: Option<DateTime<Utc>>,
+}
 
 /// Configuration for transaction event HTTP ingest.
 #[derive(Debug, Clone)]
@@ -128,7 +241,7 @@ pub struct TransactionEventInsertOutcome {
 pub const DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 500;
 /// Hard maximum query result count for read APIs.
 pub const MAX_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 2_000;
-const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction events";
+const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction event retention";
 static TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 /// Required sqlx migration version for transaction event storage.
@@ -137,7 +250,7 @@ fn required_transaction_event_migration_version() -> Result<i64, &'static str> {
         migration.description.as_ref() == REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION
     });
     let migration = matching_migrations.next().ok_or(
-        "transaction event migration 001_transaction_events.sql must be embedded in audit migrator",
+        "transaction event migration 002_transaction_event_retention.sql must be embedded in audit migrator",
     )?;
     if matching_migrations.next().is_some() {
         return Err("transaction event migration description must be unique");
@@ -151,6 +264,8 @@ pub struct TransactionEventRecord {
     /// Event envelope.
     #[serde(flatten)]
     pub event: TransactionEvent,
+    /// Retention policy selected by audit-archiver at ingest.
+    pub retention_class: TransactionEventRetentionClass,
     /// Time when audit-archiver inserted the event.
     pub ingested_at: DateTime<Utc>,
 }
@@ -196,7 +311,7 @@ pub enum TransactionEventSchemaReadinessError {
     MigrationTableMissing,
     /// The transaction event migration has not completed successfully.
     #[error(
-        "transaction-event Postgres schema is not ready: required sqlx migration version {required_version} for 001_transaction_events.sql has not been applied successfully; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
+        "transaction-event Postgres schema is not ready: required sqlx migration version {required_version} for 002_transaction_event_retention.sql has not been applied successfully; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
     )]
     RequiredMigrationMissing {
         /// Required sqlx migration version.
@@ -207,6 +322,16 @@ pub enum TransactionEventSchemaReadinessError {
         "transaction-event Postgres schema is not ready: public.transaction_events is missing or not visible to the runtime role; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
     )]
     TransactionEventsRelationMissing,
+    /// The table exists but has not been cut over to declarative partitioning.
+    #[error(
+        "transaction-event Postgres schema is not ready: public.transaction_events is not a partitioned table; complete the transaction-event retention cutover"
+    )]
+    TransactionEventsRelationNotPartitioned,
+    /// The application-owned maintenance function is unavailable.
+    #[error(
+        "transaction-event Postgres schema is not ready: partition maintenance function is missing; run migration 002_transaction_event_retention.sql"
+    )]
+    PartitionMaintenanceFunctionMissing,
     /// The expected table exists but cannot be queried by the runtime role.
     #[error(
         "transaction-event Postgres schema is not ready: runtime role cannot query public.transaction_events; verify audit_archiver privileges from 001_transaction_events.sql"
@@ -291,11 +416,23 @@ impl PgTransactionEventSink {
     pub async fn check_schema_ready(
         &self,
     ) -> std::result::Result<(), TransactionEventSchemaReadinessError> {
-        let (migration_table_exists, transaction_events_relation_exists): (bool, bool) =
-            sqlx::query_as(
+        let (
+            migration_table_exists,
+            transaction_events_relation_exists,
+            transaction_events_partitioned,
+            maintenance_function_exists,
+        ): (bool, bool, bool, bool) = sqlx::query_as(
                 "SELECT \
                     to_regclass('_sqlx_migrations') IS NOT NULL AS migration_table_exists, \
-                    to_regclass('public.transaction_events') IS NOT NULL AS transaction_events_relation_exists",
+                    to_regclass('public.transaction_events') IS NOT NULL AS transaction_events_relation_exists, \
+                    COALESCE(( \
+                        SELECT relkind = 'p' \
+                        FROM pg_class \
+                        WHERE oid = to_regclass('public.transaction_events') \
+                    ), FALSE) AS transaction_events_partitioned, \
+                    to_regprocedure( \
+                        'public.maintain_transaction_event_partitions(timestamptz,integer,integer,integer,integer)' \
+                    ) IS NOT NULL AS maintenance_function_exists",
             )
             .fetch_one(&self.pool)
             .await
@@ -324,6 +461,14 @@ impl PgTransactionEventSink {
         if !transaction_events_relation_exists {
             return Err(TransactionEventSchemaReadinessError::TransactionEventsRelationMissing);
         }
+        if !transaction_events_partitioned {
+            return Err(
+                TransactionEventSchemaReadinessError::TransactionEventsRelationNotPartitioned,
+            );
+        }
+        if !maintenance_function_exists {
+            return Err(TransactionEventSchemaReadinessError::PartitionMaintenanceFunctionMissing);
+        }
 
         sqlx::query("SELECT 1 FROM transaction_events LIMIT 0").execute(&self.pool).await.map_err(
             |source| TransactionEventSchemaReadinessError::TransactionEventsRelationUnavailable {
@@ -332,6 +477,61 @@ impl PgTransactionEventSink {
         )?;
 
         Ok(())
+    }
+
+    /// Creates upcoming daily partitions and drops expired partitions.
+    ///
+    /// The database function serializes concurrent calls from multiple replicas
+    /// with a transaction-scoped advisory lock.
+    pub async fn maintain_partitions(
+        &self,
+        config: TransactionEventRetentionConfig,
+    ) -> Result<Vec<TransactionEventPartitionMaintenanceOutcome>> {
+        let premake_days = i32::try_from(config.premake_days)?;
+        let hot_days = i32::try_from(config.hot_days)?;
+        let warm_days = i32::try_from(config.warm_days)?;
+        let cold_days = i32::try_from(config.cold_days)?;
+        let now = Utc::now();
+        let rows = sqlx::query(
+            "SELECT retention_class, partitions_created, partitions_dropped, \
+             oldest_partition_start \
+             FROM maintain_transaction_event_partitions($1, $2, $3, $4, $5)",
+        )
+        .bind(now)
+        .bind(premake_days)
+        .bind(hot_days)
+        .bind(warm_days)
+        .bind(cold_days)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            let retention_class =
+                parse_transaction_event_retention_class(row.try_get("retention_class")?)?;
+            let partitions_created: i64 = row.try_get("partitions_created")?;
+            let partitions_dropped: i64 = row.try_get("partitions_dropped")?;
+            let oldest_partition_start = row.try_get("oldest_partition_start")?;
+            let outcome = TransactionEventPartitionMaintenanceOutcome {
+                retention_class,
+                partitions_created: u64::try_from(partitions_created)?,
+                partitions_dropped: u64::try_from(partitions_dropped)?,
+                oldest_partition_start,
+            };
+
+            Metrics::transaction_event_partitions_created(retention_class.as_str())
+                .increment(outcome.partitions_created);
+            Metrics::transaction_event_partitions_dropped(retention_class.as_str())
+                .increment(outcome.partitions_dropped);
+            if let Some(oldest) = outcome.oldest_partition_start {
+                let age_seconds =
+                    now.signed_duration_since(oldest).to_std().map_or(0.0, |age| age.as_secs_f64());
+                Metrics::transaction_event_oldest_partition_age_seconds(retention_class.as_str())
+                    .set(age_seconds);
+            }
+            outcomes.push(outcome);
+        }
+        Ok(outcomes)
     }
 
     /// Checks optional transaction event storage readiness.
@@ -348,6 +548,7 @@ impl PgTransactionEventSink {
         &self,
         events: &[TransactionEvent],
     ) -> std::result::Result<HashSet<String>, TransactionEventStorageError> {
+        let ingested_at = Utc::now();
         let block_numbers: Vec<Option<i64>> = events
             .iter()
             .map(|event| {
@@ -361,8 +562,8 @@ impl PgTransactionEventSink {
 
         let mut query_builder = QueryBuilder::new(
             "INSERT INTO transaction_events \
-             (event_id, schema_version, event_time, producer, event_type, network, tx_hash, \
-              block_hash, block_number, payload_id, request_id, data) ",
+             (event_id, retention_class, schema_version, event_time, ingested_at, producer, \
+              event_type, network, tx_hash, block_hash, block_number, payload_id, request_id, data) ",
         );
 
         query_builder.push_values(
@@ -372,11 +573,15 @@ impl PgTransactionEventSink {
                 let block_hash = event.block_hash.map(|hash| hash.to_string());
                 let producer = event.producer.to_string();
                 let event_type = event.event_type.to_string();
+                let retention_class =
+                    TransactionEventRetentionClass::for_event_type(event.event_type).to_string();
                 let data = Value::Object(event.data.clone());
 
                 row.push_bind(&event.event_id)
+                    .push_bind(retention_class)
                     .push_bind(&event.schema_version)
                     .push_bind(event.event_time)
+                    .push_bind(ingested_at)
                     .push_bind(producer)
                     .push_bind(event_type)
                     .push_bind(&event.network)
@@ -389,7 +594,7 @@ impl PgTransactionEventSink {
             },
         );
 
-        query_builder.push(" ON CONFLICT (event_id) DO NOTHING RETURNING event_id");
+        query_builder.push(" ON CONFLICT DO NOTHING RETURNING event_id");
 
         let rows: Vec<(String,)> = query_builder
             .build_query_as()
@@ -408,7 +613,7 @@ impl PgTransactionEventSink {
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
         let rows = sqlx::query(
-            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
+            "SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
              WHERE tx_hash = $1 \
@@ -431,7 +636,7 @@ impl PgTransactionEventSink {
         let block_number = i64::try_from(block_number)?;
         let limit = normalize_limit(limit);
         let rows = sqlx::query(
-            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
+            "SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
              WHERE block_number = $1 \
@@ -453,7 +658,7 @@ impl PgTransactionEventSink {
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
         let rows = sqlx::query(
-            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
+            "SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
              WHERE block_hash = $1 \
@@ -476,12 +681,12 @@ impl PgTransactionEventSink {
         let limit = normalize_limit(limit);
         let rows = sqlx::query(
             "WITH bundle_events AS ( \
-                SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
+                SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
                 network, tx_hash, block_hash, block_number, payload_id, request_id, data \
                 FROM transaction_events \
                 WHERE data ? 'bundle_hash' AND data->>'bundle_hash' = $1 \
                 UNION ALL \
-                SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
+                SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
                 network, tx_hash, block_hash, block_number, payload_id, request_id, data \
                 FROM transaction_events \
                 WHERE data ? 'bundle_id' AND data->>'bundle_id' = $1 \
@@ -489,7 +694,7 @@ impl PgTransactionEventSink {
                 SELECT DISTINCT ON (event_id) * FROM bundle_events \
                 ORDER BY event_id, event_time ASC, ingested_at ASC \
              ) \
-             SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
+             SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM deduped \
              ORDER BY event_time ASC, ingested_at ASC, event_id ASC \
@@ -512,7 +717,7 @@ impl PgTransactionEventSink {
         let to_block = query.to_block.map(i64::try_from).transpose()?;
 
         let rows = sqlx::query(
-            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
+            "SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
              WHERE event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED') \
@@ -566,7 +771,11 @@ fn record_from_row(row: sqlx::postgres::PgRow) -> Result<TransactionEventRecord>
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("transaction event data column is not a JSON object"))?,
     };
-    Ok(TransactionEventRecord { event, ingested_at: row.try_get("ingested_at")? })
+    Ok(TransactionEventRecord {
+        event,
+        retention_class: parse_transaction_event_retention_class(row.try_get("retention_class")?)?,
+        ingested_at: row.try_get("ingested_at")?,
+    })
 }
 
 fn parse_transaction_event_producer(producer: String) -> Result<TransactionEventProducer> {
@@ -577,6 +786,13 @@ fn parse_transaction_event_producer(producer: String) -> Result<TransactionEvent
 fn parse_transaction_event_type(event_type: String) -> Result<TransactionEventType> {
     let deserializer: StringDeserializer<SerdeValueError> = event_type.into_deserializer();
     Ok(TransactionEventType::deserialize(deserializer)?)
+}
+
+fn parse_transaction_event_retention_class(
+    retention_class: String,
+) -> Result<TransactionEventRetentionClass> {
+    let deserializer: StringDeserializer<SerdeValueError> = retention_class.into_deserializer();
+    Ok(TransactionEventRetentionClass::deserialize(deserializer)?)
 }
 
 fn metric_len_u64(len: usize) -> u64 {
@@ -1000,6 +1216,34 @@ mod tests {
     fn raw_event(value: Value) -> RawTransactionEvent {
         let byte_len = serde_json::to_string(&value).unwrap().len();
         RawTransactionEvent { value, byte_len }
+    }
+
+    #[test]
+    fn classifies_transaction_event_retention() {
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::ProxyBackendSuccess
+            ),
+            TransactionEventRetentionClass::Hot
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::IngressReceived),
+            TransactionEventRetentionClass::Warm
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::SimulationFailed),
+            TransactionEventRetentionClass::Cold
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderRejected),
+            TransactionEventRetentionClass::Hot
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::BuilderPayloadFinalized
+            ),
+            TransactionEventRetentionClass::Cold
+        );
     }
 
     #[tokio::test]

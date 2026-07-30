@@ -54,4 +54,15 @@ base_metrics::define_metrics! {
     transaction_event_batch_size: histogram,
     #[describe("Duration of transaction observability Postgres batch writes")]
     transaction_event_batch_write_duration: histogram,
+    #[describe("Transaction observability daily partitions created")]
+    #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
+    transaction_event_partitions_created: counter,
+    #[describe("Expired transaction observability daily partitions dropped")]
+    #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
+    transaction_event_partitions_dropped: counter,
+    #[describe("Age in seconds of the oldest retained transaction observability partition")]
+    #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
+    transaction_event_oldest_partition_age_seconds: gauge,
+    #[describe("Transaction observability partition maintenance failures")]
+    transaction_event_partition_maintenance_failures: counter,
 }
