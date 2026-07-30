@@ -1,10 +1,7 @@
--- Convert transaction_events to retention-class/list partitions whose leaves are
--- daily UTC ingested_at ranges. This migration takes an ACCESS EXCLUSIVE lock
--- while it copies existing rows. Run the documented zeronet-first preflight and
--- cutover procedure before applying it to a populated environment.
-LOCK TABLE transaction_events IN ACCESS EXCLUSIVE MODE;
-
-ALTER TABLE transaction_events RENAME TO transaction_events_pre_retention;
+-- Replace the heap transaction_events table with retention-class/list partitions
+-- whose leaves are daily UTC ingested_at ranges. Existing rows are discarded;
+-- pause producers before applying this migration.
+DROP TABLE IF EXISTS transaction_events;
 
 CREATE TABLE transaction_events (
     event_id TEXT NOT NULL,
@@ -44,53 +41,6 @@ CREATE TABLE transaction_event_partition_registry (
     CONSTRAINT transaction_event_partition_registry_class_check
         CHECK (retention_class IN ('hot', 'warm', 'cold'))
 );
-
--- This duplicate of the Rust classification is used only to classify rows that
--- predate retention_class. New writes are classified by audit-archiver.
-CREATE FUNCTION transaction_event_retention_class_for_backfill(p_event_type TEXT)
-RETURNS TEXT
-LANGUAGE sql
-IMMUTABLE
-STRICT
-AS $$
-    SELECT CASE
-        WHEN p_event_type IN (
-            'PROXY_RECEIVED',
-            'PROXY_VALIDATION_ACCEPTED',
-            'PROXY_ROUTED_TO_BACKEND',
-            'PROXY_BACKEND_SUCCESS',
-            'PROXY_INGRESS_RPC_ATTEMPT',
-            'PROXY_INGRESS_RPC_SUCCESS',
-            'BUILDER_CONSIDERED',
-            'BUILDER_ACCEPTED',
-            'BUILDER_REJECTED'
-        ) THEN 'hot'
-        WHEN p_event_type IN (
-            'PROXY_REJECTED',
-            'PROXY_VALIDATION_REJECTED',
-            'PROXY_BACKEND_FAILURE',
-            'PROXY_INGRESS_RPC_FAILURE',
-            'SIMULATION_FAILED',
-            'INGRESS_TX_FORWARD_FAILURE',
-            'INGRESS_METERING_SEND_FAILURE',
-            'INGRESS_METERING_SEND_DROPPED',
-            'TXPOOL_DROPPED',
-            'TXPOOL_REPLACED',
-            'TXPOOL_TRACKING_OVERFLOWED',
-            'TXPOOL_BLOCK_INCLUDED',
-            'TXPOOL_FLASHBLOCK_INCLUDED',
-            'TXPOOL_BUILDER_FORWARD_FAILURE',
-            'TXPOOL_BUILDER_FORWARD_DROPPED',
-            'TXPOOL_VALIDATED_INSERT_REJECTED',
-            'BUILDER_INCLUDED',
-            'BUILDER_PAYLOAD_FINALIZED',
-            'BUILDER_FLASHBLOCK_STARTED',
-            'BUILDER_FLASHBLOCK_PUBLISHED',
-            'BUILDER_FLASHBLOCK_BUILD_STOPPED'
-        ) THEN 'cold'
-        ELSE 'warm'
-    END
-$$;
 
 CREATE FUNCTION create_transaction_event_partition(
     p_retention_class TEXT,
@@ -156,19 +106,11 @@ $$;
 
 DO $$
 DECLARE
-    first_day DATE;
-    last_day DATE;
+    first_day DATE := (now() AT TIME ZONE 'UTC')::DATE;
+    last_day DATE := first_day + 7;
     class_name TEXT;
     partition_day DATE;
 BEGIN
-    SELECT COALESCE(
-        min(ingested_at AT TIME ZONE 'UTC')::DATE,
-        (now() AT TIME ZONE 'UTC')::DATE
-    )
-    INTO first_day
-    FROM transaction_events_pre_retention;
-    last_day := (now() AT TIME ZONE 'UTC')::DATE + 7;
-
     FOREACH class_name IN ARRAY ARRAY['hot', 'warm', 'cold']
     LOOP
         FOR partition_day IN
@@ -179,39 +121,6 @@ BEGIN
     END LOOP;
 END
 $$;
-
-INSERT INTO transaction_events (
-    event_id,
-    retention_class,
-    schema_version,
-    event_time,
-    ingested_at,
-    producer,
-    event_type,
-    network,
-    tx_hash,
-    block_hash,
-    block_number,
-    payload_id,
-    request_id,
-    data
-)
-SELECT
-    event_id,
-    transaction_event_retention_class_for_backfill(event_type),
-    schema_version,
-    event_time,
-    ingested_at,
-    producer,
-    event_type,
-    network,
-    tx_hash,
-    block_hash,
-    block_number,
-    payload_id,
-    request_id,
-    data
-FROM transaction_events_pre_retention;
 
 CREATE INDEX transaction_events_partitioned_tx_hash_event_time_idx
     ON transaction_events (tx_hash, event_time)
@@ -342,7 +251,6 @@ REVOKE ALL ON FUNCTION maintain_transaction_event_partitions(
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'audit_archiver') THEN
-        REVOKE ALL ON transaction_events_pre_retention FROM audit_archiver;
         GRANT SELECT, INSERT, UPDATE, DELETE ON transaction_events TO audit_archiver;
         GRANT SELECT ON transaction_event_partition_registry TO audit_archiver;
         GRANT EXECUTE ON FUNCTION maintain_transaction_event_partitions(
