@@ -14,7 +14,7 @@ use syn::{ext::IdentExt, visit::Visit};
 
 /// The exact production files under `src/arm/`. A NEW arm file must be added here
 /// (and re-reviewed) before it can ship (b7, fail-closed).
-const ARM_FILES: [&str; 15] = [
+const ARM_FILES: [&str; 16] = [
     "claim.rs",
     "custody.rs",
     "fail_sink.rs",
@@ -22,6 +22,7 @@ const ARM_FILES: [&str; 15] = [
     "proofs.rs",
     "producer.rs",
     "providers.rs",
+    "production_bundle.rs",
     "production_handoff.rs",
     "simulation_entrypoint.rs",
     "simulation_store.rs",
@@ -200,7 +201,7 @@ fn arm_source_is_exactly_the_declared_set() {
 
 /// The complete root API. T4e adds only the reviewed checked authorities, exact-one
 /// production handoff, bounded worker/status types, and simulation-only runtime surface.
-const PUBLIC_API_ALLOWLIST: [&str; 75] = [
+const PUBLIC_API_ALLOWLIST: [&str; 91] = [
     "AdmittedCandidate",
     "AuthorizationGateError",
     "BlockNumHash",
@@ -222,18 +223,30 @@ const PUBLIC_API_ALLOWLIST: [&str; 75] = [
     "ProdBackend",
     "ProducerConformance",
     "ProducerError",
+    "ProductionArmFailure",
+    "ProductionArmRuntimeOpenFailure",
+    "ProductionBridgeFailure",
+    "ProductionBundleInputs",
+    "ProductionCampaignBundleFailure",
     "ProductionCandidateError",
     "ProductionCandidateReceiver",
     "ProductionClaimError",
     "ProductionClaimFailure",
     "ProductionClaimResult",
     "ProductionCustodyFailure",
+    "ProductionDeploymentFailure",
     "ProductionDrawdownSource",
     "ProductionHandoffClosed",
+    "ProductionHandoffShared",
     "ProductionHandoffInstaller",
     "ProductionHandoffState",
+    "ProductionInstallBundle",
+    "ProductionInstallDisposition",
+    "ProductionInstallInputs",
     "ProductionLatchOutcome",
-    "ProductionReservation",
+    "ProductionPersistenceFailure",
+    "ProductionProofBundle",
+    "ProductionProviderFailure",
     "ProductionSignFailure",
     "ProductionSignedField",
     "ProductionSigningError",
@@ -241,6 +254,10 @@ const PUBLIC_API_ALLOWLIST: [&str; 75] = [
     "ProductionSimulationHandoffStatus",
     "ProductionSimulationInstallError",
     "ProductionSimulationWorkerOwner",
+    "ProductionSpawnDisposition",
+    "ProductionStartup",
+    "ProductionStoreOpenFailure",
+    "ProductionWorkerBootstrap",
     "ProductionWorkerError",
     "ProviderError",
     "PublicationIoClass",
@@ -263,16 +280,16 @@ const PUBLIC_API_ALLOWLIST: [&str; 75] = [
     "SimulationLedgerEpoch",
     "SimulationLedgerInvalid",
     "SimulationReservation",
-    "SimulationReservationError",
     "SimulationStoreOperation",
-    "SimulationSubmitError",
-    "SimulationWorker",
     "SourceLedgerRowV1",
     "SuppressionRollbackError",
     "TerminalSettlementProjectionV1",
     "UnsignedInstallBundleV1",
     "UnsignedPopulationManifestV1",
+    "VerifiedProductionProofs",
+    "WorkerStartup",
     "WorkerStartupFailure",
+    "spawn_production_simulation",
     "production_custody_preflight",
     "provision_suppression_anchor",
     "try_claim_detailed",
@@ -357,7 +374,8 @@ fn exact_module_declaration(
 }
 
 fn mod_is_private(src: &str, name: &str) -> bool {
-    let expected_cfg = (name == "production_handoff").then_some("feature = \"t4e-handoff\"");
+    let expected_cfg = matches!(name, "production_bundle" | "production_handoff")
+        .then_some("feature = \"t4e-handoff\"");
     exact_module_declaration(src, name, expected_cfg).is_some()
 }
 
@@ -416,6 +434,7 @@ fn reviewed_arm_module_tree(root: &Path) -> Result<(), String> {
         "proofs",
         "providers",
         "producer",
+        "production_bundle",
         "production_handoff",
         "simulation_entrypoint",
         "simulation_store",
@@ -442,8 +461,8 @@ fn reviewed_arm_module_tree(root: &Path) -> Result<(), String> {
         ));
     }
     for child in expected_children {
-        let expected_cfg =
-            (child == "production_handoff").then_some("feature = \"t4e-handoff\"");
+        let expected_cfg = matches!(child, "production_bundle" | "production_handoff")
+            .then_some("feature = \"t4e-handoff\"");
         exact_module_resolves_to(
             &arm_source,
             child,
@@ -1206,6 +1225,7 @@ fn arm_submodules_are_private() {
         "proofs",
         "providers",
         "producer",
+        "production_bundle",
         "production_handoff",
         "simulation_entrypoint",
         "simulation_store",
@@ -1440,7 +1460,10 @@ fn t4d_arm_surface_has_only_the_reviewed_unsigned_candidate_handoff() {
 /// surface of the injection-critical types. Adding ANY non-test method (constructor,
 /// mutator, or path/source setter) to these types must update this allowlist.
 fn arm_runtime_methods() -> BTreeSet<String> {
-    ["open", "sink", "suppression_clear", "freshness"].iter().map(|s| (*s).to_string()).collect()
+    ["open", "sink", "suppression_clear", "suppression_clear_checked", "freshness"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
 }
 fn freshness_sources_methods() -> BTreeSet<String> {
     ["revalidate"].iter().map(|s| (*s).to_string()).collect()
