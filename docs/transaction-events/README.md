@@ -38,7 +38,12 @@ continues to read from `transaction_events`. Migration 002 leaves the legacy
 heap untouched, so queries will not see newly written partitioned rows until a
 later migration replaces that heap with a union view of the same name. An
 app-owned maintenance worker creates upcoming partitions and drops expired ones
-with `DROP TABLE` rather than row `DELETE`. Configure the windows with:
+with `DROP TABLE` rather than row `DELETE`. The worker emits
+`tips_audit_transaction_event_partitions_ahead_days` per class and
+`tips_audit_transaction_event_partition_maintenance_last_success_age_seconds`
+after each successful locked maintenance pass; page when ahead days fall below
+about two or when last success age exceeds roughly two retention intervals.
+Configure the windows with:
 
 - `TIPS_AUDIT_TRANSACTION_EVENT_HOT_RETENTION_DAYS`
 - `TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS`
