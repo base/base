@@ -644,6 +644,29 @@ fn ledger_lifecycle_l0_control_l1_empty_old_layout_tamper_and_rollback_mutants_r
     eprintln!("L1: RED");
 }
 
+fn public_use_exports(source: &str, name: &str) -> bool {
+    fn tree_exports(tree: &syn::UseTree, name: &str) -> bool {
+        match tree {
+            syn::UseTree::Name(item) => item.ident == name,
+            syn::UseTree::Rename(item) => item.rename == name,
+            syn::UseTree::Path(path) => tree_exports(&path.tree, name),
+            syn::UseTree::Group(group) => group.items.iter().any(|item| tree_exports(item, name)),
+            syn::UseTree::Glob(_) => false,
+        }
+    }
+
+    syn::parse_file(source).is_ok_and(|file| {
+        file.items.iter().any(|item| {
+            matches!(
+                item,
+                syn::Item::Use(item)
+                    if matches!(item.vis, syn::Visibility::Public(_))
+                        && tree_exports(&item.tree, name)
+            )
+        })
+    })
+}
+
 fn validate_correlation_envelope(store: &str, entrypoint: &str, lib: &str) -> Result<(), String> {
     for required in [
         "pub struct SimulationCorrelationEnvelopeV1 {\n    ledger_epoch: SimulationLedgerEpoch,\n    sequence: u64,\n    correlation_key: SimulationCorrelationKey,\n}",
@@ -695,7 +718,9 @@ fn validate_correlation_envelope(store: &str, entrypoint: &str, lib: &str) -> Re
             return Err(format!("X1 terminal correlation envelope edge missing: {required}"));
         }
     }
-    if !lib.contains("SimulationCorrelationEnvelopeV1,\n    SimulationCorrelationKey,") {
+    if !public_use_exports(lib, "SimulationCorrelationEnvelopeV1")
+        || !public_use_exports(lib, "SimulationCorrelationKey")
+    {
         return Err("X1 public correlation envelope export missing".to_owned());
     }
     Ok(())
