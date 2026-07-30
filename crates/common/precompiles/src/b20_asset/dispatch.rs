@@ -506,7 +506,9 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_common_genesis::BaseUpgrade;
-    use base_precompile_storage::{HashMapStorageProvider, Result, StorageCtx};
+    use base_precompile_storage::{
+        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx,
+    };
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
@@ -709,6 +711,44 @@ mod tests {
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
 
         assert_eq!(err, base_precompile_storage::BasePrecompileError::under_overflow());
+    }
+
+    /// Pins the classification predicate the `announce` inner-call loop keys on: every `Panic`
+    /// kind — including the enum-conversion (`0x21`) and array-out-of-bounds (`0x32`) classes —
+    /// plus `OutOfGas`, `Fatal`, and `SlotOverflow` must be a system error and therefore propagate
+    /// unchanged, whereas an ordinary contract revert (and a strict-decode failure) must not.
+    ///
+    /// The one inner-call system error reachable end-to-end is arithmetic overflow
+    /// (`Panic(UnderOverflow)`), pinned by [`announce_inner_system_error_propagates_unchanged`].
+    /// The enum and array-OOB classes have no inner-call selector that reaches them: strict ABI
+    /// decoding rejects an out-of-range enum as `AbiDecodeFailed` (an ordinary revert) before any
+    /// conversion guard runs, and no reachable path produces an array-OOB. Their propagation is
+    /// therefore pinned here at the `is_system_error()` predicate, guarding against a future change
+    /// that would silently reclassify a `Panic` as a wrappable revert.
+    #[test]
+    fn announce_inner_panic_classes_are_system_errors() {
+        for err in [
+            BasePrecompileError::under_overflow(),
+            BasePrecompileError::enum_conversion_error(),
+            BasePrecompileError::array_oob(),
+            BasePrecompileError::assert_failed(),
+            BasePrecompileError::OutOfGas,
+            BasePrecompileError::SlotOverflow,
+            BasePrecompileError::Fatal(String::from("db failure")),
+        ] {
+            assert!(err.is_system_error(), "{err:?} must propagate unchanged from announce");
+        }
+        // An ordinary contract revert wraps as InternalCallFailed rather than propagating.
+        assert!(
+            !BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: Bytes::new() })
+                .is_system_error()
+        );
+        // A strict-decode failure (what an out-of-range enum inner call actually yields on the
+        // native precompile) is likewise not a system error, so it wraps rather than bubbling.
+        assert!(
+            !BasePrecompileError::AbiDecodeFailed { selector: [0u8; 4], error: String::new() }
+                .is_system_error()
+        );
     }
 
     /// A non-system revert produced by an inner `announce` call must be wrapped as
