@@ -399,7 +399,7 @@ impl BootInfo {
             return Err(OracleProviderError::UncommittedZenithUpgrade);
         }
 
-        let schedule_id = ScheduleId::pin(&mut rollup_config, l2_schedule_timestamp)?;
+        let schedule_id = ScheduleId::pin(&mut rollup_config, l2_schedule_timestamp);
 
         // Only a pinned Beryl schedule requires its trusted built-in admin.
         if activation_admin_address.is_none() && rollup_config.upgrades.base.beryl.is_some() {
@@ -430,7 +430,7 @@ mod tests {
     use alloy_primitives::B256;
     use async_trait::async_trait;
     use base_common_chains::ChainConfig as BaseChainConfig;
-    use base_common_genesis::{BaseUpgrade, BaseUpgradeConfig, UpgradeConfig};
+    use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
     use base_proof_preimage::{
         PreimageKey, PreimageOracleClient,
         errors::{PreimageOracleError, PreimageOracleResult},
@@ -526,11 +526,9 @@ mod tests {
         assert_eq!(boot_info.rollup_config, rollup_config);
         let claim_timestamp = rollup_config.genesis.l2_time
             + (CLAIM_BLOCK - rollup_config.genesis.l2.number) * rollup_config.block_time;
-        let activated_count =
-            ScheduleId::activated_count(&upgrades, claim_timestamp).expect("valid schedule");
         assert_eq!(
             boot_info.schedule_id,
-            ScheduleId::from_upgrades(&upgrades, activated_count).expect("valid schedule")
+            ScheduleId::pin(&mut rollup_config.clone(), claim_timestamp)
         );
     }
 
@@ -652,19 +650,11 @@ mod tests {
 
         assert_eq!(boot_info.rollup_config.upgrades.regolith_time, Some(genesis_timestamp));
 
-        let mut normalized = rollup_config.upgrades;
-        for upgrade in BaseUpgrade::CONTRACT_VARIANTS {
-            if normalized.activation_timestamp(upgrade) == Some(0) {
-                normalized.set_activation_timestamp(upgrade, genesis_timestamp);
-            }
-        }
         let claim_timestamp = genesis_timestamp
             + (CLAIM_BLOCK - rollup_config.genesis.l2.number) * rollup_config.block_time;
-        let activated_count =
-            ScheduleId::activated_count(&normalized, claim_timestamp).expect("valid schedule");
         assert_eq!(
             boot_info.schedule_id,
-            ScheduleId::from_upgrades(&normalized, activated_count).expect("valid schedule")
+            ScheduleId::pin(&mut rollup_config.clone(), claim_timestamp)
         );
     }
 
