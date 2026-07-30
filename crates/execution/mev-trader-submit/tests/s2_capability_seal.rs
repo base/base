@@ -147,9 +147,11 @@ fn broadcastability_feature_tree_has_a_live_egress_negative_control() {
     validate_node_egress_feature_tree("arm-sim").expect("A-CTL arm-sim excludes arm-live-egress");
     eprintln!("A-CTL: GREEN");
 
-    assert!(
-        validate_node_egress_feature_tree("arm-live-egress").is_err(),
-        "A-NEG did not detect the live-egress feature"
+    let error = validate_node_egress_feature_tree("arm-live-egress")
+        .expect_err("A-NEG did not detect the live-egress feature");
+    assert_eq!(
+        error, "node inverse feature tree reached arm-live-egress",
+        "A-NEG failed for an unrelated reason"
     );
     eprintln!("A-NEG: RED (compile errors: 0)");
 }
