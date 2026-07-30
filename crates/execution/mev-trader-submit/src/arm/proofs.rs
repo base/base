@@ -19,8 +19,11 @@ use base_mev_trader::{CampaignId, OWNER_ATTEST_ADDRESS, StoreIdentity};
 
 use super::{
     settled_loss::verify_signature_shape,
-    suppression::{SuppressionEpochStore, SuppressionFileStore},
-    witness::CHAIN_ID_BASE,
+    suppression::{
+        SuppressionEpochStore, SuppressionFileReadError, SuppressionFileStore,
+        SuppressionRollbackError,
+    },
+    witness::{CHAIN_ID_BASE, ProductionCandidateError},
 };
 
 // -- domain tags (byte-exact) -------------------------------------------------
@@ -357,6 +360,29 @@ impl SubmitSuppressionClear {
         }
         epoch_store.observe(record.epoch).ok()?;
         Some(Self { epoch: record.epoch })
+    }
+
+    /// Reads a fresh production suppression proof with exact fail-closed reason.
+    pub(crate) fn read_checked(
+        file_store: &SuppressionFileStore,
+        epoch_store: &SuppressionEpochStore,
+    ) -> Result<Self, ProductionCandidateError> {
+        let record = file_store.read_fresh_guarded_checked().map_err(|error| match error {
+            SuppressionFileReadError::Unavailable => {
+                ProductionCandidateError::SuppressionUnavailable
+            }
+            SuppressionFileReadError::Invalid => ProductionCandidateError::SuppressionInvalid,
+        })?;
+        if record.suppressed {
+            return Err(ProductionCandidateError::Suppressed);
+        }
+        epoch_store.observe(record.epoch).map_err(|error| match error {
+            SuppressionRollbackError::Rollback { .. } => {
+                ProductionCandidateError::SuppressionRollback
+            }
+            SuppressionRollbackError::Io(_) => ProductionCandidateError::SuppressionUnavailable,
+        })?;
+        Ok(Self { epoch: record.epoch })
     }
 
     /// The cleared epoch.

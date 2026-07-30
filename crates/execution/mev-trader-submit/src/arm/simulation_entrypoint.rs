@@ -18,8 +18,6 @@ use super::{
 /// Missing production prerequisite. No variant supplies fallback data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationEntrypointUnavailable {
-    /// Complete production T4e simulation installation is explicitly deferred.
-    ProductionInstallationDeferred,
     /// Durable local ledger could not open.
     PersistenceUnavailable,
     /// Entrypoint status mutex was poisoned.
@@ -143,9 +141,8 @@ pub enum SimulationEntrypointTerminal {
     UnexpectedLiveOutcome,
 }
 
-/// Library execution seam for `send_gated`, fixed to `SimBackend`.
-///
-/// This seam is not production-installed until `Production T4e Simulation Installation + Settled-Loss Authority` supplies real settled-loss authority, proofs/claim-store/custody, the shared bridge, and consumes the PR #55 committed-state dependency already available here. Production `Ready`, `Busy`, and `Closed` handoff behavior remains deferred to that complete installer.
+/// Shared simulation-only execution/status seam installed by the production worker after the
+/// complete authority bundle has moved into that worker.
 #[derive(Debug)]
 pub struct SimulationEntrypoint {
     backend: SimBackend,
@@ -252,10 +249,8 @@ impl SimulationEntrypoint {
     }
 }
 
-/// Non-blocking capacity-one handoff into the sole simulation egress owner.
-///
-/// Exported for `Production T4e Simulation Installation + Settled-Loss Authority`; construction
-/// here remains deferred until that follow-up supplies the complete authority chain.
+/// Test-only legacy attempt worker retained for focused entrypoint persistence tests.
+#[cfg(test)]
 #[derive(Debug)]
 pub struct SimulationWorker {
     sender: Option<SyncSender<AdmittedAttempt>>,
@@ -274,6 +269,7 @@ pub struct SimulationReservation {
 }
 
 /// Typed pre-preparation admission refusal.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationReservationError {
     /// The sole running-or-queued admission slot is occupied.
@@ -284,6 +280,7 @@ pub enum SimulationReservationError {
 
 /// A post-preparation submission can fail only because the worker closed or its invariant broke;
 /// queue fullness is deliberately not an exposed outcome.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationSubmitError {
     /// The worker closed before accepting the reserved attempt.
@@ -292,6 +289,7 @@ pub enum SimulationSubmitError {
     AdmissionInvariant,
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 struct AdmittedAttempt {
     attempt: SubmissionAttempt,
@@ -302,6 +300,12 @@ const ADMISSION_FREE: u8 = 0;
 const ADMISSION_OCCUPIED: u8 = 1;
 const ADMISSION_CLOSED: u8 = 2;
 
+impl SimulationReservation {
+    /// Creates the reservation moved with the unified production handoff payload.
+    pub(crate) fn from_admission(admission: Arc<AtomicU8>) -> Self {
+        Self { admission }
+    }
+}
 impl Drop for SimulationReservation {
     fn drop(&mut self) {
         let _ = self.admission.compare_exchange(
@@ -313,6 +317,7 @@ impl Drop for SimulationReservation {
     }
 }
 
+#[cfg(test)]
 impl SimulationWorker {
     /// Spawns the only thread permitted to call the synchronous simulation entrypoint.
     pub fn spawn<C, D>(
@@ -418,6 +423,7 @@ impl SimulationWorker {
     }
 }
 
+#[cfg(test)]
 impl Drop for SimulationWorker {
     fn drop(&mut self) {
         self.sender.take();

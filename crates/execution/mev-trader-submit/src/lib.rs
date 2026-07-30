@@ -49,7 +49,7 @@ pub use arm::{
     ProductionHandoffInstaller, ProductionHandoffShared, ProductionHandoffState,
     ProductionInstallBundle, ProductionInstallDisposition, ProductionInstallInputs,
     ProductionPersistenceFailure, ProductionProofBundle, ProductionProviderFailure,
-    ProductionReservation, ProductionSimulationHandoff, ProductionSimulationHandoffStatus,
+    ProductionSimulationHandoff, ProductionSimulationHandoffStatus,
     ProductionSimulationInstallError, ProductionSimulationWorkerOwner, ProductionSpawnDisposition,
     ProductionStartup, ProductionStoreOpenFailure, ProductionWorkerBootstrap,
     ProductionWorkerError, VerifiedProductionProofs, WorkerStartup,
@@ -71,9 +71,9 @@ pub use arm::{
     SignedProjectionV1, SimBackend, SimulationCorrelationEnvelopeV1, SimulationCorrelationKey,
     SimulationEntrypointStatus, SimulationEntrypointUnavailable, SimulationLedgerClosure,
     SimulationLedgerEpoch, SimulationLedgerInvalid, SimulationReservation,
-    SimulationReservationError, SimulationStoreOperation, SimulationSubmitError, SimulationWorker,
-    SourceLedgerRowV1, TerminalSettlementProjectionV1, UnsignedInstallBundleV1,
-    UnsignedPopulationManifestV1, production_custody_preflight, try_claim_detailed,
+    SimulationStoreOperation, SourceLedgerRowV1, TerminalSettlementProjectionV1,
+    UnsignedInstallBundleV1, UnsignedPopulationManifestV1, production_custody_preflight,
+    try_claim_detailed,
 };
 #[cfg(feature = "t4e-handoff")]
 pub use arm::{CheckedCandidate, CodeHashProvider, CommittedStateAuthority, ProviderError};

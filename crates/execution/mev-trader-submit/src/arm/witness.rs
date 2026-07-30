@@ -1038,6 +1038,16 @@ impl ArmRuntime {
         SubmitSuppressionClear::read(&self.suppression_file, &self.suppression_epoch)
     }
 
+    /// Builds the production suppression proof while preserving exact failure semantics.
+    pub fn suppression_clear_checked(
+        &self,
+    ) -> Result<SubmitSuppressionClear, ProductionCandidateError> {
+        if self.sink.is_poisoned() {
+            return Err(ProductionCandidateError::KillActive);
+        }
+        SubmitSuppressionClear::read_checked(&self.suppression_file, &self.suppression_epoch)
+    }
+
     /// Assemble the egress-moment freshness sources: the pinned suppression stores +
     /// system clock come from `self`; the caller supplies ONLY the node-injected
     /// keyless providers and armed criteria.

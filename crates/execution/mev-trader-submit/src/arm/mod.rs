@@ -48,7 +48,7 @@ pub use production_handoff::{
     ProductionCandidateReceiver, ProductionDeploymentFailure, ProductionHandoffClosed,
     ProductionHandoffInstaller, ProductionHandoffShared, ProductionHandoffState,
     ProductionInstallBundle, ProductionInstallDisposition, ProductionInstallInputs,
-    ProductionPersistenceFailure, ProductionProviderFailure, ProductionReservation,
+    ProductionPersistenceFailure, ProductionProviderFailure,
     ProductionSimulationHandoff, ProductionSimulationHandoffStatus,
     ProductionSimulationInstallError, ProductionSimulationWorkerOwner, ProductionSpawnDisposition,
     ProductionStartup, ProductionStoreOpenFailure, ProductionWorkerBootstrap,
@@ -68,7 +68,6 @@ mod simulation_entrypoint;
 pub use simulation_entrypoint::{
     SimulationEntrypoint, SimulationEntrypointStatus, SimulationEntrypointTerminal,
     SimulationEntrypointUnavailable, SimulationLedgerClosure, SimulationReservation,
-    SimulationReservationError, SimulationSubmitError, SimulationWorker,
 };
 mod simulation_store;
 pub use simulation_store::{

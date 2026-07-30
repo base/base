@@ -376,8 +376,7 @@ where
         claim: VictimClaim,
         candidate: CheckedCandidate,
     ) -> Result<AuthorizedCandidate, ProductionCandidateError> {
-        let suppression =
-            self.arm.suppression_clear().ok_or(ProductionCandidateError::SuppressionUnavailable)?;
+        let suppression = self.arm.suppression_clear_checked()?;
         let kill =
             self.arm.sink().observe_kill().map_err(|_| ProductionCandidateError::KillActive)?;
         if !matches!(kill, KillState::Clear { .. }) {

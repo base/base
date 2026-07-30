@@ -26,8 +26,8 @@ use super::{
     ProductionLatchOutcome, ProductionProofBundle, ProductionSigningError, R9_CLAIM_STORE_PATH,
     RuntimeBackend, SIMULATION_RECORD_CAPACITY, SimBackend, SimulationEntrypoint,
     SimulationEntrypointStatus, SimulationEntrypointUnavailable, SimulationLedgerClosure,
-    SimulationPersistError, SimulationStore, SubmitOutcome, production_custody_preflight,
-    send_gated, try_claim_detailed,
+    SimulationPersistError, SimulationReservation, SimulationStore, SubmitOutcome,
+    production_custody_preflight, send_gated, try_claim_detailed,
 };
 
 const ADMISSION_FREE: u8 = 0;
@@ -439,32 +439,16 @@ where
 #[derive(Debug)]
 pub struct AdmittedCandidate {
     candidate: SealedUnsignedCandidate,
-    reservation: ProductionReservation,
+    reservation: SimulationReservation,
 }
 
 impl AdmittedCandidate {
     /// Destructures the sole queue payload for ordered worker processing.
-    pub fn into_parts(self) -> (SealedUnsignedCandidate, ProductionReservation) {
+    pub fn into_parts(self) -> (SealedUnsignedCandidate, SimulationReservation) {
         (self.candidate, self.reservation)
     }
 }
 
-/// Linear ownership of the sole running-or-queued production admission slot.
-#[derive(Debug)]
-pub struct ProductionReservation {
-    admission: Arc<AtomicU8>,
-}
-
-impl Drop for ProductionReservation {
-    fn drop(&mut self) {
-        let _ = self.admission.compare_exchange(
-            ADMISSION_OCCUPIED,
-            ADMISSION_FREE,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
-    }
-}
 
 #[derive(Debug)]
 pub enum ProductionHandoffState {
@@ -609,7 +593,7 @@ impl T4eCandidateHandoff for ProductionSimulationHandoff {
                 return Err(T4eHandoffError::Closed);
             }
         }
-        let reservation = ProductionReservation { admission: Arc::clone(admission) };
+        let reservation = SimulationReservation::from_admission(Arc::clone(admission));
         match sender.try_send(AdmittedCandidate { candidate, reservation }) {
             Ok(()) => Ok(()),
             Err(TrySendError::Disconnected(_)) => {
@@ -961,7 +945,7 @@ fn run_production_worker<C, F>(
         Ok(receiver) => receiver,
         Err(WorkerStartup::Ready { .. }) | Err(WorkerStartup::Failed(_)) => return,
     };
-    while !cancel.load(Ordering::Acquire) {
+    loop {
         let admitted = match receiver.receive() {
             Ok(admitted) => admitted,
             Err(()) => {
@@ -988,6 +972,9 @@ fn run_production_worker<C, F>(
                 handoff.close(reason);
                 return;
             }
+        }
+        if cancel.load(Ordering::Acquire) {
+            return;
         }
     }
 }
