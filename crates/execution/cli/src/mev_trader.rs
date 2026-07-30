@@ -2,6 +2,8 @@
 use std::fmt;
 #[cfg(all(feature = "edge-measurement", test))]
 use std::os::unix::fs::FileExt;
+#[cfg(feature = "arm-sim")]
+use std::time::Duration;
 #[cfg(feature = "edge-measurement")]
 use std::{
     collections::BTreeMap,
@@ -22,7 +24,6 @@ use std::{
         Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::Duration,
 };
 use std::{
     collections::BTreeSet,
@@ -55,6 +56,8 @@ use base_flashblocks::{ClockStatusV1, PayloadFirstKeyV1, WireObservationV1};
 use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState, PendingBlocks};
 #[cfg(all(feature = "edge-measurement", test))]
 use base_mev_trader::EdgeCandidateDetailOracleV1;
+#[cfg(feature = "arm-sim")]
+use base_mev_trader::production_arming_criteria;
 use base_mev_trader::{
     A1Status, BlinkFeedClient, BlinkIngressConfig, BundleVisitor, MevTraderRuntime,
     MevTraderRuntimeConfig, PayloadVisitor, PendingAccountNonce, PendingSnapshotView, PortError,
@@ -80,9 +83,11 @@ use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, N
 #[cfg(feature = "arm-sim")]
 use mev_trader_submit::{
     BlockNumHash as SettledBlockNumHash, CommittedStateAuthority, FinalizedChainAuthority,
-    FinalizedChainError, ProductionHandoffClosed, ProductionSimulationHandoff,
-    ProductionSimulationHandoffStatus, ProductionSimulationInstallError,
-    ProductionSimulationWorkerOwner, ProviderError,
+    FinalizedChainError, ProductionBridgeFailure, ProductionBundleInputs, ProductionHandoffClosed,
+    ProductionInstallBundle, ProductionInstallDisposition, ProductionInstallInputs,
+    ProductionSimulationHandoff, ProductionSimulationHandoffStatus,
+    ProductionSimulationInstallError, ProductionSimulationWorkerOwner, ProductionSpawnDisposition,
+    ProviderError, SimBackend, spawn_production_simulation,
 };
 #[cfg(feature = "t4d-shadow")]
 use mev_trader_submit::{BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate};
@@ -8516,7 +8521,7 @@ pub struct BaseNodeTraderConfig {
     #[cfg(feature = "t4e-handoff")]
     t4e_handoff: Option<Arc<dyn T4eCandidateHandoff>>,
     #[cfg(feature = "arm-sim")]
-    production_simulation_handoff: Arc<ProductionSimulationHandoff>,
+    production_simulation_handoff: Option<Arc<ProductionSimulationHandoff>>,
     #[cfg(feature = "arm-sim")]
     production_simulation_owner: Option<ProductionSimulationWorkerOwner>,
     #[cfg(feature = "edge-measurement")]
@@ -8537,6 +8542,104 @@ impl BaseNodeTraderConfig {
     #[cfg(feature = "arm-sim")]
     const fn arm_sim_activation_enabled(&self) -> bool {
         Self::arm_sim_shadow_conjunction(self.t4a_shadow, self.t4b_shadow, self.t4d_shadow)
+    }
+
+    #[cfg(feature = "arm-sim")]
+    fn initial_production_handoff(
+        t4a: bool,
+        t4b: bool,
+        t4d: bool,
+    ) -> Option<Arc<ProductionSimulationHandoff>> {
+        if Self::arm_sim_shadow_conjunction(t4a, t4b, t4d) {
+            None
+        } else {
+            Some(ProductionSimulationHandoff::unavailable(
+                ProductionSimulationInstallError::ActivationInvariant,
+            ))
+        }
+    }
+
+    #[cfg(feature = "arm-sim")]
+    fn install_production_simulation<Provider>(
+        &mut self,
+        provider: &Provider,
+        bridge: Arc<InstalledSubmissionBridge>,
+    ) where
+        Provider: StateProviderFactory
+            + BlockNumReader
+            + BlockIdReader
+            + BlockHashReader
+            + Clone
+            + Debug
+            + Send
+            + Sync
+            + 'static,
+    {
+        let bundle = ProductionInstallBundle::load(ProductionBundleInputs {
+            committed_state: Arc::new(CliCommittedStateAuthority::new(provider)),
+            finalized_chain: Arc::new(CliFinalizedChainAuthority::new(provider)),
+            bridge,
+            backend: SimBackend,
+        });
+        let (handoff, owner) = match bundle {
+            Ok(bundle) => {
+                let inputs =
+                    ProductionInstallInputs { bundle, armed: production_arming_criteria() };
+                match spawn_production_simulation(inputs) {
+                    ProductionSpawnDisposition::Spawned(startup) => {
+                        match startup.await_ready(Duration::from_secs(5)) {
+                            ProductionInstallDisposition::Ready { handoff, owner } => {
+                                (handoff, Some(owner))
+                            }
+                            ProductionInstallDisposition::Unavailable { handoff, owner, error } => {
+                                info!(
+                                    error = ?error,
+                                    "production simulation worker startup unavailable"
+                                );
+                                (handoff, Some(owner))
+                            }
+                        }
+                    }
+                    ProductionSpawnDisposition::Unavailable { handoff, error } => {
+                        info!(
+                            error = ?error,
+                            "production simulation worker spawn unavailable"
+                        );
+                        (handoff, None)
+                    }
+                }
+            }
+            Err(error) => (ProductionSimulationHandoff::unavailable(error), None),
+        };
+        let erased: Arc<dyn T4eCandidateHandoff> = handoff.clone();
+        self.t4e_handoff = Some(erased);
+        self.production_simulation_handoff = Some(handoff);
+        self.production_simulation_owner = owner;
+    }
+
+    #[cfg(feature = "arm-sim")]
+    fn set_production_unavailable(&mut self, error: ProductionSimulationInstallError) {
+        let handoff = ProductionSimulationHandoff::unavailable(error);
+        let erased: Arc<dyn T4eCandidateHandoff> = handoff.clone();
+        self.t4e_handoff = Some(erased);
+        self.production_simulation_handoff = Some(handoff);
+        self.production_simulation_owner = None;
+    }
+
+    #[cfg(feature = "arm-sim")]
+    const fn bridge_failure(error: BridgeError) -> ProductionBridgeFailure {
+        match error {
+            BridgeError::Assembly(error) => ProductionBridgeFailure::Assembly(error),
+            BridgeError::BindingRejected => ProductionBridgeFailure::BindingRejected,
+            BridgeError::CrossInstallation => ProductionBridgeFailure::CrossInstallation,
+            BridgeError::SnapshotStale => ProductionBridgeFailure::SnapshotStale,
+            BridgeError::ExecutionFreshnessUnavailable => {
+                ProductionBridgeFailure::FreshnessUnavailable
+            }
+            BridgeError::ExecutionIdentityChanged => ProductionBridgeFailure::IdentityChanged,
+            BridgeError::Cancelled => ProductionBridgeFailure::Cancelled,
+            BridgeError::DeadlineNoHandoff => ProductionBridgeFailure::Deadline,
+        }
     }
 
     #[cfg(feature = "t4a-shadow")]
@@ -8582,15 +8685,13 @@ impl BaseNodeTraderConfig {
         let t4b_shadow = Self::t4b_shadow_enabled();
         let t4d_shadow = Self::t4d_shadow_enabled();
         #[cfg(feature = "arm-sim")]
-        let production_simulation_handoff = ProductionSimulationHandoff::unavailable(
-            if Self::arm_sim_shadow_conjunction(t4a_shadow, t4b_shadow, t4d_shadow) {
-                ProductionSimulationInstallError::WorkerSpawnUnavailable
-            } else {
-                ProductionSimulationInstallError::ActivationInvariant
-            },
-        );
+        let production_simulation_handoff =
+            Self::initial_production_handoff(t4a_shadow, t4b_shadow, t4d_shadow);
         #[cfg(feature = "arm-sim")]
-        let t4e_handoff: Arc<dyn T4eCandidateHandoff> = production_simulation_handoff.clone();
+        let t4e_handoff = production_simulation_handoff.as_ref().map(|handoff| {
+            let erased: Arc<dyn T4eCandidateHandoff> = handoff.clone();
+            erased
+        });
         Some(Self {
             flashblocks: Arc::clone(&config.state),
             credential_file,
@@ -8598,7 +8699,7 @@ impl BaseNodeTraderConfig {
             t4b_shadow,
             t4d_shadow,
             #[cfg(feature = "arm-sim")]
-            t4e_handoff: Some(t4e_handoff),
+            t4e_handoff,
             #[cfg(feature = "arm-sim")]
             production_simulation_handoff,
             #[cfg(feature = "arm-sim")]
@@ -8724,7 +8825,9 @@ impl BaseNodeTraderConfig {
             runtime,
             client,
             #[cfg(feature = "arm-sim")]
-            production_simulation_handoff: self.production_simulation_handoff,
+            production_simulation_handoff: self.production_simulation_handoff.ok_or_else(|| {
+                eyre::eyre!("production simulation installation was not evaluated")
+            })?,
             #[cfg(feature = "arm-sim")]
             production_simulation_owner: self.production_simulation_owner,
             #[cfg(feature = "edge-measurement")]
@@ -8756,6 +8859,28 @@ impl BaseNodeTraderStart {
     /// Returns the sole live production simulation status.
     pub fn production_simulation_status(&self) -> ProductionSimulationHandoffStatus {
         self.production_simulation_handoff.status()
+    }
+
+    #[cfg(feature = "arm-sim")]
+    async fn shutdown_production_simulation(
+        handoff: Arc<ProductionSimulationHandoff>,
+        owner: Option<ProductionSimulationWorkerOwner>,
+    ) {
+        handoff.close(ProductionHandoffClosed::Disconnected);
+        if let Some(owner) = owner {
+            match tokio::task::spawn_blocking(move || owner.into_join_handle().join()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => {
+                    tracing::error!("production simulation worker panicked");
+                }
+                Err(error) => {
+                    tracing::error!(
+                        error = ?error,
+                        "production simulation shutdown join task failed"
+                    );
+                }
+            }
+        }
     }
     /// Returns the exact one existing flashblock broadcast subscription.
     pub const fn subscriber_count(&self) -> usize {
@@ -8813,54 +8938,98 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         hooks.add_node_started_hook(move |node| {
             #[cfg(feature = "arm-sim")]
-            if self.config.arm_sim_activation_enabled() {
-                tracing::error!(
-                    status = ?self.config.production_simulation_handoff.status(),
-                    "arm simulation production installation unavailable; rejecting candidate handoff"
-                );
-            }
+            let mut config = self.config;
+            #[cfg(not(feature = "arm-sim"))]
+            let config = self.config;
             let chain_spec = node.chain_spec();
             let port = Arc::new(CliTraderSnapshotPort::new(
-                Arc::clone(&self.config.flashblocks),
+                Arc::clone(&config.flashblocks),
                 node.provider().clone(),
             ));
             #[cfg(feature = "edge-measurement")]
-            let edge_measurement_registry = self.config.flashblocks.edge_measurement_registry();
+            let edge_measurement_registry = config.flashblocks.edge_measurement_registry();
+            #[cfg(feature = "arm-sim")]
+            let production_bridge = if config.arm_sim_activation_enabled() {
+                let node_view =
+                    t4b_shadow::node_view(Arc::clone(&port), chain_spec.chain().id());
+                match InstalledSubmissionBridge::base_mainnet(node_view) {
+                    Ok(bridge) => {
+                        let bridge = Arc::new(bridge);
+                        config.install_production_simulation(
+                            node.provider(),
+                            Arc::clone(&bridge),
+                        );
+                        info!(
+                            status = ?config
+                                .production_simulation_handoff
+                                .as_ref()
+                                .map(|handoff| handoff.status()),
+                            "arm simulation production installation evaluated"
+                        );
+                        Some(bridge)
+                    }
+                    Err(error) => {
+                        config.set_production_unavailable(
+                            ProductionSimulationInstallError::BridgeUnavailable(
+                                BaseNodeTraderConfig::bridge_failure(error),
+                            ),
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
             #[cfg(feature = "t4b-shadow")]
-            let start = if self.config.t4d_shadow {
+            let start = if config.t4d_shadow {
                 #[cfg(feature = "t4d-shadow")]
                 {
-                    if !self.config.t4a_shadow || !self.config.t4b_shadow {
+                    if !config.t4a_shadow || !config.t4b_shadow {
                         eyre::bail!("T4d shadow requires exact T4a, T4b, and T4d opt-in");
                     }
-                    #[cfg(feature = "t4e-handoff")]
-                    let handoff = self
-                        .config
-                        .t4e_handoff
-                        .clone()
-                        .ok_or_else(|| eyre::eyre!("T4e handoff sink is not installed"))?;
-                    #[cfg(not(feature = "t4e-handoff"))]
-                    let handoff = ();
-                    let node_view =
-                        t4b_shadow::node_view(Arc::clone(&port), chain_spec.chain().id());
-                    let bridge =
-                        Arc::new(InstalledSubmissionBridge::base_mainnet(node_view)?);
-                    let observer = t4d_shadow::observer(Arc::clone(&bridge), handoff);
-                    self.config.start_with_t4d_observer(observer)?
+                    #[cfg(feature = "arm-sim")]
+                    {
+                        if let Some(bridge) = production_bridge {
+                            let handoff = config
+                                .t4e_handoff
+                                .clone()
+                                .ok_or_else(|| eyre::eyre!("T4e handoff sink is not installed"))?;
+                            let observer = t4d_shadow::observer(bridge, handoff);
+                            config.start_with_t4d_observer(observer)?
+                        } else {
+                            config.start_with_runtime_config(t4a_runtime_config(true)?)?
+                        }
+                    }
+                    #[cfg(not(feature = "arm-sim"))]
+                    {
+                        #[cfg(feature = "t4e-handoff")]
+                        let handoff = config
+                            .t4e_handoff
+                            .clone()
+                            .ok_or_else(|| eyre::eyre!("T4e handoff sink is not installed"))?;
+                        #[cfg(not(feature = "t4e-handoff"))]
+                        let handoff = ();
+                        let node_view =
+                            t4b_shadow::node_view(Arc::clone(&port), chain_spec.chain().id());
+                        let bridge =
+                            Arc::new(InstalledSubmissionBridge::base_mainnet(node_view)?);
+                        let observer = t4d_shadow::observer(bridge, handoff);
+                        config.start_with_t4d_observer(observer)?
+                    }
                 }
                 #[cfg(not(feature = "t4d-shadow"))]
                 {
                     unreachable!("T4d opt-in is unavailable without the compiled feature")
                 }
-            } else if self.config.t4b_shadow {
+            } else if config.t4b_shadow {
                 let observer =
                     t4b_shadow::observer(Arc::clone(&port), chain_spec.chain().id())?;
-                self.config.start_with_t4b_observer(observer)?
+                config.start_with_t4b_observer(observer)?
             } else {
-                self.config.start_idle()?
+                config.start_idle()?
             };
             #[cfg(not(feature = "t4b-shadow"))]
-            let start = self.config.start_idle()?;
+            let start = config.start_idle()?;
             let BaseNodeTraderStart {
                 mut receiver,
                 runtime,
@@ -9058,28 +9227,11 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                     abort_and_await_edge_cutoff_task(edge_cutoff_handle).await;
                     runtime.close();
                     #[cfg(feature = "arm-sim")]
-                    {
-                        production_simulation_handoff
-                            .close(ProductionHandoffClosed::Disconnected);
-                        if let Some(owner) = production_simulation_owner {
-                            match tokio::task::spawn_blocking(move || {
-                                owner.into_join_handle().join()
-                            })
-                            .await
-                            {
-                                Ok(Ok(())) => {}
-                                Ok(Err(_)) => {
-                                    tracing::error!("production simulation worker panicked");
-                                }
-                                Err(error) => {
-                                    tracing::error!(
-                                        error = ?error,
-                                        "production simulation shutdown join task failed"
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    BaseNodeTraderStart::shutdown_production_simulation(
+                        production_simulation_handoff,
+                        production_simulation_owner,
+                    )
+                    .await;
                     #[cfg(feature = "edge-measurement")]
                     if let Some(handle) = edge_shutdown_cutoff_handle {
                         match await_edge_shutdown_task(
@@ -9941,7 +10093,7 @@ mod t4d_shadow {
             self.counter(terminal).fetch_add(1, Ordering::Relaxed);
         }
 
-        #[cfg(test)]
+        #[cfg(feature = "t4e-handoff")]
         pub(super) fn count(&self, terminal: T4dTerminal) -> u64 {
             self.counter(terminal).load(Ordering::Relaxed)
         }
@@ -10988,9 +11140,9 @@ mod tests {
             #[cfg(feature = "t4e-handoff")]
             t4e_handoff: None,
             #[cfg(feature = "arm-sim")]
-            production_simulation_handoff: ProductionSimulationHandoff::unavailable(
+            production_simulation_handoff: Some(ProductionSimulationHandoff::unavailable(
                 ProductionSimulationInstallError::ActivationInvariant,
-            ),
+            )),
             #[cfg(feature = "arm-sim")]
             production_simulation_owner: None,
             edge_measurement,
@@ -11125,6 +11277,16 @@ mod tests {
             let t4b = mask & 2 != 0;
             let t4d = mask & 4 != 0;
             assert_eq!(BaseNodeTraderConfig::arm_sim_shadow_conjunction(t4a, t4b, t4d), mask == 7,);
+            let initial = BaseNodeTraderConfig::initial_production_handoff(t4a, t4b, t4d);
+            if mask == 7 {
+                assert!(initial.is_none());
+            } else {
+                assert!(matches!(
+                    initial.expect("disabled conjunction handoff").status(),
+                    ProductionSimulationHandoffStatus::Unavailable(error)
+                        if *error == ProductionSimulationInstallError::ActivationInvariant
+                ));
+            }
         }
     }
 
@@ -11150,7 +11312,7 @@ mod tests {
             t4b_shadow: false,
             t4d_shadow: false,
             t4e_handoff: Some(erased_handoff),
-            production_simulation_handoff: Arc::clone(&handoff),
+            production_simulation_handoff: Some(Arc::clone(&handoff)),
             production_simulation_owner: Some(owner),
             #[cfg(feature = "edge-measurement")]
             edge_measurement: Ok(None),
@@ -11170,6 +11332,33 @@ mod tests {
             ProductionSimulationHandoffStatus::Unavailable(error)
                 if *error == ProductionSimulationInstallError::WorkerSpawnUnavailable
         ));
+    }
+
+    #[cfg(feature = "arm-sim")]
+    #[tokio::test]
+    async fn shutdown_joins_owner_and_preserves_prepublication_status() {
+        let installer = mev_trader_submit::ProductionHandoffInstaller::new();
+        let handoff = installer.handoff();
+        let cancel = StdArc::new(StdAtomicBool::new(false));
+        let worker_cancel = StdArc::clone(&cancel);
+        let worker_handoff = Arc::clone(&handoff);
+        let (status_sender, status_receiver) = std::sync::mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            while !worker_cancel.load(StdOrdering::Acquire) {
+                std::thread::yield_now();
+            }
+            status_sender.send(worker_handoff.status()).expect("shutdown status receiver");
+        });
+        let owner = ProductionSimulationWorkerOwner::new(worker, cancel, Arc::clone(&handoff));
+
+        BaseNodeTraderStart::shutdown_production_simulation(Arc::clone(&handoff), Some(owner))
+            .await;
+
+        assert_eq!(
+            status_receiver.recv().expect("worker shutdown observation"),
+            ProductionSimulationHandoffStatus::Installing,
+        );
+        assert_eq!(handoff.status(), ProductionSimulationHandoffStatus::Installing,);
     }
     #[cfg(feature = "edge-measurement")]
     fn manifest_sample() -> &'static [u8] {
