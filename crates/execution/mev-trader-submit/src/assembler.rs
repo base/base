@@ -3,9 +3,10 @@
 //! `scripts/arb-dryrun/blink-unsigned-assembler.ts`.
 //!
 //! Boundary: pure encoding with a fixed structurally-invalid dummy signature.
-//! There is no signer, transport, nonce lookup, or submission path here. The
-//! ephemeral real signer is the separate rung-2 [`crate::signer`] path; real
-//! submission is the rung-3 boundary and is unavailable ([`submit_blocked`]).
+//! There is no signer, transport, nonce lookup, or submission path here. The separate
+//! [`crate::signer`] path serves both ephemeral phase-b and arm custody signing. Live
+//! submission is the further-gated `arm-live-egress` capability, while [`submit_blocked`]
+//! remains the legacy rung-3 stub.
 #![cfg(feature = "phase-b")]
 
 use alloy_consensus::{SignableTransaction, TxEnvelope};
@@ -567,7 +568,7 @@ pub fn build_two_channel_dummy_assembly(
 pub enum BlockedBoundary {
     /// Rung-2 boundary: the rung-1 assembler never signs.
     Sign,
-    /// Rung-3 boundary: real submission is unavailable.
+    /// Legacy rung-3 stub boundary; feature-gated arm submission is a separate path.
     Submit,
 }
 
@@ -590,14 +591,15 @@ impl core::fmt::Display for BlockedBoundary {
 
 impl core::error::Error for BlockedBoundary {}
 
-/// Rung-2 boundary stub: the rung-1 assembler does not sign. Real signing is the
-/// ephemeral-only [`crate::signer`] path. Always returns [`BlockedBoundary::Sign`].
+/// Rung-2 boundary stub: the rung-1 assembler does not sign. Actual signing capabilities
+/// are feature-gated separately: ephemeral phase-b signing and arm-tier custody signing.
+/// Always returns [`BlockedBoundary::Sign`].
 pub const fn sign_blocked() -> Result<core::convert::Infallible, BlockedBoundary> {
     Err(BlockedBoundary::Sign)
 }
 
-/// Rung-3 boundary stub: real transaction/bundle submission is intentionally
-/// unavailable. Always returns [`BlockedBoundary::Submit`].
+/// Legacy rung-3 boundary stub: this helper never submits. The feature-gated arm live-egress
+/// path is separate. Always returns [`BlockedBoundary::Submit`].
 pub const fn submit_blocked() -> Result<core::convert::Infallible, BlockedBoundary> {
     Err(BlockedBoundary::Submit)
 }

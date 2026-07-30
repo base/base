@@ -1,11 +1,10 @@
 //! Rung-2: ephemeral throwaway signing + fully-offline verification. Byte-parity
 //! port of the TS `scripts/arb-dryrun/rung2-ephemeral-signer.ts`.
 //!
-//! Every call generates ONE fresh, unfunded, in-memory k256 keypair, signs the
-//! rung-1 unsigned envelope exactly once, and drops the key at function scope.
-//! The signing capability never escapes: only the public address and the signed
-//! bytes are returned. There is no external key input path — no file, env, argv,
-//! keystore, mnemonic, or homedir loader exists in this module.
+//! The ephemeral entry points generate one fresh, unfunded, in-memory k256 keypair,
+//! sign once, and drop the key at function scope. The shared [`sign_with_key`] core
+//! instead signs with a borrowed caller-held key for arm custody. Neither path returns
+//! a secret: only public or signed transaction data leaves the signing function.
 
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEnvelope};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
