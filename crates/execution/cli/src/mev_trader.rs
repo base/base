@@ -8388,6 +8388,11 @@ impl FlatJsonParserV1<'_> {
 
 #[cfg(feature = "arm-sim")]
 /// Node-local adapter for canonical committed state used by the arm simulation authority.
+///
+/// Construction at `node_started` belongs to
+/// `Production T4e Simulation Installation + Settled-Loss Authority`, where the in-process
+/// provider can be consumed together with the real settled-loss authority and every remaining
+/// installation prerequisite. Constructing only this available dependency must not imply Ready.
 #[derive(Debug, Clone)]
 pub struct CliCommittedStateAuthority<Provider> {
     provider: Provider,
