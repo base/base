@@ -144,13 +144,15 @@ keccak256(
 
 All components come from the already validated identity and signed transaction. The key is computed once when the paired submission is assembled and carried into the simulation record. The durable record also stores those unhashed join fields separately. This supports joins against the candidate ledger, canonical transaction receipts, victim transaction, and route plan without treating a hash as reversible data.
 
+The durable correlation surface is the fixed `SimulationCorrelationEnvelopeV1 { ledger_epoch: [u8; 32], sequence: u64, correlation_key: [u8; 32] }`, not a bare correlation key. `ledger_epoch` is not an input to the V1 correlation-key hash; it names the ledger generation in which that key was admitted. Every persisted record, `Persisted` terminal result, and operator-facing correlation export carries this envelope. Decoding rejects a missing, duplicate, or wrongly sized epoch, an envelope epoch unequal to the record and durable head epochs, an envelope sequence unequal to the record sequence, or a correlation key that does not recompute from the record's unhashed join fields.
+
 ## 6. What is persisted
 
 A simulated attempt has no observed inclusion outcome. The durable schema therefore calls it an `attempt`, never a successful outcome. It stores enough immutable input/economics evidence for offline expected-EV recomputation and enough correlation data for a later canonical-chain resolver to determine inclusion and realised EV.
 
 `SimulationDurableRecordV1` contains only bounded scalar/enum/fixed-byte data:
 
-- schema version and monotonically increasing ledger sequence;
+- `schema_version`, `ledger_epoch: [u8; 32]`, and monotonically increasing `sequence: u64`;
 - prior-record hash; the current canonical-record hash is retained in the durable `head` anchor;
 - correlation key;
 - simulation attempt kind (`Initial` or `AttributionRetry`);
@@ -183,6 +185,8 @@ Each record is published as one sequence-addressed file:
 00000000000000000042.record
 ```
 
+The durable head-anchor schema is `SimulationLedgerHead { ledger_epoch: [u8; 32], next_sequence: u64, latest_record_hash: [u8; 32] }`. Its canonical encoding is exactly 72 bytes: the epoch, the big-endian sequence, then the hash; no field is optional.
+
 Publication is:
 
 1. strict bounded canonical encoding in memory;
@@ -190,12 +194,14 @@ Publication is:
 3. `write_all`, then `sync_all` on the file;
 4. publish `.record` with a same-directory hard link, which fails if that sequence already exists, then remove `.open`;
 5. `sync_all` on the directory;
-6. write and sync a fixed 40-byte `head.open` containing `next_sequence || latest_record_hash`, atomically replace `head`, and sync the directory again;
+6. encode that fixed 72-byte schema into `head.open`, write and sync it, atomically replace `head`, and sync the directory again;
 7. only then report `Persisted` and accept the next candidate.
 
 `head` is the durable external anchor for the unsigned record chain. The startup scan must equal both its sequence and latest hash, so deleting even the trailing record or the complete record set is visible rather than becoming a shorter apparently valid chain.
 
-Startup takes an exclusive non-blocking directory lease, rejects non-regular/hard-linked published entries, unknown names, duplicate sequences, gaps, unknown schema versions, oversize records, hash-chain/head mismatch, and a pre-existing `.open` (including `head.open`). It does not guess, truncate, delete, skip, or `unwrap_or` malformed state. An empty existing/private directory is sequence zero and receives a zero head. Directory creation is allowed only at the compile-pinned path with mode `0700`; it is persistence setup, not arming or suppression provisioning.
+`ledger_epoch` is a non-zero 32-byte value generated from OS randomness exactly once when the process creates a new pinned ledger directory. Before admission opens, initialization durably publishes a 72-byte `head` containing that epoch, sequence zero, and the all-zero latest hash, using the same file-sync, atomic-replace, and directory-sync discipline. Each record stores the identical epoch, and every later head update preserves it byte-for-byte. Record encoding and startup validation reject a missing or wrongly sized epoch, any record/correlation-envelope/head epoch mismatch, and any sequence-local rollback to an earlier epoch. No candidate can be admitted while only an in-memory epoch or `head.open` exists.
+
+Startup takes an exclusive non-blocking directory lease and requires exactly one valid `head`, including at sequence zero. It rejects a missing, deleted, truncated, malformed, or hard-linked head; a head rollback whose sequence/hash does not equal the complete record scan; non-regular/hard-linked published entries; unknown names; duplicate sequences; gaps; unknown schema versions; oversize records; any record/head/correlation epoch mismatch; hash-chain/head mismatch; and a pre-existing `.open` (including `head.open`). It does not guess, truncate, delete, skip, regenerate an epoch, or `unwrap_or` malformed state. Only a directory created by this startup invocation may be initialized; a pre-existing empty directory is `InvalidExistingLedger`, so deleting the head and complete record set cannot masquerade as a fresh ledger. Directory creation is allowed only at the compile-pinned path with mode `0700`; it is persistence setup, not arming or suppression provisioning.
 
 Capacity is preflighted before the irreversible R9 claim. Any I/O error after preflight but before durable publication is a typed `PersistenceFailed`; because the claim/signing outcome may already be irreversible, the worker closes and does not retry that candidate.
 
@@ -204,26 +210,26 @@ Capacity is preflighted before the irreversible R9 claim. Any I/O error after pr
 Ledger shutdown is not emitted as an ordinary `BridgeRejected`, `Busy`, or `Closed` candidate result. The entrypoint publishes one sticky `SimulationEntrypointStatus::LedgerClosed` value and one structured `error!` event. Its closed reason is total and distinguishable:
 
 - `Full { ledger_epoch, next_sequence: 262144, capacity: 262144 }`;
-- `WriteFailed { ledger_epoch, next_sequence, operation, io_kind }`;
+- `PersistenceFailed { ledger_epoch, next_sequence, operation, io_kind }`;
 - `InvalidExistingLedger { ledger_epoch: Option<_>, class }`.
 
-`operation`, `io_kind`, and `class` are bounded enums, not interpolated paths or arbitrary error strings. The status remains queryable for the process lifetime, so an operator can distinguish capacity exhaustion, a transient-looking write failure, and structural corruption after the original log event. The T4e sink then reports `Closed`; it never downgrades the sticky ledger reason.
+`operation`, `io_kind`, and `class` are bounded enums, not interpolated paths or arbitrary error strings. These exact `Full`, `PersistenceFailed`, and `InvalidExistingLedger` variants are exhaustive. The selected value is write-once and remains queryable for the process lifetime, including after the worker and sink close, so an operator can distinguish capacity exhaustion, a transient-looking write failure, and structural corruption after the original log event. The T4e sink then reports `Closed`; it never clears, renames, overwrites, or downgrades the sticky ledger reason.
 
 S2 performs no automatic rotation, deletion, truncation, in-place repair, or retry. Recovery is an explicit owner act:
 
 1. stop the node and preserve the complete pinned directory;
 2. inspect capacity/disk/filesystem health and archive the directory under an owner-chosen immutable location without modifying its records;
 3. for `InvalidExistingLedger`, retain the invalid directory for forensic review rather than repairing it;
-4. move the entire old directory away atomically, create a new empty private pinned directory, and restart the explicitly built arm-sim node;
+4. move the entire old directory away atomically, leave the compile-pinned path absent so startup creates and durably initializes it, and restart the explicitly built arm-sim node;
 5. verify the startup status reports a new random `ledger_epoch` and sequence zero before resuming the campaign.
 
-The new epoch is generated from OS randomness when an empty ledger is initialized, durably stored before record admission, included in every record/correlation envelope, and prevents cross-rotation sequence confusion. If the owner does not perform this act, the correct recovery is “remain stopped and escalate”; there is no hidden reset surface. S2 documents this procedure but does not execute it, add a reset command, or treat restart alone as recovery.
+The new epoch is generated from OS randomness when startup creates the absent ledger directory, durably stored in the initialized head before record admission, and included in every record and correlation envelope. The operator must verify that it differs from the preserved directory's epoch as well as verifying sequence zero; equality is treated as rollback/reuse and remains stopped for investigation. This prevents cross-rotation sequence confusion without claiming that the unsigned ledger authenticates itself against an adversary who rewrites the directory and operator evidence together. If the owner does not perform this act, the correct recovery is “remain stopped and escalate”; there is no hidden reset surface. S2 documents this procedure but does not execute it, add a reset command, or treat restart alone as recovery.
 
 ## 8. Typed terminal results
 
 The worker classifies every accepted candidate exactly once:
 
-- `Persisted { sequence, correlation_key }`;
+- `Persisted { correlation: SimulationCorrelationEnvelopeV1 }`;
 - `BridgeRejected`;
 - `SuppressionClosed`;
 - `ProofUnavailable`;
@@ -261,11 +267,19 @@ Committed controls/mutants:
 - `P3 RED`: unknown field/version, sequence gap/duplicate, stale `.open`, non-regular/hard-linked path, or hash mismatch;
 - `P4 RED`: omit file fsync, atomic no-replace publication, or directory fsync;
 - `P5 RED`: remove correlation key or any economics scalar required for recomputation;
+- `H0 GREEN`: initialized-empty and populated ledgers reopen only when the required 72-byte head exactly matches epoch, next sequence, and latest record hash;
+- `H1 RED`: delete/truncate the head, tamper any head field, or roll the head back to an earlier valid sequence/hash;
+- `L0 GREEN`: each exact sticky `LedgerClosed` reason (`Full`, `PersistenceFailed`, and `InvalidExistingLedger`) remains independently queryable after sink closure;
+- `L1 RED`: remove, rename, merge, overwrite, or clear any sticky closed reason;
+- `X0 GREEN`: record, head, and correlation-envelope schemas all require one identical non-zero 32-byte ledger epoch and preserve it across restart;
+- `X1 RED`: remove the epoch from any one schema or make it optional;
+- `X2 RED`: mismatch the record, head, and correlation-envelope epochs;
+- `X3 RED`: roll an epoch back in a record, head, or correlation envelope after a new generation is established;
 - `U0 GREEN`: aggregate `ProductionInstallationDeferred`, the named follow-up, its `deferred_production` sink returning `T4eHandoffError::Rejected`, and successful node startup remain explicit;
 - `U1 RED`: remove or change the aggregate deferral reason, constructor, or follow-up installation name;
 - `U2 RED`: change `Rejected` to silent acceptance or candidate retention.
 
-Every mutant first asserts its patch changed the input. At least `S0`, `E0`, `Q0`, `P0`, and `U0` stay GREEN.
+Every mutant first asserts its patch changed the input. At least `S0`, `E0`, `Q0`, `P0`, `H0`, `L0`, `X0`, and `U0` stay GREEN.
 
 Existing seals are not weakened. Expected explicit amendments are limited to:
 
