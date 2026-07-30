@@ -151,7 +151,7 @@ pub enum SimulationEntrypointTerminal {
 
 /// Library execution seam for `send_gated`, fixed to `SimBackend`.
 ///
-/// This seam is not production-installed until `Production T4e Simulation Installation + Settled-Loss Authority` supplies real settled-loss authority, proofs/claim-store/custody, the shared bridge, and the PR #55 committed-state dependency. Production `Ready`, `Busy`, and `Closed` handoff behavior remains deferred to that complete installer.
+/// This seam is not production-installed until `Production T4e Simulation Installation + Settled-Loss Authority` supplies real settled-loss authority, proofs/claim-store/custody, the shared bridge, and consumes the PR #55 committed-state dependency already available here. Production `Ready`, `Busy`, and `Closed` handoff behavior remains deferred to that complete installer.
 #[derive(Debug)]
 pub struct SimulationEntrypoint {
     backend: SimBackend,
@@ -254,8 +254,11 @@ impl SimulationEntrypoint {
 }
 
 /// Non-blocking capacity-one handoff into the sole simulation egress owner.
+///
+/// Exported for `Production T4e Simulation Installation + Settled-Loss Authority`; construction
+/// here remains deferred until that follow-up supplies the complete authority chain.
 #[derive(Debug)]
-pub(crate) struct SimulationWorker {
+pub struct SimulationWorker {
     sender: Option<SyncSender<AdmittedAttempt>>,
     admission: Arc<AtomicU8>,
     entrypoint: Arc<SimulationEntrypoint>,
@@ -267,22 +270,26 @@ pub(crate) struct SimulationWorker {
 /// Claiming and signing may start only after this value has been obtained. Dropping an
 /// unused reservation returns admission; submitting it transfers that ownership to the worker.
 #[derive(Debug)]
-pub(crate) struct SimulationReservation {
+pub struct SimulationReservation {
     admission: Arc<AtomicU8>,
 }
 
 /// Typed pre-preparation admission refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SimulationReservationError {
+pub enum SimulationReservationError {
+    /// The sole running-or-queued admission slot is occupied.
     Busy,
+    /// The worker or ledger is closed.
     Closed,
 }
 
 /// A post-preparation submission can fail only because the worker closed or its invariant broke;
 /// queue fullness is deliberately not an exposed outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SimulationSubmitError {
+pub enum SimulationSubmitError {
+    /// The worker closed before accepting the reserved attempt.
     Closed,
+    /// The reservation did not belong to this worker or the bounded queue invariant failed.
     AdmissionInvariant,
 }
 
@@ -309,7 +316,7 @@ impl Drop for SimulationReservation {
 
 impl SimulationWorker {
     /// Spawns the only thread permitted to call the synchronous simulation entrypoint.
-    pub(crate) fn spawn<C, D>(
+    pub fn spawn<C, D>(
         runtime: super::ProductionB5Runtime<C, D>,
         armed: base_mev_trader::ArmedCriteria,
         mut store: SimulationStore,
@@ -364,7 +371,7 @@ impl SimulationWorker {
     }
 
     /// Reserves the only running-or-queued slot before claim/signing starts.
-    pub(crate) fn try_reserve(&self) -> Result<SimulationReservation, SimulationReservationError> {
+    pub fn try_reserve(&self) -> Result<SimulationReservation, SimulationReservationError> {
         if self.sender.is_none() {
             return Err(SimulationReservationError::Closed);
         }
@@ -389,7 +396,7 @@ impl SimulationWorker {
     ///
     /// Because the reservation spans both the running and queued states, `Full` is an internal
     /// invariant violation rather than an ordinary rejection of signed work.
-    pub(crate) fn submit(
+    pub fn submit(
         &self,
         reservation: SimulationReservation,
         attempt: SubmissionAttempt,
@@ -406,7 +413,8 @@ impl SimulationWorker {
         })
     }
 
-    pub(crate) fn status(&self) -> SimulationEntrypointStatus {
+    /// Returns the sticky operator-visible worker status.
+    pub fn status(&self) -> SimulationEntrypointStatus {
         self.entrypoint.status()
     }
 }
@@ -442,7 +450,10 @@ impl UnavailableSimulationHandoff {
 
     /// Builds the explicitly deferred production sink without opening or probing any runtime.
     ///
-    /// Production remains rejection-only until `Production T4e Simulation Installation + Settled-Loss Authority` installs the complete real authority path.
+    /// Production remains rejection-only until
+    /// `Production T4e Simulation Installation + Settled-Loss Authority` installs the complete
+    /// real authority chain. The node-local committed-state authority exists, but settled-loss
+    /// authority and the remaining named installation prerequisites do not.
     pub const fn deferred_production() -> Self {
         Self::new(SimulationEntrypointUnavailable::ProductionInstallationDeferred)
     }

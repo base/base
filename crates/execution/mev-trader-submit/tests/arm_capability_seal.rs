@@ -196,11 +196,13 @@ fn arm_source_is_exactly_the_declared_set() {
 // -- b9: the crate's public `arm` surface is EXACTLY the curated allowlist ------
 
 /// The complete root API. T4e adds the unsigned handoff/provider contract; S1-b
-/// adds only the sealed runtime selection and its two reviewed backends. Signing,
-/// raw permits, concrete freshness providers, and proof APIs remain private.
-const PUBLIC_API_ALLOWLIST: [&str; 17] = [
+/// adds only the sealed runtime selection and its two reviewed backends; S2 adds
+/// the deferred simulation consumer boundary. Signing, raw permits, concrete
+/// freshness providers, and proof APIs remain private.
+const PUBLIC_API_ALLOWLIST: [&str; 22] = [
     "CheckedCandidate",
     "CodeHashProvider",
+    "CommittedStateAuthority",
     "ProdBackend",
     "ProviderError",
     "RuntimeBackend",
@@ -212,7 +214,11 @@ const PUBLIC_API_ALLOWLIST: [&str; 17] = [
     "SimulationLedgerClosure",
     "SimulationLedgerEpoch",
     "SimulationLedgerInvalid",
+    "SimulationReservation",
+    "SimulationReservationError",
     "SimulationStoreOperation",
+    "SimulationSubmitError",
+    "SimulationWorker",
     "SuppressionRollbackError",
     "UnavailableSimulationHandoff",
     "provision_suppression_anchor",

@@ -32,9 +32,13 @@ use std::{
     time::Instant,
 };
 
+#[cfg(feature = "arm-sim")]
+use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_consensus::{Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
+#[cfg(feature = "arm-sim")]
+use alloy_primitives::{Bytes, U256};
 #[cfg(feature = "edge-measurement")]
 use base_flashblocks::{
     ClockAnchorRecordV1, EdgeDurableRegistryAckV1, EdgeEventDrainStatusV1, EdgeMeasurementGlobal,
@@ -75,15 +79,20 @@ use base_mev_trader::{
 use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, NodeHooks};
 #[cfg(feature = "t4d-shadow")]
 use mev_trader_submit::{BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate};
+#[cfg(feature = "arm-sim")]
+use mev_trader_submit::{
+    CommittedStateAuthority, ProviderError, SimulationEntrypointStatus,
+    UnavailableSimulationHandoff,
+};
 #[cfg(feature = "t4b-shadow")]
 use mev_trader_submit::{
     PriorityEconomicsAuthority, SnapshotFreshnessToken, TxAuthorityAssembler, TxAuthorityError,
     TxAuthorityNodeError, TxAuthorityNodeView, TxAuthorityStateRead, ValidatedUnsignedAtomicTx,
 };
-#[cfg(feature = "arm-sim")]
-use mev_trader_submit::{SimulationEntrypointStatus, UnavailableSimulationHandoff};
 #[cfg(feature = "t4e-handoff")]
 use mev_trader_submit::{T4eCandidateHandoff, T4eHandoffError};
+#[cfg(feature = "arm-sim")]
+use reth_provider::BlockNumReader;
 #[cfg(feature = "t4b-shadow")]
 use reth_provider::{AccountReader, BlockReaderIdExt, BytecodeReader};
 use reth_provider::{HeaderProvider, StateProviderBox, StateProviderFactory};
@@ -8377,6 +8386,86 @@ impl FlatJsonParserV1<'_> {
     }
 }
 
+#[cfg(feature = "arm-sim")]
+/// Node-local adapter for canonical committed state used by the arm simulation authority.
+///
+/// Construction at `node_started` belongs to
+/// `Production T4e Simulation Installation + Settled-Loss Authority`, where the in-process
+/// provider can be consumed together with the real settled-loss authority and every remaining
+/// installation prerequisite. Constructing only this available dependency must not imply Ready.
+#[derive(Debug, Clone)]
+pub struct CliCommittedStateAuthority<Provider> {
+    provider: Provider,
+}
+
+#[cfg(feature = "arm-sim")]
+impl<Provider> CliCommittedStateAuthority<Provider> {
+    /// Owns a clone of the in-process node provider.
+    pub fn new(provider: &Provider) -> Self
+    where
+        Provider: Clone,
+    {
+        Self { provider: provider.clone() }
+    }
+
+    fn runtime_code_bytes(code: Option<Bytes>) -> Result<Vec<u8>, ProviderError> {
+        let code = code.ok_or(ProviderError::Invalid("committed runtime code body is missing"))?;
+        if code.is_empty() {
+            return Err(ProviderError::Invalid("committed runtime code body is empty"));
+        }
+        Ok(code.to_vec())
+    }
+}
+
+#[cfg(feature = "arm-sim")]
+impl<Provider> CommittedStateAuthority for CliCommittedStateAuthority<Provider>
+where
+    Provider: StateProviderFactory + BlockNumReader,
+{
+    fn code_at_latest_committed(&self, address: Address) -> Result<Vec<u8>, ProviderError> {
+        let state = StateProviderFactory::latest(&self.provider).map_err(|_| {
+            ProviderError::Unavailable("latest committed state is unavailable".to_string())
+        })?;
+        let account = state
+            .basic_account(&address)
+            .map_err(|_| {
+                ProviderError::Unavailable("committed account state is unavailable".to_string())
+            })?
+            .ok_or(ProviderError::Invalid("committed account is absent"))?;
+        let code_hash = account
+            .bytecode_hash
+            .ok_or(ProviderError::Invalid("committed account has no bytecode hash"))?;
+        if code_hash == KECCAK_EMPTY {
+            return Err(ProviderError::Invalid("committed account has an empty bytecode hash"));
+        }
+        let code = state
+            .bytecode_by_hash(&code_hash)
+            .map_err(|_| {
+                ProviderError::Unavailable("committed runtime code is unavailable".to_string())
+            })?
+            .map(|bytecode| bytecode.original_bytes());
+        Self::runtime_code_bytes(code)
+    }
+
+    fn latest_committed_block(&self) -> Result<u64, ProviderError> {
+        BlockNumReader::best_block_number(&self.provider).map_err(|_| {
+            ProviderError::Unavailable("latest committed block is unavailable".to_string())
+        })
+    }
+
+    fn native_balance_at_latest_committed(
+        &self,
+        address: Address,
+    ) -> Result<Option<U256>, ProviderError> {
+        let state = StateProviderFactory::latest(&self.provider).map_err(|_| {
+            ProviderError::Unavailable("latest committed state is unavailable".to_string())
+        })?;
+        state.basic_account(&address).map(|account| account.map(|account| account.balance)).map_err(
+            |_| ProviderError::Unavailable("committed account state is unavailable".to_string()),
+        )
+    }
+}
+
 /// Exact-1 Phase A extension configuration with post-gate receive credential input.
 #[derive(Debug, Clone)]
 pub struct BaseNodeTraderConfig {
@@ -9899,11 +9988,15 @@ fn t4a_runtime_config(enabled: bool) -> eyre::Result<MevTraderRuntimeConfig> {
 }
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "arm-sim")]
+    use std::ops::Deref;
     #[cfg(feature = "edge-measurement")]
     use std::os::unix::fs::PermissionsExt;
     #[cfg(feature = "edge-measurement")]
     use std::{fs, path::PathBuf};
 
+    #[cfg(feature = "arm-sim")]
+    use alloy_eips::{BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, Bloom, Bytes, U256};
     #[cfg(feature = "edge-measurement")]
     use alloy_primitives::{hex, keccak256};
@@ -9915,8 +10008,332 @@ mod tests {
     use base_flashblocks::{DecodedFlashblockKeyV1, SourceConnectionTransitionV1};
     #[cfg(feature = "edge-measurement")]
     use base_mev_trader::{BlinkRejectClassifierV3, BlinkRejectReasonV3, SlotSubmit};
+    #[cfg(feature = "arm-sim")]
+    use reth_node_core::primitives::{Account, Bytecode};
+    #[cfg(feature = "arm-sim")]
+    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    #[cfg(feature = "arm-sim")]
+    use reth_provider::{
+        AccountReader, BlockHashReader, BlockIdReader, BytecodeReader, HashedPostStateProvider,
+        ProviderError as RethProviderError, ProviderResult, StateProofProvider, StateProvider,
+        StateRootProvider, StorageRootProvider,
+    };
 
     use super::*;
+
+    #[cfg(feature = "arm-sim")]
+    #[derive(Clone, Copy, Debug)]
+    enum ControlledStateRead {
+        BasicAccountFailure,
+        BytecodeFailure,
+        MissingBytecode,
+        EmptyBytecode,
+    }
+
+    #[cfg(feature = "arm-sim")]
+    #[derive(Clone, Copy, Debug)]
+    enum ControlledLatest {
+        Failure,
+        State(ControlledStateRead),
+    }
+
+    #[cfg(feature = "arm-sim")]
+    #[derive(Clone, Debug)]
+    struct ControlledStateView {
+        inner: MockEthProvider,
+        read: ControlledStateRead,
+    }
+
+    #[cfg(feature = "arm-sim")]
+    impl ControlledStateView {
+        fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
+            if matches!(self.read, ControlledStateRead::BasicAccountFailure) {
+                return Err(RethProviderError::BestBlockNotFound);
+            }
+            AccountReader::basic_account(&self.inner, address)
+        }
+
+        fn bytecode_by_hash(&self, code_hash: &B256) -> ProviderResult<Option<Bytecode>> {
+            match self.read {
+                ControlledStateRead::BytecodeFailure => Err(RethProviderError::BestBlockNotFound),
+                ControlledStateRead::MissingBytecode => Ok(None),
+                ControlledStateRead::EmptyBytecode => Ok(Some(Bytecode::new_raw(Bytes::new()))),
+                ControlledStateRead::BasicAccountFailure => {
+                    BytecodeReader::bytecode_by_hash(&self.inner, code_hash)
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "arm-sim")]
+    impl Deref for ControlledStateView {
+        type Target = MockEthProvider;
+
+        fn deref(&self) -> &Self::Target {
+            &self.inner
+        }
+    }
+
+    #[cfg(feature = "arm-sim")]
+    #[derive(Clone, Debug)]
+    struct ControlledStateProvider {
+        view: ControlledStateView,
+    }
+
+    #[cfg(feature = "arm-sim")]
+    impl ControlledStateProvider {
+        fn as_ref(&self) -> &ControlledStateView {
+            &self.view
+        }
+    }
+
+    #[cfg(feature = "arm-sim")]
+    reth_provider::delegate_provider_impls!(ControlledStateProvider);
+
+    #[cfg(feature = "arm-sim")]
+    #[derive(Clone, Debug)]
+    struct ControlledProvider {
+        inner: MockEthProvider,
+        latest: ControlledLatest,
+    }
+
+    #[cfg(feature = "arm-sim")]
+    impl ControlledProvider {
+        fn new(latest: ControlledLatest) -> Self {
+            Self { inner: MockEthProvider::default(), latest }
+        }
+    }
+
+    #[cfg(feature = "arm-sim")]
+    impl BlockHashReader for ControlledProvider {
+        fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
+            BlockHashReader::block_hash(&self.inner, number)
+        }
+
+        fn canonical_hashes_range(&self, start: u64, end: u64) -> ProviderResult<Vec<B256>> {
+            BlockHashReader::canonical_hashes_range(&self.inner, start, end)
+        }
+    }
+
+    #[cfg(feature = "arm-sim")]
+    impl BlockNumReader for ControlledProvider {
+        fn chain_info(&self) -> ProviderResult<reth_chainspec::ChainInfo> {
+            BlockNumReader::chain_info(&self.inner)
+        }
+
+        fn best_block_number(&self) -> ProviderResult<u64> {
+            BlockNumReader::best_block_number(&self.inner)
+        }
+
+        fn last_block_number(&self) -> ProviderResult<u64> {
+            BlockNumReader::last_block_number(&self.inner)
+        }
+
+        fn block_number(&self, hash: B256) -> ProviderResult<Option<u64>> {
+            BlockNumReader::block_number(&self.inner, hash)
+        }
+    }
+
+    #[cfg(feature = "arm-sim")]
+    impl BlockIdReader for ControlledProvider {
+        fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            BlockIdReader::pending_block_num_hash(&self.inner)
+        }
+
+        fn safe_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            BlockIdReader::safe_block_num_hash(&self.inner)
+        }
+
+        fn finalized_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            BlockIdReader::finalized_block_num_hash(&self.inner)
+        }
+    }
+
+    #[cfg(feature = "arm-sim")]
+    impl StateProviderFactory for ControlledProvider {
+        fn latest(&self) -> ProviderResult<StateProviderBox> {
+            match self.latest {
+                ControlledLatest::Failure => Err(RethProviderError::BestBlockNotFound),
+                ControlledLatest::State(read) => Ok(Box::new(ControlledStateProvider {
+                    view: ControlledStateView { inner: self.inner.clone(), read },
+                })),
+            }
+        }
+
+        fn state_by_block_number_or_tag(
+            &self,
+            number_or_tag: BlockNumberOrTag,
+        ) -> ProviderResult<StateProviderBox> {
+            StateProviderFactory::state_by_block_number_or_tag(&self.inner, number_or_tag)
+        }
+
+        fn history_by_block_number(&self, block: u64) -> ProviderResult<StateProviderBox> {
+            StateProviderFactory::history_by_block_number(&self.inner, block)
+        }
+
+        fn history_by_block_hash(&self, block: B256) -> ProviderResult<StateProviderBox> {
+            StateProviderFactory::history_by_block_hash(&self.inner, block)
+        }
+
+        fn state_by_block_hash(&self, block: B256) -> ProviderResult<StateProviderBox> {
+            StateProviderFactory::state_by_block_hash(&self.inner, block)
+        }
+
+        fn pending(&self) -> ProviderResult<StateProviderBox> {
+            StateProviderFactory::pending(&self.inner)
+        }
+
+        fn pending_state_by_hash(
+            &self,
+            block_hash: B256,
+        ) -> ProviderResult<Option<StateProviderBox>> {
+            StateProviderFactory::pending_state_by_hash(&self.inner, block_hash)
+        }
+
+        fn maybe_pending(&self) -> ProviderResult<Option<StateProviderBox>> {
+            StateProviderFactory::maybe_pending(&self.inner)
+        }
+    }
+    #[cfg(feature = "arm-sim")]
+    #[test]
+    fn committed_state_authority_preserves_runtime_bytes() {
+        let provider = MockEthProvider::default();
+        let address = Address::with_last_byte(1);
+        let code = Bytes::from_static(&[0x60, 0x2a, 0x5f, 0x52, 0x00]);
+        provider.add_account(
+            address,
+            ExtendedAccount::new(7, U256::from(9)).with_bytecode(code.clone()),
+        );
+
+        let authority = CliCommittedStateAuthority::new(&provider);
+        let runtime = authority.code_at_latest_committed(address).expect("committed runtime code");
+        assert_eq!(runtime, code);
+    }
+
+    #[cfg(feature = "arm-sim")]
+    #[test]
+    fn committed_state_authority_reads_best_block_number() {
+        let provider = MockEthProvider::default();
+        provider.add_header(B256::with_last_byte(1), Header { number: 41, ..Default::default() });
+        provider.add_header(B256::with_last_byte(2), Header { number: 73, ..Default::default() });
+
+        let authority = CliCommittedStateAuthority::new(&provider);
+        assert_eq!(authority.latest_committed_block(), Ok(73));
+
+        let empty_provider = MockEthProvider::default();
+        let empty_authority = CliCommittedStateAuthority::new(&empty_provider);
+        assert_eq!(
+            empty_authority.latest_committed_block(),
+            Err(ProviderError::Unavailable("latest committed block is unavailable".to_string(),)),
+        );
+    }
+
+    #[cfg(feature = "arm-sim")]
+    #[test]
+    fn committed_state_authority_distinguishes_zero_balance_from_absence() {
+        let provider = MockEthProvider::default();
+        let present = Address::with_last_byte(1);
+        let absent = Address::with_last_byte(2);
+        provider.add_account(present, ExtendedAccount::new(0, U256::ZERO));
+
+        let authority = CliCommittedStateAuthority::new(&provider);
+        assert_eq!(authority.native_balance_at_latest_committed(present), Ok(Some(U256::ZERO)),);
+        assert_eq!(authority.native_balance_at_latest_committed(absent), Ok(None));
+    }
+
+    #[cfg(feature = "arm-sim")]
+    #[test]
+    fn committed_state_authority_classifies_invalid_code_shapes() {
+        let provider = MockEthProvider::default();
+        let absent = Address::with_last_byte(1);
+        let no_hash = Address::with_last_byte(2);
+        let empty_hash = Address::with_last_byte(3);
+        provider.add_account(no_hash, ExtendedAccount::new(0, U256::ZERO));
+        provider.add_account(
+            empty_hash,
+            ExtendedAccount::new(0, U256::ZERO).with_bytecode(Bytes::new()),
+        );
+        let authority = CliCommittedStateAuthority::new(&provider);
+
+        assert_eq!(
+            authority.code_at_latest_committed(absent),
+            Err(ProviderError::Invalid("committed account is absent")),
+        );
+        assert_eq!(
+            authority.code_at_latest_committed(no_hash),
+            Err(ProviderError::Invalid("committed account has no bytecode hash")),
+        );
+        assert_eq!(
+            authority.code_at_latest_committed(empty_hash),
+            Err(ProviderError::Invalid("committed account has an empty bytecode hash")),
+        );
+
+        let body_address = Address::with_last_byte(4);
+        let missing_body_provider =
+            ControlledProvider::new(ControlledLatest::State(ControlledStateRead::MissingBytecode));
+        missing_body_provider.inner.add_account(
+            body_address,
+            ExtendedAccount::new(0, U256::ZERO).with_bytecode(Bytes::from_static(&[0x60, 0x00])),
+        );
+        let missing_body_authority = CliCommittedStateAuthority::new(&missing_body_provider);
+        assert_eq!(
+            missing_body_authority.code_at_latest_committed(body_address),
+            Err(ProviderError::Invalid("committed runtime code body is missing")),
+        );
+
+        let empty_body_provider =
+            ControlledProvider::new(ControlledLatest::State(ControlledStateRead::EmptyBytecode));
+        empty_body_provider.inner.add_account(
+            body_address,
+            ExtendedAccount::new(0, U256::ZERO).with_bytecode(Bytes::from_static(&[0x60, 0x00])),
+        );
+        let empty_body_authority = CliCommittedStateAuthority::new(&empty_body_provider);
+        assert_eq!(
+            empty_body_authority.code_at_latest_committed(body_address),
+            Err(ProviderError::Invalid("committed runtime code body is empty")),
+        );
+    }
+
+    #[cfg(feature = "arm-sim")]
+    #[test]
+    fn committed_state_authority_bounds_provider_failures() {
+        let address = Address::with_last_byte(1);
+        let latest_failure = ControlledProvider::new(ControlledLatest::Failure);
+        let latest_failure_authority = CliCommittedStateAuthority::new(&latest_failure);
+        assert_eq!(
+            latest_failure_authority.code_at_latest_committed(address),
+            Err(ProviderError::Unavailable("latest committed state is unavailable".to_string(),)),
+        );
+        assert_eq!(
+            latest_failure_authority.native_balance_at_latest_committed(address),
+            Err(ProviderError::Unavailable("latest committed state is unavailable".to_string(),)),
+        );
+
+        let account_failure = ControlledProvider::new(ControlledLatest::State(
+            ControlledStateRead::BasicAccountFailure,
+        ));
+        let account_failure_authority = CliCommittedStateAuthority::new(&account_failure);
+        assert_eq!(
+            account_failure_authority.code_at_latest_committed(address),
+            Err(ProviderError::Unavailable("committed account state is unavailable".to_string(),)),
+        );
+        assert_eq!(
+            account_failure_authority.native_balance_at_latest_committed(address),
+            Err(ProviderError::Unavailable("committed account state is unavailable".to_string(),)),
+        );
+
+        let bytecode_failure =
+            ControlledProvider::new(ControlledLatest::State(ControlledStateRead::BytecodeFailure));
+        bytecode_failure.inner.add_account(
+            address,
+            ExtendedAccount::new(0, U256::ZERO).with_bytecode(Bytes::from_static(&[0x60, 0x00])),
+        );
+        let bytecode_failure_authority = CliCommittedStateAuthority::new(&bytecode_failure);
+        assert_eq!(
+            bytecode_failure_authority.code_at_latest_committed(address),
+            Err(ProviderError::Unavailable("committed runtime code is unavailable".to_string(),)),
+        );
+    }
 
     #[cfg(feature = "edge-measurement")]
     #[derive(Clone, Debug, PartialEq, Eq)]

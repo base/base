@@ -44,14 +44,15 @@ pub use arm::ProdBackend;
 #[cfg(feature = "t4e-handoff")]
 pub use arm::UnavailableSimulationHandoff;
 #[cfg(feature = "t4e-handoff")]
-pub use arm::{CheckedCandidate, CodeHashProvider, ProviderError};
+pub use arm::{CheckedCandidate, CodeHashProvider, CommittedStateAuthority, ProviderError};
 #[cfg(feature = "arm")]
 pub use arm::{RuntimeBackend, SimBackend};
 #[cfg(feature = "arm")]
 pub use arm::{
     SimulationCorrelationEnvelopeV1, SimulationCorrelationKey, SimulationEntrypointStatus,
     SimulationEntrypointUnavailable, SimulationLedgerClosure, SimulationLedgerEpoch,
-    SimulationLedgerInvalid, SimulationStoreOperation,
+    SimulationLedgerInvalid, SimulationReservation, SimulationReservationError,
+    SimulationStoreOperation, SimulationSubmitError, SimulationWorker,
 };
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
 pub use arm::{SuppressionRollbackError, provision_suppression_anchor};

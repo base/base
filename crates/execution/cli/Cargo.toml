@@ -82,6 +82,11 @@ libc = { workspace = true, optional = true }
 rstest.workspace = true
 tempfile.workspace = true
 base-common-flashblocks.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }
+reth-trie.workspace = true
+revm-database.workspace = true
+reth-storage-api.workspace = true
+reth-primitives-traits.workspace = true
 base-flashblocks = { workspace = true, features = ["edge-measurement", "test-utils"] }
 base-mev-trader = { workspace = true, features = ["edge-measurement", "test-utils"] }
 

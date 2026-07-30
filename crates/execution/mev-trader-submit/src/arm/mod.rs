@@ -37,7 +37,8 @@ mod simulation_entrypoint;
 pub use simulation_entrypoint::UnavailableSimulationHandoff;
 pub use simulation_entrypoint::{
     SimulationEntrypoint, SimulationEntrypointStatus, SimulationEntrypointTerminal,
-    SimulationEntrypointUnavailable, SimulationLedgerClosure,
+    SimulationEntrypointUnavailable, SimulationLedgerClosure, SimulationReservation,
+    SimulationReservationError, SimulationSubmitError, SimulationWorker,
 };
 mod simulation_store;
 pub use simulation_store::{
