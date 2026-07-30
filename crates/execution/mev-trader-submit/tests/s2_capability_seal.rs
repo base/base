@@ -2052,6 +2052,132 @@ fn analyze_production_handoff(
     visitor
 }
 
+fn validate_install_error_taxonomy(source: &str) -> Result<(), String> {
+    let file = syn::parse_file(source)
+        .map_err(|error| format!("production installation source did not parse: {error}"))?;
+    let matches = file
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Enum(item) = item else {
+                return None;
+            };
+            (item.ident == "ProductionSimulationInstallError" && !has_cfg_test(&item.attrs))
+                .then_some(item)
+        })
+        .collect::<Vec<_>>();
+    let [install_error] = matches.as_slice() else {
+        return Err(format!(
+            "ProductionSimulationInstallError cardinality changed: {}",
+            matches.len()
+        ));
+    };
+    if !install_error.generics.params.is_empty() {
+        return Err("ProductionSimulationInstallError gained generics".to_owned());
+    }
+
+    let actual = install_error
+        .variants
+        .iter()
+        .map(|variant| {
+            let payload = match &variant.fields {
+                syn::Fields::Unit => String::new(),
+                syn::Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+                    let syn::Type::Path(payload) = &fields.unnamed[0].ty else {
+                        return Err(format!("{} payload is not a direct type path", variant.ident));
+                    };
+                    if payload.qself.is_some() || payload.path.segments.len() != 1 {
+                        return Err(format!("{} payload is not a direct closed type", variant.ident));
+                    }
+                    format!("({})", payload.path.segments[0].ident)
+                }
+                syn::Fields::Named(_) | syn::Fields::Unnamed(_) => {
+                    return Err(format!("{} payload shape changed", variant.ident));
+                }
+            };
+            Ok(format!("{}{payload}", variant.ident))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let expected = [
+        "InstallationInProgress",
+        "ActivationInvariant",
+        "ArmRuntimeUnavailable(ProductionArmRuntimeOpenFailure)",
+        "CommittedStateUnavailable(ProductionProviderFailure)",
+        "DrawdownAuthorityUnavailable(SettledLossUnavailableReason)",
+        "CampaignBundleUnavailable(ProductionCampaignBundleFailure)",
+        "ClaimStoreUnavailable(ProductionClaimFailure)",
+        "DeploymentIdentityUnavailable(ProductionDeploymentFailure)",
+        "CustodyUnavailable(ProductionCustodyFailure)",
+        "FailSinkUnavailable(ProductionArmFailure)",
+        "ArmingUnavailable(ProductionArmFailure)",
+        "PersistenceUnavailable(ProductionStoreOpenFailure)",
+        "CapacityUnavailable(SimulationLedgerClosure)",
+        "BridgeUnavailable(ProductionBridgeFailure)",
+        "WorkerSpawnUnavailable",
+        "WorkerStartupUnavailable(WorkerStartupFailure)",
+    ];
+    if actual != expected {
+        return Err(format!(
+            "ProductionSimulationInstallError taxonomy changed: {actual:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn installed_error_taxonomy_control_and_mutants() {
+    const CONTROL: &str = r#"
+enum ProductionSimulationInstallError {
+    InstallationInProgress,
+    ActivationInvariant,
+    ArmRuntimeUnavailable(ProductionArmRuntimeOpenFailure),
+    CommittedStateUnavailable(ProductionProviderFailure),
+    DrawdownAuthorityUnavailable(SettledLossUnavailableReason),
+    CampaignBundleUnavailable(ProductionCampaignBundleFailure),
+    ClaimStoreUnavailable(ProductionClaimFailure),
+    DeploymentIdentityUnavailable(ProductionDeploymentFailure),
+    CustodyUnavailable(ProductionCustodyFailure),
+    FailSinkUnavailable(ProductionArmFailure),
+    ArmingUnavailable(ProductionArmFailure),
+    PersistenceUnavailable(ProductionStoreOpenFailure),
+    CapacityUnavailable(SimulationLedgerClosure),
+    BridgeUnavailable(ProductionBridgeFailure),
+    WorkerSpawnUnavailable,
+    WorkerStartupUnavailable(WorkerStartupFailure),
+}
+"#;
+    validate_install_error_taxonomy(CONTROL).expect("installed error taxonomy control");
+    eprintln!("U-INSTALL-ERROR-TAXONOMY: GREEN");
+
+    for (name, mutant) in [
+        (
+            "MISSING-REASON",
+            CONTROL.replace("    BridgeUnavailable(ProductionBridgeFailure),\n", ""),
+        ),
+        (
+            "AGGREGATE-DEFERRAL",
+            CONTROL.replace(
+                "    InstallationInProgress,\n",
+                "    InstallationInProgress,\n    ProductionInstallationDeferred,\n",
+            ),
+        ),
+        (
+            "COLLAPSED-PAYLOAD",
+            CONTROL.replace(
+                "CommittedStateUnavailable(ProductionProviderFailure)",
+                "CommittedStateUnavailable(ProductionArmFailure)",
+            ),
+        ),
+    ] {
+        assert_ne!(mutant, CONTROL, "{name} patch did not change source");
+        assert!(
+            validate_install_error_taxonomy(&mutant).is_err(),
+            "{name} mutant remained GREEN"
+        );
+        eprintln!("U-INSTALL-ERROR-{name}: RED");
+    }
+}
+
 fn insert_before_test_module(source: &str, addition: &str) -> String {
     source.replacen(
         "#[cfg(test)]\nmod tests {",
