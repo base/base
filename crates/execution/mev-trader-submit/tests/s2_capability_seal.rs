@@ -1062,20 +1062,13 @@ fn persistence_p1_socket_p2_unbounded_p4_no_fsync_p5_no_join_red() {
     eprintln!("P5: RED");
 }
 
-fn cfg_meta_contains_test(meta: &syn::Meta) -> bool {
-    match meta {
-        syn::Meta::Path(path) => path.is_ident("test"),
-        syn::Meta::List(list) => list
-            .parse_args_with(
-                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-            )
-            .is_ok_and(|nested| nested.iter().any(cfg_meta_contains_test)),
-        syn::Meta::NameValue(_) => false,
-    }
-}
-
 fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|attr| attr.path().is_ident("cfg") && cfg_meta_contains_test(&attr.meta))
+    attrs.iter().any(|attr| {
+        let syn::Meta::List(list) = &attr.meta else {
+            return false;
+        };
+        attr.path().is_ident("cfg") && list.tokens.to_string() == "test"
+    })
 }
 
 fn item_has_cfg_test(item: &syn::Item) -> bool {
@@ -2545,9 +2538,7 @@ fn collect_submit_rust_sources(
         let path = entry.path();
         if path.is_dir() {
             collect_submit_rust_sources(&path, sources)?;
-        } else if path.extension().is_some_and(|extension| extension == "rs")
-            && path != manifest_dir().join("src/arm/simulation_entrypoint.rs")
-        {
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
             let source = std::fs::read_to_string(&path)
                 .map_err(|error| format!("read submit source {}: {error}", path.display()))?;
             sources.push((path, source));
@@ -2728,12 +2719,126 @@ fn installed_u0_green_and_recursive_whole_crate_mutants_red() {
     let handoff_path = Path::new("src/arm/production_handoff.rs");
     let handoff = read(manifest_dir().join(handoff_path));
     let cli = read(manifest_dir().join("../cli/src/mev_trader.rs"));
+    let entrypoint_path = Path::new("src/arm/simulation_entrypoint.rs");
+    let entrypoint = read(manifest_dir().join(entrypoint_path));
     let transport_path = Path::new("src/arm/transport.rs");
     let transport = read(manifest_dir().join(transport_path));
 
     validate_installed_production_handoff(&handoff, &cli, None)
         .expect("U0 exact installed production handoff");
     eprintln!("U0-INSTALLED: GREEN");
+
+    let entrypoint_second_impl = insert_before_test_module(
+        &entrypoint,
+        "#[derive(Debug)]\n\
+         struct EntrypointSecondProductionHandoff;\n\
+         impl crate::T4eCandidateHandoff for EntrypointSecondProductionHandoff {\n\
+         \tfn try_handoff(\n\
+         \t\t&self,\n\
+         \t\tcandidate: crate::SealedUnsignedCandidate,\n\
+         \t) -> Result<(), crate::T4eHandoffError> {\n\
+         \t\tdrop(candidate);\n\
+         \t\tErr(crate::T4eHandoffError::Rejected)\n\
+         \t}\n\
+         }",
+    );
+    assert_ne!(
+        entrypoint_second_impl, entrypoint,
+        "simulation entrypoint second impl patch did not change source"
+    );
+    syn::parse_file(&entrypoint_second_impl)
+        .expect("simulation entrypoint second impl compile-shaped control");
+    assert!(
+        validate_installed_production_handoff(
+            &handoff,
+            &cli,
+            Some((entrypoint_path, &entrypoint_second_impl))
+        )
+        .is_err(),
+        "simulation entrypoint second implementation remained GREEN"
+    );
+    eprintln!("U-INSTALLED-ENTRYPOINT-SECOND-IMPL: RED (compile errors: 0)");
+
+    let entrypoint_deferral = insert_before_test_module(
+        &entrypoint,
+        "const REVIEWED_DEFERRAL_MUTANT: [&str; 4] = [\n\
+         \t\"ProductionInstallationDeferred\",\n\
+         \t\"deferred_production\",\n\
+         \t\"arm_sim_status:\",\n\
+         \t\"production installation deferred\",\n\
+         ];",
+    );
+    assert_ne!(
+        entrypoint_deferral, entrypoint,
+        "simulation entrypoint deferral patch did not change source"
+    );
+    syn::parse_file(&entrypoint_deferral)
+        .expect("simulation entrypoint deferral compile-shaped control");
+    assert!(
+        validate_installed_production_handoff(
+            &handoff,
+            &cli,
+            Some((entrypoint_path, &entrypoint_deferral))
+        )
+        .is_err(),
+        "simulation entrypoint deferral edges remained GREEN"
+    );
+    eprintln!("U-INSTALLED-ENTRYPOINT-DEFERRAL: RED (compile errors: 0)");
+
+    let entrypoint_runtime_open = insert_before_test_module(
+        &entrypoint,
+        "fn second_runtime_open_mutant() {\n\
+         \tlet _ = super::ArmRuntime::open();\n\
+         }",
+    );
+    assert_ne!(
+        entrypoint_runtime_open, entrypoint,
+        "simulation entrypoint runtime-open patch did not change source"
+    );
+    syn::parse_file(&entrypoint_runtime_open)
+        .expect("simulation entrypoint runtime-open compile-shaped control");
+    assert!(
+        validate_installed_production_handoff(
+            &handoff,
+            &cli,
+            Some((entrypoint_path, &entrypoint_runtime_open))
+        )
+        .is_err(),
+        "simulation entrypoint second runtime open remained GREEN"
+    );
+    eprintln!("U-INSTALLED-ENTRYPOINT-RUNTIME-OPEN: RED (compile errors: 0)");
+
+    let not_test_second_impl = insert_before_test_module(
+        &transport,
+        "#[cfg(all(not(test), feature = \"t4e-handoff\"))]\n\
+         #[derive(Debug)]\n\
+         struct NotTestSecondProductionHandoff;\n\
+         #[cfg(all(not(test), feature = \"t4e-handoff\"))]\n\
+         impl crate::T4eCandidateHandoff for NotTestSecondProductionHandoff {\n\
+         \tfn try_handoff(\n\
+         \t\t&self,\n\
+         \t\tcandidate: crate::SealedUnsignedCandidate,\n\
+         \t) -> Result<(), crate::T4eHandoffError> {\n\
+         \t\tdrop(candidate);\n\
+         \t\tErr(crate::T4eHandoffError::Rejected)\n\
+         \t}\n\
+         }",
+    );
+    assert_ne!(
+        not_test_second_impl, transport,
+        "not(test) second impl patch did not change source"
+    );
+    syn::parse_file(&not_test_second_impl).expect("not(test) second impl compile-shaped control");
+    assert!(
+        validate_installed_production_handoff(
+            &handoff,
+            &cli,
+            Some((transport_path, &not_test_second_impl))
+        )
+        .is_err(),
+        "not(test) production implementation remained GREEN"
+    );
+    eprintln!("U-INSTALLED-NOT-TEST-SECOND-IMPL: RED (compile errors: 0)");
 
     let box_leak = handoff.replacen(
         "    fn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        let Ok(mut state) = self.shared.state.lock() else {",

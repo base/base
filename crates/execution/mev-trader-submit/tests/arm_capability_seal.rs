@@ -3523,13 +3523,14 @@ fn only_reviewed_workspace_edges_link_the_submit_crate() {
         .find(|package| package["name"] == "base-suppression-provision-bin")
         .expect("provisioning package");
     assert_eq!(provisioner["features"]["provision"], serde_json::json!(["dep:mev-trader-submit"]));
-    let provisioning_bin = provisioner["targets"]
-        .as_array()
-        .expect("provisioning targets")
-        .iter()
-        .find(|target| target["name"] == "base-mev-suppression-provision")
-        .expect("provisioning binary target");
-    assert_eq!(provisioning_bin["required-features"], serde_json::json!(["provision"]));
+    let provisioning_targets = provisioner["targets"].as_array().expect("provisioning targets");
+    for name in ["base-mev-suppression-provision", "base-mev-t4e-provision"] {
+        let provisioning_bin = provisioning_targets
+            .iter()
+            .find(|target| target["name"] == name)
+            .unwrap_or_else(|| panic!("missing provisioning binary target `{name}`"));
+        assert_eq!(provisioning_bin["required-features"], serde_json::json!(["provision"]));
+    }
 
     let cli =
         std::fs::read_to_string(manifest_dir().join("../cli/Cargo.toml")).expect("CLI manifest");

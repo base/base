@@ -133,7 +133,8 @@ fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
 }
 
 fn production_prefix(source: &str) -> Result<&str, String> {
-    let parsed = syn::parse_file(source).map_err(|error| format!("malformed Rust source: {error}"))?;
+    let parsed =
+        syn::parse_file(source).map_err(|error| format!("malformed Rust source: {error}"))?;
     let test_items = parsed
         .items
         .iter()
@@ -190,8 +191,7 @@ fn production_prefix(source: &str) -> Result<&str, String> {
 }
 
 fn read_production_code(file: &str) -> String {
-    let source =
-        std::fs::read_to_string(manifest_dir().join("src").join(file)).expect("source");
+    let source = std::fs::read_to_string(manifest_dir().join("src").join(file)).expect("source");
     let production = production_prefix(&source)
         .unwrap_or_else(|error| panic!("invalid test tail in {file}: {error}"));
     strip_comments(production)
@@ -201,25 +201,21 @@ fn read_production_code(file: &str) -> String {
 fn production_prefix_accepts_only_a_structural_terminal_test_module() {
     let source = "pub fn production() {}\n#[cfg(test)]\nmod tests { #[test] fn works() {} }\n";
     assert_eq!(production_prefix(source).unwrap(), "pub fn production() {}\n");
-    assert_eq!(
-        production_prefix("pub fn production() {}\n").unwrap(),
-        "pub fn production() {}\n"
-    );
+    assert_eq!(production_prefix("pub fn production() {}\n").unwrap(), "pub fn production() {}\n");
 }
 
 #[test]
 fn production_prefix_rejects_malformed_and_fake_test_markers() {
     assert!(production_prefix("pub fn broken( {\n#[cfg(test)] mod tests {}").is_err());
     assert!(
-        production_prefix("const MARKER: &str = \"#[cfg(test)]\";\npub fn production() {}").is_err()
+        production_prefix("const MARKER: &str = \"#[cfg(test)]\";\npub fn production() {}")
+            .is_err()
     );
 }
 
 #[test]
 fn production_prefix_rejects_multiple_or_nonterminal_test_modules() {
-    assert!(
-        production_prefix("#[cfg(test)] mod tests {}\n#[cfg(test)] mod tests {}").is_err()
-    );
+    assert!(production_prefix("#[cfg(test)] mod tests {}\n#[cfg(test)] mod tests {}").is_err());
     assert!(
         production_prefix("#[cfg(test)] mod tests {}\npub fn production_after_tests() {}").is_err()
     );
@@ -711,27 +707,28 @@ fn validate_submit_linkers(metadata: &Value) -> Result<(), String> {
     )?;
 
     let targets = required_array(package, "targets", &format!("package `{PROVISION_PACKAGE}`"))?;
-    let mut provisioning_bins = Vec::new();
+    let expected_bins =
+        BTreeSet::from(["base-mev-suppression-provision", "base-mev-t4e-provision"]);
+    let mut provisioning_bins = BTreeSet::new();
     for target in targets {
         let target_name = required_string(target, "name", "provisioning package target")?;
-        if target_name == "base-mev-suppression-provision" {
-            provisioning_bins.push(target);
+        if expected_bins.contains(target_name) {
+            let required_features =
+                required_array(target, "required-features", "provisioning binary target")?;
+            require_exact_strings(
+                required_features,
+                &["provision"],
+                &format!("provisioning binary `{target_name}` `required-features`"),
+            )?;
+            provisioning_bins.insert(target_name);
         }
     }
-    if provisioning_bins.len() != 1 {
+    if provisioning_bins != expected_bins {
         return Err(format!(
-            "`{PROVISION_PACKAGE}` must have exactly one `base-mev-suppression-provision` target, \
-             got {}",
-            provisioning_bins.len()
+            "`{PROVISION_PACKAGE}` must have exactly the reviewed provisioning binaries, got \
+             {provisioning_bins:?}"
         ));
     }
-    let required_features =
-        required_array(provisioning_bins[0], "required-features", "provisioning binary target")?;
-    require_exact_strings(
-        required_features,
-        &["provision"],
-        "provisioning binary `required-features`",
-    )?;
 
     Ok(())
 }

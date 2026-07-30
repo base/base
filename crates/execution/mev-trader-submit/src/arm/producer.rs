@@ -1,5 +1,7 @@
 //! Offline producer conformance and crash-safe publication for T4e artifacts.
 
+#[cfg(feature = "arm-provisioning")]
+use std::{fs::DirBuilder, os::unix::fs::DirBuilderExt};
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
@@ -7,7 +9,11 @@ use std::{
     path::Path,
 };
 
+#[cfg(feature = "arm-provisioning")]
+use super::settled_loss::R9_CLAIM_STORE_PATH;
 use alloy_primitives::{Address, B256, keccak256};
+#[cfg(feature = "arm-provisioning")]
+use base_mev_trader::{ClaimStoreError, VictimClaimConfig, VictimClaimStore};
 
 use super::settled_loss::{
     FrozenP2PopulationManifestV1, INSTALL_BUNDLE_DOMAIN, MAX_POPULATION_MANIFEST_BYTES,
@@ -161,8 +167,7 @@ impl CanonicalG7PairV1 {
         preimage.extend_from_slice(campaign_id.as_slice());
         preimage.extend_from_slice(&g7_closure_epoch.to_be_bytes());
         preimage.extend_from_slice(&expiry_unix.to_be_bytes());
-        verify_canonical_signature(&signature, &preimage)
-            .map_err(|_| ProducerError::Signature)?;
+        verify_canonical_signature(&signature, &preimage).map_err(|_| ProducerError::Signature)?;
         let mut canonical = [0u8; G7_PAIR_BYTES];
         canonical[..32].copy_from_slice(campaign_id.as_slice());
         canonical[32..40].copy_from_slice(&g7_closure_epoch.to_be_bytes());
@@ -194,8 +199,7 @@ impl CanonicalLivePairV1 {
         preimage.extend_from_slice(campaign_id.as_slice());
         preimage.extend_from_slice(&window_start.to_be_bytes());
         preimage.extend_from_slice(&expiry_unix.to_be_bytes());
-        verify_canonical_signature(&signature, &preimage)
-            .map_err(|_| ProducerError::Signature)?;
+        verify_canonical_signature(&signature, &preimage).map_err(|_| ProducerError::Signature)?;
         let mut canonical = [0u8; LIVE_PAIR_BYTES];
         canonical[..32].copy_from_slice(campaign_id.as_slice());
         canonical[32..40].copy_from_slice(&window_start.to_be_bytes());
@@ -239,8 +243,7 @@ impl CanonicalDeploymentPairV1 {
         preimage.extend_from_slice(binary_digest.as_slice());
         preimage.extend_from_slice(deployment_digest.as_slice());
         preimage.extend_from_slice(r9_store_identity.as_slice());
-        verify_canonical_signature(&signature, &preimage)
-            .map_err(|_| ProducerError::Signature)?;
+        verify_canonical_signature(&signature, &preimage).map_err(|_| ProducerError::Signature)?;
 
         let mut canonical = [0u8; DEPLOYMENT_PAIR_BYTES];
         canonical[..8].copy_from_slice(&chain_id.to_be_bytes());
@@ -327,13 +330,7 @@ impl SourceLedgerRowV1 {
         our_backrun_tx_hash: B256,
         submit_wallclock_ms: u64,
     ) -> Self {
-        Self {
-            submission_id,
-            chain_id,
-            target_tx_hash,
-            our_backrun_tx_hash,
-            submit_wallclock_ms,
-        }
+        Self { submission_id, chain_id, target_tx_hash, our_backrun_tx_hash, submit_wallclock_ms }
     }
 }
 
@@ -393,6 +390,60 @@ impl UnsignedPopulationManifestV1 {
 pub struct ProducerConformance;
 
 impl ProducerConformance {
+    /// Creates and validates the four private compile-pinned artifact directories.
+    #[cfg(feature = "arm-provisioning")]
+    pub fn prepare_directories() -> Result<(), ProducerError> {
+        for artifact in [
+            T4E_INSTALL_BUNDLE_PATH,
+            SETTLED_LOSS_PROJECTION_PATH,
+            P2_POPULATION_MANIFEST_PATH,
+            R9_CLAIM_STORE_PATH,
+        ] {
+            let directory = Path::new(artifact).parent().ok_or(ProducerError::UnsafeObject)?;
+            prepare_private_directory(directory)?;
+        }
+        Ok(())
+    }
+
+    /// Creates the identity-bearing R9 claim store or adopts its existing identity idempotently.
+    #[cfg(feature = "arm-provisioning")]
+    pub fn provision_claim_store() -> Result<[u8; 32], ClaimStoreError> {
+        Self::prepare_directories().map_err(|error| {
+            ClaimStoreError::Io(format!("T4e directory preparation failed: {error:?}"))
+        })?;
+        let store = VictimClaimStore::bootstrap(&VictimClaimConfig {
+            db_path: R9_CLAIM_STORE_PATH.into(),
+        })?;
+        Ok(*store.store_identity().as_bytes())
+    }
+
+    /// Validates and immutably publishes an externally owner-signed population file.
+    #[cfg(feature = "arm-provisioning")]
+    pub fn publish_population_file(path: &Path) -> Result<(), ProducerError> {
+        Self::prepare_directories()?;
+        let canonical = read_bounded(path, MAX_POPULATION_MANIFEST_BYTES)?;
+        let manifest = SignedPopulationManifestV1::from_canonical(canonical)?;
+        Self::publish_population(manifest).map(|_| ())
+    }
+
+    /// Validates and atomically publishes an externally owner-signed projection file.
+    #[cfg(feature = "arm-provisioning")]
+    pub fn publish_projection_file(path: &Path) -> Result<(), ProducerError> {
+        Self::prepare_directories()?;
+        let canonical = read_bounded(path, MAX_PROJECTION_BYTES)?;
+        let projection = SignedProjectionV1::from_canonical(canonical)?;
+        Self::publish_projection(projection)
+    }
+
+    /// Validates and atomically publishes an externally owner-signed install-bundle file.
+    #[cfg(feature = "arm-provisioning")]
+    pub fn publish_install_bundle_file(path: &Path) -> Result<(), ProducerError> {
+        Self::prepare_directories()?;
+        let canonical = read_bounded(path, INSTALL_BUNDLE_BYTES)?;
+        let bundle = SignedInstallBundleV1::from_canonical(canonical)?;
+        Self::publish_install_bundle(bundle)
+    }
+
     /// Builds the fixed-order install bundle body and outer-signature preimage.
     pub fn prepare_install_bundle(
         generation: u64,
@@ -490,9 +541,7 @@ impl ProducerConformance {
             let correlation_key = keccak256(correlation_preimage);
 
             encoded_entries.extend_from_slice(
-                &u64::try_from(sequence)
-                    .map_err(|_| ProducerError::Bounds)?
-                    .to_be_bytes(),
+                &u64::try_from(sequence).map_err(|_| ProducerError::Bounds)?.to_be_bytes(),
             );
             encoded_entries.extend_from_slice(source_submission_id.as_slice());
             encoded_entries.extend_from_slice(row.target_tx_hash.as_slice());
@@ -502,11 +551,9 @@ impl ProducerConformance {
             encoded_entries.extend_from_slice(row.our_backrun_tx_hash.as_slice());
         }
 
-        let submission_count =
-            u64::try_from(rows.len()).map_err(|_| ProducerError::Bounds)?;
+        let submission_count = u64::try_from(rows.len()).map_err(|_| ProducerError::Bounds)?;
         let source_manifest_hash = keccak256(&encoded_entries);
-        let mut canonical_preimage =
-            Vec::with_capacity(191 + encoded_entries.len());
+        let mut canonical_preimage = Vec::with_capacity(191 + encoded_entries.len());
         canonical_preimage.extend_from_slice(super::settled_loss::POPULATION_CLOSURE_DOMAIN);
         canonical_preimage.extend_from_slice(&SETTLED_LOSS_SCHEMA_VERSION.to_be_bytes());
         canonical_preimage.extend_from_slice(closure.campaign_id.as_slice());
@@ -520,9 +567,7 @@ impl ProducerConformance {
         canonical_preimage.extend_from_slice(&submission_count.to_be_bytes());
         canonical_preimage.extend_from_slice(source_manifest_hash.as_slice());
         canonical_preimage.extend_from_slice(
-            &u32::try_from(rows.len())
-                .map_err(|_| ProducerError::Bounds)?
-                .to_be_bytes(),
+            &u32::try_from(rows.len()).map_err(|_| ProducerError::Bounds)?.to_be_bytes(),
         );
         canonical_preimage.extend_from_slice(&encoded_entries);
         Ok(UnsignedPopulationManifestV1 { canonical_preimage })
@@ -565,12 +610,16 @@ impl ProducerConformance {
 
     /// Atomically replaces the current projection with one authenticated successor.
     pub fn publish_projection(projection: SignedProjectionV1) -> Result<(), ProducerError> {
-        publish_replace_at(Path::new(SETTLED_LOSS_PROJECTION_PATH), &projection.canonical)
+        publish_replace_at(
+            Path::new(SETTLED_LOSS_PROJECTION_PATH),
+            &projection.canonical,
+            &["accepted-head"],
+        )
     }
 
     /// Atomically replaces the current install bundle with one authenticated generation.
     pub fn publish_install_bundle(bundle: SignedInstallBundleV1) -> Result<(), ProducerError> {
-        publish_replace_at(Path::new(T4E_INSTALL_BUNDLE_PATH), &bundle.canonical)
+        publish_replace_at(Path::new(T4E_INSTALL_BUNDLE_PATH), &bundle.canonical, &[])
     }
 }
 
@@ -655,7 +704,7 @@ fn publish_population_at(
     let parent = checked_parent(final_path)?;
     let final_name =
         final_path.file_name().and_then(|name| name.to_str()).ok_or(ProducerError::UnsafeObject)?;
-    inventory(&parent, final_name)?;
+    inventory(&parent, final_name, &[])?;
     let directory_path = proc_fd_path(&parent);
     let final_handle_path = directory_path.join(final_name);
     let temp = directory_path.join(format!("{final_name}.open"));
@@ -690,11 +739,15 @@ fn publish_population_at(
     Ok(PublishedPopulationManifestV1 { canonical })
 }
 
-fn publish_replace_at(final_path: &Path, canonical: &[u8]) -> Result<(), ProducerError> {
+fn publish_replace_at(
+    final_path: &Path,
+    canonical: &[u8],
+    allowed_existing: &[&str],
+) -> Result<(), ProducerError> {
     let parent = checked_parent(final_path)?;
     let final_name =
         final_path.file_name().and_then(|name| name.to_str()).ok_or(ProducerError::UnsafeObject)?;
-    inventory(&parent, final_name)?;
+    inventory(&parent, final_name, allowed_existing)?;
     let directory_path = proc_fd_path(&parent);
     let final_handle_path = directory_path.join(final_name);
     let temp = directory_path.join(format!("{final_name}.open"));
@@ -718,6 +771,19 @@ fn checked_parent(path: &Path) -> Result<File, ProducerError> {
     super::settled_loss::open_directory_no_follow(parent).map_err(map_consumer_io)
 }
 
+#[cfg(feature = "arm-provisioning")]
+fn prepare_private_directory(path: &Path) -> Result<(), ProducerError> {
+    if !path.exists() {
+        DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path)
+            .map_err(|_| ProducerError::Io(PublicationIoClass::Open))?;
+    }
+    super::settled_loss::open_directory_no_follow(path).map_err(map_consumer_io)?;
+    Ok(())
+}
+
 #[cfg(test)]
 fn checked_parent(path: &Path) -> Result<File, ProducerError> {
     let parent = path.parent().ok_or(ProducerError::UnsafeObject)?;
@@ -733,7 +799,11 @@ fn checked_parent(path: &Path) -> Result<File, ProducerError> {
     Ok(file)
 }
 
-fn inventory(parent: &File, final_name: &str) -> Result<(), ProducerError> {
+fn inventory(
+    parent: &File,
+    final_name: &str,
+    allowed_existing: &[&str],
+) -> Result<(), ProducerError> {
     let temp_name = format!("{final_name}.open");
     for entry in std::fs::read_dir(proc_fd_path(parent))
         .map_err(|_| ProducerError::Io(PublicationIoClass::Inventory))?
@@ -741,7 +811,7 @@ fn inventory(parent: &File, final_name: &str) -> Result<(), ProducerError> {
         let entry = entry.map_err(|_| ProducerError::Io(PublicationIoClass::Inventory))?;
         let name = entry.file_name();
         let name = name.to_str().ok_or(ProducerError::Io(PublicationIoClass::Inventory))?;
-        if name == temp_name || name != final_name {
+        if name == temp_name || (name != final_name && !allowed_existing.contains(&name)) {
             return Err(ProducerError::Io(PublicationIoClass::Inventory));
         }
     }
@@ -888,14 +958,10 @@ mod tests {
     fn install_bundle_staging_is_fixed_order_and_mixed_generation_resistant() {
         let campaign = B256::repeat_byte(0x11);
         let (g7, live, deployment) = canonical_pairs(campaign);
-        let unsigned =
-            ProducerConformance::prepare_install_bundle(9, g7, live, deployment)
-                .expect("prepare bundle");
+        let unsigned = ProducerConformance::prepare_install_bundle(9, g7, live, deployment)
+            .expect("prepare bundle");
         assert_eq!(unsigned.canonical_body().len(), INSTALL_BUNDLE_BYTES - 65);
-        assert_eq!(
-            unsigned.outer_signature_preimage().len(),
-            INSTALL_BUNDLE_DOMAIN.len() + 32
-        );
+        assert_eq!(unsigned.outer_signature_preimage().len(), INSTALL_BUNDLE_DOMAIN.len() + 32);
         assert_eq!(&unsigned.canonical_body()[..30], INSTALL_BUNDLE_DOMAIN);
         assert_eq!(&unsigned.canonical_body()[32..40], &9u64.to_be_bytes());
         assert_eq!(
@@ -916,9 +982,11 @@ mod tests {
     }
     #[test]
     fn frozen_population_derives_exact_canonical_identities() {
-        let unsigned =
-            ProducerConformance::prepare_frozen_manifest(vec![row(b"submission-a", 120)], closure())
-                .expect("prepare manifest");
+        let unsigned = ProducerConformance::prepare_frozen_manifest(
+            vec![row(b"submission-a", 120)],
+            closure(),
+        )
+        .expect("prepare manifest");
         let bytes = unsigned.canonical_preimage();
         assert_eq!(bytes.len(), 191 + super::super::settled_loss::SOURCE_ENTRY_BYTES);
         assert_eq!(&bytes[..33], super::super::settled_loss::POPULATION_CLOSURE_DOMAIN);
@@ -938,14 +1006,8 @@ mod tests {
 
     #[test]
     fn frozen_population_rejects_unbounded_unordered_and_out_of_window_rows() {
-        assert_eq!(
-            BoundedSubmissionIdV1::new(Vec::new()),
-            Err(ProducerError::Bounds)
-        );
-        assert_eq!(
-            BoundedSubmissionIdV1::new(vec![0xff]),
-            Err(ProducerError::Bounds)
-        );
+        assert_eq!(BoundedSubmissionIdV1::new(Vec::new()), Err(ProducerError::Bounds));
+        assert_eq!(BoundedSubmissionIdV1::new(vec![0xff]), Err(ProducerError::Bounds));
         assert!(matches!(
             ProducerConformance::prepare_frozen_manifest(
                 vec![row(b"later", 120), row(b"earlier", 110)],
@@ -977,8 +1039,9 @@ mod tests {
     fn successor_publication_replaces_only_after_complete_file_sync() {
         let directory = private_directory();
         let path = directory.join("projection.bin");
-        publish_replace_at(&path, &[1u8; 32]).expect("first projection");
-        publish_replace_at(&path, &[2u8; 32]).expect("successor projection");
+        publish_replace_at(&path, &[1u8; 32], &[]).expect("first projection");
+        fs::write(directory.join("accepted-head"), b"anchor").expect("accepted head");
+        publish_replace_at(&path, &[2u8; 32], &["accepted-head"]).expect("successor projection");
         assert_eq!(fs::read(&path).expect("published bytes"), vec![2u8; 32]);
         assert!(!directory.join("projection.bin.open").exists());
         fs::remove_dir_all(directory).expect("cleanup");
@@ -1006,7 +1069,7 @@ mod tests {
         let path = directory.join("projection.bin");
         fs::write(directory.join("projection.bin.open"), b"stale").expect("stale temp");
         assert_eq!(
-            publish_replace_at(&path, &[1u8; 32]),
+            publish_replace_at(&path, &[1u8; 32], &[]),
             Err(ProducerError::Io(PublicationIoClass::Inventory))
         );
         fs::remove_dir_all(directory).expect("cleanup");

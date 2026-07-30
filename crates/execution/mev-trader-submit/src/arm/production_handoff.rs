@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel},
     },
     thread::JoinHandle,
@@ -305,6 +305,19 @@ pub enum ProductionHandoffClosed {
     Worker(ProductionWorkerError),
 }
 
+impl ProductionHandoffClosed {
+    /// Returns whether the reason consumes only the current candidate while the worker stays ready.
+    pub const fn is_candidate_denial(&self) -> bool {
+        matches!(
+            self,
+            Self::Authorization(_)
+                | Self::Worker(
+                    ProductionWorkerError::Bridge(_) | ProductionWorkerError::ClaimAlreadyClaimed
+                )
+        )
+    }
+}
+
 /// Sole public live status of production T4e simulation installation and processing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProductionSimulationHandoffStatus {
@@ -486,6 +499,7 @@ pub enum ProductionHandoffState {
 #[derive(Debug)]
 pub struct ProductionHandoffShared {
     state: Mutex<ProductionHandoffState>,
+    denied_candidates: AtomicU64,
 }
 
 /// The exact-one production implementation of [`T4eCandidateHandoff`].
@@ -497,12 +511,22 @@ pub struct ProductionSimulationHandoff {
 impl ProductionSimulationHandoff {
     /// Installs the exact initial shared state without publishing readiness.
     pub fn install(state: ProductionHandoffState) -> Self {
-        Self { shared: Arc::new(ProductionHandoffShared { state: Mutex::new(state) }) }
+        Self {
+            shared: Arc::new(ProductionHandoffShared {
+                state: Mutex::new(state),
+                denied_candidates: AtomicU64::new(0),
+            }),
+        }
     }
 
     /// Creates the one rejecting handoff used for a typed pre-spawn installation failure.
     pub fn unavailable(error: ProductionSimulationInstallError) -> Arc<Self> {
         Arc::new(Self::install(ProductionHandoffState::Unavailable(Arc::new(error))))
+    }
+
+    /// Returns the number of per-candidate denials consumed without closing the worker.
+    pub fn candidate_denial_count(&self) -> u64 {
+        self.shared.denied_candidates.load(Ordering::Acquire)
     }
 
     /// Returns the sole live production status with sticky entrypoint precedence.
@@ -956,29 +980,51 @@ fn run_production_worker<C, F, R>(
         Ok(receiver) => receiver,
         Err(WorkerStartup::Ready { .. }) | Err(WorkerStartup::Failed(_)) => return,
     };
+    run_candidate_loop(
+        &handoff,
+        &cancel,
+        || receiver.receive(),
+        |admitted| {
+            let (candidate, reservation) = admitted.into_parts();
+            let terminal = process_candidate(
+                candidate,
+                &bridge,
+                &proofs,
+                &claims,
+                &runtime,
+                &armed,
+                &simulation_backend,
+                &mut store,
+                &entrypoint,
+            );
+            drop(reservation);
+            terminal
+        },
+    );
+}
+
+fn run_candidate_loop<T, R, P>(
+    handoff: &Arc<ProductionSimulationHandoff>,
+    cancel: &Arc<AtomicBool>,
+    mut receive: R,
+    mut process: P,
+) where
+    R: FnMut() -> Result<T, ()>,
+    P: FnMut(T) -> Result<(), ProductionHandoffClosed>,
+{
     loop {
-        let admitted = match receiver.receive() {
+        let admitted = match receive() {
             Ok(admitted) => admitted,
             Err(()) => {
                 handoff.close(ProductionHandoffClosed::Disconnected);
                 return;
             }
         };
-        let (candidate, reservation) = admitted.into_parts();
-        let terminal = process_candidate(
-            candidate,
-            &bridge,
-            &proofs,
-            &claims,
-            &runtime,
-            &armed,
-            &simulation_backend,
-            &mut store,
-            &entrypoint,
-        );
-        drop(reservation);
-        match terminal {
+        match process(admitted) {
             Ok(()) => {}
+            Err(reason) if reason.is_candidate_denial() => {
+                let _ = handoff.shared.denied_candidates.fetch_add(1, Ordering::AcqRel);
+            }
             Err(reason) => {
                 handoff.close(reason);
                 return;
@@ -1161,6 +1207,64 @@ mod tests {
         let owner =
             ProductionSimulationWorkerOwner::new(thread, Arc::clone(&cancel), Arc::clone(&handoff));
         ProductionStartup { handoff, owner, receiver: startup_receiver, cancel }
+    }
+
+    #[test]
+    fn real_candidate_loop_continues_from_denial_to_success() {
+        let entrypoint = Arc::new(SimulationEntrypoint::ready());
+        let admission = Arc::new(AtomicU8::new(ADMISSION_FREE));
+        let (handoff_sender, _handoff_receiver) = sync_channel(1);
+        let handoff =
+            Arc::new(ProductionSimulationHandoff::install(ProductionHandoffState::Open {
+                entrypoint,
+                admission,
+                sender: handoff_sender,
+            }));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (sender, receiver) = sync_channel(6);
+        for candidate in 0_u8..=5 {
+            sender.send(candidate).expect("queued candidate");
+        }
+        drop(sender);
+
+        let mut processed = Vec::new();
+        run_candidate_loop(
+            &handoff,
+            &cancel,
+            || receiver.recv().map_err(|_| ()),
+            |candidate| {
+                processed.push(candidate);
+                let denial = match candidate {
+                    0 => Some(ProductionHandoffClosed::Worker(
+                        ProductionWorkerError::ClaimAlreadyClaimed,
+                    )),
+                    1 => Some(ProductionHandoffClosed::Authorization(
+                        ProductionCandidateError::CampaignMismatch,
+                    )),
+                    2 => Some(ProductionHandoffClosed::Worker(ProductionWorkerError::Bridge(
+                        ProductionBridgeFailure::SnapshotStale,
+                    ))),
+                    3 => Some(ProductionHandoffClosed::Worker(ProductionWorkerError::Bridge(
+                        ProductionBridgeFailure::Deadline,
+                    ))),
+                    4 => Some(ProductionHandoffClosed::Worker(ProductionWorkerError::Bridge(
+                        ProductionBridgeFailure::Cancelled,
+                    ))),
+                    _ => None,
+                };
+                match denial {
+                    Some(denial) => Err(denial),
+                    None => {
+                        cancel.store(true, Ordering::Release);
+                        Ok(())
+                    }
+                }
+            },
+        );
+
+        assert_eq!(processed, [0, 1, 2, 3, 4, 5]);
+        assert_eq!(handoff.candidate_denial_count(), 5);
+        assert_eq!(handoff.status(), ProductionSimulationHandoffStatus::Ready);
     }
 
     #[test]

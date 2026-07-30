@@ -1,6 +1,6 @@
 [package]
 name = "base-suppression-provision-bin"
-description = "Provision the compile-pinned MEV suppression rollback anchor"
+description = "Provision compile-pinned MEV rollback and T4e simulation state"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,11 @@ repository.workspace = true
 [[bin]]
 name = "base-mev-suppression-provision"
 path = "main.rs"
+required-features = ["provision"]
+
+[[bin]]
+name = "base-mev-t4e-provision"
+path = "t4e.rs"
 required-features = ["provision"]
 
 [lints]

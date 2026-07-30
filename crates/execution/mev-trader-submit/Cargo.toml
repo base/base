@@ -62,10 +62,10 @@ arm = [
 # `block_on`/`Waker`). `tokio` is therefore no longer a required feature dep.
 arm-live-egress = ["arm", "dep:reqwest"]
 
-# Provisioning-only surface: makes `SuppressionEpochStore::bootstrap` compile
-# (create-a-new high-water DB). Not the node build; the activation path uses
-# `open_existing` which never auto-creates.
-arm-provisioning = ["arm"]
+# Provisioning-only surface: compiles the suppression-anchor and R9 claim-store
+# bootstrap paths plus validated T4e artifact publication. Not the node build;
+# activation opens existing state and never auto-creates either rollback authority.
+arm-provisioning = ["arm", "base-mev-trader/r9-provisioning"]
 
 presign = ["dep:alloy-primitives", "dep:sha2"]
 
