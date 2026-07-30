@@ -1734,7 +1734,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     let (package, path, imports, uses, slot_uses) = &consumers[0];
     assert_eq!(package, "base-execution-cli");
     assert!(path.ends_with("crates/execution/cli/src/mev_trader.rs"));
-    assert_eq!((*imports, *uses, *slot_uses), (3, 3, 2));
+    assert_eq!((*imports, *uses, *slot_uses), (3, 4, 2));
 
     let mut global_topology = [0usize; 11];
     for path in rust_files(&root.join("crates/execution/cli/src")) {
@@ -1805,10 +1805,10 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
         internal_by_file,
         BTreeMap::from([
             ("bridge.rs".to_owned(), (1, 2, 0)),
-            ("simulation_entrypoint.rs".to_owned(), (1, 1, 0)),
+            ("production_handoff.rs".to_owned(), (1, 3, 0)),
             ("witness.rs".to_owned(), (1, 2, 0)),
         ]),
-        "only the bridge, simulation entrypoint, and exhaustive arm witness may consume T4b authority"
+        "only the bridge, installed handoff, and exhaustive arm witness may consume T4b authority"
     );
     let authority_source = read(crate_dir.join("src/tx_authority.rs"));
     let authority_ast = parse_production(&authority_source);
