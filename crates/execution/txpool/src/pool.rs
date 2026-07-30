@@ -23,7 +23,6 @@ use reth_transaction_pool::{
     PoolTransaction, PropagatedTransactions, SubPool, TransactionEvents, TransactionListenerKind,
     TransactionOrigin, TransactionPool, TransactionPoolExt, TransactionValidationOutcome,
     TransactionValidationTaskExecutor, TransactionValidator, ValidPoolTransaction,
-    identifier::SenderIdentifiers,
     pool::{AddedTransactionState, TransactionEvent},
 };
 use tokio::{spawn, sync::mpsc};
@@ -33,7 +32,7 @@ use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics,
     InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, StateDiffInvalidation,
     best::MergeBestTransactions,
-    sidecar_pool::{RemovalReason, SidecarInsert, SidecarPool},
+    sidecar_pool::{RemovalReason, SidecarAdmission, SidecarInsert, SidecarPool},
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
 
@@ -94,14 +93,6 @@ pub struct BaseTransactionPool<
     ordering: O,
     nonce_pool: Arc<RwLock<TwoDNoncePool<T>>>,
     sidecars: Arc<Vec<Arc<dyn SidecarPool<T>>>>,
-    /// Sender-ID interner for registered sidecars, kept separate from the 2D nonce pool's.
-    ///
-    /// Sidecar insertions must not allocate out of `nonce_pool`'s interner: those transactions
-    /// never enter the nonce pool, so every one would leave a permanent entry behind in it. The
-    /// two namespaces are independent by design — a [`SidecarPool`] is told to mint its own
-    /// `TransactionId` from the transaction it is handed, and nothing compares a `SenderId`
-    /// across pools.
-    sidecar_senders: Arc<RwLock<SenderIdentifiers>>,
     listeners: Arc<RwLock<SidecarListeners<T>>>,
     /// Shared admission and invalidation ledger for EIP-8130 transactions.
     guard: Arc<RwLock<MempoolGuard>>,
@@ -140,7 +131,6 @@ where
             ordering: self.ordering.clone(),
             nonce_pool: Arc::clone(&self.nonce_pool),
             sidecars: Arc::clone(&self.sidecars),
-            sidecar_senders: Arc::clone(&self.sidecar_senders),
             listeners: Arc::clone(&self.listeners),
             guard: Arc::clone(&self.guard),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
@@ -183,7 +173,6 @@ where
             ordering,
             nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
             sidecars: Arc::new(Vec::new()),
-            sidecar_senders: Arc::new(RwLock::new(SenderIdentifiers::default())),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
@@ -250,7 +239,39 @@ where
     /// pools, one per node extension, not a per-transaction collection. If that ever stops being
     /// true this wants a hash-to-pool index instead.
     fn sidecar_owning(&self, hash: &TxHash) -> Option<&Arc<dyn SidecarPool<T>>> {
-        self.sidecars.iter().find(|pool| pool.contains(hash))
+        self.sidecars.iter().find(|pool| pool.get(hash).is_some())
+    }
+
+    /// One sidecar's transactions, pending and queued.
+    ///
+    /// Derived rather than a trait method: every implementation would write this same
+    /// concatenation, and the pending/queued split is the only part the pool itself must answer.
+    fn sidecar_all_of(sidecar: &Arc<dyn SidecarPool<T>>) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        let mut all = sidecar.pending_transactions();
+        all.extend(sidecar.queued_transactions());
+        all
+    }
+
+    /// Every transaction held by every registered sidecar.
+    fn sidecar_all_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        self.sidecars.iter().flat_map(Self::sidecar_all_of).collect()
+    }
+
+    /// Registered-sidecar transactions from `sender`, filtered out of `select`.
+    ///
+    /// Derived rather than asked for: a per-sender view is the same filter for every
+    /// implementation, so the trait does not carry four methods each one would write identically
+    /// — and could quietly get wrong, since the host's callers promise completeness.
+    fn sidecar_by_sender(
+        &self,
+        sender: Address,
+        select: impl Fn(&Arc<dyn SidecarPool<T>>) -> Vec<Arc<ValidPoolTransaction<T>>>,
+    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        self.sidecars
+            .iter()
+            .flat_map(select)
+            .filter(|transaction| transaction.sender() == sender)
+            .collect()
     }
 
     /// Splits `hashes` into (registered-sidecar-owned, rest).
@@ -264,7 +285,7 @@ where
         let mut owned = Vec::new();
         let mut rest = Vec::with_capacity(hashes.len());
         for hash in hashes {
-            match self.sidecars.iter().position(|pool| pool.contains(&hash)) {
+            match self.sidecars.iter().position(|pool| pool.get(&hash).is_some()) {
                 Some(index) => owned.push((index, hash)),
                 None => rest.push(hash),
             }
@@ -297,21 +318,18 @@ where
     ) -> PoolResult<AddedTransactionOutcome> {
         let validated = self.validator().validate_transaction(origin, transaction).await;
         match validated {
-            TransactionValidationOutcome::Valid {
-                transaction,
-                propagate,
-                authorities,
-                state_nonce,
-                ..
-            } => {
-                // Deliberately not `validated_pool_transaction`: that interns the sender in the
-                // 2D nonce pool, which this transaction never enters, so every sidecar admission
-                // would leave a permanent entry behind in it.
-                let validated =
-                    self.validated_sidecar_transaction(transaction, origin, propagate, authorities);
-                let admission = Self::admission_for(&validated.transaction);
-                let insert =
-                    self.sidecars[pool_index].insert_validated(origin, validated, state_nonce)?;
+            TransactionValidationOutcome::Valid { transaction, propagate, authorities, .. } => {
+                // The host does not build a `ValidPoolTransaction` here. Minting a
+                // `TransactionId` would need a sender interner, the sidecar is told to mint its
+                // own identifier anyway, and reth's `SenderIdentifiers` has no removal API — so
+                // interning here would accumulate an entry per sender that nothing could free.
+                let admission = Self::admission_for(transaction.transaction());
+                let insert = self.sidecars[pool_index].insert(SidecarAdmission {
+                    origin,
+                    transaction,
+                    propagate,
+                    authorities,
+                })?;
                 let mut listeners = self.listeners.write();
                 let mut guard = self.guard.write();
                 match (&insert.replaced, admission) {
@@ -794,42 +812,6 @@ where
         }
     }
 
-    /// Builds a [`ValidPoolTransaction`] for a registered sidecar, interning the sender in
-    /// [`Self::sidecar_senders`] rather than in the 2D nonce pool.
-    ///
-    /// The `TransactionId` this produces is a starting point only: a [`SidecarPool`] receives the
-    /// transaction by value and is expected to mint whatever identifier its own storage needs.
-    fn validated_sidecar_transaction(
-        &self,
-        transaction: reth_transaction_pool::validate::ValidTransaction<T>,
-        origin: TransactionOrigin,
-        propagate: bool,
-        authorities: Option<Vec<Address>>,
-    ) -> ValidPoolTransaction<T> {
-        let transaction = transaction.into_transaction();
-        let mut senders = self.sidecar_senders.write();
-        let sender_id = senders.sender_id_or_create(transaction.sender());
-        let authority_ids = authorities.map(|authorities| {
-            authorities
-                .into_iter()
-                .map(|authority| senders.sender_id_or_create(authority))
-                .collect()
-        });
-        drop(senders);
-
-        ValidPoolTransaction {
-            transaction_id: reth_transaction_pool::identifier::TransactionId::new(
-                sender_id,
-                transaction.nonce(),
-            ),
-            transaction,
-            propagate,
-            timestamp: std::time::Instant::now(),
-            origin,
-            authority_ids,
-        }
-    }
-
     fn validated_pool_transaction(
         &self,
         transaction: reth_transaction_pool::validate::ValidTransaction<T>,
@@ -979,13 +961,13 @@ where
         size.queued_size += queued_size;
         size.total += pending + queued;
         for sidecar in self.sidecars.iter() {
-            let (p, q) = sidecar.pending_and_queued_txn_count();
+            let sidecar_size = sidecar.size();
+            let (p, q) = (sidecar_size.pending, sidecar_size.queued);
             size.pending += p;
             size.queued += q;
             size.total += p + q;
-            let (pending_size, queued_size) = sidecar.pending_and_queued_size();
-            size.pending_size += pending_size;
-            size.queued_size += queued_size;
+            size.pending_size += sidecar_size.pending_size;
+            size.queued_size += sidecar_size.queued_size;
         }
         size
     }
@@ -1133,8 +1115,7 @@ where
         );
         for sidecar in self.sidecars.iter() {
             hashes.extend(
-                sidecar
-                    .all_transactions()
+                Self::sidecar_all_of(sidecar)
                     .into_iter()
                     .filter(|transaction| transaction.propagate)
                     .map(|transaction| *transaction.hash()),
@@ -1160,7 +1141,7 @@ where
         }
         drop(nonce_pool);
         for sidecar in self.sidecars.iter() {
-            for transaction in sidecar.all_transactions() {
+            for transaction in Self::sidecar_all_of(sidecar) {
                 if transaction.propagate {
                     hashes.push(*transaction.hash());
                     if hashes.len() >= max {
@@ -1182,9 +1163,8 @@ where
                 .filter(|transaction| transaction.propagate),
         );
         for sidecar in self.sidecars.iter() {
-            transactions.extend(
-                sidecar.all_transactions().into_iter().filter(|transaction| transaction.propagate),
-            );
+            transactions
+                .extend(Self::sidecar_all_of(sidecar).into_iter().filter(|tx| tx.propagate));
         }
         transactions
     }
@@ -1209,7 +1189,7 @@ where
         }
         drop(nonce_pool);
         for sidecar in self.sidecars.iter() {
-            for transaction in sidecar.all_transactions() {
+            for transaction in Self::sidecar_all_of(sidecar) {
                 if transaction.propagate {
                     transactions.push(transaction);
                     if transactions.len() >= max {
@@ -1367,7 +1347,8 @@ where
         let mut pending = pending + sidecar_pending;
         let mut queued = queued + sidecar_queued;
         for sidecar in self.sidecars.iter() {
-            let (p, q) = sidecar.pending_and_queued_txn_count();
+            let sidecar_size = sidecar.size();
+            let (p, q) = (sidecar_size.pending, sidecar_size.queued);
             pending += p;
             queued += q;
         }
@@ -1391,7 +1372,7 @@ where
         let mut hashes = self.protocol_pool.all_transaction_hashes();
         hashes.extend(self.nonce_pool.read().all_hashes());
         for sidecar in self.sidecars.iter() {
-            hashes.extend(sidecar.all_hashes());
+            hashes.extend(Self::sidecar_all_of(sidecar).iter().map(|tx| *tx.hash()));
         }
         hashes
     }
@@ -1440,7 +1421,8 @@ where
             let hashes: Vec<_> =
                 registered.iter().filter(|(i, _)| *i == index).map(|(_, h)| *h).collect();
             if !hashes.is_empty() {
-                registered_removed.extend(pool.remove_transactions_and_descendants(&hashes));
+                registered_removed
+                    .extend(pool.remove_transactions(&hashes, RemovalReason::Discarded));
             }
         }
         if !registered_removed.is_empty() {
@@ -1465,7 +1447,15 @@ where
         removed.extend(sidecar_removed);
         let mut registered_removed = Vec::new();
         for pool in self.sidecars.iter() {
-            registered_removed.extend(pool.remove_transactions_by_sender(sender));
+            let hashes = Self::sidecar_all_of(pool)
+                .into_iter()
+                .filter(|transaction| transaction.sender() == sender)
+                .map(|transaction| *transaction.hash())
+                .collect::<Vec<_>>();
+            if !hashes.is_empty() {
+                registered_removed
+                    .extend(pool.remove_transactions(&hashes, RemovalReason::Discarded));
+            }
         }
         if !registered_removed.is_empty() {
             self.listeners.write().on_discarded(&registered_removed);
@@ -1592,9 +1582,7 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.get_transactions_by_sender(sender);
         transactions.extend(self.nonce_pool.read().transactions_by_sender(sender));
-        for sidecar in self.sidecars.iter() {
-            transactions.extend(sidecar.transactions_by_sender(sender));
-        }
+        transactions.extend(self.sidecar_by_sender(sender, Self::sidecar_all_of));
         transactions
     }
 
@@ -1628,9 +1616,8 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.get_pending_transactions_by_sender(sender);
         transactions.extend(self.nonce_pool.read().pending_transactions_by_sender(sender));
-        for sidecar in self.sidecars.iter() {
-            transactions.extend(sidecar.pending_transactions_by_sender(sender));
-        }
+        transactions
+            .extend(self.sidecar_by_sender(sender, |sidecar| sidecar.pending_transactions()));
         transactions
     }
 
@@ -1640,9 +1627,8 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.get_queued_transactions_by_sender(sender);
         transactions.extend(self.nonce_pool.read().queued_transactions_by_sender(sender));
-        for sidecar in self.sidecars.iter() {
-            transactions.extend(sidecar.queued_transactions_by_sender(sender));
-        }
+        transactions
+            .extend(self.sidecar_by_sender(sender, |sidecar| sidecar.queued_transactions()));
         transactions
     }
 
@@ -1683,8 +1669,7 @@ where
         );
         for sidecar in self.sidecars.iter() {
             transactions.extend(
-                sidecar
-                    .all_transactions()
+                Self::sidecar_all_of(sidecar)
                     .into_iter()
                     .filter(|transaction| transaction.origin == origin),
             );
@@ -1720,10 +1705,8 @@ where
         for sender in self.nonce_pool.read().unique_senders() {
             senders.insert(sender);
         }
-        for sidecar in self.sidecars.iter() {
-            for sender in sidecar.unique_senders() {
-                senders.insert(sender);
-            }
+        for transaction in self.sidecar_all_transactions() {
+            senders.insert(transaction.sender());
         }
         senders
     }
@@ -2829,5 +2812,232 @@ mod tests {
         }]);
         assert!(pool.get(&hash).is_none());
         assert!(!pool.guard.read().contains(&hash));
+    }
+
+    // ---- registered sidecar pool: behavioural coverage of the seam ----
+
+    /// A sidecar that actually stores transactions, claiming everything from one sender.
+    ///
+    /// The existing suite only ever ran the empty-`sidecars` path, so none of the host's sidecar
+    /// branches were reachable from a test. This is the minimum second implementation needed to
+    /// exercise them, and it doubles as a check that the trait is implementable without reaching
+    /// into pool internals.
+    #[derive(Debug)]
+    struct TestSidecar {
+        owner: Address,
+        stored: RwLock<Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>>,
+    }
+
+    impl TestSidecar {
+        fn new(owner: Address) -> Self {
+            Self { owner, stored: RwLock::new(Vec::new()) }
+        }
+    }
+
+    /// Yields a fixed snapshot; the host merges arms by comparing heads, so a sidecar is free to
+    /// hand its transactions over in whatever order it likes.
+    #[derive(Debug)]
+    struct SnapshotBest(std::vec::IntoIter<Arc<ValidPoolTransaction<BasePooledTransaction>>>);
+
+    impl Iterator for SnapshotBest {
+        type Item = Arc<ValidPoolTransaction<BasePooledTransaction>>;
+        fn next(&mut self) -> Option<Self::Item> {
+            self.0.next()
+        }
+    }
+
+    impl BestTransactions for SnapshotBest {
+        fn mark_invalid(
+            &mut self,
+            _tx: &Self::Item,
+            _kind: reth_transaction_pool::error::InvalidPoolTransactionError,
+        ) {
+        }
+        fn no_updates(&mut self) {}
+        fn set_skip_blobs(&mut self, _skip: bool) {}
+    }
+
+    impl SidecarPool<BasePooledTransaction> for TestSidecar {
+        fn name(&self) -> &'static str {
+            "test-sidecar"
+        }
+
+        fn claims(&self, transaction: &BasePooledTransaction) -> bool {
+            transaction.sender() == self.owner
+        }
+
+        fn insert(
+            &self,
+            admission: SidecarAdmission<BasePooledTransaction>,
+        ) -> PoolResult<SidecarInsert<BasePooledTransaction>> {
+            let transaction = admission.transaction.into_transaction();
+            let stored = Arc::new(ValidPoolTransaction {
+                transaction_id: TransactionId::new(0u64.into(), transaction.nonce()),
+                transaction,
+                propagate: admission.propagate,
+                timestamp: Instant::now(),
+                origin: admission.origin,
+                authority_ids: None,
+            });
+            let hash = *stored.hash();
+            self.stored.write().push(Arc::clone(&stored));
+            Ok(SidecarInsert {
+                outcome: AddedTransactionOutcome { hash, state: AddedTransactionState::Pending },
+                replaced: None,
+                promoted: Vec::new(),
+                inserted: stored,
+            })
+        }
+
+        fn best_transactions(
+            &self,
+            _base_fee: u64,
+        ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>>
+        {
+            Box::new(SnapshotBest(self.stored.read().clone().into_iter()))
+        }
+
+        fn get(&self, hash: &TxHash) -> Option<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
+            self.stored.read().iter().find(|tx| tx.hash() == hash).map(Arc::clone)
+        }
+
+        fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
+            self.stored.read().clone()
+        }
+
+        fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
+            Vec::new()
+        }
+
+        fn remove_transactions(
+            &self,
+            hashes: &[TxHash],
+            _reason: RemovalReason,
+        ) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
+            let mut stored = self.stored.write();
+            let (removed, kept) = stored.iter().cloned().partition(|tx| hashes.contains(tx.hash()));
+            *stored = kept;
+            removed
+        }
+    }
+
+    fn pool_with_sidecar() -> (
+        IntegrationPool,
+        MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        Arc<TestSidecar>,
+        PrivateKeySigner,
+    ) {
+        let owner = signer();
+        let sidecar = Arc::new(TestSidecar::new(owner.address()));
+        let (pool, client) = build_integration_pool();
+        let pool = pool.with_sidecar_pools(vec![
+            Arc::clone(&sidecar) as Arc<dyn SidecarPool<BasePooledTransaction>>
+        ]);
+        fund(&client, owner.address());
+        (pool, client, sidecar, owner)
+    }
+
+    #[tokio::test]
+    async fn claimed_transaction_is_routed_to_the_sidecar_not_the_protocol_pool() {
+        let (pool, _client, sidecar, owner) = pool_with_sidecar();
+        let transaction = signed_1559(&owner, 0);
+        let hash = *transaction.hash();
+
+        pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+
+        assert!(sidecar.get(&hash).is_some(), "sidecar must hold the claimed transaction");
+        assert!(pool.protocol_pool.get(&hash).is_none(), "protocol pool must not hold it");
+        // And the host resolves it through the sidecar.
+        assert_eq!(pool.get(&hash).map(|tx| *tx.hash()), Some(hash));
+    }
+
+    #[tokio::test]
+    async fn unclaimed_transaction_still_goes_to_the_protocol_pool() {
+        let (pool, client, sidecar, _owner) = pool_with_sidecar();
+        let other = PrivateKeySigner::random();
+        fund(&client, other.address());
+        let transaction = signed_1559(&other, 0);
+        let hash = *transaction.hash();
+
+        pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+
+        assert!(sidecar.get(&hash).is_none());
+        assert!(pool.protocol_pool.get(&hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn sidecar_transactions_appear_in_the_merged_best_iterator() {
+        let (pool, client, _sidecar, owner) = pool_with_sidecar();
+        let other = PrivateKeySigner::random();
+        fund(&client, other.address());
+
+        let claimed = signed_1559(&owner, 0);
+        let claimed_hash = *claimed.hash();
+        let unclaimed = signed_1559(&other, 0);
+        let unclaimed_hash = *unclaimed.hash();
+
+        pool.add_transaction(TransactionOrigin::Local, claimed).await.unwrap();
+        pool.add_transaction(TransactionOrigin::Local, unclaimed).await.unwrap();
+
+        let best = pool.best_transactions().map(|tx| *tx.hash()).collect::<Vec<_>>();
+        assert!(best.contains(&claimed_hash), "sidecar transaction missing from merge: {best:?}");
+        assert!(best.contains(&unclaimed_hash), "protocol transaction missing from merge");
+    }
+
+    #[tokio::test]
+    async fn sidecar_transactions_are_visible_to_the_aggregate_queries() {
+        let (pool, _client, _sidecar, owner) = pool_with_sidecar();
+        let transaction = signed_1559(&owner, 0);
+        let hash = *transaction.hash();
+        let encoded_length = transaction.encoded_length();
+
+        pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+
+        assert!(pool.pending_transactions().iter().any(|tx| *tx.hash() == hash));
+        assert!(pool.all_transactions().pending.iter().any(|tx| *tx.hash() == hash));
+        assert!(pool.pooled_transaction_hashes().contains(&hash));
+        assert!(pool.unique_senders().contains(&owner.address()));
+
+        // Derived per-sender views must include the sidecar, since their callers promise
+        // every transaction from the sender.
+        let by_sender = pool.get_transactions_by_sender(owner.address());
+        assert!(by_sender.iter().any(|tx| *tx.hash() == hash));
+
+        let size = pool.pool_size();
+        assert_eq!(size.pending, 1);
+        assert_eq!(size.pending_size, encoded_length);
+    }
+
+    #[tokio::test]
+    async fn removing_a_sidecar_transaction_drops_it_from_the_sidecar() {
+        let (pool, _client, sidecar, owner) = pool_with_sidecar();
+        let transaction = signed_1559(&owner, 0);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+
+        let removed = pool.remove_transactions(vec![hash]);
+
+        assert_eq!(removed.len(), 1);
+        assert!(sidecar.get(&hash).is_none());
+        assert!(pool.get(&hash).is_none());
+    }
+
+    #[tokio::test]
+    async fn removing_by_sender_reaches_sidecar_transactions() {
+        let (pool, _client, sidecar, owner) = pool_with_sidecar();
+        let transaction = signed_1559(&owner, 0);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+
+        pool.remove_transactions_by_sender(owner.address());
+
+        assert!(sidecar.get(&hash).is_none(), "by-sender removal must reach the sidecar");
+    }
+
+    #[test]
+    fn a_pool_with_no_registered_sidecars_reports_nothing_for_them() {
+        let (pool, _client) = build_integration_pool();
+        assert!(pool.sidecar_all_transactions().is_empty());
+        assert!(pool.sidecar_owning(&TxHash::repeat_byte(0x11)).is_none());
     }
 }

@@ -69,7 +69,10 @@ pub use wire::ValidatedTransaction;
 mod two_d_nonce_pool;
 
 mod sidecar_pool;
-pub use sidecar_pool::{CanonicalStateOutcome, RemovalReason, SidecarInsert, SidecarPool};
+pub use sidecar_pool::{
+    CanonicalStateOutcome, RemovalReason, SidecarAdmission, SidecarInsert, SidecarPool,
+    SidecarPoolSize,
+};
 
 mod metrics;
 pub use metrics::{GuardMetrics, ValidatorMetrics};

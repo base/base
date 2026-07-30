@@ -178,11 +178,17 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
 mod tests {
     use std::sync::Arc;
 
-    use base_execution_txpool::{BasePooledTransaction, RemovalReason, SidecarInsert, SidecarPool};
+    use base_execution_txpool::{
+        BasePooledTransaction, RemovalReason, SidecarAdmission, SidecarInsert, SidecarPool,
+    };
 
     use super::*;
 
     /// Stands in for an out-of-tree sidecar pool defined in another crate.
+    ///
+    /// Holds nothing: this test covers registration plumbing only. Behavioural coverage of the
+    /// seam lives in `base-execution-txpool`'s own tests, against a sidecar that actually stores
+    /// transactions.
     #[derive(Debug, Default)]
     struct ProbePool;
 
@@ -193,13 +199,11 @@ mod tests {
         fn claims(&self, _transaction: &BasePooledTransaction) -> bool {
             false
         }
-        fn insert_validated(
+        fn insert(
             &self,
-            _origin: reth_transaction_pool::TransactionOrigin,
-            _transaction: reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>,
-            _state_nonce: u64,
+            _admission: SidecarAdmission<BasePooledTransaction>,
         ) -> reth_transaction_pool::PoolResult<SidecarInsert<BasePooledTransaction>> {
-            unimplemented!()
+            unreachable!("claims() is always false, so nothing is ever routed here")
         }
         fn best_transactions(
             &self,
@@ -209,10 +213,7 @@ mod tests {
                     Item = Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>,
                 >,
         > {
-            unimplemented!()
-        }
-        fn contains(&self, _hash: &alloy_primitives::TxHash) -> bool {
-            false
+            Box::new(std::iter::empty())
         }
         fn get(
             &self,
@@ -220,11 +221,6 @@ mod tests {
         ) -> Option<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>
         {
             None
-        }
-        fn all_transactions(
-            &self,
-        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>> {
-            Vec::new()
         }
         fn pending_transactions(
             &self,
@@ -236,22 +232,10 @@ mod tests {
         ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>> {
             Vec::new()
         }
-        fn pending_and_queued_txn_count(&self) -> (usize, usize) {
-            (0, 0)
-        }
-        fn all_hashes(&self) -> Vec<alloy_primitives::TxHash> {
-            Vec::new()
-        }
         fn remove_transactions(
             &self,
             _hashes: &[alloy_primitives::TxHash],
             _reason: RemovalReason,
-        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>> {
-            Vec::new()
-        }
-        fn remove_transactions_by_sender(
-            &self,
-            _sender: alloy_primitives::Address,
         ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>> {
             Vec::new()
         }
