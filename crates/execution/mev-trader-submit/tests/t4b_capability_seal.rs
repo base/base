@@ -1765,9 +1765,9 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     }
     assert_eq!(
         global_topology,
-        // Seven pre-existing production task spawns live outside the T4d module.
-        // The module-local seal below remains pinned to zero for this handoff.
-        [2, 1, 2, 2, 4, 2, 1, 1, 7, 0, 1],
+        // Seven pre-existing production task spawns plus the one required join-only
+        // production-simulation shutdown `spawn_blocking`.
+        [2, 1, 2, 2, 4, 2, 1, 1, 8, 0, 1],
         "CLI-wide T4d observer topology changed"
     );
     let submit_src = crate_dir.join("src");
@@ -1880,19 +1880,13 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
             "std::sync::Arc".to_owned(),
             "std::sync::atomic::AtomicU64".to_owned(),
             "std::sync::atomic::Ordering".to_owned(),
-            "super::BlockReaderIdExt".to_owned(),
             "super::BridgeError".to_owned(),
             "super::CandidateAssemblyView".to_owned(),
             "super::CandidateTxShapeObserver".to_owned(),
-            "super::CliTraderSnapshotPort".to_owned(),
-            "super::Debug".to_owned(),
-            "super::Header".to_owned(),
-            "super::HeaderProvider".to_owned(),
             "super::InstalledSubmissionBridge".to_owned(),
             "super::SealedUnsignedCandidate".to_owned(),
             "super::ShadowLatestSlot".to_owned(),
             "super::ShadowSubmit".to_owned(),
-            "super::StateProviderFactory".to_owned(),
             "super::T4bOutcome".to_owned(),
             "super::T4bOutcomeCounters".to_owned(),
             "super::T4eCandidateHandoff".to_owned(),
@@ -1932,7 +1926,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
         "T4d observer connects to forbidden capability: {:?}",
         t4d_ast.violations
     );
-    assert_eq!(t4d_ast.base_mainnet_calls, 1);
+    assert_eq!(t4d_ast.base_mainnet_calls, 0);
     assert_eq!(t4d_ast.assemble_sealed_calls, 1);
     assert_eq!(t4d_ast.observer_factories, 1);
     assert_eq!(t4d_ast.slot_constructions, 1);
@@ -1946,7 +1940,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     assert_eq!(cli_inventory.t4d_observer_calls, 1);
     assert_eq!(cli_inventory.assemble_sealed_calls, 1);
     assert_eq!(cli_inventory.slot_constructions, 2);
-    assert_eq!(cli_inventory.spawn_calls, 7);
+    assert_eq!(cli_inventory.spawn_calls, 8);
     assert_eq!(cli_inventory.thread_calls, 0);
     assert_eq!(cli_inventory.subscription_calls, 1);
 
@@ -2377,7 +2371,7 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
     assert_eq!(cli_seal.assemble_sealed_calls, 1);
     assert_eq!(cli_seal.observe_candidate_calls, 0);
     assert_eq!(cli_seal.subscription_calls, 1);
-    assert_eq!(cli_seal.spawn_calls, 7);
+    assert_eq!(cli_seal.spawn_calls, 8);
     assert_eq!(cli_seal.thread_calls, 0);
     assert_eq!(cli_seal.pending_adapter_constructions, 1);
     assert_eq!(cli_seal.node_view_constructions, 1);
