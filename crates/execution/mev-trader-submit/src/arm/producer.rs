@@ -18,9 +18,9 @@ use base_mev_trader::{ClaimStoreError, VictimClaimConfig, VictimClaimStore};
 use super::settled_loss::{
     FrozenP2PopulationManifestV1, INSTALL_BUNDLE_DOMAIN, MAX_POPULATION_MANIFEST_BYTES,
     MAX_PROJECTION_BYTES, P2_POPULATION_MANIFEST_PATH, SETTLED_LOSS_PROJECTION_PATH,
-    SETTLED_LOSS_SCHEMA_VERSION, T4E_INSTALL_BUNDLE_PATH, TerminalSettlementProjectionV1,
-    proc_fd_path, read_strict_bytes, validate_directory_inventory, verify_canonical_signature,
-    verify_signature_shape,
+    SETTLED_LOSS_SCHEMA_VERSION, SourceSubmissionManifestEntryV1, T4E_INSTALL_BUNDLE_PATH,
+    TerminalSettlementEntryV1, TerminalSettlementProjectionV1, proc_fd_path, read_strict_bytes,
+    validate_directory_inventory, verify_canonical_signature, verify_signature_shape,
 };
 
 const INSTALL_BUNDLE_BYTES: usize = 584;
@@ -385,6 +385,82 @@ impl UnsignedPopulationManifestV1 {
     }
 }
 
+/// Non-clone canonical projection body awaiting an external owner signature.
+#[derive(Debug)]
+pub struct UnsignedProjectionV1 {
+    canonical_body: Vec<u8>,
+    signature_preimage: Vec<u8>,
+}
+
+impl UnsignedProjectionV1 {
+    /// Returns the exact bytes the external owner may sign.
+    pub fn signature_preimage(&self) -> &[u8] {
+        &self.signature_preimage
+    }
+
+    /// Returns the canonical projection body ending with its content hash.
+    pub fn canonical_body(&self) -> &[u8] {
+        &self.canonical_body
+    }
+}
+
+/// Explicit authenticated closure fields copied into one terminal projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectionClosureFieldsV1 {
+    campaign_id: B256,
+    chain_id: u64,
+    source_window_start_ms: u64,
+    source_window_end_ms: u64,
+    source_snapshot_xmin: u64,
+    source_snapshot_xmax: u64,
+    source_snapshot_xip_hash: B256,
+    source_snapshot_wal_lsn: u64,
+    projection_sequence: u64,
+    source_manifest_hash: B256,
+    population_closure_signature: [u8; 65],
+    finalized_block_number: u64,
+    finalized_block_hash: B256,
+    previous_content_hash: B256,
+}
+
+impl ProjectionClosureFieldsV1 {
+    /// Constructs explicit projection closure fields; preparation validates the complete wire.
+    #[expect(clippy::too_many_arguments, reason = "the canonical projection header is explicit")]
+    pub const fn new(
+        campaign_id: B256,
+        chain_id: u64,
+        source_window_start_ms: u64,
+        source_window_end_ms: u64,
+        source_snapshot_xmin: u64,
+        source_snapshot_xmax: u64,
+        source_snapshot_xip_hash: B256,
+        source_snapshot_wal_lsn: u64,
+        projection_sequence: u64,
+        source_manifest_hash: B256,
+        population_closure_signature: [u8; 65],
+        finalized_block_number: u64,
+        finalized_block_hash: B256,
+        previous_content_hash: B256,
+    ) -> Self {
+        Self {
+            campaign_id,
+            chain_id,
+            source_window_start_ms,
+            source_window_end_ms,
+            source_snapshot_xmin,
+            source_snapshot_xmax,
+            source_snapshot_xip_hash,
+            source_snapshot_wal_lsn,
+            projection_sequence,
+            source_manifest_hash,
+            population_closure_signature,
+            finalized_block_number,
+            finalized_block_hash,
+            previous_content_hash,
+        }
+    }
+}
+
 /// Offline-only artifact validator and publisher with no signer, database, RPC, or network surface.
 #[derive(Debug, Clone, Copy)]
 pub struct ProducerConformance;
@@ -486,6 +562,116 @@ impl ProducerConformance {
         let canonical_length = unsigned.canonical_body.len() - INSTALL_BUNDLE_DOMAIN.len() - 32;
         let mut canonical = unsigned.canonical_body;
         canonical.truncate(canonical_length);
+        canonical.extend_from_slice(&signature);
+        SignedInstallBundleV1::from_canonical(canonical)
+    }
+
+    /// Builds and validates the sole canonical terminal-projection body and signature preimage.
+    pub fn prepare_terminal_projection(
+        source_entries: Vec<SourceSubmissionManifestEntryV1>,
+        terminal_entries: Vec<TerminalSettlementEntryV1>,
+        closure: ProjectionClosureFieldsV1,
+    ) -> Result<UnsignedProjectionV1, ProducerError> {
+        let (canonical_body, signature_preimage) =
+            TerminalSettlementProjectionV1::prepare_unsigned(
+                closure.campaign_id,
+                closure.chain_id,
+                closure.source_window_start_ms,
+                closure.source_window_end_ms,
+                closure.source_snapshot_xmin,
+                closure.source_snapshot_xmax,
+                closure.source_snapshot_xip_hash,
+                closure.source_snapshot_wal_lsn,
+                closure.projection_sequence,
+                closure.source_manifest_hash,
+                closure.population_closure_signature,
+                closure.finalized_block_number,
+                closure.finalized_block_hash,
+                closure.previous_content_hash,
+                source_entries,
+                terminal_entries,
+            )
+            .map_err(|error| match error {
+                super::settled_loss::SettledLossUnavailableReason::ManifestMismatch => {
+                    ProducerError::Coverage
+                }
+                super::settled_loss::SettledLossUnavailableReason::AuthenticationFailed => {
+                    ProducerError::Signature
+                }
+                _ => ProducerError::Formula,
+            })?;
+        Ok(UnsignedProjectionV1 { canonical_body, signature_preimage })
+    }
+
+    /// Attaches and verifies an externally supplied projection owner signature.
+    pub fn attach_projection_signature(
+        unsigned: UnsignedProjectionV1,
+        signature: [u8; 65],
+    ) -> Result<SignedProjectionV1, ProducerError> {
+        verify_canonical_signature(&signature, &unsigned.signature_preimage)
+            .map_err(|_| ProducerError::Signature)?;
+        let mut canonical = unsigned.canonical_body;
+        canonical.extend_from_slice(&signature);
+        SignedProjectionV1::from_canonical(canonical)
+    }
+
+    /// Rehydrates an exact population preimage from a request directory and attaches its signature.
+    pub fn attach_population_signature_bytes(
+        canonical_preimage: Vec<u8>,
+        signature: [u8; 65],
+    ) -> Result<SignedPopulationManifestV1, ProducerError> {
+        if canonical_preimage.is_empty()
+            || canonical_preimage.len() > MAX_POPULATION_MANIFEST_BYTES - 65
+        {
+            return Err(ProducerError::Bounds);
+        }
+        verify_canonical_signature(&signature, &canonical_preimage)
+            .map_err(|_| ProducerError::Signature)?;
+        let mut canonical = canonical_preimage;
+        canonical.extend_from_slice(&signature);
+        SignedPopulationManifestV1::from_canonical(canonical)
+    }
+
+    /// Rehydrates an exact projection request and attaches its externally supplied signature.
+    pub fn attach_projection_signature_bytes(
+        canonical_body: Vec<u8>,
+        signature_preimage: Vec<u8>,
+        signature: [u8; 65],
+    ) -> Result<SignedProjectionV1, ProducerError> {
+        if canonical_body.len() < 32 || canonical_body.len() > MAX_PROJECTION_BYTES - 65 {
+            return Err(ProducerError::Bounds);
+        }
+        let content_hash = &canonical_body[canonical_body.len() - 32..];
+        if signature_preimage.len() != super::settled_loss::SETTLED_LOSS_DOMAIN.len() + 32
+            || !signature_preimage.starts_with(super::settled_loss::SETTLED_LOSS_DOMAIN)
+            || &signature_preimage[super::settled_loss::SETTLED_LOSS_DOMAIN.len()..] != content_hash
+        {
+            return Err(ProducerError::Canonicality);
+        }
+        verify_canonical_signature(&signature, &signature_preimage)
+            .map_err(|_| ProducerError::Signature)?;
+        let mut canonical = canonical_body;
+        canonical.extend_from_slice(&signature);
+        SignedProjectionV1::from_canonical(canonical)
+    }
+
+    /// Rehydrates an exact install request and attaches its externally supplied outer signature.
+    pub fn attach_install_bundle_signature_bytes(
+        canonical_body: Vec<u8>,
+        signature_preimage: Vec<u8>,
+        signature: [u8; 65],
+    ) -> Result<SignedInstallBundleV1, ProducerError> {
+        if canonical_body.len() != INSTALL_BUNDLE_BYTES - 65
+            || signature_preimage.len() != INSTALL_BUNDLE_DOMAIN.len() + 32
+            || !signature_preimage.starts_with(INSTALL_BUNDLE_DOMAIN)
+            || &canonical_body[canonical_body.len() - 32..]
+                != &signature_preimage[INSTALL_BUNDLE_DOMAIN.len()..]
+        {
+            return Err(ProducerError::Canonicality);
+        }
+        verify_canonical_signature(&signature, &signature_preimage)
+            .map_err(|_| ProducerError::Signature)?;
+        let mut canonical = canonical_body;
         canonical.extend_from_slice(&signature);
         SignedInstallBundleV1::from_canonical(canonical)
     }
@@ -1019,6 +1205,87 @@ mod tests {
             ProducerConformance::prepare_frozen_manifest(vec![row(b"outside", 200)], closure()),
             Err(ProducerError::Identity)
         ));
+    }
+
+    #[test]
+    fn terminal_projection_uses_single_canonical_encoder_and_external_signature() {
+        use super::super::{
+            settled_loss::{SETTLED_LOSS_DOMAIN, TerminalKindV1, UnresolvedReasonV1},
+            testkit::{eip191_sign, owner_key},
+        };
+        use alloy_primitives::U256;
+
+        let source = SourceSubmissionManifestEntryV1::new(
+            0,
+            B256::repeat_byte(0x10),
+            B256::repeat_byte(0x20),
+            B256::repeat_byte(0x30),
+            B256::repeat_byte(0x40),
+            B256::repeat_byte(0x40),
+        );
+        let mut source_bytes = Vec::new();
+        source_bytes.extend_from_slice(&0u64.to_be_bytes());
+        source_bytes.extend_from_slice(B256::repeat_byte(0x10).as_slice());
+        source_bytes.extend_from_slice(B256::repeat_byte(0x20).as_slice());
+        source_bytes.extend_from_slice(B256::repeat_byte(0x30).as_slice());
+        source_bytes.extend_from_slice(B256::repeat_byte(0x40).as_slice());
+        source_bytes.push(1);
+        source_bytes.extend_from_slice(B256::repeat_byte(0x40).as_slice());
+        let terminal = TerminalSettlementEntryV1::new(
+            0,
+            B256::repeat_byte(0x10),
+            B256::repeat_byte(0x30),
+            B256::repeat_byte(0x40),
+            B256::repeat_byte(0x40),
+            TerminalKindV1::Successful,
+            UnresolvedReasonV1::None,
+            1_001,
+            B256::repeat_byte(0x50),
+            U256::from(6),
+            U256::from(1),
+            U256::from(2),
+            U256::from(30),
+            U256::ZERO,
+            U256::from(39),
+            U256::ZERO,
+        );
+        let fields = ProjectionClosureFieldsV1::new(
+            B256::repeat_byte(0x11),
+            BASE_CHAIN_ID,
+            100,
+            200,
+            7,
+            9,
+            B256::repeat_byte(0x22),
+            12,
+            1,
+            keccak256(source_bytes),
+            [0x22; 65],
+            1_100,
+            B256::repeat_byte(0x60),
+            B256::ZERO,
+        );
+        let unsigned = ProducerConformance::prepare_terminal_projection(
+            vec![source],
+            vec![terminal],
+            fields,
+        )
+        .expect("prepare projection");
+        assert_eq!(unsigned.signature_preimage().len(), SETTLED_LOSS_DOMAIN.len() + 32);
+        assert_eq!(&unsigned.signature_preimage()[..SETTLED_LOSS_DOMAIN.len()], SETTLED_LOSS_DOMAIN);
+        assert_eq!(
+            &unsigned.canonical_body()[unsigned.canonical_body().len() - 32..],
+            &unsigned.signature_preimage()[SETTLED_LOSS_DOMAIN.len()..],
+        );
+
+        let signature = eip191_sign(unsigned.signature_preimage(), &owner_key());
+        let signed = ProducerConformance::attach_projection_signature(unsigned, signature)
+            .expect("attach projection signature");
+        assert_eq!(
+            signed.canonical_bytes().len(),
+            664 + super::super::settled_loss::SOURCE_ENTRY_BYTES
+                + super::super::settled_loss::TERMINAL_ENTRY_BYTES,
+        );
     }
     #[test]
     fn population_publication_is_no_replace_and_exactly_idempotent() {

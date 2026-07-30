@@ -64,20 +64,25 @@ pub use arm::{
     ProducerConformance, ProducerError, ProductionCandidateError, ProductionClaimError,
     ProductionClaimFailure, ProductionClaimResult, ProductionCustodyFailure,
     ProductionDrawdownSource, ProductionLatchOutcome, ProductionSignFailure, ProductionSignedField,
-    ProductionSigningError, PublicationIoClass, PublishedPopulationManifestV1, RuntimeBackend,
-    SETTLED_LOSS_ANCHOR_PATH, SETTLED_LOSS_PROJECTION_PATH, SettledLossLoad, SettledLossReader,
+    ProductionSigningError, ProjectionClosureFieldsV1, PublicationIoClass,
+    PublishedPopulationManifestV1, RuntimeBackend, SETTLED_LOSS_ANCHOR_PATH,
+    SETTLED_LOSS_PROJECTION_PATH, SettledLossLoad, SettledLossReader,
     SettledLossUnavailableReason, SignedInstallBundleV1, SignedPopulationManifestV1,
     SignedProjectionV1, SimBackend, SimulationCorrelationEnvelopeV1, SimulationCorrelationKey,
     SimulationEntrypointStatus, SimulationEntrypointUnavailable, SimulationLedgerClosure,
     SimulationLedgerEpoch, SimulationLedgerInvalid, SimulationReservation,
-    SimulationStoreOperation, SourceLedgerRowV1, TerminalSettlementProjectionV1,
-    UnsignedInstallBundleV1, UnsignedPopulationManifestV1, production_custody_preflight,
-    try_claim_detailed,
+    SimulationStoreOperation, SourceLedgerRowV1, SourceSubmissionManifestEntryV1,
+    TerminalKindV1, TerminalSettlementEntryV1, TerminalSettlementProjectionV1,
+    UnresolvedReasonV1, UnsignedInstallBundleV1, UnsignedPopulationManifestV1,
+    UnsignedProjectionV1, production_custody_preflight, try_claim_detailed,
 };
 #[cfg(feature = "t4e-handoff")]
 pub use arm::{CheckedCandidate, CodeHashProvider, CommittedStateAuthority, ProviderError};
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
-pub use arm::{SuppressionRollbackError, provision_suppression_anchor};
+pub use arm::{
+    ParsedFrozenExportV1, ProvisioningToolError, SuppressionRollbackError, T4eProvisioningTool,
+    provision_suppression_anchor,
+};
 
 // B5-1a `presign` dormant tier. The module is PRIVATE; only the reviewed value/
 // digest surface is re-exported. It is pure and provider/filesystem/environment/

@@ -58,10 +58,13 @@ mod producer;
 mod proofs;
 pub use producer::{
     BoundedSubmissionIdV1, CanonicalDeploymentPairV1, CanonicalG7PairV1, CanonicalLivePairV1,
-    PopulationClosureFieldsV1, ProducerConformance, ProducerError, PublicationIoClass,
-    PublishedPopulationManifestV1, SignedInstallBundleV1, SignedPopulationManifestV1,
-    SignedProjectionV1, SourceLedgerRowV1, UnsignedInstallBundleV1, UnsignedPopulationManifestV1,
+    PopulationClosureFieldsV1, ProducerConformance, ProducerError, ProjectionClosureFieldsV1,
+    PublicationIoClass, PublishedPopulationManifestV1, SignedInstallBundleV1,
+    SignedPopulationManifestV1, SignedProjectionV1, SourceLedgerRowV1, UnsignedInstallBundleV1,
+    UnsignedPopulationManifestV1, UnsignedProjectionV1,
 };
+mod provisioning_tool;
+pub use provisioning_tool::{ParsedFrozenExportV1, ProvisioningToolError, T4eProvisioningTool};
 mod providers;
 mod simulation_entrypoint;
 pub use simulation_entrypoint::{
