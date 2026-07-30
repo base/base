@@ -202,7 +202,7 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::BasePrecompileError;
 
-    use super::{AssetCall, AssetAbiPair};
+    use super::{AssetAbiPair, AssetCall};
     use crate::{
         AssetAbi, AssetVersion, AssetVersions, B20Abi, IB20, IB20Asset, IB20AssetV1, IB20AssetV2,
     };
