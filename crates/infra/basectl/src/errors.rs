@@ -120,18 +120,6 @@ pub enum P2pTargetError {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum P2pCommandError {
-    /// The command could not resolve a consensus-node RPC URL from flags or config.
-    #[error(
-        "{command_name} needs a consensus-node RPC URL.\n\
-         The '{config_name}' config does not set `consensus_node_rpc`.\n\
-         Override with `--cl-rpc <url>` or set `consensus_node_rpc` in your YAML config."
-    )]
-    MissingConsensusRpc {
-        /// The config name selected for the command.
-        config_name: String,
-        /// The command that needed a consensus RPC URL.
-        command_name: String,
-    },
     /// Some peers failed during `unban-all`.
     #[error("failed to unban {failed} CL peer(s)")]
     UnbanAllPartialFailure {
@@ -200,20 +188,18 @@ pub enum ProofsCommandError {
     },
 }
 
-/// Error returned by the `sync-status` command.
+/// Error returned when a command cannot resolve a consensus-node RPC URL from flags or config.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[non_exhaustive]
-pub enum SyncStatusCommandError {
-    /// The command could not resolve a consensus-node RPC URL from flags or config.
-    #[error(
-        "sync-status needs a consensus-node RPC URL.\n\
-         The '{config_name}' config does not set `consensus_node_rpc`.\n\
-         Override with `--cl-rpc <url>` or set `consensus_node_rpc` in your YAML config."
-    )]
-    MissingConsensusRpc {
-        /// The config name selected for the command.
-        config_name: String,
-    },
+#[error(
+    "{command_name} needs a consensus-node RPC URL.\n\
+     The '{config_name}' config does not set `consensus_node_rpc`.\n\
+     Override with `--cl-rpc <url>` or set `consensus_node_rpc` in your YAML config."
+)]
+pub struct MissingConsensusRpcError {
+    /// The command that needed a consensus RPC URL.
+    pub command_name: String,
+    /// The config name selected for the command.
+    pub config_name: String,
 }
 
 /// Error returned by txpool RPC helpers and command execution.

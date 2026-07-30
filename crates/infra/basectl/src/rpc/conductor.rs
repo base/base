@@ -141,7 +141,7 @@ impl ConductorFanoutReport {
         self.total > 0 && self.failures.is_empty()
     }
 
-    /// Formats the same summary string used by the TUI toast path.
+    /// Formats the fanout summary string shared by the CLI and the TUI toast path.
     ///
     /// `verb` is the past-tense action used for success and partial-failure
     /// summaries. Add new verbs to [`empty_fanout_verb`] so the zero-target

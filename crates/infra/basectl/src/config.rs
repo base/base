@@ -407,6 +407,21 @@ impl MonitoringConfig {
             .ok_or_else(|| crate::NodeLookupError::MissingSource { config_name: self.name.clone() })
     }
 
+    /// Resolves the consensus-node RPC URL from the flag override or this config.
+    pub fn resolve_cl_rpc(
+        &self,
+        override_url: Option<&Url>,
+        command_name: &str,
+    ) -> Result<Url, crate::MissingConsensusRpcError> {
+        if let Some(url) = override_url {
+            return Ok(url.clone());
+        }
+        self.consensus_node_rpc.clone().ok_or_else(|| crate::MissingConsensusRpcError {
+            command_name: command_name.to_string(),
+            config_name: self.name.clone(),
+        })
+    }
+
     /// Returns the block explorer base URL for this chain, if known.
     pub fn explorer_base_url(&self) -> Option<&'static str> {
         match self.name.as_str() {
@@ -813,6 +828,32 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn resolve_cl_rpc_prefers_flag_override() {
+        let config = MonitoringConfig::mainnet();
+        let override_url = Url::parse("http://127.0.0.1:9545").unwrap();
+
+        assert_eq!(config.resolve_cl_rpc(Some(&override_url), "p2p info").unwrap(), override_url);
+    }
+
+    #[test]
+    fn resolve_cl_rpc_falls_back_to_config() {
+        let config = MonitoringConfig::devnet_base();
+        let expected = config.consensus_node_rpc.clone().expect("devnet sets consensus_node_rpc");
+
+        assert_eq!(config.resolve_cl_rpc(None, "p2p info").unwrap(), expected);
+    }
+
+    #[test]
+    fn resolve_cl_rpc_errors_without_config() {
+        let config = MonitoringConfig::mainnet();
+
+        let error = config.resolve_cl_rpc(None, "sync-status").unwrap_err();
+
+        assert_eq!(error.command_name, "sync-status");
+        assert_eq!(error.config_name, "mainnet");
     }
 
     #[tokio::test]

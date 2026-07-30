@@ -187,7 +187,7 @@ async fn run_reachability(
 async fn run_peers(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
     let P2pArgs { el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, json, raw } = args;
     let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
-    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p peers")?;
+    let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), "p2p peers")?;
 
     match (json, raw) {
         (true, true) => {
@@ -222,8 +222,7 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
             );
             let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
             let prompt = format!("Add EL peer {enode} through {el_rpc}? [y/N] ");
-            if !Confirm::prompt(&prompt, yes)? {
-                println!("aborted");
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
             let accepted = add_peer(&el_rpc, &enode).await?;
@@ -239,10 +238,9 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
                 "CL targets",
                 PeerLayer::Cl,
             );
-            let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p add-peer")?;
+            let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), "p2p add-peer")?;
             let prompt = format!("Connect CL peer {multiaddr} through {cl_rpc}? [y/N] ");
-            if !Confirm::prompt(&prompt, yes)? {
-                println!("aborted");
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
             connect_peer(&cl_rpc, &multiaddr).await?;
@@ -268,8 +266,7 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
             );
             let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
             let prompt = format!("Remove EL peer {enode} through {el_rpc}? [y/N] ");
-            if !Confirm::prompt(&prompt, yes)? {
-                println!("aborted");
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
             let accepted = remove_peer(&el_rpc, &enode).await?;
@@ -285,10 +282,9 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
                 "CL targets",
                 PeerLayer::Cl,
             );
-            let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p remove-peer")?;
+            let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), "p2p remove-peer")?;
             let prompt = format!("Disconnect CL peer {peer_id} from {cl_rpc}? [y/N] ");
-            if !Confirm::prompt(&prompt, yes)? {
-                println!("aborted");
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
             disconnect_peer(&cl_rpc, &peer_id).await?;
@@ -326,8 +322,7 @@ async fn run_peer_ban_action(
                 return Err(P2pCommandError::TrustedElPeerBan { target: enode }.into());
             }
             let prompt = format!("{verb} EL peer {enode} through {el_rpc}? [y/N] ");
-            if !Confirm::prompt(&prompt, yes)? {
-                println!("aborted");
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
             let accepted = match action {
@@ -346,10 +341,9 @@ async fn run_peer_ban_action(
                 "CL targets",
                 PeerLayer::Cl,
             );
-            let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), command_name)?;
+            let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), command_name)?;
             let prompt = format!("{verb} CL peer {peer_id} through {cl_rpc}? [y/N] ");
-            if !Confirm::prompt(&prompt, yes)? {
-                println!("aborted");
+            if !Confirm::prompt_or_abort(&prompt, yes)? {
                 return Ok(());
             }
             let disconnect_error = match action {
@@ -378,7 +372,7 @@ async fn run_peer_ban_action(
 
 async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) -> Result<()> {
     let DestructiveClBulkArgs { cl_rpc: cl_rpc_override, yes, json } = args;
-    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p unban-all")?;
+    let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), "p2p unban-all")?;
     let mut peer_ids = list_banned_peers(&cl_rpc).await?;
     peer_ids.sort();
 
@@ -395,8 +389,7 @@ async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) ->
     }
 
     let prompt = format!("Unban all {} banned CL peers through {cl_rpc}? [y/N] ", peer_ids.len());
-    if !Confirm::prompt(&prompt, yes)? {
-        println!("aborted");
+    if !Confirm::prompt_or_abort(&prompt, yes)? {
         return Ok(());
     }
 
@@ -424,7 +417,7 @@ const fn fail_unban_all_if_partial(failed: usize) -> Result<(), P2pCommandError>
 async fn run_info(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
     let P2pArgs { el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, json, raw } = args;
     let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
-    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p info")?;
+    let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), "p2p info")?;
 
     match (json, raw) {
         (true, true) => {
@@ -442,20 +435,6 @@ async fn run_info(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn resolve_cl_rpc(
-    config: &MonitoringConfig,
-    override_url: Option<&Url>,
-    command_name: &str,
-) -> Result<Url, P2pCommandError> {
-    if let Some(u) = override_url {
-        return Ok(u.clone());
-    }
-    config.consensus_node_rpc.clone().ok_or_else(|| P2pCommandError::MissingConsensusRpc {
-        config_name: config.name.clone(),
-        command_name: command_name.to_string(),
-    })
 }
 
 /// Minimum length used to catch obvious non-libp2p peer IDs before hitting the CL RPC.
@@ -878,7 +857,7 @@ mod tests {
 
     use super::{
         AddTarget, PeerAction, PeerActionJson, PeerBulkActionResultJson, PeerTarget,
-        fail_unban_all_if_partial, resolve_cl_rpc, run_reachability,
+        fail_unban_all_if_partial, run_reachability,
     };
     use crate::{MonitoringConfig, P2pCommandError, P2pTargetError};
 
@@ -903,40 +882,6 @@ mod tests {
             proofs: None,
             pods: None,
         }
-    }
-
-    #[test]
-    fn resolve_cl_rpc_prefers_flag() {
-        let config = test_config(None);
-        let override_url = Url::parse("http://127.0.0.1:9545").unwrap();
-
-        let resolved = resolve_cl_rpc(&config, Some(&override_url), "p2p info").unwrap();
-
-        assert_eq!(resolved, override_url);
-    }
-
-    #[test]
-    fn resolve_cl_rpc_falls_back_to_config() {
-        let cl_url = Url::parse("http://127.0.0.1:7545").unwrap();
-        let config = test_config(Some(cl_url.clone()));
-
-        let resolved = resolve_cl_rpc(&config, None, "p2p info").unwrap();
-
-        assert_eq!(resolved, cl_url);
-    }
-
-    #[test]
-    fn resolve_cl_rpc_errors_without_config() {
-        let config = test_config(None);
-
-        assert!(matches!(
-            resolve_cl_rpc(&config, None, "p2p info").unwrap_err(),
-            P2pCommandError::MissingConsensusRpc {
-                config_name,
-                command_name,
-                ..
-            } if config_name == "devnet" && command_name == "p2p info"
-        ));
     }
 
     #[tokio::test]

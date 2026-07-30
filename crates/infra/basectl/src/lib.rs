@@ -2,17 +2,21 @@
 
 mod commands;
 pub use commands::{
-    AddTarget, BanAction, BlockCommand, BlockSummaryJson, Cli, CommandOutcome, Commands,
-    ConductorAction, ConductorClusterActionArgs, ConductorCommand, ConductorCommands,
-    ConductorLeaderArgs, ConductorNodeActionArgs, ConductorStatusArgs, DestructiveClBulkArgs,
-    DestructivePeerArgs, DoctorCommand, ElSyncInfoJson, HeadJson, MonitorCommands, P2pArgs,
-    P2pCommand, P2pCommands, PeerAction, PeerActionJson, PeerBulkActionResultJson, PeerLayer,
-    PeerTarget, PeersJson, ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand,
-    ProofsCommands, ProofsFinalizeArgs, ProofsFinalizeJson, ProofsListArgs, ProofsListJson,
-    ProofsStatusArgs, ProofsStatusJson, SequencerCommand, SequencerCommands,
-    SequencerNodeActionArgs, SequencerStartArgs, SequencerStatusArgs, SyncStatusCommand,
-    SyncStatusJson, TipReferenceJson, TipStatus, TxpoolClearArgs, TxpoolClearJson, TxpoolCommand,
-    TxpoolCommands, TxpoolReadArgs, TxpoolReadJson, UnsafeHeadSource,
+    AddTarget, BanAction, BlockCommand, BlockSummaryJson, Cli, ClusterNodeScope, CommandOutcome,
+    Commands, ConductorAction, ConductorActionJson, ConductorActionName,
+    ConductorClusterActionArgs, ConductorCommand, ConductorCommands, ConductorFailureJson,
+    ConductorFanoutJson, ConductorLeaderArgs, ConductorNodeActionArgs, ConductorNodeJson,
+    ConductorStatusArgs, ConductorStatusJson, DestructiveClBulkArgs, DestructivePeerArgs,
+    DoctorCommand, ElSyncInfoJson, HeadJson, LeadershipStatus, MonitorCommands, OptionalValue,
+    P2pArgs, P2pCommand, P2pCommands, PausedSummaryJson, PeerAction, PeerActionJson,
+    PeerBulkActionResultJson, PeerLayer, PeerTarget, PeersJson, ProofResultJson, ProofStatusFilter,
+    ProofSummaryJson, ProofsCommand, ProofsCommands, ProofsFinalizeArgs, ProofsFinalizeJson,
+    ProofsListArgs, ProofsListJson, ProofsStatusArgs, ProofsStatusJson, SequencerAction,
+    SequencerActionJson, SequencerCommand, SequencerCommands, SequencerNodeActionArgs,
+    SequencerNodeJson, SequencerRole, SequencerStartArgs, SequencerStatusArgs, SequencerStatusJson,
+    SyncStatusCommand, SyncStatusJson, TipReferenceJson, TipStatus, TxpoolClearArgs,
+    TxpoolClearJson, TxpoolCommand, TxpoolCommands, TxpoolReadArgs, TxpoolReadJson,
+    UnsafeHeadSource,
 };
 
 mod confirm;
@@ -54,9 +58,9 @@ pub use doctor::{
 
 mod errors;
 pub use errors::{
-    BlockRefParseError, ConductorCommandError, DoctorArgsError, NodeLookupError, P2pCommandError,
-    P2pTargetError, ProofsCommandError, SequencerCommandError, StateConvergenceTimeoutError,
-    SyncStatusCommandError, TxpoolCommandError,
+    BlockRefParseError, ConductorCommandError, DoctorArgsError, MissingConsensusRpcError,
+    NodeLookupError, P2pCommandError, P2pTargetError, ProofsCommandError, SequencerCommandError,
+    StateConvergenceTimeoutError, TxpoolCommandError,
 };
 
 mod rpc;

@@ -8,8 +8,10 @@ pub use cli::{Cli, Commands, MonitorCommands};
 
 mod conductor;
 pub use conductor::{
-    ConductorAction, ConductorClusterActionArgs, ConductorCommand, ConductorCommands,
-    ConductorLeaderArgs, ConductorNodeActionArgs, ConductorStatusArgs,
+    ClusterNodeScope, ConductorAction, ConductorActionJson, ConductorActionName,
+    ConductorClusterActionArgs, ConductorCommand, ConductorCommands, ConductorFailureJson,
+    ConductorFanoutJson, ConductorLeaderArgs, ConductorNodeActionArgs, ConductorNodeJson,
+    ConductorStatusArgs, ConductorStatusJson, PausedSummaryJson,
 };
 
 mod doctor;
@@ -23,7 +25,7 @@ pub use p2p::{
 };
 
 mod outcome;
-pub use outcome::CommandOutcome;
+pub use outcome::{CommandOutcome, OptionalValue};
 
 mod proofs;
 pub use proofs::{
@@ -34,8 +36,9 @@ pub use proofs::{
 
 mod sequencer;
 pub use sequencer::{
-    SequencerCommand, SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs,
-    SequencerStatusArgs, UnsafeHeadSource,
+    LeadershipStatus, SequencerAction, SequencerActionJson, SequencerCommand, SequencerCommands,
+    SequencerNodeActionArgs, SequencerNodeJson, SequencerRole, SequencerStartArgs,
+    SequencerStatusArgs, SequencerStatusJson, UnsafeHeadSource,
 };
 
 mod sync_status;
