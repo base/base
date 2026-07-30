@@ -1,6 +1,10 @@
 //! Base transaction-pool wrapper that combines the protocol pool with a 2D nonce sidecar.
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    sync::Arc,
+};
 
 use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
@@ -19,6 +23,7 @@ use reth_transaction_pool::{
     PoolTransaction, PropagatedTransactions, SubPool, TransactionEvents, TransactionListenerKind,
     TransactionOrigin, TransactionPool, TransactionPoolExt, TransactionValidationOutcome,
     TransactionValidationTaskExecutor, TransactionValidator, ValidPoolTransaction,
+    identifier::SenderIdentifiers,
     pool::{AddedTransactionState, TransactionEvent},
 };
 use tokio::{spawn, sync::mpsc};
@@ -89,6 +94,14 @@ pub struct BaseTransactionPool<
     ordering: O,
     nonce_pool: Arc<RwLock<TwoDNoncePool<T>>>,
     sidecars: Arc<Vec<Arc<dyn SidecarPool<T>>>>,
+    /// Sender-ID interner for registered sidecars, kept separate from the 2D nonce pool's.
+    ///
+    /// Sidecar insertions must not allocate out of `nonce_pool`'s interner: those transactions
+    /// never enter the nonce pool, so every one would leave a permanent entry behind in it. The
+    /// two namespaces are independent by design — a [`SidecarPool`] is told to mint its own
+    /// `TransactionId` from the transaction it is handed, and nothing compares a `SenderId`
+    /// across pools.
+    sidecar_senders: Arc<RwLock<SenderIdentifiers>>,
     listeners: Arc<RwLock<SidecarListeners<T>>>,
     /// Shared admission and invalidation ledger for EIP-8130 transactions.
     guard: Arc<RwLock<MempoolGuard>>,
@@ -127,6 +140,7 @@ where
             ordering: self.ordering.clone(),
             nonce_pool: Arc::clone(&self.nonce_pool),
             sidecars: Arc::clone(&self.sidecars),
+            sidecar_senders: Arc::clone(&self.sidecar_senders),
             listeners: Arc::clone(&self.listeners),
             guard: Arc::clone(&self.guard),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
@@ -169,6 +183,7 @@ where
             ordering,
             nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
             sidecars: Arc::new(Vec::new()),
+            sidecar_senders: Arc::new(RwLock::new(SenderIdentifiers::default())),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
@@ -289,16 +304,11 @@ where
                 state_nonce,
                 ..
             } => {
-                let validated = {
-                    let mut nonce_pool = self.nonce_pool.write();
-                    self.validated_pool_transaction(
-                        transaction,
-                        origin,
-                        propagate,
-                        authorities,
-                        &mut nonce_pool,
-                    )
-                };
+                // Deliberately not `validated_pool_transaction`: that interns the sender in the
+                // 2D nonce pool, which this transaction never enters, so every sidecar admission
+                // would leave a permanent entry behind in it.
+                let validated =
+                    self.validated_sidecar_transaction(transaction, origin, propagate, authorities);
                 let admission = Self::admission_for(&validated.transaction);
                 let insert =
                     self.sidecars[pool_index].insert_validated(origin, validated, state_nonce)?;
@@ -781,6 +791,42 @@ where
             TransactionValidationOutcome::Error(hash, error) => {
                 Err(reth_transaction_pool::error::PoolError::other(hash, error.to_string()))
             }
+        }
+    }
+
+    /// Builds a [`ValidPoolTransaction`] for a registered sidecar, interning the sender in
+    /// [`Self::sidecar_senders`] rather than in the 2D nonce pool.
+    ///
+    /// The `TransactionId` this produces is a starting point only: a [`SidecarPool`] receives the
+    /// transaction by value and is expected to mint whatever identifier its own storage needs.
+    fn validated_sidecar_transaction(
+        &self,
+        transaction: reth_transaction_pool::validate::ValidTransaction<T>,
+        origin: TransactionOrigin,
+        propagate: bool,
+        authorities: Option<Vec<Address>>,
+    ) -> ValidPoolTransaction<T> {
+        let transaction = transaction.into_transaction();
+        let mut senders = self.sidecar_senders.write();
+        let sender_id = senders.sender_id_or_create(transaction.sender());
+        let authority_ids = authorities.map(|authorities| {
+            authorities
+                .into_iter()
+                .map(|authority| senders.sender_id_or_create(authority))
+                .collect()
+        });
+        drop(senders);
+
+        ValidPoolTransaction {
+            transaction_id: reth_transaction_pool::identifier::TransactionId::new(
+                sender_id,
+                transaction.nonce(),
+            ),
+            transaction,
+            propagate,
+            timestamp: std::time::Instant::now(),
+            origin,
+            authority_ids,
         }
     }
 
@@ -1474,12 +1520,27 @@ where
     where
         A: HandleMempoolData,
     {
-        let nonce_pool = self.nonce_pool.read();
-        announcement.retain_by_hash(|hash| {
-            self.protocol_pool.get(hash).is_some()
-                || nonce_pool.contains(hash)
-                || self.sidecar_owning(hash).is_some()
-        });
+        if self.sidecars.is_empty() {
+            let nonce_pool = self.nonce_pool.read();
+            announcement.retain_by_hash(|hash| {
+                self.protocol_pool.get(hash).is_some() || nonce_pool.contains(hash)
+            });
+            return;
+        }
+        // Two passes so no sidecar `contains` runs under `nonce_pool`: note what the in-tree
+        // pools know while the lock is held, then consult the sidecars with nothing held.
+        let mut known = HashSet::new();
+        {
+            let nonce_pool = self.nonce_pool.read();
+            announcement.retain_by_hash(|hash| {
+                if self.protocol_pool.get(hash).is_some() || nonce_pool.contains(hash) {
+                    known.insert(*hash);
+                }
+                true
+            });
+        }
+        announcement
+            .retain_by_hash(|hash| known.contains(hash) || self.sidecar_owning(hash).is_some());
     }
 
     fn get(&self, tx_hash: &TxHash) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
@@ -1490,26 +1551,36 @@ where
     }
 
     fn get_all(&self, txs: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        let nonce_pool = self.nonce_pool.read();
-        txs.into_iter()
-            .filter_map(|tx| {
-                self.protocol_pool
-                    .get(&tx)
-                    .or_else(|| nonce_pool.get(&tx))
-                    .or_else(|| self.sidecar_owning(&tx).and_then(|pool| pool.get(&tx)))
-            })
-            .collect()
+        // In-tree lookups first, under the lock; sidecar lookups afterwards with nothing held,
+        // so no out-of-tree `get` runs while `nonce_pool` is read-locked.
+        let mut resolved = {
+            let nonce_pool = self.nonce_pool.read();
+            txs.into_iter()
+                .map(|tx| (tx, self.protocol_pool.get(&tx).or_else(|| nonce_pool.get(&tx))))
+                .collect::<Vec<_>>()
+        };
+        if !self.sidecars.is_empty() {
+            for (hash, slot) in &mut resolved {
+                if slot.is_none() {
+                    *slot = self.sidecar_owning(hash).and_then(|pool| pool.get(hash));
+                }
+            }
+        }
+        resolved.into_iter().filter_map(|(_, slot)| slot).collect()
     }
 
     fn on_propagated(&self, txs: PropagatedTransactions) {
+        // Sidecar membership first, with no pool lock held.
+        let txs = if self.sidecars.is_empty() {
+            txs
+        } else {
+            PropagatedTransactions(
+                txs.0.into_iter().filter(|(hash, _)| self.sidecar_owning(hash).is_none()).collect(),
+            )
+        };
         let nonce_pool = self.nonce_pool.read();
         let protocol_txs = PropagatedTransactions(
-            txs.0
-                .into_iter()
-                .filter(|(hash, _)| {
-                    !nonce_pool.contains(hash) && self.sidecar_owning(hash).is_none()
-                })
-                .collect(),
+            txs.0.into_iter().filter(|(hash, _)| !nonce_pool.contains(hash)).collect(),
         );
         drop(nonce_pool);
         self.protocol_pool.on_propagated(protocol_txs)

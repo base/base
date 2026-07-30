@@ -160,10 +160,16 @@ where
 {
     /// Invalidates `transaction` on the arm that served it.
     ///
-    /// Provenance recorded by [`Self::pop_best`] is authoritative and is what callers exercise:
-    /// the payload builder marks the transaction it just took from `next`. Only a transaction
-    /// this iterator never yielded falls back to `owns_sidecar`, which is the best guess
-    /// available and matches the pre-provenance behaviour.
+    /// Provenance is authoritative **only for the most recently yielded transaction**, which is
+    /// the entire call pattern in practice: both this iterator's own underpriced path and the
+    /// payload builder mark the transaction they just took from `next`. Marking any earlier
+    /// transaction falls back to `owns_sidecar`, which is correct whenever the arms are populated
+    /// consistently with the predicate and is the pre-provenance behaviour otherwise.
+    ///
+    /// Tracking every yielded transaction would remove the caveat, at the cost of a per-yield map
+    /// insertion on the block-building hot path. Not worth it for a case no caller exercises —
+    /// but if a caller ever needs to mark arbitrary earlier transactions, widen this rather than
+    /// letting it silently fall back.
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
         let from = match self.last_yielded {
             Some((hash, from)) if hash == *transaction.hash() => from,
