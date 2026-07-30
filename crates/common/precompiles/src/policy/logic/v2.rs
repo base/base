@@ -572,10 +572,8 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV2 {
 
     fn composite_policy_child_ids(&self, storage: &S, policy_id: u64) -> Result<Vec<u64>> {
         // Never reverts, matching the rest of the read surface. The gate byte alone decides
-        // whether a child set can exist: `is_composite` is false for the built-in sentinels
-        // (types 0/1), for simple policies, and for malformed IDs (type > INTERSECT), so all of
-        // them collapse to empty without a storage read. A well-formed composite ID that was
-        // never created also reads empty, since only the two write paths populate slot 4.
+        // whether a child set can exist, so built-ins, simple policies, and malformed IDs all
+        // collapse to empty without a storage read.
         if !Self::is_composite(policy_id) {
             return Ok(Vec::new());
         }
