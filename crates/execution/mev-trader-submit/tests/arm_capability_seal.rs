@@ -1830,9 +1830,10 @@ fn sink_macro_surface_is_reviewed(source: &str) -> bool {
                 syn::Meta::List(list) if list.path.is_ident("cfg") => {
                     matches!(list.tokens.to_string().as_str(), "test" | "not (test)")
                 }
-                syn::Meta::List(list) if list.path.is_ident("derive") => {
-                    list.tokens.to_string() == "Debug"
-                }
+                syn::Meta::List(list) if list.path.is_ident("derive") => matches!(
+                    list.tokens.to_string().as_str(),
+                    "Debug" | "Debug , Clone , Copy , PartialEq , Eq"
+                ),
                 _ => false,
             };
             if !reviewed {
