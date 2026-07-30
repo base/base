@@ -330,6 +330,21 @@ where
                 // own identifier anyway, and reth's `SenderIdentifiers` has no removal API — so
                 // interning here would accumulate an entry per sender that nothing could free.
                 let admission = Self::admission_for(transaction.transaction());
+                let generation = transaction
+                    .transaction()
+                    .limit_class()
+                    .map(|class| class.classification_generation);
+
+                // Held across the insert and the guard mutation, as every other guard-mutating
+                // path does. `reconcile_guard` takes this same lock across its recheck *and* its
+                // release; without it here, a reconcile pass can observe the transaction as
+                // absent, then release its guard slot after this path has admitted it. That is
+                // the invariant `reconcile_guard`'s own comment relies on.
+                //
+                // This does mean the serializer — not a pool data lock — is held across the
+                // out-of-tree `insert`. A slow sidecar therefore delays other admissions. It
+                // cannot deadlock: the lock is private and the trait contract forbids reentry.
+                let admission_guard = self.protocol_admission_lock.lock();
                 let insert = self.sidecars[pool_index].insert(SidecarAdmission {
                     origin,
                     transaction,
@@ -339,6 +354,23 @@ where
                 })?;
                 let mut listeners = self.listeners.write();
                 let mut guard = self.guard.write();
+
+                // The limit-class cache can be bumped while validation is awaiting, which would
+                // leave `admission` carrying stale balance and cost figures that `try_admit`
+                // would wrongly accept. The nonce-pool path rolls back for exactly this; so does
+                // this one.
+                let current = generation.is_none_or(|generation| {
+                    generation == self.validator().validator().limit_class_cache_generation()
+                });
+                if !current {
+                    let hash = insert.outcome.hash;
+                    drop(guard);
+                    drop(listeners);
+                    drop(admission_guard);
+                    self.sidecars[pool_index]
+                        .remove_transactions(&[hash], RemovalReason::Discarded);
+                    return Err(Self::stale_classification_error(hash));
+                }
                 match (&insert.replaced, admission) {
                     (Some(replaced), Some(admission)) => {
                         guard.release(replaced.hash());
@@ -349,12 +381,13 @@ where
                     }
                     (None, Some(admission)) => {
                         if let Err(rejection) = guard.try_admit(admission) {
-                            // Both locks go before the rollback: `remove_transactions` is
+                            // Every lock goes before the rollback: `remove_transactions` is
                             // out-of-tree code, and holding `listeners` across it would deadlock
                             // any implementation that reaches back into the pool.
                             let hash = insert.outcome.hash;
                             drop(guard);
                             drop(listeners);
+                            drop(admission_guard);
                             // Rolled back silently, with no `on_discarded`. The insertion was
                             // never announced — `on_sidecar_inserted` is only reached on the
                             // success path below — so a terminal event here would tell every
