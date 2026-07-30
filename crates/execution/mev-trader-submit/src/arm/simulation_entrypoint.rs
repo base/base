@@ -21,10 +21,8 @@ use super::{
 /// Missing production prerequisite. No variant supplies fallback data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationEntrypointUnavailable {
-    /// Compile-pinned arm runtime could not open.
-    ArmRuntimeUnavailable(ArmRuntimeOpenCause),
-    /// No node-bound canonical committed-state authority exists.
-    CommittedStateAuthorityUnavailable,
+    /// Complete production T4e simulation installation is explicitly deferred.
+    ProductionInstallationDeferred,
     /// Durable local ledger could not open.
     PersistenceUnavailable,
     /// Entrypoint status mutex was poisoned.
@@ -34,91 +32,6 @@ pub enum SimulationEntrypointUnavailable {
         /// Whether unwinding, rather than a typed terminal outcome, closed the worker.
         panicked: bool,
     },
-}
-
-/// Bounded, copyable evidence preserving the exact typed `ArmRuntime::open` failure class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArmRuntimeOpenCause {
-    /// Runtime anchor identity was not compile-pinned.
-    AnchorIdentityUnpinned,
-    /// Persistent kill state was not clear at startup.
-    KillStateNotClear,
-    /// Anchor path validation or access failed.
-    AnchorPath,
-    /// Anchor creation found an existing anchor.
-    AnchorAlreadyExists,
-    /// The required anchor was missing.
-    AnchorMissing,
-    /// The anchor did not have a singleton writer.
-    AnchorNotSingletonWriter,
-    /// The anchor database operation failed.
-    AnchorDatabase,
-    /// The anchor contents were corrupt.
-    AnchorCorrupt,
-    /// The anchor had not been initialized.
-    AnchorUninitialized,
-    /// The persisted anchor identity did not match.
-    AnchorIdentityMismatch,
-    /// Persisted anchor evidence did not match.
-    AnchorEvidenceMismatch,
-    /// Secure randomness for anchor handling failed.
-    AnchorRandom,
-    /// An anchor update attempted to move behind the current sequence.
-    AnchorRollback {
-        /// Attempted anchor sequence.
-        attempted: u64,
-        /// Current anchor sequence.
-        current: u64,
-    },
-    /// A suppression epoch moved behind its persisted high-water mark.
-    SuppressionRollback {
-        /// Observed suppression epoch.
-        observed: u64,
-        /// Persisted suppression high-water mark.
-        high_water: u64,
-    },
-    /// Suppression high-water persistence failed.
-    SuppressionIo,
-}
-
-impl From<super::ArmRuntimeOpenError> for ArmRuntimeOpenCause {
-    fn from(error: super::ArmRuntimeOpenError) -> Self {
-        match error {
-            super::ArmRuntimeOpenError::Startup(
-                base_mev_trader::StartupError::AnchorIdentityUnpinned,
-            ) => Self::AnchorIdentityUnpinned,
-            super::ArmRuntimeOpenError::Startup(
-                base_mev_trader::StartupError::KillStateNotClear,
-            ) => Self::KillStateNotClear,
-            super::ArmRuntimeOpenError::Startup(base_mev_trader::StartupError::Anchor(error)) => {
-                match error {
-                    base_mev_trader::AnchorError::Path(_) => Self::AnchorPath,
-                    base_mev_trader::AnchorError::AlreadyExists => Self::AnchorAlreadyExists,
-                    base_mev_trader::AnchorError::Missing => Self::AnchorMissing,
-                    base_mev_trader::AnchorError::NotSingletonWriter => {
-                        Self::AnchorNotSingletonWriter
-                    }
-                    base_mev_trader::AnchorError::Database(_) => Self::AnchorDatabase,
-                    base_mev_trader::AnchorError::Corrupt(_) => Self::AnchorCorrupt,
-                    base_mev_trader::AnchorError::Uninitialized => Self::AnchorUninitialized,
-                    base_mev_trader::AnchorError::IdentityMismatch => Self::AnchorIdentityMismatch,
-                    base_mev_trader::AnchorError::EvidenceMismatch(_) => {
-                        Self::AnchorEvidenceMismatch
-                    }
-                    base_mev_trader::AnchorError::Random(_) => Self::AnchorRandom,
-                    base_mev_trader::AnchorError::Rollback(error) => {
-                        Self::AnchorRollback { attempted: error.attempted, current: error.current }
-                    }
-                }
-            }
-            super::ArmRuntimeOpenError::Suppression(
-                super::SuppressionRollbackError::Rollback { observed, high_water },
-            ) => Self::SuppressionRollback { observed, high_water },
-            super::ArmRuntimeOpenError::Suppression(super::SuppressionRollbackError::Io(_)) => {
-                Self::SuppressionIo
-            }
-        }
-    }
 }
 
 /// Sticky operator-visible ledger closure.
@@ -216,7 +129,9 @@ pub enum SimulationEntrypointTerminal {
     UnexpectedLiveOutcome,
 }
 
-/// First production caller of `send_gated`, fixed to `SimBackend`.
+/// Library execution seam for `send_gated`, fixed to `SimBackend`.
+///
+/// This seam is not production-installed until `Production T4e Simulation Installation + Settled-Loss Authority` supplies real settled-loss authority, proofs/claim-store/custody, the shared bridge, and the PR #55 committed-state dependency. Production `Ready`, `Busy`, and `Closed` handoff behavior remains deferred to that complete installer.
 #[derive(Debug)]
 pub struct SimulationEntrypoint {
     backend: SimBackend,
@@ -491,16 +406,11 @@ impl UnavailableSimulationHandoff {
         self.status
     }
 
-    /// Probes only existing production prerequisites and returns a typed rejecting sink.
+    /// Builds the explicitly deferred production sink without opening or probing any runtime.
     ///
-    /// S2 has no production committed-state authority implementation, so a successfully
-    /// opened arm runtime still closes at that measured gap rather than inventing one.
-    pub fn probe_production() -> Self {
-        let reason = match super::ArmRuntime::open() {
-            Ok(_) => SimulationEntrypointUnavailable::CommittedStateAuthorityUnavailable,
-            Err(error) => SimulationEntrypointUnavailable::ArmRuntimeUnavailable(error.into()),
-        };
-        Self::new(reason)
+    /// Production remains rejection-only until `Production T4e Simulation Installation + Settled-Loss Authority` installs the complete real authority path.
+    pub const fn deferred_production() -> Self {
+        Self::new(SimulationEntrypointUnavailable::ProductionInstallationDeferred)
     }
     /// Erases only the sink type, not its separately observable status.
     pub fn into_handoff(self) -> Arc<dyn T4eCandidateHandoff> {
@@ -813,21 +723,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn runtime_open_failures_keep_typed_cause_evidence() {
-        assert_eq!(
-            ArmRuntimeOpenCause::from(super::super::ArmRuntimeOpenError::Startup(
-                base_mev_trader::StartupError::AnchorIdentityUnpinned,
-            )),
-            ArmRuntimeOpenCause::AnchorIdentityUnpinned,
-        );
-        assert_eq!(
-            ArmRuntimeOpenCause::from(super::super::ArmRuntimeOpenError::Suppression(
-                super::super::SuppressionRollbackError::Rollback { observed: 4, high_water: 5 },
-            )),
-            ArmRuntimeOpenCause::SuppressionRollback { observed: 4, high_water: 5 },
-        );
-    }
     #[test]
     fn normal_owner_shutdown_joins_without_worker_failure_status() {
         let (worker, terminated) = idle_worker();

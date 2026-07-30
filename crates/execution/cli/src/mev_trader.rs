@@ -8439,7 +8439,7 @@ impl BaseNodeTraderConfig {
         let config = flashblocks_config.as_ref()?;
         let credential_file = std::env::var_os("MEV_TRADER_BLINK_CREDENTIAL_FILE");
         #[cfg(feature = "arm-sim")]
-        let arm_sim_handoff = UnavailableSimulationHandoff::probe_production();
+        let arm_sim_handoff = UnavailableSimulationHandoff::deferred_production();
         #[cfg(feature = "arm-sim")]
         let arm_sim_status = arm_sim_handoff.status();
         Some(Self {
@@ -8651,7 +8651,8 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
             #[cfg(feature = "arm-sim")]
             tracing::error!(
                 status = ?self.config.arm_sim_status,
-                "arm simulation entrypoint unavailable; rejecting candidate handoff"
+                follow_up = "Production T4e Simulation Installation + Settled-Loss Authority",
+                "arm simulation production installation deferred; rejecting candidate handoff"
             );
             let chain_spec = node.chain_spec();
             let port = Arc::new(CliTraderSnapshotPort::new(
@@ -10351,7 +10352,7 @@ mod tests {
             t4e_handoff: None,
             #[cfg(feature = "arm-sim")]
             arm_sim_status: SimulationEntrypointStatus::Unavailable(
-                mev_trader_submit::SimulationEntrypointUnavailable::CommittedStateAuthorityUnavailable,
+                mev_trader_submit::SimulationEntrypointUnavailable::ProductionInstallationDeferred,
             ),
             edge_measurement,
         };
