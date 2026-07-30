@@ -14,12 +14,13 @@ use syn::{ext::IdentExt, visit::Visit};
 
 /// The exact production files under `src/arm/`. A NEW arm file must be added here
 /// (and re-reviewed) before it can ship (b7, fail-closed).
-const ARM_FILES: [&str; 14] = [
+const ARM_FILES: [&str; 15] = [
     "claim.rs",
     "custody.rs",
     "fail_sink.rs",
     "mod.rs",
     "proofs.rs",
+    "producer.rs",
     "providers.rs",
     "production_handoff.rs",
     "simulation_entrypoint.rs",
@@ -199,22 +200,35 @@ fn arm_source_is_exactly_the_declared_set() {
 
 /// The complete root API. T4e adds only the reviewed checked authorities, exact-one
 /// production handoff, bounded worker/status types, and simulation-only runtime surface.
-const PUBLIC_API_ALLOWLIST: [&str; 48] = [
+const PUBLIC_API_ALLOWLIST: [&str; 75] = [
     "AdmittedCandidate",
     "AuthorizationGateError",
     "BlockNumHash",
+    "BoundedSubmissionIdV1",
+    "BoundedUnresolvedSummaryV1",
+    "CanonicalDeploymentPairV1",
+    "CanonicalG7PairV1",
+    "CanonicalLivePairV1",
+    "CanonicalMismatchClass",
     "CheckedCandidate",
     "CodeHashProvider",
     "CommittedStateAuthority",
     "FinalizedChainAuthority",
     "FinalizedChainError",
+    "FrozenP2PopulationManifestV1",
+    "NodeLocalSettledLossAuthority",
+    "PopulationClosureFieldsV1",
+    "PreparedSettledLossAuthority",
     "ProdBackend",
+    "ProducerConformance",
+    "ProducerError",
     "ProductionCandidateError",
     "ProductionCandidateReceiver",
     "ProductionClaimError",
     "ProductionClaimFailure",
     "ProductionClaimResult",
     "ProductionCustodyFailure",
+    "ProductionDrawdownSource",
     "ProductionHandoffClosed",
     "ProductionHandoffInstaller",
     "ProductionHandoffState",
@@ -229,7 +243,17 @@ const PUBLIC_API_ALLOWLIST: [&str; 48] = [
     "ProductionSimulationWorkerOwner",
     "ProductionWorkerError",
     "ProviderError",
+    "PublicationIoClass",
+    "PublishedPopulationManifestV1",
     "RuntimeBackend",
+    "SETTLED_LOSS_ANCHOR_PATH",
+    "SETTLED_LOSS_PROJECTION_PATH",
+    "SettledLossLoad",
+    "SettledLossReader",
+    "SettledLossUnavailableReason",
+    "SignedInstallBundleV1",
+    "SignedPopulationManifestV1",
+    "SignedProjectionV1",
     "SimBackend",
     "SimulationCorrelationEnvelopeV1",
     "SimulationCorrelationKey",
@@ -243,7 +267,11 @@ const PUBLIC_API_ALLOWLIST: [&str; 48] = [
     "SimulationStoreOperation",
     "SimulationSubmitError",
     "SimulationWorker",
+    "SourceLedgerRowV1",
     "SuppressionRollbackError",
+    "TerminalSettlementProjectionV1",
+    "UnsignedInstallBundleV1",
+    "UnsignedPopulationManifestV1",
     "WorkerStartupFailure",
     "production_custody_preflight",
     "provision_suppression_anchor",
@@ -387,6 +415,7 @@ fn reviewed_arm_module_tree(root: &Path) -> Result<(), String> {
         "fail_sink",
         "proofs",
         "providers",
+        "producer",
         "production_handoff",
         "simulation_entrypoint",
         "simulation_store",
@@ -1176,6 +1205,7 @@ fn arm_submodules_are_private() {
         "fail_sink",
         "proofs",
         "providers",
+        "producer",
         "production_handoff",
         "simulation_entrypoint",
         "simulation_store",
@@ -1249,7 +1279,7 @@ fn t4d_arm_surface_has_only_the_reviewed_unsigned_candidate_handoff() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(arm_exports.len(), 6, "arm root surface must be six reviewed facades");
+    assert_eq!(arm_exports.len(), 5, "arm root surface must be five reviewed facades");
     let gates = arm_exports
         .iter()
         .map(|item| {
