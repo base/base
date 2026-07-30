@@ -20,8 +20,8 @@ pub use doctor::DoctorCommand;
 mod p2p;
 pub use p2p::{
     AddTarget, BanAction, DestructiveClBulkArgs, DestructivePeerArgs, P2pArgs, P2pCommand,
-    P2pCommands, PeerAction, PeerActionJson, PeerBulkActionResultJson, PeerLayer, PeerTarget,
-    PeersJson,
+    P2pCommands, PeerAction, PeerActionJson, PeerBulkAction, PeerBulkActionResultJson, PeerLayer,
+    PeerTarget, PeersJson,
 };
 
 mod outcome;
@@ -29,9 +29,9 @@ pub use outcome::{CommandOutcome, OptionalValue};
 
 mod proofs;
 pub use proofs::{
-    ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand, ProofsCommands,
-    ProofsFinalizeArgs, ProofsFinalizeJson, ProofsListArgs, ProofsListJson, ProofsStatusArgs,
-    ProofsStatusJson,
+    ProofOutputStatus, ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand,
+    ProofsCommands, ProofsFinalizeArgs, ProofsFinalizeJson, ProofsListArgs, ProofsListJson,
+    ProofsStatusArgs, ProofsStatusJson,
 };
 
 mod sequencer;

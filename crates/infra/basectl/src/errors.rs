@@ -120,18 +120,6 @@ pub enum P2pTargetError {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum P2pCommandError {
-    /// Some peers failed during `unban-all`.
-    #[error("failed to unban {failed} CL peer(s)")]
-    UnbanAllPartialFailure {
-        /// The number of failed peer unban attempts.
-        failed: usize,
-    },
-    /// The pretty-printer received a peer action shape it does not support.
-    #[error("unsupported p2p pretty output action {action}")]
-    UnsupportedPrettyAction {
-        /// The unsupported action name.
-        action: String,
-    },
     /// The EL ban target is a trusted peer, which the node silently refuses to ban.
     #[error("cannot ban peer {target}: it is in the trusted set")]
     TrustedElPeerBan {
@@ -197,7 +185,7 @@ pub enum ProofsCommandError {
 )]
 pub struct MissingConsensusRpcError {
     /// The command that needed a consensus RPC URL.
-    pub command_name: String,
+    pub command_name: &'static str,
     /// The config name selected for the command.
     pub config_name: String,
 }
@@ -343,7 +331,7 @@ pub enum SequencerCommandError {
         /// The node currently observed as conductor leader.
         current_leader: String,
         /// The sequencer action being validated.
-        action: String,
+        action: &'static str,
     },
     /// The command targeted a follower while no current leader name was available.
     #[error(
@@ -353,7 +341,7 @@ pub enum SequencerCommandError {
         /// The node name requested by the caller.
         requested_node: String,
         /// The sequencer action being validated.
-        action: String,
+        action: &'static str,
     },
     /// The observed unsafe head is zero, so no safe prestate exists for start.
     #[error("no prestate: engine unsafe head is uninitialized, cannot safely start sequencer")]

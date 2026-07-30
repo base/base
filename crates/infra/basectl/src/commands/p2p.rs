@@ -129,6 +129,7 @@ impl P2pCommand {
             P2pCommands::Reachability { enode, json } => {
                 run_reachability(&config, &enode, json).await
             }
+            P2pCommands::UnbanAll(args) => run_unban_all(config, args).await,
             other => {
                 match other {
                     P2pCommands::Peers(args) => run_peers(config, args).await?,
@@ -141,8 +142,7 @@ impl P2pCommand {
                     P2pCommands::Unban(args) => {
                         run_peer_ban_action(config, args, BanAction::Unban).await?
                     }
-                    P2pCommands::UnbanAll(args) => run_unban_all(config, args).await?,
-                    P2pCommands::Reachability { .. } => unreachable!(),
+                    P2pCommands::Reachability { .. } | P2pCommands::UnbanAll(_) => unreachable!(),
                 }
                 Ok(CommandOutcome::Success)
             }
@@ -370,7 +370,10 @@ async fn run_peer_ban_action(
     Ok(())
 }
 
-async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) -> Result<()> {
+async fn run_unban_all(
+    config: MonitoringConfig,
+    args: DestructiveClBulkArgs,
+) -> Result<CommandOutcome> {
     let DestructiveClBulkArgs { cl_rpc: cl_rpc_override, yes, json } = args;
     let cl_rpc = config.resolve_cl_rpc(cl_rpc_override.as_ref(), "p2p unban-all")?;
     let mut peer_ids = list_banned_peers(&cl_rpc).await?;
@@ -379,18 +382,18 @@ async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) ->
     if peer_ids.is_empty() {
         if json {
             print_peer_action(
-                &PeerActionJson::cl_bulk(&config.name, PeerAction::UnbanAll, vec![]),
+                &PeerActionJson::cl_bulk(&config.name, PeerBulkAction::UnbanAll, vec![]),
                 json,
             )?;
         } else {
             println!("no peers are currently banned");
         }
-        return Ok(());
+        return Ok(CommandOutcome::Success);
     }
 
     let prompt = format!("Unban all {} banned CL peers through {cl_rpc}? [y/N] ", peer_ids.len());
     if !Confirm::prompt_or_abort(&prompt, yes)? {
-        return Ok(());
+        return Ok(CommandOutcome::Success);
     }
 
     let mut results = Vec::with_capacity(peer_ids.len());
@@ -400,18 +403,10 @@ async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) ->
             Err(err) => results.push(PeerBulkActionResultJson::err(peer_id, err.to_string())),
         }
     }
-    let action = PeerActionJson::cl_bulk(&config.name, PeerAction::UnbanAll, results);
+    let action = PeerActionJson::cl_bulk(&config.name, PeerBulkAction::UnbanAll, results);
     let failed = action.failed_count();
     print_peer_action(&action, json)?;
-    fail_unban_all_if_partial(failed)?;
-    Ok(())
-}
-
-const fn fail_unban_all_if_partial(failed: usize) -> Result<(), P2pCommandError> {
-    if failed > 0 {
-        return Err(P2pCommandError::UnbanAllPartialFailure { failed });
-    }
-    Ok(())
+    Ok(CommandOutcome::from_failures(failed > 0))
 }
 
 async fn run_info(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
@@ -574,7 +569,7 @@ pub enum PeerActionJson {
         /// Selected network name.
         network: String,
         /// Peer action performed.
-        action: PeerAction,
+        action: PeerBulkAction,
         /// Peer layer targeted.
         layer: PeerLayer,
         /// Number of peers attempted.
@@ -588,7 +583,7 @@ pub enum PeerActionJson {
     },
 }
 
-/// Peer-management action represented in command output.
+/// Single-peer management action represented in command output.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum PeerAction {
     /// Add or connect a peer.
@@ -603,6 +598,11 @@ pub enum PeerAction {
     /// Unban a peer.
     #[serde(rename = "unbanPeer")]
     Unban,
+}
+
+/// Bulk peer-management action represented in command output.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub enum PeerBulkAction {
     /// Unban every banned consensus peer.
     #[serde(rename = "unbanAll")]
     UnbanAll,
@@ -670,7 +670,11 @@ impl PeerActionJson {
         }
     }
 
-    fn cl_bulk(network: &str, action: PeerAction, results: Vec<PeerBulkActionResultJson>) -> Self {
+    fn cl_bulk(
+        network: &str,
+        action: PeerBulkAction,
+        results: Vec<PeerBulkActionResultJson>,
+    ) -> Self {
         let attempted = results.len();
         let succeeded = results.iter().filter(|result| result.ok).count();
         let failed = attempted.saturating_sub(succeeded);
@@ -782,11 +786,6 @@ fn print_peer_action_pretty(action: &PeerActionJson) -> Result<()> {
                 }
             }
         }
-        PeerActionJson::El { action, .. } | PeerActionJson::Cl { action, .. } => {
-            return Err(
-                P2pCommandError::UnsupportedPrettyAction { action: format!("{action:?}") }.into()
-            );
-        }
     }
     Ok(())
 }
@@ -856,10 +855,10 @@ mod tests {
     use url::Url;
 
     use super::{
-        AddTarget, PeerAction, PeerActionJson, PeerBulkActionResultJson, PeerTarget,
-        fail_unban_all_if_partial, run_reachability,
+        AddTarget, PeerAction, PeerActionJson, PeerBulkAction, PeerBulkActionResultJson,
+        PeerTarget, run_reachability,
     };
-    use crate::{MonitoringConfig, P2pCommandError, P2pTargetError};
+    use crate::{MonitoringConfig, P2pTargetError};
 
     const VALID_ENODE: &str = "enode://d7dfaea49c7ef37701e668652bcf1bc63d3abb2ae97593374a949e175e4ff128730a2f35199f3462a56298b981dfc395a5abebd2d6f0284ffe5bdc3d8e258b86@127.0.0.1:30304?discport=30301";
     const VALID_ENR: &str = "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg";
@@ -1008,15 +1007,6 @@ mod tests {
     }
 
     #[test]
-    fn unban_all_partial_failure_is_typed() {
-        assert!(fail_unban_all_if_partial(0).is_ok());
-        assert!(matches!(
-            fail_unban_all_if_partial(2).unwrap_err(),
-            P2pCommandError::UnbanAllPartialFailure { failed: 2 }
-        ));
-    }
-
-    #[test]
     fn peer_action_json_serializes_typed_action_and_layer() {
         let el = serde_json::to_value(PeerActionJson::el(
             "devnet",
@@ -1092,7 +1082,7 @@ mod tests {
 
         let unban_all = serde_json::to_value(PeerActionJson::cl_bulk(
             "devnet",
-            PeerAction::UnbanAll,
+            PeerBulkAction::UnbanAll,
             vec![
                 PeerBulkActionResultJson::ok("16Uiu2HAmExamplePeerId".to_string()),
                 PeerBulkActionResultJson::err(

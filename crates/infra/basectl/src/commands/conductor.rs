@@ -3,6 +3,7 @@
 use std::io::{self, Write};
 
 use anyhow::Result;
+use base_consensus_rpc::ServerSuffrage;
 use clap::{Args, Subcommand};
 use serde::Serialize;
 use tracing::warn;
@@ -10,8 +11,9 @@ use url::Url;
 
 use crate::{
     CommandOutcome, ConductorClusterSnapshot, ConductorCommandError, ConductorControl,
-    ConductorFanoutReport, ConductorNodeConfig, ConductorNodeFailure, ConductorNodeStatus,
-    ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig, OptionalValue,
+    ConductorFanoutAction, ConductorFanoutReport, ConductorNodeConfig, ConductorNodeFailure,
+    ConductorNodeStatus, ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig,
+    OptionalValue,
 };
 
 /// Inspect and control an HA conductor cluster.
@@ -52,7 +54,7 @@ pub struct ConductorStatusArgs {
 /// Flags for `basectl conductor transfer-leader`.
 #[derive(Debug, Args)]
 pub struct ConductorLeaderArgs {
-    /// Optional target node name.
+    /// Optional target node name. If omitted, the leader transfers to any available peer.
     #[arg(value_name = "TARGET")]
     pub target: Option<String>,
     /// Skip the interactive confirmation prompt.
@@ -66,7 +68,7 @@ pub struct ConductorLeaderArgs {
 /// Shared flags for single-node destructive conductor commands.
 #[derive(Debug, Args)]
 pub struct ConductorNodeActionArgs {
-    /// Conductor node name or discovered raft server ID.
+    /// Conductor node name from the selected config or discovered raft server ID.
     #[arg(value_name = "NODE")]
     pub node: String,
     /// Skip the interactive confirmation prompt.
@@ -83,7 +85,7 @@ pub struct ConductorClusterActionArgs {
     /// Skip the typed network-name confirmation prompt.
     #[arg(long)]
     pub yes: bool,
-    /// Emit a structured JSON action outcome instead of pretty text.
+    /// Emit a structured JSON action outcome instead of pretty text. Requires `--yes`.
     #[arg(long, requires = "yes")]
     pub json: bool,
 }
@@ -172,11 +174,11 @@ impl ConductorAction {
         }
     }
 
-    /// Past tense used in fanout summaries.
-    pub const fn past_tense(self) -> &'static str {
+    /// Cluster-wide fanout operation performed by this action.
+    pub const fn fanout(self) -> ConductorFanoutAction {
         match self {
-            Self::Pause => "paused",
-            Self::Unpause => "resumed",
+            Self::Pause => ConductorFanoutAction::Pause,
+            Self::Unpause => ConductorFanoutAction::Resume,
         }
     }
 }
@@ -316,7 +318,7 @@ async fn run_cluster_action(
         ConductorAction::Unpause => ConductorControl::resume_all(nodes).await,
     };
     print_fanout_action(&report, &config.name, action, args.json)?;
-    Ok(CommandOutcome::from_failures(fanout_requires_failure_exit(&report)))
+    Ok(CommandOutcome::from_failures(!report.is_success()))
 }
 
 async fn current_nodes_for_action(source: &ConductorSource) -> Result<Vec<ConductorNodeConfig>> {
@@ -359,10 +361,6 @@ async fn current_nodes_for_cluster_action(
     }
 }
 
-const fn fanout_requires_failure_exit(report: &ConductorFanoutReport) -> bool {
-    !report.is_success()
-}
-
 fn print_status_pretty(status: &ConductorStatusJson) -> Result<()> {
     let mut table = KeyValueTable::new();
     table
@@ -399,7 +397,7 @@ fn print_fanout_action(
     } else {
         let mut stdout = io::stdout().lock();
         let prefix = if report.is_success() { "OK" } else { "WARN" };
-        writeln!(stdout, "{prefix} {}", report.summary(action.past_tense()))?;
+        writeln!(stdout, "{prefix} {}", report.summary(action.fanout()))?;
     }
     Ok(())
 }
@@ -591,7 +589,7 @@ pub struct ConductorNodeJson {
     /// Execution-layer peer count.
     pub el_peer_count: Option<u32>,
     /// Raft suffrage.
-    pub suffrage: Option<String>,
+    pub suffrage: Option<&'static str>,
     /// Whether runtime discovery produced this node.
     pub discovered: bool,
 }
@@ -629,8 +627,9 @@ impl ConductorNodeJson {
             el_block: status.and_then(|status| status.el_block),
             el_syncing: status.and_then(|status| status.el_syncing),
             el_peer_count: status.and_then(|status| status.el_peer_count),
-            suffrage: status.and_then(|status| {
-                status.suffrage.map(|suffrage| format!("{suffrage:?}").to_ascii_lowercase())
+            suffrage: status.and_then(|status| status.suffrage).map(|suffrage| match suffrage {
+                ServerSuffrage::Voter => "voter",
+                ServerSuffrage::Nonvoter => "nonvoter",
             }),
             discovered,
         }
@@ -662,7 +661,7 @@ mod tests {
 
     use super::{
         ConductorAction, ConductorActionJson, ConductorActionName, ConductorFanoutJson,
-        ConductorNodeJson, ConductorStatusJson, fanout_requires_failure_exit,
+        ConductorNodeJson, ConductorStatusJson,
     };
     use crate::{
         CommandOutcome, ConductorClusterSnapshot, ConductorCommandError, ConductorNodeConfig,
@@ -778,18 +777,12 @@ mod tests {
         let empty =
             crate::ConductorFanoutReport { total: 0, successes: Vec::new(), failures: Vec::new() };
 
+        assert_eq!(CommandOutcome::from_failures(!success.is_success()), CommandOutcome::Success);
         assert_eq!(
-            CommandOutcome::from_failures(fanout_requires_failure_exit(&success)),
-            CommandOutcome::Success
-        );
-        assert_eq!(
-            CommandOutcome::from_failures(fanout_requires_failure_exit(&partial_failure)),
+            CommandOutcome::from_failures(!partial_failure.is_success()),
             CommandOutcome::HasFailures
         );
-        assert_eq!(
-            CommandOutcome::from_failures(fanout_requires_failure_exit(&empty)),
-            CommandOutcome::HasFailures
-        );
+        assert_eq!(CommandOutcome::from_failures(!empty.is_success()), CommandOutcome::HasFailures);
     }
 
     #[test]

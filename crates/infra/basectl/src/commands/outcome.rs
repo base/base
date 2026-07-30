@@ -1,7 +1,11 @@
 //! Process outcomes and shared optional-value formatting for CLI commands.
 
 /// Whether a command observed failures, used by the binary to set the process exit code.
+///
+/// `#[must_use]` so a command that starts reporting failures cannot have its outcome
+/// silently dropped by a `run(..)?;` call site that still assumes success.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
 pub enum CommandOutcome {
     /// The command completed without failures; the process should exit 0.
     Success,

@@ -411,13 +411,13 @@ impl MonitoringConfig {
     pub fn resolve_cl_rpc(
         &self,
         override_url: Option<&Url>,
-        command_name: &str,
+        command_name: &'static str,
     ) -> Result<Url, crate::MissingConsensusRpcError> {
         if let Some(url) = override_url {
             return Ok(url.clone());
         }
         self.consensus_node_rpc.clone().ok_or_else(|| crate::MissingConsensusRpcError {
-            command_name: command_name.to_string(),
+            command_name,
             config_name: self.name.clone(),
         })
     }

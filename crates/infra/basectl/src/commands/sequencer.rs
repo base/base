@@ -39,7 +39,7 @@ pub enum SequencerCommands {
 /// Flags for `basectl sequencer status`.
 #[derive(Debug, Args)]
 pub struct SequencerStatusArgs {
-    /// Optional node name or discovered raft server ID.
+    /// Optional node name from the selected config or discovered raft server ID.
     #[arg(value_name = "NODE")]
     pub node: Option<String>,
     /// Emit a structured JSON status summary instead of pretty text.
@@ -50,10 +50,12 @@ pub struct SequencerStatusArgs {
 /// Flags for `basectl sequencer start`.
 #[derive(Debug, Args)]
 pub struct SequencerStartArgs {
-    /// Sequencer node name or discovered raft server ID.
+    /// Sequencer node name from the selected config or discovered raft server ID.
     #[arg(value_name = "NODE")]
     pub node: String,
-    /// Unsafe head hash passed to `admin_startSequencer`.
+    /// Unsafe head hash to pass to `admin_startSequencer`.
+    ///
+    /// If omitted, basectl uses the node's currently observed unsafe L2 hash.
     #[arg(value_name = "UNSAFE_HEAD")]
     pub unsafe_head: Option<String>,
     /// Skip the interactive confirmation prompt.
@@ -67,7 +69,7 @@ pub struct SequencerStartArgs {
 /// Flags for `basectl sequencer stop`.
 #[derive(Debug, Args)]
 pub struct SequencerNodeActionArgs {
-    /// Sequencer node name or discovered raft server ID.
+    /// Sequencer node name from the selected config or discovered raft server ID.
     #[arg(value_name = "NODE")]
     pub node: String,
     /// Skip the interactive confirmation prompt.
@@ -368,13 +370,13 @@ fn ensure_leader_target(
         return Err(SequencerCommandError::NotCurrentLeader {
             requested_node: node.name.clone(),
             current_leader: leader.to_string(),
-            action: action.infinitive().to_string(),
+            action: action.infinitive(),
         });
     }
     if status.and_then(|status| status.is_leader) == Some(false) {
         return Err(SequencerCommandError::NotLeader {
             requested_node: node.name.clone(),
-            action: action.infinitive().to_string(),
+            action: action.infinitive(),
         });
     }
     Ok(LeadershipStatus::Unknown)

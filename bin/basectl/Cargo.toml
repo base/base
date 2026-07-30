@@ -12,9 +12,9 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-clap = { workspace = true, features = ["derive"] }
 anyhow = { workspace = true }
 basectl-cli = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
 rustls = { workspace = true, features = ["ring"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
