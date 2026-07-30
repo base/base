@@ -2318,6 +2318,235 @@ impl ProductionSimulationHandoff {
     }
 }
 
+#[derive(Default)]
+struct InstalledHandoffBodyVisitor {
+    candidate_uses: usize,
+    rejected: usize,
+    busy: usize,
+    closed: usize,
+    successful_enqueue: usize,
+    disconnected: usize,
+    full: usize,
+    admission_invariant: usize,
+    top_level_wildcard_arms: usize,
+    try_send_calls: usize,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for InstalledHandoffBodyVisitor {
+    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
+        if matches!(arm.pat, syn::Pat::Wild(_)) {
+            self.top_level_wildcard_arms += 1;
+        }
+        syn::visit::visit_arm(self, arm);
+    }
+
+    fn visit_pat_tuple_struct(&mut self, pattern: &'ast syn::PatTupleStruct) {
+        if path_ends_with(&pattern.path, &["TrySendError", "Disconnected"]) {
+            self.disconnected += 1;
+        }
+        if path_ends_with(&pattern.path, &["TrySendError", "Full"]) {
+            self.full += 1;
+        }
+        syn::visit::visit_pat_tuple_struct(self, pattern);
+    }
+
+    fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
+        if expression.path.segments.last().is_some_and(|segment| segment.ident == "candidate") {
+            self.candidate_uses += 1;
+        }
+        for (suffix, count) in [
+            (&["T4eHandoffError", "Rejected"][..], &mut self.rejected),
+            (&["T4eHandoffError", "Busy"][..], &mut self.busy),
+            (&["T4eHandoffError", "Closed"][..], &mut self.closed),
+            (&["TrySendError", "Disconnected"][..], &mut self.disconnected),
+            (&["TrySendError", "Full"][..], &mut self.full),
+            (
+                &["ProductionHandoffClosed", "AdmissionInvariant"][..],
+                &mut self.admission_invariant,
+            ),
+        ] {
+            if path_ends_with(&expression.path, suffix) {
+                *count += 1;
+            }
+        }
+        syn::visit::visit_expr_path(self, expression);
+    }
+
+    fn visit_expr_call(&mut self, expression: &'ast syn::ExprCall) {
+        if matches!(
+            expression.func.as_ref(),
+            syn::Expr::Path(function)
+                if path_ends_with(&function.path, &["Ok"])
+                    && expression.args.len() == 1
+                    && matches!(
+                        expression.args.first(),
+                        Some(syn::Expr::Tuple(tuple)) if tuple.elems.is_empty()
+                    )
+        ) {
+            self.successful_enqueue += 1;
+        }
+        syn::visit::visit_expr_call(self, expression);
+    }
+
+    fn visit_expr_method_call(&mut self, expression: &'ast syn::ExprMethodCall) {
+        if expression.method == "try_send" {
+            self.try_send_calls += 1;
+        }
+        syn::visit::visit_expr_method_call(self, expression);
+    }
+}
+
+fn has_total_installed_handoff_body(
+    method: &syn::ImplItemFn,
+    aliases: &ProductionAliases,
+    module_scope: &[String],
+) -> bool {
+    use syn::visit::Visit;
+
+    if try_handoff_candidate(method, aliases, module_scope).as_deref() != Some("candidate")
+        || method.sig.inputs.len() != 2
+        || !matches!(
+            method.sig.inputs.first(),
+            Some(syn::FnArg::Receiver(receiver))
+                if receiver.reference.is_some() && receiver.mutability.is_none()
+        )
+    {
+        return false;
+    }
+
+    let mut body = InstalledHandoffBodyVisitor::default();
+    body.visit_block(&method.block);
+    body.candidate_uses == 1
+        && body.rejected == 1
+        && body.busy == 1
+        && body.closed == 7
+        && body.successful_enqueue == 1
+        && body.disconnected == 1
+        && body.full == 1
+        && body.admission_invariant == 2
+        && body.top_level_wildcard_arms == 0
+        && body.try_send_calls == 1
+}
+
+#[test]
+fn installed_handoff_mapping_control_and_mutants() {
+    const CONTROL: &str = r#"
+impl T4eCandidateHandoff for ProductionSimulationHandoff {
+    fn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {
+        let Ok(mut state) = self.shared.state.lock() else {
+            return Err(T4eHandoffError::Closed);
+        };
+        let ProductionHandoffState::Open { admission, sender, entrypoint } = &*state else {
+            return match &*state {
+                ProductionHandoffState::Installing(_) | ProductionHandoffState::Unavailable(_) => {
+                    Err(T4eHandoffError::Rejected)
+                }
+                ProductionHandoffState::Closed { .. } => Err(T4eHandoffError::Closed),
+                ProductionHandoffState::Open { .. } => unreachable!("matched open state"),
+            };
+        };
+        if entrypoint.status() != SimulationEntrypointStatus::Ready {
+            return Err(T4eHandoffError::Closed);
+        }
+        match admission.compare_exchange(FREE, OCCUPIED, AcqRel, Acquire) {
+            Ok(_) => {}
+            Err(OCCUPIED) => return Err(T4eHandoffError::Busy),
+            Err(CLOSED) => return Err(T4eHandoffError::Closed),
+            Err(_) => {
+                *state = ProductionHandoffState::Closed {
+                    entrypoint: Some(Arc::clone(entrypoint)),
+                    reason: ProductionHandoffClosed::AdmissionInvariant,
+                };
+                return Err(T4eHandoffError::Closed);
+            }
+        }
+        let reservation = ProductionReservation { admission: Arc::clone(admission) };
+        match sender.try_send(AdmittedCandidate { candidate, reservation }) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Disconnected(_)) => {
+                *state = ProductionHandoffState::Closed {
+                    entrypoint: Some(Arc::clone(entrypoint)),
+                    reason: ProductionHandoffClosed::Disconnected,
+                };
+                Err(T4eHandoffError::Closed)
+            }
+            Err(TrySendError::Full(_)) => {
+                *state = ProductionHandoffState::Closed {
+                    entrypoint: Some(Arc::clone(entrypoint)),
+                    reason: ProductionHandoffClosed::AdmissionInvariant,
+                };
+                Err(T4eHandoffError::Closed)
+            }
+        }
+    }
+}
+"#;
+    let file = syn::parse_file(CONTROL).expect("mapping control parses");
+    let syn::Item::Impl(item) = &file.items[0] else {
+        panic!("mapping control impl");
+    };
+    let syn::ImplItem::Fn(method) = &item.items[0] else {
+        panic!("mapping control method");
+    };
+    let mut collector = ProductionAliasCollector::default();
+    collector.collect_file(&file, &["arm".to_owned(), "production_handoff".to_owned()], true);
+    let aliases = ProductionAliases::resolve(collector);
+    assert!(has_total_installed_handoff_body(
+        method,
+        &aliases,
+        &["arm".to_owned(), "production_handoff".to_owned()]
+    ));
+    eprintln!("U-INSTALL-MAPPING: GREEN");
+
+    for (name, mutant) in [
+        (
+            "BUSY-AS-REJECTED",
+            CONTROL.replacen("T4eHandoffError::Busy", "T4eHandoffError::Rejected", 1),
+        ),
+        (
+            "SUCCESS-AS-REJECTED",
+            CONTROL.replacen("Ok(()) => Ok(())", "Ok(()) => Err(T4eHandoffError::Rejected)", 1),
+        ),
+        (
+            "CANDIDATE-BOX-LEAK",
+            CONTROL.replacen(
+                "        let Ok(mut state)",
+                "        Box::leak(Box::new(&candidate));\n        let Ok(mut state)",
+                1,
+            ),
+        ),
+        (
+            "WILDCARD-STATE",
+            CONTROL.replacen(
+                "ProductionHandoffState::Closed { .. } => Err(T4eHandoffError::Closed)",
+                "_ => Err(T4eHandoffError::Closed)",
+                1,
+            ),
+        ),
+    ] {
+        assert_ne!(mutant, CONTROL, "{name} patch did not change source");
+        let file = syn::parse_file(&mutant).unwrap_or_else(|error| panic!("{name} parses: {error}"));
+        let syn::Item::Impl(item) = &file.items[0] else {
+            panic!("{name} impl");
+        };
+        let syn::ImplItem::Fn(method) = &item.items[0] else {
+            panic!("{name} method");
+        };
+        let mut collector = ProductionAliasCollector::default();
+        collector.collect_file(&file, &["arm".to_owned(), "production_handoff".to_owned()], true);
+        let aliases = ProductionAliases::resolve(collector);
+        assert!(
+            !has_total_installed_handoff_body(
+                method,
+                &aliases,
+                &["arm".to_owned(), "production_handoff".to_owned()]
+            ),
+            "{name} mutant remained GREEN"
+        );
+        eprintln!("U-INSTALL-MAPPING-{name}: RED");
+    }
+}
+
 fn insert_before_test_module(source: &str, addition: &str) -> String {
     source.replacen(
         "#[cfg(test)]\nmod tests {",
