@@ -1111,13 +1111,18 @@ fn known_macro_without_sealed_symbols(mac: &syn::Macro) -> bool {
     let known = name.as_deref().is_some_and(|name| {
         matches!(
             name,
-            "assert"
+            "address"
+                | "b256"
+                | "sol"
+                | "assert"
                 | "assert_eq"
                 | "assert_ne"
                 | "bail"
                 | "concat"
                 | "cfg"
                 | "debug"
+                | "debug_assert"
+                | "debug_assert_eq"
                 | "env"
                 | "error"
                 | "eyre"
@@ -1127,7 +1132,6 @@ fn known_macro_without_sealed_symbols(mac: &syn::Macro) -> bool {
                 | "info"
                 | "json"
                 | "matches"
-                | "macro_rules"
                 | "panic"
                 | "select"
                 | "unreachable"
@@ -1153,26 +1157,121 @@ fn known_macro_without_sealed_symbols(mac: &syn::Macro) -> bool {
             })
 }
 
-const PROTECTED_PRODUCTION_TYPES: [&str; 5] = [
+const PROTECTED_PRODUCTION_TYPES: [&str; 6] = [
     "T4eCandidateHandoff",
     "ArmRuntime",
     "SimulationEntrypoint",
     "SimulationWorker",
     "SealedUnsignedCandidate",
+    "UnavailableSimulationHandoff",
 ];
 
 struct AliasBinding {
     alias: String,
     target: Vec<String>,
+    scope: Vec<String>,
 }
 
 #[derive(Default)]
 struct ProductionAliasCollector {
     bindings: Vec<AliasBinding>,
     opaque_use_globs: usize,
+    module_scope: Vec<String>,
+    file_root_len: usize,
+    canonical_source: bool,
+    shadowing_definitions: BTreeSet<String>,
+    protected_definitions: BTreeMap<String, BTreeSet<String>>,
+}
+
+fn qualified_name(scope: &[String], name: &str) -> String {
+    scope
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(name))
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+fn path_scope_candidates(mut scope: Vec<String>, mut segments: Vec<String>) -> Vec<String> {
+    if segments.first().is_some_and(|segment| segment == "crate") {
+        segments.remove(0);
+        return vec![segments.join("::")];
+    }
+    let mut explicit_parent = false;
+    while segments.first().is_some_and(|segment| segment == "super") {
+        explicit_parent = true;
+        segments.remove(0);
+        scope.pop();
+    }
+    if explicit_parent {
+        return vec![scope
+            .iter()
+            .chain(&segments)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("::")];
+    }
+    if segments.first().is_some_and(|segment| segment == "self") {
+        segments.remove(0);
+        return vec![scope
+            .iter()
+            .chain(&segments)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("::")];
+    }
+
+    let mut candidates = Vec::new();
+    loop {
+        candidates.push(
+            scope
+                .iter()
+                .chain(&segments)
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join("::"),
+        );
+        if scope.pop().is_none() {
+            break;
+        }
+    }
+    candidates
+}
+
+fn path_parts_resolve_identity(
+    scope: &[String],
+    segments: &[String],
+    identities: &BTreeSet<String>,
+    canonical_name: Option<&str>,
+    shadowing_definitions: &BTreeSet<String>,
+) -> bool {
+    let candidates = path_scope_candidates(scope.to_vec(), segments.to_vec());
+    for candidate in &candidates {
+        if identities.contains(candidate) {
+            return true;
+        }
+        if shadowing_definitions.contains(candidate) {
+            return false;
+        }
+    }
+    canonical_name.is_some_and(|canonical| {
+        segments.last().is_some_and(|segment| segment == canonical)
+    })
 }
 
 impl ProductionAliasCollector {
+    fn collect_file(&mut self, file: &syn::File, module_root: &[String], canonical_source: bool) {
+        use syn::visit::Visit;
+
+        self.module_scope = module_root.to_vec();
+        self.file_root_len = module_root.len();
+        self.canonical_source = canonical_source;
+        self.visit_file(file);
+        self.module_scope.clear();
+        self.file_root_len = 0;
+        self.canonical_source = false;
+    }
+
     fn collect_use_tree(&mut self, tree: &syn::UseTree, prefix: &mut Vec<String>) {
         match tree {
             syn::UseTree::Path(path) => {
@@ -1185,7 +1284,10 @@ impl ProductionAliasCollector {
                 self.bindings.push(AliasBinding {
                     alias: name.ident.to_string(),
                     target: prefix.clone(),
+                    scope: self.module_scope.clone(),
                 });
+                self.shadowing_definitions
+                    .insert(qualified_name(&self.module_scope, &name.ident.to_string()));
                 prefix.pop();
             }
             syn::UseTree::Rename(rename) => {
@@ -1193,7 +1295,12 @@ impl ProductionAliasCollector {
                 self.bindings.push(AliasBinding {
                     alias: rename.rename.to_string(),
                     target: prefix.clone(),
+                    scope: self.module_scope.clone(),
                 });
+                self.shadowing_definitions.insert(qualified_name(
+                    &self.module_scope,
+                    &rename.rename.to_string(),
+                ));
                 prefix.pop();
             }
             syn::UseTree::Group(group) => {
@@ -1212,7 +1319,36 @@ impl ProductionAliasCollector {
             self.bindings.push(AliasBinding {
                 alias: alias.to_string(),
                 target: ty.path.segments.iter().map(|segment| segment.ident.to_string()).collect(),
+                scope: self.module_scope.clone(),
             });
+        }
+    }
+
+    fn record_shadowing_definition(&mut self, item: &syn::Item) {
+        let ident = match item {
+            syn::Item::Enum(item) => Some(&item.ident),
+            syn::Item::Struct(item) => Some(&item.ident),
+            syn::Item::Trait(item) => Some(&item.ident),
+            syn::Item::Mod(item) => Some(&item.ident),
+            syn::Item::Union(item) => Some(&item.ident),
+            syn::Item::TraitAlias(item) => Some(&item.ident),
+            syn::Item::Type(item) => Some(&item.ident),
+            _ => None,
+        };
+        if let Some(ident) = ident {
+            let name = ident.to_string();
+            if self.canonical_source
+                && self.module_scope.len() == self.file_root_len
+                && PROTECTED_PRODUCTION_TYPES.contains(&name.as_str())
+            {
+                self.protected_definitions
+                    .entry(name)
+                    .or_default()
+                    .insert(qualified_name(&self.module_scope, &ident.to_string()));
+            } else {
+                self.shadowing_definitions
+                    .insert(qualified_name(&self.module_scope, &ident.to_string()));
+            }
         }
     }
 }
@@ -1220,8 +1356,19 @@ impl ProductionAliasCollector {
 impl<'ast> syn::visit::Visit<'ast> for ProductionAliasCollector {
     fn visit_item(&mut self, item: &'ast syn::Item) {
         if !item_has_cfg_test(item) {
+            self.record_shadowing_definition(item);
             syn::visit::visit_item(self, item);
         }
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        self.module_scope.push(item.ident.to_string());
+        if let Some((_, items)) = &item.content {
+            for item in items {
+                self.visit_item(item);
+            }
+        }
+        self.module_scope.pop();
     }
 
     fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
@@ -1238,25 +1385,31 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionAliasCollector {
                 self.bindings.push(AliasBinding {
                     alias: item.ident.to_string(),
                     target: bound.path.segments.iter().map(|segment| segment.ident.to_string()).collect(),
+                    scope: self.module_scope.clone(),
                 });
             }
         }
     }
 }
 
+#[derive(Clone)]
 struct ProductionAliases {
     types: BTreeMap<String, BTreeSet<String>>,
     runtime_open: BTreeSet<String>,
     entrypoint_ready: BTreeSet<String>,
     worker_spawn: BTreeSet<String>,
     opaque_use_globs: usize,
+    shadowing_definitions: BTreeSet<String>,
 }
 
 impl ProductionAliases {
     fn resolve(collector: ProductionAliasCollector) -> Self {
         let mut types = BTreeMap::new();
         for symbol in PROTECTED_PRODUCTION_TYPES {
-            types.insert(symbol.to_owned(), BTreeSet::from([symbol.to_owned()]));
+            types.insert(
+                symbol.to_owned(),
+                collector.protected_definitions.get(symbol).cloned().unwrap_or_default(),
+            );
         }
         let mut runtime_open = BTreeSet::new();
         let mut entrypoint_ready = BTreeSet::new();
@@ -1265,49 +1418,72 @@ impl ProductionAliases {
         loop {
             let mut changed = false;
             for binding in &collector.bindings {
-                let matching_types: Vec<String> = types
+                let binding_identity = qualified_name(&binding.scope, &binding.alias);
+                let matching_types = types
                     .iter()
-                    .filter(|(_, aliases)| {
-                        binding.target.last().is_some_and(|target| aliases.contains(target))
+                    .filter(|(symbol, identities)| {
+                        path_parts_resolve_identity(
+                            &binding.scope,
+                            &binding.target,
+                            identities,
+                            Some(symbol.as_str()),
+                            &collector.shadowing_definitions,
+                        )
                     })
                     .map(|(symbol, _)| symbol.clone())
-                    .collect();
+                    .collect::<Vec<_>>();
                 for symbol in matching_types {
                     changed |= types
                         .get_mut(&symbol)
                         .expect("protected production type")
-                        .insert(binding.alias.clone());
+                        .insert(binding_identity.clone());
                 }
 
                 let target = binding.target.last().map(String::as_str);
-                let owner = binding.target.iter().nth_back(1).map(String::as_str);
+                let owner_segments =
+                    &binding.target[..binding.target.len().saturating_sub(1)];
                 let is_function_alias = |aliases: &BTreeSet<String>,
                                          owner_aliases: &BTreeSet<String>,
+                                         owner_symbol: &str,
                                          member: &str| {
-                    target.is_some_and(|target| aliases.contains(target))
-                        || (target == Some(member)
-                            && owner.is_some_and(|owner| owner_aliases.contains(owner)))
+                    path_parts_resolve_identity(
+                        &binding.scope,
+                        &binding.target,
+                        aliases,
+                        None,
+                        &collector.shadowing_definitions,
+                    ) || (target == Some(member)
+                        && path_parts_resolve_identity(
+                            &binding.scope,
+                            owner_segments,
+                            owner_aliases,
+                            Some(owner_symbol),
+                            &collector.shadowing_definitions,
+                        ))
                 };
                 if is_function_alias(
                     &runtime_open,
                     &types["ArmRuntime"],
+                    "ArmRuntime",
                     "open",
                 ) {
-                    changed |= runtime_open.insert(binding.alias.clone());
+                    changed |= runtime_open.insert(binding_identity.clone());
                 }
                 if is_function_alias(
                     &entrypoint_ready,
                     &types["SimulationEntrypoint"],
+                    "SimulationEntrypoint",
                     "ready",
                 ) {
-                    changed |= entrypoint_ready.insert(binding.alias.clone());
+                    changed |= entrypoint_ready.insert(binding_identity.clone());
                 }
                 if is_function_alias(
                     &worker_spawn,
                     &types["SimulationWorker"],
+                    "SimulationWorker",
                     "spawn",
                 ) {
-                    changed |= worker_spawn.insert(binding.alias.clone());
+                    changed |= worker_spawn.insert(binding_identity);
                 }
             }
             if !changed {
@@ -1321,102 +1497,168 @@ impl ProductionAliases {
             entrypoint_ready,
             worker_spawn,
             opaque_use_globs: collector.opaque_use_globs,
+            shadowing_definitions: collector.shadowing_definitions,
         }
     }
 
-    fn type_aliases(&self, symbol: &str) -> &BTreeSet<String> {
-        &self.types[symbol]
+    fn path_is_protected(&self, scope: &[String], path: &syn::Path, symbol: &str) -> bool {
+        let segments =
+            path.segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<_>>();
+        path_parts_resolve_identity(
+            scope,
+            &segments,
+            &self.types[symbol],
+            Some(symbol),
+            &self.shadowing_definitions,
+        )
+    }
+
+    fn path_is_alias(&self, scope: &[String], path: &syn::Path, aliases: &BTreeSet<String>) -> bool {
+        let segments =
+            path.segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<_>>();
+        path_parts_resolve_identity(
+            scope,
+            &segments,
+            aliases,
+            None,
+            &self.shadowing_definitions,
+        )
+    }
+
+    fn type_is_protected(&self, scope: &[String], ty: &syn::Type, symbol: &str) -> bool {
+        matches!(ty, syn::Type::Path(ty) if ty.qself.is_none() && self.path_is_protected(scope, &ty.path, symbol))
     }
 }
 
-fn type_path_is_alias(ty: &syn::Type, aliases: &BTreeSet<String>) -> bool {
+
+fn try_handoff_candidate(
+    method: &syn::ImplItemFn,
+    aliases: &ProductionAliases,
+    module_scope: &[String],
+) -> Option<String> {
+    if method.sig.ident != "try_handoff" {
+        return None;
+    }
+    let syn::ReturnType::Type(_, output) = &method.sig.output else {
+        return None;
+    };
+    let syn::Type::Path(result) = output.as_ref() else {
+        return None;
+    };
+    let Some(segment) = result.path.segments.last() else {
+        return None;
+    };
+    if segment.ident != "Result" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return None;
+    };
+    let mut arguments = arguments.args.iter();
+    if !matches!(
+        arguments.next(),
+        Some(syn::GenericArgument::Type(syn::Type::Tuple(unit))) if unit.elems.is_empty()
+    ) || !matches!(
+        arguments.next(),
+        Some(syn::GenericArgument::Type(syn::Type::Path(error)))
+            if path_ends_with(&error.path, &["T4eHandoffError"])
+    ) || arguments.next().is_some()
+    {
+        return None;
+    }
+
+    method.sig.inputs.iter().find_map(|argument| {
+        let syn::FnArg::Typed(argument) = argument else {
+            return None;
+        };
+        if !aliases.type_is_protected(
+            module_scope,
+            &argument.ty,
+            "SealedUnsignedCandidate",
+        ) {
+            return None;
+        }
+        match argument.pat.as_ref() {
+            syn::Pat::Ident(binding) => Some(binding.ident.to_string()),
+            _ => None,
+        }
+    })
+}
+
+fn has_exact_deferred_handoff_body(
+    method: &syn::ImplItemFn,
+    aliases: &ProductionAliases,
+    module_scope: &[String],
+) -> bool {
+    if try_handoff_candidate(method, aliases, module_scope).as_deref() != Some("_candidate")
+        || method.sig.inputs.len() != 2
+        || !matches!(
+            method.sig.inputs.first(),
+            Some(syn::FnArg::Receiver(receiver))
+                if receiver.reference.is_some() && receiver.mutability.is_none()
+        )
+        || !matches!(
+            method.sig.inputs.last(),
+            Some(syn::FnArg::Typed(candidate))
+                if matches!(
+                    candidate.pat.as_ref(),
+                    syn::Pat::Ident(binding)
+                        if binding.ident == "_candidate"
+                            && binding.by_ref.is_none()
+                            && binding.mutability.is_none()
+                            && binding.subpat.is_none()
+                )
+        )
+    {
+        return false;
+    }
+    let [syn::Stmt::Expr(syn::Expr::Call(call), None)] = method.block.stmts.as_slice() else {
+        return false;
+    };
     matches!(
-        ty,
-        syn::Type::Path(ty)
-            if ty.path.segments.last().is_some_and(|segment| aliases.contains(&segment.ident.to_string()))
+        call.func.as_ref(),
+        syn::Expr::Path(function)
+            if call.attrs.is_empty()
+                && function.attrs.is_empty()
+                && function.qself.is_none()
+                && function.path.leading_colon.is_none()
+                && function.path.segments.len() == 1
+                && function.path.segments[0].ident == "Err"
+                && matches!(
+                    &function.path.segments[0].arguments,
+                    syn::PathArguments::None
+                )
+    ) && matches!(
+        call.args.first(),
+        Some(syn::Expr::Path(argument))
+            if call.args.len() == 1
+                && argument.attrs.is_empty()
+                && argument.qself.is_none()
+                && argument.path.leading_colon.is_none()
+                && argument.path.segments.len() == 2
+                && argument.path.segments[0].ident == "T4eHandoffError"
+                && argument.path.segments[1].ident == "Rejected"
+                && argument
+                    .path
+                    .segments
+                    .iter()
+                    .all(|segment| matches!(&segment.arguments, syn::PathArguments::None))
     )
 }
 
-fn expression_references_associated(
-    expression: &syn::ExprPath,
-    owner_aliases: &BTreeSet<String>,
-    member_aliases: &BTreeSet<String>,
-    member: &str,
-) -> bool {
-    let segments = &expression.path.segments;
-    let direct_alias = segments.len() == 1
-        && segments.last().is_some_and(|segment| member_aliases.contains(&segment.ident.to_string()));
-    let associated = segments.last().is_some_and(|segment| segment.ident == member)
-        && (segments.iter().nth_back(1).is_some_and(|segment| {
-            owner_aliases.contains(&segment.ident.to_string())
-        }) || expression
-            .qself
-            .as_ref()
-            .is_some_and(|qself| type_path_is_alias(&qself.ty, owner_aliases)));
-    direct_alias || associated
-}
-
-#[derive(Default)]
-struct HandoffBodyCardinality {
-    rejected: usize,
-    busy: usize,
-    closed: usize,
-    ok: usize,
-    err: usize,
-    rejected_err: usize,
-}
-
-impl<'ast> syn::visit::Visit<'ast> for HandoffBodyCardinality {
-    fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
-        if path_ends_with(&expression.path, &["T4eHandoffError", "Rejected"]) {
-            self.rejected += 1;
-        }
-        if path_ends_with(&expression.path, &["T4eHandoffError", "Busy"]) {
-            self.busy += 1;
-        }
-        if path_ends_with(&expression.path, &["T4eHandoffError", "Closed"]) {
-            self.closed += 1;
-        }
-        syn::visit::visit_expr_path(self, expression);
-    }
-
-    fn visit_expr_call(&mut self, expression: &'ast syn::ExprCall) {
-        if let syn::Expr::Path(function) = expression.func.as_ref() {
-            if path_ends_with(&function.path, &["Ok"]) {
-                self.ok += 1;
-            }
-            if path_ends_with(&function.path, &["Err"]) {
-                self.err += 1;
-                if expression.args.len() == 1
-                    && matches!(
-                        expression.args.first(),
-                        Some(syn::Expr::Path(argument))
-                            if path_ends_with(
-                                &argument.path,
-                                &["T4eHandoffError", "Rejected"],
-                            )
-                    )
-                {
-                    self.rejected_err += 1;
-                }
-            }
-        }
-        syn::visit::visit_expr_call(self, expression);
-    }
-}
 
 struct CandidateFieldVisitor<'a> {
-    candidate_aliases: &'a BTreeSet<String>,
+    aliases: &'a ProductionAliases,
+    module_scope: &'a [String],
     retains_candidate: bool,
 }
 
 impl<'ast> syn::visit::Visit<'ast> for CandidateFieldVisitor<'_> {
     fn visit_type_path(&mut self, ty: &'ast syn::TypePath) {
-        if ty
-            .path
-            .segments
-            .last()
-            .is_some_and(|segment| self.candidate_aliases.contains(&segment.ident.to_string()))
+        if ty.qself.is_some()
+            || self
+                .aliases
+                .path_is_protected(self.module_scope, &ty.path, "SealedUnsignedCandidate")
         {
             self.retains_candidate = true;
         }
@@ -1429,7 +1671,7 @@ struct ProductionHandoffVisitor {
     handoff_impls: usize,
     handoff_impl_target_mismatches: usize,
     try_handoff_methods: usize,
-    handoff_body: HandoffBodyCardinality,
+    exact_deferred_try_handoff_methods: usize,
     candidate_fields: usize,
     worker_spawn_calls: usize,
     entrypoint_ready_calls: usize,
@@ -1437,18 +1679,20 @@ struct ProductionHandoffVisitor {
     runtime_open_calls: usize,
     opaque_production_items: usize,
     function_body_depth: usize,
+    module_scope: Vec<String>,
     in_worker_impl: bool,
     in_worker_spawn: bool,
+    current_impl_protected: BTreeSet<String>,
 }
 
 impl ProductionHandoffVisitor {
-    fn new(aliases: ProductionAliases) -> Self {
+    fn new(aliases: ProductionAliases, module_root: Vec<String>) -> Self {
         Self {
             aliases,
             handoff_impls: 0,
             handoff_impl_target_mismatches: 0,
             try_handoff_methods: 0,
-            handoff_body: HandoffBodyCardinality::default(),
+            exact_deferred_try_handoff_methods: 0,
             candidate_fields: 0,
             worker_spawn_calls: 0,
             entrypoint_ready_calls: 0,
@@ -1456,20 +1700,58 @@ impl ProductionHandoffVisitor {
             runtime_open_calls: 0,
             opaque_production_items: 0,
             function_body_depth: 0,
+            module_scope: module_root,
             in_worker_impl: false,
             in_worker_spawn: false,
+            current_impl_protected: BTreeSet::new(),
         }
     }
 
     fn record_candidate_type(&mut self, ty: &syn::Type) {
         let mut field_visitor = CandidateFieldVisitor {
-            candidate_aliases: self.aliases.type_aliases("SealedUnsignedCandidate"),
+            aliases: &self.aliases,
+            module_scope: &self.module_scope,
             retains_candidate: false,
         };
         syn::visit::Visit::visit_type(&mut field_visitor, ty);
         if field_visitor.retains_candidate {
             self.candidate_fields += 1;
         }
+    }
+
+    fn path_is_protected(&self, path: &syn::Path, symbol: &str) -> bool {
+        self.aliases.path_is_protected(&self.module_scope, path, symbol)
+    }
+
+    fn type_is_protected(&self, ty: &syn::Type, symbol: &str) -> bool {
+        self.aliases.type_is_protected(&self.module_scope, ty, symbol)
+    }
+
+    fn expression_references_protected_associated(
+        &self,
+        expression: &syn::ExprPath,
+        symbol: &str,
+        member_aliases: &BTreeSet<String>,
+        member: &str,
+    ) -> bool {
+        let segments = &expression.path.segments;
+        let self_owner = segments.len() == 2
+            && segments.first().is_some_and(|segment| segment.ident == "Self")
+            && self.current_impl_protected.contains(symbol);
+        let direct_alias = self
+            .aliases
+            .path_is_alias(&self.module_scope, &expression.path, member_aliases);
+        let associated = segments.last().is_some_and(|segment| segment.ident == member)
+            && if let Some(qself) = &expression.qself {
+                self.type_is_protected(&qself.ty, symbol)
+            } else if segments.len() >= 2 {
+                let mut owner = expression.path.clone();
+                owner.segments.pop();
+                self.path_is_protected(&owner, symbol)
+            } else {
+                false
+            };
+        direct_alias || associated || self_owner
     }
 }
 
@@ -1480,13 +1762,29 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionHandoffVisitor {
         }
         match item {
             syn::Item::Macro(item) => {
-                if !known_macro_without_sealed_symbols(&item.mac) {
+                if item.ident.is_some() || !known_macro_without_sealed_symbols(&item.mac) {
                     self.opaque_production_items += 1;
                 }
             }
-            syn::Item::Verbatim(_) => self.opaque_production_items += 1,
+            syn::Item::Verbatim(_) => {
+                self.opaque_production_items += 1;
+            }
             _ => syn::visit::visit_item(self, item),
         }
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if item.attrs.iter().any(|attr| attr.path().is_ident("path")) {
+            self.opaque_production_items += 1;
+            return;
+        }
+        self.module_scope.push(item.ident.to_string());
+        if let Some((_, items)) = &item.content {
+            for item in items {
+                self.visit_item(item);
+            }
+        }
+        self.module_scope.pop();
     }
 
     fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
@@ -1540,40 +1838,64 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionHandoffVisitor {
 
 
     fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
-        let self_is_unavailable = matches!(
-            item.self_ty.as_ref(),
-            syn::Type::Path(ty) if path_ends_with(&ty.path, &["UnavailableSimulationHandoff"])
-        );
         let is_handoff_impl = item.trait_.as_ref().is_some_and(|(_, path, _)| {
-            path.segments.last().is_some_and(|segment| {
-                self.aliases
-                    .type_aliases("T4eCandidateHandoff")
-                    .contains(&segment.ident.to_string())
-            })
+            self.path_is_protected(path, "T4eCandidateHandoff")
         });
+        let self_is_unavailable =
+            self.type_is_protected(item.self_ty.as_ref(), "UnavailableSimulationHandoff");
+        let try_handoff_methods = is_handoff_impl
+            .then(|| {
+                item.items
+                    .iter()
+                    .filter(|impl_item| {
+                        matches!(
+                            impl_item,
+                            syn::ImplItem::Fn(method)
+                                if method.sig.ident == "try_handoff" && !has_cfg_test(&method.attrs)
+                        )
+                    })
+                    .count()
+            })
+            .unwrap_or_default();
+        let exact_deferred_try_handoff_methods = is_handoff_impl
+            .then(|| {
+                item.items
+                    .iter()
+                    .filter(|impl_item| {
+                        matches!(
+                            impl_item,
+                            syn::ImplItem::Fn(method)
+                                if !has_cfg_test(&method.attrs)
+                                    && has_exact_deferred_handoff_body(
+                                        method,
+                                        &self.aliases,
+                                        &self.module_scope,
+                                    )
+                        )
+                    })
+                    .count()
+            })
+            .unwrap_or_default();
+        self.try_handoff_methods += try_handoff_methods;
+        self.exact_deferred_try_handoff_methods += exact_deferred_try_handoff_methods;
         if is_handoff_impl {
             self.handoff_impls += 1;
             if !self_is_unavailable {
                 self.handoff_impl_target_mismatches += 1;
             }
-            for impl_item in &item.items {
-                if let syn::ImplItem::Fn(method) = impl_item
-                    && !has_cfg_test(&method.attrs)
-                    && method.sig.ident == "try_handoff"
-                {
-                    self.try_handoff_methods += 1;
-                    syn::visit::Visit::visit_block(&mut self.handoff_body, &method.block);
-                }
-            }
         }
 
         let old_in_worker_impl = self.in_worker_impl;
-        self.in_worker_impl = type_path_is_alias(
-            item.self_ty.as_ref(),
-            self.aliases.type_aliases("SimulationWorker"),
-        );
+        let old_current_impl_protected = std::mem::take(&mut self.current_impl_protected);
+        for symbol in ["ArmRuntime", "SimulationEntrypoint", "SimulationWorker"] {
+            if self.type_is_protected(item.self_ty.as_ref(), symbol) {
+                self.current_impl_protected.insert(symbol.to_owned());
+            }
+        }
+        self.in_worker_impl = self.current_impl_protected.contains("SimulationWorker");
         syn::visit::visit_item_impl(self, item);
         self.in_worker_impl = old_in_worker_impl;
+        self.current_impl_protected = old_current_impl_protected;
     }
 
     fn visit_impl_item(&mut self, item: &'ast syn::ImplItem) {
@@ -1645,17 +1967,17 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionHandoffVisitor {
 
 
     fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
-        if expression_references_associated(
+        if self.expression_references_protected_associated(
             expression,
-            self.aliases.type_aliases("SimulationWorker"),
+            "SimulationWorker",
             &self.aliases.worker_spawn,
             "spawn",
         ) {
             self.worker_spawn_calls += 1;
         }
-        if expression_references_associated(
+        if self.expression_references_protected_associated(
             expression,
-            self.aliases.type_aliases("SimulationEntrypoint"),
+            "SimulationEntrypoint",
             &self.aliases.entrypoint_ready,
             "ready",
         ) {
@@ -1664,9 +1986,9 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionHandoffVisitor {
                 self.entrypoint_ready_calls_in_worker_spawn += 1;
             }
         }
-        if expression_references_associated(
+        if self.expression_references_protected_associated(
             expression,
-            self.aliases.type_aliases("ArmRuntime"),
+            "ArmRuntime",
             &self.aliases.runtime_open,
             "open",
         ) {
@@ -1676,20 +1998,56 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionHandoffVisitor {
     }
 }
 
-fn analyze_production_handoff(
+struct ParsedProductionSource {
+    file: syn::File,
+    module_root: Vec<String>,
+    canonical_source: bool,
+}
+
+fn parse_production_source(
     source: &str,
     label: &str,
-) -> Result<ProductionHandoffVisitor, String> {
+    module_root: Vec<String>,
+    canonical_source: bool,
+) -> Result<ParsedProductionSource, String> {
+    let file = syn::parse_file(source).map_err(|error| format!("{label} did not parse: {error}"))?;
+    Ok(ParsedProductionSource {
+        file,
+        module_root,
+        canonical_source,
+    })
+}
+
+fn module_root_for_source(path: &Path, source_root: &Path) -> Result<Vec<String>, String> {
+    let relative = path
+        .strip_prefix(source_root)
+        .map_err(|_| format!("source {} is outside {}", path.display(), source_root.display()))?;
+    let mut components = relative
+        .parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let stem = relative
+        .file_stem()
+        .ok_or_else(|| format!("source {} has no file stem", path.display()))?
+        .to_string_lossy();
+    if stem != "lib" && stem != "main" && stem != "mod" {
+        components.push(stem.into_owned());
+    }
+    Ok(components)
+}
+
+fn analyze_production_handoff(
+    source: &ParsedProductionSource,
+    aliases: &ProductionAliases,
+) -> ProductionHandoffVisitor {
     use syn::visit::Visit;
 
-    let file =
-        syn::parse_file(source).map_err(|error| format!("{label} did not parse: {error}"))?;
-    let mut alias_collector = ProductionAliasCollector::default();
-    alias_collector.visit_file(&file);
-    let aliases = ProductionAliases::resolve(alias_collector);
-    let mut visitor = ProductionHandoffVisitor::new(aliases);
-    visitor.visit_file(&file);
-    Ok(visitor)
+    let mut visitor =
+        ProductionHandoffVisitor::new(aliases.clone(), source.module_root.clone());
+    visitor.visit_file(&source.file);
+    visitor
 }
 
 fn insert_before_test_module(source: &str, addition: &str) -> String {
@@ -1699,8 +2057,48 @@ fn insert_before_test_module(source: &str, addition: &str) -> String {
         1,
     )
 }
+/// Enumerates the sealed crate source inventory, intentionally stronger than the
+/// active module graph: any orphan `.rs` file under `src/` is unreviewed production
+/// source and must not be able to hide an additional handoff implementation.
+fn collect_submit_rust_sources(
+    directory: &Path,
+    sources: &mut Vec<(PathBuf, String)>,
+) -> Result<(), String> {
+    let mut entries = std::fs::read_dir(directory)
+        .map_err(|error| format!("read submit source directory {}: {error}", directory.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("read submit source entry: {error}"))?;
+    entries.sort_by_key(std::fs::DirEntry::path);
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_submit_rust_sources(&path, sources)?;
+        } else if path.extension().is_some_and(|extension| extension == "rs")
+            && path != manifest_dir().join("src/arm/simulation_entrypoint.rs")
+        {
+            let source = std::fs::read_to_string(&path)
+                .map_err(|error| format!("read submit source {}: {error}", path.display()))?;
+            sources.push((path, source));
+        }
+    }
+    Ok(())
+}
+
+fn submit_crate_sources() -> Result<Vec<(PathBuf, String)>, String> {
+    let mut sources = Vec::new();
+    collect_submit_rust_sources(&manifest_dir().join("src"), &mut sources)?;
+    Ok(sources)
+}
 
 fn validate_deferred_production_handoff(entrypoint: &str, cli: &str) -> Result<(), String> {
+    validate_deferred_production_handoff_with_override(entrypoint, cli, None)
+}
+
+fn validate_deferred_production_handoff_with_override(
+    entrypoint: &str,
+    cli: &str,
+    source_override: Option<(&Path, &str)>,
+) -> Result<(), String> {
     const FOLLOW_UP: &str = "Production T4e Simulation Installation + Settled-Loss Authority";
 
     for required in [
@@ -1738,65 +2136,158 @@ fn validate_deferred_production_handoff(entrypoint: &str, cli: &str) -> Result<(
         return Err("CLI production handoff is not the sole deferred rejecting sink".to_owned());
     }
 
-    let entrypoint_analysis = analyze_production_handoff(entrypoint, "simulation entrypoint")?;
-    let cli_analysis = analyze_production_handoff(cli, "CLI")?;
-    let opaque_production_items =
-        entrypoint_analysis.opaque_production_items + cli_analysis.opaque_production_items;
-    let opaque_use_globs =
-        entrypoint_analysis.aliases.opaque_use_globs + cli_analysis.aliases.opaque_use_globs;
+    let submit_source_root = manifest_dir().join("src");
+    let entrypoint_path = submit_source_root.join("arm/simulation_entrypoint.rs");
+    let cli_source_root = manifest_dir().join("../cli/src");
+    let cli_path = cli_source_root.join("mev_trader.rs");
+    let mut parsed_sources = vec![
+        parse_production_source(
+            entrypoint,
+            "simulation entrypoint",
+            module_root_for_source(&entrypoint_path, &submit_source_root)?,
+            true,
+        )?,
+        parse_production_source(
+            cli,
+            "CLI",
+            module_root_for_source(&cli_path, &cli_source_root)?,
+            false,
+        )?,
+    ];
+    let mut override_applied = source_override.is_none();
+    for (path, source) in submit_crate_sources()? {
+        let analyzed_source = if let Some((override_path, replacement)) = source_override
+            && path.ends_with(override_path)
+        {
+            override_applied = true;
+            replacement
+        } else {
+            source.as_str()
+        };
+        let module_root = module_root_for_source(&path, &submit_source_root)?;
+        let canonical_source = matches!(
+            module_root.as_slice(),
+            [arm, simulation_entrypoint]
+                if arm == "arm" && simulation_entrypoint == "simulation_entrypoint"
+        ) || matches!(
+            module_root.as_slice(),
+            [tx_authority, bridge]
+                if tx_authority == "tx_authority" && bridge == "bridge"
+        ) || matches!(
+            module_root.as_slice(),
+            [arm, witness] if arm == "arm" && witness == "witness"
+        );
+        parsed_sources.push(parse_production_source(
+            analyzed_source,
+            &format!("submit source {}", path.display()),
+            module_root,
+            canonical_source,
+        )?);
+    }
+    if !override_applied {
+        return Err("submit source override did not match a crate source file".to_owned());
+    }
+
+    let mut collector = ProductionAliasCollector::default();
+    for source in &parsed_sources {
+        collector.collect_file(
+            &source.file,
+            &source.module_root,
+            source.canonical_source,
+        );
+    }
+    let aliases = ProductionAliases::resolve(collector);
+    let mut analyses =
+        parsed_sources.iter().map(|source| analyze_production_handoff(source, &aliases));
+    let entrypoint_analysis = analyses.next().expect("simulation entrypoint analysis");
+    let cli_analysis = analyses.next().expect("CLI analysis");
+    let crate_analyses = analyses.collect::<Vec<_>>();
+
+    let opaque_production_items = entrypoint_analysis.opaque_production_items
+        + cli_analysis.opaque_production_items
+        + crate_analyses
+            .iter()
+            .map(|analysis| analysis.opaque_production_items)
+            .sum::<usize>();
+    let opaque_use_globs = aliases.opaque_use_globs;
     if opaque_production_items != 0 || opaque_use_globs != 0 {
         return Err(format!(
-            "production contains syntax the deferral seal cannot resolve: opaque items/body macros/associated types={opaque_production_items}, use globs={opaque_use_globs}",
+            "production contains syntax the deferral seal cannot resolve: opaque crate-wide items={opaque_production_items}, use globs={opaque_use_globs}",
         ));
     }
-    let handoff_impls = entrypoint_analysis.handoff_impls + cli_analysis.handoff_impls;
-    let handoff_impl_target_mismatches = entrypoint_analysis.handoff_impl_target_mismatches
+
+    let mut handoff_impls = entrypoint_analysis.handoff_impls + cli_analysis.handoff_impls;
+    let mut handoff_impl_target_mismatches = entrypoint_analysis.handoff_impl_target_mismatches
         + cli_analysis.handoff_impl_target_mismatches;
-    let try_handoff_methods =
+    let mut try_handoff_methods =
         entrypoint_analysis.try_handoff_methods + cli_analysis.try_handoff_methods;
+    let mut exact_deferred_try_handoff_methods =
+        entrypoint_analysis.exact_deferred_try_handoff_methods
+            + cli_analysis.exact_deferred_try_handoff_methods;
+    for analysis in &crate_analyses {
+        handoff_impls += analysis.handoff_impls;
+        handoff_impl_target_mismatches += analysis.handoff_impl_target_mismatches;
+        try_handoff_methods += analysis.try_handoff_methods;
+        exact_deferred_try_handoff_methods += analysis.exact_deferred_try_handoff_methods;
+    }
     if handoff_impls != 1 || handoff_impl_target_mismatches != 0 || try_handoff_methods != 1 {
         return Err(format!(
-            "production handoff implementation cardinality changed: impls={handoff_impls}, wrong_targets={handoff_impl_target_mismatches}, try_handoff_methods={try_handoff_methods}",
+            "crate-wide production handoff implementation cardinality changed: impls={handoff_impls}, wrong_targets={handoff_impl_target_mismatches}, try_handoff_methods={try_handoff_methods}",
         ));
     }
-    let rejected = entrypoint_analysis.handoff_body.rejected + cli_analysis.handoff_body.rejected;
-    let busy = entrypoint_analysis.handoff_body.busy + cli_analysis.handoff_body.busy;
-    let closed = entrypoint_analysis.handoff_body.closed + cli_analysis.handoff_body.closed;
-    let ok = entrypoint_analysis.handoff_body.ok + cli_analysis.handoff_body.ok;
-    let err = entrypoint_analysis.handoff_body.err + cli_analysis.handoff_body.err;
-    let rejected_err =
-        entrypoint_analysis.handoff_body.rejected_err + cli_analysis.handoff_body.rejected_err;
-    if rejected != 1 || busy != 0 || closed != 0 || ok != 0 || err != 1 || rejected_err != 1 {
+    if exact_deferred_try_handoff_methods != try_handoff_methods {
         return Err(format!(
-            "deferred handoff is not Rejected-only: Rejected={rejected}, Busy={busy}, Closed={closed}, Ok={ok}, Err={err}, Err(Rejected)={rejected_err}",
+            "every production try_handoff must bind _candidate and contain only the tail expression Err(T4eHandoffError::Rejected): exact={exact_deferred_try_handoff_methods}, try_handoff_methods={try_handoff_methods}",
         ));
     }
-    if entrypoint_analysis.candidate_fields != 0 || cli_analysis.candidate_fields != 1 {
+    let crate_candidate_fields =
+        crate_analyses.iter().map(|analysis| analysis.candidate_fields).sum::<usize>();
+    if entrypoint_analysis.candidate_fields != 0
+        || cli_analysis.candidate_fields != 1
+        || crate_candidate_fields != 0
+    {
         return Err(format!(
-            "candidate ownership cardinality changed: deferred entrypoint fields={}, sole T4d shadow slot fields={}",
+            "candidate ownership cardinality changed: deferred entrypoint fields={}, sole T4d shadow slot fields={}, other crate source fields={crate_candidate_fields}",
             entrypoint_analysis.candidate_fields, cli_analysis.candidate_fields,
         ));
     }
-    let worker_spawn_calls =
-        entrypoint_analysis.worker_spawn_calls + cli_analysis.worker_spawn_calls;
+    let worker_spawn_calls = entrypoint_analysis.worker_spawn_calls
+        + cli_analysis.worker_spawn_calls
+        + crate_analyses
+            .iter()
+            .map(|analysis| analysis.worker_spawn_calls)
+            .sum::<usize>();
     if worker_spawn_calls != 0 {
         return Err(format!(
             "production contains {worker_spawn_calls} SimulationWorker::spawn caller(s)"
         ));
     }
-    let ready_calls =
-        entrypoint_analysis.entrypoint_ready_calls + cli_analysis.entrypoint_ready_calls;
-    if ready_calls != 1 || entrypoint_analysis.entrypoint_ready_calls_in_worker_spawn != 1 {
+    let ready_calls = entrypoint_analysis.entrypoint_ready_calls
+        + cli_analysis.entrypoint_ready_calls
+        + crate_analyses
+            .iter()
+            .map(|analysis| analysis.entrypoint_ready_calls)
+            .sum::<usize>();
+    let ready_calls_in_worker_spawn = entrypoint_analysis.entrypoint_ready_calls_in_worker_spawn
+        + cli_analysis.entrypoint_ready_calls_in_worker_spawn
+        + crate_analyses
+            .iter()
+            .map(|analysis| analysis.entrypoint_ready_calls_in_worker_spawn)
+            .sum::<usize>();
+    if ready_calls != 1 || ready_calls_in_worker_spawn != 1 {
         return Err(format!(
-            "SimulationEntrypoint::ready cardinality/context changed: total={ready_calls}, inside SimulationWorker::spawn={}",
-            entrypoint_analysis.entrypoint_ready_calls_in_worker_spawn,
+            "SimulationEntrypoint::ready cardinality/context changed: total={ready_calls}, inside SimulationWorker::spawn={ready_calls_in_worker_spawn}",
         ));
     }
-    let runtime_open_calls =
-        entrypoint_analysis.runtime_open_calls + cli_analysis.runtime_open_calls;
-    if runtime_open_calls != 0 {
+    let runtime_open_calls = entrypoint_analysis.runtime_open_calls
+        + cli_analysis.runtime_open_calls
+        + crate_analyses
+            .iter()
+            .map(|analysis| analysis.runtime_open_calls)
+            .sum::<usize>();
+    if runtime_open_calls != 1 {
         return Err(format!(
-            "deferred entrypoint or CLI contains {runtime_open_calls} ArmRuntime::open caller(s)"
+            "ArmRuntime::open internal installer cardinality changed: total={runtime_open_calls}"
         ));
     }
     Ok(())
@@ -1806,6 +2297,8 @@ fn validate_deferred_production_handoff(entrypoint: &str, cli: &str) -> Result<(
 fn unavailable_u0_green_u1_deferral_forgotten_u2_silent_fallback_red() {
     let entrypoint = read(manifest_dir().join("src/arm/simulation_entrypoint.rs"));
     let cli = read(manifest_dir().join("../cli/src/mev_trader.rs"));
+    let transport_path = Path::new("src/arm/transport.rs");
+    let transport = read(manifest_dir().join(transport_path));
     validate_deferred_production_handoff(&entrypoint, &cli)
         .expect("U0 explicitly deferred rejecting production handoff");
     eprintln!("U0: GREEN");
@@ -1823,6 +2316,198 @@ fn unavailable_u0_green_u1_deferral_forgotten_u2_silent_fallback_red() {
     assert_ne!(mutant, entrypoint, "U2 patch did not change source");
     assert!(validate_deferred_production_handoff(&mutant, &cli).is_err());
     eprintln!("U2: RED");
+    const EXACT_HANDOFF: &str =
+        "fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        Err(T4eHandoffError::Rejected)";
+    for (name, replacement) in [
+        (
+            "divergent branch",
+            "fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        if false { loop {} }\n        Err(T4eHandoffError::Rejected)",
+        ),
+        (
+            "unknown retention helper",
+            "fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        retain(_candidate);\n        Err(T4eHandoffError::Rejected)",
+        ),
+        (
+            "non-ignored candidate binding",
+            "fn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        Err(T4eHandoffError::Rejected)",
+        ),
+        (
+            "preceding statement",
+            "fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        let _ = ();\n        Err(T4eHandoffError::Rejected)",
+        ),
+        (
+            "preceding Box::leak",
+            "fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        Box::leak(Box::new(0_u8));\n        Err(T4eHandoffError::Rejected)",
+        ),
+    ] {
+        let mutant = entrypoint.replacen(EXACT_HANDOFF, replacement, 1);
+        assert_ne!(mutant, entrypoint, "{name} mutant did not change source");
+        assert!(
+            validate_deferred_production_handoff(&mutant, &cli).is_err(),
+            "{name} violated the exact deferred handoff shape but remained GREEN"
+        );
+    }
+    eprintln!("U-EXACT-REJECTED-BODY: RED");
+
+    let protected_candidate_leak_mutant = entrypoint.replacen(
+        EXACT_HANDOFF,
+        "fn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        Box::leak(Box::new(candidate));\n        Err(T4eHandoffError::Rejected)",
+        1,
+    );
+    assert_ne!(
+        protected_candidate_leak_mutant, entrypoint,
+        "protected candidate Box::leak mutant did not change source"
+    );
+    assert!(
+        validate_deferred_production_handoff(&protected_candidate_leak_mutant, &cli).is_err(),
+        "protected candidate Box::leak violated exact-body/non-retention but remained GREEN"
+    );
+    eprintln!("U-PROTECTED-CANDIDATE-BOX-LEAK: RED");
+
+    for (name, addition) in [
+        (
+            "direct Box::leak",
+            "fn unrelated_box_leak_control() {\n    Box::leak(Box::new(0_u8));\n}",
+        ),
+        (
+            "aliased Box::leak",
+            "fn unrelated_aliased_box_leak_control() {\n    use std::boxed::Box as Heap;\n    Heap::leak(Heap::new(0_u8));\n}",
+        ),
+    ] {
+        let control = insert_before_test_module(&entrypoint, addition);
+        assert_ne!(control, entrypoint, "{name} control did not change source");
+        validate_deferred_production_handoff(&control, &cli)
+            .unwrap_or_else(|error| panic!("unrelated {name} was rejected: {error}"));
+    }
+
+    let unrelated_try_handoff_controls = insert_before_test_module(
+        &transport,
+        "struct UnrelatedInherentHandoff;\n\
+         impl UnrelatedInherentHandoff {\n\
+         \tfn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n\
+         \t\tErr(T4eHandoffError::Rejected)\n\
+         \t}\n\
+         }\n\
+         trait UnrelatedTryHandoff {\n\
+         \tfn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError>;\n\
+         }\n\
+         struct UnrelatedTraitHandoff;\n\
+         impl UnrelatedTryHandoff for UnrelatedTraitHandoff {\n\
+         \tfn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n\
+         \t\tErr(T4eHandoffError::Rejected)\n\
+         \t}\n\
+         }",
+    );
+    validate_deferred_production_handoff_with_override(
+        &entrypoint,
+        &cli,
+        Some((transport_path, &unrelated_try_handoff_controls)),
+    )
+    .expect("unrelated inherent/trait try_handoff methods must remain GREEN");
+    let exact_shadow_trait_control = insert_before_test_module(
+        &transport,
+        "mod unrelated_handoff_identity {\n\
+         \ttrait T4eCandidateHandoff { fn try_handoff(&self); }\n\
+         \tstruct UnrelatedHandoff;\n\
+         \timpl T4eCandidateHandoff for UnrelatedHandoff {\n\
+         \t\tfn try_handoff(&self) {}\n\
+         \t}\n\
+         }",
+    );
+    validate_deferred_production_handoff_with_override(
+        &entrypoint,
+        &cli,
+        Some((transport_path, &exact_shadow_trait_control)),
+    )
+    .expect("same-spelling unrelated trait try_handoff must remain GREEN");
+    eprintln!("U-EXACT-SHADOW-TRAIT-TRY-HANDOFF: GREEN");
+    eprintln!("U-UNRELATED-INHERENT-TRY-HANDOFF: GREEN");
+    eprintln!("U-UNRELATED-TRAIT-TRY-HANDOFF: GREEN");
+    let same_spelling_unavailable_control = insert_before_test_module(
+        &transport,
+        "mod unrelated_unavailable_identity {\n\
+         \ttrait UnrelatedHandoff {\n\
+         \t\tfn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError>;\n\
+         \t}\n\
+         \tstruct UnavailableSimulationHandoff;\n\
+         \timpl UnrelatedHandoff for UnavailableSimulationHandoff {\n\
+         \t\tfn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n\
+         \t\t\tErr(T4eHandoffError::Rejected)\n\
+         \t\t}\n\
+         \t}\n\
+         }",
+    );
+    validate_deferred_production_handoff_with_override(
+        &entrypoint,
+        &cli,
+        Some((transport_path, &same_spelling_unavailable_control)),
+    )
+    .expect("unrelated same-spelling UnavailableSimulationHandoff must remain GREEN");
+    eprintln!("U-UNRELATED-SAME-SPELLING-UNAVAILABLE: GREEN");
+
+    let same_spelling_unavailable_mutant = insert_before_test_module(
+        &entrypoint.replacen(
+            "impl T4eCandidateHandoff for UnavailableSimulationHandoff {",
+            "impl T4eCandidateHandoff for same_spelling_unavailable::UnavailableSimulationHandoff {",
+            1,
+        ),
+        "mod same_spelling_unavailable {\n\
+         \tpub(super) struct UnavailableSimulationHandoff;\n\
+         }",
+    );
+    assert_ne!(
+        same_spelling_unavailable_mutant, entrypoint,
+        "same-spelling unavailable replacement mutant did not change source"
+    );
+    assert!(
+        validate_deferred_production_handoff(&same_spelling_unavailable_mutant, &cli).is_err(),
+        "canonical unavailable impl was replaced by a same-spelling target but remained GREEN"
+    );
+    eprintln!("U-SAME-SPELLING-UNAVAILABLE-REPLACEMENT: RED");
+
+    let qself_unavailable_mutant = insert_before_test_module(
+        &entrypoint.replacen(
+            "impl T4eCandidateHandoff for UnavailableSimulationHandoff {",
+            "impl T4eCandidateHandoff for <() as UnavailableCarrier>::UnavailableSimulationHandoff {",
+            1,
+        ),
+        "trait UnavailableCarrier {\n\
+         \ttype UnavailableSimulationHandoff;\n\
+         }\n\
+         struct ProjectedUnavailableSimulationHandoff;\n\
+         impl UnavailableCarrier for () {\n\
+         \ttype UnavailableSimulationHandoff = ProjectedUnavailableSimulationHandoff;\n\
+         }",
+    );
+    assert_ne!(
+        qself_unavailable_mutant, entrypoint,
+        "qself unavailable replacement mutant did not change source"
+    );
+    assert!(
+        validate_deferred_production_handoff(&qself_unavailable_mutant, &cli).is_err(),
+        "associated-type projection replaced the canonical unavailable impl but remained GREEN"
+    );
+    eprintln!("U-QSELF-UNAVAILABLE-REPLACEMENT: RED");
+
+    let source_root = Path::new("/crate/src");
+    for (name, path, expected) in [
+        ("LIB", "/crate/src/lib.rs", Vec::<String>::new()),
+        ("FLAT", "/crate/src/foo.rs", vec!["foo".to_owned()]),
+        ("MOD", "/crate/src/foo/mod.rs", vec!["foo".to_owned()]),
+        (
+            "NESTED",
+            "/crate/src/foo/bar.rs",
+            vec!["foo".to_owned(), "bar".to_owned()],
+        ),
+    ] {
+        assert_eq!(
+            module_root_for_source(Path::new(path), source_root)
+                .unwrap_or_else(|error| panic!("{name} module root failed: {error}")),
+            expected,
+            "{name} file-derived module root changed",
+        );
+    }
+    eprintln!("U-FILE-DERIVED-MODULE-ROOTS: GREEN");
 
     for (name, result) in [
         ("Busy", "Err(T4eHandoffError::Busy)"),
@@ -1846,6 +2531,582 @@ fn unavailable_u0_green_u1_deferral_forgotten_u2_silent_fallback_red() {
         );
         eprintln!("U-{name}: RED");
     }
+    let mutant = insert_before_test_module(
+        &transport,
+        "struct TransportHandoffBypass;\n\
+         impl T4eCandidateHandoff for TransportHandoffBypass {\n\
+         \tfn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n\
+         \t\tErr(T4eHandoffError::Rejected)\n\
+         \t}\n\
+         }",
+    );
+    assert_ne!(mutant, transport, "transport handoff mutant did not change source");
+    assert!(
+        validate_deferred_production_handoff_with_override(
+            &entrypoint,
+            &cli,
+            Some((transport_path, &mutant)),
+        )
+        .is_err(),
+        "second crate-wide handoff implementation remained GREEN"
+    );
+    eprintln!("U-CRATE-WIDE-IMPL: RED");
+    for (name, call) in [
+        (
+            "worker spawn",
+            "crate::arm::simulation_entrypoint::SimulationWorker::spawn();",
+        ),
+        (
+            "entrypoint ready",
+            "crate::arm::simulation_entrypoint::SimulationEntrypoint::ready();",
+        ),
+        (
+            "runtime open",
+            "crate::arm::simulation_entrypoint::ArmRuntime::open();",
+        ),
+    ] {
+        let addition = format!("fn transport_activation_bypass() {{\n    {call}\n}}");
+        let mutant = insert_before_test_module(&transport, &addition);
+        assert_ne!(mutant, transport, "{name} override mutant did not change source");
+        assert!(
+            validate_deferred_production_handoff_with_override(
+                &entrypoint,
+                &cli,
+                Some((transport_path, &mutant)),
+            )
+            .is_err(),
+            "crate-wide helper {name} activation remained GREEN"
+        );
+    }
+    eprintln!("U-CRATE-WIDE-ACTIVATION: RED");
+    for (name, expression) in [
+        ("CALL", "Self::open();"),
+        ("FUNCTION_VALUE", "let _ = Self::open;"),
+    ] {
+        let addition = format!(
+            "impl ArmRuntime {{\n\
+             \tfn protected_self_open_{name}() {{ {expression} }}\n\
+             }}",
+        );
+        let mutant = insert_before_test_module(&entrypoint, &addition);
+        assert_ne!(mutant, entrypoint, "protected Self::open {name} mutant did not change source");
+        assert!(
+            validate_deferred_production_handoff(&mutant, &cli).is_err(),
+            "protected Self::open {name} remained GREEN"
+        );
+    }
+    for (owner, member) in [
+        ("SimulationWorker", "spawn"),
+        ("SimulationEntrypoint", "ready"),
+    ] {
+        for (name, expression) in [
+            ("CALL", format!("Self::{member}();")),
+            ("FUNCTION_VALUE", format!("let _ = Self::{member};")),
+        ] {
+            let addition = format!(
+                "impl {owner} {{\n\
+                 \tfn protected_self_{member}_{name}() {{ {expression} }}\n\
+                 }}",
+            );
+            let mutant = insert_before_test_module(&entrypoint, &addition);
+            assert_ne!(
+                mutant, entrypoint,
+                "protected {owner} Self::{member} {name} mutant did not change source"
+            );
+            assert!(
+                validate_deferred_production_handoff(&mutant, &cli).is_err(),
+                "protected {owner} Self::{member} {name} remained GREEN"
+            );
+        }
+    }
+    eprintln!("U-PROTECTED-SELF-ACTIVATION-CALLS-AND-VALUES: RED");
+
+    let unrelated_self_owner_control = insert_before_test_module(
+        &transport,
+        "struct UnrelatedSelfRuntime;\n\
+         impl UnrelatedSelfRuntime {\n\
+         \tfn open() {}\n\
+         \tfn probe() { Self::open(); let _ = Self::open; }\n\
+         }\n\
+         struct UnrelatedSelfWorker;\n\
+         impl UnrelatedSelfWorker {\n\
+         \tfn spawn() {}\n\
+         \tfn probe() { Self::spawn(); let _ = Self::spawn; }\n\
+         }\n\
+         struct UnrelatedSelfEntrypoint;\n\
+         impl UnrelatedSelfEntrypoint {\n\
+         \tfn ready() {}\n\
+         \tfn probe() { Self::ready(); let _ = Self::ready; }\n\
+         }",
+    );
+    validate_deferred_production_handoff_with_override(
+        &entrypoint,
+        &cli,
+        Some((transport_path, &unrelated_self_owner_control)),
+    )
+    .expect("Self activation on unrelated impl owners must remain GREEN");
+    eprintln!("U-UNRELATED-SELF-OWNERS: GREEN");
+
+    let unrelated_activation_names = insert_before_test_module(
+        &transport,
+        "struct UnrelatedSimulationWorker;\n\
+         impl UnrelatedSimulationWorker { fn spawn() {} }\n\
+         struct UnrelatedSimulationEntrypoint;\n\
+         impl UnrelatedSimulationEntrypoint { fn ready() {} }\n\
+         struct UnrelatedArmRuntime;\n\
+         impl UnrelatedArmRuntime { fn open() {} }\n\
+         fn unrelated_same_named_calls() {\n\
+         \tUnrelatedSimulationWorker::spawn();\n\
+         \tUnrelatedSimulationEntrypoint::ready();\n\
+         \tUnrelatedArmRuntime::open();\n\
+         }",
+    );
+    validate_deferred_production_handoff_with_override(
+        &entrypoint,
+        &cli,
+        Some((transport_path, &unrelated_activation_names)),
+    )
+    .expect("unrelated same-named methods and types must remain GREEN");
+
+    let exact_shadow_activation_names = insert_before_test_module(
+        &transport,
+        "mod exact_shadow_activation_names {\n\
+         \tpub(super) struct ArmRuntime;\n\
+         \timpl ArmRuntime { pub(super) fn open() {} }\n\
+         \tpub(super) struct SimulationWorker;\n\
+         \timpl SimulationWorker { pub(super) fn spawn() {} }\n\
+         \tpub(super) struct SimulationEntrypoint;\n\
+         \timpl SimulationEntrypoint { pub(super) fn ready() {} }\n\
+         \tuse self::ArmRuntime::open as shadow_open;\n\
+         \tfn calls() {\n\
+         \t\tArmRuntime::open();\n\
+         \t\tSimulationWorker::spawn();\n\
+         \t\tSimulationEntrypoint::ready();\n\
+         \t\tshadow_open();\n\
+         \t}\n\
+         }\n\
+         mod exact_shadow_sibling_calls {\n\
+         \tfn calls() {\n\
+         \t\tsuper::exact_shadow_activation_names::ArmRuntime::open();\n\
+         \t\tsuper::exact_shadow_activation_names::SimulationWorker::spawn();\n\
+         \t\tsuper::exact_shadow_activation_names::SimulationEntrypoint::ready();\n\
+         \t}\n\
+         }",
+    );
+    validate_deferred_production_handoff_with_override(
+        &entrypoint,
+        &cli,
+        Some((transport_path, &exact_shadow_activation_names)),
+    )
+    .expect("nested/sibling exact-spelling activation identities must remain GREEN");
+    eprintln!("U-EXACT-SHADOW-ACTIVATION: GREEN");
+    let exact_candidate_shadow_controls = insert_before_test_module(
+        &transport,
+        "struct SealedUnsignedCandidate;\n\
+         struct SeparateFileRootCandidateShadow {\n\
+         \tcandidate: Option<SealedUnsignedCandidate>,\n\
+         }\n\
+         mod nested_candidate_shadow {\n\
+         \tstruct SealedUnsignedCandidate;\n\
+         \tstruct NestedCandidateShadow {\n\
+         \t\tcandidate: Option<SealedUnsignedCandidate>,\n\
+         \t}\n\
+         }",
+    );
+    validate_deferred_production_handoff_with_override(
+        &entrypoint,
+        &cli,
+        Some((transport_path, &exact_candidate_shadow_controls)),
+    )
+    .expect("nested and separate-file-root exact candidate shadow fields must remain GREEN");
+    eprintln!("U-EXACT-CANDIDATE-SHADOW-FIELDS: GREEN");
+    for (name, addition) in [
+        (
+            "STRUCT",
+            "struct TransportCandidateRetention {\n\
+             \tcandidate: Option<SealedUnsignedCandidate>,\n\
+             }",
+        ),
+        (
+            "ENUM",
+            "enum TransportCandidateRetention {\n\
+             \tCandidate(SealedUnsignedCandidate),\n\
+             }",
+        ),
+        (
+            "UNION",
+            "union TransportCandidateRetention {\n\
+             \tcandidate: std::mem::ManuallyDrop<SealedUnsignedCandidate>,\n\
+             }",
+        ),
+        (
+            "STATIC",
+            "static TRANSPORT_CANDIDATE_RETENTION: Option<SealedUnsignedCandidate> = None;",
+        ),
+        (
+            "CONST",
+            "const TRANSPORT_CANDIDATE_RETENTION: Option<SealedUnsignedCandidate> = None;",
+        ),
+    ] {
+        let mutant = insert_before_test_module(&transport, addition);
+        assert_ne!(
+            mutant, transport,
+            "crate-wide {name} candidate-retention mutant did not change source"
+        );
+        assert!(
+            validate_deferred_production_handoff_with_override(
+                &entrypoint,
+                &cli,
+                Some((transport_path, &mutant)),
+            )
+            .is_err(),
+            "crate-wide {name} candidate retention without a handoff impl remained GREEN"
+        );
+    }
+    eprintln!("U-CRATE-WIDE-CANDIDATE-RETENTION: RED");
+    let projection_retention_mutant = insert_before_test_module(
+        &transport,
+        "trait Carrier { type Candidate; }\n\
+         impl Carrier for () { type Candidate = SealedUnsignedCandidate; }\n\
+         struct ProjectedCandidateRetention {\n\
+         \tcandidate: <() as Carrier>::Candidate,\n\
+         }",
+    );
+    assert_ne!(
+        projection_retention_mutant, transport,
+        "associated candidate projection retention mutant did not change source"
+    );
+    assert!(
+        validate_deferred_production_handoff_with_override(
+            &entrypoint,
+            &cli,
+            Some((transport_path, &projection_retention_mutant)),
+        )
+        .is_err(),
+        "<() as Carrier>::Candidate retention remained GREEN"
+    );
+    eprintln!("U-QSELF-CANDIDATE-PROJECTION-RETENTION: RED");
+
+    let unrelated_qualified_candidate_control = insert_before_test_module(
+        &transport,
+        "struct UnrelatedQualifiedFieldControl {\n\
+         \tvalue: Option<std::time::Duration>,\n\
+         }\n\
+         static UNRELATED_QUALIFIED_STATIC: Option<std::time::Duration> = None;\n\
+         const UNRELATED_QUALIFIED_CONST: Option<std::time::Duration> = None;",
+    );
+    validate_deferred_production_handoff_with_override(
+        &entrypoint,
+        &cli,
+        Some((transport_path, &unrelated_qualified_candidate_control)),
+    )
+    .expect("provably unrelated qualified field/static/const types must remain GREEN");
+    eprintln!("U-UNRELATED-QUALIFIED-OWNERSHIP-TYPES: GREEN");
+
+    for (name, addition) in [
+        (
+            "STMT",
+            "fn opaque_transport_statement_helper() {\n\
+             \tgenerate_transport_statement!();\n\
+             }",
+        ),
+        (
+            "EXPR",
+            "fn opaque_transport_expression_helper() {\n\
+             \tlet _ = generate_transport_expression!();\n\
+             }",
+        ),
+    ] {
+        let mutant = insert_before_test_module(&transport, addition);
+        assert_ne!(
+            mutant, transport,
+            "crate-wide opaque {name} macro mutant did not change source"
+        );
+        assert!(
+            validate_deferred_production_handoff_with_override(
+                &entrypoint,
+                &cli,
+                Some((transport_path, &mutant)),
+            )
+            .is_err(),
+            "crate-wide opaque {name} macro without a handoff impl remained GREEN"
+        );
+    }
+    eprintln!("U-CRATE-WIDE-OPAQUE-FUNCTION-MACROS: RED");
+    let cross_file_alias_source = insert_before_test_module(
+        &entrypoint,
+        "pub trait CrossFileHandoffAlias = T4eCandidateHandoff;\n\
+         pub use std::boxed::Box as CrossFileBoxAlias;\n\
+         pub use std::boxed::Box::leak as cross_file_leak_alias;",
+    );
+    for (name, leak) in [
+        (
+            "BOX-TYPE",
+            "ImportedBoxAlias::leak(ImportedBoxAlias::new(candidate));",
+        ),
+        (
+            "BOX-LEAK-FUNCTION",
+            "imported_leak_alias(Box::new(candidate));",
+        ),
+    ] {
+        let addition = format!(
+            "pub use crate::arm::simulation_entrypoint::{{\n\
+             \tCrossFileBoxAlias as ImportedBoxAlias,\n\
+             \tCrossFileHandoffAlias as ImportedHandoffAlias,\n\
+             \tcross_file_leak_alias as imported_leak_alias,\n\
+             }};\n\
+             struct CrossFileAliasHandoff;\n\
+             impl ImportedHandoffAlias for CrossFileAliasHandoff {{\n\
+             \tfn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {{\n\
+             \t\t{leak}\n\
+             \t\tErr(T4eHandoffError::Rejected)\n\
+             \t}}\n\
+             }}"
+        );
+        let mutant = insert_before_test_module(&transport, &addition);
+        assert_ne!(mutant, transport, "cross-file {name} alias mutant did not change source");
+        assert!(
+            validate_deferred_production_handoff_with_override(
+                &cross_file_alias_source,
+                &cli,
+                Some((transport_path, &mutant)),
+            )
+            .is_err(),
+            "cross-file trait/{name} aliases remained GREEN"
+        );
+    }
+
+    let collision_entrypoint = insert_before_test_module(
+        &entrypoint,
+        "type SharedCandidateAlias = SealedUnsignedCandidate;\n\
+         trait SharedHandoffAlias = T4eCandidateHandoff;",
+    );
+    let collision_transport = insert_before_test_module(
+        &transport,
+        "struct SharedCandidateAlias;\n\
+         trait SharedHandoffAlias {\n\
+         \tfn unrelated(&self, value: SharedCandidateAlias);\n\
+         }\n\
+         struct UnrelatedSharedNames;\n\
+         impl SharedHandoffAlias for UnrelatedSharedNames {\n\
+         \tfn unrelated(&self, _value: SharedCandidateAlias) {}\n\
+         }",
+    );
+    validate_deferred_production_handoff_with_override(
+        &collision_entrypoint,
+        &cli,
+        Some((transport_path, &collision_transport)),
+    )
+    .expect("bare alias spellings reused in another module must not inherit protected meaning");
+
+    let imported_trait_collision_entrypoint = insert_before_test_module(
+        &entrypoint,
+        "trait ImportedTraitCollision = T4eCandidateHandoff;\n\
+         use ArmRuntime::open as ImportedOpenCollision;",
+    );
+    let imported_trait_collision_transport = insert_before_test_module(
+        &transport,
+        "mod unrelated_import_origin {\n\
+         \tpub(super) trait ForeignHandoff { fn unrelated(&self); }\n\
+         \tpub(super) struct ForeignRuntime;\n\
+         \timpl ForeignRuntime { pub(super) fn open() {} }\n\
+         }\n\
+         use self::unrelated_import_origin::ForeignHandoff as ImportedTraitCollision;\n\
+         use self::unrelated_import_origin::ForeignRuntime::open as ImportedOpenCollision;\n\
+         struct ImportedTraitCollisionTarget;\n\
+         impl ImportedTraitCollision for ImportedTraitCollisionTarget {\n\
+         \tfn unrelated(&self) {}\n\
+         }\n\
+         fn imported_open_collision_control() { ImportedOpenCollision(); }",
+    );
+    validate_deferred_production_handoff_with_override(
+        &imported_trait_collision_entrypoint,
+        &cli,
+        Some((transport_path, &imported_trait_collision_transport)),
+    )
+    .expect("same-spelling imported unrelated trait/function aliases must not inherit cross-module protected identities");
+    eprintln!("U-IMPORTED-TRAIT-AND-OPEN-ALIAS-COLLISION: GREEN");
+
+    let combined_alias_collision_handoff = insert_before_test_module(
+        &collision_entrypoint,
+        "struct ProtectedAliasCollisionHandoff;\n\
+         impl SharedHandoffAlias for ProtectedAliasCollisionHandoff {\n\
+         \tfn try_handoff(&self, _candidate: SharedCandidateAlias) -> Result<(), T4eHandoffError> {\n\
+         \t\tErr(T4eHandoffError::Rejected)\n\
+         \t}\n\
+         }",
+    );
+    assert!(
+        validate_deferred_production_handoff_with_override(
+            &combined_alias_collision_handoff,
+            &cli,
+            Some((transport_path, &collision_transport)),
+        )
+        .is_err(),
+        "protected alias second handoff was hidden by an unrelated same-spelling file-root definition",
+    );
+    eprintln!("U-COMBINED-CROSS-FILE-ALIAS-COLLISION-HANDOFF: RED");
+
+    let candidate_alias_collision_entrypoint = insert_before_test_module(
+        &collision_entrypoint,
+        "struct ProtectedAliasCollisionRetention {\n\
+         \tcandidate: Option<SharedCandidateAlias>,\n\
+         }",
+    );
+    assert!(
+        validate_deferred_production_handoff_with_override(
+            &candidate_alias_collision_entrypoint,
+            &cli,
+            Some((transport_path, &collision_transport)),
+        )
+        .is_err(),
+        "protected candidate alias retention was hidden by an unrelated same-spelling file-root definition",
+    );
+    eprintln!("U-CROSS-FILE-CANDIDATE-ALIAS-COLLISION: RED");
+
+    let runtime_alias_collision_entrypoint = insert_before_test_module(
+        &entrypoint,
+        "type SharedRuntimeAlias = ArmRuntime;\n\
+         fn protected_runtime_alias_collision_probe() {\n\
+         \tlet _ = SharedRuntimeAlias::open();\n\
+         }",
+    );
+    let runtime_alias_collision_transport = insert_before_test_module(
+        &transport,
+        "struct SharedRuntimeAlias;\n\
+         impl SharedRuntimeAlias { fn open() {} }",
+    );
+    assert!(
+        validate_deferred_production_handoff_with_override(
+            &runtime_alias_collision_entrypoint,
+            &cli,
+            Some((transport_path, &runtime_alias_collision_transport)),
+        )
+        .is_err(),
+        "protected ArmRuntime::open alias was hidden by an unrelated same-spelling file-root definition",
+    );
+    eprintln!("U-CROSS-FILE-RUNTIME-ALIAS-COLLISION: RED");
+    let sibling_module_alias_control = insert_before_test_module(
+        &transport,
+        "mod protected_looking_aliases {\n\
+         \ttype SharedCandidateAlias = SealedUnsignedCandidate;\n\
+         \ttrait SharedHandoffAlias = T4eCandidateHandoff;\n\
+         }\n\
+         mod unrelated_sibling_aliases {\n\
+         \tstruct SharedCandidateAlias;\n\
+         \ttrait SharedHandoffAlias {\n\
+         \t\tfn unrelated(&self, value: SharedCandidateAlias);\n\
+         \t}\n\
+         \tstruct UnrelatedSharedNames;\n\
+         \timpl SharedHandoffAlias for UnrelatedSharedNames {\n\
+         \t\tfn unrelated(&self, _value: SharedCandidateAlias) {}\n\
+         \t}\n\
+         }",
+    );
+    validate_deferred_production_handoff_with_override(
+        &entrypoint,
+        &cli,
+        Some((transport_path, &sibling_module_alias_control)),
+    )
+    .expect(
+        "protected-looking bare alias names reused in a sibling inline module without protected behavior must stay GREEN under the file-local alias model",
+    );
+    let cross_file_cardinality_entrypoint = insert_before_test_module(
+        &entrypoint,
+        "pub trait CrossFileCardinalityHandoffAlias = T4eCandidateHandoff;\n\
+         pub type CrossFileCardinalityCandidateAlias = SealedUnsignedCandidate;",
+    );
+    let cross_file_cardinality_transport = insert_before_test_module(
+        &transport,
+        "use crate::arm::simulation_entrypoint::{\n\
+         \tCrossFileCardinalityCandidateAlias as ImportedCardinalityCandidate,\n\
+         \tCrossFileCardinalityHandoffAlias as ImportedCardinalityHandoff,\n\
+         };\n\
+         struct CrossFileCardinalityBypass;\n\
+         impl ImportedCardinalityHandoff for CrossFileCardinalityBypass {\n\
+         \tfn try_handoff(&self, _candidate: ImportedCardinalityCandidate) -> Result<(), T4eHandoffError> {\n\
+         \t\tErr(T4eHandoffError::Rejected)\n\
+         \t}\n\
+         }",
+    );
+    let error = validate_deferred_production_handoff_with_override(
+        &cross_file_cardinality_entrypoint,
+        &cli,
+        Some((transport_path, &cross_file_cardinality_transport)),
+    )
+    .expect_err("cross-file trait/candidate aliases bypassed handoff method cardinality");
+    assert_eq!(
+        error,
+        "crate-wide production handoff implementation cardinality changed: impls=2, wrong_targets=1, try_handoff_methods=2",
+        "cross-file trait/candidate alias mutant was not rejected by method cardinality"
+    );
+    let macro_mutant = insert_before_test_module(
+        &transport,
+        "macro_rules! install_transport_handoff {\n\
+         \t() => {\n\
+         \t\tstruct MacroTransportHandoff;\n\
+         \t\timpl T4eCandidateHandoff for MacroTransportHandoff {\n\
+         \t\t\tfn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n\
+         \t\t\t\tErr(T4eHandoffError::Rejected)\n\
+         \t\t\t}\n\
+         \t\t}\n\
+         \t};\n\
+         }\n\
+         install_transport_handoff!();",
+    );
+    assert_ne!(macro_mutant, transport, "macro handoff mutant did not change source");
+    assert!(
+        validate_deferred_production_handoff_with_override(
+            &entrypoint,
+            &cli,
+            Some((transport_path, &macro_mutant)),
+        )
+        .is_err(),
+        "macro-generated crate-wide handoff remained GREEN"
+    );
+    let opaque_macro_mutant =
+        insert_before_test_module(&transport, "generate_transport_handoff!();");
+    assert_ne!(
+        opaque_macro_mutant, transport,
+        "symbol-free macro mutant did not change source"
+    );
+    assert!(
+        validate_deferred_production_handoff_with_override(
+            &entrypoint,
+            &cli,
+            Some((transport_path, &opaque_macro_mutant)),
+        )
+        .is_err(),
+        "symbol-free opaque macro remained GREEN"
+    );
+
+    let path_module_mutant =
+        insert_before_test_module(&transport, "#[path = \"hidden_handoff.rs\"] mod hidden_handoff;");
+    assert_ne!(
+        path_module_mutant, transport,
+        "path module mutant did not change source"
+    );
+    assert!(
+        validate_deferred_production_handoff_with_override(
+            &entrypoint,
+            &cli,
+            Some((transport_path, &path_module_mutant)),
+        )
+        .is_err(),
+        "opaque #[path] production module remained GREEN"
+    );
+    eprintln!("U-OPAQUE-PATH-MODULE: RED");
+    let glob_mutant = insert_before_test_module(&transport, "use crate::*;");
+    assert_ne!(glob_mutant, transport, "glob mutant did not change source");
+    assert!(
+        validate_deferred_production_handoff_with_override(
+            &entrypoint,
+            &cli,
+            Some((transport_path, &glob_mutant)),
+        )
+        .is_err(),
+        "glob-obscured crate source remained GREEN"
+    );
 
     let mutant = insert_before_test_module(
         &entrypoint,
