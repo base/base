@@ -60,7 +60,7 @@ impl AssetVersion {
     pub const fn abi(self) -> AssetAbiPair {
         match self {
             Self::V1 => AssetAbiPair { asset: AssetAbi::V1, common_b20: B20Abi::V1 },
-            Self::V2 => AssetAbiPair { asset: AssetAbi::V2, common_b20: B20Abi::V1 },
+            Self::V2 => AssetAbiPair { asset: AssetAbi::V2, common_b20: B20Abi::V2 },
         }
     }
 }
@@ -232,7 +232,7 @@ mod tests {
         );
         assert_eq!(
             AssetVersion::V2.abi(),
-            AssetAbiPair { asset: AssetAbi::V2, common_b20: B20Abi::V1 }
+            AssetAbiPair { asset: AssetAbi::V2, common_b20: B20Abi::V2 }
         );
 
         let beryl = AssetVersions::from_base_upgrade(BaseUpgrade::Beryl).unwrap();
@@ -240,7 +240,7 @@ mod tests {
         assert_eq!(beryl.abi().asset, AssetAbi::V1);
         assert_eq!(beryl.abi().common_b20, B20Abi::V1);
         assert_eq!(cobalt.abi().asset, AssetAbi::V2);
-        assert_eq!(cobalt.abi().common_b20, B20Abi::V1);
+        assert_eq!(cobalt.abi().common_b20, B20Abi::V2);
     }
 
     /// `SolInterface::NAME` lands in consensus data: the short-calldata branch of
@@ -355,7 +355,7 @@ mod tests {
                 ..
             } if selector == IB20::transferCall::SELECTOR
         ));
-        // Same bytes at V2: both versions map onto B20Abi::V1 today.
+        // Same bytes at V2: common V1 and V2 declare the same surface today.
         assert_eq!(AssetVersion::V2.abi().decode(&calldata), Err(err));
     }
 

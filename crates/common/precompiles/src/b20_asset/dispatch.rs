@@ -100,12 +100,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        // Decode against the composite surface frozen at this version's fork: asset-specific
-        // selectors first, then the frozen common `B20Abi` surface. The ERC-8056
-        // scheduled-multiplier selectors were introduced at Cobalt with `AssetV2`, so they are
-        // simply absent from the Beryl (`AssetV1`) surface and decode as `UnknownFunctionSelector`.
-        // That keeps pre-Cobalt calldata returning the exact bytes it did at that version's
-        // activation fork — the structural replacement for the old hand-written fork gate.
         let call = version.abi().decode(calldata)?;
         let label = call.as_label();
         match call {

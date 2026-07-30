@@ -2,7 +2,7 @@
 //!
 //! The latest surface is always named `IB20` in its `vN` module, then re-exported here as both
 //! [`IB20`] (canonical) and `IB20VN`. Older forks keep the same Rust name inside their module so
-//! truncated-calldata revert bytes stay stable, and are re-exported as [`IB20V1`], etc.
+//! truncated-calldata revert bytes stay stable, and are re-exported as [`IB20V1`], [`IB20V2`], etc.
 //!
 //! Token variants compose this surface with their own extension ABI. Asset does so via
 //! [`crate::AssetAbiPair`]; stablecoin still decodes against canonical [`IB20`] directly until it
@@ -18,7 +18,10 @@ use alloy_sol_types::SolInterface;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 mod v1;
-pub use v1::{IB20, IB20 as IB20V1};
+pub use v1::IB20 as IB20V1;
+
+mod v2;
+pub use v2::{IB20, IB20 as IB20V2};
 
 /// A frozen wire (ABI) surface of the shared B-20 token interface.
 ///
@@ -29,6 +32,8 @@ pub use v1::{IB20, IB20 as IB20V1};
 pub enum B20Abi {
     /// Wire surface activated at Beryl with the first native B-20 tokens.
     V1,
+    /// Wire surface activated at Cobalt.
+    V2,
 }
 
 impl B20Abi {
@@ -36,6 +41,7 @@ impl B20Abi {
     pub fn valid_selector(self, selector: [u8; 4]) -> bool {
         match self {
             Self::V1 => IB20V1::IB20Calls::valid_selector(selector),
+            Self::V2 => IB20V2::IB20Calls::valid_selector(selector),
         }
     }
 
@@ -43,6 +49,7 @@ impl B20Abi {
     pub fn abi_decode_validate(self, calldata: &[u8], selector: [u8; 4]) -> Result<()> {
         match self {
             Self::V1 => IB20V1::IB20Calls::abi_decode_validate(calldata).map(|_| ()),
+            Self::V2 => IB20V2::IB20Calls::abi_decode_validate(calldata).map(|_| ()),
         }
         .map_err(|error| BasePrecompileError::AbiDecodeFailed {
             selector,
@@ -75,13 +82,20 @@ mod tests {
     use alloy_sol_types::{SolCall, SolInterface};
     use base_precompile_storage::BasePrecompileError;
 
-    use super::{B20Abi, IB20, IB20V1};
+    use super::{B20Abi, IB20, IB20V1, IB20V2};
 
     #[test]
     fn v1_surface_accepts_transfer() {
         let calldata =
             IB20::transferCall { to: Address::ZERO, amount: Default::default() }.abi_encode();
         assert!(matches!(B20Abi::V1.decode(&calldata), Ok(IB20::IB20Calls::transfer(_))));
+    }
+
+    #[test]
+    fn v2_surface_accepts_transfer() {
+        let calldata =
+            IB20::transferCall { to: Address::ZERO, amount: Default::default() }.abi_encode();
+        assert!(matches!(B20Abi::V2.decode(&calldata), Ok(IB20::IB20Calls::transfer(_))));
     }
 
     #[test]
@@ -108,6 +122,19 @@ mod tests {
     #[test]
     fn frozen_and_canonical_names_match() {
         assert_eq!(IB20V1::IB20Calls::NAME, IB20::IB20Calls::NAME);
+        assert_eq!(IB20V2::IB20Calls::NAME, IB20::IB20Calls::NAME);
         assert_eq!(IB20V1::IB20Calls::NAME, "IB20Calls");
+    }
+
+    /// The dispatcher re-decodes against the canonical surface after a frozen surface accepts, so
+    /// every frozen selector must exist on canonical. Today V1 and V2 declare the same surface.
+    #[test]
+    fn v1_selectors_are_a_subset_of_v2() {
+        for selector in IB20V1::IB20Calls::selectors() {
+            assert!(
+                B20Abi::V2.valid_selector(selector),
+                "V1 selector {selector:?} missing from the V2 surface"
+            );
+        }
     }
 }

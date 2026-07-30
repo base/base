@@ -40,7 +40,7 @@ pub use bls12_381::{
 mod common;
 pub use common::{
     B20_MAX_SUPPLY_CAP, B20Abi, B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType,
-    B20TokenRole, Burnable, Configurable, Eip712Domain, IB20, IB20V1, Mintable, Pausable,
+    B20TokenRole, Burnable, Configurable, Eip712Domain, IB20, IB20V1, IB20V2, Mintable, Pausable,
     PermitArgs, Permittable, RoleManaged, Token, TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
