@@ -178,9 +178,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
 mod tests {
     use std::sync::Arc;
 
-    use base_execution_txpool::{
-        BasePooledTransaction, RemovalReason, SidecarInsert, SidecarPool,
-    };
+    use base_execution_txpool::{BasePooledTransaction, RemovalReason, SidecarInsert, SidecarPool};
 
     use super::*;
 
@@ -208,9 +206,7 @@ mod tests {
             _base_fee: u64,
         ) -> Box<
             dyn reth_transaction_pool::BestTransactions<
-                    Item = Arc<
-                        reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>,
-                    >,
+                    Item = Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>,
                 >,
         > {
             unimplemented!()
@@ -227,20 +223,17 @@ mod tests {
         }
         fn all_transactions(
             &self,
-        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>
-        {
+        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>> {
             Vec::new()
         }
         fn pending_transactions(
             &self,
-        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>
-        {
+        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>> {
             Vec::new()
         }
         fn queued_transactions(
             &self,
-        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>
-        {
+        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>> {
             Vec::new()
         }
         fn pending_and_queued_txn_count(&self) -> (usize, usize) {
@@ -253,15 +246,13 @@ mod tests {
             &self,
             _hashes: &[alloy_primitives::TxHash],
             _reason: RemovalReason,
-        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>
-        {
+        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>> {
             Vec::new()
         }
         fn remove_transactions_by_sender(
             &self,
             _sender: alloy_primitives::Address,
-        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>>
-        {
+        ) -> Vec<Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>> {
             Vec::new()
         }
     }

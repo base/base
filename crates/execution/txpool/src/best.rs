@@ -678,7 +678,9 @@ mod nest_probe {
                 vec![Vec::new(), Vec::new(), Vec::new(), Vec::new()];
             let mut x = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             for i in 0..24u128 {
-                x = x.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+                x = x
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
                 let arm = (x >> 33) as usize % 4;
                 let tip = 1 + ((x >> 7) % 60) as u128;
                 let ts = now + std::time::Duration::from_micros(((x >> 17) % 5) as u64);
@@ -689,10 +691,8 @@ mod nest_probe {
                 ));
             }
 
-            let expected = reference_nway(
-                arms.iter().cloned().map(VecDeque::from).collect::<Vec<_>>(),
-                10,
-            );
+            let expected =
+                reference_nway(arms.iter().cloned().map(VecDeque::from).collect::<Vec<_>>(), 10);
 
             let mut merged: Box<
                 dyn BestTransactions<Item = Arc<ValidPoolTransaction<BasePooledTransaction>>>,

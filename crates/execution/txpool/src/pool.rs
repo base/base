@@ -227,10 +227,6 @@ where
         transaction.is_eip8130_sidecar_transaction()
     }
 
-    fn sidecar_for(&self, transaction: &T) -> Option<&Arc<dyn SidecarPool<T>>> {
-        self.sidecars.iter().find(|pool| pool.claims(transaction))
-    }
-
     fn sidecar_owning(&self, hash: &TxHash) -> Option<&Arc<dyn SidecarPool<T>>> {
         self.sidecars.iter().find(|pool| pool.contains(hash))
     }
@@ -280,7 +276,11 @@ where
         let validated = self.validator().validate_transaction(origin, transaction).await;
         match validated {
             TransactionValidationOutcome::Valid {
-                transaction, propagate, authorities, state_nonce, ..
+                transaction,
+                propagate,
+                authorities,
+                state_nonce,
+                ..
             } => {
                 let validated = {
                     let mut nonce_pool = self.nonce_pool.write();
@@ -1755,7 +1755,8 @@ where
             let mut listeners = self.listeners.write();
             let mut guard = self.guard.write();
             for sidecar in self.sidecars.iter() {
-                let (mined, discarded) = sidecar.on_canonical_state_change(&mined_transactions, now);
+                let (mined, discarded) =
+                    sidecar.on_canonical_state_change(&mined_transactions, now);
                 if !mined.is_empty() {
                     listeners.on_mined(&mined, block_hash);
                 }
