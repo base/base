@@ -13,9 +13,11 @@ base-reth-node/arm-live-egress
   -> mev-trader-submit/arm
 ```
 
-Consequently, compiling the safe simulation backend currently also compiles the live transport. S2 first creates a simulation-only rung, then installs the first bounded production submission worker and a local durable record ledger.
+Consequently, compiling the safe simulation backend currently also compiles the live transport. PR #52 creates the simulation-only rung and supplies the bounded worker/library entrypoint, typed unavailable sink, and local durable record ledger. It deliberately does not install the first production caller of `send_gated`: the current production handoff is Rejected-only and cannot produce `Busy`, `Closed`, or `Ready`.
 
 S2 MUST NOT introduce a second candidate, assembly, economics, authorization, signing, or request-building path. It MUST NOT provision suppression, create owner signatures, invent a drawdown value, open a socket from simulation or persistence, activate the MEV trader in a default node, or perform any deployment/restart/funding/submission operation.
+
+The complete production installation is deferred to the exactly named follow-up **Production T4e Simulation Installation + Settled-Loss Authority**. The detailed worker, persistence, shutdown, and seal requirements below remain the normative design for that follow-up; descriptions of its ready path are completion requirements, not claims that PR #52 or current S2 is production-reachable.
 
 ## 2. Feature graph and broadcastability
 
@@ -46,7 +48,7 @@ Compiling `arm-sim` is capability selection, not implicit runtime activation. Th
 
 ## 3. One unified data path
 
-The only admitted flow is:
+The only admitted flow after **Production T4e Simulation Installation + Settled-Loss Authority** is complete will be:
 
 ```text
 existing candidate selection
@@ -63,15 +65,17 @@ existing candidate selection
   -> bounded durable projection
 ```
 
-The T4d authority and worker share one `Arc<InstalledSubmissionBridge>`. `t4d_shadow::observer` changes its bridge ownership from a value to an `Arc`, retaining one clone and handing one clone to the S2 installer. This preserves the installation seal: the worker can convert only a candidate minted by that same bridge installation.
+The completed installer MUST give T4d authority and T4e worker one shared `Arc<InstalledSubmissionBridge>`. `t4d_shadow::observer` must retain one clone and hand one clone to the production T4e installer. This preserves the installation seal: the worker can convert only a candidate minted by that same bridge installation.
 
-The current `T4eCandidateHandoff` remains the sole candidate boundary. S2 installs its bounded sink; it does not add a second observer or tap. `try_handoff` remains non-blocking and by-value.
+The current `T4eCandidateHandoff` remains the sole candidate boundary. PR #52 supplies its bounded worker/library sink implementation and the node-facing typed unavailable sink; it does not add a second observer or tap and does not connect a production candidate to the worker. `try_handoff` remains non-blocking and by-value. Until the named follow-up is complete, every production handoff terminates as `T4eHandoffError::Rejected`.
 
 ### 3.1 Missing production authorities are typed failures, never substitutes
 
-`ProductionDrawdownSource`, `ProductionCodeHashProvider`, and `ProductionDeploymentIdentitySource` already exist as generic provider adapters. What is missing is the node-binding layer beneath them: every current `DrawdownAuthority` and `CommittedStateAuthority` implementation is test-only, there is no production importer of campaign G7/live/deployment attestations, and there is no production installer for the attested R9 store. In particular, S1-b's L4 canonical-balance check has no production authority implementation today and therefore cannot yet run in production. S2 does not rebuild the existing provider adapters or fill the missing authorities with zero drawdown, unsigned JSON, an RPC lookup, a second witness path, or test fixtures.
+`ProductionDrawdownSource`, `ProductionCodeHashProvider`, and `ProductionDeploymentIdentitySource` already exist as generic provider adapters. At PR #52's `feb8561b` base, the node-binding layer beneath them is absent: every `DrawdownAuthority` and `CommittedStateAuthority` implementation is test-only, there is no production importer of campaign G7/live/deployment attestations, and there is no production installer for the attested R9 store. PR #55 separately adds only the committed-state adapter; it does not add the remaining conjunction. PR #52 does not rebuild the existing provider adapters or fill missing authorities with default zero drawdown, unsigned JSON, an RPC or network lookup, a second witness path, or test fixtures.
 
-The high-level worker accepts only an installed authority bundle made from the existing verified types. Its production installer reports a closed `SimulationEntrypointUnavailable` reason for each absent prerequisite:
+PR #52 does not probe a partial prerequisite set or imply that one successful probe makes the installation ready. Its node-facing sink reports exactly `SimulationEntrypointUnavailable::ProductionInstallationDeferred`, emits one structured status naming **Production T4e Simulation Installation + Settled-Loss Authority**, and rejects every candidate with `T4eHandoffError::Rejected`.
+
+The completed follow-up installer must replace that aggregate deferral with a closed typed reason for each failed prerequisite:
 
 - `ArmRuntimeUnavailable(ArmRuntimeOpenError)`;
 - `DrawdownAuthorityUnavailable`;
@@ -80,24 +84,38 @@ The high-level worker accepts only an installed authority bundle made from the e
 - `DeploymentIdentityUnavailable`;
 - `PersistenceUnavailable(SimulationStoreOpenError)`.
 
-In particular, absent `/home/ubuntu/.config/mev-suppression.json` reaches `ArmRuntimeUnavailable` and does not panic or disappear into an `Option`. The node remains up, installs a rejecting T4e sink, emits one structured status with the typed reason, and exposes the same typed status to tests/diagnostics. Every candidate handed to that sink terminates as `T4eHandoffError::Rejected`; it is never retained or retried.
+In particular, the completed installer must map an absent `/home/ubuntu/.config/mev-suppression.json` to `ArmRuntimeUnavailable` rather than panic or erase the failure behind an `Option`. PR #52 tests the library ready path with existing verified synthetic authorities, but product code contains no fixture constructor, no first production `send_gated` callsite, and no production path that can report `Ready`, `Busy`, or `Closed`.
 
-The worker implementation contains the first non-test `send_gated` callsite, but it can reach that call only after the existing verified witness has produced a `PairedSubmission`. Until owner-reviewed producers for the currently missing authorities are installed, the production node is observably unavailable rather than pretending to simulate. This is the required interpretation of “if a piece is missing, say so rather than building a parallel one.” S2 tests the ready path with existing verified synthetic authorities; product code contains no fixture constructor.
+### 3.2 Auditable production-installation deferral
+
+The first production caller of `send_gated` is deferred in full to **Production T4e Simulation Installation + Settled-Loss Authority**. That follow-up is complete only when all of these concrete prerequisites are installed and verified together:
+
+- the PR #55 committed-state adapter;
+- an authoritative settled-loss `DrawdownAuthority`;
+- verified campaign, G7, live, and deployment proofs;
+- an identity-matched `VictimClaimStore`;
+- pinned custody, fail sink, and arming criteria;
+- the compile-pinned `SimulationStore`;
+- one shared `Arc<InstalledSubmissionBridge>` between T4d and T4e.
+
+PR #55 alone is insufficient: its committed-state adapter cannot establish settled loss, proof provenance, claim-store identity, custody/fail behavior, arming, persistence, or same-installation bridge identity. The production installer MUST reject installation unless the entire conjunction is present and identity-matched. It MUST NOT fake `Ready`, use default zero for any authority, or add an RPC, network, fixture, or other fallback.
+
+The completed installer MUST reserve bounded worker admission before any R9 claim or signing. Its handoff mapping is exact: `Busy` means admission occupied, `Closed` means worker closed or disconnected, and `Rejected` means unavailable installation. `Ready` becomes valid only after the complete prerequisite conjunction and shared bridge are installed. Until then the current production contract is deliberately Rejected-only.
 
 ## 4. Thread ownership, bounds, and shutdown
 
-`send_gated` is driven by one named dedicated OS thread, `base-mev-arm-egress`. It is created with `std::thread::Builder`, not `tokio::spawn`, `spawn_blocking`, `block_in_place`, an ExEx callback, or a consensus task. The thread owns:
+In the completed production installation, `send_gated` is driven by one named dedicated OS thread, `base-mev-arm-egress`. It is created with `std::thread::Builder`, not `tokio::spawn`, `spawn_blocking`, `block_in_place`, an ExEx callback, or a consensus task. The thread owns:
 
 - the installed authority bundle and shared bridge;
 - the selected `RuntimeBackend` and `SimBackend` (and, only in a live build, the selected `ProdBackend`);
 - the R9 claim-store writer handle;
 - the durable simulation ledger writer.
 
-The T4e sink owns a `std::sync::mpsc::SyncSender` with capacity exactly one and uses `try_send`. Full maps to `T4eHandoffError::Busy`; disconnected maps to `Closed`; unavailable installation maps to `Rejected`. The caller never waits for signing, disk fsync, or network I/O. Together with T4d’s existing one-candidate slot, at most two sealed candidates exist across the drain/worker boundary; no `Vec`, unbounded channel, retry queue, or cloned candidate is introduced.
+The PR #52 worker/library sink owns a `std::sync::mpsc::SyncSender` with capacity exactly one and uses `try_send`. In the future production installation, full maps to `T4eHandoffError::Busy`, disconnected maps to `Closed`, and unavailable installation maps to `Rejected`; current production exposes only the last mapping. The caller never waits for signing, disk fsync, or network I/O. Admission MUST be successfully reserved before R9 claim/signing begins. Together with T4d’s existing one-candidate slot, at most two sealed candidates exist across the drain/worker boundary; no `Vec`, unbounded channel, retry queue, or cloned candidate is introduced.
 
-The worker processes exactly one candidate to a terminal result before receiving another. A live build uses the same thread and queue, so blocking `reqwest` can never migrate onto Tokio or ExEx.
+The installed worker processes exactly one candidate to a terminal result before receiving another. A live build uses the same thread and queue, so blocking `reqwest` can never migrate onto Tokio or ExEx.
 
-On graceful shutdown the T4d observer closes first, the sender is dropped, and the worker drains at most the one already accepted candidate. The node’s graceful-shutdown owner joins the OS thread through its existing blocking-shutdown lane. A persistence failure, poison, or structurally unknown outcome closes the worker; later handoffs see `Closed`, not silent loss. Ledger closure uses the distinct operator-visible status described in §7 rather than an ordinary candidate rejection.
+After production installation, graceful shutdown closes the T4d observer first, drops the sender, and lets the worker drain at most the one already accepted candidate. The node’s graceful-shutdown owner joins the OS thread through its existing blocking-shutdown lane. A persistence failure, poison, or structurally unknown outcome closes the worker; later handoffs see `Closed`, not silent loss. Ledger closure uses the distinct operator-visible status described in §7 rather than an ordinary candidate rejection.
 
 ## 5. Economics retention and correlation
 
@@ -243,8 +261,9 @@ Committed controls/mutants:
 - `P3 RED`: unknown field/version, sequence gap/duplicate, stale `.open`, non-regular/hard-linked path, or hash mismatch;
 - `P4 RED`: omit file fsync, atomic no-replace publication, or directory fsync;
 - `P5 RED`: remove correlation key or any economics scalar required for recomputation;
-- `U0 GREEN`: absent suppression yields typed `ArmRuntimeUnavailable` and a rejecting sink while node startup succeeds;
-- `U1 RED`: panic, silent `Option`/no-op, fixture fallback, zero drawdown, or candidate retention when runtime/authority is unavailable.
+- `U0 GREEN`: aggregate `ProductionInstallationDeferred`, the named follow-up, its `deferred_production` sink returning `T4eHandoffError::Rejected`, and successful node startup remain explicit;
+- `U1 RED`: remove or change the aggregate deferral reason, constructor, or follow-up installation name;
+- `U2 RED`: change `Rejected` to silent acceptance or candidate retention.
 
 Every mutant first asserts its patch changed the input. At least `S0`, `E0`, `Q0`, `P0`, and `U0` stay GREEN.
 
@@ -262,12 +281,12 @@ Each amendment is listed in the implementation PR body with before/after counts.
 
 Meaningful logic remains outside `lib.rs` and binary glue:
 
-- submit crate: arm simulation entrypoint/worker, typed statuses, correlation projection, bounded store, economics receipt propagation, seals/tests;
-- CLI trader module: committed-state/drawdown/proof authority installation, shared bridge handoff installation, structured unavailable status, graceful worker ownership;
+- PR #52 submit crate: arm simulation worker/library entrypoint, typed unavailable status/sink, correlation projection, bounded store, economics receipt propagation, seals/tests;
+- **Production T4e Simulation Installation + Settled-Loss Authority**: CLI trader node-binding for the complete prerequisite conjunction, shared bridge installation, production worker ownership, and graceful shutdown;
 - CLI/node manifests: exact feature forwarding only;
 - node binary: no meaningful logic.
 
-No generic persistence framework or network sink abstraction is introduced.
+No generic persistence framework or network sink abstraction is introduced. PR #52 makes no production `send_gated` caller reachable.
 
 ## 11. Verification
 
@@ -294,4 +313,4 @@ No live/provisioning binary is executed. Neither PR is merged by the author.
 
 ## 12. Acceptance criteria
 
-S2 is complete when an explicitly built arm-sim node has a bounded, non-blocking path from the existing T4e handoff to a dedicated OS worker; the worker contains the first production `send_gated` caller and durably publishes a bounded, joinable, EV-recomputable simulation attempt only after the existing unified witness succeeds; all unavailable prerequisites are typed and visible; persistence failure is fail-closed; and default/workspace artifacts retain broadcastability zero.
+PR #52/S2 is complete when it supplies the default-off simulation-only rung, bounded non-blocking worker/library entrypoint, typed Rejected-only unavailable sink, and bounded joinable EV-recomputable durable simulation store while retaining broadcastability zero. It does not install the first production `send_gated` caller and does not claim production `Busy`, `Closed`, or `Ready`. Production reachability is complete only in **Production T4e Simulation Installation + Settled-Loss Authority**, after every prerequisite in §3.2 is installed as one identity-matched conjunction, admission is reserved before claim/signing, and the existing unified witness precedes durable simulated submission.
