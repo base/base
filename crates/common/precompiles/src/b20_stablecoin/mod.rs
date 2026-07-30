@@ -1,7 +1,7 @@
 //! `B20StablecoinToken` native precompile — stablecoin variant of the B-20 token.
 
 mod abi;
-pub use abi::IB20Stablecoin;
+pub use abi::{IB20Stablecoin, IB20StablecoinV1, IB20StablecoinV2};
 
 mod accounting;
 pub use accounting::StablecoinAccounting;

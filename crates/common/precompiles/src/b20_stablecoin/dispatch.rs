@@ -6,8 +6,6 @@
 //! (role IDs, policy type IDs, `decimals`) that are invariant across all versions
 //! are answered inline.
 
-use alloc::string::ToString;
-
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
@@ -106,9 +104,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
         if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Stablecoin::IB20StablecoinCalls::valid_selector(selector)
         {
-            let call = IB20Stablecoin::IB20StablecoinCalls::abi_decode_validate(calldata).map_err(
-                |error| BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() },
-            )?;
+            let call = version.abi().stablecoin_decode(calldata)?;
             let label = call.as_label();
             return observer.observe(label, || {
                 let encoded: Bytes = match call {
@@ -118,9 +114,9 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
             });
         }
 
-        // Inherited IB20 selectors, decoded against the wire surface frozen for this version so
-        // historical forks see exactly the surface they shipped with.
-        let call = version.abi().decode(calldata)?;
+        // Fall through to inherited IB20 selectors, decoded against the shared wire surface frozen
+        // for this version so historical forks see exactly the surface they shipped with.
+        let call = version.abi().ib20_decode(calldata)?;
         let label = call.as_label();
 
         observer.observe(label, || {

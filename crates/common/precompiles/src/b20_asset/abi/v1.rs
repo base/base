@@ -1,0 +1,128 @@
+//! The asset-specific `IB20Asset` wire surface frozen at Beryl, the asset's activation fork. This
+//! surface predates the ERC-8056 scheduled-multiplier surface (added at Cobalt), so those selectors
+//! are absent here and stay undialable before Cobalt. A new wire surface goes in a new `abi/vN.rs`;
+//! see [`super`].
+
+use alloy_sol_types::sol;
+
+sol! {
+    #[derive(Debug, PartialEq, Eq)]
+    interface IB20Asset {
+        // ── Errors ───────────────────────────────────────────────────────────
+
+        /// `id` has previously been consumed by `announce`. Each id may be used at most once.
+        error AnnouncementIdAlreadyUsed(string id);
+
+        /// `updateExtraMetadata` was called with an empty metadata key.
+        error InvalidMetadataKey();
+
+        /// A multiplier setter (`setUIMultiplier` / `updateMultiplier`) was called with a
+        /// multiplier of zero or above the `type(uint128).max` overflow guard.
+        error InvalidMultiplier();
+
+        /// [V2] `setUIMultiplier` was called with an `effectiveAt` that is not in the future
+        error EffectiveAtInPast(uint256 effectiveAt);
+
+        /// [V2] `setUIMultiplier` was called with an `effectiveAt` beyond the `uint64` field range
+        error EffectiveAtTooFar(uint256 effectiveAt);
+
+        /// [V2] `setUIMultiplier` was called while a live pending update already exists.
+        error ScheduleOverlap(uint256 pendingEffectiveAt);
+
+        /// [V2] `cancelScheduledMultiplier` was called when there is no live pending update.
+        error NoScheduledMultiplier();
+
+        /// A batched function was called with parallel arrays of differing lengths.
+        error LengthMismatch(uint256 leftLen, uint256 rightLen);
+
+        /// A batched function was called with empty arrays.
+        error EmptyBatch();
+
+        /// An `internalCalls` entry tried to invoke `announce` itself.
+        error AnnouncementInProgress();
+
+        /// An `internalCalls` entry was shorter than four bytes.
+        error InternalCallMalformed(bytes call);
+
+        /// An `internalCalls` entry reverted during its inner dispatch.
+        error InternalCallFailed(bytes call);
+
+        // ── Events ───────────────────────────────────────────────────────────
+
+        /// Emitted by `updateMultiplier` (V1, Beryl). Retained for the `AssetV1` version; the
+        /// scheduled-multiplier version `AssetV2` emits `UIMultiplierUpdated` instead.
+        event MultiplierUpdated(uint256 multiplier);
+
+        /// [V2] ERC-8056; emitted by `setUIMultiplier` and `updateMultiplier`.
+        event UIMultiplierUpdated(uint256 oldMultiplier, uint256 newMultiplier, uint256 effectiveAtTimestamp);
+
+        /// [V2] Emitted by `cancelScheduledMultiplier`, and by `updateMultiplier` when it clears
+        /// a live pending update.
+        event MultiplierUpdateCancelled(uint256 cancelledMultiplier, uint256 cancelledEffectiveAt);
+
+        /// Emitted by `updateExtraMetadata`. Empty `value` indicates removal.
+        event ExtraMetadataUpdated(string key, string value);
+
+        /// Emitted at the start of `announce`. Indexers join with `EndAnnouncement` via `id`.
+        event Announcement(address indexed caller, string id, string description, string uri);
+
+        /// Emitted at the end of `announce` after all `internalCalls` have executed.
+        event EndAnnouncement(string id);
+
+        // ── Role / precision identifiers ─────────────────────────────────────
+
+        /// `keccak256("OPERATOR_ROLE")` — required for `announce` and `updateMultiplier`.
+        function OPERATOR_ROLE() external view returns (bytes32);
+
+        /// Fixed-point precision for `multiplier`: `1e18` (one WAD).
+        function WAD_PRECISION() external view returns (uint256);
+
+
+        // ── Announcements ────────────────────────────────────────────────────
+
+        /// Posts a holder-impacting announcement and atomically executes `internalCalls`.
+        function announce(
+            bytes[] calldata internalCalls,
+            string calldata id,
+            string calldata description,
+            string calldata uri
+        ) external;
+
+        /// Returns true if `id` has been consumed by `announce`.
+        function isAnnouncementIdUsed(string calldata id) external view returns (bool);
+
+        // ── Multiplier ────────────────────────────────────────────────────────
+
+        /// The current multiplier, scaled to `WAD_PRECISION`.
+        function multiplier() external view returns (uint256);
+
+        /// Converts a raw balance to its scaled view: `rawBalance * multiplier / WAD_PRECISION`.
+        function toScaledBalance(uint256 rawBalance) external view returns (uint256);
+
+        /// Converts a scaled balance back to its raw representation.
+        function toRawBalance(uint256 scaledBalance) external view returns (uint256 rawBalance);
+
+        /// Convenience: `toScaledBalance(balanceOf(account))`.
+        function scaledBalanceOf(address account) external view returns (uint256);
+
+        /// Instant failsafe: sets the current multiplier immediately and clears any pending.
+        /// At `AssetV1` emits `MultiplierUpdated` which was replaced in `AssetV2` by `UIMultiplierUpdated`
+        function updateMultiplier(uint256 newMultiplier) external;
+
+        // ── Batched issuance and clawback ────────────────────────────────────
+
+        /// Mints `amounts[i]` to `recipients[i]`. Requires `MINT_ROLE`. All-or-nothing.
+        function batchMint(address[] calldata recipients, uint256[] calldata amounts) external;
+
+        // ── Extra metadata ────────────────────────────────────────────────
+
+        /// Returns the value of the named metadata entry (e.g. `"category"`, `"region"`). Empty string if not set.
+        function extraMetadata(string calldata key) external view returns (string);
+
+        /// Sets, updates, or removes an extra-metadata entry. Empty `value` removes the entry. Requires `METADATA_ROLE`.
+        function updateExtraMetadata(
+            string calldata key,
+            string calldata value
+        ) external;
+    }
+}

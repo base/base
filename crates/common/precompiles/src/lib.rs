@@ -39,12 +39,15 @@ pub use bls12_381::{
 
 mod common;
 pub use common::{
-    B20_MAX_SUPPLY_CAP, B20Abi, B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType,
-    B20TokenRole, Burnable, Configurable, Eip712Domain, IB20, IB20V1, IB20V2, Mintable, Pausable,
-    PermitArgs, Permittable, RoleManaged, Token, TokenAccounting, Transferable,
+    B20_MAX_SUPPLY_CAP, B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole,
+    Burnable, Configurable, Eip712Domain, IB20, IB20V1, IB20V2, Mintable, Pausable, PermitArgs,
+    Permittable, RoleManaged, Token, TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use common::{FakePolicyAccounting, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
+
+mod b20_abi;
+pub use b20_abi::B20Abi;
 
 mod observer;
 pub use observer::{EndGuard, NoopPrecompileCallObserver, PrecompileCallObserver};
@@ -60,14 +63,15 @@ mod b20_asset;
 pub use b20_asset::{
     Asset, AssetAccounting, AssetV1, AssetV2, AssetVersion, AssetVersions,
     B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage, B20AssetToken,
-    ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset,
+    ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset, IB20AssetV1, IB20AssetV2,
 };
 
 mod b20_stablecoin;
 pub use b20_stablecoin::{
     B20StablecoinExtensionStorage, B20StablecoinInit, B20StablecoinPrecompile,
-    B20StablecoinStorage, B20StablecoinToken, IB20Stablecoin, Stablecoin, StablecoinAccounting,
-    StablecoinV1, StablecoinV2, StablecoinVersion, StablecoinVersions,
+    B20StablecoinStorage, B20StablecoinToken, IB20Stablecoin, IB20StablecoinV1, IB20StablecoinV2,
+    Stablecoin, StablecoinAccounting, StablecoinV1, StablecoinV2, StablecoinVersion,
+    StablecoinVersions,
 };
 
 mod b20_factory;

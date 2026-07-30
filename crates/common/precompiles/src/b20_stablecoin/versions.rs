@@ -40,11 +40,8 @@ impl StablecoinVersion {
         }
     }
 
-    /// Returns the shared `IB20` wire surface frozen for this version.
-    ///
-    /// The seize surface — the `SEIZE` pause feature and the seize functions/getters — arrived at
-    /// Cobalt with `V2`. `V1` decodes against the frozen Beryl surface so that discriminant and
-    /// those selectors stay unreachable, matching the pre-Cobalt binary.
+    /// Returns the family wire version ([`B20Abi`]) for this logic version, gating all three B-20
+    /// wire surfaces (shared `IB20`, asset, stablecoin).
     pub const fn abi(self) -> B20Abi {
         match self {
             Self::V1 => B20Abi::V1,

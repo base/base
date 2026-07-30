@@ -8,8 +8,6 @@
 //! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
 //! routing responsibility; its version-defined business steps live on [`Asset`].
 
-use alloc::string::ToString;
-
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
@@ -102,32 +100,15 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        // Asset-specific and overridden selectors are caught here first.
+        // Asset-specific and overridden selectors are caught here first, decoded against the asset
+        // wire surface frozen for this version. The ERC-8056 scheduled-multiplier selectors arrived
+        // at Cobalt with `AssetV2`; at an earlier version they are absent from the frozen surface, so
+        // `asset_decode` returns `UnknownFunctionSelector` before argument decoding, byte-for-byte as
+        // at that version's activation fork (replaces a hand-written fork gate).
         if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Asset::IB20AssetCalls::valid_selector(selector)
         {
-            // Fork gate (pre-decode): the ERC-8056 scheduled-multiplier selectors were introduced
-            // at Cobalt with `AssetV2`. A version that predates them must reject them as an unknown
-            // selector *before* argument decoding, so pre-Cobalt calldata keeps returning
-            // `UnknownFunctionSelector` byte-for-byte as it did at that version's activation fork.
-            // Gating on the raw selector here (rather than per-arm in `handle_asset_call`,
-            // which only runs after a successful decode) is what preserves it.
-            if version < AssetVersion::V2
-                && (selector == IB20Asset::uiMultiplierCall::SELECTOR
-                    || selector == IB20Asset::newUIMultiplierCall::SELECTOR
-                    || selector == IB20Asset::effectiveAtCall::SELECTOR
-                    || selector == IB20Asset::balanceOfUICall::SELECTOR
-                    || selector == IB20Asset::totalSupplyUICall::SELECTOR
-                    || selector == IB20Asset::setUIMultiplierCall::SELECTOR
-                    || selector == IB20Asset::cancelScheduledMultiplierCall::SELECTOR
-                    || selector == IB20Asset::supportsInterfaceCall::SELECTOR)
-            {
-                return Err(BasePrecompileError::UnknownFunctionSelector(selector));
-            }
-            let call =
-                IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
-                    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
-                })?;
+            let call = version.abi().asset_decode(calldata)?;
             let label = call.as_label();
             let asset_observer = observer.clone();
             return observer.observe(label, move || {
@@ -135,9 +116,9 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             });
         }
 
-        // Inherited IB20 selectors, decoded against the wire surface frozen for this version so
-        // historical forks see exactly the surface they shipped with.
-        let call = version.abi().decode(calldata)?;
+        // Fall through to inherited IB20 selectors, decoded against the shared wire surface frozen
+        // for this version so historical forks see exactly the surface they shipped with.
+        let call = version.abi().ib20_decode(calldata)?;
         let label = call.as_label();
 
         observer.observe(label, || self.handle_b20_call(ctx, call, version, privileged))

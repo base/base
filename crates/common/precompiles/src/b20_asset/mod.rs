@@ -11,9 +11,10 @@
 /// committed; any other default would retroactively change an older version's state transition, i.e.
 /// a silent hardfork.
 ///
-/// The `[0u8; 4]` is a placeholder: the dispatcher rejects these selectors on the raw calldata,
-/// before any version method is reached (see the fork gate in `route`), so a reachable call never
-/// actually returns this value. Pinned by `golden_v2_selectors_unknown_at_v1`.
+/// The `[0u8; 4]` is a placeholder: the dispatcher rejects these selectors when decoding against the
+/// version's frozen wire surface (`AssetVersion::abi().asset_decode`), before any version method is
+/// reached, so a reachable call never actually returns this value. Pinned by
+/// `golden_v2_selectors_unknown_at_v1`.
 macro_rules! reject_frozen_selector {
     () => {
         ::core::result::Result::Err(
@@ -23,7 +24,7 @@ macro_rules! reject_frozen_selector {
 }
 
 mod abi;
-pub use abi::{ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset};
+pub use abi::{ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset, IB20AssetV1, IB20AssetV2};
 
 mod accounting;
 pub use accounting::AssetAccounting;
