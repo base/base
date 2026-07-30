@@ -125,26 +125,21 @@ pub struct DestructiveClBulkArgs {
 impl P2pCommand {
     /// Runs the selected `basectl p2p` operation.
     pub async fn run(self, config: MonitoringConfig) -> Result<CommandOutcome> {
+        let success = CommandOutcome::Success;
         match self.command {
             P2pCommands::Reachability { enode, json } => {
                 run_reachability(&config, &enode, json).await
             }
             P2pCommands::UnbanAll(args) => run_unban_all(config, args).await,
-            other => {
-                match other {
-                    P2pCommands::Peers(args) => run_peers(config, args).await?,
-                    P2pCommands::Info(args) => run_info(config, args).await?,
-                    P2pCommands::AddPeer(args) => run_add_peer(config, args).await?,
-                    P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await?,
-                    P2pCommands::Ban(args) => {
-                        run_peer_ban_action(config, args, BanAction::Ban).await?
-                    }
-                    P2pCommands::Unban(args) => {
-                        run_peer_ban_action(config, args, BanAction::Unban).await?
-                    }
-                    P2pCommands::Reachability { .. } | P2pCommands::UnbanAll(_) => unreachable!(),
-                }
-                Ok(CommandOutcome::Success)
+            P2pCommands::Peers(args) => run_peers(config, args).await.map(|()| success),
+            P2pCommands::Info(args) => run_info(config, args).await.map(|()| success),
+            P2pCommands::AddPeer(args) => run_add_peer(config, args).await.map(|()| success),
+            P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await.map(|()| success),
+            P2pCommands::Ban(args) => {
+                run_peer_ban_action(config, args, BanAction::Ban).await.map(|()| success)
+            }
+            P2pCommands::Unban(args) => {
+                run_peer_ban_action(config, args, BanAction::Unban).await.map(|()| success)
             }
         }
     }
@@ -196,7 +191,7 @@ async fn run_peers(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
         }
         (true, false) => {
             let report = fetch_connected_peers(&el_rpc, &cl_rpc).await?;
-            JsonOutput::print(&PeersJson::from_report(&config.name, &report))?;
+            JsonOutput::print(&PeersJson::from_report(&config.name, report))?;
         }
         (false, _) => {
             let report = fetch_connected_peers(&el_rpc, &cl_rpc).await?;
@@ -803,8 +798,8 @@ pub struct PeersJson {
 }
 
 impl PeersJson {
-    fn from_report(network: &str, report: &PeerListReport) -> Self {
-        Self { network: network.to_string(), el: report.el.clone(), cl: report.cl.clone() }
+    fn from_report(network: &str, report: PeerListReport) -> Self {
+        Self { network: network.to_string(), el: report.el, cl: report.cl }
     }
 }
 

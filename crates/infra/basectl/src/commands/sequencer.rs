@@ -914,7 +914,7 @@ mod tests {
         wait_for_expected_state_with_fetch,
     };
     use crate::{
-        ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus,
+        ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus, NodeLookupError,
         SEQUENCER_ACTIVE_RPC_TIMEOUT, SequencerCommandError,
     };
 
@@ -1304,10 +1304,10 @@ mod tests {
 
         assert!(matches!(
             err,
-            SequencerCommandError::MissingNode {
+            SequencerCommandError::NodeLookup(NodeLookupError::MissingNode {
                 requested_node,
                 available_nodes,
-            } if requested_node == "op-conductor-1"
+            }) if requested_node == "op-conductor-1"
                 && available_nodes == vec!["op-conductor-0".to_string()]
         ));
     }

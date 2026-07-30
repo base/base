@@ -35,11 +35,11 @@ pub enum ConductorCommands {
     Pause(ConductorNodeActionArgs),
     /// Resume op-conductor's control loop on one node.
     Unpause(ConductorNodeActionArgs),
-    /// Pause the control loop on every current raft member, falling back to
-    /// the configured conductor list if static membership lookup is unavailable.
+    /// Pause op-conductor's control loop on every current raft member, falling
+    /// back to the configured conductor list if static membership lookup is unavailable.
     PauseAll(ConductorClusterActionArgs),
-    /// Resume the control loop on every current raft member, falling back to
-    /// the configured conductor list if static membership lookup is unavailable.
+    /// Resume op-conductor's control loop on every current raft member, falling
+    /// back to the configured conductor list if static membership lookup is unavailable.
     UnpauseAll(ConductorClusterActionArgs),
 }
 
@@ -665,7 +665,7 @@ mod tests {
     };
     use crate::{
         CommandOutcome, ConductorClusterSnapshot, ConductorCommandError, ConductorNodeConfig,
-        ConductorNodeFailure,
+        ConductorNodeFailure, NodeLookupError,
     };
 
     fn node(name: &str) -> ConductorNodeConfig {
@@ -865,10 +865,10 @@ mod tests {
 
         assert!(matches!(
             err,
-            ConductorCommandError::MissingNode {
+            ConductorCommandError::NodeLookup(NodeLookupError::MissingNode {
                 requested_node,
                 available_nodes,
-            } if requested_node == "op-conductor-1"
+            }) if requested_node == "op-conductor-1"
                 && available_nodes == vec!["op-conductor-0".to_string()]
         ));
     }

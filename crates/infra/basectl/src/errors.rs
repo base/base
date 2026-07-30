@@ -32,6 +32,10 @@ pub enum BlockRefParseError {
 }
 
 /// Error returned when shared conductor source or node lookup fails.
+///
+/// Messages are deliberately subject-less fragments; callers wrap this in
+/// [`ConductorCommandError`] or [`SequencerCommandError`], which prepend the
+/// command group so operators see which one failed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum NodeLookupError {
@@ -178,6 +182,7 @@ pub enum ProofsCommandError {
 
 /// Error returned when a command cannot resolve a consensus-node RPC URL from flags or config.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
 #[error(
     "{command_name} needs a consensus-node RPC URL.\n\
      The '{config_name}' config does not set `consensus_node_rpc`.\n\
@@ -252,55 +257,18 @@ pub enum TxpoolCommandError {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum ConductorCommandError {
-    /// The command could not resolve a conductor source from config or flags.
-    #[error(
-        "conductor commands need conductor config or a bootstrap RPC URL for '{config_name}'. Set `conductors` or `discovery.bootstrap_rpc` in config, or pass `--conductor-rpc <url>`."
-    )]
-    MissingSource {
-        /// The config name selected for the command.
-        config_name: String,
-    },
-    /// The requested conductor node name was not found.
-    #[error("conductor node {requested_node} not found. Available nodes: {}", available_nodes.join(", "))]
-    MissingNode {
-        /// The node name requested by the caller.
-        requested_node: String,
-        /// The node names available to the command.
-        available_nodes: Vec<String>,
-    },
-}
-
-impl From<NodeLookupError> for ConductorCommandError {
-    fn from(error: NodeLookupError) -> Self {
-        match error {
-            NodeLookupError::MissingSource { config_name } => Self::MissingSource { config_name },
-            NodeLookupError::MissingNode { requested_node, available_nodes } => {
-                Self::MissingNode { requested_node, available_nodes }
-            }
-        }
-    }
+    /// The shared conductor source or node lookup failed.
+    #[error("conductor {0}")]
+    NodeLookup(#[from] NodeLookupError),
 }
 
 /// Error returned by sequencer command validation and preflight checks.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum SequencerCommandError {
-    /// The command could not resolve a conductor source from config or flags.
-    #[error(
-        "sequencer commands need conductor config or a bootstrap RPC URL for '{config_name}'. Set `conductors` or `discovery.bootstrap_rpc` in config, or pass `--conductor-rpc <url>`."
-    )]
-    MissingSource {
-        /// The config name selected for the command.
-        config_name: String,
-    },
-    /// The requested sequencer node name was not found.
-    #[error("sequencer node {requested_node} not found. Available nodes: {}", available_nodes.join(", "))]
-    MissingNode {
-        /// The node name requested by the caller.
-        requested_node: String,
-        /// The node names available to the command.
-        available_nodes: Vec<String>,
-    },
+    /// The shared conductor source or node lookup failed.
+    #[error("sequencer {0}")]
+    NodeLookup(#[from] NodeLookupError),
     /// The command could not infer an unsafe head hash from the target node.
     #[error(
         "could not determine unsafe head for {node}; pass an explicit 32-byte hash or restore CL reachability"
@@ -402,17 +370,6 @@ pub struct StateConvergenceTimeoutError {
     pub last_error: Option<String>,
 }
 
-impl From<NodeLookupError> for SequencerCommandError {
-    fn from(error: NodeLookupError) -> Self {
-        match error {
-            NodeLookupError::MissingSource { config_name } => Self::MissingSource { config_name },
-            NodeLookupError::MissingNode { requested_node, available_nodes } => {
-                Self::MissingNode { requested_node, available_nodes }
-            }
-        }
-    }
-}
-
 /// Error returned by doctor argument validation.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
@@ -433,4 +390,37 @@ pub enum DoctorArgsError {
         /// The configured failure threshold.
         fail_blocks: u64,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn node_lookup_errors_name_the_failing_command_group() {
+        let missing_source = NodeLookupError::MissingSource { config_name: "devnet".to_string() };
+        let missing_node = NodeLookupError::MissingNode {
+            requested_node: "op-conductor-1".to_string(),
+            available_nodes: vec!["op-conductor-0".to_string()],
+        };
+
+        assert!(
+            ConductorCommandError::from(missing_source.clone())
+                .to_string()
+                .starts_with("conductor commands need conductor config")
+        );
+        assert!(
+            SequencerCommandError::from(missing_source)
+                .to_string()
+                .starts_with("sequencer commands need conductor config")
+        );
+        assert_eq!(
+            ConductorCommandError::from(missing_node.clone()).to_string(),
+            "conductor node op-conductor-1 not found. Available nodes: op-conductor-0"
+        );
+        assert_eq!(
+            SequencerCommandError::from(missing_node).to_string(),
+            "sequencer node op-conductor-1 not found. Available nodes: op-conductor-0"
+        );
+    }
 }

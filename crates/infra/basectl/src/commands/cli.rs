@@ -1,6 +1,6 @@
 //! CLI arguments and subcommands for basectl.
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser, Subcommand};
 use url::Url;
 
@@ -92,43 +92,41 @@ pub enum MonitorCommands {
 }
 
 impl Cli {
+    /// Returns whether this invocation renders to the terminal directly (the
+    /// TUI monitor, or bare `basectl` help), where a stderr tracing
+    /// subscriber would corrupt or pollute the display.
+    pub const fn is_tui(&self) -> bool {
+        matches!(self.command, Some(Commands::Monitor { .. }) | None)
+    }
+
     /// Runs the parsed command and returns its process outcome.
     pub async fn run(self) -> Result<CommandOutcome> {
-        let config = self.config;
         let conductor_rpc = self.conductor_rpc;
-        match self.command {
+        let command = match self.command {
             Some(Commands::Monitor { command }) => {
                 let view = command.map(|command| command.view_id()).unwrap_or(ViewId::Home);
-                run_app(view, &config, conductor_rpc).await?;
+                run_app(view, &self.config, conductor_rpc).await?;
+                return Ok(CommandOutcome::Success);
             }
-            Some(Commands::Block(command)) => {
-                command.run(MonitoringConfig::load(&config).await?).await?;
+            None => {
+                Self::command().print_help()?;
+                return Ok(CommandOutcome::Success);
             }
-            Some(Commands::SyncStatus(command)) => {
-                command.run(MonitoringConfig::load(&config).await?).await?;
-            }
-            Some(Commands::P2p(command)) => {
-                return command.run(MonitoringConfig::load(&config).await?).await;
-            }
-            Some(Commands::Txpool(command)) => {
-                command.run(MonitoringConfig::load(&config).await?).await?;
-            }
-            Some(Commands::Conductor(command)) => {
-                return command.run(MonitoringConfig::load(&config).await?, conductor_rpc).await;
-            }
-            Some(Commands::Sequencer(command)) => {
-                return command.run(MonitoringConfig::load(&config).await?, conductor_rpc).await;
-            }
-            Some(Commands::Proofs(command)) => {
-                return command.run(MonitoringConfig::load(&config).await?).await;
-            }
-            Some(Commands::Doctor(command)) => {
-                return command.run(MonitoringConfig::load(&config).await?).await;
-            }
-            Some(Commands::Flashblocks) => {
-                run_flashblocks_json(MonitoringConfig::load(&config).await?).await?;
-            }
-            None => Self::command().print_help()?,
+            Some(command) => command,
+        };
+        let config = MonitoringConfig::load(&self.config).await?;
+        match command {
+            Commands::Block(command) => command.run(config).await?,
+            Commands::SyncStatus(command) => command.run(config).await?,
+            Commands::P2p(command) => return command.run(config).await,
+            Commands::Txpool(command) => command.run(config).await?,
+            Commands::Conductor(command) => return command.run(config, conductor_rpc).await,
+            Commands::Sequencer(command) => return command.run(config, conductor_rpc).await,
+            Commands::Proofs(command) => return command.run(config).await,
+            Commands::Doctor(command) => return command.run(config).await,
+            Commands::Flashblocks => run_flashblocks_json(config).await?,
+            // Handled by the pre-load match above; the compiler cannot narrow the type.
+            Commands::Monitor { .. } => bail!("monitor reached post-load dispatch"),
         }
         Ok(CommandOutcome::Success)
     }

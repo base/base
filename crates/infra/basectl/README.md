@@ -9,7 +9,8 @@ txpool, peer, proof, conductor, sequencer, and diagnostic workflows. `Cli::run`
 dispatches parsed commands and returns a process outcome.
 
 The crate also provides the interactive terminal monitor for block production,
-node sync status, flashblock throughput, and system metrics.
+node sync status, flashblock throughput, and system metrics, plus the
+non-interactive `basectl flashblocks` JSON-lines stream.
 
 ## Pods View
 
@@ -40,7 +41,9 @@ basectl-cli = { workspace = true }
 use basectl_cli::Cli;
 use clap::Parser;
 
-let outcome = Cli::parse().run().await?;
+if Cli::parse().run().await?.has_failures() {
+    std::process::exit(1);
+}
 ```
 
 ## License

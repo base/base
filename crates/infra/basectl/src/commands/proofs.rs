@@ -240,7 +240,7 @@ async fn run_finalize(
         network = %config.name,
         prover_rpc = %endpoint,
         session_id = %accepted_session_id,
-        status = ProofsClient::status_label(response.status),
+        status = %ProofOutputStatus::from(response.status),
         "proofs finalize wait completed"
     );
     Ok(CommandOutcome::from_failures(failed))
