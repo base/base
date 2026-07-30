@@ -6071,6 +6071,7 @@ dependencies = [
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "brotli",
+ "criterion",
  "derive_more 2.1.1",
  "miniz_oxide 0.9.1",
  "proptest",
