@@ -3,6 +3,9 @@
 mod best_txs;
 pub use best_txs::BestFlashblocksTxs;
 
+mod deadline;
+pub use deadline::PayloadJobDeadline;
+
 mod generator;
 pub use generator::{BlockPayloadJob, BlockPayloadJobGenerator, BuildArguments, ResolvePayload};
 
