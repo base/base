@@ -152,10 +152,7 @@ pub enum SimulationEntrypointTerminal {
 
 /// Library execution seam for `send_gated`, fixed to `SimBackend`.
 ///
-/// This seam is not production-installed until
-/// `Production T4e Simulation Installation + Settled-Loss Authority` supplies the real
-/// settled-loss authority and all other named installation prerequisites. The committed-state
-/// authority is available to that follow-up, but is not sufficient to make production ready.
+/// This seam is not production-installed until `Production T4e Simulation Installation + Settled-Loss Authority` supplies real settled-loss authority, proofs/claim-store/custody, the shared bridge, and consumes the PR #55 committed-state dependency already available here. Production `Ready`, `Busy`, and `Closed` handoff behavior remains deferred to that complete installer.
 #[derive(Debug)]
 pub struct SimulationEntrypoint {
     backend: SimBackend,
