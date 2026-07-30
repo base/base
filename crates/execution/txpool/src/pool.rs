@@ -318,7 +318,13 @@ where
     ) -> PoolResult<AddedTransactionOutcome> {
         let validated = self.validator().validate_transaction(origin, transaction).await;
         match validated {
-            TransactionValidationOutcome::Valid { transaction, propagate, authorities, .. } => {
+            TransactionValidationOutcome::Valid {
+                transaction,
+                propagate,
+                authorities,
+                state_nonce,
+                ..
+            } => {
                 // The host does not build a `ValidPoolTransaction` here. Minting a
                 // `TransactionId` would need a sender interner, the sidecar is told to mint its
                 // own identifier anyway, and reth's `SenderIdentifiers` has no removal API — so
@@ -329,6 +335,7 @@ where
                     transaction,
                     propagate,
                     authorities,
+                    state_nonce,
                 })?;
                 let mut listeners = self.listeners.write();
                 let mut guard = self.guard.write();
@@ -1421,8 +1428,9 @@ where
             let hashes: Vec<_> =
                 registered.iter().filter(|(i, _)| *i == index).map(|(_, h)| *h).collect();
             if !hashes.is_empty() {
-                registered_removed
-                    .extend(pool.remove_transactions(&hashes, RemovalReason::Discarded));
+                registered_removed.extend(
+                    pool.remove_transactions(&hashes, RemovalReason::DiscardedWithDescendants),
+                );
             }
         }
         if !registered_removed.is_empty() {
@@ -2826,11 +2834,20 @@ mod tests {
     struct TestSidecar {
         owner: Address,
         stored: RwLock<Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>>,
+        /// Every `reason` the host has passed to `remove_transactions`, in order.
+        reasons: RwLock<Vec<RemovalReason>>,
+        /// Every `state_nonce` the host has passed to `insert`, in order.
+        admitted_state_nonces: RwLock<Vec<u64>>,
     }
 
     impl TestSidecar {
         fn new(owner: Address) -> Self {
-            Self { owner, stored: RwLock::new(Vec::new()) }
+            Self {
+                owner,
+                stored: RwLock::new(Vec::new()),
+                reasons: RwLock::new(Vec::new()),
+                admitted_state_nonces: RwLock::new(Vec::new()),
+            }
         }
     }
 
@@ -2870,6 +2887,7 @@ mod tests {
             &self,
             admission: SidecarAdmission<BasePooledTransaction>,
         ) -> PoolResult<SidecarInsert<BasePooledTransaction>> {
+            self.admitted_state_nonces.write().push(admission.state_nonce);
             let transaction = admission.transaction.into_transaction();
             let stored = Arc::new(ValidPoolTransaction {
                 transaction_id: TransactionId::new(0u64.into(), transaction.nonce()),
@@ -2912,8 +2930,9 @@ mod tests {
         fn remove_transactions(
             &self,
             hashes: &[TxHash],
-            _reason: RemovalReason,
+            reason: RemovalReason,
         ) -> Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>> {
+            self.reasons.write().push(reason);
             let mut stored = self.stored.write();
             let (removed, kept) = stored.iter().cloned().partition(|tx| hashes.contains(tx.hash()));
             *stored = kept;
@@ -3039,5 +3058,49 @@ mod tests {
         let (pool, _client) = build_integration_pool();
         assert!(pool.sidecar_all_transactions().is_empty());
         assert!(pool.sidecar_owning(&TxHash::repeat_byte(0x11)).is_none());
+    }
+
+    #[tokio::test]
+    async fn removal_reason_distinguishes_mined_discarded_and_descendants() {
+        // A pool that sequences per sender advances its cursor only on `Mined`, and must evict
+        // dependents on the descendants variant. Collapsing these — as an earlier revision of the
+        // trait did — is invisible until a nonce-sequencing pool is written against it.
+        let (pool, _client, sidecar, owner) = pool_with_sidecar();
+
+        let mined = signed_1559(&owner, 0);
+        let mined_hash = *mined.hash();
+        pool.add_transaction(TransactionOrigin::Local, mined).await.unwrap();
+        pool.prune_transactions(vec![mined_hash]);
+        assert_eq!(*sidecar.reasons.read().last().unwrap(), RemovalReason::Mined);
+
+        let discarded = signed_1559(&owner, 1);
+        let discarded_hash = *discarded.hash();
+        pool.add_transaction(TransactionOrigin::Local, discarded).await.unwrap();
+        pool.remove_transactions(vec![discarded_hash]);
+        assert_eq!(*sidecar.reasons.read().last().unwrap(), RemovalReason::Discarded);
+
+        let with_descendants = signed_1559(&owner, 2);
+        let with_descendants_hash = *with_descendants.hash();
+        pool.add_transaction(TransactionOrigin::Local, with_descendants).await.unwrap();
+        pool.remove_transactions_and_descendants(vec![with_descendants_hash]);
+        assert_eq!(
+            *sidecar.reasons.read().last().unwrap(),
+            RemovalReason::DiscardedWithDescendants,
+        );
+    }
+
+    #[tokio::test]
+    async fn admission_carries_the_state_nonce_a_sequencing_pool_needs() {
+        // `TwoDNoncePool` anchors its per-sender cursor on this and re-anchors after a reorg, so
+        // a seam that cannot express it cannot host the pool it was extracted from.
+        let (pool, client, sidecar, owner) = pool_with_sidecar();
+        client.add_account(
+            owner.address(),
+            ExtendedAccount::new(7, U256::from(1_000_000_000_000_000_000u64)),
+        );
+
+        pool.add_transaction(TransactionOrigin::Local, signed_1559(&owner, 7)).await.unwrap();
+
+        assert_eq!(*sidecar.admitted_state_nonces.read().last().unwrap(), 7);
     }
 }

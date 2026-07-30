@@ -34,9 +34,18 @@ use crate::BasePooledTx;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemovalReason {
     /// The transactions became canonical.
+    ///
+    /// A pool sequencing transactions per sender should advance its cursor for these, and only
+    /// these — a discard leaves the sequence where it was.
     Mined,
     /// The transactions are being discarded without being mined.
     Discarded,
+    /// As [`Self::Discarded`], and also drop anything their removal leaves un-includable.
+    ///
+    /// A pool whose transactions depend on one another — a per-sender nonce sequence, say — must
+    /// also evict the dependents. A pool with no such dependencies treats this exactly as
+    /// [`Self::Discarded`].
+    DiscardedWithDescendants,
 }
 
 /// A validated transaction being handed to a sidecar for storage.
@@ -55,6 +64,12 @@ pub struct SidecarAdmission<T: BasePooledTx> {
     pub propagate: bool,
     /// EIP-7702 authorities recovered during validation, if any.
     pub authorities: Option<Vec<Address>>,
+    /// The sender's on-chain nonce as of validation.
+    ///
+    /// A pool that sequences transactions per sender needs this to anchor its cursor, and to
+    /// re-anchor it after a reorg moves the account backwards. Pools keyed on anything other than
+    /// account nonces ignore it.
+    pub state_nonce: u64,
 }
 
 /// Result of a sidecar insertion.
