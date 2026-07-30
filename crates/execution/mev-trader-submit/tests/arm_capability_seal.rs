@@ -14,13 +14,14 @@ use syn::{ext::IdentExt, visit::Visit};
 
 /// The exact production files under `src/arm/`. A NEW arm file must be added here
 /// (and re-reviewed) before it can ship (b7, fail-closed).
-const ARM_FILES: [&str; 16] = [
+const ARM_FILES: [&str; 17] = [
     "claim.rs",
     "custody.rs",
     "fail_sink.rs",
     "mod.rs",
     "proofs.rs",
     "producer.rs",
+    "provisioning_tool.rs",
     "providers.rs",
     "production_bundle.rs",
     "production_handoff.rs",
@@ -201,7 +202,7 @@ fn arm_source_is_exactly_the_declared_set() {
 
 /// The complete root API. T4e adds only the reviewed checked authorities, exact-one
 /// production handoff, bounded worker/status types, and simulation-only runtime surface.
-const PUBLIC_API_ALLOWLIST: [&str; 91] = [
+const PUBLIC_API_ALLOWLIST: [&str; 100] = [
     "AdmittedCandidate",
     "AuthorizationGateError",
     "BlockNumHash",
@@ -259,7 +260,10 @@ const PUBLIC_API_ALLOWLIST: [&str; 91] = [
     "ProductionStoreOpenFailure",
     "ProductionWorkerBootstrap",
     "ProductionWorkerError",
+    "ParsedFrozenExportV1",
     "ProviderError",
+    "ProjectionClosureFieldsV1",
+    "ProvisioningToolError",
     "PublicationIoClass",
     "PublishedPopulationManifestV1",
     "RuntimeBackend",
@@ -282,10 +286,16 @@ const PUBLIC_API_ALLOWLIST: [&str; 91] = [
     "SimulationReservation",
     "SimulationStoreOperation",
     "SourceLedgerRowV1",
+    "SourceSubmissionManifestEntryV1",
     "SuppressionRollbackError",
     "TerminalSettlementProjectionV1",
+    "T4eProvisioningTool",
+    "TerminalKindV1",
+    "TerminalSettlementEntryV1",
     "UnsignedInstallBundleV1",
     "UnsignedPopulationManifestV1",
+    "UnsignedProjectionV1",
+    "UnresolvedReasonV1",
     "VerifiedProductionProofs",
     "WorkerStartup",
     "WorkerStartupFailure",
@@ -434,6 +444,7 @@ fn reviewed_arm_module_tree(root: &Path) -> Result<(), String> {
         "proofs",
         "providers",
         "producer",
+        "provisioning_tool",
         "production_bundle",
         "production_handoff",
         "simulation_entrypoint",
@@ -1225,6 +1236,7 @@ fn arm_submodules_are_private() {
         "proofs",
         "providers",
         "producer",
+        "provisioning_tool",
         "production_bundle",
         "production_handoff",
         "simulation_entrypoint",

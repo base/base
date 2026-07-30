@@ -12,7 +12,9 @@ use std::{
 };
 
 use alloy_primitives::{B256, Signature, U256, keccak256};
-use base_mev_trader::{DrawdownInput, LossProvenance, OWNER_ATTEST_ADDRESS};
+use base_mev_trader::{DrawdownInput, LossProvenance};
+#[cfg(not(test))]
+use base_mev_trader::OWNER_ATTEST_ADDRESS;
 
 use super::{DrawdownAuthority, ProviderError};
 
@@ -640,6 +642,90 @@ impl TerminalSettlementProjectionV1 {
         signature_preimage.extend_from_slice(projection.content_hash.as_slice());
         verify_canonical_signature(&projection.signature, &signature_preimage)?;
         Ok(projection)
+    }
+
+    /// Builds the sole canonical unsigned projection body and its owner-signature preimage.
+    #[expect(clippy::too_many_arguments, reason = "the canonical projection header is explicit")]
+    pub fn prepare_unsigned(
+        campaign_id: B256,
+        chain_id: u64,
+        source_window_start_ms: u64,
+        source_window_end_ms: u64,
+        source_snapshot_xmin: u64,
+        source_snapshot_xmax: u64,
+        source_snapshot_xip_hash: B256,
+        source_snapshot_wal_lsn: u64,
+        projection_sequence: u64,
+        source_manifest_hash: B256,
+        population_closure_signature: [u8; 65],
+        finalized_block_number: u64,
+        finalized_block_hash: B256,
+        previous_content_hash: B256,
+        source_manifest_entries: Vec<SourceSubmissionManifestEntryV1>,
+        terminal_entries: Vec<TerminalSettlementEntryV1>,
+    ) -> Result<(Vec<u8>, Vec<u8>), SettledLossUnavailableReason> {
+        let count = u64::try_from(source_manifest_entries.len())
+            .map_err(|_| SettledLossUnavailableReason::Malformed)?;
+        if terminal_entries.iter().any(|entry| {
+            entry.terminal != TerminalKindV1::Unresolved
+                && entry.terminal_block_number > finalized_block_number
+        }) {
+            return Err(SettledLossUnavailableReason::Malformed);
+        }
+        let mut totals = [U256::ZERO; 6];
+        for terminal in &terminal_entries {
+            totals[0] = checked_add(totals[0], terminal.execution_gas_loss_wei)?;
+            totals[1] = checked_add(totals[1], terminal.l1_data_fee_loss_wei)?;
+            totals[2] = checked_add(totals[2], terminal.operator_fee_loss_wei)?;
+            totals[3] = checked_add(totals[3], terminal.kickback_loss_wei)?;
+            totals[4] = checked_add(totals[4], terminal.ejection_loss_wei)?;
+            totals[5] = checked_add(totals[5], terminal.settled_loss_wei)?;
+        }
+        let mut projection = Self {
+            campaign_id,
+            chain_id,
+            source_window_start_ms,
+            source_window_end_ms,
+            source_snapshot_xmin,
+            source_snapshot_xmax,
+            source_snapshot_xip_hash,
+            source_snapshot_wal_lsn,
+            projection_sequence,
+            manifest_start_sequence: 0,
+            manifest_next_sequence: count,
+            submission_count: count,
+            terminal_count: count,
+            complete: true,
+            unresolved_count: 0,
+            source_manifest_hash,
+            population_closure_signature,
+            finalized_block_number,
+            finalized_block_hash,
+            previous_content_hash,
+            total_execution_gas_loss_wei: totals[0],
+            total_l1_data_fee_loss_wei: totals[1],
+            total_operator_fee_loss_wei: totals[2],
+            total_kickback_loss_wei: totals[3],
+            total_ejection_loss_wei: totals[4],
+            total_settled_loss_wei: totals[5],
+            source_manifest_entries,
+            terminal_entries,
+            content_hash: B256::ZERO,
+            signature: [0; 65],
+        };
+        projection.validate_structure()?;
+        let canonical = projection.encode();
+        let body_len = canonical.len() - 32 - 65;
+        let mut hash_preimage = Vec::with_capacity(SETTLED_LOSS_DOMAIN.len() + body_len);
+        hash_preimage.extend_from_slice(SETTLED_LOSS_DOMAIN);
+        hash_preimage.extend_from_slice(&canonical[..body_len]);
+        projection.content_hash = keccak256(hash_preimage);
+        let mut canonical_body = projection.encode();
+        canonical_body.truncate(canonical_body.len() - 65);
+        let mut signature_preimage = Vec::with_capacity(SETTLED_LOSS_DOMAIN.len() + 32);
+        signature_preimage.extend_from_slice(SETTLED_LOSS_DOMAIN);
+        signature_preimage.extend_from_slice(projection.content_hash.as_slice());
+        Ok((canonical_body, signature_preimage))
     }
 
     /// Returns the exact canonical projection bytes.
@@ -1643,7 +1729,10 @@ pub(crate) fn verify_canonical_signature(
     preimage: &[u8],
 ) -> Result<(), SettledLossUnavailableReason> {
     verify_signature_shape(bytes)?;
+    #[cfg(not(test))]
     let owner = OWNER_ATTEST_ADDRESS.ok_or(SettledLossUnavailableReason::AuthenticationFailed)?;
+    #[cfg(test)]
+    let owner = super::testkit::owner_address();
     let signature = Signature::from_raw_array(bytes)
         .map_err(|_| SettledLossUnavailableReason::AuthenticationFailed)?;
     let recovered = signature
