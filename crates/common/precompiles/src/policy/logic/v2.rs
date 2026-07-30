@@ -191,11 +191,11 @@ impl PolicyRegistryV2 {
     /// rather than shared with [`super::PolicyRegistryV1`] so that widening the rule for a later
     /// fork cannot reach back and change what that frozen version accepts.
     fn validate_create_policy_inputs(admin: Address, policy_type: PolicyType) -> Result<u8> {
-        if !matches!(policy_type, PolicyType::BLOCKLIST | PolicyType::ALLOWLIST) {
-            return Err(BasePrecompileError::enum_conversion_error());
-        }
         if admin == Address::ZERO {
             return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
+        }
+        if !matches!(policy_type, PolicyType::BLOCKLIST | PolicyType::ALLOWLIST) {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
         }
         Ok(policy_type.as_discriminant())
     }
@@ -1053,14 +1053,24 @@ mod tests {
         assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
     }
 
+    /// Precedence pin for the shared validator on the `createPolicyWithAccounts` path: a composite
+    /// type is rejected with `IncompatiblePolicyType` before the batch-size guard runs, matching
+    /// base-std's `ZeroAddress` -> `IncompatiblePolicyType` -> `BatchSizeTooLarge` order. Composite
+    /// discriminants (2/3) are the only invalid-type values that decode at V2 and reach the logic;
+    /// out-of-range bytes are rejected earlier at ABI decode (see `dispatch` tests).
     #[test]
-    fn create_policy_with_accounts_invalid_policy_type_precedes_batch_size_revert() {
+    fn create_policy_with_accounts_composite_type_precedes_batch_size_revert() {
         let mut rt = initialized();
         let accounts = many_accounts(PolicyRegistryV2::MAX_ACCOUNTS_PER_BATCH + 1);
-        let err = LOGIC
-            .create_policy_with_accounts(&mut rt, ADMIN, PolicyType::__Invalid, accounts)
-            .unwrap_err();
-        assert_eq!(err, BasePrecompileError::enum_conversion_error());
+        for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
+            let err = LOGIC
+                .create_policy_with_accounts(&mut rt, ADMIN, policy_type, accounts.clone())
+                .unwrap_err();
+            assert_eq!(
+                err,
+                BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
+            );
+        }
     }
 
     /// `createPolicy` admits only simple leaf types. `create_composite_policy` is the sole path
@@ -1071,7 +1081,21 @@ mod tests {
         let mut rt = initialized();
         for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
             let err = LOGIC.create_policy(&mut rt, ADMIN, policy_type).unwrap_err();
-            assert_eq!(err, BasePrecompileError::enum_conversion_error());
+            assert_eq!(
+                err,
+                BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
+            );
+        }
+    }
+
+    /// Precedence pin: a zero admin is rejected before the composite-type check, matching the
+    /// base-std natspec order (`ZeroAddress` before `IncompatiblePolicyType`).
+    #[test]
+    fn create_policy_zero_admin_precedes_incompatible_type() {
+        let mut rt = initialized();
+        for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
+            let err = LOGIC.create_policy(&mut rt, Address::ZERO, policy_type).unwrap_err();
+            assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
         }
     }
 
