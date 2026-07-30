@@ -12,8 +12,6 @@ use base_proof_preimage::errors::PreimageOracleError;
 use base_protocol::{BaseBlockConversionError, FromBlockError};
 use thiserror::Error;
 
-use crate::ScheduleIdError;
-
 /// Error from an oracle-backed provider.
 ///
 /// [`OracleProviderError`] represents various failure modes when interacting with
@@ -145,9 +143,6 @@ pub enum OracleProviderError {
     /// The rollup config has a zero L2 genesis timestamp.
     #[error("L2 genesis timestamp must be non-zero")]
     InvalidL2GenesisTimestamp,
-    /// The rollup config contains a schedule that cannot be represented by `ProtocolVersions`.
-    #[error(transparent)]
-    ScheduleId(#[from] ScheduleIdError),
     /// The schedule block precedes the claimed L2 block.
     #[error("Schedule L2 block {schedule_block} precedes claimed L2 block {claim_block}")]
     ScheduleBlockBeforeClaim {
