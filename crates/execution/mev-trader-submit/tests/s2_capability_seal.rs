@@ -238,8 +238,9 @@ fn validate_s2_metadata(metadata: &serde_json::Value) -> Result<(), String> {
         for (feature, edges) in
             submit["features"].as_object().ok_or_else(|| "submit feature map missing".to_owned())?
         {
-            let edges =
-                edges.as_array().ok_or_else(|| format!("submit/{feature} edges are not an array"))?;
+            let edges = edges
+                .as_array()
+                .ok_or_else(|| format!("submit/{feature} edges are not an array"))?;
             if feature != owning_feature
                 && edges.iter().any(|edge| edge.as_str() == Some(dependency_edge.as_str()))
             {
@@ -487,26 +488,26 @@ fn validate_ledger_lifecycle(source: &str) -> Result<(), String> {
     }
 
     let open = sealed_region(source, "    fn open_directory(", "    fn create_directory(")?;
-    let create_call = open
-        .find("Self::create_directory(directory)")
-        .ok_or_else(|| "L absent ledger no longer creates through durable namespace helper".to_owned())?;
+    let create_call = open.find("Self::create_directory(directory)").ok_or_else(|| {
+        "L absent ledger no longer creates through durable namespace helper".to_owned()
+    })?;
     let child_open = open
         .find("let directory_handle =")
         .ok_or_else(|| "L child directory handle open missing".to_owned())?;
     let initialize_call = open
         .find("Self::initialize(directory, &directory_handle)?")
         .ok_or_else(|| "L child initialization missing".to_owned())?;
-    let admission = open
-        .find("Ok(Self {")
-        .ok_or_else(|| "L store admission missing".to_owned())?;
+    let admission = open.find("Ok(Self {").ok_or_else(|| "L store admission missing".to_owned())?;
     if !(create_call < child_open && child_open < initialize_call && initialize_call < admission) {
-        return Err("L parent fsync no longer precedes child initialization and admission".to_owned());
+        return Err(
+            "L parent fsync no longer precedes child initialization and admission".to_owned()
+        );
     }
 
     let initialize = sealed_region(source, "    fn initialize(", "    fn inspect(")?;
-    if !initialize.contains(
-        "file.write_all(&head.encode())\n            .and_then(|()| file.sync_all())",
-    ) {
+    if !initialize
+        .contains("file.write_all(&head.encode())\n            .and_then(|()| file.sync_all())")
+    {
         return Err("L initialized head lacks file fsync".to_owned());
     }
     let durable = initialize
@@ -537,7 +538,9 @@ fn validate_ledger_lifecycle(source: &str) -> Result<(), String> {
     if !(capacity_check < push && push < sort && sort < read)
         || inspect.matches("if accumulated >= capacity").count() != 1
     {
-        return Err("L startup capacity is not checked before push, sort, and record read".to_owned());
+        return Err(
+            "L startup capacity is not checked before push, sort, and record read".to_owned()
+        );
     }
     Ok(())
 }
@@ -684,8 +687,7 @@ fn validate_correlation_envelope(store: &str, entrypoint: &str, lib: &str) -> Re
         }
     }
 
-    let validate =
-        sealed_region(store, "    fn validate_existing(", "    fn exact_object<'a>(")?;
+    let validate = sealed_region(store, "    fn validate_existing(", "    fn exact_object<'a>(")?;
     for required in [
         "if !Self::hash_field(object, \"ledgerEpoch\", false)\n            || object.get(\"ledgerEpoch\").and_then(Value::as_str)\n                != Some(Self::hex_epoch(epoch).as_str())\n        {\n            return Err(invalid_epoch());\n        }",
         "if !Self::has_exact_keys(object, &top_keys)\n            || object.get(\"version\").and_then(Value::as_u64) != Some(VERSION)\n            || object.get(\"sequence\").and_then(Value::as_u64) != Some(sequence)\n        {\n            return Err(invalid());\n        }",
@@ -727,11 +729,8 @@ fn validate_correlation_envelope(store: &str, entrypoint: &str, lib: &str) -> Re
 }
 
 fn validate_correlation_recomputation(source: &str) -> Result<(), String> {
-    let recompute = sealed_region(
-        source,
-        "    fn recompute_correlation_key(",
-        "    fn hex_address(",
-    )?;
+    let recompute =
+        sealed_region(source, "    fn recompute_correlation_key(", "    fn hex_address(")?;
     for required in [
         "campaign: B256",
         "victim: B256",
@@ -799,7 +798,8 @@ fn correlation_and_closure_x0_x1_x2_x3_controls_and_epoch_mutants_red() {
     let entrypoint = read(manifest_dir().join("src/arm/simulation_entrypoint.rs"));
     let lib = read(manifest_dir().join("src/lib.rs"));
 
-    validate_correlation_envelope(&store, &entrypoint, &lib).expect("X0 immutable durable envelope");
+    validate_correlation_envelope(&store, &entrypoint, &lib)
+        .expect("X0 immutable durable envelope");
     eprintln!("X0: GREEN");
     validate_correlation_recomputation(&store).expect("X1 stable key excludes epoch");
     eprintln!("X1: GREEN");
@@ -855,11 +855,7 @@ fn correlation_and_closure_x0_x1_x2_x3_controls_and_epoch_mutants_red() {
     );
     assert_ne!(mutant, entrypoint, "X2 last-reason-wins mutant did not change input");
     assert!(validate_sticky_closure(&mutant).is_err());
-    let mutant = entrypoint.replacen(
-        "proposed.emit();",
-        "if false { proposed.emit(); }",
-        1,
-    );
+    let mutant = entrypoint.replacen("proposed.emit();", "if false { proposed.emit(); }", 1);
     assert_ne!(mutant, entrypoint, "X2 masked sole-emit mutant did not change input");
     assert!(validate_sticky_closure(&mutant).is_err());
 
@@ -1066,14 +1062,20 @@ fn persistence_p1_socket_p2_unbounded_p4_no_fsync_p5_no_join_red() {
     eprintln!("P5: RED");
 }
 
-fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        attr.path().is_ident("cfg")
-            && matches!(
-                &attr.meta,
-                syn::Meta::List(list) if list.tokens.to_string() == "test"
+fn cfg_meta_contains_test(meta: &syn::Meta) -> bool {
+    match meta {
+        syn::Meta::Path(path) => path.is_ident("test"),
+        syn::Meta::List(list) => list
+            .parse_args_with(
+                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
             )
-    })
+            .is_ok_and(|nested| nested.iter().any(cfg_meta_contains_test)),
+        syn::Meta::NameValue(_) => false,
+    }
+}
+
+fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| attr.path().is_ident("cfg") && cfg_meta_contains_test(&attr.meta))
 }
 
 fn item_has_cfg_test(item: &syn::Item) -> bool {
@@ -1148,6 +1150,7 @@ fn known_macro_without_sealed_symbols(mac: &syn::Macro) -> bool {
                 | "debug"
                 | "debug_assert"
                 | "debug_assert_eq"
+                | "debug_assert_ne"
                 | "env"
                 | "error"
                 | "eyre"
@@ -1209,12 +1212,7 @@ struct ProductionAliasCollector {
 }
 
 fn qualified_name(scope: &[String], name: &str) -> String {
-    scope
-        .iter()
-        .map(String::as_str)
-        .chain(std::iter::once(name))
-        .collect::<Vec<_>>()
-        .join("::")
+    scope.iter().map(String::as_str).chain(std::iter::once(name)).collect::<Vec<_>>().join("::")
 }
 
 fn path_scope_candidates(mut scope: Vec<String>, mut segments: Vec<String>) -> Vec<String> {
@@ -1229,33 +1227,21 @@ fn path_scope_candidates(mut scope: Vec<String>, mut segments: Vec<String>) -> V
         scope.pop();
     }
     if explicit_parent {
-        return vec![scope
-            .iter()
-            .chain(&segments)
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join("::")];
+        return vec![
+            scope.iter().chain(&segments).map(String::as_str).collect::<Vec<_>>().join("::"),
+        ];
     }
     if segments.first().is_some_and(|segment| segment == "self") {
         segments.remove(0);
-        return vec![scope
-            .iter()
-            .chain(&segments)
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join("::")];
+        return vec![
+            scope.iter().chain(&segments).map(String::as_str).collect::<Vec<_>>().join("::"),
+        ];
     }
 
     let mut candidates = Vec::new();
     loop {
-        candidates.push(
-            scope
-                .iter()
-                .chain(&segments)
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .join("::"),
-        );
+        candidates
+            .push(scope.iter().chain(&segments).map(String::as_str).collect::<Vec<_>>().join("::"));
         if scope.pop().is_none() {
             break;
         }
@@ -1279,9 +1265,8 @@ fn path_parts_resolve_identity(
             return false;
         }
     }
-    canonical_name.is_some_and(|canonical| {
-        segments.last().is_some_and(|segment| segment == canonical)
-    })
+    canonical_name
+        .is_some_and(|canonical| segments.last().is_some_and(|segment| segment == canonical))
 }
 
 impl ProductionAliasCollector {
@@ -1322,10 +1307,8 @@ impl ProductionAliasCollector {
                     target: prefix.clone(),
                     scope: self.module_scope.clone(),
                 });
-                self.shadowing_definitions.insert(qualified_name(
-                    &self.module_scope,
-                    &rename.rename.to_string(),
-                ));
+                self.shadowing_definitions
+                    .insert(qualified_name(&self.module_scope, &rename.rename.to_string()));
                 prefix.pop();
             }
             syn::UseTree::Group(group) => {
@@ -1409,7 +1392,12 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionAliasCollector {
             if let syn::TypeParamBound::Trait(bound) = bound {
                 self.bindings.push(AliasBinding {
                     alias: item.ident.to_string(),
-                    target: bound.path.segments.iter().map(|segment| segment.ident.to_string()).collect(),
+                    target: bound
+                        .path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect(),
                     scope: self.module_scope.clone(),
                 });
             }
@@ -1465,8 +1453,7 @@ impl ProductionAliases {
                 }
 
                 let target = binding.target.last().map(String::as_str);
-                let owner_segments =
-                    &binding.target[..binding.target.len().saturating_sub(1)];
+                let owner_segments = &binding.target[..binding.target.len().saturating_sub(1)];
                 let is_function_alias = |aliases: &BTreeSet<String>,
                                          owner_aliases: &BTreeSet<String>,
                                          owner_symbol: &str,
@@ -1486,12 +1473,7 @@ impl ProductionAliases {
                             &collector.shadowing_definitions,
                         ))
                 };
-                if is_function_alias(
-                    &runtime_open,
-                    &types["ArmRuntime"],
-                    "ArmRuntime",
-                    "open",
-                ) {
+                if is_function_alias(&runtime_open, &types["ArmRuntime"], "ArmRuntime", "open") {
                     changed |= runtime_open.insert(binding_identity.clone());
                 }
                 if is_function_alias(
@@ -1538,23 +1520,21 @@ impl ProductionAliases {
         )
     }
 
-    fn path_is_alias(&self, scope: &[String], path: &syn::Path, aliases: &BTreeSet<String>) -> bool {
+    fn path_is_alias(
+        &self,
+        scope: &[String],
+        path: &syn::Path,
+        aliases: &BTreeSet<String>,
+    ) -> bool {
         let segments =
             path.segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<_>>();
-        path_parts_resolve_identity(
-            scope,
-            &segments,
-            aliases,
-            None,
-            &self.shadowing_definitions,
-        )
+        path_parts_resolve_identity(scope, &segments, aliases, None, &self.shadowing_definitions)
     }
 
     fn type_is_protected(&self, scope: &[String], ty: &syn::Type, symbol: &str) -> bool {
         matches!(ty, syn::Type::Path(ty) if ty.qself.is_none() && self.path_is_protected(scope, &ty.path, symbol))
     }
 }
-
 
 fn try_handoff_candidate(
     method: &syn::ImplItemFn,
@@ -1596,11 +1576,7 @@ fn try_handoff_candidate(
         let syn::FnArg::Typed(argument) = argument else {
             return None;
         };
-        if !aliases.type_is_protected(
-            module_scope,
-            &argument.ty,
-            "SealedUnsignedCandidate",
-        ) {
+        if !aliases.type_is_protected(module_scope, &argument.ty, "SealedUnsignedCandidate") {
             return None;
         }
         match argument.pat.as_ref() {
@@ -1618,7 +1594,6 @@ fn has_exact_installed_handoff_body(
     has_total_installed_handoff_body(method, aliases, module_scope)
 }
 
-
 struct CandidateFieldVisitor<'a> {
     aliases: &'a ProductionAliases,
     module_scope: &'a [String],
@@ -1628,9 +1603,11 @@ struct CandidateFieldVisitor<'a> {
 impl<'ast> syn::visit::Visit<'ast> for CandidateFieldVisitor<'_> {
     fn visit_type_path(&mut self, ty: &'ast syn::TypePath) {
         if ty.qself.is_some()
-            || self
-                .aliases
-                .path_is_protected(self.module_scope, &ty.path, "SealedUnsignedCandidate")
+            || self.aliases.path_is_protected(
+                self.module_scope,
+                &ty.path,
+                "SealedUnsignedCandidate",
+            )
         {
             self.retains_candidate = true;
         }
@@ -1710,9 +1687,8 @@ impl ProductionHandoffVisitor {
         let self_owner = segments.len() == 2
             && segments.first().is_some_and(|segment| segment.ident == "Self")
             && self.current_impl_protected.contains(symbol);
-        let direct_alias = self
-            .aliases
-            .path_is_alias(&self.module_scope, &expression.path, member_aliases);
+        let direct_alias =
+            self.aliases.path_is_alias(&self.module_scope, &expression.path, member_aliases);
         let associated = segments.last().is_some_and(|segment| segment.ident == member)
             && if let Some(qself) = &expression.qself {
                 self.type_is_protected(&qself.ty, symbol)
@@ -1808,11 +1784,11 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionHandoffVisitor {
         syn::visit::visit_item_type(self, item);
     }
 
-
     fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
-        let is_handoff_impl = item.trait_.as_ref().is_some_and(|(_, path, _)| {
-            self.path_is_protected(path, "T4eCandidateHandoff")
-        });
+        let is_handoff_impl = item
+            .trait_
+            .as_ref()
+            .is_some_and(|(_, path, _)| self.path_is_protected(path, "T4eCandidateHandoff"));
         let self_is_installed =
             self.type_is_protected(item.self_ty.as_ref(), "ProductionSimulationHandoff");
         let try_handoff_methods = is_handoff_impl
@@ -1937,7 +1913,6 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionHandoffVisitor {
         syn::visit::visit_stmt_macro(self, statement);
     }
 
-
     fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
         if self.expression_references_protected_associated(
             expression,
@@ -1972,6 +1947,7 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionHandoffVisitor {
 
 struct ParsedProductionSource {
     file: syn::File,
+    label: String,
     module_root: Vec<String>,
     canonical_source: bool,
 }
@@ -1982,12 +1958,9 @@ fn parse_production_source(
     module_root: Vec<String>,
     canonical_source: bool,
 ) -> Result<ParsedProductionSource, String> {
-    let file = syn::parse_file(source).map_err(|error| format!("{label} did not parse: {error}"))?;
-    Ok(ParsedProductionSource {
-        file,
-        module_root,
-        canonical_source,
-    })
+    let file =
+        syn::parse_file(source).map_err(|error| format!("{label} did not parse: {error}"))?;
+    Ok(ParsedProductionSource { file, label: label.to_owned(), module_root, canonical_source })
 }
 
 fn module_root_for_source(path: &Path, source_root: &Path) -> Result<Vec<String>, String> {
@@ -2016,8 +1989,7 @@ fn analyze_production_handoff(
 ) -> ProductionHandoffVisitor {
     use syn::visit::Visit;
 
-    let mut visitor =
-        ProductionHandoffVisitor::new(aliases.clone(), source.module_root.clone());
+    let mut visitor = ProductionHandoffVisitor::new(aliases.clone(), source.module_root.clone());
     visitor.visit_file(&source.file);
     visitor
 }
@@ -2090,9 +2062,7 @@ fn validate_install_error_taxonomy(source: &str) -> Result<(), String> {
         "WorkerStartupUnavailable(WorkerStartupFailure)",
     ];
     if actual != expected {
-        return Err(format!(
-            "ProductionSimulationInstallError taxonomy changed: {actual:?}"
-        ));
+        return Err(format!("ProductionSimulationInstallError taxonomy changed: {actual:?}"));
     }
     Ok(())
 }
@@ -2143,10 +2113,7 @@ enum ProductionSimulationInstallError {
         ),
     ] {
         assert_ne!(mutant, CONTROL, "{name} patch did not change source");
-        assert!(
-            validate_install_error_taxonomy(&mutant).is_err(),
-            "{name} mutant remained GREEN"
-        );
+        assert!(validate_install_error_taxonomy(&mutant).is_err(), "{name} mutant remained GREEN");
         eprintln!("U-INSTALL-ERROR-{name}: RED");
     }
 }
@@ -2162,8 +2129,12 @@ impl<'ast> syn::visit::Visit<'ast> for InstallConstructorBodyVisitor {
         if expression.path.segments.last().is_some_and(|segment| segment.ident == "state") {
             self.state_uses += 1;
         }
-        let segments =
-            expression.path.segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<_>>();
+        let segments = expression
+            .path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>();
         if segments.first().is_some_and(|segment| segment == "ProductionHandoffState")
             || segments.as_slice() == ["Default", "default"]
         {
@@ -2273,14 +2244,8 @@ impl ProductionSimulationHandoff {
                 "Mutex::new(ProductionHandoffState::Unavailable(error))",
             ),
         ),
-        (
-            "DEFERRED-CONSTRUCTOR",
-            CONTROL.replace("pub fn install(", "pub fn deferred_production("),
-        ),
-        (
-            "SECOND-CONSTRUCTOR",
-            format!("{CONTROL}\n{CONTROL}"),
-        ),
+        ("DEFERRED-CONSTRUCTOR", CONTROL.replace("pub fn install(", "pub fn deferred_production(")),
+        ("SECOND-CONSTRUCTOR", format!("{CONTROL}\n{CONTROL}")),
     ] {
         assert_ne!(mutant, CONTROL, "{name} patch did not change source");
         assert!(
@@ -2333,10 +2298,7 @@ impl<'ast> syn::visit::Visit<'ast> for InstalledHandoffBodyVisitor {
             (&["T4eHandoffError", "Closed"][..], &mut self.closed),
             (&["TrySendError", "Disconnected"][..], &mut self.disconnected),
             (&["TrySendError", "Full"][..], &mut self.full),
-            (
-                &["ProductionHandoffClosed", "AdmissionInvariant"][..],
-                &mut self.admission_invariant,
-            ),
+            (&["ProductionHandoffClosed", "AdmissionInvariant"][..], &mut self.admission_invariant),
         ] {
             if path_ends_with(&expression.path, suffix) {
                 *count += 1;
@@ -2498,7 +2460,8 @@ impl T4eCandidateHandoff for ProductionSimulationHandoff {
         ),
     ] {
         assert_ne!(mutant, CONTROL, "{name} patch did not change source");
-        let file = syn::parse_file(&mutant).unwrap_or_else(|error| panic!("{name} parses: {error}"));
+        let file =
+            syn::parse_file(&mutant).unwrap_or_else(|error| panic!("{name} parses: {error}"));
         let syn::Item::Impl(item) = &file.items[0] else {
             panic!("{name} impl");
         };
@@ -2620,7 +2583,7 @@ fn validate_installed_production_handoff(
     for required in [
         "ProductionBundleInputs",
         "ProductionInstallBundle::load",
-        "spawn_production_simulation",
+        "SimulationWorker::spawn",
         "Duration::from_secs(5)",
         "ProductionInstallDisposition::Ready",
         "InstalledSubmissionBridge::base_mainnet",
@@ -2688,21 +2651,25 @@ fn validate_installed_production_handoff(
 
     let mut collector = ProductionAliasCollector::default();
     for source in &parsed_sources {
-        collector.collect_file(
-            &source.file,
-            &source.module_root,
-            source.canonical_source,
-        );
+        collector.collect_file(&source.file, &source.module_root, source.canonical_source);
     }
     let aliases = ProductionAliases::resolve(collector);
-    let analyses =
-        parsed_sources.iter().map(|source| analyze_production_handoff(source, &aliases)).collect::<Vec<_>>();
+    let analyses = parsed_sources
+        .iter()
+        .map(|source| analyze_production_handoff(source, &aliases))
+        .collect::<Vec<_>>();
 
+    let opaque_sources = parsed_sources
+        .iter()
+        .zip(&analyses)
+        .filter(|(_, analysis)| analysis.opaque_production_items != 0)
+        .map(|(source, analysis)| format!("{}={}", source.label, analysis.opaque_production_items))
+        .collect::<Vec<_>>();
     let opaque_production_items =
         analyses.iter().map(|analysis| analysis.opaque_production_items).sum::<usize>();
     if opaque_production_items != 0 || aliases.opaque_use_globs != 0 {
         return Err(format!(
-            "production contains syntax the installed seal cannot resolve: opaque crate-wide items={opaque_production_items}, use globs={}",
+            "production contains syntax the installed seal cannot resolve: opaque crate-wide items={opaque_production_items} ({opaque_sources:?}), use globs={}",
             aliases.opaque_use_globs
         ));
     }
@@ -2712,10 +2679,8 @@ fn validate_installed_production_handoff(
         analyses.iter().map(|analysis| analysis.handoff_impl_target_mismatches).sum::<usize>();
     let try_handoff_methods =
         analyses.iter().map(|analysis| analysis.try_handoff_methods).sum::<usize>();
-    let exact_installed = analyses
-        .iter()
-        .map(|analysis| analysis.exact_installed_try_handoff_methods)
-        .sum::<usize>();
+    let exact_installed =
+        analyses.iter().map(|analysis| analysis.exact_installed_try_handoff_methods).sum::<usize>();
     if handoff_impls != 1
         || target_mismatches != 0
         || try_handoff_methods != 1
@@ -2771,18 +2736,14 @@ fn installed_u0_green_and_recursive_whole_crate_mutants_red() {
     eprintln!("U0-INSTALLED: GREEN");
 
     let box_leak = handoff.replacen(
-        "        let Ok(mut state) = self.shared.state.lock() else {",
-        "        Box::leak(Box::new(&candidate));\n        let Ok(mut state) = self.shared.state.lock() else {",
+        "    fn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        let Ok(mut state) = self.shared.state.lock() else {",
+        "    fn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        Box::leak(Box::new(&candidate));\n        let Ok(mut state) = self.shared.state.lock() else {",
         1,
     );
     assert_ne!(box_leak, handoff, "Box::leak patch did not change source");
     assert!(
-        validate_installed_production_handoff(
-            &box_leak,
-            &cli,
-            Some((handoff_path, &box_leak))
-        )
-        .is_err(),
+        validate_installed_production_handoff(&box_leak, &cli, Some((handoff_path, &box_leak)))
+            .is_err(),
         "#56 candidate Box::leak mutant remained GREEN"
     );
     eprintln!("U-INSTALLED-BOX-LEAK: RED");
@@ -2799,12 +2760,8 @@ fn installed_u0_green_and_recursive_whole_crate_mutants_red() {
     );
     assert_ne!(second_impl, transport, "second impl patch did not change source");
     assert!(
-        validate_installed_production_handoff(
-            &handoff,
-            &cli,
-            Some((transport_path, &second_impl))
-        )
-        .is_err(),
+        validate_installed_production_handoff(&handoff, &cli, Some((transport_path, &second_impl)))
+            .is_err(),
         "second crate-wide implementation remained GREEN"
     );
     eprintln!("U-INSTALLED-SECOND-IMPL: RED");
@@ -2863,12 +2820,8 @@ fn installed_u0_green_and_recursive_whole_crate_mutants_red() {
     );
     assert_ne!(extra_owner, transport, "extra owner patch did not change source");
     assert!(
-        validate_installed_production_handoff(
-            &handoff,
-            &cli,
-            Some((transport_path, &extra_owner))
-        )
-        .is_err(),
+        validate_installed_production_handoff(&handoff, &cli, Some((transport_path, &extra_owner)))
+            .is_err(),
         "third candidate owner remained GREEN"
     );
     eprintln!("U-INSTALLED-CANDIDATE-OWNER: RED");
@@ -2881,12 +2834,8 @@ fn installed_u0_green_and_recursive_whole_crate_mutants_red() {
         let mutant = insert_before_test_module(&transport, addition);
         assert_ne!(mutant, transport, "{name} patch did not change source");
         assert!(
-            validate_installed_production_handoff(
-                &handoff,
-                &cli,
-                Some((transport_path, &mutant))
-            )
-            .is_err(),
+            validate_installed_production_handoff(&handoff, &cli, Some((transport_path, &mutant)))
+                .is_err(),
             "{name} resolution escape remained GREEN"
         );
         eprintln!("U-INSTALLED-{name}: RED");

@@ -1734,7 +1734,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     let (package, path, imports, uses, slot_uses) = &consumers[0];
     assert_eq!(package, "base-execution-cli");
     assert!(path.ends_with("crates/execution/cli/src/mev_trader.rs"));
-    assert_eq!((*imports, *uses, *slot_uses), (3, 4, 2));
+    assert_eq!((*imports, *uses, *slot_uses), (3, 5, 2));
 
     let mut global_topology = [0usize; 11];
     for path in rust_files(&root.join("crates/execution/cli/src")) {
@@ -1765,9 +1765,9 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     }
     assert_eq!(
         global_topology,
-        // Seven pre-existing production task spawns plus the one required join-only
-        // production-simulation shutdown `spawn_blocking`.
-        [2, 1, 2, 2, 4, 2, 1, 1, 8, 0, 1],
+        // Seven pre-existing production task spawns, the production simulation worker,
+        // and the one required join-only production-simulation shutdown `spawn_blocking`.
+        [2, 1, 2, 2, 5, 3, 1, 2, 9, 0, 1],
         "CLI-wide T4d observer topology changed"
     );
     let submit_src = crate_dir.join("src");
@@ -1805,7 +1805,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
         internal_by_file,
         BTreeMap::from([
             ("bridge.rs".to_owned(), (1, 2, 0)),
-            ("production_handoff.rs".to_owned(), (1, 3, 0)),
+            ("production_handoff.rs".to_owned(), (2, 7, 0)),
             ("witness.rs".to_owned(), (1, 2, 0)),
         ]),
         "only the bridge, installed handoff, and exhaustive arm witness may consume T4b authority"
@@ -1937,10 +1937,10 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
 
     let mut cli_inventory = AstSeal::default();
     cli_inventory.visit_file(&cli_ast);
-    assert_eq!(cli_inventory.t4d_observer_calls, 1);
+    assert_eq!(cli_inventory.t4d_observer_calls, 2);
     assert_eq!(cli_inventory.assemble_sealed_calls, 1);
     assert_eq!(cli_inventory.slot_constructions, 2);
-    assert_eq!(cli_inventory.spawn_calls, 8);
+    assert_eq!(cli_inventory.spawn_calls, 9);
     assert_eq!(cli_inventory.thread_calls, 0);
     assert_eq!(cli_inventory.subscription_calls, 1);
 
@@ -2367,17 +2367,17 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
     assert_eq!(cli_seal.node_view_impls, 1);
     assert_eq!(cli_seal.observer_impls, 2);
     assert_eq!(cli_seal.pending_view_impls, 1);
-    assert_eq!(cli_seal.base_mainnet_calls, 2);
+    assert_eq!(cli_seal.base_mainnet_calls, 3);
     assert_eq!(cli_seal.assemble_sealed_calls, 1);
     assert_eq!(cli_seal.observe_candidate_calls, 0);
     assert_eq!(cli_seal.subscription_calls, 1);
-    assert_eq!(cli_seal.spawn_calls, 8);
+    assert_eq!(cli_seal.spawn_calls, 9);
     assert_eq!(cli_seal.thread_calls, 0);
     assert_eq!(cli_seal.pending_adapter_constructions, 1);
     assert_eq!(cli_seal.node_view_constructions, 1);
     assert_eq!(cli_seal.authority_constructions, 1);
     assert_eq!(cli_seal.observer_factories, 2);
-    assert_eq!(cli_seal.observer_install_calls, 4);
+    assert_eq!(cli_seal.observer_install_calls, 5);
 
     let t4b_module = cli_ast
         .items

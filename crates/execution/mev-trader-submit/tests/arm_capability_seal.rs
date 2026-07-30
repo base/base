@@ -289,7 +289,7 @@ const PUBLIC_API_ALLOWLIST: [&str; 91] = [
     "VerifiedProductionProofs",
     "WorkerStartup",
     "WorkerStartupFailure",
-    "spawn_production_simulation",
+    "SimulationWorker",
     "production_custody_preflight",
     "provision_suppression_anchor",
     "try_claim_detailed",
@@ -1469,17 +1469,10 @@ fn freshness_sources_methods() -> BTreeSet<String> {
     ["revalidate"].iter().map(|s| (*s).to_string()).collect()
 }
 fn armed_fail_sink_methods() -> BTreeSet<String> {
-    [
-        "from_anchored",
-        "is_poisoned",
-        "observe_kill",
-        "check",
-        "latch",
-        "latch_production",
-    ]
-    .iter()
-    .map(|s| (*s).to_string())
-    .collect()
+    ["from_anchored", "is_poisoned", "observe_kill", "check", "latch", "latch_production"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
 }
 
 fn all_inherent_method_names(src: &str, ty_name: &str) -> BTreeSet<String> {
@@ -1929,9 +1922,7 @@ fn sink_macro_surface_is_reviewed(source: &str) -> bool {
     let mut inventory =
         MacroInventory { reviewed_matches: 0, reviewed_unreachable: 0, rejected: false };
     syn::visit::Visit::visit_file(&mut inventory, &file);
-    !inventory.rejected
-        && inventory.reviewed_matches == 1
-        && inventory.reviewed_unreachable == 1
+    !inventory.rejected && inventory.reviewed_matches == 1 && inventory.reviewed_unreachable == 1
 }
 
 fn has_sibling_sink_construction_or_child_path(source: &str) -> bool {

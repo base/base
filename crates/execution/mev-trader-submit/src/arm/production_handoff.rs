@@ -26,8 +26,8 @@ use super::{
     ProductionLatchOutcome, ProductionProofBundle, ProductionSigningError, R9_CLAIM_STORE_PATH,
     RuntimeBackend, SIMULATION_RECORD_CAPACITY, SimBackend, SimulationEntrypoint,
     SimulationEntrypointStatus, SimulationEntrypointUnavailable, SimulationLedgerClosure,
-    SimulationPersistError, SimulationReservation, SimulationStore, SubmitOutcome,
-    production_custody_preflight, send_gated, try_claim_detailed,
+    SimulationPersistError, SimulationReservation, SimulationStore, SimulationWorker,
+    SubmitOutcome, production_custody_preflight, send_gated, try_claim_detailed,
 };
 
 const ADMISSION_FREE: u8 = 0;
@@ -332,7 +332,7 @@ pub struct ProductionBundleInputs<C, F> {
     /// The one shared T4d/T4e bridge allocation.
     pub bridge: Arc<InstalledSubmissionBridge>,
     /// Simulation-only backend.
-    pub backend: SimBackend,
+    pub simulation_backend: SimBackend,
 }
 
 /// Complete non-clone bundle moved exactly once into the production worker.
@@ -343,7 +343,7 @@ where
 {
     committed_state: Arc<C>,
     bridge: Arc<InstalledSubmissionBridge>,
-    backend: SimBackend,
+    simulation_backend: SimBackend,
     proofs: ProductionProofBundle,
     claims: VictimClaimStore,
     prepared_loss: PreparedSettledLossAuthority<Arc<F>>,
@@ -371,7 +371,8 @@ where
     pub fn load(
         inputs: ProductionBundleInputs<C, F>,
     ) -> Result<Self, ProductionSimulationInstallError> {
-        let ProductionBundleInputs { committed_state, finalized_chain, bridge, backend } = inputs;
+        let ProductionBundleInputs { committed_state, finalized_chain, bridge, simulation_backend } =
+            inputs;
         let proofs = ProductionProofBundle::load()
             .map_err(ProductionSimulationInstallError::CampaignBundleUnavailable)?;
         let provider = ProductionCodeHashProvider::install(Arc::clone(&committed_state));
@@ -431,7 +432,15 @@ where
                 .expect("capacity failure is always a ledger closure");
             ProductionSimulationInstallError::CapacityUnavailable(reason)
         })?;
-        Ok(Self { committed_state, bridge, backend, proofs, claims, prepared_loss, store })
+        Ok(Self {
+            committed_state,
+            bridge,
+            simulation_backend,
+            proofs,
+            claims,
+            prepared_loss,
+            store,
+        })
     }
 }
 
@@ -448,7 +457,6 @@ impl AdmittedCandidate {
         (self.candidate, self.reservation)
     }
 }
-
 
 #[derive(Debug)]
 pub enum ProductionHandoffState {
@@ -816,72 +824,75 @@ impl ProductionStartup {
     }
 }
 
-/// Spawns the sole named production simulation worker and one-shot startup channel.
-pub fn spawn_production_simulation<C, F>(
-    inputs: ProductionInstallInputs<C, F>,
-) -> ProductionSpawnDisposition
-where
-    C: super::CommittedStateAuthority + std::fmt::Debug + Send + Sync + 'static,
-    F: super::FinalizedChainAuthority + 'static,
-{
-    let installer = ProductionHandoffInstaller::new();
-    let handoff = installer.handoff();
-    let cancel = Arc::new(AtomicBool::new(false));
-    let worker_cancel = Arc::clone(&cancel);
-    let worker_handoff = Arc::clone(&handoff);
-    let (startup_sender, startup_receiver) = sync_channel(1);
-    let bootstrap = installer.into_worker(WorkerStartupSender(startup_sender));
-    let thread =
-        std::thread::Builder::new().name("base-mev-arm-egress".to_owned()).spawn(move || {
-            let result = catch_unwind(AssertUnwindSafe(|| {
-                run_production_worker(
-                    inputs,
-                    bootstrap,
-                    Arc::clone(&worker_handoff),
-                    Arc::clone(&worker_cancel),
+impl SimulationWorker {
+    /// Spawns the sole named production simulation worker and one-shot startup channel.
+    pub fn spawn<C, F>(inputs: ProductionInstallInputs<C, F>) -> ProductionSpawnDisposition
+    where
+        C: super::CommittedStateAuthority + std::fmt::Debug + Send + Sync + 'static,
+        F: super::FinalizedChainAuthority + 'static,
+    {
+        let installer = ProductionHandoffInstaller::new();
+        let handoff = installer.handoff();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = Arc::clone(&cancel);
+        let worker_handoff = Arc::clone(&handoff);
+        let (startup_sender, startup_receiver) = sync_channel(1);
+        let bootstrap = installer.into_worker(WorkerStartupSender(startup_sender));
+        let thread =
+            std::thread::Builder::new().name("base-mev-arm-egress".to_owned()).spawn(move || {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    run_production_worker(
+                        inputs,
+                        bootstrap,
+                        Arc::clone(&worker_handoff),
+                        Arc::clone(&worker_cancel),
+                        SimulationEntrypoint::ready,
+                    );
+                }));
+                if result.is_err() {
+                    worker_handoff
+                        .close(ProductionHandoffClosed::Worker(ProductionWorkerError::WorkerPanic));
+                }
+            });
+        match thread {
+            Ok(thread) => {
+                let owner = ProductionSimulationWorkerOwner::new(
+                    thread,
+                    Arc::clone(&cancel),
+                    Arc::clone(&handoff),
                 );
-            }));
-            if result.is_err() {
-                worker_handoff
-                    .close(ProductionHandoffClosed::Worker(ProductionWorkerError::WorkerPanic));
+                ProductionSpawnDisposition::Spawned(ProductionStartup {
+                    handoff,
+                    owner,
+                    receiver: startup_receiver,
+                    cancel,
+                })
             }
-        });
-    match thread {
-        Ok(thread) => {
-            let owner = ProductionSimulationWorkerOwner::new(
-                thread,
-                Arc::clone(&cancel),
-                Arc::clone(&handoff),
-            );
-            ProductionSpawnDisposition::Spawned(ProductionStartup {
-                handoff,
-                owner,
-                receiver: startup_receiver,
-                cancel,
-            })
-        }
-        Err(_) => {
-            let error = Arc::new(ProductionSimulationInstallError::WorkerSpawnUnavailable);
-            ProductionStartup::set_unavailable(&handoff, Arc::clone(&error));
-            ProductionSpawnDisposition::Unavailable { handoff, error }
+            Err(_) => {
+                let error = Arc::new(ProductionSimulationInstallError::WorkerSpawnUnavailable);
+                ProductionStartup::set_unavailable(&handoff, Arc::clone(&error));
+                ProductionSpawnDisposition::Unavailable { handoff, error }
+            }
         }
     }
 }
 
-fn run_production_worker<C, F>(
+fn run_production_worker<C, F, R>(
     inputs: ProductionInstallInputs<C, F>,
     bootstrap: ProductionWorkerBootstrap,
     handoff: Arc<ProductionSimulationHandoff>,
     cancel: Arc<AtomicBool>,
+    ready: R,
 ) where
     C: super::CommittedStateAuthority + std::fmt::Debug + Send + Sync + 'static,
     F: super::FinalizedChainAuthority + 'static,
+    R: FnOnce() -> SimulationEntrypoint,
 {
     let ProductionInstallInputs { bundle, armed } = inputs;
     let ProductionInstallBundle {
         committed_state,
         bridge,
-        backend,
+        simulation_backend,
         proofs,
         claims,
         prepared_loss,
@@ -940,7 +951,7 @@ fn run_production_worker<C, F>(
             return;
         }
     };
-    let entrypoint = Arc::new(SimulationEntrypoint::ready());
+    let entrypoint = Arc::new(ready());
     let receiver = match bootstrap.publish_ready(Arc::clone(&entrypoint)) {
         Ok(receiver) => receiver,
         Err(WorkerStartup::Ready { .. }) | Err(WorkerStartup::Failed(_)) => return,
@@ -961,7 +972,7 @@ fn run_production_worker<C, F>(
             &claims,
             &runtime,
             &armed,
-            &backend,
+            &simulation_backend,
             &mut store,
             &entrypoint,
         );
@@ -987,7 +998,7 @@ fn process_candidate<C, F>(
     claims: &VictimClaimStore,
     runtime: &ProductionB5Runtime<C, NodeLocalSettledLossAuthority<Arc<F>>>,
     armed: &ArmedCriteria,
-    backend: &SimBackend,
+    simulation_backend: &SimBackend,
     store: &mut SimulationStore,
     entrypoint: &SimulationEntrypoint,
 ) -> Result<(), ProductionHandoffClosed>
@@ -1040,18 +1051,19 @@ where
         .map_err(|error| ProductionHandoffClosed::Worker(ProductionWorkerError::Signing(error)))?;
     let attempt = super::SubmissionAttempt::Initial(super::PairedSubmission::assemble(signed));
     let freshness = runtime.freshness(armed);
-    let record = match send_gated(attempt, &freshness, RuntimeBackend::simulated(backend)) {
-        SubmitOutcome::Simulated(record) => record,
-        SubmitOutcome::NoEgress
-        | SubmitOutcome::LiveLocksClosed(_)
-        | SubmitOutcome::InclusionFailed(_)
-        | SubmitOutcome::InclusionSentAttributionFailed { .. }
-        | SubmitOutcome::LiveComplete => {
-            return Err(ProductionHandoffClosed::Worker(
-                ProductionWorkerError::UnexpectedLiveOutcome,
-            ));
-        }
-    };
+    let record =
+        match send_gated(attempt, &freshness, RuntimeBackend::simulated(simulation_backend)) {
+            SubmitOutcome::Simulated(record) => record,
+            SubmitOutcome::NoEgress
+            | SubmitOutcome::LiveLocksClosed(_)
+            | SubmitOutcome::InclusionFailed(_)
+            | SubmitOutcome::InclusionSentAttributionFailed { .. }
+            | SubmitOutcome::LiveComplete => {
+                return Err(ProductionHandoffClosed::Worker(
+                    ProductionWorkerError::UnexpectedLiveOutcome,
+                ));
+            }
+        };
     let persisted = match store.append(&record) {
         Ok(persisted) => persisted,
         Err(

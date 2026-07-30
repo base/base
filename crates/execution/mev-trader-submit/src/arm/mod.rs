@@ -48,26 +48,26 @@ pub use production_handoff::{
     ProductionCandidateReceiver, ProductionDeploymentFailure, ProductionHandoffClosed,
     ProductionHandoffInstaller, ProductionHandoffShared, ProductionHandoffState,
     ProductionInstallBundle, ProductionInstallDisposition, ProductionInstallInputs,
-    ProductionPersistenceFailure, ProductionProviderFailure,
-    ProductionSimulationHandoff, ProductionSimulationHandoffStatus,
-    ProductionSimulationInstallError, ProductionSimulationWorkerOwner, ProductionSpawnDisposition,
-    ProductionStartup, ProductionStoreOpenFailure, ProductionWorkerBootstrap,
-    ProductionWorkerError, WorkerStartup, WorkerStartupFailure, spawn_production_simulation,
+    ProductionPersistenceFailure, ProductionProviderFailure, ProductionSimulationHandoff,
+    ProductionSimulationHandoffStatus, ProductionSimulationInstallError,
+    ProductionSimulationWorkerOwner, ProductionSpawnDisposition, ProductionStartup,
+    ProductionStoreOpenFailure, ProductionWorkerBootstrap, ProductionWorkerError, WorkerStartup,
+    WorkerStartupFailure,
 };
-mod proofs;
 mod producer;
+mod proofs;
 pub use producer::{
-    BoundedSubmissionIdV1, CanonicalDeploymentPairV1, CanonicalG7PairV1,
-    CanonicalLivePairV1, PopulationClosureFieldsV1, ProducerConformance, ProducerError,
-    PublicationIoClass, PublishedPopulationManifestV1, SignedInstallBundleV1,
-    SignedPopulationManifestV1, SignedProjectionV1, SourceLedgerRowV1,
-    UnsignedInstallBundleV1, UnsignedPopulationManifestV1,
+    BoundedSubmissionIdV1, CanonicalDeploymentPairV1, CanonicalG7PairV1, CanonicalLivePairV1,
+    PopulationClosureFieldsV1, ProducerConformance, ProducerError, PublicationIoClass,
+    PublishedPopulationManifestV1, SignedInstallBundleV1, SignedPopulationManifestV1,
+    SignedProjectionV1, SourceLedgerRowV1, UnsignedInstallBundleV1, UnsignedPopulationManifestV1,
 };
 mod providers;
 mod simulation_entrypoint;
 pub use simulation_entrypoint::{
     SimulationEntrypoint, SimulationEntrypointStatus, SimulationEntrypointTerminal,
     SimulationEntrypointUnavailable, SimulationLedgerClosure, SimulationReservation,
+    SimulationWorker,
 };
 mod simulation_store;
 pub use simulation_store::{

@@ -87,7 +87,7 @@ use mev_trader_submit::{
     ProductionInstallBundle, ProductionInstallDisposition, ProductionInstallInputs,
     ProductionSimulationHandoff, ProductionSimulationHandoffStatus,
     ProductionSimulationInstallError, ProductionSimulationWorkerOwner, ProductionSpawnDisposition,
-    ProviderError, SimBackend, spawn_production_simulation,
+    ProviderError, SimBackend, SimulationWorker,
 };
 #[cfg(feature = "t4d-shadow")]
 use mev_trader_submit::{BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate};
@@ -8579,13 +8579,13 @@ impl BaseNodeTraderConfig {
             committed_state: Arc::new(CliCommittedStateAuthority::new(provider)),
             finalized_chain: Arc::new(CliFinalizedChainAuthority::new(provider)),
             bridge,
-            backend: SimBackend,
+            simulation_backend: SimBackend,
         });
         let (handoff, owner) = match bundle {
             Ok(bundle) => {
                 let inputs =
                     ProductionInstallInputs { bundle, armed: production_arming_criteria() };
-                match spawn_production_simulation(inputs) {
+                match SimulationWorker::spawn(inputs) {
                     ProductionSpawnDisposition::Spawned(startup) => {
                         match startup.await_ready(Duration::from_secs(5)) {
                             ProductionInstallDisposition::Ready { handoff, owner } => {
@@ -10093,7 +10093,7 @@ mod t4d_shadow {
             self.counter(terminal).fetch_add(1, Ordering::Relaxed);
         }
 
-        #[cfg(feature = "t4e-handoff")]
+        #[cfg(all(feature = "t4e-handoff", test))]
         pub(super) fn count(&self, terminal: T4dTerminal) -> u64 {
             self.counter(terminal).load(Ordering::Relaxed)
         }

@@ -249,10 +249,14 @@ impl SimulationEntrypoint {
     }
 }
 
+/// Sole production worker namespace for the T4e simulation path.
+#[derive(Debug)]
+pub struct SimulationWorker;
+
 /// Test-only legacy attempt worker retained for focused entrypoint persistence tests.
 #[cfg(test)]
 #[derive(Debug)]
-pub struct SimulationWorker {
+struct LegacySimulationWorker {
     sender: Option<SyncSender<AdmittedAttempt>>,
     admission: Arc<AtomicU8>,
     entrypoint: Arc<SimulationEntrypoint>,
@@ -318,7 +322,7 @@ impl Drop for SimulationReservation {
 }
 
 #[cfg(test)]
-impl SimulationWorker {
+impl LegacySimulationWorker {
     /// Spawns the only thread permitted to call the synchronous simulation entrypoint.
     pub fn spawn<C, D>(
         runtime: super::ProductionB5Runtime<C, D>,
@@ -424,7 +428,7 @@ impl SimulationWorker {
 }
 
 #[cfg(test)]
-impl Drop for SimulationWorker {
+impl Drop for LegacySimulationWorker {
     fn drop(&mut self) {
         self.sender.take();
         if let Some(thread) = self.thread.take()
@@ -503,7 +507,7 @@ mod tests {
         SubmissionAttempt::Initial(PairedSubmission::assemble(signed))
     }
 
-    fn gated_worker() -> (SimulationWorker, Arc<Barrier>, Arc<Barrier>) {
+    fn gated_worker() -> (LegacySimulationWorker, Arc<Barrier>, Arc<Barrier>) {
         let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
         let release = Arc::new(Barrier::new(2));
         let consumed = Arc::new(Barrier::new(2));
@@ -518,7 +522,7 @@ mod tests {
             while receiver.recv().is_ok() {}
         });
         (
-            SimulationWorker {
+            LegacySimulationWorker {
                 sender: Some(sender),
                 admission: Arc::new(AtomicU8::new(ADMISSION_FREE)),
                 entrypoint: Arc::new(SimulationEntrypoint::ready()),
@@ -529,7 +533,7 @@ mod tests {
         )
     }
 
-    fn idle_worker() -> (SimulationWorker, Arc<AtomicBool>) {
+    fn idle_worker() -> (LegacySimulationWorker, Arc<AtomicBool>) {
         let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
         let terminated = Arc::new(AtomicBool::new(false));
         let worker_terminated = Arc::clone(&terminated);
@@ -538,7 +542,7 @@ mod tests {
             worker_terminated.store(true, Ordering::Release);
         });
         (
-            SimulationWorker {
+            LegacySimulationWorker {
                 sender: Some(sender),
                 admission: Arc::new(AtomicU8::new(ADMISSION_FREE)),
                 entrypoint: Arc::new(SimulationEntrypoint::ready()),
@@ -548,7 +552,7 @@ mod tests {
         )
     }
 
-    fn forced_panicking_worker() -> (SimulationWorker, Arc<Barrier>, Arc<Barrier>) {
+    fn forced_panicking_worker() -> (LegacySimulationWorker, Arc<Barrier>, Arc<Barrier>) {
         let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
         let admission = Arc::new(AtomicU8::new(ADMISSION_FREE));
         let entrypoint = Arc::new(SimulationEntrypoint::ready());
@@ -569,7 +573,12 @@ mod tests {
             worker_closed.wait();
         });
         (
-            SimulationWorker { sender: Some(sender), admission, entrypoint, thread: Some(thread) },
+            LegacySimulationWorker {
+                sender: Some(sender),
+                admission,
+                entrypoint,
+                thread: Some(thread),
+            },
             release,
             closed,
         )
@@ -649,7 +658,7 @@ mod tests {
     fn submit_classifies_disconnected_sender_and_releases_reservation() {
         let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
         drop(receiver);
-        let worker = SimulationWorker {
+        let worker = LegacySimulationWorker {
             sender: Some(sender),
             admission: Arc::new(AtomicU8::new(ADMISSION_FREE)),
             entrypoint: Arc::new(SimulationEntrypoint::ready()),
@@ -720,8 +729,12 @@ mod tests {
         let entrypoint = Arc::new(SimulationEntrypoint::ready());
         let observed = Arc::clone(&entrypoint);
         let thread = std::thread::spawn(|| panic!("forced uncaught worker termination"));
-        let worker =
-            SimulationWorker { sender: Some(sender), admission, entrypoint, thread: Some(thread) };
+        let worker = LegacySimulationWorker {
+            sender: Some(sender),
+            admission,
+            entrypoint,
+            thread: Some(thread),
+        };
 
         drop(worker);
 
