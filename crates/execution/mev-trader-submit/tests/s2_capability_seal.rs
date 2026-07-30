@@ -695,9 +695,7 @@ fn validate_correlation_envelope(store: &str, entrypoint: &str, lib: &str) -> Re
             return Err(format!("X1 terminal correlation envelope edge missing: {required}"));
         }
     }
-    if !lib.contains(
-        "SimulationCorrelationEnvelopeV1, SimulationCorrelationKey, SimulationEntrypointStatus,",
-    ) {
+    if !lib.contains("SimulationCorrelationEnvelopeV1,\n    SimulationCorrelationKey,") {
         return Err("X1 public correlation envelope export missing".to_owned());
     }
     Ok(())
@@ -1154,7 +1152,7 @@ fn known_macro_without_sealed_symbols(mac: &syn::Macro) -> bool {
                         | "SealedUnsignedCandidate"
                         | "T4eCandidateHandoff"
                         | "T4eHandoffError"
-                        | "UnavailableSimulationHandoff"
+                        | "ProductionSimulationHandoff"
                 )
             })
 }
@@ -1165,7 +1163,7 @@ const PROTECTED_PRODUCTION_TYPES: [&str; 6] = [
     "SimulationEntrypoint",
     "SimulationWorker",
     "SealedUnsignedCandidate",
-    "UnavailableSimulationHandoff",
+    "ProductionSimulationHandoff",
 ];
 
 struct AliasBinding {
@@ -1587,65 +1585,12 @@ fn try_handoff_candidate(
     })
 }
 
-fn has_exact_deferred_handoff_body(
+fn has_exact_installed_handoff_body(
     method: &syn::ImplItemFn,
     aliases: &ProductionAliases,
     module_scope: &[String],
 ) -> bool {
-    if try_handoff_candidate(method, aliases, module_scope).as_deref() != Some("_candidate")
-        || method.sig.inputs.len() != 2
-        || !matches!(
-            method.sig.inputs.first(),
-            Some(syn::FnArg::Receiver(receiver))
-                if receiver.reference.is_some() && receiver.mutability.is_none()
-        )
-        || !matches!(
-            method.sig.inputs.last(),
-            Some(syn::FnArg::Typed(candidate))
-                if matches!(
-                    candidate.pat.as_ref(),
-                    syn::Pat::Ident(binding)
-                        if binding.ident == "_candidate"
-                            && binding.by_ref.is_none()
-                            && binding.mutability.is_none()
-                            && binding.subpat.is_none()
-                )
-        )
-    {
-        return false;
-    }
-    let [syn::Stmt::Expr(syn::Expr::Call(call), None)] = method.block.stmts.as_slice() else {
-        return false;
-    };
-    matches!(
-        call.func.as_ref(),
-        syn::Expr::Path(function)
-            if call.attrs.is_empty()
-                && function.attrs.is_empty()
-                && function.qself.is_none()
-                && function.path.leading_colon.is_none()
-                && function.path.segments.len() == 1
-                && function.path.segments[0].ident == "Err"
-                && matches!(
-                    &function.path.segments[0].arguments,
-                    syn::PathArguments::None
-                )
-    ) && matches!(
-        call.args.first(),
-        Some(syn::Expr::Path(argument))
-            if call.args.len() == 1
-                && argument.attrs.is_empty()
-                && argument.qself.is_none()
-                && argument.path.leading_colon.is_none()
-                && argument.path.segments.len() == 2
-                && argument.path.segments[0].ident == "T4eHandoffError"
-                && argument.path.segments[1].ident == "Rejected"
-                && argument
-                    .path
-                    .segments
-                    .iter()
-                    .all(|segment| matches!(&segment.arguments, syn::PathArguments::None))
-    )
+    has_total_installed_handoff_body(method, aliases, module_scope)
 }
 
 
@@ -1673,7 +1618,7 @@ struct ProductionHandoffVisitor {
     handoff_impls: usize,
     handoff_impl_target_mismatches: usize,
     try_handoff_methods: usize,
-    exact_deferred_try_handoff_methods: usize,
+    exact_installed_try_handoff_methods: usize,
     candidate_fields: usize,
     worker_spawn_calls: usize,
     entrypoint_ready_calls: usize,
@@ -1694,7 +1639,7 @@ impl ProductionHandoffVisitor {
             handoff_impls: 0,
             handoff_impl_target_mismatches: 0,
             try_handoff_methods: 0,
-            exact_deferred_try_handoff_methods: 0,
+            exact_installed_try_handoff_methods: 0,
             candidate_fields: 0,
             worker_spawn_calls: 0,
             entrypoint_ready_calls: 0,
@@ -1843,8 +1788,8 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionHandoffVisitor {
         let is_handoff_impl = item.trait_.as_ref().is_some_and(|(_, path, _)| {
             self.path_is_protected(path, "T4eCandidateHandoff")
         });
-        let self_is_unavailable =
-            self.type_is_protected(item.self_ty.as_ref(), "UnavailableSimulationHandoff");
+        let self_is_installed =
+            self.type_is_protected(item.self_ty.as_ref(), "ProductionSimulationHandoff");
         let try_handoff_methods = is_handoff_impl
             .then(|| {
                 item.items
@@ -1859,7 +1804,7 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionHandoffVisitor {
                     .count()
             })
             .unwrap_or_default();
-        let exact_deferred_try_handoff_methods = is_handoff_impl
+        let exact_installed_try_handoff_methods = is_handoff_impl
             .then(|| {
                 item.items
                     .iter()
@@ -1868,7 +1813,7 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionHandoffVisitor {
                             impl_item,
                             syn::ImplItem::Fn(method)
                                 if !has_cfg_test(&method.attrs)
-                                    && has_exact_deferred_handoff_body(
+                                    && has_exact_installed_handoff_body(
                                         method,
                                         &self.aliases,
                                         &self.module_scope,
@@ -1879,10 +1824,10 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionHandoffVisitor {
             })
             .unwrap_or_default();
         self.try_handoff_methods += try_handoff_methods;
-        self.exact_deferred_try_handoff_methods += exact_deferred_try_handoff_methods;
+        self.exact_installed_try_handoff_methods += exact_installed_try_handoff_methods;
         if is_handoff_impl {
             self.handoff_impls += 1;
-            if !self_is_unavailable {
+            if !self_is_installed {
                 self.handoff_impl_target_mismatches += 1;
             }
         }
@@ -2629,70 +2574,46 @@ fn submit_crate_sources() -> Result<Vec<(PathBuf, String)>, String> {
     Ok(sources)
 }
 
-fn validate_deferred_production_handoff(entrypoint: &str, cli: &str) -> Result<(), String> {
-    validate_deferred_production_handoff_with_override(entrypoint, cli, None)
-}
-
-fn validate_deferred_production_handoff_with_override(
-    entrypoint: &str,
+fn validate_installed_production_handoff(
+    handoff: &str,
     cli: &str,
     source_override: Option<(&Path, &str)>,
 ) -> Result<(), String> {
-    const FOLLOW_UP: &str = "Production T4e Simulation Installation + Settled-Loss Authority";
-
-    for required in [
+    validate_install_error_taxonomy(handoff)?;
+    validate_installed_handoff_constructor(handoff)?;
+    for forbidden in [
         "ProductionInstallationDeferred",
-        "pub const fn deferred_production() -> Self",
-        "Self::new(SimulationEntrypointUnavailable::ProductionInstallationDeferred)",
-        "real settled-loss authority",
-        "proofs/claim-store/custody",
-        "shared bridge",
-        "PR #55 committed-state dependency",
-        "Err(T4eHandoffError::Rejected)",
-        FOLLOW_UP,
+        "deferred_production",
+        "arm_sim_status:",
+        "production installation deferred",
     ] {
-        if !entrypoint.contains(required) {
-            return Err(format!("deferred rejecting entrypoint edge missing: {required}"));
+        if handoff.contains(forbidden) || cli.contains(forbidden) {
+            return Err(format!("installed production retained deferral edge: {forbidden}"));
         }
     }
-    if entrypoint.contains("probe_production") || cli.contains("probe_production") {
-        return Err(
-            "deferred installation performed a production probe: probe_production".to_owned()
-        );
-    }
     for required in [
-        "UnavailableSimulationHandoff::deferred_production()",
-        "t4e_handoff: Some(arm_sim_handoff.into_handoff())",
-        "status = ?self.config.arm_sim_status",
-        "arm simulation production installation deferred; rejecting candidate handoff",
-        FOLLOW_UP,
+        "ProductionBundleInputs",
+        "ProductionInstallBundle::load",
+        "spawn_production_simulation",
+        "Duration::from_secs(5)",
+        "ProductionInstallDisposition::Ready",
+        "InstalledSubmissionBridge::base_mainnet",
+        "Arc::clone(&bridge)",
     ] {
         if !cli.contains(required) {
-            return Err(format!("CLI deferred installation edge missing: {required}"));
+            return Err(format!("CLI installed conjunction missing: {required}"));
         }
-    }
-    if cli.matches("t4e_handoff: Some(arm_sim_handoff.into_handoff())").count() != 1 {
-        return Err("CLI production handoff is not the sole deferred rejecting sink".to_owned());
     }
 
     let submit_source_root = manifest_dir().join("src");
-    let entrypoint_path = submit_source_root.join("arm/simulation_entrypoint.rs");
     let cli_source_root = manifest_dir().join("../cli/src");
     let cli_path = cli_source_root.join("mev_trader.rs");
-    let mut parsed_sources = vec![
-        parse_production_source(
-            entrypoint,
-            "simulation entrypoint",
-            module_root_for_source(&entrypoint_path, &submit_source_root)?,
-            true,
-        )?,
-        parse_production_source(
-            cli,
-            "CLI",
-            module_root_for_source(&cli_path, &cli_source_root)?,
-            false,
-        )?,
-    ];
+    let mut parsed_sources = vec![parse_production_source(
+        cli,
+        "CLI",
+        module_root_for_source(&cli_path, &cli_source_root)?,
+        false,
+    )?];
     let mut override_applied = source_override.is_none();
     for (path, source) in submit_crate_sources()? {
         let analyzed_source = if let Some((override_path, replacement)) = source_override
@@ -2708,6 +2629,10 @@ fn validate_deferred_production_handoff_with_override(
             module_root.as_slice(),
             [arm, simulation_entrypoint]
                 if arm == "arm" && simulation_entrypoint == "simulation_entrypoint"
+        ) || matches!(
+            module_root.as_slice(),
+            [arm, production_handoff]
+                if arm == "arm" && production_handoff == "production_handoff"
         ) || matches!(
             module_root.as_slice(),
             [tx_authority, bridge]
@@ -2736,1182 +2661,200 @@ fn validate_deferred_production_handoff_with_override(
         );
     }
     let aliases = ProductionAliases::resolve(collector);
-    let mut analyses =
-        parsed_sources.iter().map(|source| analyze_production_handoff(source, &aliases));
-    let entrypoint_analysis = analyses.next().expect("simulation entrypoint analysis");
-    let cli_analysis = analyses.next().expect("CLI analysis");
-    let crate_analyses = analyses.collect::<Vec<_>>();
+    let analyses =
+        parsed_sources.iter().map(|source| analyze_production_handoff(source, &aliases)).collect::<Vec<_>>();
 
-    let opaque_production_items = entrypoint_analysis.opaque_production_items
-        + cli_analysis.opaque_production_items
-        + crate_analyses
-            .iter()
-            .map(|analysis| analysis.opaque_production_items)
-            .sum::<usize>();
-    let opaque_use_globs = aliases.opaque_use_globs;
-    if opaque_production_items != 0 || opaque_use_globs != 0 {
+    let opaque_production_items =
+        analyses.iter().map(|analysis| analysis.opaque_production_items).sum::<usize>();
+    if opaque_production_items != 0 || aliases.opaque_use_globs != 0 {
         return Err(format!(
-            "production contains syntax the deferral seal cannot resolve: opaque crate-wide items={opaque_production_items}, use globs={opaque_use_globs}",
+            "production contains syntax the installed seal cannot resolve: opaque crate-wide items={opaque_production_items}, use globs={}",
+            aliases.opaque_use_globs
         ));
     }
 
-    let mut handoff_impls = entrypoint_analysis.handoff_impls + cli_analysis.handoff_impls;
-    let mut handoff_impl_target_mismatches = entrypoint_analysis.handoff_impl_target_mismatches
-        + cli_analysis.handoff_impl_target_mismatches;
-    let mut try_handoff_methods =
-        entrypoint_analysis.try_handoff_methods + cli_analysis.try_handoff_methods;
-    let mut exact_deferred_try_handoff_methods =
-        entrypoint_analysis.exact_deferred_try_handoff_methods
-            + cli_analysis.exact_deferred_try_handoff_methods;
-    for analysis in &crate_analyses {
-        handoff_impls += analysis.handoff_impls;
-        handoff_impl_target_mismatches += analysis.handoff_impl_target_mismatches;
-        try_handoff_methods += analysis.try_handoff_methods;
-        exact_deferred_try_handoff_methods += analysis.exact_deferred_try_handoff_methods;
-    }
-    if handoff_impls != 1 || handoff_impl_target_mismatches != 0 || try_handoff_methods != 1 {
-        return Err(format!(
-            "crate-wide production handoff implementation cardinality changed: impls={handoff_impls}, wrong_targets={handoff_impl_target_mismatches}, try_handoff_methods={try_handoff_methods}",
-        ));
-    }
-    if exact_deferred_try_handoff_methods != try_handoff_methods {
-        return Err(format!(
-            "every production try_handoff must bind _candidate and contain only the tail expression Err(T4eHandoffError::Rejected): exact={exact_deferred_try_handoff_methods}, try_handoff_methods={try_handoff_methods}",
-        ));
-    }
-    let crate_candidate_fields =
-        crate_analyses.iter().map(|analysis| analysis.candidate_fields).sum::<usize>();
-    if entrypoint_analysis.candidate_fields != 0
-        || cli_analysis.candidate_fields != 1
-        || crate_candidate_fields != 0
+    let handoff_impls = analyses.iter().map(|analysis| analysis.handoff_impls).sum::<usize>();
+    let target_mismatches =
+        analyses.iter().map(|analysis| analysis.handoff_impl_target_mismatches).sum::<usize>();
+    let try_handoff_methods =
+        analyses.iter().map(|analysis| analysis.try_handoff_methods).sum::<usize>();
+    let exact_installed = analyses
+        .iter()
+        .map(|analysis| analysis.exact_installed_try_handoff_methods)
+        .sum::<usize>();
+    if handoff_impls != 1
+        || target_mismatches != 0
+        || try_handoff_methods != 1
+        || exact_installed != 1
     {
         return Err(format!(
-            "candidate ownership cardinality changed: deferred entrypoint fields={}, sole T4d shadow slot fields={}, other crate source fields={crate_candidate_fields}",
-            entrypoint_analysis.candidate_fields, cli_analysis.candidate_fields,
+            "crate-wide installed handoff cardinality changed: impls={handoff_impls}, wrong_targets={target_mismatches}, methods={try_handoff_methods}, exact_installed={exact_installed}"
         ));
     }
-    let worker_spawn_calls = entrypoint_analysis.worker_spawn_calls
-        + cli_analysis.worker_spawn_calls
-        + crate_analyses
-            .iter()
-            .map(|analysis| analysis.worker_spawn_calls)
-            .sum::<usize>();
-    if worker_spawn_calls != 0 {
+
+    let candidate_fields = analyses.iter().map(|analysis| analysis.candidate_fields).sum::<usize>();
+    if candidate_fields != 2 {
         return Err(format!(
-            "production contains {worker_spawn_calls} SimulationWorker::spawn caller(s)"
+            "candidate ownership must be exactly the T4d slot and worker payload: fields={candidate_fields}"
         ));
     }
-    let ready_calls = entrypoint_analysis.entrypoint_ready_calls
-        + cli_analysis.entrypoint_ready_calls
-        + crate_analyses
-            .iter()
-            .map(|analysis| analysis.entrypoint_ready_calls)
-            .sum::<usize>();
-    let ready_calls_in_worker_spawn = entrypoint_analysis.entrypoint_ready_calls_in_worker_spawn
-        + cli_analysis.entrypoint_ready_calls_in_worker_spawn
-        + crate_analyses
-            .iter()
-            .map(|analysis| analysis.entrypoint_ready_calls_in_worker_spawn)
-            .sum::<usize>();
-    if ready_calls != 1 || ready_calls_in_worker_spawn != 1 {
+    let worker_spawn_calls =
+        analyses.iter().map(|analysis| analysis.worker_spawn_calls).sum::<usize>();
+    if worker_spawn_calls != 1 {
         return Err(format!(
-            "SimulationEntrypoint::ready cardinality/context changed: total={ready_calls}, inside SimulationWorker::spawn={ready_calls_in_worker_spawn}",
+            "SimulationWorker::spawn production call cardinality changed: {worker_spawn_calls}"
         ));
     }
-    let runtime_open_calls = entrypoint_analysis.runtime_open_calls
-        + cli_analysis.runtime_open_calls
-        + crate_analyses
-            .iter()
-            .map(|analysis| analysis.runtime_open_calls)
-            .sum::<usize>();
+    let ready_calls =
+        analyses.iter().map(|analysis| analysis.entrypoint_ready_calls).sum::<usize>();
+    let ready_in_spawn = analyses
+        .iter()
+        .map(|analysis| analysis.entrypoint_ready_calls_in_worker_spawn)
+        .sum::<usize>();
+    if ready_calls != 1 || ready_in_spawn != 1 {
+        return Err(format!(
+            "SimulationEntrypoint::ready cardinality/context changed: total={ready_calls}, inside_spawn={ready_in_spawn}"
+        ));
+    }
+    let runtime_open_calls =
+        analyses.iter().map(|analysis| analysis.runtime_open_calls).sum::<usize>();
     if runtime_open_calls != 1 {
-        return Err(format!(
-            "ArmRuntime::open internal installer cardinality changed: total={runtime_open_calls}"
-        ));
+        return Err(format!("ArmRuntime::open cardinality changed: {runtime_open_calls}"));
     }
     Ok(())
 }
 
 #[test]
-fn unavailable_u0_green_u1_deferral_forgotten_u2_silent_fallback_red() {
-    let entrypoint = read(manifest_dir().join("src/arm/simulation_entrypoint.rs"));
+fn installed_u0_green_and_recursive_whole_crate_mutants_red() {
+    let handoff_path = Path::new("src/arm/production_handoff.rs");
+    let handoff = read(manifest_dir().join(handoff_path));
     let cli = read(manifest_dir().join("../cli/src/mev_trader.rs"));
     let transport_path = Path::new("src/arm/transport.rs");
     let transport = read(manifest_dir().join(transport_path));
-    validate_deferred_production_handoff(&entrypoint, &cli)
-        .expect("U0 explicitly deferred rejecting production handoff");
-    eprintln!("U0: GREEN");
 
-    let mutant = entrypoint.replace("ProductionInstallationDeferred", "ProductionInstallerMissing");
-    assert_ne!(mutant, entrypoint, "U1 patch did not change source");
-    assert!(validate_deferred_production_handoff(&mutant, &cli).is_err());
-    eprintln!("U1: RED");
+    validate_installed_production_handoff(&handoff, &cli, None)
+        .expect("U0 exact installed production handoff");
+    eprintln!("U0-INSTALLED: GREEN");
 
-    let mutant = entrypoint.replacen(
-        "Err(T4eHandoffError::Rejected)",
-        "Ok(()) /* silent candidate loss */",
+    let box_leak = handoff.replacen(
+        "        let Ok(mut state) = self.shared.state.lock() else {",
+        "        Box::leak(Box::new(&candidate));\n        let Ok(mut state) = self.shared.state.lock() else {",
         1,
     );
-    assert_ne!(mutant, entrypoint, "U2 patch did not change source");
-    assert!(validate_deferred_production_handoff(&mutant, &cli).is_err());
-    eprintln!("U2: RED");
-    const EXACT_HANDOFF: &str =
-        "fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        Err(T4eHandoffError::Rejected)";
-    for (name, replacement) in [
-        (
-            "divergent branch",
-            "fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        if false { loop {} }\n        Err(T4eHandoffError::Rejected)",
-        ),
-        (
-            "unknown retention helper",
-            "fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        retain(_candidate);\n        Err(T4eHandoffError::Rejected)",
-        ),
-        (
-            "non-ignored candidate binding",
-            "fn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        Err(T4eHandoffError::Rejected)",
-        ),
-        (
-            "preceding statement",
-            "fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        let _ = ();\n        Err(T4eHandoffError::Rejected)",
-        ),
-        (
-            "preceding Box::leak",
-            "fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        Box::leak(Box::new(0_u8));\n        Err(T4eHandoffError::Rejected)",
-        ),
-    ] {
-        let mutant = entrypoint.replacen(EXACT_HANDOFF, replacement, 1);
-        assert_ne!(mutant, entrypoint, "{name} mutant did not change source");
-        assert!(
-            validate_deferred_production_handoff(&mutant, &cli).is_err(),
-            "{name} violated the exact deferred handoff shape but remained GREEN"
-        );
-    }
-    eprintln!("U-EXACT-REJECTED-BODY: RED");
+    assert_ne!(box_leak, handoff, "Box::leak patch did not change source");
+    assert!(
+        validate_installed_production_handoff(
+            &box_leak,
+            &cli,
+            Some((handoff_path, &box_leak))
+        )
+        .is_err(),
+        "#56 candidate Box::leak mutant remained GREEN"
+    );
+    eprintln!("U-INSTALLED-BOX-LEAK: RED");
 
-    let protected_candidate_leak_mutant = entrypoint.replacen(
-        EXACT_HANDOFF,
-        "fn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n        Box::leak(Box::new(candidate));\n        Err(T4eHandoffError::Rejected)",
+    let second_impl = insert_before_test_module(
+        &transport,
+        "struct SecondProductionHandoff;\n\
+         impl T4eCandidateHandoff for SecondProductionHandoff {\n\
+         \tfn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n\
+         \t\tdrop(candidate);\n\
+         \t\tErr(T4eHandoffError::Rejected)\n\
+         \t}\n\
+         }",
+    );
+    assert_ne!(second_impl, transport, "second impl patch did not change source");
+    assert!(
+        validate_installed_production_handoff(
+            &handoff,
+            &cli,
+            Some((transport_path, &second_impl))
+        )
+        .is_err(),
+        "second crate-wide implementation remained GREEN"
+    );
+    eprintln!("U-INSTALLED-SECOND-IMPL: RED");
+
+    let aliased_impl = insert_before_test_module(
+        &transport,
+        "use crate::T4eCandidateHandoff as HiddenHandoff;\n\
+         struct AliasedProductionHandoff;\n\
+         impl HiddenHandoff for AliasedProductionHandoff {\n\
+         \tfn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n\
+         \t\tdrop(candidate);\n\
+         \t\tErr(T4eHandoffError::Rejected)\n\
+         \t}\n\
+         }",
+    );
+    assert_ne!(aliased_impl, transport, "aliased impl patch did not change source");
+    assert!(
+        validate_installed_production_handoff(
+            &handoff,
+            &cli,
+            Some((transport_path, &aliased_impl))
+        )
+        .is_err(),
+        "aliased second implementation remained GREEN"
+    );
+    eprintln!("U-INSTALLED-ALIASED-IMPL: RED");
+
+    let qself_target = handoff.replacen(
+        "impl T4eCandidateHandoff for ProductionSimulationHandoff {",
+        "impl T4eCandidateHandoff for <() as HandoffCarrier>::ProductionSimulationHandoff {",
         1,
     );
-    assert_ne!(
-        protected_candidate_leak_mutant, entrypoint,
-        "protected candidate Box::leak mutant did not change source"
+    let qself_target = qself_target.replacen(
+        "impl T4eCandidateHandoff for <() as HandoffCarrier>::ProductionSimulationHandoff {",
+        "trait HandoffCarrier { type ProductionSimulationHandoff; }\n\
+         struct ProjectedHandoff;\n\
+         impl HandoffCarrier for () { type ProductionSimulationHandoff = ProjectedHandoff; }\n\
+         impl T4eCandidateHandoff for <() as HandoffCarrier>::ProductionSimulationHandoff {",
+        1,
     );
+    assert_ne!(qself_target, handoff, "qself target patch did not change source");
     assert!(
-        validate_deferred_production_handoff(&protected_candidate_leak_mutant, &cli).is_err(),
-        "protected candidate Box::leak violated exact-body/non-retention but remained GREEN"
-    );
-    eprintln!("U-PROTECTED-CANDIDATE-BOX-LEAK: RED");
-
-    for (name, addition) in [
-        (
-            "direct Box::leak",
-            "fn unrelated_box_leak_control() {\n    Box::leak(Box::new(0_u8));\n}",
-        ),
-        (
-            "aliased Box::leak",
-            "fn unrelated_aliased_box_leak_control() {\n    use std::boxed::Box as Heap;\n    Heap::leak(Heap::new(0_u8));\n}",
-        ),
-    ] {
-        let control = insert_before_test_module(&entrypoint, addition);
-        assert_ne!(control, entrypoint, "{name} control did not change source");
-        validate_deferred_production_handoff(&control, &cli)
-            .unwrap_or_else(|error| panic!("unrelated {name} was rejected: {error}"));
-    }
-
-    let unrelated_try_handoff_controls = insert_before_test_module(
-        &transport,
-        "struct UnrelatedInherentHandoff;\n\
-         impl UnrelatedInherentHandoff {\n\
-         \tfn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n\
-         \t\tErr(T4eHandoffError::Rejected)\n\
-         \t}\n\
-         }\n\
-         trait UnrelatedTryHandoff {\n\
-         \tfn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError>;\n\
-         }\n\
-         struct UnrelatedTraitHandoff;\n\
-         impl UnrelatedTryHandoff for UnrelatedTraitHandoff {\n\
-         \tfn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n\
-         \t\tErr(T4eHandoffError::Rejected)\n\
-         \t}\n\
-         }",
-    );
-    validate_deferred_production_handoff_with_override(
-        &entrypoint,
-        &cli,
-        Some((transport_path, &unrelated_try_handoff_controls)),
-    )
-    .expect("unrelated inherent/trait try_handoff methods must remain GREEN");
-    let exact_shadow_trait_control = insert_before_test_module(
-        &transport,
-        "mod unrelated_handoff_identity {\n\
-         \ttrait T4eCandidateHandoff { fn try_handoff(&self); }\n\
-         \tstruct UnrelatedHandoff;\n\
-         \timpl T4eCandidateHandoff for UnrelatedHandoff {\n\
-         \t\tfn try_handoff(&self) {}\n\
-         \t}\n\
-         }",
-    );
-    validate_deferred_production_handoff_with_override(
-        &entrypoint,
-        &cli,
-        Some((transport_path, &exact_shadow_trait_control)),
-    )
-    .expect("same-spelling unrelated trait try_handoff must remain GREEN");
-    eprintln!("U-EXACT-SHADOW-TRAIT-TRY-HANDOFF: GREEN");
-    eprintln!("U-UNRELATED-INHERENT-TRY-HANDOFF: GREEN");
-    eprintln!("U-UNRELATED-TRAIT-TRY-HANDOFF: GREEN");
-    let same_spelling_unavailable_control = insert_before_test_module(
-        &transport,
-        "mod unrelated_unavailable_identity {\n\
-         \ttrait UnrelatedHandoff {\n\
-         \t\tfn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError>;\n\
-         \t}\n\
-         \tstruct UnavailableSimulationHandoff;\n\
-         \timpl UnrelatedHandoff for UnavailableSimulationHandoff {\n\
-         \t\tfn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n\
-         \t\t\tErr(T4eHandoffError::Rejected)\n\
-         \t\t}\n\
-         \t}\n\
-         }",
-    );
-    validate_deferred_production_handoff_with_override(
-        &entrypoint,
-        &cli,
-        Some((transport_path, &same_spelling_unavailable_control)),
-    )
-    .expect("unrelated same-spelling UnavailableSimulationHandoff must remain GREEN");
-    eprintln!("U-UNRELATED-SAME-SPELLING-UNAVAILABLE: GREEN");
-
-    let same_spelling_unavailable_mutant = insert_before_test_module(
-        &entrypoint.replacen(
-            "impl T4eCandidateHandoff for UnavailableSimulationHandoff {",
-            "impl T4eCandidateHandoff for same_spelling_unavailable::UnavailableSimulationHandoff {",
-            1,
-        ),
-        "mod same_spelling_unavailable {\n\
-         \tpub(super) struct UnavailableSimulationHandoff;\n\
-         }",
-    );
-    assert_ne!(
-        same_spelling_unavailable_mutant, entrypoint,
-        "same-spelling unavailable replacement mutant did not change source"
-    );
-    assert!(
-        validate_deferred_production_handoff(&same_spelling_unavailable_mutant, &cli).is_err(),
-        "canonical unavailable impl was replaced by a same-spelling target but remained GREEN"
-    );
-    eprintln!("U-SAME-SPELLING-UNAVAILABLE-REPLACEMENT: RED");
-
-    let qself_unavailable_mutant = insert_before_test_module(
-        &entrypoint.replacen(
-            "impl T4eCandidateHandoff for UnavailableSimulationHandoff {",
-            "impl T4eCandidateHandoff for <() as UnavailableCarrier>::UnavailableSimulationHandoff {",
-            1,
-        ),
-        "trait UnavailableCarrier {\n\
-         \ttype UnavailableSimulationHandoff;\n\
-         }\n\
-         struct ProjectedUnavailableSimulationHandoff;\n\
-         impl UnavailableCarrier for () {\n\
-         \ttype UnavailableSimulationHandoff = ProjectedUnavailableSimulationHandoff;\n\
-         }",
-    );
-    assert_ne!(
-        qself_unavailable_mutant, entrypoint,
-        "qself unavailable replacement mutant did not change source"
-    );
-    assert!(
-        validate_deferred_production_handoff(&qself_unavailable_mutant, &cli).is_err(),
-        "associated-type projection replaced the canonical unavailable impl but remained GREEN"
-    );
-    eprintln!("U-QSELF-UNAVAILABLE-REPLACEMENT: RED");
-
-    let source_root = Path::new("/crate/src");
-    for (name, path, expected) in [
-        ("LIB", "/crate/src/lib.rs", Vec::<String>::new()),
-        ("FLAT", "/crate/src/foo.rs", vec!["foo".to_owned()]),
-        ("MOD", "/crate/src/foo/mod.rs", vec!["foo".to_owned()]),
-        (
-            "NESTED",
-            "/crate/src/foo/bar.rs",
-            vec!["foo".to_owned(), "bar".to_owned()],
-        ),
-    ] {
-        assert_eq!(
-            module_root_for_source(Path::new(path), source_root)
-                .unwrap_or_else(|error| panic!("{name} module root failed: {error}")),
-            expected,
-            "{name} file-derived module root changed",
-        );
-    }
-    eprintln!("U-FILE-DERIVED-MODULE-ROOTS: GREEN");
-
-    for (name, result) in [
-        ("Busy", "Err(T4eHandoffError::Busy)"),
-        ("Closed", "Err(T4eHandoffError::Closed)"),
-        ("Ok", "Ok(())"),
-        ("Rejected", "Err(T4eHandoffError::Rejected)"),
-    ] {
-        let addition = format!(
-            "struct AlternateHandoff{name};\n\
-             impl T4eCandidateHandoff for AlternateHandoff{name} {{\n\
-             \tfn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {{\n\
-             \t\t{result}\n\
-             \t}}\n\
-             }}"
-        );
-        let mutant = insert_before_test_module(&entrypoint, &addition);
-        assert_ne!(mutant, entrypoint, "alternate {name} handoff patch did not change source");
-        assert!(
-            validate_deferred_production_handoff(&mutant, &cli).is_err(),
-            "alternate {name} handoff remained GREEN"
-        );
-        eprintln!("U-{name}: RED");
-    }
-    let mutant = insert_before_test_module(
-        &transport,
-        "struct TransportHandoffBypass;\n\
-         impl T4eCandidateHandoff for TransportHandoffBypass {\n\
-         \tfn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n\
-         \t\tErr(T4eHandoffError::Rejected)\n\
-         \t}\n\
-         }",
-    );
-    assert_ne!(mutant, transport, "transport handoff mutant did not change source");
-    assert!(
-        validate_deferred_production_handoff_with_override(
-            &entrypoint,
+        validate_installed_production_handoff(
+            &qself_target,
             &cli,
-            Some((transport_path, &mutant)),
+            Some((handoff_path, &qself_target))
         )
         .is_err(),
-        "second crate-wide handoff implementation remained GREEN"
+        "qself replacement target remained GREEN"
     );
-    eprintln!("U-CRATE-WIDE-IMPL: RED");
-    for (name, call) in [
-        (
-            "worker spawn",
-            "crate::arm::simulation_entrypoint::SimulationWorker::spawn();",
-        ),
-        (
-            "entrypoint ready",
-            "crate::arm::simulation_entrypoint::SimulationEntrypoint::ready();",
-        ),
-        (
-            "runtime open",
-            "crate::arm::simulation_entrypoint::ArmRuntime::open();",
-        ),
-    ] {
-        let addition = format!("fn transport_activation_bypass() {{\n    {call}\n}}");
-        let mutant = insert_before_test_module(&transport, &addition);
-        assert_ne!(mutant, transport, "{name} override mutant did not change source");
-        assert!(
-            validate_deferred_production_handoff_with_override(
-                &entrypoint,
-                &cli,
-                Some((transport_path, &mutant)),
-            )
-            .is_err(),
-            "crate-wide helper {name} activation remained GREEN"
-        );
-    }
-    eprintln!("U-CRATE-WIDE-ACTIVATION: RED");
-    for (name, expression) in [
-        ("CALL", "Self::open();"),
-        ("FUNCTION_VALUE", "let _ = Self::open;"),
-    ] {
-        let addition = format!(
-            "impl ArmRuntime {{\n\
-             \tfn protected_self_open_{name}() {{ {expression} }}\n\
-             }}",
-        );
-        let mutant = insert_before_test_module(&entrypoint, &addition);
-        assert_ne!(mutant, entrypoint, "protected Self::open {name} mutant did not change source");
-        assert!(
-            validate_deferred_production_handoff(&mutant, &cli).is_err(),
-            "protected Self::open {name} remained GREEN"
-        );
-    }
-    for (owner, member) in [
-        ("SimulationWorker", "spawn"),
-        ("SimulationEntrypoint", "ready"),
-    ] {
-        for (name, expression) in [
-            ("CALL", format!("Self::{member}();")),
-            ("FUNCTION_VALUE", format!("let _ = Self::{member};")),
-        ] {
-            let addition = format!(
-                "impl {owner} {{\n\
-                 \tfn protected_self_{member}_{name}() {{ {expression} }}\n\
-                 }}",
-            );
-            let mutant = insert_before_test_module(&entrypoint, &addition);
-            assert_ne!(
-                mutant, entrypoint,
-                "protected {owner} Self::{member} {name} mutant did not change source"
-            );
-            assert!(
-                validate_deferred_production_handoff(&mutant, &cli).is_err(),
-                "protected {owner} Self::{member} {name} remained GREEN"
-            );
-        }
-    }
-    eprintln!("U-PROTECTED-SELF-ACTIVATION-CALLS-AND-VALUES: RED");
+    eprintln!("U-INSTALLED-QSELF-TARGET: RED");
 
-    let unrelated_self_owner_control = insert_before_test_module(
+    let extra_owner = insert_before_test_module(
         &transport,
-        "struct UnrelatedSelfRuntime;\n\
-         impl UnrelatedSelfRuntime {\n\
-         \tfn open() {}\n\
-         \tfn probe() { Self::open(); let _ = Self::open; }\n\
-         }\n\
-         struct UnrelatedSelfWorker;\n\
-         impl UnrelatedSelfWorker {\n\
-         \tfn spawn() {}\n\
-         \tfn probe() { Self::spawn(); let _ = Self::spawn; }\n\
-         }\n\
-         struct UnrelatedSelfEntrypoint;\n\
-         impl UnrelatedSelfEntrypoint {\n\
-         \tfn ready() {}\n\
-         \tfn probe() { Self::ready(); let _ = Self::ready; }\n\
-         }",
+        "struct RetainedCandidateOwner { candidate: SealedUnsignedCandidate }",
     );
-    validate_deferred_production_handoff_with_override(
-        &entrypoint,
-        &cli,
-        Some((transport_path, &unrelated_self_owner_control)),
-    )
-    .expect("Self activation on unrelated impl owners must remain GREEN");
-    eprintln!("U-UNRELATED-SELF-OWNERS: GREEN");
+    assert_ne!(extra_owner, transport, "extra owner patch did not change source");
+    assert!(
+        validate_installed_production_handoff(
+            &handoff,
+            &cli,
+            Some((transport_path, &extra_owner))
+        )
+        .is_err(),
+        "third candidate owner remained GREEN"
+    );
+    eprintln!("U-INSTALLED-CANDIDATE-OWNER: RED");
 
-    let unrelated_activation_names = insert_before_test_module(
-        &transport,
-        "struct UnrelatedSimulationWorker;\n\
-         impl UnrelatedSimulationWorker { fn spawn() {} }\n\
-         struct UnrelatedSimulationEntrypoint;\n\
-         impl UnrelatedSimulationEntrypoint { fn ready() {} }\n\
-         struct UnrelatedArmRuntime;\n\
-         impl UnrelatedArmRuntime { fn open() {} }\n\
-         fn unrelated_same_named_calls() {\n\
-         \tUnrelatedSimulationWorker::spawn();\n\
-         \tUnrelatedSimulationEntrypoint::ready();\n\
-         \tUnrelatedArmRuntime::open();\n\
-         }",
-    );
-    validate_deferred_production_handoff_with_override(
-        &entrypoint,
-        &cli,
-        Some((transport_path, &unrelated_activation_names)),
-    )
-    .expect("unrelated same-named methods and types must remain GREEN");
-
-    let exact_shadow_activation_names = insert_before_test_module(
-        &transport,
-        "mod exact_shadow_activation_names {\n\
-         \tpub(super) struct ArmRuntime;\n\
-         \timpl ArmRuntime { pub(super) fn open() {} }\n\
-         \tpub(super) struct SimulationWorker;\n\
-         \timpl SimulationWorker { pub(super) fn spawn() {} }\n\
-         \tpub(super) struct SimulationEntrypoint;\n\
-         \timpl SimulationEntrypoint { pub(super) fn ready() {} }\n\
-         \tuse self::ArmRuntime::open as shadow_open;\n\
-         \tfn calls() {\n\
-         \t\tArmRuntime::open();\n\
-         \t\tSimulationWorker::spawn();\n\
-         \t\tSimulationEntrypoint::ready();\n\
-         \t\tshadow_open();\n\
-         \t}\n\
-         }\n\
-         mod exact_shadow_sibling_calls {\n\
-         \tfn calls() {\n\
-         \t\tsuper::exact_shadow_activation_names::ArmRuntime::open();\n\
-         \t\tsuper::exact_shadow_activation_names::SimulationWorker::spawn();\n\
-         \t\tsuper::exact_shadow_activation_names::SimulationEntrypoint::ready();\n\
-         \t}\n\
-         }",
-    );
-    validate_deferred_production_handoff_with_override(
-        &entrypoint,
-        &cli,
-        Some((transport_path, &exact_shadow_activation_names)),
-    )
-    .expect("nested/sibling exact-spelling activation identities must remain GREEN");
-    eprintln!("U-EXACT-SHADOW-ACTIVATION: GREEN");
-    let exact_candidate_shadow_controls = insert_before_test_module(
-        &transport,
-        "struct SealedUnsignedCandidate;\n\
-         struct SeparateFileRootCandidateShadow {\n\
-         \tcandidate: Option<SealedUnsignedCandidate>,\n\
-         }\n\
-         mod nested_candidate_shadow {\n\
-         \tstruct SealedUnsignedCandidate;\n\
-         \tstruct NestedCandidateShadow {\n\
-         \t\tcandidate: Option<SealedUnsignedCandidate>,\n\
-         \t}\n\
-         }",
-    );
-    validate_deferred_production_handoff_with_override(
-        &entrypoint,
-        &cli,
-        Some((transport_path, &exact_candidate_shadow_controls)),
-    )
-    .expect("nested and separate-file-root exact candidate shadow fields must remain GREEN");
-    eprintln!("U-EXACT-CANDIDATE-SHADOW-FIELDS: GREEN");
     for (name, addition) in [
-        (
-            "STRUCT",
-            "struct TransportCandidateRetention {\n\
-             \tcandidate: Option<SealedUnsignedCandidate>,\n\
-             }",
-        ),
-        (
-            "ENUM",
-            "enum TransportCandidateRetention {\n\
-             \tCandidate(SealedUnsignedCandidate),\n\
-             }",
-        ),
-        (
-            "UNION",
-            "union TransportCandidateRetention {\n\
-             \tcandidate: std::mem::ManuallyDrop<SealedUnsignedCandidate>,\n\
-             }",
-        ),
-        (
-            "STATIC",
-            "static TRANSPORT_CANDIDATE_RETENTION: Option<SealedUnsignedCandidate> = None;",
-        ),
-        (
-            "CONST",
-            "const TRANSPORT_CANDIDATE_RETENTION: Option<SealedUnsignedCandidate> = None;",
-        ),
+        ("MACRO", "install_production_simulation!();"),
+        ("PATH", "#[path = \"hidden.rs\"] mod hidden;"),
+        ("GLOB", "use crate::arm::*;"),
     ] {
         let mutant = insert_before_test_module(&transport, addition);
-        assert_ne!(
-            mutant, transport,
-            "crate-wide {name} candidate-retention mutant did not change source"
-        );
+        assert_ne!(mutant, transport, "{name} patch did not change source");
         assert!(
-            validate_deferred_production_handoff_with_override(
-                &entrypoint,
+            validate_installed_production_handoff(
+                &handoff,
                 &cli,
-                Some((transport_path, &mutant)),
+                Some((transport_path, &mutant))
             )
             .is_err(),
-            "crate-wide {name} candidate retention without a handoff impl remained GREEN"
+            "{name} resolution escape remained GREEN"
         );
+        eprintln!("U-INSTALLED-{name}: RED");
     }
-    eprintln!("U-CRATE-WIDE-CANDIDATE-RETENTION: RED");
-    let projection_retention_mutant = insert_before_test_module(
-        &transport,
-        "trait Carrier { type Candidate; }\n\
-         impl Carrier for () { type Candidate = SealedUnsignedCandidate; }\n\
-         struct ProjectedCandidateRetention {\n\
-         \tcandidate: <() as Carrier>::Candidate,\n\
-         }",
-    );
-    assert_ne!(
-        projection_retention_mutant, transport,
-        "associated candidate projection retention mutant did not change source"
-    );
-    assert!(
-        validate_deferred_production_handoff_with_override(
-            &entrypoint,
-            &cli,
-            Some((transport_path, &projection_retention_mutant)),
-        )
-        .is_err(),
-        "<() as Carrier>::Candidate retention remained GREEN"
-    );
-    eprintln!("U-QSELF-CANDIDATE-PROJECTION-RETENTION: RED");
-
-    let unrelated_qualified_candidate_control = insert_before_test_module(
-        &transport,
-        "struct UnrelatedQualifiedFieldControl {\n\
-         \tvalue: Option<std::time::Duration>,\n\
-         }\n\
-         static UNRELATED_QUALIFIED_STATIC: Option<std::time::Duration> = None;\n\
-         const UNRELATED_QUALIFIED_CONST: Option<std::time::Duration> = None;",
-    );
-    validate_deferred_production_handoff_with_override(
-        &entrypoint,
-        &cli,
-        Some((transport_path, &unrelated_qualified_candidate_control)),
-    )
-    .expect("provably unrelated qualified field/static/const types must remain GREEN");
-    eprintln!("U-UNRELATED-QUALIFIED-OWNERSHIP-TYPES: GREEN");
-
-    for (name, addition) in [
-        (
-            "STMT",
-            "fn opaque_transport_statement_helper() {\n\
-             \tgenerate_transport_statement!();\n\
-             }",
-        ),
-        (
-            "EXPR",
-            "fn opaque_transport_expression_helper() {\n\
-             \tlet _ = generate_transport_expression!();\n\
-             }",
-        ),
-    ] {
-        let mutant = insert_before_test_module(&transport, addition);
-        assert_ne!(
-            mutant, transport,
-            "crate-wide opaque {name} macro mutant did not change source"
-        );
-        assert!(
-            validate_deferred_production_handoff_with_override(
-                &entrypoint,
-                &cli,
-                Some((transport_path, &mutant)),
-            )
-            .is_err(),
-            "crate-wide opaque {name} macro without a handoff impl remained GREEN"
-        );
-    }
-    eprintln!("U-CRATE-WIDE-OPAQUE-FUNCTION-MACROS: RED");
-    let cross_file_alias_source = insert_before_test_module(
-        &entrypoint,
-        "pub trait CrossFileHandoffAlias = T4eCandidateHandoff;\n\
-         pub use std::boxed::Box as CrossFileBoxAlias;\n\
-         pub use std::boxed::Box::leak as cross_file_leak_alias;",
-    );
-    for (name, leak) in [
-        (
-            "BOX-TYPE",
-            "ImportedBoxAlias::leak(ImportedBoxAlias::new(candidate));",
-        ),
-        (
-            "BOX-LEAK-FUNCTION",
-            "imported_leak_alias(Box::new(candidate));",
-        ),
-    ] {
-        let addition = format!(
-            "pub use crate::arm::simulation_entrypoint::{{\n\
-             \tCrossFileBoxAlias as ImportedBoxAlias,\n\
-             \tCrossFileHandoffAlias as ImportedHandoffAlias,\n\
-             \tcross_file_leak_alias as imported_leak_alias,\n\
-             }};\n\
-             struct CrossFileAliasHandoff;\n\
-             impl ImportedHandoffAlias for CrossFileAliasHandoff {{\n\
-             \tfn try_handoff(&self, candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {{\n\
-             \t\t{leak}\n\
-             \t\tErr(T4eHandoffError::Rejected)\n\
-             \t}}\n\
-             }}"
-        );
-        let mutant = insert_before_test_module(&transport, &addition);
-        assert_ne!(mutant, transport, "cross-file {name} alias mutant did not change source");
-        assert!(
-            validate_deferred_production_handoff_with_override(
-                &cross_file_alias_source,
-                &cli,
-                Some((transport_path, &mutant)),
-            )
-            .is_err(),
-            "cross-file trait/{name} aliases remained GREEN"
-        );
-    }
-
-    let collision_entrypoint = insert_before_test_module(
-        &entrypoint,
-        "type SharedCandidateAlias = SealedUnsignedCandidate;\n\
-         trait SharedHandoffAlias = T4eCandidateHandoff;",
-    );
-    let collision_transport = insert_before_test_module(
-        &transport,
-        "struct SharedCandidateAlias;\n\
-         trait SharedHandoffAlias {\n\
-         \tfn unrelated(&self, value: SharedCandidateAlias);\n\
-         }\n\
-         struct UnrelatedSharedNames;\n\
-         impl SharedHandoffAlias for UnrelatedSharedNames {\n\
-         \tfn unrelated(&self, _value: SharedCandidateAlias) {}\n\
-         }",
-    );
-    validate_deferred_production_handoff_with_override(
-        &collision_entrypoint,
-        &cli,
-        Some((transport_path, &collision_transport)),
-    )
-    .expect("bare alias spellings reused in another module must not inherit protected meaning");
-
-    let imported_trait_collision_entrypoint = insert_before_test_module(
-        &entrypoint,
-        "trait ImportedTraitCollision = T4eCandidateHandoff;\n\
-         use ArmRuntime::open as ImportedOpenCollision;",
-    );
-    let imported_trait_collision_transport = insert_before_test_module(
-        &transport,
-        "mod unrelated_import_origin {\n\
-         \tpub(super) trait ForeignHandoff { fn unrelated(&self); }\n\
-         \tpub(super) struct ForeignRuntime;\n\
-         \timpl ForeignRuntime { pub(super) fn open() {} }\n\
-         }\n\
-         use self::unrelated_import_origin::ForeignHandoff as ImportedTraitCollision;\n\
-         use self::unrelated_import_origin::ForeignRuntime::open as ImportedOpenCollision;\n\
-         struct ImportedTraitCollisionTarget;\n\
-         impl ImportedTraitCollision for ImportedTraitCollisionTarget {\n\
-         \tfn unrelated(&self) {}\n\
-         }\n\
-         fn imported_open_collision_control() { ImportedOpenCollision(); }",
-    );
-    validate_deferred_production_handoff_with_override(
-        &imported_trait_collision_entrypoint,
-        &cli,
-        Some((transport_path, &imported_trait_collision_transport)),
-    )
-    .expect("same-spelling imported unrelated trait/function aliases must not inherit cross-module protected identities");
-    eprintln!("U-IMPORTED-TRAIT-AND-OPEN-ALIAS-COLLISION: GREEN");
-
-    let combined_alias_collision_handoff = insert_before_test_module(
-        &collision_entrypoint,
-        "struct ProtectedAliasCollisionHandoff;\n\
-         impl SharedHandoffAlias for ProtectedAliasCollisionHandoff {\n\
-         \tfn try_handoff(&self, _candidate: SharedCandidateAlias) -> Result<(), T4eHandoffError> {\n\
-         \t\tErr(T4eHandoffError::Rejected)\n\
-         \t}\n\
-         }",
-    );
-    assert!(
-        validate_deferred_production_handoff_with_override(
-            &combined_alias_collision_handoff,
-            &cli,
-            Some((transport_path, &collision_transport)),
-        )
-        .is_err(),
-        "protected alias second handoff was hidden by an unrelated same-spelling file-root definition",
-    );
-    eprintln!("U-COMBINED-CROSS-FILE-ALIAS-COLLISION-HANDOFF: RED");
-
-    let candidate_alias_collision_entrypoint = insert_before_test_module(
-        &collision_entrypoint,
-        "struct ProtectedAliasCollisionRetention {\n\
-         \tcandidate: Option<SharedCandidateAlias>,\n\
-         }",
-    );
-    assert!(
-        validate_deferred_production_handoff_with_override(
-            &candidate_alias_collision_entrypoint,
-            &cli,
-            Some((transport_path, &collision_transport)),
-        )
-        .is_err(),
-        "protected candidate alias retention was hidden by an unrelated same-spelling file-root definition",
-    );
-    eprintln!("U-CROSS-FILE-CANDIDATE-ALIAS-COLLISION: RED");
-
-    let runtime_alias_collision_entrypoint = insert_before_test_module(
-        &entrypoint,
-        "type SharedRuntimeAlias = ArmRuntime;\n\
-         fn protected_runtime_alias_collision_probe() {\n\
-         \tlet _ = SharedRuntimeAlias::open();\n\
-         }",
-    );
-    let runtime_alias_collision_transport = insert_before_test_module(
-        &transport,
-        "struct SharedRuntimeAlias;\n\
-         impl SharedRuntimeAlias { fn open() {} }",
-    );
-    assert!(
-        validate_deferred_production_handoff_with_override(
-            &runtime_alias_collision_entrypoint,
-            &cli,
-            Some((transport_path, &runtime_alias_collision_transport)),
-        )
-        .is_err(),
-        "protected ArmRuntime::open alias was hidden by an unrelated same-spelling file-root definition",
-    );
-    eprintln!("U-CROSS-FILE-RUNTIME-ALIAS-COLLISION: RED");
-    let sibling_module_alias_control = insert_before_test_module(
-        &transport,
-        "mod protected_looking_aliases {\n\
-         \ttype SharedCandidateAlias = SealedUnsignedCandidate;\n\
-         \ttrait SharedHandoffAlias = T4eCandidateHandoff;\n\
-         }\n\
-         mod unrelated_sibling_aliases {\n\
-         \tstruct SharedCandidateAlias;\n\
-         \ttrait SharedHandoffAlias {\n\
-         \t\tfn unrelated(&self, value: SharedCandidateAlias);\n\
-         \t}\n\
-         \tstruct UnrelatedSharedNames;\n\
-         \timpl SharedHandoffAlias for UnrelatedSharedNames {\n\
-         \t\tfn unrelated(&self, _value: SharedCandidateAlias) {}\n\
-         \t}\n\
-         }",
-    );
-    validate_deferred_production_handoff_with_override(
-        &entrypoint,
-        &cli,
-        Some((transport_path, &sibling_module_alias_control)),
-    )
-    .expect(
-        "protected-looking bare alias names reused in a sibling inline module without protected behavior must stay GREEN under the file-local alias model",
-    );
-    let cross_file_cardinality_entrypoint = insert_before_test_module(
-        &entrypoint,
-        "pub trait CrossFileCardinalityHandoffAlias = T4eCandidateHandoff;\n\
-         pub type CrossFileCardinalityCandidateAlias = SealedUnsignedCandidate;",
-    );
-    let cross_file_cardinality_transport = insert_before_test_module(
-        &transport,
-        "use crate::arm::simulation_entrypoint::{\n\
-         \tCrossFileCardinalityCandidateAlias as ImportedCardinalityCandidate,\n\
-         \tCrossFileCardinalityHandoffAlias as ImportedCardinalityHandoff,\n\
-         };\n\
-         struct CrossFileCardinalityBypass;\n\
-         impl ImportedCardinalityHandoff for CrossFileCardinalityBypass {\n\
-         \tfn try_handoff(&self, _candidate: ImportedCardinalityCandidate) -> Result<(), T4eHandoffError> {\n\
-         \t\tErr(T4eHandoffError::Rejected)\n\
-         \t}\n\
-         }",
-    );
-    let error = validate_deferred_production_handoff_with_override(
-        &cross_file_cardinality_entrypoint,
-        &cli,
-        Some((transport_path, &cross_file_cardinality_transport)),
-    )
-    .expect_err("cross-file trait/candidate aliases bypassed handoff method cardinality");
-    assert_eq!(
-        error,
-        "crate-wide production handoff implementation cardinality changed: impls=2, wrong_targets=1, try_handoff_methods=2",
-        "cross-file trait/candidate alias mutant was not rejected by method cardinality"
-    );
-    let macro_mutant = insert_before_test_module(
-        &transport,
-        "macro_rules! install_transport_handoff {\n\
-         \t() => {\n\
-         \t\tstruct MacroTransportHandoff;\n\
-         \t\timpl T4eCandidateHandoff for MacroTransportHandoff {\n\
-         \t\t\tfn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {\n\
-         \t\t\t\tErr(T4eHandoffError::Rejected)\n\
-         \t\t\t}\n\
-         \t\t}\n\
-         \t};\n\
-         }\n\
-         install_transport_handoff!();",
-    );
-    assert_ne!(macro_mutant, transport, "macro handoff mutant did not change source");
-    assert!(
-        validate_deferred_production_handoff_with_override(
-            &entrypoint,
-            &cli,
-            Some((transport_path, &macro_mutant)),
-        )
-        .is_err(),
-        "macro-generated crate-wide handoff remained GREEN"
-    );
-    let opaque_macro_mutant =
-        insert_before_test_module(&transport, "generate_transport_handoff!();");
-    assert_ne!(
-        opaque_macro_mutant, transport,
-        "symbol-free macro mutant did not change source"
-    );
-    assert!(
-        validate_deferred_production_handoff_with_override(
-            &entrypoint,
-            &cli,
-            Some((transport_path, &opaque_macro_mutant)),
-        )
-        .is_err(),
-        "symbol-free opaque macro remained GREEN"
-    );
-
-    let path_module_mutant =
-        insert_before_test_module(&transport, "#[path = \"hidden_handoff.rs\"] mod hidden_handoff;");
-    assert_ne!(
-        path_module_mutant, transport,
-        "path module mutant did not change source"
-    );
-    assert!(
-        validate_deferred_production_handoff_with_override(
-            &entrypoint,
-            &cli,
-            Some((transport_path, &path_module_mutant)),
-        )
-        .is_err(),
-        "opaque #[path] production module remained GREEN"
-    );
-    eprintln!("U-OPAQUE-PATH-MODULE: RED");
-    let glob_mutant = insert_before_test_module(&transport, "use crate::*;");
-    assert_ne!(glob_mutant, transport, "glob mutant did not change source");
-    assert!(
-        validate_deferred_production_handoff_with_override(
-            &entrypoint,
-            &cli,
-            Some((transport_path, &glob_mutant)),
-        )
-        .is_err(),
-        "glob-obscured crate source remained GREEN"
-    );
-
-    let mutant = insert_before_test_module(
-        &entrypoint,
-        "fn aliased_runtime_probe() {\n\
-         \tuse super::ArmRuntime as RuntimeProbe;\n\
-         \tlet _ = RuntimeProbe::open();\n\
-         }",
-    );
-    assert_ne!(mutant, entrypoint, "aliased ArmRuntime open patch did not change source");
-    assert!(
-        validate_deferred_production_handoff(&mutant, &cli).is_err(),
-        "aliased ArmRuntime open remained GREEN"
-    );
-    eprintln!("U-ALIASED-OPEN: RED");
-
-    let mutant = insert_before_test_module(
-        &entrypoint,
-        "fn hidden_simulation_installer() {\n\
-         \tlet _ = SimulationEntrypoint::ready();\n\
-         \tlet _ = SimulationWorker::spawn(runtime, armed, store);\n\
-         }",
-    );
-    assert_ne!(mutant, entrypoint, "hidden Ready/spawn caller patch did not change source");
-    assert!(
-        validate_deferred_production_handoff(&mutant, &cli).is_err(),
-        "hidden Ready/spawn caller remained GREEN"
-    );
-    eprintln!("U-HIDDEN-INSTALLER: RED");
-
-    let mutant = insert_before_test_module(
-        &entrypoint,
-        "struct CandidateRetentionBypass {\n\
-         \tcandidate: Option<SealedUnsignedCandidate>,\n\
-         }",
-    );
-    assert_ne!(mutant, entrypoint, "candidate retention patch did not change source");
-    assert!(
-        validate_deferred_production_handoff(&mutant, &cli).is_err(),
-        "candidate retention remained GREEN"
-    );
-    eprintln!("U-CANDIDATE-RETENTION: RED");
-
-    for (name, result) in [
-        ("Busy", "Err(T4eHandoffError::Busy)"),
-        ("Closed", "Err(T4eHandoffError::Closed)"),
-        ("Rejected", "Err(T4eHandoffError::Rejected)"),
-    ] {
-        let addition = format!(
-            "trait HandoffAlias{name} = T4eCandidateHandoff;\n\
-             struct TraitAliasedAlternate{name};\n\
-             impl HandoffAlias{name} for TraitAliasedAlternate{name} {{\n\
-             \tfn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {{\n\
-             \t\t{result}\n\
-             \t}}\n\
-             }}"
-        );
-        let mutant = insert_before_test_module(&entrypoint, &addition);
-        assert_ne!(mutant, entrypoint, "trait-alias {name} patch did not change source");
-        assert!(
-            validate_deferred_production_handoff(&mutant, &cli).is_err(),
-            "trait-alias alternate {name} handoff remained GREEN"
-        );
-        eprintln!("U-TRAIT-ALIAS-{name}: RED");
-    }
-
-    let mutant = insert_before_test_module(
-        &entrypoint,
-        "type RuntimeAliasOne = ArmRuntime;\n\
-         type RuntimeAliasTwo = RuntimeAliasOne;\n\
-         fn type_aliased_runtime_probe() {\n\
-         \tlet open = RuntimeAliasTwo::open;\n\
-         \tlet _ = open;\n\
-         }",
-    );
-    assert_ne!(mutant, entrypoint, "ArmRuntime type-alias chain patch did not change source");
-    assert!(
-        validate_deferred_production_handoff(&mutant, &cli).is_err(),
-        "ArmRuntime type-alias chain/function value remained GREEN"
-    );
-    eprintln!("U-RUNTIME-TYPE-ALIAS: RED");
-
-    let mutant = insert_before_test_module(
-        &entrypoint,
-        "use super::ArmRuntime as RuntimeUseOne;\n\
-         use RuntimeUseOne as RuntimeUseTwo;\n\
-         fn use_aliased_runtime_probe() {\n\
-         \tlet _ = <RuntimeUseTwo>::open();\n\
-         }",
-    );
-    assert_ne!(mutant, entrypoint, "ArmRuntime use-alias/UFCS patch did not change source");
-    assert!(
-        validate_deferred_production_handoff(&mutant, &cli).is_err(),
-        "ArmRuntime use-alias chain/UFCS remained GREEN"
-    );
-    eprintln!("U-RUNTIME-USE-ALIAS-UFCS: RED");
-
-    let mutant = insert_before_test_module(
-        &entrypoint,
-        "type EntrypointAliasOne = SimulationEntrypoint;\n\
-         type EntrypointAliasTwo = EntrypointAliasOne;\n\
-         type WorkerAliasOne = SimulationWorker;\n\
-         type WorkerAliasTwo = WorkerAliasOne;\n\
-         fn aliased_simulation_function_values() {\n\
-         \tlet ready = EntrypointAliasTwo::ready;\n\
-         \tlet spawn = WorkerAliasTwo::spawn;\n\
-         \tlet _ = (ready, spawn);\n\
-         }",
-    );
-    assert_ne!(mutant, entrypoint, "entrypoint/worker alias patch did not change source");
-    assert!(
-        validate_deferred_production_handoff(&mutant, &cli).is_err(),
-        "entrypoint/worker alias function values remained GREEN"
-    );
-    eprintln!("U-ENTRYPOINT-WORKER-ALIASES: RED");
-
-    let mutant = insert_before_test_module(
-        &entrypoint,
-        "type EntrypointUfcsAlias = SimulationEntrypoint;\n\
-         type WorkerUfcsAlias = SimulationWorker;\n\
-         fn aliased_simulation_ufcs() {\n\
-         \tlet _ = <EntrypointUfcsAlias>::ready();\n\
-         \tlet _ = <WorkerUfcsAlias>::spawn(runtime, armed, store);\n\
-         }",
-    );
-    assert_ne!(mutant, entrypoint, "entrypoint/worker UFCS patch did not change source");
-    assert!(
-        validate_deferred_production_handoff(&mutant, &cli).is_err(),
-        "entrypoint/worker alias UFCS remained GREEN"
-    );
-    eprintln!("U-ENTRYPOINT-WORKER-UFCS: RED");
-
-    let mutant = insert_before_test_module(
-        &entrypoint,
-        "use SimulationEntrypoint::ready as make_ready;\n\
-         use SimulationWorker::spawn as spawn_worker;\n\
-         fn imported_simulation_function_values() {\n\
-         \tlet _ = make_ready;\n\
-         \tlet _ = spawn_worker;\n\
-         }",
-    );
-    assert_ne!(mutant, entrypoint, "associated function import patch did not change source");
-    assert!(
-        validate_deferred_production_handoff(&mutant, &cli).is_err(),
-        "imported ready/spawn function values remained GREEN"
-    );
-    eprintln!("U-IMPORTED-FUNCTION-VALUES: RED");
-
-    let mutant = insert_before_test_module(
-        &entrypoint,
-        "type CandidateAliasOne = SealedUnsignedCandidate;\n\
-         type CandidateAliasTwo = CandidateAliasOne;\n\
-         struct TypeAliasedCandidateRetention {\n\
-         \tcandidate: Option<CandidateAliasTwo>,\n\
-         }",
-    );
-    assert_ne!(mutant, entrypoint, "candidate type-alias patch did not change source");
-    assert!(
-        validate_deferred_production_handoff(&mutant, &cli).is_err(),
-        "candidate type-alias retention remained GREEN"
-    );
-    eprintln!("U-CANDIDATE-TYPE-ALIAS: RED");
-
-    for (owner, member) in [
-        ("SimulationWorker", "spawn"),
-        ("SimulationEntrypoint", "ready"),
-        ("ArmRuntime", "open"),
-    ] {
-        let addition = format!(
-            "use {owner}::{member};\n\
-             fn direct_associated_import_probe() {{\n\
-             \tlet _ = {member};\n\
-             }}"
-        );
-        let mutant = insert_before_test_module(&entrypoint, &addition);
-        assert_ne!(
-            mutant, entrypoint,
-            "direct associated {owner}::{member} import patch did not change source"
-        );
-        assert!(
-            validate_deferred_production_handoff(&mutant, &cli).is_err(),
-            "direct associated {owner}::{member} import remained GREEN"
-        );
-        eprintln!("U-DIRECT-ASSOCIATED-{owner}-{member}: RED");
-    }
-
-    for (name, body) in [
-        ("STMT", "install_production_simulation!();"),
-        ("EXPR", "let _ = install_production_simulation!();"),
-    ] {
-        let addition = format!(
-            "fn in_function_macro_{name}() {{\n\
-             \t{body}\n\
-             }}"
-        );
-        let mutant = insert_before_test_module(&entrypoint, &addition);
-        assert_ne!(mutant, entrypoint, "in-function {name} macro patch did not change source");
-        assert!(
-            validate_deferred_production_handoff(&mutant, &cli).is_err(),
-            "opaque in-function {name} macro remained GREEN"
-        );
-        eprintln!("U-IN-FUNCTION-MACRO-{name}: RED");
-    }
-
-    for (name, declaration) in [
-        (
-            "ENUM-VARIANT",
-            "type RetainedCandidate = SealedUnsignedCandidate;\n\
-             enum CandidateRetentionEnum {\n\
-             \tRetained(RetainedCandidate),\n\
-             }",
-        ),
-        (
-            "UNION-FIELD",
-            "type RetainedCandidate = SealedUnsignedCandidate;\n\
-             union CandidateRetentionUnion {\n\
-             \tretained: std::mem::ManuallyDrop<RetainedCandidate>,\n\
-             }",
-        ),
-        (
-            "TYPED-STATIC",
-            "type RetainedCandidate = SealedUnsignedCandidate;\n\
-             static RETAINED_CANDIDATE: Option<RetainedCandidate> = None;",
-        ),
-        (
-            "TYPED-CONST",
-            "type RetainedCandidate = SealedUnsignedCandidate;\n\
-             const RETAINED_CANDIDATE: Option<RetainedCandidate> = None;",
-        ),
-    ] {
-        let mutant = insert_before_test_module(&entrypoint, declaration);
-        assert_ne!(mutant, entrypoint, "{name} retention patch did not change source");
-        assert!(
-            validate_deferred_production_handoff(&mutant, &cli).is_err(),
-            "candidate retention through {name} alias remained GREEN"
-        );
-        eprintln!("U-CANDIDATE-RETENTION-{name}: RED");
-    }
-
-    let mutant = insert_before_test_module(
-        &entrypoint,
-        "trait RuntimeProjection {\n\
-         \ttype Runtime;\n\
-         }\n\
-         impl RuntimeProjection for () {\n\
-         \ttype Runtime = ArmRuntime;\n\
-         }\n\
-         type ProjectedRuntime = <() as RuntimeProjection>::Runtime;\n\
-         fn projected_runtime_function_value() {\n\
-         \tlet open = ProjectedRuntime::open;\n\
-         \tlet _ = open;\n\
-         }",
-    );
-    assert_ne!(mutant, entrypoint, "associated-type projection patch did not change source");
-    assert!(
-        validate_deferred_production_handoff(&mutant, &cli).is_err(),
-        "associated-type projection/runtime function value remained GREEN"
-    );
-    eprintln!("U-ASSOCIATED-TYPE-PROJECTION: RED");
-    let mutant = insert_before_test_module(
-        &entrypoint,
-        "install_production_simulation!();",
-    );
-    assert_ne!(mutant, entrypoint, "production macro item patch did not change source");
-    assert!(
-        validate_deferred_production_handoff(&mutant, &cli).is_err(),
-        "opaque production macro item remained GREEN"
-    );
-    eprintln!("U-PRODUCTION-MACRO-ITEM: RED");
 }

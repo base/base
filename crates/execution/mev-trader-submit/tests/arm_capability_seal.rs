@@ -197,15 +197,37 @@ fn arm_source_is_exactly_the_declared_set() {
 
 // -- b9: the crate's public `arm` surface is EXACTLY the curated allowlist ------
 
-/// The complete root API. T4e adds the unsigned handoff/provider contract; S1-b
-/// adds only the sealed runtime selection and its two reviewed backends; S2 adds
-/// the deferred simulation consumer boundary. Signing, raw permits, concrete
-/// freshness providers, and proof APIs remain private.
-const PUBLIC_API_ALLOWLIST: [&str; 22] = [
+/// The complete root API. T4e adds only the reviewed checked authorities, exact-one
+/// production handoff, bounded worker/status types, and simulation-only runtime surface.
+const PUBLIC_API_ALLOWLIST: [&str; 48] = [
+    "AdmittedCandidate",
+    "AuthorizationGateError",
+    "BlockNumHash",
     "CheckedCandidate",
     "CodeHashProvider",
     "CommittedStateAuthority",
+    "FinalizedChainAuthority",
+    "FinalizedChainError",
     "ProdBackend",
+    "ProductionCandidateError",
+    "ProductionCandidateReceiver",
+    "ProductionClaimError",
+    "ProductionClaimFailure",
+    "ProductionClaimResult",
+    "ProductionCustodyFailure",
+    "ProductionHandoffClosed",
+    "ProductionHandoffInstaller",
+    "ProductionHandoffState",
+    "ProductionLatchOutcome",
+    "ProductionReservation",
+    "ProductionSignFailure",
+    "ProductionSignedField",
+    "ProductionSigningError",
+    "ProductionSimulationHandoff",
+    "ProductionSimulationHandoffStatus",
+    "ProductionSimulationInstallError",
+    "ProductionSimulationWorkerOwner",
+    "ProductionWorkerError",
     "ProviderError",
     "RuntimeBackend",
     "SimBackend",
@@ -222,8 +244,10 @@ const PUBLIC_API_ALLOWLIST: [&str; 22] = [
     "SimulationSubmitError",
     "SimulationWorker",
     "SuppressionRollbackError",
-    "UnavailableSimulationHandoff",
+    "WorkerStartupFailure",
+    "production_custody_preflight",
     "provision_suppression_anchor",
+    "try_claim_detailed",
 ];
 
 static MODULE_FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -305,7 +329,8 @@ fn exact_module_declaration(
 }
 
 fn mod_is_private(src: &str, name: &str) -> bool {
-    exact_module_declaration(src, name, None).is_some()
+    let expected_cfg = (name == "production_handoff").then_some("feature = \"t4e-handoff\"");
+    exact_module_declaration(src, name, expected_cfg).is_some()
 }
 
 fn exact_module_resolves_to(
@@ -388,10 +413,12 @@ fn reviewed_arm_module_tree(root: &Path) -> Result<(), String> {
         ));
     }
     for child in expected_children {
+        let expected_cfg =
+            (child == "production_handoff").then_some("feature = \"t4e-handoff\"");
         exact_module_resolves_to(
             &arm_source,
             child,
-            None,
+            expected_cfg,
             arm_dir,
             src_dir,
             &arm_dir.join(format!("{child}.rs")),
@@ -1389,10 +1416,17 @@ fn freshness_sources_methods() -> BTreeSet<String> {
     ["revalidate"].iter().map(|s| (*s).to_string()).collect()
 }
 fn armed_fail_sink_methods() -> BTreeSet<String> {
-    ["from_anchored", "is_poisoned", "observe_kill", "check", "latch"]
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect()
+    [
+        "from_anchored",
+        "is_poisoned",
+        "observe_kill",
+        "check",
+        "latch",
+        "latch_production",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect()
 }
 
 fn all_inherent_method_names(src: &str, ty_name: &str) -> BTreeSet<String> {
@@ -1786,6 +1820,7 @@ fn has_exact_canonical_sink_construction(source: &str) -> bool {
 fn sink_macro_surface_is_reviewed(source: &str) -> bool {
     struct MacroInventory {
         reviewed_matches: usize,
+        reviewed_unreachable: usize,
         rejected: bool,
     }
 
@@ -1816,12 +1851,19 @@ fn sink_macro_surface_is_reviewed(source: &str) -> bool {
             syn::visit::visit_item_use(self, item);
         }
         fn visit_macro(&mut self, mac: &'ast syn::Macro) {
-            let is_reviewed_matches = mac.path.leading_colon.is_none()
-                && mac.path.segments.len() == 1
-                && ident_name(&mac.path.segments[0].ident) == "matches"
-                && mac.tokens.to_string() == "state , KillState :: Clear { .. }";
-            if is_reviewed_matches {
+            let direct = mac.path.leading_colon.is_none() && mac.path.segments.len() == 1;
+            let name = mac.path.segments.first().map(|segment| ident_name(&segment.ident));
+            let tokens = mac.tokens.to_string();
+            if direct
+                && name.as_deref() == Some("matches")
+                && tokens == "state , KillState :: Clear { .. }"
+            {
                 self.reviewed_matches += 1;
+            } else if direct
+                && name.as_deref() == Some("unreachable")
+                && tokens == "\"fixed production latch reason\""
+            {
+                self.reviewed_unreachable += 1;
             } else {
                 self.rejected = true;
             }
@@ -1830,9 +1872,12 @@ fn sink_macro_surface_is_reviewed(source: &str) -> bool {
     }
 
     let file = parse(source);
-    let mut inventory = MacroInventory { reviewed_matches: 0, rejected: false };
+    let mut inventory =
+        MacroInventory { reviewed_matches: 0, reviewed_unreachable: 0, rejected: false };
     syn::visit::Visit::visit_file(&mut inventory, &file);
-    !inventory.rejected && inventory.reviewed_matches == 1
+    !inventory.rejected
+        && inventory.reviewed_matches == 1
+        && inventory.reviewed_unreachable == 1
 }
 
 fn has_sibling_sink_construction_or_child_path(source: &str) -> bool {
@@ -1851,8 +1896,10 @@ fn constructor_surface_is_sealed() {
     let fail_sink = std::fs::read_to_string(arm_dir().join("fail_sink.rs")).expect("fail_sink.rs");
     let fail_sink_production = arm_production("fail_sink.rs");
     assert!(
-        modrs.contains("mod fail_sink;\npub use fail_sink::ArmedFailSink;"),
-        "fail sink must be a private child module grouped with its sole public re-export"
+        modrs.contains(
+            "mod fail_sink;\npub use fail_sink::{ArmedFailSink, ProductionLatchOutcome};"
+        ),
+        "fail sink must be a private child module grouped with its reviewed public re-exports"
     );
     assert!(
         armed_fail_sink_fields_are_private(&fail_sink),
@@ -1885,6 +1932,7 @@ fn constructor_surface_is_sealed() {
             "from_store_checked",
             "is_poisoned",
             "latch",
+            "latch_production",
             "new",
             "new_with_process_poison",
             "observe_kill",
