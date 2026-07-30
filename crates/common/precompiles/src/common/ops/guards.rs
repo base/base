@@ -108,29 +108,29 @@ mod tests {
 
     use crate::{
         B20Guards, B20PolicyType, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
-        PolicyRegistryStorage, TestToken,
+        PolicyRegistryStorage, PolicyVersion, TestStablecoinToken,
     };
 
     const EXTERNAL_POLICY_ID: u64 = (1u64 << 56) | 7; // ALLOWLIST type + counter 7
 
-    fn token_with_transfer_sender_policy(account: Address) -> TestToken {
+    fn token_with_transfer_sender_policy(account: Address) -> TestStablecoinToken {
         let mut accounting = InMemoryTokenAccounting::new(Address::repeat_byte(0x20));
         accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), EXTERNAL_POLICY_ID);
 
         let mut policy = FakePolicyAccounting::new();
         policy.allow(EXTERNAL_POLICY_ID, account);
 
-        TestToken::with_storage_and_policy(accounting, policy)
+        TestStablecoinToken::with_storage_and_policy(accounting, policy, PolicyVersion::V1)
     }
 
-    fn token_with_seizable_policy(account: Address) -> TestToken {
+    fn token_with_seizable_policy(account: Address) -> TestStablecoinToken {
         let mut accounting = InMemoryTokenAccounting::new(Address::repeat_byte(0x20));
         accounting.policy_ids.insert(B20PolicyType::SeizableAccount.id(), EXTERNAL_POLICY_ID);
 
         let mut policy = FakePolicyAccounting::new();
         policy.allow(EXTERNAL_POLICY_ID, account);
 
-        TestToken::with_storage_and_policy(accounting, policy)
+        TestStablecoinToken::with_storage_and_policy(accounting, policy, PolicyVersion::V1)
     }
 
     #[test]
@@ -208,7 +208,11 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
+        let token = TestStablecoinToken::with_storage_and_policy(
+            accounting,
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
+        );
 
         B20Guards::ensure_blocked(&token, account).unwrap();
 
@@ -216,7 +220,11 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_ALLOW_ID);
-        let token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
+        let token = TestStablecoinToken::with_storage_and_policy(
+            accounting,
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
+        );
 
         assert_eq!(
             B20Guards::ensure_blocked(&token, account).unwrap_err(),
