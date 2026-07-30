@@ -51,20 +51,26 @@ pub use arm::{
 };
 #[cfg(feature = "arm")]
 pub use arm::{
-    AuthorizationGateError, BlockNumHash, FinalizedChainAuthority, FinalizedChainError,
-    ProductionCandidateError, ProductionClaimError, ProductionClaimFailure, ProductionClaimResult,
-    ProductionCustodyFailure, ProductionLatchOutcome, ProductionSignFailure,
-    ProductionSignedField, ProductionSigningError, SimulationCorrelationEnvelopeV1,
-    SimulationCorrelationKey, SimulationEntrypointStatus, SimulationEntrypointUnavailable,
-    SimulationLedgerClosure, SimulationLedgerEpoch, SimulationLedgerInvalid, SimulationReservation,
+    AuthorizationGateError, BlockNumHash, BoundedSubmissionIdV1,
+    BoundedUnresolvedSummaryV1, CanonicalDeploymentPairV1, CanonicalG7PairV1,
+    CanonicalLivePairV1, CanonicalMismatchClass, FinalizedChainAuthority, FinalizedChainError,
+    FrozenP2PopulationManifestV1, NodeLocalSettledLossAuthority, PopulationClosureFieldsV1,
+    PreparedSettledLossAuthority, ProducerConformance, ProducerError, ProductionCandidateError,
+    ProductionClaimError, ProductionClaimFailure, ProductionClaimResult, ProductionCustodyFailure,
+    ProductionDrawdownSource, ProductionLatchOutcome, ProductionSignFailure,
+    ProductionSignedField, ProductionSigningError, PublicationIoClass,
+    PublishedPopulationManifestV1, RuntimeBackend, SETTLED_LOSS_ANCHOR_PATH,
+    SETTLED_LOSS_PROJECTION_PATH, SettledLossLoad, SettledLossReader,
+    SettledLossUnavailableReason, SignedInstallBundleV1, SignedPopulationManifestV1,
+    SignedProjectionV1, SimBackend, SimulationCorrelationEnvelopeV1, SimulationCorrelationKey,
+    SimulationEntrypointStatus, SimulationEntrypointUnavailable, SimulationLedgerClosure,
+    SimulationLedgerEpoch, SimulationLedgerInvalid, SimulationReservation,
     SimulationReservationError, SimulationStoreOperation, SimulationSubmitError, SimulationWorker,
-    production_custody_preflight, try_claim_detailed,
-];
+    SourceLedgerRowV1, TerminalSettlementProjectionV1, UnsignedInstallBundleV1,
+    UnsignedPopulationManifestV1, production_custody_preflight, try_claim_detailed,
 };
 #[cfg(feature = "t4e-handoff")]
 pub use arm::{CheckedCandidate, CodeHashProvider, CommittedStateAuthority, ProviderError};
-#[cfg(feature = "arm")]
-pub use arm::{RuntimeBackend, SimBackend};
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
 pub use arm::{SuppressionRollbackError, provision_suppression_anchor};
 

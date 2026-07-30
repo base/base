@@ -14,6 +14,9 @@ use sha2::{Digest, Sha256};
 
 use super::{
     proofs::{CodeHashProvider, DeploymentEvidence, ProviderError},
+    settled_loss::{
+        FinalizedChainAuthority, NodeLocalSettledLossAuthority, SettledLossUnavailableReason,
+    },
     witness::{
         ArmRuntime, ArmRuntimeOpenError, DeploymentIdentity, DeploymentIdentitySource,
         DrawdownSource, FreshnessSources,
@@ -120,6 +123,12 @@ impl<A> ProductionDrawdownSource<A> {
     /// Installs an explicit realized-loss authority.
     pub const fn install(authority: A) -> Self {
         Self { authority }
+    }
+}
+impl<A: FinalizedChainAuthority> ProductionDrawdownSource<NodeLocalSettledLossAuthority<A>> {
+    /// Loads the authenticated projection without collapsing its bounded failure reason.
+    pub fn evaluate_checked(&self) -> Result<DrawdownInput, SettledLossUnavailableReason> {
+        self.authority.load_complete()
     }
 }
 

@@ -4,7 +4,10 @@ use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
     io::{Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    os::unix::{
+        fs::{MetadataExt, OpenOptionsExt},
+        io::AsRawFd,
+    },
     path::{Path, PathBuf},
 };
 
@@ -395,7 +398,7 @@ impl FrozenP2PopulationManifestV1 {
         let submission_count = reader.u64()?;
         let source_manifest_hash = reader.b256()?;
         let count = reader.u32()? as usize;
-        validate_count_before_allocation(count, bytes.len(), SOURCE_ENTRY_BYTES, 65)?;
+        validate_count_before_allocation(count, reader.remaining(), SOURCE_ENTRY_BYTES, 65)?;
         let mut entries = Vec::with_capacity(count);
         for _ in 0..count {
             entries.push(SourceSubmissionManifestEntryV1::decode(&mut reader)?);
@@ -941,6 +944,63 @@ pub enum SettledLossLoad {
         total_settled_loss_wei: U256,
     },
 }
+/// Strict one-shot settled-loss reader preserving the closed load classification.
+#[derive(Debug, Clone, Copy)]
+pub struct SettledLossReader;
+
+impl SettledLossReader {
+    /// Rereads, authenticates, finality-checks, and rollback-checks the pinned artifacts.
+    pub fn load<A: FinalizedChainAuthority>(chain: &A) -> SettledLossLoad {
+        let checked = (|| {
+            let (manifest, _manifest_file, projection, _projection_file) = load_artifacts()?;
+            validate_manifest_equality(&manifest, &projection)?;
+            projection.availability()?;
+            validate_finality_snapshot(chain, &projection, true)?;
+            accept_projection_head(&projection)?;
+            Ok(projection.total_settled_loss_wei)
+        })();
+        match checked {
+            Ok(total_settled_loss_wei) => SettledLossLoad::Complete { total_settled_loss_wei },
+            Err(reason) => classify_load_failure(reason),
+        }
+    }
+}
+
+fn classify_load_failure(reason: SettledLossUnavailableReason) -> SettledLossLoad {
+    match reason {
+        SettledLossUnavailableReason::Missing => SettledLossLoad::Missing,
+        SettledLossUnavailableReason::Incomplete => {
+            SettledLossLoad::PendingOrUnresolved(SettledLossUnavailableReason::Incomplete)
+        }
+        SettledLossUnavailableReason::Unresolved(summary) => {
+            SettledLossLoad::PendingOrUnresolved(SettledLossUnavailableReason::Unresolved(summary))
+        }
+        SettledLossUnavailableReason::Stale => {
+            SettledLossLoad::PendingOrUnresolved(SettledLossUnavailableReason::Stale)
+        }
+        SettledLossUnavailableReason::ManifestMismatch => {
+            SettledLossLoad::PendingOrUnresolved(SettledLossUnavailableReason::ManifestMismatch)
+        }
+        SettledLossUnavailableReason::FinalityUnavailable => {
+            SettledLossLoad::Error(SettledLossUnavailableReason::FinalityUnavailable)
+        }
+        SettledLossUnavailableReason::CanonicalMismatch(class) => {
+            SettledLossLoad::Error(SettledLossUnavailableReason::CanonicalMismatch(class))
+        }
+        SettledLossUnavailableReason::Malformed => {
+            SettledLossLoad::Error(SettledLossUnavailableReason::Malformed)
+        }
+        SettledLossUnavailableReason::AuthenticationFailed => {
+            SettledLossLoad::Error(SettledLossUnavailableReason::AuthenticationFailed)
+        }
+        SettledLossUnavailableReason::Rollback => {
+            SettledLossLoad::Error(SettledLossUnavailableReason::Rollback)
+        }
+        SettledLossUnavailableReason::Io => {
+            SettledLossLoad::Error(SettledLossUnavailableReason::Io)
+        }
+    }
+}
 
 /// Non-clone startup proof retaining the verified artifacts until worker activation.
 #[derive(Debug)]
@@ -1032,13 +1092,11 @@ impl OpenedArtifact {
         let held = FileIdentity::from_metadata(
             &self.file.metadata().map_err(|_| SettledLossUnavailableReason::Io)?,
         );
-        let path_metadata =
-            std::fs::symlink_metadata(path).map_err(|_| SettledLossUnavailableReason::Io)?;
-        let current = FileIdentity::from_metadata(&path_metadata);
-        if held != self.identity
-            || current != self.identity
-            || path_metadata.file_type().is_symlink()
-        {
+        let current_file = open_final_no_follow(path)?;
+        let current = FileIdentity::from_metadata(
+            &current_file.metadata().map_err(|_| SettledLossUnavailableReason::Io)?,
+        );
+        if held != self.identity || current != self.identity {
             return Err(SettledLossUnavailableReason::Io);
         }
         Ok(())
@@ -1356,7 +1414,11 @@ fn accept_projection_head(
 fn publish_anchor(head: AcceptedProjectionHeadV1) -> Result<(), SettledLossUnavailableReason> {
     let final_path = Path::new(SETTLED_LOSS_ANCHOR_PATH);
     let parent = final_path.parent().ok_or(SettledLossUnavailableReason::Io)?;
-    let temp = parent.join("accepted-head.open");
+    let directory = open_directory_no_follow(parent)?;
+    let directory_path = proc_fd_path(&directory);
+    let temp = directory_path.join("accepted-head.open");
+    let final_name = final_path.file_name().ok_or(SettledLossUnavailableReason::Io)?;
+    let final_handle_path = directory_path.join(final_name);
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1372,10 +1434,8 @@ fn publish_anchor(head: AcceptedProjectionHeadV1) -> Result<(), SettledLossUnava
             ACCEPTED_HEAD_BYTES,
             ACCEPTED_HEAD_BYTES,
         )?;
-        std::fs::rename(&temp, final_path).map_err(|_| SettledLossUnavailableReason::Io)?;
-        File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| SettledLossUnavailableReason::Io)?;
+        std::fs::rename(&temp, &final_handle_path).map_err(|_| SettledLossUnavailableReason::Io)?;
+        directory.sync_all().map_err(|_| SettledLossUnavailableReason::Io)?;
         Ok(())
     })();
     if result.is_err() {
@@ -1390,14 +1450,7 @@ fn read_strict_file(
     minimum: usize,
     maximum: usize,
 ) -> Result<(Vec<u8>, OpenedArtifact), SettledLossUnavailableReason> {
-    validate_path_ancestors(path)?;
-    let mut file = match OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(SettledLossUnavailableReason::Missing);
-        }
-        Err(_) => return Err(SettledLossUnavailableReason::Io),
-    };
+    let mut file = open_final_no_follow(path)?;
     let before = file.metadata().map_err(|_| SettledLossUnavailableReason::Io)?;
     validate_final_metadata(&before, minimum, maximum)?;
     let identity = FileIdentity::from_metadata(&before);
@@ -1431,57 +1484,122 @@ pub(crate) fn read_install_bundle_bytes() -> Result<Vec<u8>, SettledLossUnavaila
     Ok(bytes)
 }
 
-fn validate_path_ancestors(path: &Path) -> Result<(), SettledLossUnavailableReason> {
-    let effective_uid = effective_uid()?;
-    let private_root = Path::new("/home/ubuntu/.local/state/base-mev");
+fn open_final_no_follow(path: &Path) -> Result<File, SettledLossUnavailableReason> {
     let parent = path.parent().ok_or(SettledLossUnavailableReason::Io)?;
-    let mut current = PathBuf::from("/");
-    for component in parent.components().skip(1) {
-        current.push(component.as_os_str());
-        let metadata =
-            std::fs::symlink_metadata(&current).map_err(|_| SettledLossUnavailableReason::Io)?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+    let directory = open_directory_no_follow(parent)?;
+    let file_name = path.file_name().ok_or(SettledLossUnavailableReason::Io)?;
+    let handle_path = proc_fd_path(&directory).join(file_name);
+    match OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(handle_path) {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(SettledLossUnavailableReason::Missing)
+        }
+        Err(_) => Err(SettledLossUnavailableReason::Io),
+    }
+}
+
+pub(super) fn open_directory_no_follow(path: &Path) -> Result<File, SettledLossUnavailableReason> {
+    if !path.is_absolute() {
+        return Err(SettledLossUnavailableReason::Io);
+    }
+    let effective_uid = effective_uid()?;
+    let mut current_path = PathBuf::from("/");
+    let mut current = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open("/")
+        .map_err(|_| SettledLossUnavailableReason::Io)?;
+    validate_directory_metadata(
+        &current_path,
+        &current.metadata().map_err(|_| SettledLossUnavailableReason::Io)?,
+        effective_uid,
+    )?;
+
+    for component in path.components().skip(1) {
+        let std::path::Component::Normal(name) = component else {
+            return Err(SettledLossUnavailableReason::Io);
+        };
+        current_path.push(name);
+        let next_path = proc_fd_path(&current).join(name);
+        let next = match OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(next_path)
+        {
+            Ok(directory) => directory,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(SettledLossUnavailableReason::Missing);
+            }
+            Err(_) => return Err(SettledLossUnavailableReason::Io),
+        };
+        validate_directory_metadata(
+            &current_path,
+            &next.metadata().map_err(|_| SettledLossUnavailableReason::Io)?,
+            effective_uid,
+        )?;
+        current = next;
+    }
+    Ok(current)
+}
+
+pub(super) fn proc_fd_path(file: &File) -> PathBuf {
+    PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()))
+}
+
+fn validate_directory_metadata(
+    path: &Path,
+    metadata: &std::fs::Metadata,
+    effective_uid: u32,
+) -> Result<(), SettledLossUnavailableReason> {
+    if !metadata.is_dir() {
+        return Err(SettledLossUnavailableReason::Io);
+    }
+    let mode = metadata.mode() & 0o777;
+    let private_root = Path::new("/home/ubuntu/.local/state/base-mev");
+    if path == Path::new("/") || path == Path::new("/home") {
+        if metadata.uid() != 0 || mode & 0o022 != 0 {
             return Err(SettledLossUnavailableReason::Io);
         }
-        let mode = metadata.mode() & 0o777;
-        if current == Path::new("/home") {
-            if metadata.uid() != 0 || mode & 0o022 != 0 {
-                return Err(SettledLossUnavailableReason::Io);
-            }
-        } else if current.starts_with(private_root) {
-            if metadata.uid() != effective_uid || mode != 0o700 {
-                return Err(SettledLossUnavailableReason::Io);
-            }
-        } else if current == Path::new("/home/ubuntu")
-            || current == Path::new("/home/ubuntu/.local")
-            || current == Path::new("/home/ubuntu/.local/state")
-        {
-            if metadata.uid() != effective_uid || mode & 0o022 != 0 {
-                return Err(SettledLossUnavailableReason::Io);
-            }
+    } else if path.starts_with(private_root) {
+        if metadata.uid() != effective_uid || mode != 0o700 {
+            return Err(SettledLossUnavailableReason::Io);
         }
+    } else if path == Path::new("/home/ubuntu")
+        || path == Path::new("/home/ubuntu/.local")
+        || path == Path::new("/home/ubuntu/.local/state")
+    {
+        if metadata.uid() != effective_uid || mode & 0o022 != 0 {
+            return Err(SettledLossUnavailableReason::Io);
+        }
+    } else {
+        return Err(SettledLossUnavailableReason::Io);
     }
     Ok(())
 }
 
-fn validate_directory_inventory(
+pub(super) fn validate_directory_inventory(
     directory: &Path,
     permitted: &[&str],
 ) -> Result<(), SettledLossUnavailableReason> {
-    validate_path_ancestors(&directory.join("artifact"))?;
-    for entry in std::fs::read_dir(directory).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            SettledLossUnavailableReason::Missing
-        } else {
-            SettledLossUnavailableReason::Io
-        }
-    })? {
+    let opened = open_directory_no_follow(directory)?;
+    let before = FileIdentity::from_metadata(
+        &opened.metadata().map_err(|_| SettledLossUnavailableReason::Io)?,
+    );
+    for entry in
+        std::fs::read_dir(proc_fd_path(&opened)).map_err(|_| SettledLossUnavailableReason::Io)?
+    {
         let entry = entry.map_err(|_| SettledLossUnavailableReason::Io)?;
         let name = entry.file_name();
         let name = name.to_str().ok_or(SettledLossUnavailableReason::Io)?;
         if !permitted.contains(&name) || name.ends_with(".open") {
             return Err(SettledLossUnavailableReason::Io);
         }
+    }
+    let after = FileIdentity::from_metadata(
+        &opened.metadata().map_err(|_| SettledLossUnavailableReason::Io)?,
+    );
+    if before != after {
+        return Err(SettledLossUnavailableReason::Io);
     }
     Ok(())
 }
@@ -1646,6 +1764,8 @@ impl<'a> CanonicalReader<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
 
     #[test]
@@ -1674,7 +1794,7 @@ mod tests {
         assert_eq!(
             validate_count_before_allocation(
                 MAX_TERMINAL_ENTRIES,
-                MAX_CANONICAL_POPULATION_BYTES - 1,
+                MAX_TERMINAL_ENTRIES * SOURCE_ENTRY_BYTES + 64,
                 SOURCE_ENTRY_BYTES,
                 65
             ),
@@ -1713,5 +1833,216 @@ mod tests {
             SettledLossLoad::Missing,
             SettledLossLoad::Complete { total_settled_loss_wei: U256::ZERO }
         );
+    }
+
+    #[test]
+    fn trusted_root_components_are_opened_no_follow_and_policy_checked() {
+        let root = open_directory_no_follow(Path::new("/")).expect("trusted root");
+        let root_metadata = root.metadata().expect("root metadata");
+        assert_eq!(root_metadata.uid(), 0);
+        assert_eq!(root_metadata.mode() & 0o022, 0);
+
+        let home = open_directory_no_follow(Path::new("/home")).expect("trusted home");
+        let home_metadata = home.metadata().expect("home metadata");
+        assert_eq!(home_metadata.uid(), 0);
+        assert_eq!(home_metadata.mode() & 0o022, 0);
+    }
+
+    #[derive(Debug)]
+    struct TestChain {
+        head: Result<Option<BlockNumHash>, FinalizedChainError>,
+        hashes: BTreeMap<u64, Result<Option<B256>, FinalizedChainError>>,
+        calls: Mutex<Vec<u64>>,
+    }
+
+    impl FinalizedChainAuthority for TestChain {
+        fn finalized_head(&self) -> Result<Option<BlockNumHash>, FinalizedChainError> {
+            self.head
+        }
+
+        fn canonical_hash(&self, number: u64) -> Result<Option<B256>, FinalizedChainError> {
+            self.calls.lock().expect("calls").push(number);
+            self.hashes.get(&number).copied().unwrap_or(Ok(None))
+        }
+    }
+
+    fn terminal_at(number: u64, hash: B256) -> TerminalSettlementEntryV1 {
+        TerminalSettlementEntryV1 {
+            submission_sequence: 0,
+            source_submission_id: B256::repeat_byte(1),
+            correlation_key: B256::repeat_byte(2),
+            candidate_signed_tx_hash: B256::repeat_byte(3),
+            our_backrun_tx_hash: B256::repeat_byte(4),
+            terminal: TerminalKindV1::Reverted,
+            unresolved_reason: UnresolvedReasonV1::None,
+            terminal_block_number: number,
+            terminal_block_hash: hash,
+            execution_gas_loss_wei: U256::ZERO,
+            l1_data_fee_loss_wei: U256::ZERO,
+            operator_fee_loss_wei: U256::ZERO,
+            kickback_loss_wei: U256::ZERO,
+            ejection_loss_wei: U256::ZERO,
+            settled_loss_wei: U256::ZERO,
+            realized_profit_wei: U256::ZERO,
+        }
+    }
+
+    fn projection_at(
+        finalized_block_number: u64,
+        finalized_block_hash: B256,
+        terminal_entries: Vec<TerminalSettlementEntryV1>,
+    ) -> TerminalSettlementProjectionV1 {
+        TerminalSettlementProjectionV1 {
+            campaign_id: B256::repeat_byte(9),
+            chain_id: SETTLED_LOSS_CHAIN_ID,
+            source_window_start_ms: 1,
+            source_window_end_ms: 2,
+            source_snapshot_xmin: 1,
+            source_snapshot_xmax: 2,
+            source_snapshot_xip_hash: B256::repeat_byte(5),
+            source_snapshot_wal_lsn: 1,
+            projection_sequence: 1,
+            manifest_start_sequence: 0,
+            manifest_next_sequence: terminal_entries.len() as u64,
+            submission_count: terminal_entries.len() as u64,
+            terminal_count: terminal_entries.len() as u64,
+            complete: true,
+            unresolved_count: 0,
+            source_manifest_hash: B256::repeat_byte(6),
+            population_closure_signature: [0u8; 65],
+            finalized_block_number,
+            finalized_block_hash,
+            previous_content_hash: B256::ZERO,
+            total_execution_gas_loss_wei: U256::ZERO,
+            total_l1_data_fee_loss_wei: U256::ZERO,
+            total_operator_fee_loss_wei: U256::ZERO,
+            total_kickback_loss_wei: U256::ZERO,
+            total_ejection_loss_wei: U256::ZERO,
+            total_settled_loss_wei: U256::ZERO,
+            source_manifest_entries: Vec::new(),
+            terminal_entries,
+            content_hash: B256::ZERO,
+            signature: [0u8; 65],
+        }
+    }
+
+    #[test]
+    fn closed_load_mapping_keeps_expected_absence_separate_from_errors() {
+        let summary = BoundedUnresolvedSummaryV1 {
+            total: 1,
+            first_sequence: 7,
+            first_reason: UnresolvedReasonV1::ReceiptMissing,
+            reason_counts: [1, 0, 0, 0, 0, 0, 0],
+        };
+        assert_eq!(
+            classify_load_failure(SettledLossUnavailableReason::Missing),
+            SettledLossLoad::Missing
+        );
+        for reason in [
+            SettledLossUnavailableReason::Incomplete,
+            SettledLossUnavailableReason::Unresolved(summary),
+            SettledLossUnavailableReason::Stale,
+            SettledLossUnavailableReason::ManifestMismatch,
+        ] {
+            assert_eq!(
+                classify_load_failure(reason.clone()),
+                SettledLossLoad::PendingOrUnresolved(reason)
+            );
+        }
+        for reason in [
+            SettledLossUnavailableReason::FinalityUnavailable,
+            SettledLossUnavailableReason::CanonicalMismatch(
+                CanonicalMismatchClass::ProjectionFinalizedHash,
+            ),
+            SettledLossUnavailableReason::Malformed,
+            SettledLossUnavailableReason::AuthenticationFailed,
+            SettledLossUnavailableReason::Rollback,
+            SettledLossUnavailableReason::Io,
+        ] {
+            assert_eq!(classify_load_failure(reason.clone()), SettledLossLoad::Error(reason));
+        }
+    }
+
+    #[test]
+    fn finalized_lag_boundary_and_every_distinct_terminal_hash_are_checked() {
+        let finalized_hash = B256::repeat_byte(0xa1);
+        let terminal_hash = B256::repeat_byte(0xb2);
+        let projection = projection_at(
+            100,
+            finalized_hash,
+            vec![terminal_at(90, terminal_hash), terminal_at(90, terminal_hash)],
+        );
+        let chain = TestChain {
+            head: Ok(Some(BlockNumHash { number: 228, hash: B256::repeat_byte(0xff) })),
+            hashes: BTreeMap::from([
+                (100, Ok(Some(finalized_hash))),
+                (90, Ok(Some(terminal_hash))),
+            ]),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert!(validate_finality_snapshot(&chain, &projection, true).is_ok());
+        assert_eq!(*chain.calls.lock().expect("calls"), vec![100, 90]);
+
+        let stale = TestChain {
+            head: Ok(Some(BlockNumHash { number: 229, hash: B256::repeat_byte(0xff) })),
+            hashes: BTreeMap::from([(100, Ok(Some(finalized_hash)))]),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            validate_finality_snapshot(&stale, &projection, true),
+            Err(SettledLossUnavailableReason::Stale)
+        );
+        assert!(stale.calls.lock().expect("calls").is_empty());
+    }
+
+    #[test]
+    fn finalized_and_terminal_canonical_mismatches_remain_distinct() {
+        let finalized_hash = B256::repeat_byte(0xa1);
+        let terminal_hash = B256::repeat_byte(0xb2);
+        let projection = projection_at(100, finalized_hash, vec![terminal_at(90, terminal_hash)]);
+        let projection_mismatch = TestChain {
+            head: Ok(Some(BlockNumHash { number: 100, hash: finalized_hash })),
+            hashes: BTreeMap::from([(100, Ok(Some(B256::repeat_byte(0xee))))]),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            validate_finality_snapshot(&projection_mismatch, &projection, true),
+            Err(SettledLossUnavailableReason::CanonicalMismatch(
+                CanonicalMismatchClass::ProjectionFinalizedHash,
+            ))
+        );
+
+        let terminal_mismatch = TestChain {
+            head: Ok(Some(BlockNumHash { number: 100, hash: finalized_hash })),
+            hashes: BTreeMap::from([
+                (100, Ok(Some(finalized_hash))),
+                (90, Ok(Some(B256::repeat_byte(0xee)))),
+            ]),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            validate_finality_snapshot(&terminal_mismatch, &projection, true),
+            Err(SettledLossUnavailableReason::CanonicalMismatch(
+                CanonicalMismatchClass::TerminalHistoricalHash,
+            ))
+        );
+
+        let conflict = projection_at(
+            100,
+            finalized_hash,
+            vec![terminal_at(90, terminal_hash), terminal_at(90, B256::repeat_byte(0xcc))],
+        );
+        let chain = TestChain {
+            head: Ok(Some(BlockNumHash { number: 100, hash: finalized_hash })),
+            hashes: BTreeMap::from([(100, Ok(Some(finalized_hash)))]),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            validate_finality_snapshot(&chain, &conflict, true),
+            Err(SettledLossUnavailableReason::CanonicalMismatch(
+                CanonicalMismatchClass::TerminalHeightConflict,
+            ))
+        );
+        assert_eq!(*chain.calls.lock().expect("calls"), vec![100]);
     }
 }

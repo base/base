@@ -37,7 +37,6 @@ mod fail_sink;
 pub use fail_sink::{ArmedFailSink, ProductionLatchOutcome};
 #[cfg(feature = "t4e-handoff")]
 mod production_handoff;
-mod proofs;
 #[cfg(feature = "t4e-handoff")]
 pub use production_handoff::{
     AdmittedCandidate, ProductionCandidateReceiver, ProductionHandoffClosed,
@@ -45,6 +44,15 @@ pub use production_handoff::{
     ProductionPersistenceFailure, ProductionReservation, ProductionSimulationHandoff,
     ProductionSimulationHandoffStatus, ProductionSimulationInstallError,
     ProductionSimulationWorkerOwner, ProductionWorkerError, WorkerStartupFailure,
+};
+mod proofs;
+mod producer;
+pub use producer::{
+    BoundedSubmissionIdV1, CanonicalDeploymentPairV1, CanonicalG7PairV1,
+    CanonicalLivePairV1, PopulationClosureFieldsV1, ProducerConformance, ProducerError,
+    PublicationIoClass, PublishedPopulationManifestV1, SignedInstallBundleV1,
+    SignedPopulationManifestV1, SignedProjectionV1, SourceLedgerRowV1,
+    UnsignedInstallBundleV1, UnsignedPopulationManifestV1,
 };
 mod providers;
 mod simulation_entrypoint;
@@ -70,8 +78,8 @@ pub use settled_loss::{
     POPULATION_CLOSURE_DOMAIN, PreparedSettledLossAuthority, R9_CLAIM_STORE_PATH,
     SETTLED_LOSS_ANCHOR_PATH, SETTLED_LOSS_CHAIN_ID, SETTLED_LOSS_DOMAIN,
     SETTLED_LOSS_PROJECTION_PATH, SETTLED_LOSS_SCHEMA_VERSION, SOURCE_ENTRY_BYTES, SettledLossLoad,
-    SettledLossUnavailableReason, SourceSubmissionManifestEntryV1, T4E_INSTALL_BUNDLE_PATH,
-    TERMINAL_ENTRY_BYTES, TerminalKindV1, TerminalSettlementEntryV1,
+    SettledLossReader, SettledLossUnavailableReason, SourceSubmissionManifestEntryV1,
+    T4E_INSTALL_BUNDLE_PATH, TERMINAL_ENTRY_BYTES, TerminalKindV1, TerminalSettlementEntryV1,
     TerminalSettlementProjectionV1, UnresolvedReasonV1,
 };
 mod request;
