@@ -1,7 +1,5 @@
-use alloc::string::ToString;
-
 use alloy_primitives::Bytes;
-use alloy_sol_types::{SolCall, SolInterface};
+use alloy_sol_types::SolCall;
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
@@ -12,7 +10,6 @@ use crate::{
     IPolicyRegistry::{self, IPolicyRegistryCalls as C},
     NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
     PrecompileCallObserver,
-    macros::decode_precompile_call,
 };
 
 impl PolicyRegistryStorage<'_> {
@@ -57,45 +54,38 @@ impl PolicyRegistryStorage<'_> {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
+        let abi = version.abi();
         let result = match calldata.first_chunk::<4>().copied() {
             None => Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4])),
+            // View calls bypass the activation gate. They still clear the wire gate, inside
+            // `route`, which decodes every call against the active surface.
             Some(sel)
-                if sel == IPolicyRegistry::isAuthorizedCall::SELECTOR
-                    || sel == IPolicyRegistry::policyExistsCall::SELECTOR
-                    || sel == IPolicyRegistry::policyAdminCall::SELECTOR
-                    || sel == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR =>
+                if abi.valid_selector(sel)
+                    && (sel == IPolicyRegistry::isAuthorizedCall::SELECTOR
+                        || sel == IPolicyRegistry::policyExistsCall::SELECTOR
+                        || sel == IPolicyRegistry::policyAdminCall::SELECTOR
+                        || sel == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR) =>
             {
                 self.route(calldata, version, &observer)
             }
-            // Composite policies are a V2 feature. Before V2 these selectors were unknown, so V1
-            // must keep reverting with UnknownFunctionSelector rather than routing/decoding them.
-            Some(sel)
-                if version == PolicyVersion::V1
-                    && (sel == IPolicyRegistry::createCompositePolicyCall::SELECTOR
-                        || sel == IPolicyRegistry::updateCompositeCall::SELECTOR) =>
-            {
-                Err(BasePrecompileError::UnknownFunctionSelector(sel))
-            }
-            Some(sel) if IPolicyRegistry::IPolicyRegistryCalls::valid_selector(sel) => {
+            Some(sel) if abi.valid_selector(sel) => {
                 // Validate ABI encoding before the activation gate so that malformed
                 // arguments return AbiDecodeFailed regardless of activation state.
-                IPolicyRegistry::IPolicyRegistryCalls::abi_decode_validate(calldata)
-                    .map_err(|e| BasePrecompileError::AbiDecodeFailed {
-                        selector: sel,
-                        error: e.to_string(),
-                    })
-                    .and_then(|_| {
-                        ActivationRegistryStorage::new(ctx)
-                            .ensure_activated(ActivationFeature::PolicyRegistry.id())
-                            .and_then(|()| self.route(calldata, version, &observer))
-                    })
+                abi.abi_decode_validate(calldata, sel).and_then(|()| {
+                    ActivationRegistryStorage::new(ctx)
+                        .ensure_activated(ActivationFeature::PolicyRegistry.id())
+                        .and_then(|()| self.route(calldata, version, &observer))
+                })
             }
+            // Selectors a later fork introduced are absent from this surface, so they land here and
+            // stay unknown — the composite selectors at Beryl among them.
             Some(sel) => Err(BasePrecompileError::UnknownFunctionSelector(sel)),
         };
         recorder.record_base_result(ctx, result, |b| b)
     }
 
-    /// Decodes calldata and routes each operation to the active version's logic.
+    /// Decodes calldata against the active wire surface and routes each operation to the active
+    /// version's logic.
     fn route<O>(
         &mut self,
         calldata: &[u8],
@@ -106,7 +96,7 @@ impl PolicyRegistryStorage<'_> {
         O: PrecompileCallObserver,
     {
         let logic = version.implementation();
-        match decode_precompile_call!(calldata, IPolicyRegistry::IPolicyRegistryCalls) {
+        match version.abi().decode(calldata)? {
             C::createPolicy(call) => {
                 let id = logic.create_policy(self, call.admin, call.policyType)?;
                 Ok(IPolicyRegistry::createPolicyCall::abi_encode_returns(&id).into())
@@ -168,8 +158,7 @@ impl PolicyRegistryStorage<'_> {
                 let pending = logic.pending_policy_admin(self, call.policyId)?;
                 Ok(IPolicyRegistry::pendingPolicyAdminCall::abi_encode_returns(&pending).into())
             }
-            // Composite ops are a V2 feature; V1 short-circuits these selectors to
-            // UnknownFunctionSelector in `dispatch_with_observer`, so this only runs under V2.
+            // Introduced in V2 (Cobalt).
             C::createCompositePolicy(call) => {
                 let id = logic.create_composite_policy(
                     self,
@@ -179,6 +168,7 @@ impl PolicyRegistryStorage<'_> {
                 )?;
                 Ok(IPolicyRegistry::createCompositePolicyCall::abi_encode_returns(&id).into())
             }
+            // Introduced in V2 (Cobalt).
             C::updateComposite(call) => {
                 logic.update_composite(self, call.policyId, call.childPolicyIds)?;
                 Ok(Bytes::new())
@@ -250,8 +240,17 @@ mod tests {
 
     /// Dispatches `calldata` against a Beryl runtime, expecting no fatal error.
     fn run(storage: &mut HashMapStorageProvider, calldata: &[u8]) -> PrecompileOutput {
+        run_at(storage, calldata, BaseUpgrade::Beryl)
+    }
+
+    /// Dispatches `calldata` at `upgrade`, expecting no fatal error.
+    fn run_at(
+        storage: &mut HashMapStorageProvider,
+        calldata: &[u8],
+        upgrade: BaseUpgrade,
+    ) -> PrecompileOutput {
         StorageCtx::enter(storage, |ctx| {
-            PolicyRegistryStorage::new(ctx).dispatch(ctx, calldata, BaseUpgrade::Beryl)
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, calldata, upgrade)
         })
         .expect("dispatch should not fatally error")
     }
@@ -425,6 +424,9 @@ mod tests {
         assert!(output.is_revert());
     }
 
+    /// Regression test for the deleted fork gate. The composite selectors used to be rejected by a
+    /// hand-written `version == V1 && sel == ...` arm; now they are simply absent from the Beryl
+    /// wire surface. The bytes must not move.
     #[test]
     fn v1_composite_selectors_revert_with_unknown_function_selector() {
         // Composite policies are a V2 feature; at Beryl (V1) their selectors are unknown, so
@@ -456,6 +458,85 @@ mod tests {
         assert_eq!(
             update_out.bytes,
             Bytes::from(IPolicyRegistry::updateCompositeCall::SELECTOR.as_ref())
+        );
+    }
+
+    /// The other side of the gate: at Cobalt the same selectors are on the wire surface, so they
+    /// route instead of reverting as unknown. Pins that the deletion narrowed nothing.
+    #[test]
+    fn cobalt_composite_selectors_are_dialable() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+        storage.set_caller(ADMIN);
+        let update = IPolicyRegistry::updateCompositeCall {
+            policyId: 2,
+            childPolicyIds: alloc::vec![2, (1u64 << 56) | 2],
+        }
+        .abi_encode();
+
+        let out = run_at(&mut storage, &update, BaseUpgrade::Cobalt);
+
+        // It still reverts (policy 2 does not exist here), but as a typed registry error rather
+        // than the raw selector an unknown-selector revert would return.
+        assert!(out.is_revert());
+        assert_ne!(
+            out.bytes,
+            Bytes::from(IPolicyRegistry::updateCompositeCall::SELECTOR.as_ref()),
+            "Cobalt must reach routing, not reject the selector as unknown"
+        );
+    }
+
+    /// The bug this change fixes. `createPolicy(address,uint8)` keeps its selector across the
+    /// Cobalt widening, so only decoding against Beryl's own surface rejects a composite
+    /// discriminant. Full byte pin lives in the V1 golden.
+    #[test]
+    fn v1_create_policy_rejects_composite_discriminants() {
+        for discriminant in
+            [IPolicyRegistry::PolicyType::UNION, IPolicyRegistry::PolicyType::INTERSECT]
+        {
+            let mut storage = HashMapStorageProvider::new(1);
+            activate_policy_registry(&mut storage);
+            storage.set_caller(ADMIN);
+            let calldata =
+                IPolicyRegistry::createPolicyCall { admin: ADMIN, policyType: discriminant }
+                    .abi_encode();
+
+            let out = run(&mut storage, &calldata);
+
+            assert!(out.is_revert());
+            // AbiDecodeFailed encodes as `selector || utf8(error)`, so a decode rejection carries
+            // the call selector. A `Panic(0x21)` from the logic layer would start with 0x4e487b71.
+            assert_eq!(
+                out.bytes.get(..4),
+                Some(IPolicyRegistry::createPolicyCall::SELECTOR.as_ref()),
+                "discriminant {} must be rejected by the V1 decoder, not by logic",
+                discriminant as u8
+            );
+            assert!(out.bytes.len() > 4, "AbiDecodeFailed carries the decoder message");
+        }
+    }
+
+    /// The decode rejection must stay ahead of the activation gate, matching how the pre-Cobalt
+    /// binary ordered them. Otherwise an inactive registry would answer `FeatureNotActivated` where
+    /// Beryl answered `AbiDecodeFailed`.
+    #[test]
+    fn v1_composite_discriminant_rejects_before_activation_check() {
+        // Registry deliberately never activated.
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(ADMIN);
+        let calldata = IPolicyRegistry::createPolicyCall {
+            admin: ADMIN,
+            policyType: IPolicyRegistry::PolicyType::UNION,
+        }
+        .abi_encode();
+
+        let out = run(&mut storage, &calldata);
+
+        assert!(out.is_revert());
+        assert_eq!(
+            out.bytes.get(..4),
+            Some(IPolicyRegistry::createPolicyCall::SELECTOR.as_ref()),
+            "revert must be AbiDecodeFailed, not FeatureNotActivated"
         );
     }
 

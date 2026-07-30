@@ -4,6 +4,7 @@ use core::fmt::Debug;
 use std::sync::Arc;
 
 use alloy_genesis::ChainConfig;
+use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_derive::{
@@ -91,6 +92,31 @@ impl OnlinePipeline {
         l1_head_number: L1HeadNumber,
         verifier_l1_confs: u64,
     ) -> Self {
+        Self::new_polled_with_da_batcher_sender_override(
+            cfg,
+            l1_cfg,
+            blob_provider,
+            chain_provider,
+            l2_chain_provider,
+            l1_head_number,
+            verifier_l1_confs,
+            None,
+        )
+    }
+
+    /// Constructs a new uninitialized polled derivation pipeline with an optional batcher address
+    /// override used only to filter L1 data-availability transactions.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_polled_with_da_batcher_sender_override(
+        cfg: Arc<RollupConfig>,
+        l1_cfg: Arc<ChainConfig>,
+        blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
+        chain_provider: AlloyChainProvider,
+        l2_chain_provider: AlloyL2ChainProvider,
+        l1_head_number: L1HeadNumber,
+        verifier_l1_confs: u64,
+        da_batcher_sender_override: Option<Address>,
+    ) -> Self {
         let chain_provider =
             ConfDepthProvider::new(chain_provider, l1_head_number, verifier_l1_confs);
         let attributes = StatefulAttributesBuilder::new(
@@ -108,6 +134,7 @@ impl OnlinePipeline {
             .chain_provider(chain_provider)
             .builder(attributes)
             .origin(BlockInfo::default())
+            .da_batcher_sender_override(da_batcher_sender_override)
             .build_polled();
 
         Self { inner: pipeline }

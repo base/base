@@ -3608,6 +3608,7 @@ dependencies = [
  "reth-trie-common",
  "revm",
  "rlimit",
+ "rstest",
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
@@ -6777,10 +6778,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "anyhow",
- "base-consensus-peers",
- "base-prover-service-protocol",
  "basectl-cli",
- "chrono",
  "clap",
  "rustls 0.23.42",
  "serde",

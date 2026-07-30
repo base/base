@@ -148,22 +148,22 @@ where
         if self.rollup_cfg.is_ecotone_active(next_l2_time)
             && !self.rollup_cfg.is_ecotone_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions = Upgrades::ECOTONE.txs().collect();
+            upgrade_transactions.extend(Upgrades::ECOTONE.txs());
         }
         if self.rollup_cfg.is_fjord_active(next_l2_time)
             && !self.rollup_cfg.is_fjord_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions.append(&mut Upgrades::FJORD.txs().collect());
+            upgrade_transactions.extend(Upgrades::FJORD.txs());
         }
         if self.rollup_cfg.is_isthmus_active(next_l2_time)
             && !self.rollup_cfg.is_isthmus_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions.append(&mut Upgrades::ISTHMUS.txs().collect());
+            upgrade_transactions.extend(Upgrades::ISTHMUS.txs());
         }
         if self.rollup_cfg.is_jovian_active(next_l2_time)
             && !self.rollup_cfg.is_jovian_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions.append(&mut Upgrades::JOVIAN.txs().collect());
+            upgrade_transactions.extend(Upgrades::JOVIAN.txs());
         }
 
         // Build and encode the L1 info transaction for the current payload.

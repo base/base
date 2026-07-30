@@ -1,10 +1,11 @@
 //! CLI arguments and subcommands for basectl.
 
-use alloy_primitives::{Address, B256};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 use url::Url;
 
-use super::{BlockCommand, DoctorCommand, SyncStatusCommand};
+use super::{
+    BlockCommand, DoctorCommand, P2pCommand, ProofsCommand, SyncStatusCommand, TxpoolCommand,
+};
 use crate::ViewId;
 
 /// Base infrastructure control CLI.
@@ -46,17 +47,9 @@ pub enum Commands {
     /// Report combined CL `optimism_syncStatus` + EL `eth_syncing`.
     SyncStatus(SyncStatusCommand),
     /// Inspect p2p peers and advertised endpoints.
-    P2p {
-        /// P2P operation to run.
-        #[command(subcommand)]
-        command: P2pCommands,
-    },
+    P2p(P2pCommand),
     /// Inspect and clear execution-layer txpool contents.
-    Txpool {
-        /// Transaction-pool operation to run.
-        #[command(subcommand)]
-        command: TxpoolCommands,
-    },
+    Txpool(TxpoolCommand),
     /// Inspect and control an HA conductor cluster.
     Conductor {
         /// Conductor operation to run.
@@ -72,271 +65,10 @@ pub enum Commands {
     /// Run read-only diagnostics for a single node.
     Doctor(DoctorCommand),
     /// Request and inspect ZK proofs on the internal prover service.
-    Proofs {
-        /// Proof operation to run.
-        #[command(subcommand)]
-        command: ProofsCommands,
-    },
+    Proofs(ProofsCommand),
     /// Stream flashblocks as JSON lines.
     #[command(after_help = "Use `basectl monitor flashblocks` for the TUI.")]
     Flashblocks,
-}
-
-/// Prover-service proof request and inspection commands.
-#[derive(Debug, Subcommand)]
-pub enum ProofsCommands {
-    /// Submit a compressed ZK proof request for a block range to speed up finality.
-    Finalize(ProofsFinalizeArgs),
-    /// Show status and result data for a submitted proof request.
-    Status(ProofsStatusArgs),
-    /// List submitted proof requests.
-    List(ProofsListArgs),
-}
-
-/// Flags for `basectl proofs finalize`.
-#[derive(Debug, Args)]
-pub struct ProofsFinalizeArgs {
-    /// First L2 block number to prove.
-    #[arg(value_name = "START_BLOCK")]
-    pub start_block: u64,
-    /// Number of consecutive L2 blocks to prove.
-    #[arg(value_name = "NUM_BLOCKS", value_parser = clap::value_parser!(u64).range(1..))]
-    pub num_blocks: u64,
-    /// Explicit proof session ID (prover-service idempotency key).
-    ///
-    /// If omitted, basectl derives a deterministic session ID from the
-    /// network name and block range, so re-running the same command resolves
-    /// to the existing prover-service session instead of enqueueing a
-    /// duplicate proof.
-    #[arg(long = "session-id", value_name = "ID")]
-    pub session_id: Option<String>,
-    /// L1 head hash used for witness generation.
-    ///
-    /// If omitted, the prover service picks one.
-    #[arg(long = "l1-head", value_name = "HASH")]
-    pub l1_head: Option<B256>,
-    /// Sequencing window passed to the prover.
-    #[arg(long = "sequence-window", value_name = "N")]
-    pub sequence_window: Option<u64>,
-    /// Intermediate output root interval passed to the prover.
-    #[arg(long = "intermediate-root-interval", value_name = "N")]
-    pub intermediate_root_interval: Option<u64>,
-    /// Poll the prover service until the proof succeeds or fails.
-    ///
-    /// Exits non-zero when the proof fails or does not complete in time.
-    #[arg(long)]
-    pub wait: bool,
-    /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
-    #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
-    pub prover_rpc: Option<Url>,
-    /// Skip the interactive confirmation prompt.
-    #[arg(long)]
-    pub yes: bool,
-    /// Emit a structured JSON action outcome instead of pretty text.
-    #[arg(long, requires = "yes")]
-    pub json: bool,
-}
-
-/// Flags for `basectl proofs status`.
-#[derive(Debug, Args)]
-pub struct ProofsStatusArgs {
-    /// Proof session ID returned by `basectl proofs finalize`.
-    #[arg(value_name = "SESSION_ID")]
-    pub session_id: String,
-    /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
-    #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
-    pub prover_rpc: Option<Url>,
-    /// Emit humanized JSON instead of pretty text.
-    #[arg(long)]
-    pub json: bool,
-    /// With `--json`, emit the prover-service wire shape instead of the humanized summary.
-    #[arg(long, requires = "json")]
-    pub raw: bool,
-}
-
-/// Flags for `basectl proofs list`.
-#[derive(Debug, Args)]
-pub struct ProofsListArgs {
-    /// Only list proofs with this status.
-    #[arg(long, value_enum, value_name = "STATUS")]
-    pub status: Option<ProofStatusFilter>,
-    /// Number of rows to skip.
-    #[arg(long, value_name = "N", default_value_t = 0)]
-    pub offset: u64,
-    /// Maximum rows to return.
-    #[arg(long, value_name = "N", default_value_t = 50)]
-    pub limit: u32,
-    /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
-    #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
-    pub prover_rpc: Option<Url>,
-    /// Emit humanized JSON instead of pretty text.
-    #[arg(long)]
-    pub json: bool,
-}
-
-/// Proof status filter accepted by `basectl proofs list`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ProofStatusFilter {
-    /// Proof request is queued.
-    Queued,
-    /// Proof request is running.
-    Running,
-    /// Proof request completed successfully.
-    Succeeded,
-    /// Proof request failed.
-    Failed,
-}
-
-/// P2P inspection and peer-management commands.
-#[derive(Debug, Subcommand)]
-pub enum P2pCommands {
-    /// List connected peers per layer.
-    Peers(P2pArgs),
-    /// Show advertised endpoints and peer-count summary per layer.
-    Info(P2pArgs),
-    /// Ask the Base telemetry service to probe an execution-layer enode.
-    Reachability {
-        /// Execution-layer `enode://` URL to probe.
-        #[arg(value_name = "ENODE")]
-        enode: String,
-        /// Emit the telemetry response as JSON.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Add a single execution or consensus peer.
-    AddPeer(DestructivePeerArgs),
-    /// Remove a single execution or consensus peer.
-    RemovePeer(DestructivePeerArgs),
-    /// Ban a single execution or consensus peer.
-    Ban(DestructivePeerArgs),
-    /// Unban a single execution or consensus peer.
-    Unban(DestructivePeerArgs),
-    /// Unban all currently banned consensus peers.
-    UnbanAll(DestructiveClBulkArgs),
-}
-
-/// Shared flags for the read-only `basectl p2p` subcommands.
-#[derive(Debug, Args)]
-pub struct P2pArgs {
-    /// Override the execution-layer RPC URL.
-    ///
-    /// Defaults to the chain config's `rpc` field, which on the
-    /// `mainnet` and `sepolia` presets resolves to the public proxyd
-    /// fleet. Pass this flag to query a single node directly.
-    #[arg(long = "el-rpc", value_name = "URL")]
-    pub el_rpc: Option<Url>,
-    /// Override the consensus-node RPC URL.
-    ///
-    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
-    /// so non-devnet users must pass this flag (or set the field in
-    /// their YAML config).
-    #[arg(long = "cl-rpc", value_name = "URL")]
-    pub cl_rpc: Option<Url>,
-    /// Emit JSON instead of the pretty table output.
-    #[arg(long)]
-    pub json: bool,
-    /// With `--json`, emit raw RPC wire shapes instead of the humanized summary.
-    #[arg(long, requires = "json")]
-    pub raw: bool,
-}
-
-/// Shared flags for destructive `basectl p2p` subcommands.
-#[derive(Debug, Args)]
-pub struct DestructivePeerArgs {
-    /// Peer target. `enode://...` routes to EL; CL add accepts ENR or multiaddr, while other actions use a peer ID.
-    #[arg(value_name = "TARGET")]
-    pub target: String,
-    /// Override the execution-layer RPC URL.
-    ///
-    /// Defaults to the chain config's `rpc` field, which on the
-    /// `mainnet` and `sepolia` presets resolves to the public proxyd
-    /// fleet. Pass this flag to query a single node directly.
-    #[arg(long = "el-rpc", value_name = "URL")]
-    pub el_rpc: Option<Url>,
-    /// Override the consensus-node RPC URL.
-    ///
-    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
-    /// so non-devnet users must pass this flag (or set the field in
-    /// their YAML config).
-    #[arg(long = "cl-rpc", value_name = "URL")]
-    pub cl_rpc: Option<Url>,
-    /// Skip the interactive confirmation prompt.
-    #[arg(long)]
-    pub yes: bool,
-    /// Emit a structured JSON action outcome instead of pretty text.
-    #[arg(long, requires = "yes")]
-    pub json: bool,
-}
-
-/// Shared flags for destructive consensus-only `basectl p2p` bulk subcommands.
-#[derive(Debug, Args)]
-pub struct DestructiveClBulkArgs {
-    /// Override the consensus-node RPC URL.
-    ///
-    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
-    /// so non-devnet users must pass this flag (or set the field in
-    /// their YAML config).
-    #[arg(long = "cl-rpc", value_name = "URL")]
-    pub cl_rpc: Option<Url>,
-    /// Skip the interactive confirmation prompt.
-    #[arg(long)]
-    pub yes: bool,
-    /// Emit a structured JSON action outcome instead of pretty text.
-    #[arg(long, requires = "yes")]
-    pub json: bool,
-}
-
-/// Transaction-pool inspection and destructive clearing commands.
-#[derive(Debug, Subcommand)]
-pub enum TxpoolCommands {
-    /// Show pending txpool transactions.
-    Pending(TxpoolReadArgs),
-    /// Show queued txpool transactions.
-    Queued(TxpoolReadArgs),
-    /// Show pending and queued txpool transactions.
-    All(TxpoolReadArgs),
-    /// Clear the txpool or drop every transaction for one sender.
-    Clear(TxpoolClearArgs),
-}
-
-/// Shared flags for read-only `basectl txpool` subcommands.
-#[derive(Debug, Args)]
-pub struct TxpoolReadArgs {
-    /// Optional sender address to filter at the RPC layer.
-    #[arg(value_name = "SENDER")]
-    pub sender: Option<Address>,
-    /// Override the execution-layer RPC URL.
-    ///
-    /// Defaults to the chain config's `rpc` field. Pass this flag to query a
-    /// single node directly.
-    #[arg(long = "el-rpc", value_name = "URL")]
-    pub el_rpc: Option<Url>,
-    /// Emit humanized JSON instead of pretty text.
-    #[arg(long)]
-    pub json: bool,
-    /// With `--json`, emit the txpool wire shape instead of the humanized summary.
-    #[arg(long, requires = "json")]
-    pub raw: bool,
-}
-
-/// Flags for destructive `basectl txpool clear`.
-#[derive(Debug, Args)]
-pub struct TxpoolClearArgs {
-    /// Sender address whose txpool transactions should be dropped.
-    #[arg(long, value_name = "ADDRESS")]
-    pub sender: Option<Address>,
-    /// Override the execution-layer RPC URL.
-    ///
-    /// Defaults to the chain config's `rpc` field. Destructive txpool calls
-    /// usually require an admin-enabled node RPC.
-    #[arg(long = "el-rpc", value_name = "URL")]
-    pub el_rpc: Option<Url>,
-    /// Skip the interactive confirmation prompt.
-    #[arg(long)]
-    pub yes: bool,
-    /// Emit a structured JSON action outcome instead of pretty text.
-    #[arg(long, requires = "yes")]
-    pub json: bool,
 }
 
 /// HA conductor inspection and control commands.

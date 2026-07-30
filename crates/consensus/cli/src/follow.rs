@@ -270,6 +270,7 @@ impl ConsensusFollowNodeArgs {
             engine_provider: L1RpcProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone()),
             finalized_poll_interval: L1Config::default_finalized_poll_interval(cfg.l1_chain_id),
             verifier_l1_confs: self.config.l1_rpc_args.l1_verifier_confs,
+            da_batcher_sender_override: self.config.l1_rpc_args.l1_da_batcher_sender_override,
         })
     }
 }

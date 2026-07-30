@@ -8,6 +8,7 @@ use std::{
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_genesis::ChainConfig as GenesisChainConfig;
+use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
@@ -63,6 +64,8 @@ pub struct L1Config {
     /// pipeline). When non-zero, the L1 watcher delays derivation heads by this many blocks,
     /// providing reorg protection. Controlled via `BASE_NODE_VERIFIER_L1_CONFS`.
     pub verifier_l1_confs: u64,
+    /// Optional sender used only to filter L1 data-availability transactions.
+    pub da_batcher_sender_override: Option<Address>,
 }
 
 impl L1Config {
@@ -222,7 +225,7 @@ impl RollupNode {
             self.l2_trust_rpc,
         );
 
-        OnlinePipeline::new_polled(
+        OnlinePipeline::new_polled_with_da_batcher_sender_override(
             Arc::clone(&self.config),
             Arc::clone(&self.l1_config.chain_config),
             OnlineBlobProvider::init(self.l1_config.beacon_client.clone()).await,
@@ -230,6 +233,7 @@ impl RollupNode {
             l2_derivation_provider,
             l1_head_number,
             self.l1_config.verifier_l1_confs,
+            self.l1_config.da_batcher_sender_override,
         )
     }
 
