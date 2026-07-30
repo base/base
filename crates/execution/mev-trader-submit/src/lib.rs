@@ -43,11 +43,18 @@ mod arm;
 pub use arm::ProdBackend;
 #[cfg(feature = "t4e-handoff")]
 pub use arm::{
-    AdmittedCandidate, ProductionCandidateReceiver, ProductionHandoffClosed,
-    ProductionHandoffInstaller, ProductionHandoffState, ProductionReservation,
-    ProductionSimulationHandoff, ProductionSimulationHandoffStatus,
-    ProductionSimulationInstallError, ProductionSimulationWorkerOwner, ProductionWorkerError,
-    WorkerStartupFailure,
+    AdmittedCandidate, FinalizedChainAuthority, FinalizedChainError, NodeLocalSettledLossAuthority,
+    PreparedSettledLossAuthority, ProductionArmFailure, ProductionArmRuntimeOpenFailure,
+    ProductionBridgeFailure, ProductionBundleInputs, ProductionCampaignBundleFailure,
+    ProductionCandidateReceiver, ProductionDeploymentFailure, ProductionHandoffClosed,
+    ProductionHandoffInstaller, ProductionHandoffShared, ProductionHandoffState,
+    ProductionInstallBundle, ProductionInstallDisposition, ProductionInstallInputs,
+    ProductionPersistenceFailure, ProductionProofBundle, ProductionProviderFailure,
+    ProductionReservation, ProductionSimulationHandoff, ProductionSimulationHandoffStatus,
+    ProductionSimulationInstallError, ProductionSimulationWorkerOwner, ProductionSpawnDisposition,
+    ProductionStartup, ProductionStoreOpenFailure, ProductionWorkerBootstrap,
+    ProductionWorkerError, SettledLossUnavailableReason, VerifiedProductionProofs, WorkerStartup,
+    WorkerStartupFailure, spawn_production_simulation,
 };
 #[cfg(feature = "arm")]
 pub use arm::{

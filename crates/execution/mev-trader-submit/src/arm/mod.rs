@@ -36,14 +36,23 @@ pub use custody::{ProductionCustodyFailure, production_custody_preflight};
 mod fail_sink;
 pub use fail_sink::{ArmedFailSink, ProductionLatchOutcome};
 #[cfg(feature = "t4e-handoff")]
+mod production_bundle;
+#[cfg(feature = "t4e-handoff")]
+pub use production_bundle::{ProductionProofBundle, VerifiedProductionProofs};
+#[cfg(feature = "t4e-handoff")]
 mod production_handoff;
 #[cfg(feature = "t4e-handoff")]
 pub use production_handoff::{
-    AdmittedCandidate, ProductionCandidateReceiver, ProductionHandoffClosed,
+    AdmittedCandidate, ProductionArmFailure, ProductionArmRuntimeOpenFailure,
+    ProductionBridgeFailure, ProductionBundleInputs, ProductionCampaignBundleFailure,
+    ProductionCandidateReceiver, ProductionDeploymentFailure, ProductionHandoffClosed,
     ProductionHandoffInstaller, ProductionHandoffShared, ProductionHandoffState,
-    ProductionPersistenceFailure, ProductionReservation, ProductionSimulationHandoff,
-    ProductionSimulationHandoffStatus, ProductionSimulationInstallError,
-    ProductionSimulationWorkerOwner, ProductionWorkerError, WorkerStartupFailure,
+    ProductionInstallBundle, ProductionInstallDisposition, ProductionInstallInputs,
+    ProductionPersistenceFailure, ProductionProviderFailure, ProductionReservation,
+    ProductionSimulationHandoff, ProductionSimulationHandoffStatus,
+    ProductionSimulationInstallError, ProductionSimulationWorkerOwner, ProductionSpawnDisposition,
+    ProductionStartup, ProductionStoreOpenFailure, ProductionWorkerBootstrap,
+    ProductionWorkerError, WorkerStartup, WorkerStartupFailure, spawn_production_simulation,
 };
 mod proofs;
 mod producer;

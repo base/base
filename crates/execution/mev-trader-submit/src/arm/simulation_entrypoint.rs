@@ -235,6 +235,11 @@ impl SimulationEntrypoint {
         }
     }
 
+    /// Latches an exact durable ledger closure for process-lifetime status.
+    pub fn close_ledger(&self, reason: SimulationLedgerClosure) {
+        self.set_ledger_closed(reason);
+    }
+
     fn close_worker(&self, admission: &AtomicU8, panicked: bool) {
         if let Ok(mut status) = self.status.lock()
             && *status == SimulationEntrypointStatus::Ready

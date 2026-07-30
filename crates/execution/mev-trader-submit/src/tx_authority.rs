@@ -2370,7 +2370,7 @@ mod tests {
         assert_eq!(handoff.try_handoff(installing), Err(T4eHandoffError::Rejected));
 
         let receiver = installer
-            .publish_ready(Arc::new(SimulationEntrypoint::ready()))
+            .publish_ready_for_test(Arc::new(SimulationEntrypoint::ready()))
             .expect("publish ready");
         let admitted_fixture = assembly_fixture(
             Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
@@ -2387,9 +2387,8 @@ mod tests {
             None,
         );
         let busy_bridge = busy_fixture.bridge();
-        let busy = busy_bridge
-            .assemble_sealed_for_test(busy_fixture.view())
-            .expect("busy candidate");
+        let busy =
+            busy_bridge.assemble_sealed_for_test(busy_fixture.view()).expect("busy candidate");
         assert_eq!(handoff.try_handoff(busy), Err(T4eHandoffError::Busy));
 
         drop(receiver.receive().expect("ordered admitted candidate"));

@@ -1,20 +1,33 @@
 //! Unified production T4e handoff, bounded admission, startup publication, and worker ownership.
 
 use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU8, Ordering},
-        mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
+        mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel},
     },
     thread::JoinHandle,
+    time::Duration,
 };
 
-use crate::{SealedUnsignedCandidate, T4eCandidateHandoff, T4eHandoffError, TxAuthorityError};
+use base_mev_trader::{ArmedCriteria, ClaimStoreError, VictimClaimConfig, VictimClaimStore};
+
+use crate::{
+    BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate, T4eCandidateHandoff,
+    T4eHandoffError, TxAuthorityError,
+};
 
 use super::{
-    ProductionCandidateError, ProductionClaimFailure, ProductionLatchOutcome,
-    ProductionSigningError, SimulationEntrypoint, SimulationEntrypointStatus,
-    SimulationEntrypointUnavailable, SimulationLedgerClosure,
+    CHAIN_ID_BASE, NodeLocalSettledLossAuthority, PreparedSettledLossAuthority,
+    ProductionB5Runtime, ProductionB5RuntimeInstallError, ProductionCandidateError,
+    ProductionClaimFailure, ProductionClaimResult, ProductionCodeHashProvider,
+    ProductionLatchOutcome, ProductionProofBundle, ProductionSigningError, R9_CLAIM_STORE_PATH,
+    RuntimeBackend, SIMULATION_RECORD_CAPACITY, SimBackend, SimulationEntrypoint,
+    SimulationEntrypointStatus, SimulationEntrypointUnavailable, SimulationLedgerClosure,
+    SimulationPersistError, SimulationStore, SubmitOutcome, production_custody_preflight,
+    send_gated, try_claim_detailed,
 };
 
 const ADMISSION_FREE: u8 = 0;
@@ -185,6 +198,61 @@ pub enum WorkerStartupFailure {
     SenderLost,
 }
 
+/// One-shot worker startup acknowledgement.
+#[derive(Debug)]
+pub enum WorkerStartup {
+    /// The complete bundle is owned by the worker and its entrypoint is ready.
+    Ready {
+        /// Shared entrypoint created inside the worker.
+        entrypoint: Arc<SimulationEntrypoint>,
+        /// Sole candidate sender moved to node-start for publication.
+        sender: SyncSender<AdmittedCandidate>,
+        /// Shared capacity-one admission state.
+        admission: Arc<AtomicU8>,
+    },
+    /// Worker initialization failed before readiness.
+    Failed(Arc<ProductionSimulationInstallError>),
+}
+
+/// Private non-clone sender whose send consumes the only producer.
+#[derive(Debug)]
+struct WorkerStartupSender(SyncSender<WorkerStartup>);
+
+impl WorkerStartupSender {
+    fn send(self, startup: WorkerStartup) -> Result<(), WorkerStartup> {
+        self.0.send(startup).map_err(|error| error.0)
+    }
+}
+
+/// Worker-owned pre-publication queue and one-shot acknowledgement.
+#[derive(Debug)]
+pub struct ProductionWorkerBootstrap {
+    admission: Arc<AtomicU8>,
+    sender: SyncSender<AdmittedCandidate>,
+    receiver: Receiver<AdmittedCandidate>,
+    startup: WorkerStartupSender,
+}
+
+impl ProductionWorkerBootstrap {
+    /// Acknowledges readiness exactly once and retains the sole candidate receiver.
+    pub fn publish_ready(
+        self,
+        entrypoint: Arc<SimulationEntrypoint>,
+    ) -> Result<ProductionCandidateReceiver, WorkerStartup> {
+        let Self { admission, sender, receiver, startup } = self;
+        startup.send(WorkerStartup::Ready { entrypoint, sender, admission })?;
+        Ok(ProductionCandidateReceiver { receiver })
+    }
+
+    /// Sends a typed startup failure exactly once.
+    pub fn publish_failed(
+        self,
+        error: Arc<ProductionSimulationInstallError>,
+    ) -> Result<(), WorkerStartup> {
+        self.startup.send(WorkerStartup::Failed(error))
+    }
+}
+
 /// Stable worker persistence failure that is not a ledger closure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProductionPersistenceFailure {
@@ -199,6 +267,8 @@ pub enum ProductionPersistenceFailure {
 /// Stable worker failure after a candidate has been admitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProductionWorkerError {
+    /// Shared bridge conversion failed.
+    Bridge(ProductionBridgeFailure),
     /// The victim was already claimed; no latch was attempted.
     ClaimAlreadyClaimed,
     /// The claim store failed and the mandatory latch was attempted.
@@ -250,6 +320,119 @@ pub enum ProductionSimulationHandoffStatus {
     LedgerClosed(SimulationLedgerClosure),
     /// The handoff closed for an exact worker/admission reason.
     HandoffClosed(ProductionHandoffClosed),
+}
+
+/// Node-local handles required to load the complete production bundle.
+#[derive(Debug)]
+pub struct ProductionBundleInputs<C, F> {
+    /// Installed committed-state authority.
+    pub committed_state: Arc<C>,
+    /// Installed finalized-chain authority.
+    pub finalized_chain: Arc<F>,
+    /// The one shared T4d/T4e bridge allocation.
+    pub bridge: Arc<InstalledSubmissionBridge>,
+    /// Simulation-only backend.
+    pub backend: SimBackend,
+}
+
+/// Complete non-clone bundle moved exactly once into the production worker.
+#[derive(Debug)]
+pub struct ProductionInstallBundle<C, F>
+where
+    F: super::FinalizedChainAuthority,
+{
+    committed_state: Arc<C>,
+    bridge: Arc<InstalledSubmissionBridge>,
+    backend: SimBackend,
+    proofs: ProductionProofBundle,
+    claims: VictimClaimStore,
+    prepared_loss: PreparedSettledLossAuthority<Arc<F>>,
+    store: SimulationStore,
+}
+
+/// Complete bundle plus owner-verified arming criteria moved into thread spawn.
+#[derive(Debug)]
+pub struct ProductionInstallInputs<C, F>
+where
+    F: super::FinalizedChainAuthority,
+{
+    /// Fully loaded production conjunction.
+    pub bundle: ProductionInstallBundle<C, F>,
+    /// Owner-verified arming criteria.
+    pub armed: ArmedCriteria,
+}
+
+impl<C, F> ProductionInstallBundle<C, F>
+where
+    C: super::CommittedStateAuthority,
+    F: super::FinalizedChainAuthority,
+{
+    /// Loads every bounded prerequisite before any worker thread exists.
+    pub fn load(
+        inputs: ProductionBundleInputs<C, F>,
+    ) -> Result<Self, ProductionSimulationInstallError> {
+        let ProductionBundleInputs { committed_state, finalized_chain, bridge, backend } = inputs;
+        let proofs = ProductionProofBundle::load()
+            .map_err(ProductionSimulationInstallError::CampaignBundleUnavailable)?;
+        let provider = ProductionCodeHashProvider::install(Arc::clone(&committed_state));
+        let deployment = proofs.verify_deployment(&provider).map_err(|error| match error {
+            ProductionCandidateError::Deployment(_) => {
+                ProductionSimulationInstallError::DeploymentIdentityUnavailable(
+                    ProductionDeploymentFailure::ProviderUnavailable,
+                )
+            }
+            ProductionCandidateError::G7(_)
+            | ProductionCandidateError::Live(_)
+            | ProductionCandidateError::CampaignMismatch
+            | ProductionCandidateError::SuppressionUnavailable
+            | ProductionCandidateError::Suppressed
+            | ProductionCandidateError::SuppressionRollback
+            | ProductionCandidateError::SuppressionInvalid
+            | ProductionCandidateError::KillActive
+            | ProductionCandidateError::SettledLoss(_)
+            | ProductionCandidateError::CommittedStateUnavailable
+            | ProductionCandidateError::CommittedAccountAbsent
+            | ProductionCandidateError::Gate(_) => {
+                ProductionSimulationInstallError::ActivationInvariant
+            }
+        })?;
+        let prepared_loss =
+            NodeLocalSettledLossAuthority::prepare_complete(Arc::clone(&finalized_chain))
+                .map_err(ProductionSimulationInstallError::DrawdownAuthorityUnavailable)?;
+        if prepared_loss.campaign_id().as_slice() != proofs.campaign_id().as_bytes() {
+            return Err(ProductionSimulationInstallError::ActivationInvariant);
+        }
+        let claims = VictimClaimStore::open_existing(
+            &VictimClaimConfig { db_path: PathBuf::from(R9_CLAIM_STORE_PATH) },
+            deployment.r9_store_identity(),
+        )
+        .map_err(|error| {
+            ProductionSimulationInstallError::ClaimStoreUnavailable(map_claim_failure(error))
+        })?;
+        production_custody_preflight()
+            .map_err(ProductionSimulationInstallError::CustodyUnavailable)?;
+        let store = SimulationStore::open().map_err(|error| {
+            ProductionSimulationInstallError::PersistenceUnavailable(match error {
+                super::SimulationStoreOpenError::Io(_) => ProductionStoreOpenFailure::Io,
+                super::SimulationStoreOpenError::AlreadyOpen => {
+                    ProductionStoreOpenFailure::AlreadyOpen
+                }
+                super::SimulationStoreOpenError::Lease(_) => ProductionStoreOpenFailure::Lease,
+                super::SimulationStoreOpenError::InvalidExistingLedger { ledger_epoch, class } => {
+                    ProductionStoreOpenFailure::InvalidExistingLedger {
+                        trusted_epoch_present: ledger_epoch.is_some(),
+                        class,
+                    }
+                }
+            })
+        })?;
+        store.ensure_capacity().map_err(|error| {
+            let reason = SimulationLedgerClosure::try_from(error)
+                .expect("capacity failure is always a ledger closure");
+            ProductionSimulationInstallError::CapacityUnavailable(reason)
+        })?;
+        Ok(Self { committed_state, bridge, backend, proofs, claims, prepared_loss, store })
+    }
 }
 
 /// Capacity-one payload transferring candidate and reservation together by value.
@@ -378,7 +561,7 @@ impl ProductionSimulationHandoff {
         match &*state {
             ProductionHandoffState::Closed { .. } => return,
             ProductionHandoffState::Installing(_) | ProductionHandoffState::Unavailable(_) => {
-                *state = ProductionHandoffState::Closed { entrypoint: None, reason };
+                return;
             }
             ProductionHandoffState::Open { entrypoint, admission, .. } => {
                 admission.store(ADMISSION_CLOSED, Ordering::Release);
@@ -474,13 +657,10 @@ impl ProductionHandoffInstaller {
     pub fn new() -> Self {
         let (sender, receiver) = sync_channel(1);
         let admission = Arc::new(AtomicU8::new(ADMISSION_FREE));
-        let handoff = Arc::new(ProductionSimulationHandoff {
-            shared: Arc::new(ProductionHandoffShared {
-                state: Mutex::new(ProductionHandoffState::Installing(Arc::new(
-                    ProductionSimulationInstallError::InstallationInProgress,
-                ))),
-            }),
-        });
+        let handoff =
+            Arc::new(ProductionSimulationHandoff::install(ProductionHandoffState::Installing(
+                Arc::new(ProductionSimulationInstallError::InstallationInProgress),
+            )));
         Self { handoff, admission, sender, receiver }
     }
 
@@ -489,24 +669,30 @@ impl ProductionHandoffInstaller {
         Arc::clone(&self.handoff)
     }
 
-    /// Consumes the sole publication capability and opens the worker queue exactly once.
-    pub fn publish_ready(
+    fn into_worker(self, startup: WorkerStartupSender) -> ProductionWorkerBootstrap {
+        let Self { handoff: _, admission, sender, receiver } = self;
+        ProductionWorkerBootstrap { admission, sender, receiver, startup }
+    }
+
+    /// Test-only direct publication seam for real candidate state-machine tests.
+    #[cfg(test)]
+    pub fn publish_ready_for_test(
         self,
         entrypoint: Arc<SimulationEntrypoint>,
     ) -> Result<ProductionCandidateReceiver, ()> {
-        let Self { handoff, admission, sender, receiver } = self;
-        {
-            let mut state = handoff.shared.state.lock().map_err(|_| ())?;
-            match &*state {
-                ProductionHandoffState::Installing(_) => {
-                    *state = ProductionHandoffState::Open { entrypoint, admission, sender };
-                }
-                ProductionHandoffState::Unavailable(_)
-                | ProductionHandoffState::Open { .. }
-                | ProductionHandoffState::Closed { .. } => return Err(()),
-            }
-        }
-        Ok(ProductionCandidateReceiver { receiver })
+        let (startup_sender, startup_receiver) = sync_channel(1);
+        let handoff = self.handoff();
+        let worker = self.into_worker(WorkerStartupSender(startup_sender));
+        let receiver = worker.publish_ready(entrypoint).map_err(|_| ())?;
+        let WorkerStartup::Ready { entrypoint, sender, admission } =
+            startup_receiver.recv().map_err(|_| ())?
+        else {
+            return Err(());
+        };
+        let mut state = handoff.shared.state.lock().map_err(|_| ())?;
+        *state = ProductionHandoffState::Open { entrypoint, sender, admission };
+        drop(state);
+        Ok(receiver)
     }
 }
 
@@ -539,5 +725,489 @@ impl ProductionSimulationWorkerOwner {
         self.cancel.store(true, Ordering::Release);
         self.handoff.close(ProductionHandoffClosed::Disconnected);
         self.thread
+    }
+}
+
+/// Successful worker spawn awaiting its one-shot readiness acknowledgement.
+#[derive(Debug)]
+pub struct ProductionStartup {
+    /// Shared handoff created before thread spawn.
+    pub handoff: Arc<ProductionSimulationHandoff>,
+    /// Sole worker owner retained through readiness.
+    pub owner: ProductionSimulationWorkerOwner,
+    /// Sole startup receiver.
+    pub receiver: Receiver<WorkerStartup>,
+    /// Shared timeout cancellation flag.
+    pub cancel: Arc<AtomicBool>,
+}
+
+/// Result of attempting to create the production worker OS thread.
+#[derive(Debug)]
+pub enum ProductionSpawnDisposition {
+    /// The worker exists and awaits readiness.
+    Spawned(ProductionStartup),
+    /// Thread creation failed before an owner existed.
+    Unavailable {
+        /// Rejecting unified handoff.
+        handoff: Arc<ProductionSimulationHandoff>,
+        /// Exact stable spawn failure.
+        error: Arc<ProductionSimulationInstallError>,
+    },
+}
+
+/// Result of the bounded startup handshake.
+#[derive(Debug)]
+pub enum ProductionInstallDisposition {
+    /// The complete worker conjunction was published.
+    Ready {
+        /// Open unified handoff.
+        handoff: Arc<ProductionSimulationHandoff>,
+        /// Sole worker owner.
+        owner: ProductionSimulationWorkerOwner,
+    },
+    /// Startup failed while preserving the owner for shutdown.
+    Unavailable {
+        /// Rejecting unified handoff.
+        handoff: Arc<ProductionSimulationHandoff>,
+        /// Sole worker owner.
+        owner: ProductionSimulationWorkerOwner,
+        /// Exact stable startup failure.
+        error: Arc<ProductionSimulationInstallError>,
+    },
+}
+
+impl ProductionStartup {
+    /// Waits exactly once for worker readiness or typed failure.
+    pub fn await_ready(self, timeout: Duration) -> ProductionInstallDisposition {
+        let Self { handoff, owner, receiver, cancel } = self;
+        match receiver.recv_timeout(timeout) {
+            Ok(WorkerStartup::Ready { entrypoint, sender, admission }) => {
+                let published = handoff.shared.state.lock().ok().and_then(|mut state| {
+                    if matches!(&*state, ProductionHandoffState::Installing(_)) {
+                        *state = ProductionHandoffState::Open { entrypoint, admission, sender };
+                        Some(())
+                    } else {
+                        None
+                    }
+                });
+                if published.is_some() {
+                    ProductionInstallDisposition::Ready { handoff, owner }
+                } else {
+                    let error = Arc::new(ProductionSimulationInstallError::ActivationInvariant);
+                    ProductionInstallDisposition::Unavailable { handoff, owner, error }
+                }
+            }
+            Ok(WorkerStartup::Failed(error)) => {
+                Self::set_unavailable(&handoff, Arc::clone(&error));
+                ProductionInstallDisposition::Unavailable { handoff, owner, error }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                cancel.store(true, Ordering::Release);
+                let error = Arc::new(ProductionSimulationInstallError::WorkerStartupUnavailable(
+                    WorkerStartupFailure::Timeout,
+                ));
+                Self::set_unavailable(&handoff, Arc::clone(&error));
+                ProductionInstallDisposition::Unavailable { handoff, owner, error }
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                let error = Arc::new(ProductionSimulationInstallError::WorkerStartupUnavailable(
+                    WorkerStartupFailure::SenderLost,
+                ));
+                Self::set_unavailable(&handoff, Arc::clone(&error));
+                ProductionInstallDisposition::Unavailable { handoff, owner, error }
+            }
+        }
+    }
+
+    fn set_unavailable(
+        handoff: &ProductionSimulationHandoff,
+        error: Arc<ProductionSimulationInstallError>,
+    ) {
+        let Ok(mut state) = handoff.shared.state.lock() else {
+            return;
+        };
+        if matches!(&*state, ProductionHandoffState::Installing(_)) {
+            *state = ProductionHandoffState::Unavailable(error);
+        }
+    }
+}
+
+/// Spawns the sole named production simulation worker and one-shot startup channel.
+pub fn spawn_production_simulation<C, F>(
+    inputs: ProductionInstallInputs<C, F>,
+) -> ProductionSpawnDisposition
+where
+    C: super::CommittedStateAuthority + std::fmt::Debug + Send + Sync + 'static,
+    F: super::FinalizedChainAuthority + 'static,
+{
+    let installer = ProductionHandoffInstaller::new();
+    let handoff = installer.handoff();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_cancel = Arc::clone(&cancel);
+    let worker_handoff = Arc::clone(&handoff);
+    let (startup_sender, startup_receiver) = sync_channel(1);
+    let bootstrap = installer.into_worker(WorkerStartupSender(startup_sender));
+    let thread =
+        std::thread::Builder::new().name("base-mev-arm-egress".to_owned()).spawn(move || {
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                run_production_worker(
+                    inputs,
+                    bootstrap,
+                    Arc::clone(&worker_handoff),
+                    Arc::clone(&worker_cancel),
+                );
+            }));
+            if result.is_err() {
+                worker_handoff
+                    .close(ProductionHandoffClosed::Worker(ProductionWorkerError::WorkerPanic));
+            }
+        });
+    match thread {
+        Ok(thread) => {
+            let owner = ProductionSimulationWorkerOwner::new(
+                thread,
+                Arc::clone(&cancel),
+                Arc::clone(&handoff),
+            );
+            ProductionSpawnDisposition::Spawned(ProductionStartup {
+                handoff,
+                owner,
+                receiver: startup_receiver,
+                cancel,
+            })
+        }
+        Err(_) => {
+            let error = Arc::new(ProductionSimulationInstallError::WorkerSpawnUnavailable);
+            ProductionStartup::set_unavailable(&handoff, Arc::clone(&error));
+            ProductionSpawnDisposition::Unavailable { handoff, error }
+        }
+    }
+}
+
+fn run_production_worker<C, F>(
+    inputs: ProductionInstallInputs<C, F>,
+    bootstrap: ProductionWorkerBootstrap,
+    handoff: Arc<ProductionSimulationHandoff>,
+    cancel: Arc<AtomicBool>,
+) where
+    C: super::CommittedStateAuthority + std::fmt::Debug + Send + Sync + 'static,
+    F: super::FinalizedChainAuthority + 'static,
+{
+    let ProductionInstallInputs { bundle, armed } = inputs;
+    let ProductionInstallBundle {
+        committed_state,
+        bridge,
+        backend,
+        proofs,
+        claims,
+        prepared_loss,
+        mut store,
+    } = bundle;
+    if let Err(error) = store.ensure_capacity() {
+        let reason =
+            SimulationLedgerClosure::try_from(error).expect("capacity failure is a closure");
+        let _ = bootstrap.publish_failed(Arc::new(
+            ProductionSimulationInstallError::CapacityUnavailable(reason),
+        ));
+        return;
+    }
+    let settled = match prepared_loss.activate() {
+        Ok(settled) => settled,
+        Err(error) => {
+            let _ = bootstrap.publish_failed(Arc::new(
+                ProductionSimulationInstallError::DrawdownAuthorityUnavailable(error),
+            ));
+            return;
+        }
+    };
+    let provider = ProductionCodeHashProvider::install(Arc::clone(&committed_state));
+    let deployment = match proofs.verify_deployment(&provider) {
+        Ok(deployment) => deployment,
+        Err(_) => {
+            let _ = bootstrap.publish_failed(Arc::new(
+                ProductionSimulationInstallError::DeploymentIdentityUnavailable(
+                    ProductionDeploymentFailure::ProviderUnavailable,
+                ),
+            ));
+            return;
+        }
+    };
+    let runtime = match ProductionB5Runtime::install(&deployment, &claims, committed_state, settled)
+    {
+        Ok(runtime) => runtime,
+        Err(ProductionB5RuntimeInstallError::DeploymentIdentity(_)) => {
+            let _ = bootstrap.publish_failed(Arc::new(
+                ProductionSimulationInstallError::DeploymentIdentityUnavailable(
+                    ProductionDeploymentFailure::BinaryMismatch,
+                ),
+            ));
+            return;
+        }
+        Err(ProductionB5RuntimeInstallError::ArmRuntime(error)) => {
+            let failure = match error {
+                super::ArmRuntimeOpenError::Startup(_) => ProductionArmRuntimeOpenFailure::Startup,
+                super::ArmRuntimeOpenError::Suppression(_) => {
+                    ProductionArmRuntimeOpenFailure::Suppression
+                }
+            };
+            let _ = bootstrap.publish_failed(Arc::new(
+                ProductionSimulationInstallError::ArmRuntimeUnavailable(failure),
+            ));
+            return;
+        }
+    };
+    let entrypoint = Arc::new(SimulationEntrypoint::ready());
+    let receiver = match bootstrap.publish_ready(Arc::clone(&entrypoint)) {
+        Ok(receiver) => receiver,
+        Err(WorkerStartup::Ready { .. }) | Err(WorkerStartup::Failed(_)) => return,
+    };
+    while !cancel.load(Ordering::Acquire) {
+        let admitted = match receiver.receive() {
+            Ok(admitted) => admitted,
+            Err(()) => {
+                handoff.close(ProductionHandoffClosed::Disconnected);
+                return;
+            }
+        };
+        let (candidate, reservation) = admitted.into_parts();
+        let terminal = process_candidate(
+            candidate,
+            &bridge,
+            &proofs,
+            &claims,
+            &runtime,
+            &armed,
+            &backend,
+            &mut store,
+            &entrypoint,
+        );
+        drop(reservation);
+        match terminal {
+            Ok(()) => {}
+            Err(reason) => {
+                handoff.close(reason);
+                return;
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_candidate<C, F>(
+    candidate: SealedUnsignedCandidate,
+    bridge: &InstalledSubmissionBridge,
+    proofs: &ProductionProofBundle,
+    claims: &VictimClaimStore,
+    runtime: &ProductionB5Runtime<C, NodeLocalSettledLossAuthority<Arc<F>>>,
+    armed: &ArmedCriteria,
+    backend: &SimBackend,
+    store: &mut SimulationStore,
+    entrypoint: &SimulationEntrypoint,
+) -> Result<(), ProductionHandoffClosed>
+where
+    C: super::CommittedStateAuthority,
+    F: super::FinalizedChainAuthority,
+{
+    let checked = bridge
+        .into_checked_candidate(candidate, proofs.campaign_id(), runtime.code_hash_provider())
+        .map_err(|error| {
+            ProductionHandoffClosed::Worker(ProductionWorkerError::Bridge(map_bridge_failure(
+                error,
+            )))
+        })?;
+    let verified = proofs
+        .verify_candidate(runtime.code_hash_provider())
+        .map_err(ProductionHandoffClosed::Authorization)?;
+    if let Err(error) = store.ensure_capacity() {
+        let reason =
+            SimulationLedgerClosure::try_from(error).expect("capacity failure is a closure");
+        entrypoint.close_ledger(reason);
+        return Err(ProductionHandoffClosed::LedgerClosed);
+    }
+    let identity = checked.execution_identity();
+    let claim = match try_claim_detailed(
+        claims,
+        CHAIN_ID_BASE,
+        identity.victim(),
+        identity.campaign_id(),
+        runtime.sink(),
+    ) {
+        Ok(ProductionClaimResult::Claimed(claim)) => claim,
+        Ok(ProductionClaimResult::AlreadyClaimed) => {
+            return Err(ProductionHandoffClosed::Worker(
+                ProductionWorkerError::ClaimAlreadyClaimed,
+            ));
+        }
+        Err(error) => {
+            return Err(ProductionHandoffClosed::Worker(ProductionWorkerError::ClaimError {
+                source: error.source(),
+                latch: error.latch(),
+            }));
+        }
+    };
+    let authorized = runtime
+        .authorize(armed, verified, claim, checked)
+        .map_err(ProductionHandoffClosed::Authorization)?;
+    let signed = authorized
+        .load_and_sign_detailed(runtime.sink())
+        .map_err(|error| ProductionHandoffClosed::Worker(ProductionWorkerError::Signing(error)))?;
+    let attempt = super::SubmissionAttempt::Initial(super::PairedSubmission::assemble(signed));
+    let freshness = runtime.freshness(armed);
+    let record = match send_gated(attempt, &freshness, RuntimeBackend::simulated(backend)) {
+        SubmitOutcome::Simulated(record) => record,
+        SubmitOutcome::NoEgress
+        | SubmitOutcome::LiveLocksClosed(_)
+        | SubmitOutcome::InclusionFailed(_)
+        | SubmitOutcome::InclusionSentAttributionFailed { .. }
+        | SubmitOutcome::LiveComplete => {
+            return Err(ProductionHandoffClosed::Worker(
+                ProductionWorkerError::UnexpectedLiveOutcome,
+            ));
+        }
+    };
+    let persisted = match store.append(&record) {
+        Ok(persisted) => persisted,
+        Err(
+            error @ (SimulationPersistError::Full { .. }
+            | SimulationPersistError::WriteFailed { .. }),
+        ) => {
+            let reason = SimulationLedgerClosure::try_from(error).expect("persistence closure");
+            entrypoint.close_ledger(reason);
+            return Err(ProductionHandoffClosed::LedgerClosed);
+        }
+        Err(SimulationPersistError::MissingEconomics) => {
+            return Err(ProductionHandoffClosed::Worker(ProductionWorkerError::Persistence(
+                ProductionPersistenceFailure::MissingEconomics,
+            )));
+        }
+        Err(SimulationPersistError::MissingIdentityEvidence) => {
+            return Err(ProductionHandoffClosed::Worker(ProductionWorkerError::Persistence(
+                ProductionPersistenceFailure::MissingIdentityEvidence,
+            )));
+        }
+        Err(SimulationPersistError::Oversize) => {
+            return Err(ProductionHandoffClosed::Worker(ProductionWorkerError::Persistence(
+                ProductionPersistenceFailure::Oversize,
+            )));
+        }
+    };
+    if persisted.ledger_full_after_commit() {
+        let reason = SimulationLedgerClosure::Full {
+            ledger_epoch: persisted.correlation().ledger_epoch(),
+            next_sequence: SIMULATION_RECORD_CAPACITY,
+            capacity: SIMULATION_RECORD_CAPACITY,
+        };
+        entrypoint.close_ledger(reason);
+        return Err(ProductionHandoffClosed::LedgerClosed);
+    }
+    Ok(())
+}
+
+fn map_bridge_failure(error: BridgeError) -> ProductionBridgeFailure {
+    match error {
+        BridgeError::Assembly(error) => ProductionBridgeFailure::Assembly(error),
+        BridgeError::BindingRejected => ProductionBridgeFailure::BindingRejected,
+        BridgeError::CrossInstallation => ProductionBridgeFailure::CrossInstallation,
+        BridgeError::SnapshotStale => ProductionBridgeFailure::SnapshotStale,
+        BridgeError::ExecutionFreshnessUnavailable => ProductionBridgeFailure::FreshnessUnavailable,
+        BridgeError::ExecutionIdentityChanged => ProductionBridgeFailure::IdentityChanged,
+        BridgeError::Cancelled => ProductionBridgeFailure::Cancelled,
+        BridgeError::DeadlineNoHandoff => ProductionBridgeFailure::Deadline,
+    }
+}
+fn map_claim_failure(error: ClaimStoreError) -> ProductionClaimFailure {
+    match error {
+        ClaimStoreError::Io(_) => ProductionClaimFailure::Io,
+        ClaimStoreError::Corruption(_) => ProductionClaimFailure::Corruption,
+        ClaimStoreError::CommitFailed(_) => ProductionClaimFailure::CommitUnknown,
+        ClaimStoreError::NotSingletonWriter => ProductionClaimFailure::NotSingleton,
+        ClaimStoreError::StoreIdentityMismatch => ProductionClaimFailure::IdentityMismatch,
+    }
+}
+#[cfg(test)]
+mod tests {
+    use std::{thread, time::Duration};
+
+    use super::*;
+
+    enum StartupMode {
+        Ready,
+        SenderLost,
+        Timeout,
+    }
+
+    fn startup(mode: StartupMode) -> ProductionStartup {
+        let installer = ProductionHandoffInstaller::new();
+        let handoff = installer.handoff();
+        let (startup_sender, startup_receiver) = sync_channel(1);
+        let bootstrap = installer.into_worker(WorkerStartupSender(startup_sender));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = Arc::clone(&cancel);
+        let thread = thread::Builder::new()
+            .name("base-mev-arm-egress".to_owned())
+            .spawn(move || match mode {
+                StartupMode::Ready => {
+                    let receiver = bootstrap
+                        .publish_ready(Arc::new(SimulationEntrypoint::ready()))
+                        .expect("ready acknowledgement");
+                    while !worker_cancel.load(Ordering::Acquire) && receiver.receive().is_ok() {}
+                }
+                StartupMode::SenderLost => drop(bootstrap),
+                StartupMode::Timeout => {
+                    thread::sleep(Duration::from_millis(50));
+                    let _ = bootstrap.publish_ready(Arc::new(SimulationEntrypoint::ready()));
+                }
+            })
+            .expect("spawn startup worker");
+        let owner =
+            ProductionSimulationWorkerOwner::new(thread, Arc::clone(&cancel), Arc::clone(&handoff));
+        ProductionStartup { handoff, owner, receiver: startup_receiver, cancel }
+    }
+
+    #[test]
+    fn startup_ready_publishes_once_and_owner_joins() {
+        let disposition = startup(StartupMode::Ready).await_ready(Duration::from_secs(5));
+        let ProductionInstallDisposition::Ready { handoff, owner } = disposition else {
+            panic!("expected ready disposition");
+        };
+        assert_eq!(handoff.status(), ProductionSimulationHandoffStatus::Ready);
+        owner.into_join_handle().join().expect("worker join");
+    }
+
+    #[test]
+    fn startup_sender_loss_is_typed_and_rejecting() {
+        let disposition = startup(StartupMode::SenderLost).await_ready(Duration::from_secs(5));
+        let ProductionInstallDisposition::Unavailable { handoff, owner, error } = disposition
+        else {
+            panic!("expected unavailable disposition");
+        };
+        assert_eq!(
+            *error,
+            ProductionSimulationInstallError::WorkerStartupUnavailable(
+                WorkerStartupFailure::SenderLost,
+            )
+        );
+        assert_eq!(
+            handoff.status(),
+            ProductionSimulationHandoffStatus::Unavailable(Arc::clone(&error))
+        );
+        owner.into_join_handle().join().expect("worker join");
+    }
+
+    #[test]
+    fn startup_timeout_cancels_late_ready_and_stays_unavailable() {
+        let disposition = startup(StartupMode::Timeout).await_ready(Duration::from_millis(5));
+        let ProductionInstallDisposition::Unavailable { handoff, owner, error } = disposition
+        else {
+            panic!("expected unavailable disposition");
+        };
+        assert_eq!(
+            *error,
+            ProductionSimulationInstallError::WorkerStartupUnavailable(
+                WorkerStartupFailure::Timeout,
+            )
+        );
+        owner.into_join_handle().join().expect("worker join");
+        assert_eq!(handoff.status(), ProductionSimulationHandoffStatus::Unavailable(error));
     }
 }

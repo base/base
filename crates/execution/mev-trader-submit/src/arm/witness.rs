@@ -365,6 +365,11 @@ impl CheckedCandidate {
     pub(crate) fn unsigned_signing_hash(&self) -> B256 {
         self.vtx.unsigned_tx().signature_hash()
     }
+
+    /// Returns the by-value execution identity retained from the sole economics evaluation.
+    pub const fn execution_identity(&self) -> ValidatedExecutionIdentity {
+        self.id
+    }
 }
 
 /// Stable signed-field identity for a production signature mismatch.
