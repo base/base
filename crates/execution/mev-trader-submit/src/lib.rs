@@ -49,8 +49,9 @@ pub use arm::{CheckedCandidate, CodeHashProvider, ProviderError};
 pub use arm::{RuntimeBackend, SimBackend};
 #[cfg(feature = "arm")]
 pub use arm::{
-    SimulationEntrypointStatus, SimulationEntrypointUnavailable, SimulationLedgerClosure,
-    SimulationLedgerEpoch, SimulationLedgerInvalid, SimulationStoreOperation,
+    SimulationCorrelationEnvelopeV1, SimulationCorrelationKey, SimulationEntrypointStatus,
+    SimulationEntrypointUnavailable, SimulationLedgerClosure, SimulationLedgerEpoch,
+    SimulationLedgerInvalid, SimulationStoreOperation,
 };
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
 pub use arm::{SuppressionRollbackError, provision_suppression_anchor};

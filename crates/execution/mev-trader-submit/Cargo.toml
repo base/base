@@ -39,7 +39,14 @@ t4e-handoff = ["arm", "t4d-bridge"]
 # two-channel transport builders. Everything it adds lives in `src/arm/` behind
 # `#[cfg(feature="arm")]`. It does NOT compile a real network egress path — that
 # is the further-gated `arm-live-egress`. `arm` alone is broadcastability-0.
-arm = ["phase-b", "dep:zeroize", "dep:redb", "dep:serde_json", "dep:sha2"]
+arm = [
+    "phase-b",
+    "dep:redb",
+    "dep:serde_json",
+    "dep:sha2",
+    "dep:tracing",
+    "dep:zeroize",
+]
 
 # The ONLY configuration in which a real `reqwest` egress (`ProdBackend::execute`)
 # compiles. Even here the call is reachable only through the full proof witness and
@@ -76,6 +83,7 @@ redb = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["std"], optional = true }
 reqwest = { workspace = true, features = ["blocking"], optional = true }
 sha2 = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Test-only (never linked into any node binary). The anvil e2e talks JSON-RPC to a

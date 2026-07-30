@@ -41,8 +41,9 @@ pub use simulation_entrypoint::{
 mod simulation_store;
 pub use simulation_store::{
     SIMULATION_LEDGER_PATH, SIMULATION_RECORD_CAPACITY, SIMULATION_RECORD_MAX_BYTES,
-    SimulationLedgerEpoch, SimulationLedgerInvalid, SimulationPersistError, SimulationPersisted,
-    SimulationStore, SimulationStoreOpenError, SimulationStoreOperation,
+    SimulationCorrelationEnvelopeV1, SimulationLedgerEpoch, SimulationLedgerInvalid,
+    SimulationPersistError, SimulationPersisted, SimulationStore, SimulationStoreOpenError,
+    SimulationStoreOperation,
 };
 mod request;
 mod suppression;

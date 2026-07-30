@@ -14,8 +14,8 @@ use std::{
 use crate::{SealedUnsignedCandidate, T4eCandidateHandoff, T4eHandoffError};
 
 use super::{
-    FreshnessSources, RuntimeBackend, SimBackend, SimulationPersistError, SimulationPersisted,
-    SimulationStore, SubmissionAttempt, SubmitOutcome, send_gated,
+    FreshnessSources, RuntimeBackend, SimBackend, SimulationCorrelationEnvelopeV1,
+    SimulationPersistError, SimulationStore, SubmissionAttempt, SubmitOutcome, send_gated,
 };
 
 /// Missing production prerequisite. No variant supplies fallback data.
@@ -40,50 +40,84 @@ pub enum SimulationLedgerClosure {
     /// Fixed campaign bound was reached before irreversible work.
     Full {
         /// Epoch that filled.
-        epoch: super::SimulationLedgerEpoch,
+        ledger_epoch: super::SimulationLedgerEpoch,
         /// Rejected sequence.
         next_sequence: u64,
         /// Fixed capacity.
         capacity: u64,
     },
     /// A durable publication operation failed.
-    WriteFailed {
+    PersistenceFailed {
         /// Epoch being written.
-        epoch: super::SimulationLedgerEpoch,
+        ledger_epoch: super::SimulationLedgerEpoch,
         /// Sequence with unknown durability.
         next_sequence: u64,
         /// Failed operation.
         operation: super::SimulationStoreOperation,
         /// Stable I/O class.
-        kind: std::io::ErrorKind,
+        io_kind: std::io::ErrorKind,
     },
-    /// Record did not carry the sole checked economics receipt.
-    MissingEconomics,
-    /// Record lacked bounded T4e transaction/route evidence.
-    MissingIdentityEvidence,
-    /// Canonical encoding exceeded its fixed bound.
-    Oversize,
     /// Existing ledger failed strict startup validation.
     InvalidExistingLedger {
-        /// Epoch is unavailable when metadata itself is invalid.
-        epoch: Option<super::SimulationLedgerEpoch>,
+        /// Epoch is unavailable when the durable head itself is invalid.
+        ledger_epoch: Option<super::SimulationLedgerEpoch>,
         /// Closed structural class.
         class: super::SimulationLedgerInvalid,
     },
 }
 
-impl From<SimulationPersistError> for SimulationLedgerClosure {
-    fn from(error: SimulationPersistError) -> Self {
+impl TryFrom<SimulationPersistError> for SimulationLedgerClosure {
+    type Error = ();
+
+    fn try_from(error: SimulationPersistError) -> Result<Self, Self::Error> {
         match error {
             SimulationPersistError::Full { epoch, next_sequence, capacity } => {
-                Self::Full { epoch, next_sequence, capacity }
+                Ok(Self::Full { ledger_epoch: epoch, next_sequence, capacity })
             }
             SimulationPersistError::WriteFailed { epoch, next_sequence, operation, kind } => {
-                Self::WriteFailed { epoch, next_sequence, operation, kind }
+                Ok(Self::PersistenceFailed {
+                    ledger_epoch: epoch,
+                    next_sequence,
+                    operation,
+                    io_kind: kind,
+                })
             }
-            SimulationPersistError::MissingEconomics => Self::MissingEconomics,
-            SimulationPersistError::MissingIdentityEvidence => Self::MissingIdentityEvidence,
-            SimulationPersistError::Oversize => Self::Oversize,
+            SimulationPersistError::MissingEconomics
+            | SimulationPersistError::MissingIdentityEvidence
+            | SimulationPersistError::Oversize => Err(()),
+        }
+    }
+}
+
+impl SimulationLedgerClosure {
+    fn emit(self) {
+        match self {
+            Self::Full { ledger_epoch, next_sequence, capacity } => tracing::error!(
+                closure_reason = "Full",
+                ledger_epoch = ?ledger_epoch.as_bytes(),
+                next_sequence,
+                capacity,
+                "simulation ledger closed"
+            ),
+            Self::PersistenceFailed {
+                ledger_epoch,
+                next_sequence,
+                operation,
+                io_kind,
+            } => tracing::error!(
+                closure_reason = "PersistenceFailed",
+                ledger_epoch = ?ledger_epoch.as_bytes(),
+                next_sequence,
+                operation = ?operation,
+                io_kind = ?io_kind,
+                "simulation ledger closed"
+            ),
+            Self::InvalidExistingLedger { ledger_epoch, class } => tracing::error!(
+                closure_reason = "InvalidExistingLedger",
+                ledger_epoch = ?ledger_epoch.map(|epoch| *epoch.as_bytes()),
+                class = ?class,
+                "simulation ledger closed"
+            ),
         }
     }
 }
@@ -99,33 +133,19 @@ pub enum SimulationEntrypointStatus {
     LedgerClosed(SimulationLedgerClosure),
 }
 
-impl SimulationEntrypointStatus {
-    pub(crate) fn from_store_open_error(error: super::SimulationStoreOpenError) -> Self {
-        match error {
-            super::SimulationStoreOpenError::InvalidExistingLedger(class) => {
-                Self::LedgerClosed(SimulationLedgerClosure::InvalidExistingLedger {
-                    epoch: None,
-                    class,
-                })
-            }
-            super::SimulationStoreOpenError::Io(_)
-            | super::SimulationStoreOpenError::Lease(_)
-            | super::SimulationStoreOpenError::AlreadyOpen => {
-                Self::Unavailable(SimulationEntrypointUnavailable::PersistenceUnavailable)
-            }
-        }
-    }
-}
 /// Terminal classification for one accepted prepared submission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationEntrypointTerminal {
     /// Attempt was fsync'd and atomically published.
-    Persisted(SimulationPersisted),
+    Persisted {
+        /// Complete bounded join identity for the durable record.
+        correlation: SimulationCorrelationEnvelopeV1,
+    },
     /// Egress-moment freshness refused the attempt.
     FreshnessClosed,
     /// Ledger closed; status contains the distinct operator reason.
     LedgerClosed(SimulationLedgerClosure),
-    /// Simulation-only entrypoint observed a live-only outcome.
+    /// Simulation-only entrypoint observed an invalid record or live-only outcome.
     UnexpectedLiveOutcome,
 }
 
@@ -162,17 +182,16 @@ impl SimulationEntrypoint {
         store: &mut SimulationStore,
     ) -> SimulationEntrypointTerminal {
         if let Err(error) = store.ensure_capacity() {
-            return self.close(error);
+            return self.close_persistence(error);
         }
-        if self.status() != SimulationEntrypointStatus::Ready {
-            return match self.status() {
-                SimulationEntrypointStatus::LedgerClosed(reason) => {
-                    SimulationEntrypointTerminal::LedgerClosed(reason)
-                }
-                SimulationEntrypointStatus::Ready | SimulationEntrypointStatus::Unavailable(_) => {
-                    SimulationEntrypointTerminal::UnexpectedLiveOutcome
-                }
-            };
+        match self.status() {
+            SimulationEntrypointStatus::Ready => {}
+            SimulationEntrypointStatus::LedgerClosed(reason) => {
+                return SimulationEntrypointTerminal::LedgerClosed(reason);
+            }
+            SimulationEntrypointStatus::Unavailable(_) => {
+                return SimulationEntrypointTerminal::UnexpectedLiveOutcome;
+            }
         }
         match send_gated(attempt, freshness, RuntimeBackend::simulated(&self.backend)) {
             SubmitOutcome::Simulated(record) => match store.append(&record) {
@@ -180,9 +199,11 @@ impl SimulationEntrypoint {
                     if let Err(error) = store.ensure_capacity() {
                         self.set_closed(error);
                     }
-                    SimulationEntrypointTerminal::Persisted(persisted)
+                    SimulationEntrypointTerminal::Persisted {
+                        correlation: *persisted.correlation(),
+                    }
                 }
-                Err(error) => self.close(error),
+                Err(error) => self.close_persistence(error),
             },
             SubmitOutcome::NoEgress => SimulationEntrypointTerminal::FreshnessClosed,
             SubmitOutcome::LiveLocksClosed(_)
@@ -192,30 +213,43 @@ impl SimulationEntrypoint {
         }
     }
 
-    fn close(&self, error: SimulationPersistError) -> SimulationEntrypointTerminal {
-        let reason = SimulationLedgerClosure::from(error);
-        if let Ok(mut status) = self.status.lock() {
-            *status = SimulationEntrypointStatus::LedgerClosed(reason);
-        }
-        SimulationEntrypointTerminal::LedgerClosed(reason)
+    fn close_persistence(&self, error: SimulationPersistError) -> SimulationEntrypointTerminal {
+        let Ok(reason) = SimulationLedgerClosure::try_from(error) else {
+            return SimulationEntrypointTerminal::UnexpectedLiveOutcome;
+        };
+        SimulationEntrypointTerminal::LedgerClosed(self.set_ledger_closed(reason))
     }
 
     fn set_closed(&self, error: SimulationPersistError) {
-        let reason = SimulationLedgerClosure::from(error);
-        if let Ok(mut status) = self.status.lock() {
-            *status = SimulationEntrypointStatus::LedgerClosed(reason);
+        if let Ok(reason) = SimulationLedgerClosure::try_from(error) {
+            self.set_ledger_closed(reason);
+        }
+    }
+
+    fn set_ledger_closed(&self, proposed: SimulationLedgerClosure) -> SimulationLedgerClosure {
+        let Ok(mut status) = self.status.lock() else {
+            return proposed;
+        };
+        match *status {
+            SimulationEntrypointStatus::LedgerClosed(reason) => reason,
+            SimulationEntrypointStatus::Ready => {
+                *status = SimulationEntrypointStatus::LedgerClosed(proposed);
+                proposed.emit();
+                proposed
+            }
+            SimulationEntrypointStatus::Unavailable(_) => proposed,
         }
     }
 
     fn close_worker(&self, admission: &AtomicU8, panicked: bool) {
-        if let Ok(mut status) = self.status.lock() {
+        if let Ok(mut status) = self.status.lock()
+            && *status == SimulationEntrypointStatus::Ready
+        {
             *status = SimulationEntrypointStatus::Unavailable(
                 SimulationEntrypointUnavailable::WorkerClosed { panicked },
             );
-            admission.store(ADMISSION_CLOSED, Ordering::Release);
-        } else {
-            admission.store(ADMISSION_CLOSED, Ordering::Release);
         }
+        admission.store(ADMISSION_CLOSED, Ordering::Release);
     }
 }
 
@@ -437,6 +471,9 @@ mod tests {
     fn campaign() -> base_mev_trader::CampaignId {
         base_mev_trader::CampaignId::new([0x0A; 32])
     }
+    fn epoch(byte: u8) -> super::super::SimulationLedgerEpoch {
+        super::super::SimulationLedgerEpoch::for_test([byte; 32])
+    }
 
     fn attempt() -> SubmissionAttempt {
         use alloy_primitives::B256;
@@ -593,15 +630,14 @@ mod tests {
     }
 
     #[test]
-    fn closed_or_full_status_refuses_before_preparation() {
+    fn closed_status_refuses_before_preparation() {
         let (worker, _) = idle_worker();
-        *worker.entrypoint.status.lock().expect("status") =
-            SimulationEntrypointStatus::LedgerClosed(
-                SimulationLedgerClosure::InvalidExistingLedger {
-                    epoch: None,
-                    class: super::super::SimulationLedgerInvalid::Schema,
-                },
-            );
+        worker.entrypoint.set_ledger_closed(
+            SimulationLedgerClosure::InvalidExistingLedger {
+                ledger_epoch: None,
+                class: super::super::SimulationLedgerInvalid::Schema,
+            },
+        );
         assert!(matches!(worker.try_reserve(), Err(SimulationReservationError::Closed)));
     }
 
@@ -730,5 +766,104 @@ mod tests {
         drop(worker);
         assert!(terminated.load(Ordering::Acquire));
         assert_eq!(observed.status(), SimulationEntrypointStatus::Ready);
+    }
+
+    #[test]
+    fn full_reason_remains_queryable() {
+        let entrypoint = SimulationEntrypoint::ready();
+        let reason = SimulationLedgerClosure::Full {
+            ledger_epoch: epoch(1),
+            next_sequence: 262_144,
+            capacity: 262_144,
+        };
+
+        assert_eq!(entrypoint.set_ledger_closed(reason), reason);
+        assert_eq!(entrypoint.status(), SimulationEntrypointStatus::LedgerClosed(reason));
+    }
+
+    #[test]
+    fn persistence_failed_reason_remains_queryable() {
+        let entrypoint = SimulationEntrypoint::ready();
+        let reason = SimulationLedgerClosure::PersistenceFailed {
+            ledger_epoch: epoch(2),
+            next_sequence: 7,
+            operation: super::super::SimulationStoreOperation::UpdateHead,
+            io_kind: std::io::ErrorKind::WriteZero,
+        };
+
+        assert_eq!(entrypoint.set_ledger_closed(reason), reason);
+        assert_eq!(entrypoint.status(), SimulationEntrypointStatus::LedgerClosed(reason));
+    }
+
+    #[test]
+    fn invalid_existing_ledger_reason_remains_queryable() {
+        let entrypoint = SimulationEntrypoint::ready();
+        let reason = SimulationLedgerClosure::InvalidExistingLedger {
+            ledger_epoch: Some(epoch(3)),
+            class: super::super::SimulationLedgerInvalid::HashChain,
+        };
+
+        assert_eq!(entrypoint.set_ledger_closed(reason), reason);
+        assert_eq!(entrypoint.status(), SimulationEntrypointStatus::LedgerClosed(reason));
+    }
+
+    #[test]
+    fn first_ledger_closure_reason_wins() {
+        let entrypoint = SimulationEntrypoint::ready();
+        let first = SimulationLedgerClosure::Full {
+            ledger_epoch: epoch(4),
+            next_sequence: 262_144,
+            capacity: 262_144,
+        };
+        let later = SimulationLedgerClosure::PersistenceFailed {
+            ledger_epoch: epoch(4),
+            next_sequence: 262_144,
+            operation: super::super::SimulationStoreOperation::SyncDirectory,
+            io_kind: std::io::ErrorKind::Other,
+        };
+
+        assert_eq!(entrypoint.set_ledger_closed(first), first);
+        assert_eq!(entrypoint.set_ledger_closed(later), first);
+        assert_eq!(entrypoint.status(), SimulationEntrypointStatus::LedgerClosed(first));
+    }
+
+    #[test]
+    fn worker_close_and_later_proposal_preserve_first_ledger_closure() {
+        let entrypoint = SimulationEntrypoint::ready();
+        let admission = AtomicU8::new(ADMISSION_FREE);
+        let first = SimulationLedgerClosure::InvalidExistingLedger {
+            ledger_epoch: None,
+            class: super::super::SimulationLedgerInvalid::Schema,
+        };
+        let later = SimulationLedgerClosure::PersistenceFailed {
+            ledger_epoch: epoch(4),
+            next_sequence: 262_144,
+            operation: super::super::SimulationStoreOperation::SyncDirectory,
+            io_kind: std::io::ErrorKind::Other,
+        };
+        assert_eq!(entrypoint.set_ledger_closed(first), first);
+
+        entrypoint.close_worker(&admission, true);
+
+        assert_eq!(entrypoint.set_ledger_closed(later), first);
+        assert_eq!(entrypoint.status(), SimulationEntrypointStatus::LedgerClosed(first));
+        assert_eq!(admission.load(Ordering::Acquire), ADMISSION_CLOSED);
+    }
+
+    #[test]
+    fn sink_is_closed_while_detailed_status_remains_queryable() {
+        let (worker, _) = idle_worker();
+        let reason = SimulationLedgerClosure::Full {
+            ledger_epoch: epoch(5),
+            next_sequence: 262_144,
+            capacity: 262_144,
+        };
+        worker.entrypoint.set_ledger_closed(reason);
+
+        assert!(matches!(
+            worker.try_reserve(),
+            Err(SimulationReservationError::Closed)
+        ));
+        assert_eq!(worker.status(), SimulationEntrypointStatus::LedgerClosed(reason));
     }
 }

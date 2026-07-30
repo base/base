@@ -198,13 +198,15 @@ fn arm_source_is_exactly_the_declared_set() {
 /// The complete root API. T4e adds the unsigned handoff/provider contract; S1-b
 /// adds only the sealed runtime selection and its two reviewed backends. Signing,
 /// raw permits, concrete freshness providers, and proof APIs remain private.
-const PUBLIC_API_ALLOWLIST: [&str; 15] = [
+const PUBLIC_API_ALLOWLIST: [&str; 17] = [
     "CheckedCandidate",
     "CodeHashProvider",
     "ProdBackend",
     "ProviderError",
     "RuntimeBackend",
     "SimBackend",
+    "SimulationCorrelationEnvelopeV1",
+    "SimulationCorrelationKey",
     "SimulationEntrypointStatus",
     "SimulationEntrypointUnavailable",
     "SimulationLedgerClosure",
@@ -1166,6 +1168,26 @@ fn t4d_arm_surface_has_only_the_reviewed_unsigned_candidate_handoff() {
     assert_eq!(
         public, expected,
         "arm PUBLIC exported-name set does not match the allowlist (alias to a non-allowlisted name?)"
+    );
+    let store = arm_production("simulation_store.rs");
+    assert!(
+        !store.contains("pub struct SimulationLedgerHead")
+            && !store.contains("pub(crate) struct SimulationLedgerHead"),
+        "ledger head must remain private"
+    );
+    assert_eq!(
+        inherent_method_surface(&store, "SimulationLedgerEpoch"),
+        BTreeSet::from(["as_bytes".to_owned()]),
+        "ledger epoch constructor or mutator escaped"
+    );
+    assert_eq!(
+        inherent_method_surface(&store, "SimulationCorrelationEnvelopeV1"),
+        BTreeSet::from([
+            "correlation_key".to_owned(),
+            "ledger_epoch".to_owned(),
+            "sequence".to_owned(),
+        ]),
+        "correlation envelope constructor or mutator escaped"
     );
     let lib = std::fs::read_to_string(manifest_dir().join("src").join("lib.rs")).expect("lib.rs");
     let parsed = parse(&lib);

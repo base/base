@@ -159,7 +159,14 @@ fn validate_s2_metadata(metadata: &serde_json::Value) -> Result<(), String> {
         metadata,
         "mev-trader-submit",
         "arm",
-        &["phase-b", "dep:zeroize", "dep:redb", "dep:serde_json", "dep:sha2"],
+        &[
+            "phase-b",
+            "dep:redb",
+            "dep:serde_json",
+            "dep:sha2",
+            "dep:tracing",
+            "dep:zeroize",
+        ],
     )?;
     exact_feature_edges(metadata, "mev-trader-submit", "arm-live-egress", &["arm", "dep:reqwest"])?;
     exact_feature_edges(
@@ -208,28 +215,34 @@ fn validate_s2_metadata(metadata: &serde_json::Value) -> Result<(), String> {
         "reqwest",
         "serde_json",
         "sha2",
+        "tracing",
         "zeroize",
     ]);
     if actual != expected {
         return Err("submit direct dependency set differs".to_owned());
     }
-    let reqwest = dependencies
-        .iter()
-        .filter(|dependency| dependency["name"].as_str() == Some("reqwest"))
-        .collect::<Vec<_>>();
-    if !matches!(reqwest.as_slice(), [dependency] if dependency["optional"].as_bool() == Some(true))
-    {
-        return Err("reqwest must remain one optional live-only dependency".to_owned());
-    }
-    let features =
-        submit["features"].as_object().ok_or_else(|| "submit feature map missing".to_owned())?;
-    for (feature, edges) in features {
-        let edges =
-            edges.as_array().ok_or_else(|| format!("submit/{feature} edges are not an array"))?;
-        if feature != "arm-live-egress"
-            && edges.iter().any(|edge| edge.as_str() == Some("dep:reqwest"))
+    for (name, owning_feature) in [("reqwest", "arm-live-egress"), ("tracing", "arm")] {
+        let matches = dependencies
+            .iter()
+            .filter(|dependency| dependency["name"].as_str() == Some(name))
+            .collect::<Vec<_>>();
+        if !matches!(
+            matches.as_slice(),
+            [dependency] if dependency["optional"].as_bool() == Some(true)
+        ) {
+            return Err(format!("{name} must remain one optional dependency"));
+        }
+        let dependency_edge = format!("dep:{name}");
+        for (feature, edges) in
+            submit["features"].as_object().ok_or_else(|| "submit feature map missing".to_owned())?
         {
-            return Err(format!("submit/{feature} gained direct reqwest capability"));
+            let edges =
+                edges.as_array().ok_or_else(|| format!("submit/{feature} edges are not an array"))?;
+            if feature != owning_feature
+                && edges.iter().any(|edge| edge.as_str() == Some(dependency_edge.as_str()))
+            {
+                return Err(format!("submit/{feature} gained direct {name} capability"));
+            }
         }
     }
     Ok(())
@@ -299,6 +312,25 @@ fn closure_s0_green_unknown_feature_dependency_and_live_tree_red() {
     assert_ne!(mutant, metadata, "unknown dependency mutant did not change metadata");
     assert!(validate_s2_metadata(&mutant).is_err());
     let mut mutant = metadata.clone();
+    let tracing = package_mut(&mut mutant, "mev-trader-submit")["dependencies"]
+        .as_array_mut()
+        .expect("submit dependencies")
+        .iter_mut()
+        .find(|dependency| dependency["name"].as_str() == Some("tracing"))
+        .expect("tracing dependency");
+    tracing["optional"] = serde_json::json!(false);
+    assert_ne!(mutant, metadata, "required tracing mutant did not change metadata");
+    assert!(validate_s2_metadata(&mutant).is_err());
+
+    let mut mutant = metadata.clone();
+    package_mut(&mut mutant, "mev-trader-submit")["features"]["arm-live-egress"]
+        .as_array_mut()
+        .expect("arm-live-egress feature")
+        .push(serde_json::json!("dep:tracing"));
+    assert_ne!(mutant, metadata, "live-owned tracing mutant did not change metadata");
+    assert!(validate_s2_metadata(&mutant).is_err());
+
+    let mut mutant = metadata.clone();
     package_mut(&mut mutant, "mev-trader-submit")["features"]["phase-b"]
         .as_array_mut()
         .expect("phase-b feature")
@@ -327,6 +359,550 @@ fn package_mut<'a>(metadata: &'a mut serde_json::Value, name: &str) -> &'a mut s
         .iter_mut()
         .find(|package| package["name"].as_str() == Some(name))
         .expect("metadata package")
+}
+
+fn sealed_region<'a>(source: &'a str, start: &str, end: &str) -> Result<&'a str, String> {
+    let (_, remainder) =
+        source.split_once(start).ok_or_else(|| format!("sealed region start missing: {start}"))?;
+    let (region, _) =
+        remainder.split_once(end).ok_or_else(|| format!("sealed region end missing: {end}"))?;
+    if region.contains(start) {
+        return Err(format!("sealed region start duplicated: {start}"));
+    }
+    Ok(region)
+}
+
+fn validate_head_contract(source: &str) -> Result<(), String> {
+    let source = source
+        .split_once("\n#[cfg(test)]\nmod tests {")
+        .map(|(production, _)| production)
+        .ok_or_else(|| "H terminal test module marker changed".to_owned())?;
+    for required in [
+        "struct SimulationLedgerHead {",
+        "const ENCODED_LEN: usize = 72;",
+        "bytes[..32].copy_from_slice(self.ledger_epoch.as_bytes());",
+        "bytes[32..40].copy_from_slice(&self.next_sequence.to_be_bytes());",
+        "bytes[40..].copy_from_slice(self.latest_record_hash.as_slice());",
+        "let bytes: &[u8; Self::ENCODED_LEN] =",
+        "if epoch.iter().all(|byte| *byte == 0)",
+        "latest_record_hash: B256::from_slice(&bytes[40..]),",
+    ] {
+        if !source.contains(required) {
+            return Err(format!("H head contract missing: {required}"));
+        }
+    }
+    if source.matches("struct SimulationLedgerHead {").count() != 1
+        || source.contains("const EPOCH_FILE")
+        || source.contains("join(\"epoch\")")
+        || source.contains("to_le_bytes()")
+    {
+        return Err("H head gained a second authority or non-canonical encoding".to_owned());
+    }
+    let head = sealed_region(
+        source,
+        "struct SimulationLedgerHead {",
+        "/// Typed failure while opening a ledger.",
+    )?;
+    for field in ["ledger_epoch:", "next_sequence:", "latest_record_hash:"] {
+        if head.matches(field).count() != 2 {
+            return Err(format!("H exact head field flow changed: {field}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ledger_head_h0_control_h1_layout_and_epoch_mutants_red() {
+    let source = read(manifest_dir().join("src/arm/simulation_store.rs"));
+    validate_head_contract(&source).expect("H0 exact 72-byte epoch||BE sequence||hash head");
+    eprintln!("H0: GREEN");
+
+    for (label, mutant) in [
+        ("length", source.replacen("ENCODED_LEN: usize = 72", "ENCODED_LEN: usize = 40", 1)),
+        ("endianness", source.replacen("to_be_bytes()", "to_le_bytes()", 1)),
+        (
+            "order",
+            source.replacen(
+                "bytes[..32].copy_from_slice(self.ledger_epoch.as_bytes());",
+                "bytes[..32].copy_from_slice(self.latest_record_hash.as_slice());",
+                1,
+            ),
+        ),
+        (
+            "separate epoch file",
+            source.replacen(
+                "const HEAD_FILE: &str = \"head\";",
+                "const HEAD_FILE: &str = \"head\";\nconst EPOCH_FILE: &str = \"epoch\";",
+                1,
+            ),
+        ),
+        (
+            "zero epoch",
+            source.replacen(
+                "if epoch.iter().all(|byte| *byte == 0) {",
+                "if false && epoch.iter().all(|byte| *byte == 0) {",
+                1,
+            ),
+        ),
+    ] {
+        assert_ne!(mutant, source, "H1 {label} mutant did not change input");
+        assert!(validate_head_contract(&mutant).is_err(), "H1 {label} mutant survived");
+    }
+    eprintln!("H1: RED");
+}
+
+fn validate_ledger_lifecycle(source: &str) -> Result<(), String> {
+    for required in [
+        "if is_empty {\n                    return Err(SimulationStoreOpenError::InvalidExistingLedger {",
+        "let state = if created {\n            Self::initialize(directory, &directory_handle)?\n        } else {\n            Self::inspect(directory)?\n        };",
+        "fs::rename(&open_path, directory.join(HEAD_FILE))",
+        "directory_handle\n            .sync_all()",
+        "let head = Self::read_head(directory)?;",
+        "SimulationLedgerHead::decode(&bytes)",
+        "if head.next_sequence != next_sequence || head.latest_record_hash != prior_hash",
+    ] {
+        if !source.contains(required) {
+            return Err(format!("L lifecycle contract missing: {required}"));
+        }
+    }
+
+    let create = sealed_region(source, "    fn create_directory_with<", "    fn initialize(")?;
+    let opened = create
+        .find("let parent_handle = open_parent(parent)?;")
+        .ok_or_else(|| "L parent directory is not opened fail-closed".to_owned())?;
+    let made = create
+        .find("create_child(directory)?;")
+        .ok_or_else(|| "L child directory creation is not fail-closed".to_owned())?;
+    let parent_durable = create
+        .find("sync_parent(&parent_handle)\n    }")
+        .ok_or_else(|| "L child namespace lacks fail-closed parent fsync".to_owned())?;
+    if !(opened < made && made < parent_durable)
+        || create.matches("open_parent(parent)?").count() != 1
+        || create.matches("create_child(directory)?").count() != 1
+        || create.matches("sync_parent(&parent_handle)\n    }").count() != 1
+    {
+        return Err("L parent namespace durability order changed".to_owned());
+    }
+
+    let open = sealed_region(source, "    fn open_directory(", "    fn create_directory(")?;
+    let create_call = open
+        .find("Self::create_directory(directory)")
+        .ok_or_else(|| "L absent ledger no longer creates through durable namespace helper".to_owned())?;
+    let child_open = open
+        .find("let directory_handle =")
+        .ok_or_else(|| "L child directory handle open missing".to_owned())?;
+    let initialize_call = open
+        .find("Self::initialize(directory, &directory_handle)?")
+        .ok_or_else(|| "L child initialization missing".to_owned())?;
+    let admission = open
+        .find("Ok(Self {")
+        .ok_or_else(|| "L store admission missing".to_owned())?;
+    if !(create_call < child_open && child_open < initialize_call && initialize_call < admission) {
+        return Err("L parent fsync no longer precedes child initialization and admission".to_owned());
+    }
+
+    let initialize = sealed_region(source, "    fn initialize(", "    fn inspect(")?;
+    if !initialize.contains(
+        "file.write_all(&head.encode())\n            .and_then(|()| file.sync_all())",
+    ) {
+        return Err("L initialized head lacks file fsync".to_owned());
+    }
+    let durable = initialize
+        .find("directory_handle\n            .sync_all()")
+        .ok_or_else(|| "L initialized head lacks directory fsync".to_owned())?;
+    let admitted = initialize
+        .find("Ok((epoch, 0, B256::ZERO))")
+        .ok_or_else(|| "L initialized state return missing".to_owned())?;
+    if durable >= admitted {
+        return Err("L initialized head becomes admissible before durability".to_owned());
+    }
+
+    let inspect = sealed_region(source, "    fn inspect_with_capacity(", "    fn read_head(")?;
+    let capacity_check = inspect
+        .find(
+            "if accumulated >= capacity {\n                return Err(invalid(SimulationLedgerInvalid::Sequence));\n            }",
+        )
+        .ok_or_else(|| "L startup scan capacity check missing or masked".to_owned())?;
+    let push = inspect
+        .find("sequences.push(sequence);")
+        .ok_or_else(|| "L startup sequence collection missing".to_owned())?;
+    let sort = inspect
+        .find("sequences.sort_unstable();")
+        .ok_or_else(|| "L startup sequence sort missing".to_owned())?;
+    let read = inspect
+        .find("let bytes = fs::read(directory.join(Self::record_name(sequence)))")
+        .ok_or_else(|| "L startup record read missing".to_owned())?;
+    if !(capacity_check < push && push < sort && sort < read)
+        || inspect.matches("if accumulated >= capacity").count() != 1
+    {
+        return Err("L startup capacity is not checked before push, sort, and record read".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn ledger_lifecycle_l0_control_l1_empty_old_layout_tamper_and_rollback_mutants_red() {
+    let source = read(manifest_dir().join("src/arm/simulation_store.rs"));
+    validate_ledger_lifecycle(&source).expect("L0 durable initialized head and strict reopen");
+    eprintln!("L0: GREEN");
+
+    for (label, mutant) in [
+        (
+            "existing empty",
+            source.replacen(
+                "if is_empty {\n                    return Err(SimulationStoreOpenError::InvalidExistingLedger {",
+                "if false && is_empty {\n                    return Err(SimulationStoreOpenError::InvalidExistingLedger {",
+                1,
+            ),
+        ),
+        (
+            "old layout",
+            source.replacen(
+                "SimulationLedgerHead::decode(&bytes)",
+                "SimulationLedgerHead::decode(&bytes[..bytes.len().min(72)])",
+                1,
+            ),
+        ),
+        (
+            "initial head durability",
+            source.replacen(
+                "file.write_all(&head.encode())\n            .and_then(|()| file.sync_all())",
+                "file.write_all(&head.encode())\n            .and_then(|()| Ok(()))",
+                1,
+            ),
+        ),
+        (
+            "head tamper",
+            source.replacen(
+                "let head = Self::read_head(directory)?;",
+                "let head = Self::read_head(directory).unwrap_or(SimulationLedgerHead { ledger_epoch: SimulationLedgerEpoch([1; 32]), next_sequence: 0, latest_record_hash: B256::ZERO });",
+                1,
+            ),
+        ),
+        (
+            "rollback",
+            source.replacen(
+                "if head.next_sequence != next_sequence || head.latest_record_hash != prior_hash",
+                "if head.next_sequence > next_sequence || head.latest_record_hash != prior_hash",
+                1,
+            ),
+        ),
+        (
+            "parent open removal",
+            source.replacen(
+                "let parent_handle = open_parent(parent)?;",
+                "let parent_handle = open_parent(parent).unwrap();",
+                1,
+            ),
+        ),
+        (
+            "parent open after mkdir",
+            source.replacen(
+                "let parent_handle = open_parent(parent)?;\n        create_child(directory)?;",
+                "create_child(directory)?;\n        let parent_handle = open_parent(parent)?;",
+                1,
+            ),
+        ),
+        (
+            "parent fsync failure bypass",
+            source.replacen(
+                "sync_parent(&parent_handle)",
+                "sync_parent(&parent_handle).or(Ok(()))",
+                1,
+            ),
+        ),
+        (
+            "parent fsync after initialization",
+            source.replacen(
+                "Self::create_directory(directory)\n                    .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;",
+                "fs::DirBuilder::new().mode(0o700).create(directory)\n                    .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;",
+                1,
+            ),
+        ),
+        (
+            "startup capacity masking",
+            source.replacen(
+                "if accumulated >= capacity {",
+                "if false && accumulated >= capacity {",
+                1,
+            ),
+        ),
+        (
+            "startup capacity removal",
+            source.replacen(
+                "if accumulated >= capacity {\n                return Err(invalid(SimulationLedgerInvalid::Sequence));\n            }",
+                "",
+                1,
+            ),
+        ),
+    ] {
+        assert_ne!(mutant, source, "L1 {label} mutant did not change input");
+        assert!(validate_ledger_lifecycle(&mutant).is_err(), "L1 {label} mutant survived");
+    }
+    eprintln!("L1: RED");
+}
+
+fn validate_correlation_envelope(store: &str, entrypoint: &str, lib: &str) -> Result<(), String> {
+    for required in [
+        "pub struct SimulationCorrelationEnvelopeV1 {\n    ledger_epoch: SimulationLedgerEpoch,\n    sequence: u64,\n    correlation_key: SimulationCorrelationKey,\n}",
+        "pub const fn ledger_epoch(&self) -> SimulationLedgerEpoch",
+        "pub const fn sequence(&self) -> u64",
+        "pub const fn correlation_key(&self) -> SimulationCorrelationKey",
+        "correlation: SimulationCorrelationEnvelopeV1,",
+        "\"correlation\": {\n                \"correlationKey\":",
+        "\"ledgerEpoch\": Self::hex_epoch(correlation.ledger_epoch()),",
+        "\"ledgerEpoch\": Self::hex_epoch(self.epoch),",
+        "Self::validate_existing(&value, epoch, sequence, prior_hash)?;",
+    ] {
+        if !store.contains(required) {
+            return Err(format!("X0 durable correlation envelope edge missing: {required}"));
+        }
+    }
+
+    let validate =
+        sealed_region(store, "    fn validate_existing(", "    fn exact_object<'a>(")?;
+    for required in [
+        "if !Self::hash_field(object, \"ledgerEpoch\", false)\n            || object.get(\"ledgerEpoch\").and_then(Value::as_str)\n                != Some(Self::hex_epoch(epoch).as_str())\n        {\n            return Err(invalid_epoch());\n        }",
+        "if !Self::has_exact_keys(object, &top_keys)\n            || object.get(\"version\").and_then(Value::as_u64) != Some(VERSION)\n            || object.get(\"sequence\").and_then(Value::as_u64) != Some(sequence)\n        {\n            return Err(invalid());\n        }",
+        "if !Self::hash_field(correlation, \"ledgerEpoch\", false)\n            || correlation.get(\"ledgerEpoch\") != object.get(\"ledgerEpoch\")\n        {\n            return Err(invalid_epoch());\n        }",
+        "if correlation.get(\"sequence\").and_then(Value::as_u64) != Some(sequence)\n            || !Self::hash_field(correlation, \"correlationKey\", false)\n            || correlation.get(\"correlationKey\") != object.get(\"correlationKey\")\n        {\n            return Err(invalid());\n        }",
+    ] {
+        if !validate.contains(required) {
+            return Err(format!("X0 exact envelope validation edge missing: {required}"));
+        }
+    }
+    for masking in [
+        "false &&",
+        "true ||",
+        "return Ok(())",
+        ".unwrap(",
+        ".unwrap_or",
+        "Default::default",
+        "::default()",
+    ] {
+        if validate.contains(masking) {
+            return Err(format!("X0 envelope validation contains masking path: {masking}"));
+        }
+    }
+
+    for required in [
+        "Persisted {\n        /// Complete bounded join identity for the durable record.\n        correlation: SimulationCorrelationEnvelopeV1,",
+        "correlation: *persisted.correlation(),",
+    ] {
+        if !entrypoint.contains(required) {
+            return Err(format!("X1 terminal correlation envelope edge missing: {required}"));
+        }
+    }
+    if !lib.contains(
+        "SimulationCorrelationEnvelopeV1, SimulationCorrelationKey, SimulationEntrypointStatus,",
+    ) {
+        return Err("X1 public correlation envelope export missing".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_correlation_recomputation(source: &str) -> Result<(), String> {
+    let recompute = sealed_region(
+        source,
+        "    fn recompute_correlation_key(",
+        "    fn hex_address(",
+    )?;
+    for required in [
+        "campaign: B256",
+        "victim: B256",
+        "plan: B256",
+        "signed: B256",
+        "base-mev/simulation-correlation/v1",
+    ] {
+        if !recompute.contains(required) {
+            return Err(format!("X1 correlation recomputation missing: {required}"));
+        }
+    }
+    if recompute.contains("epoch") || recompute.contains("ledger") {
+        return Err("X1 stable correlation key became epoch-dependent".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_sticky_closure(entrypoint: &str) -> Result<(), String> {
+    let closure = sealed_region(
+        entrypoint,
+        "pub enum SimulationLedgerClosure {",
+        "impl TryFrom<SimulationPersistError> for SimulationLedgerClosure",
+    )?;
+    for reason in ["Full {", "PersistenceFailed {", "InvalidExistingLedger {"] {
+        if closure.matches(reason).count() != 1 {
+            return Err(format!("X2 sticky reason cardinality changed: {reason}"));
+        }
+    }
+    if entrypoint.matches("tracing::error!(").count() != 3
+        || entrypoint.matches("\"simulation ledger closed\"").count() != 3
+    {
+        return Err("X2 structured closure reason emission changed".to_owned());
+    }
+
+    let setter = sealed_region(entrypoint, "    fn set_ledger_closed(", "    fn close_worker(")?;
+    if entrypoint.matches(".emit();").count() != 1
+        || setter.matches(".emit();").count() != 1
+        || setter.matches("SimulationEntrypointStatus::Ready =>").count() != 1
+    {
+        return Err("X2 set_ledger_closed is not the sole emit authority".to_owned());
+    }
+    for required in [
+        "closure_reason = \"Full\"",
+        "closure_reason = \"PersistenceFailed\"",
+        "closure_reason = \"InvalidExistingLedger\"",
+        "ledger_epoch = ?",
+        "next_sequence,",
+        "capacity,",
+        "operation = ?operation,",
+        "io_kind = ?io_kind,",
+        "class = ?class,",
+        "SimulationEntrypointStatus::LedgerClosed(reason) => reason,",
+        "SimulationEntrypointStatus::Ready => {\n                *status = SimulationEntrypointStatus::LedgerClosed(proposed);\n                proposed.emit();\n                proposed\n            }",
+    ] {
+        if !entrypoint.contains(required) {
+            return Err(format!("X2 sticky/bounded evidence edge missing: {required}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn correlation_and_closure_x0_x1_x2_x3_controls_and_epoch_mutants_red() {
+    let store = read(manifest_dir().join("src/arm/simulation_store.rs"));
+    let entrypoint = read(manifest_dir().join("src/arm/simulation_entrypoint.rs"));
+    let lib = read(manifest_dir().join("src/lib.rs"));
+
+    validate_correlation_envelope(&store, &entrypoint, &lib).expect("X0 immutable durable envelope");
+    eprintln!("X0: GREEN");
+    validate_correlation_recomputation(&store).expect("X1 stable key excludes epoch");
+    eprintln!("X1: GREEN");
+    validate_sticky_closure(&entrypoint).expect("X2 exact first-wins structured closure");
+    eprintln!("X2: GREEN");
+    validate_head_contract(&store).expect("X3 required nonzero epoch authority");
+    eprintln!("X3: GREEN");
+
+    let mutant = store.replacen(
+        "\"ledgerEpoch\": Self::hex_epoch(self.epoch),",
+        "\"ledgerGeneration\": Self::hex_epoch(self.epoch),",
+        1,
+    );
+    assert_ne!(mutant, store, "X0 epoch omission mutant did not change input");
+    assert!(validate_correlation_envelope(&mutant, &entrypoint, &lib).is_err());
+
+    let mutant = store.replacen(
+        "ledger_epoch: SimulationLedgerEpoch,\n    sequence: u64,",
+        "ledger_epoch: Option<SimulationLedgerEpoch>,\n    sequence: u64,",
+        1,
+    );
+    assert_ne!(mutant, store, "X0 epoch optionality mutant did not change input");
+    assert!(validate_correlation_envelope(&mutant, &entrypoint, &lib).is_err());
+
+    let mutant = store.replacen(
+        "if epoch.iter().all(|byte| *byte == 0) {",
+        "if false && epoch.iter().all(|byte| *byte == 0) {",
+        1,
+    );
+    assert_ne!(mutant, store, "X3 zero epoch mutant did not change input");
+    assert!(validate_head_contract(&mutant).is_err());
+
+    let mutant = store.replacen(
+        "correlation.get(\"ledgerEpoch\") != object.get(\"ledgerEpoch\")",
+        "correlation.get(\"ledgerEpoch\") == object.get(\"ledgerEpoch\")",
+        1,
+    );
+    assert_ne!(mutant, store, "X0 epoch mismatch mutant did not change input");
+    assert!(validate_correlation_envelope(&mutant, &entrypoint, &lib).is_err());
+
+    let mutant = store.replacen(
+        "signed: B256,\n    ) -> B256 {",
+        "signed: B256,\n        epoch: SimulationLedgerEpoch,\n    ) -> B256 {",
+        1,
+    );
+    assert_ne!(mutant, store, "X1 epoch-key mutant did not change input");
+    assert!(validate_correlation_recomputation(&mutant).is_err());
+
+    let mutant = entrypoint.replacen(
+        "SimulationEntrypointStatus::LedgerClosed(reason) => reason,",
+        "SimulationEntrypointStatus::LedgerClosed(_) => proposed,",
+        1,
+    );
+    assert_ne!(mutant, entrypoint, "X2 last-reason-wins mutant did not change input");
+    assert!(validate_sticky_closure(&mutant).is_err());
+    let mutant = entrypoint.replacen(
+        "proposed.emit();",
+        "if false { proposed.emit(); }",
+        1,
+    );
+    assert_ne!(mutant, entrypoint, "X2 masked sole-emit mutant did not change input");
+    assert!(validate_sticky_closure(&mutant).is_err());
+
+    let mutant = entrypoint.replacen(
+        "proposed.emit();",
+        "proposed.emit();\n                proposed.emit();",
+        1,
+    );
+    assert_ne!(mutant, entrypoint, "X2 duplicate emit mutant did not change input");
+    assert!(validate_sticky_closure(&mutant).is_err());
+
+    for (label, mutant) in [
+        (
+            "false-and epoch equality",
+            store.replacen(
+                "if !Self::hash_field(object, \"ledgerEpoch\", false)",
+                "if false && !Self::hash_field(object, \"ledgerEpoch\", false)",
+                1,
+            ),
+        ),
+        (
+            "true-or correlation equality",
+            store.replacen(
+                "if !Self::hash_field(correlation, \"ledgerEpoch\", false)",
+                "if true || !Self::hash_field(correlation, \"ledgerEpoch\", false)",
+                1,
+            ),
+        ),
+        (
+            "early success",
+            store.replacen(
+                "    ) -> Result<(), SimulationStoreOpenError> {\n        let invalid =",
+                "    ) -> Result<(), SimulationStoreOpenError> {\n        return Ok(());\n        let invalid =",
+                1,
+            ),
+        ),
+        (
+            "unwrap default object",
+            store.replacen(
+                "let object = value.as_object().ok_or_else(invalid)?;",
+                "let object = value.as_object().unwrap_or_default();",
+                1,
+            ),
+        ),
+        (
+            "alternate epoch path",
+            store.replacen(
+                "correlation.get(\"ledgerEpoch\") != object.get(\"ledgerEpoch\")",
+                "correlation.get(\"ledgerEpoch\") != value.get(\"ledgerEpoch\")",
+                1,
+            ),
+        ),
+    ] {
+        assert_ne!(mutant, store, "X0 {label} masking mutant did not change input");
+        assert!(
+            validate_correlation_envelope(&mutant, &entrypoint, &lib).is_err(),
+            "X0 {label} masking mutant survived"
+        );
+    }
+
+    let mutant = store.replacen(
+        "if head.next_sequence != next_sequence || head.latest_record_hash != prior_hash",
+        "if head.next_sequence > next_sequence || head.latest_record_hash != prior_hash",
+        1,
+    );
+    assert_ne!(mutant, store, "X3 rollback mutant did not change input");
+    assert!(validate_ledger_lifecycle(&mutant).is_err());
+    eprintln!("X0/X1/X2/X3 mutants: RED");
 }
 
 fn validate_unified_entrypoint(entrypoint: &str, authority: &str) -> Result<(), String> {

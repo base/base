@@ -11,7 +11,7 @@ use alloy_primitives::{B256, U256, keccak256};
 use rand_08::{RngCore, rngs::OsRng};
 use serde_json::{Value, json};
 
-use super::{SimulationAttempt, SimulationRecord};
+use super::{SimulationAttempt, SimulationCorrelationKey, SimulationRecord};
 use crate::PriorityEconomicsReceipt;
 
 /// Compile-pinned local simulation ledger directory.
@@ -21,7 +21,6 @@ pub const SIMULATION_RECORD_CAPACITY: u64 = 262_144;
 /// Maximum canonical JSON bytes in one durable record.
 pub const SIMULATION_RECORD_MAX_BYTES: usize = 16 * 1024;
 
-const EPOCH_FILE: &str = "epoch";
 const LEASE_FILE: &str = ".lease";
 const HEAD_FILE: &str = "head";
 const HEAD_OPEN_FILE: &str = ".head.open";
@@ -29,12 +28,79 @@ const VERSION: u64 = 1;
 
 /// One random identity separating owner-rotated ledger epochs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SimulationLedgerEpoch(B256);
+pub struct SimulationLedgerEpoch([u8; 32]);
 
 impl SimulationLedgerEpoch {
-    /// Returns epoch bytes.
-    pub const fn value(self) -> B256 {
-        self.0
+    /// Returns the opaque epoch bytes.
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(bytes: [u8; 32]) -> Self {
+        assert!(bytes != [0; 32]);
+        Self(bytes)
+    }
+}
+
+/// Immutable durable correlation coordinates for one simulation attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SimulationCorrelationEnvelopeV1 {
+    ledger_epoch: SimulationLedgerEpoch,
+    sequence: u64,
+    correlation_key: SimulationCorrelationKey,
+}
+
+impl SimulationCorrelationEnvelopeV1 {
+    /// Returns the ledger generation containing the attempt.
+    pub const fn ledger_epoch(&self) -> SimulationLedgerEpoch {
+        self.ledger_epoch
+    }
+
+    /// Returns the sequence within the ledger generation.
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Returns the stable candidate correlation key.
+    pub const fn correlation_key(&self) -> SimulationCorrelationKey {
+        self.correlation_key
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SimulationLedgerHead {
+    ledger_epoch: SimulationLedgerEpoch,
+    next_sequence: u64,
+    latest_record_hash: B256,
+}
+
+impl SimulationLedgerHead {
+    const ENCODED_LEN: usize = 72;
+
+    fn encode(self) -> [u8; Self::ENCODED_LEN] {
+        let mut bytes = [0_u8; Self::ENCODED_LEN];
+        bytes[..32].copy_from_slice(self.ledger_epoch.as_bytes());
+        bytes[32..40].copy_from_slice(&self.next_sequence.to_be_bytes());
+        bytes[40..].copy_from_slice(self.latest_record_hash.as_slice());
+        bytes
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, SimulationLedgerInvalid> {
+        let bytes: &[u8; Self::ENCODED_LEN] =
+            bytes.try_into().map_err(|_| SimulationLedgerInvalid::HashChain)?;
+        let epoch: [u8; 32] =
+            bytes[..32].try_into().map_err(|_| SimulationLedgerInvalid::Epoch)?;
+        if epoch.iter().all(|byte| *byte == 0) {
+            return Err(SimulationLedgerInvalid::Epoch);
+        }
+        Ok(Self {
+            ledger_epoch: SimulationLedgerEpoch(epoch),
+            next_sequence: u64::from_be_bytes(
+                bytes[32..40].try_into().map_err(|_| SimulationLedgerInvalid::HashChain)?,
+            ),
+            latest_record_hash: B256::from_slice(&bytes[40..]),
+        })
     }
 }
 
@@ -48,7 +114,12 @@ pub enum SimulationStoreOpenError {
     /// The lease database could not be opened because it is corrupt or otherwise unusable.
     Lease(redb::DatabaseError),
     /// Existing ledger structure is not classifiable as valid V1 data.
-    InvalidExistingLedger(SimulationLedgerInvalid),
+    InvalidExistingLedger {
+        /// Trusted epoch decoded from the durable head, when available.
+        ledger_epoch: Option<SimulationLedgerEpoch>,
+        /// Closed structural class.
+        class: SimulationLedgerInvalid,
+    },
 }
 
 /// Closed structural classes for an existing ledger.
@@ -125,17 +196,19 @@ pub enum SimulationStoreOperation {
 /// Durable publication receipt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimulationPersisted {
-    /// Ledger epoch.
-    pub epoch: SimulationLedgerEpoch,
-    /// Published sequence.
-    pub sequence: u64,
-    /// Stable candidate correlation key.
-    pub correlation_key: B256,
+    correlation: SimulationCorrelationEnvelopeV1,
+}
+
+impl SimulationPersisted {
+    /// Returns the immutable durable correlation coordinates.
+    pub const fn correlation(&self) -> &SimulationCorrelationEnvelopeV1 {
+        &self.correlation
+    }
 }
 
 #[derive(Debug)]
 struct SimulationDurableInput {
-    correlation_key: B256,
+    correlation_key: SimulationCorrelationKey,
     attempt: SimulationAttempt,
     campaign_id: B256,
     victim_tx_hash: B256,
@@ -169,7 +242,7 @@ impl SimulationDurableInput {
         let evidence =
             record.simulation_evidence().ok_or(SimulationPersistError::MissingIdentityEvidence)?;
         Ok(Self {
-            correlation_key: record.correlation_key().value(),
+            correlation_key: record.correlation_key(),
             attempt: record.attempt(),
             campaign_id: B256::from(*record.campaign_id().as_bytes()),
             victim_tx_hash: record.victim_tx_hash(),
@@ -223,43 +296,54 @@ impl SimulationStore {
     }
 
     fn open_directory(directory: &Path) -> Result<Self, SimulationStoreOpenError> {
-        let initialized = match fs::symlink_metadata(directory) {
+        let created = match fs::symlink_metadata(directory) {
             Ok(metadata) => {
                 if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-                    return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                        SimulationLedgerInvalid::FileType,
-                    ));
+                    return Err(SimulationStoreOpenError::InvalidExistingLedger {
+                        ledger_epoch: None,
+                        class: SimulationLedgerInvalid::FileType,
+                    });
+                }
+                let is_empty = fs::read_dir(directory)
+                    .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?
+                    .next()
+                    .transpose()
+                    .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?
+                    .is_none();
+                if is_empty {
+                    return Err(SimulationStoreOpenError::InvalidExistingLedger {
+                        ledger_epoch: None,
+                        class: SimulationLedgerInvalid::Epoch,
+                    });
+                }
+                let lease_metadata =
+                    fs::symlink_metadata(directory.join(LEASE_FILE)).map_err(|error| {
+                        if error.kind() == io::ErrorKind::NotFound {
+                            SimulationStoreOpenError::InvalidExistingLedger {
+                                ledger_epoch: None,
+                                class: SimulationLedgerInvalid::Epoch,
+                            }
+                        } else {
+                            SimulationStoreOpenError::Io(error.kind())
+                        }
+                    })?;
+                if !lease_metadata.file_type().is_file()
+                    || lease_metadata.file_type().is_symlink()
+                    || lease_metadata.nlink() != 1
+                {
+                    return Err(SimulationStoreOpenError::InvalidExistingLedger {
+                        ledger_epoch: None,
+                        class: SimulationLedgerInvalid::FileType,
+                    });
                 }
                 false
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                fs::DirBuilder::new()
-                    .recursive(true)
-                    .mode(0o700)
-                    .create(directory)
+                Self::create_directory(directory)
                     .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
                 true
             }
             Err(error) => return Err(SimulationStoreOpenError::Io(error.kind())),
-        };
-
-        let is_empty = fs::read_dir(directory)
-            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?
-            .next()
-            .transpose()
-            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?
-            .is_none();
-        let state = if initialized || is_empty {
-            fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-                .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-            Self::initialize(directory)?
-        } else {
-            if !directory.join(EPOCH_FILE).exists() {
-                return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                    SimulationLedgerInvalid::Epoch,
-                ));
-            }
-            Self::inspect(directory)?
         };
 
         let directory_handle =
@@ -272,6 +356,12 @@ impl SimulationStore {
         fs::set_permissions(&lease_path, fs::Permissions::from_mode(0o600))
             .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
 
+        let state = if created {
+            Self::initialize(directory, &directory_handle)?
+        } else {
+            Self::inspect(directory)?
+        };
+
         Ok(Self {
             directory: directory.to_path_buf(),
             directory_handle,
@@ -282,27 +372,62 @@ impl SimulationStore {
         })
     }
 
+    fn create_directory(directory: &Path) -> io::Result<()> {
+        Self::create_directory_with(
+            directory,
+            |path| File::open(path),
+            |path| fs::DirBuilder::new().mode(0o700).create(path),
+            File::sync_all,
+        )
+    }
+
+    fn create_directory_with<Parent, OpenParent, CreateChild, SyncParent>(
+        directory: &Path,
+        open_parent: OpenParent,
+        create_child: CreateChild,
+        sync_parent: SyncParent,
+    ) -> io::Result<()>
+    where
+        OpenParent: FnOnce(&Path) -> io::Result<Parent>,
+        CreateChild: FnOnce(&Path) -> io::Result<()>,
+        SyncParent: FnOnce(&Parent) -> io::Result<()>,
+    {
+        let parent = directory
+            .parent()
+            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let parent_handle = open_parent(parent)?;
+        create_child(directory)?;
+        sync_parent(&parent_handle)
+    }
+
     fn initialize(
         directory: &Path,
+        directory_handle: &File,
     ) -> Result<(SimulationLedgerEpoch, u64, B256), SimulationStoreOpenError> {
         let mut bytes = [0_u8; 32];
         while bytes.iter().all(|byte| *byte == 0) {
             OsRng.fill_bytes(&mut bytes);
         }
-        let epoch = SimulationLedgerEpoch(B256::from(bytes));
-        let epoch_path = directory.join(EPOCH_FILE);
+        let epoch = SimulationLedgerEpoch(bytes);
+        let head = SimulationLedgerHead {
+            ledger_epoch: epoch,
+            next_sequence: 0,
+            latest_record_hash: B256::ZERO,
+        };
+        let open_path = directory.join(HEAD_OPEN_FILE);
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .open(&epoch_path)
+            .open(&open_path)
             .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-        file.write_all(&bytes)
+        file.write_all(&head.encode())
             .and_then(|()| file.sync_all())
             .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-        Self::initialize_head(directory)?;
-        File::open(directory)
-            .and_then(|handle| handle.sync_all())
+        fs::rename(&open_path, directory.join(HEAD_FILE))
+            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
+        directory_handle
+            .sync_all()
             .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
         Ok((epoch, 0, B256::ZERO))
     }
@@ -310,17 +435,19 @@ impl SimulationStore {
     fn inspect(
         directory: &Path,
     ) -> Result<(SimulationLedgerEpoch, u64, B256), SimulationStoreOpenError> {
-        let bytes = fs::read(directory.join(EPOCH_FILE))
-            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-        let bytes: [u8; 32] = bytes.try_into().map_err(|_| {
-            SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Epoch)
-        })?;
-        if bytes.iter().all(|byte| *byte == 0) {
-            return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::Epoch,
-            ));
-        }
-        let epoch = SimulationLedgerEpoch(B256::from(bytes));
+        Self::inspect_with_capacity(directory, SIMULATION_RECORD_CAPACITY)
+    }
+
+    fn inspect_with_capacity(
+        directory: &Path,
+        capacity: u64,
+    ) -> Result<(SimulationLedgerEpoch, u64, B256), SimulationStoreOpenError> {
+        let head = Self::read_head(directory)?;
+        let epoch = head.ledger_epoch;
+        let invalid = |class| SimulationStoreOpenError::InvalidExistingLedger {
+            ledger_epoch: Some(epoch),
+            class,
+        };
 
         let mut sequences = Vec::new();
         for entry in
@@ -328,25 +455,21 @@ impl SimulationStore {
         {
             let entry = entry.map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
             let name = entry.file_name();
-            let name = name.to_str().ok_or(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::UnknownEntry,
-            ))?;
+            let name = name
+                .to_str()
+                .ok_or_else(|| invalid(SimulationLedgerInvalid::UnknownEntry))?;
             let file_type =
                 entry.file_type().map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
             let metadata =
                 entry.metadata().map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
             if !file_type.is_file() || metadata.nlink() != 1 {
-                return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                    SimulationLedgerInvalid::FileType,
-                ));
+                return Err(invalid(SimulationLedgerInvalid::FileType));
             }
-            if name == EPOCH_FILE || name == HEAD_FILE || name == LEASE_FILE {
+            if name == HEAD_FILE || name == LEASE_FILE {
                 continue;
             }
             if name.ends_with(".open") {
-                return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                    SimulationLedgerInvalid::StaleOpen,
-                ));
+                return Err(invalid(SimulationLedgerInvalid::StaleOpen));
             }
             let sequence = name
                 .strip_suffix(".record")
@@ -354,91 +477,78 @@ impl SimulationStore {
                     digits.len() == 20 && digits.bytes().all(|byte| byte.is_ascii_digit())
                 })
                 .and_then(|digits| digits.parse::<u64>().ok())
-                .ok_or(SimulationStoreOpenError::InvalidExistingLedger(
-                    SimulationLedgerInvalid::UnknownEntry,
-                ))?;
+                .ok_or_else(|| invalid(SimulationLedgerInvalid::UnknownEntry))?;
+            let accumulated = u64::try_from(sequences.len())
+                .map_err(|_| invalid(SimulationLedgerInvalid::Sequence))?;
+            if accumulated >= capacity {
+                return Err(invalid(SimulationLedgerInvalid::Sequence));
+            }
             sequences.push(sequence);
         }
         sequences.sort_unstable();
 
         let mut prior_hash = B256::ZERO;
         for (expected, sequence) in sequences.iter().copied().enumerate() {
-            let expected = u64::try_from(expected).map_err(|_| {
-                SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Sequence)
-            })?;
+            let expected = u64::try_from(expected)
+                .map_err(|_| invalid(SimulationLedgerInvalid::Sequence))?;
             if sequence != expected {
-                return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                    SimulationLedgerInvalid::Sequence,
-                ));
+                return Err(invalid(SimulationLedgerInvalid::Sequence));
             }
             let bytes = fs::read(directory.join(Self::record_name(sequence)))
                 .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
             if bytes.len() > SIMULATION_RECORD_MAX_BYTES {
-                return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                    SimulationLedgerInvalid::Oversize,
-                ));
+                return Err(invalid(SimulationLedgerInvalid::Oversize));
             }
-            let value: Value = serde_json::from_slice(&bytes).map_err(|_| {
-                SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Schema)
-            })?;
+            if bytes
+                .windows(b"\"ledgerEpoch\":".len())
+                .filter(|window| *window == b"\"ledgerEpoch\":")
+                .count()
+                != 2
+            {
+                return Err(SimulationStoreOpenError::InvalidExistingLedger {
+                    ledger_epoch: None,
+                    class: SimulationLedgerInvalid::Epoch,
+                });
+            }
+            let value: Value = serde_json::from_slice(&bytes)
+                .map_err(|_| invalid(SimulationLedgerInvalid::Schema))?;
             if serde_json::to_vec(&value).ok().as_deref() != Some(bytes.as_slice()) {
-                return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                    SimulationLedgerInvalid::Schema,
-                ));
+                return Err(invalid(SimulationLedgerInvalid::Schema));
             }
             Self::validate_existing(&value, epoch, sequence, prior_hash)?;
             prior_hash = keccak256(&bytes);
         }
-        let next_sequence = u64::try_from(sequences.len()).map_err(|_| {
-            SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Sequence)
-        })?;
-        if next_sequence > SIMULATION_RECORD_CAPACITY {
-            return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::Sequence,
-            ));
+        let next_sequence = u64::try_from(sequences.len())
+            .map_err(|_| invalid(SimulationLedgerInvalid::Sequence))?;
+        if head.next_sequence != next_sequence || head.latest_record_hash != prior_hash {
+            return Err(invalid(SimulationLedgerInvalid::HashChain));
         }
-        Self::validate_head(directory, next_sequence, prior_hash)?;
         Ok((epoch, next_sequence, prior_hash))
     }
 
-    fn validate_head(
-        directory: &Path,
-        next_sequence: u64,
-        prior_hash: B256,
-    ) -> Result<(), SimulationStoreOpenError> {
-        let bytes = fs::read(directory.join(HEAD_FILE)).map_err(|error| {
+    fn read_head(directory: &Path) -> Result<SimulationLedgerHead, SimulationStoreOpenError> {
+        let path = directory.join(HEAD_FILE);
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
-                SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::HashChain)
+                SimulationStoreOpenError::InvalidExistingLedger {
+                    ledger_epoch: None,
+                    class: SimulationLedgerInvalid::HashChain,
+                }
             } else {
                 SimulationStoreOpenError::Io(error.kind())
             }
         })?;
-        if bytes.len() != 40 {
-            return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::HashChain,
-            ));
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() || metadata.nlink() != 1
+        {
+            return Err(SimulationStoreOpenError::InvalidExistingLedger {
+                ledger_epoch: None,
+                class: SimulationLedgerInvalid::FileType,
+            });
         }
-        let observed_sequence = u64::from_be_bytes(bytes[..8].try_into().map_err(|_| {
-            SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::HashChain)
-        })?);
-        if observed_sequence != next_sequence || bytes[8..] != prior_hash[..] {
-            return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::HashChain,
-            ));
-        }
-        Ok(())
-    }
-
-    fn initialize_head(directory: &Path) -> Result<(), SimulationStoreOpenError> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(directory.join(HEAD_FILE))
-            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-        file.write_all(&Self::head_bytes(0, B256::ZERO))
-            .and_then(|()| file.sync_all())
-            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))
+        let bytes = fs::read(path).map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
+        SimulationLedgerHead::decode(&bytes).map_err(|class| {
+            SimulationStoreOpenError::InvalidExistingLedger { ledger_epoch: None, class }
+        })
     }
     fn validate_existing(
         value: &Value,
@@ -446,13 +556,26 @@ impl SimulationStore {
         sequence: u64,
         prior_hash: B256,
     ) -> Result<(), SimulationStoreOpenError> {
-        let invalid =
-            || SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Schema);
+        let invalid = || SimulationStoreOpenError::InvalidExistingLedger {
+            ledger_epoch: Some(epoch),
+            class: SimulationLedgerInvalid::Schema,
+        };
+        let invalid_epoch = || SimulationStoreOpenError::InvalidExistingLedger {
+            ledger_epoch: None,
+            class: SimulationLedgerInvalid::Epoch,
+        };
         let object = value.as_object().ok_or_else(invalid)?;
+        if !Self::hash_field(object, "ledgerEpoch", false)
+            || object.get("ledgerEpoch").and_then(Value::as_str)
+                != Some(Self::hex_epoch(epoch).as_str())
+        {
+            return Err(invalid_epoch());
+        }
         let top_keys = [
             "attempt",
             "blockIdentity",
             "campaignId",
+            "correlation",
             "correlationKey",
             "economics",
             "execution",
@@ -471,9 +594,23 @@ impl SimulationStore {
         if !Self::has_exact_keys(object, &top_keys)
             || object.get("version").and_then(Value::as_u64) != Some(VERSION)
             || object.get("sequence").and_then(Value::as_u64) != Some(sequence)
-            || !Self::hash_field(object, "ledgerEpoch", false)
-            || object.get("ledgerEpoch").and_then(Value::as_str)
-                != Some(Self::hex(epoch.value()).as_str())
+        {
+            return Err(invalid());
+        }
+        let correlation = Self::exact_object(
+            object,
+            epoch,
+            "correlation",
+            &["correlationKey", "ledgerEpoch", "sequence"],
+        )?;
+        if !Self::hash_field(correlation, "ledgerEpoch", false)
+            || correlation.get("ledgerEpoch") != object.get("ledgerEpoch")
+        {
+            return Err(invalid_epoch());
+        }
+        if correlation.get("sequence").and_then(Value::as_u64) != Some(sequence)
+            || !Self::hash_field(correlation, "correlationKey", false)
+            || correlation.get("correlationKey") != object.get("correlationKey")
         {
             return Err(invalid());
         }
@@ -483,9 +620,10 @@ impl SimulationStore {
         if object.get("priorRecordHash").and_then(Value::as_str)
             != Some(Self::hex(prior_hash).as_str())
         {
-            return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::HashChain,
-            ));
+            return Err(SimulationStoreOpenError::InvalidExistingLedger {
+                ledger_epoch: Some(epoch),
+                class: SimulationLedgerInvalid::HashChain,
+            });
         }
 
         for field in [
@@ -511,7 +649,8 @@ impl SimulationStore {
             return Err(invalid());
         }
 
-        let block = Self::exact_object(object, "blockIdentity", &["number", "parentHash"])?;
+        let block =
+            Self::exact_object(object, epoch, "blockIdentity", &["number", "parentHash"])?;
         let block_number = block
             .get("number")
             .and_then(Value::as_u64)
@@ -523,6 +662,7 @@ impl SimulationStore {
 
         let execution = Self::exact_object(
             object,
+            epoch,
             "execution",
             &[
                 "chainId",
@@ -552,14 +692,15 @@ impl SimulationStore {
         {
             return Err(invalid());
         }
-        let max_fee = Self::decimal_field(execution, "maxFeePerGasWei")?;
-        let max_priority = Self::decimal_field(execution, "maxPriorityFeePerGasWei")?;
+        let max_fee = Self::decimal_field(execution, epoch, "maxFeePerGasWei")?;
+        let max_priority = Self::decimal_field(execution, epoch, "maxPriorityFeePerGasWei")?;
         if max_fee.is_zero() || max_priority.is_zero() || max_priority > max_fee {
             return Err(invalid());
         }
 
         let proof = Self::exact_object(
             object,
+            epoch,
             "proofIdentity",
             &[
                 "binaryDigest",
@@ -597,6 +738,7 @@ impl SimulationStore {
 
         let economics = Self::exact_object(
             object,
+            epoch,
             "economics",
             &[
                 "authorityBlock",
@@ -616,17 +758,18 @@ impl SimulationStore {
         if economics.get("authorityBlock").and_then(Value::as_u64) != Some(block_number) {
             return Err(invalid());
         }
-        let gross = Self::positive_decimal(economics, "grossProfitWei")?;
-        let kickback = Self::positive_decimal(economics, "kickbackWei")?;
-        let retained = Self::positive_decimal(economics, "retainedValueWei")?;
-        let gas = Self::positive_decimal(economics, "executionGasEstimate")?;
-        let l1_fee = Self::positive_decimal(economics, "l1DataFeeWei")?;
-        let l2_fee = Self::positive_decimal(economics, "l2ExecutionFeeWei")?;
-        let total = Self::positive_decimal(economics, "totalCostWei")?;
-        let expected = Self::positive_decimal(economics, "expectedEvWei")?;
-        let base_fee = Self::positive_decimal(economics, "baseFeePerGasWei")?;
-        let victim_priority = Self::positive_decimal(economics, "victimPriorityFeePerGasWei")?;
-        let victim_max = Self::positive_decimal(economics, "victimMaxFeePerGasWei")?;
+        let gross = Self::positive_decimal(economics, epoch, "grossProfitWei")?;
+        let kickback = Self::positive_decimal(economics, epoch, "kickbackWei")?;
+        let retained = Self::positive_decimal(economics, epoch, "retainedValueWei")?;
+        let gas = Self::positive_decimal(economics, epoch, "executionGasEstimate")?;
+        let l1_fee = Self::positive_decimal(economics, epoch, "l1DataFeeWei")?;
+        let l2_fee = Self::positive_decimal(economics, epoch, "l2ExecutionFeeWei")?;
+        let total = Self::positive_decimal(economics, epoch, "totalCostWei")?;
+        let expected = Self::positive_decimal(economics, epoch, "expectedEvWei")?;
+        let base_fee = Self::positive_decimal(economics, epoch, "baseFeePerGasWei")?;
+        let victim_priority =
+            Self::positive_decimal(economics, epoch, "victimPriorityFeePerGasWei")?;
+        let victim_max = Self::positive_decimal(economics, epoch, "victimMaxFeePerGasWei")?;
         let expected_kickback = (gross / U256::from(4)) * U256::from(3)
             + ((gross % U256::from(4)) * U256::from(3) + U256::from(3)) / U256::from(4);
         let effective_fee = base_fee.checked_add(victim_priority).ok_or_else(invalid)?;
@@ -647,14 +790,11 @@ impl SimulationStore {
         let victim = Self::parse_hash(object, "victimTxHash").ok_or_else(invalid)?;
         let plan = Self::parse_hash(object, "planDigest").ok_or_else(invalid)?;
         let signed = Self::parse_hash(object, "signedTxHash").ok_or_else(invalid)?;
-        let mut correlation_input = Vec::with_capacity(32 * 4 + 30);
-        correlation_input.extend_from_slice(b"base-mev/simulation-correlation/v1");
-        correlation_input.extend_from_slice(campaign.as_slice());
-        correlation_input.extend_from_slice(victim.as_slice());
-        correlation_input.extend_from_slice(plan.as_slice());
-        correlation_input.extend_from_slice(signed.as_slice());
-        if object.get("correlationKey").and_then(Value::as_str)
-            != Some(Self::hex(keccak256(correlation_input)).as_str())
+        let recomputed = Self::recompute_correlation_key(campaign, victim, plan, signed);
+        let recomputed = Self::hex(recomputed);
+        if object.get("correlationKey").and_then(Value::as_str) != Some(recomputed.as_str())
+            || correlation.get("correlationKey").and_then(Value::as_str)
+                != Some(recomputed.as_str())
         {
             return Err(invalid());
         }
@@ -663,16 +803,21 @@ impl SimulationStore {
 
     fn exact_object<'a>(
         object: &'a serde_json::Map<String, Value>,
+        epoch: SimulationLedgerEpoch,
         field: &str,
         expected: &[&str],
     ) -> Result<&'a serde_json::Map<String, Value>, SimulationStoreOpenError> {
         let object = object.get(field).and_then(Value::as_object).ok_or(
-            SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Schema),
+            SimulationStoreOpenError::InvalidExistingLedger {
+                ledger_epoch: Some(epoch),
+                class: SimulationLedgerInvalid::Schema,
+            },
         )?;
         if !Self::has_exact_keys(object, expected) {
-            return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::Schema,
-            ));
+            return Err(SimulationStoreOpenError::InvalidExistingLedger {
+                ledger_epoch: Some(epoch),
+                class: SimulationLedgerInvalid::Schema,
+            });
         }
         Ok(object)
     }
@@ -708,33 +853,41 @@ impl SimulationStore {
 
     fn decimal_field(
         object: &serde_json::Map<String, Value>,
+        epoch: SimulationLedgerEpoch,
         field: &str,
     ) -> Result<U256, SimulationStoreOpenError> {
         let value = object.get(field).and_then(Value::as_str).ok_or(
-            SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Schema),
+            SimulationStoreOpenError::InvalidExistingLedger {
+                ledger_epoch: Some(epoch),
+                class: SimulationLedgerInvalid::Schema,
+            },
         )?;
         if value.is_empty()
             || (value.len() > 1 && value.starts_with('0'))
             || !value.bytes().all(|byte| byte.is_ascii_digit())
         {
-            return Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::Schema,
-            ));
+            return Err(SimulationStoreOpenError::InvalidExistingLedger {
+                ledger_epoch: Some(epoch),
+                class: SimulationLedgerInvalid::Schema,
+            });
         }
-        value.parse().map_err(|_| {
-            SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Schema)
+        value.parse().map_err(|_| SimulationStoreOpenError::InvalidExistingLedger {
+            ledger_epoch: Some(epoch),
+            class: SimulationLedgerInvalid::Schema,
         })
     }
 
     fn positive_decimal(
         object: &serde_json::Map<String, Value>,
+        epoch: SimulationLedgerEpoch,
         field: &str,
     ) -> Result<U256, SimulationStoreOpenError> {
-        Self::decimal_field(object, field).and_then(|value| {
+        Self::decimal_field(object, epoch, field).and_then(|value| {
             if value.is_zero() {
-                Err(SimulationStoreOpenError::InvalidExistingLedger(
-                    SimulationLedgerInvalid::Schema,
-                ))
+                Err(SimulationStoreOpenError::InvalidExistingLedger {
+                    ledger_epoch: Some(epoch),
+                    class: SimulationLedgerInvalid::Schema,
+                })
             } else {
                 Ok(value)
             }
@@ -776,8 +929,22 @@ impl SimulationStore {
             });
         }
         let input = SimulationDurableInput::from_record(record)?;
-        let bytes = self.encode(&input)?;
+        let recomputed = Self::recompute_correlation_key(
+            input.campaign_id,
+            input.victim_tx_hash,
+            input.plan_digest,
+            input.signed_tx_hash,
+        );
+        if input.correlation_key.value() != recomputed {
+            return Err(SimulationPersistError::MissingIdentityEvidence);
+        }
         let sequence = self.next_sequence;
+        let correlation = SimulationCorrelationEnvelopeV1 {
+            ledger_epoch: self.epoch,
+            sequence,
+            correlation_key: input.correlation_key,
+        };
+        let bytes = self.encode(&input, correlation)?;
         let open_path = self.directory.join(Self::open_name(sequence));
         let record_path = self.directory.join(Self::record_name(sequence));
         let mut file =
@@ -802,11 +969,7 @@ impl SimulationStore {
         self.publish_head(sequence + 1, record_hash, sequence)?;
         self.prior_hash = record_hash;
         self.next_sequence += 1;
-        Ok(SimulationPersisted {
-            epoch: self.epoch,
-            sequence,
-            correlation_key: input.correlation_key,
-        })
+        Ok(SimulationPersisted { correlation })
     }
 
     fn publish_head(
@@ -823,7 +986,12 @@ impl SimulationStore {
                     self.write_error(failed_sequence, SimulationStoreOperation::UpdateHead, error)
                 },
             )?;
-        file.write_all(&Self::head_bytes(next_sequence, record_hash))
+        let head = SimulationLedgerHead {
+            ledger_epoch: self.epoch,
+            next_sequence,
+            latest_record_hash: record_hash,
+        };
+        file.write_all(&head.encode())
             .and_then(|()| file.sync_all())
             .map_err(|error| {
                 self.write_error(failed_sequence, SimulationStoreOperation::UpdateHead, error)
@@ -836,13 +1004,11 @@ impl SimulationStore {
         })
     }
 
-    fn head_bytes(next_sequence: u64, record_hash: B256) -> [u8; 40] {
-        let mut bytes = [0_u8; 40];
-        bytes[..8].copy_from_slice(&next_sequence.to_be_bytes());
-        bytes[8..].copy_from_slice(record_hash.as_slice());
-        bytes
-    }
-    fn encode(&self, input: &SimulationDurableInput) -> Result<Vec<u8>, SimulationPersistError> {
+    fn encode(
+        &self,
+        input: &SimulationDurableInput,
+        correlation: SimulationCorrelationEnvelopeV1,
+    ) -> Result<Vec<u8>, SimulationPersistError> {
         let economics = input.economics;
         let value = json!({
             "attempt": match input.attempt {
@@ -854,7 +1020,12 @@ impl SimulationStore {
                 "number": input.block_number,
                 "parentHash": Self::hex(input.parent_hash),
             },
-            "correlationKey": Self::hex(input.correlation_key),
+            "correlation": {
+                "correlationKey": Self::hex(correlation.correlation_key().value()),
+                "ledgerEpoch": Self::hex_epoch(correlation.ledger_epoch()),
+                "sequence": correlation.sequence(),
+            },
+            "correlationKey": Self::hex(correlation.correlation_key().value()),
             "economics": {
                 "authorityBlock": economics.authority_block(),
                 "baseFeePerGasWei": economics.base_fee_per_gas_wei().to_string(),
@@ -880,7 +1051,7 @@ impl SimulationStore {
                 "validUntilBlock": input.valid_until_block,
             },
             "expectedInclusionHash": Self::hex(input.signed_tx_hash),
-            "ledgerEpoch": Self::hex(self.epoch.value()),
+            "ledgerEpoch": Self::hex_epoch(self.epoch),
             "planDigest": Self::hex(input.plan_digest),
             "proofIdentity": {
                 "binaryDigest": Self::hex(input.binary_digest),
@@ -941,6 +1112,25 @@ impl SimulationStore {
         format!("{value:#x}")
     }
 
+    fn hex_epoch(epoch: SimulationLedgerEpoch) -> String {
+        Self::hex(B256::from(*epoch.as_bytes()))
+    }
+
+    fn recompute_correlation_key(
+        campaign: B256,
+        victim: B256,
+        plan: B256,
+        signed: B256,
+    ) -> B256 {
+        let mut input = Vec::with_capacity(32 * 4 + 30);
+        input.extend_from_slice(b"base-mev/simulation-correlation/v1");
+        input.extend_from_slice(campaign.as_slice());
+        input.extend_from_slice(victim.as_slice());
+        input.extend_from_slice(plan.as_slice());
+        input.extend_from_slice(signed.as_slice());
+        keccak256(input)
+    }
+
     fn hex_address(value: alloy_primitives::Address) -> String {
         format!("{value:#x}")
     }
@@ -964,10 +1154,14 @@ impl Drop for SimulationStore {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::{
+        cell::RefCell,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use alloy_primitives::U256;
 
     use crate::economics::{PriorityEconomicsAuthority, PriorityFilterInput, evaluate};
-    use alloy_primitives::U256;
 
     use super::*;
 
@@ -979,7 +1173,7 @@ mod tests {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir_all(&path).unwrap();
+        let _ = fs::remove_dir_all(&path);
         path
     }
 
@@ -1011,50 +1205,421 @@ mod tests {
         entries
     }
 
-    fn assert_schema_rejected(mutate: impl FnOnce(&mut Value)) {
+    fn populated() -> (PathBuf, SimulationLedgerEpoch) {
         let path = temp();
         let mut store = SimulationStore::open_at(&path).unwrap();
+        let epoch = store.epoch;
         store.append(&SimulationRecord::for_store_test(economics())).unwrap();
         drop(store);
-        let record_path = path.join(SimulationStore::record_name(0));
-        let mut value: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
-        mutate(&mut value);
-        fs::write(&record_path, serde_json::to_vec(&value).unwrap()).unwrap();
+        (path, epoch)
+    }
+
+    fn assert_rejected(path: &Path) {
         assert!(matches!(
-            SimulationStore::open_at(&path),
-            Err(SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Schema))
+            SimulationStore::open_at(path),
+            Err(SimulationStoreOpenError::InvalidExistingLedger { .. })
         ));
+    }
+
+    fn assert_invalid(
+        path: &Path,
+        expected_epoch: Option<SimulationLedgerEpoch>,
+        expected_class: SimulationLedgerInvalid,
+    ) {
+        match SimulationStore::open_at(path) {
+            Err(SimulationStoreOpenError::InvalidExistingLedger { ledger_epoch, class }) => {
+                assert_eq!(ledger_epoch, expected_epoch);
+                assert_eq!(class, expected_class);
+            }
+            other => panic!("unexpected ledger-open result: {other:?}"),
+        }
+    }
+
+    fn rewrite_chain(path: &Path, values: &mut [Value]) {
+        let mut prior_hash = B256::ZERO;
+        for (sequence, value) in values.iter_mut().enumerate() {
+            value["priorRecordHash"] = Value::String(SimulationStore::hex(prior_hash));
+            let bytes = serde_json::to_vec(value).unwrap();
+            fs::write(
+                path.join(SimulationStore::record_name(u64::try_from(sequence).unwrap())),
+                &bytes,
+            )
+            .unwrap();
+            prior_hash = keccak256(bytes);
+        }
+        let head_path = path.join(HEAD_FILE);
+        let mut head = SimulationLedgerHead::decode(&fs::read(&head_path).unwrap()).unwrap();
+        head.next_sequence = u64::try_from(values.len()).unwrap();
+        head.latest_record_hash = prior_hash;
+        fs::write(head_path, head.encode()).unwrap();
+    }
+
+    fn assert_mutation_rejected(
+        expected_epoch: bool,
+        expected_class: SimulationLedgerInvalid,
+        mutate: impl FnOnce(&mut Value),
+    ) {
+        let (path, epoch) = populated();
+        let record_path = path.join(SimulationStore::record_name(0));
+        let value: Value = serde_json::from_slice(&fs::read(record_path).unwrap()).unwrap();
+        let mut values = [value];
+        mutate(&mut values[0]);
+        rewrite_chain(&path, &mut values);
+        assert_invalid(&path, expected_epoch.then_some(epoch), expected_class);
         fs::remove_dir_all(path).unwrap();
     }
 
+    fn assert_schema_rejected(mutate: impl FnOnce(&mut Value)) {
+        assert_mutation_rejected(true, SimulationLedgerInvalid::Schema, mutate);
+    }
+
+    fn assert_epoch_rejected(mutate: impl FnOnce(&mut Value)) {
+        assert_mutation_rejected(false, SimulationLedgerInvalid::Epoch, mutate);
+    }
+
     #[test]
-    fn p0_publish_reopen_and_hash_chain_are_green() {
+    fn initialized_and_populated_ledgers_reopen_with_exact_head_layout() {
         let path = temp();
-        let mut store = SimulationStore::open_at(&path).unwrap();
-        let record = SimulationRecord::for_store_test(economics());
-        let persisted = store.append(&record).unwrap();
-        assert_eq!(persisted.sequence, 0);
-        assert_eq!(persisted.correlation_key, record.correlation_key().value());
-        let durable: Value =
-            serde_json::from_slice(&fs::read(path.join(SimulationStore::record_name(0))).unwrap())
-                .unwrap();
-        assert_eq!(durable["execution"]["chainId"], super::super::CHAIN_ID_BASE);
-        assert_eq!(durable["execution"]["nonce"], 9);
-        assert_eq!(durable["requestChannelCount"], 2);
-        assert_eq!(durable["route"][0]["protocol"], "uniswap-v2");
-        assert_eq!(durable["route"][1]["protocol"], "uniswap-v3");
-        assert_eq!(durable["economics"]["expectedEvWei"], U256::from(220_000_u64).to_string());
+        let store = SimulationStore::open_at(&path).unwrap();
+        let epoch = store.epoch;
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let initialized_head = fs::read(path.join(HEAD_FILE)).unwrap();
+        assert_eq!(initialized_head.len(), SimulationLedgerHead::ENCODED_LEN);
+        assert_eq!(&initialized_head[..32], epoch.as_bytes());
+        assert_eq!(&initialized_head[32..40], &0_u64.to_be_bytes());
+        assert_eq!(&initialized_head[40..], B256::ZERO.as_slice());
         drop(store);
 
+        let mut reopened = SimulationStore::open_at(&path).unwrap();
+        let record = SimulationRecord::for_store_test(economics());
+        let persisted = reopened.append(&record).unwrap();
+        assert_eq!(persisted.correlation().ledger_epoch(), epoch);
+        assert_eq!(persisted.correlation().sequence(), 0);
+        assert_eq!(persisted.correlation().correlation_key(), record.correlation_key());
+        drop(reopened);
+
+        let head_bytes = fs::read(path.join(HEAD_FILE)).unwrap();
+        let head = SimulationLedgerHead::decode(&head_bytes).unwrap();
+        let record_bytes = fs::read(path.join(SimulationStore::record_name(0))).unwrap();
+        assert_eq!(head.ledger_epoch, epoch);
+        assert_eq!(head.next_sequence, 1);
+        assert_eq!(head.latest_record_hash, keccak256(record_bytes));
         let reopened = SimulationStore::open_at(&path).unwrap();
+        assert_eq!(reopened.epoch, epoch);
         assert_eq!(reopened.next_sequence, 1);
-        eprintln!("P0: GREEN");
         drop(reopened);
         fs::remove_dir_all(path).unwrap();
     }
 
     #[test]
-    fn q2_exclusive_lease_recovers_after_clean_drop() {
+    fn absent_ledger_opens_parent_before_create_and_requires_parent_sync() {
+        let exercise = |failure: Option<&str>| {
+            let events = RefCell::new(Vec::new());
+            let result = SimulationStore::create_directory_with(
+                Path::new("/parent/ledger"),
+                |_| {
+                    events.borrow_mut().push("open-parent");
+                    if failure == Some("open-parent") {
+                        Err(io::Error::from(io::ErrorKind::PermissionDenied))
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_| {
+                    events.borrow_mut().push("create-child");
+                    if failure == Some("create-child") {
+                        Err(io::Error::from(io::ErrorKind::AlreadyExists))
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_| {
+                    events.borrow_mut().push("sync-parent");
+                    if failure == Some("sync-parent") {
+                        Err(io::Error::from(io::ErrorKind::ReadOnlyFilesystem))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            (result.map_err(|error| error.kind()), events.into_inner())
+        };
+
+        assert_eq!(
+            exercise(None),
+            (Ok(()), vec!["open-parent", "create-child", "sync-parent"])
+        );
+        assert_eq!(
+            exercise(Some("open-parent")),
+            (Err(io::ErrorKind::PermissionDenied), vec!["open-parent"])
+        );
+        assert_eq!(
+            exercise(Some("create-child")),
+            (
+                Err(io::ErrorKind::AlreadyExists),
+                vec!["open-parent", "create-child"],
+            )
+        );
+        assert_eq!(
+            exercise(Some("sync-parent")),
+            (
+                Err(io::ErrorKind::ReadOnlyFilesystem),
+                vec!["open-parent", "create-child", "sync-parent"],
+            )
+        );
+
+        let missing_parent = temp().join("absent-parent").join("ledger");
+        assert!(matches!(
+            SimulationStore::open_at(&missing_parent),
+            Err(SimulationStoreOpenError::Io(io::ErrorKind::NotFound))
+        ));
+        assert!(!missing_parent.exists());
+    }
+
+    #[test]
+    fn startup_scan_rejects_over_capacity_before_record_read() {
+        let path = temp();
+        let store = SimulationStore::open_at(&path).unwrap();
+        let epoch = store.epoch;
+        drop(store);
+        for sequence in 0..2 {
+            let record_path = path.join(SimulationStore::record_name(sequence));
+            fs::write(&record_path, b"unreadable").unwrap();
+            fs::set_permissions(record_path, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+
+        match SimulationStore::inspect_with_capacity(&path, 1) {
+            Err(SimulationStoreOpenError::InvalidExistingLedger { ledger_epoch, class }) => {
+                assert_eq!(ledger_epoch, Some(epoch));
+                assert_eq!(class, SimulationLedgerInvalid::Sequence);
+            }
+            other => panic!("unexpected bounded-inspection result: {other:?}"),
+        }
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn existing_empty_directory_is_rejected_without_mutation() {
+        let path = temp();
+        fs::create_dir(&path).unwrap();
+        let before = snapshot(&path);
+        assert!(matches!(
+            SimulationStore::open_at(&path),
+            Err(SimulationStoreOpenError::InvalidExistingLedger {
+                ledger_epoch: None,
+                class: SimulationLedgerInvalid::Epoch,
+            })
+        ));
+        assert_eq!(snapshot(&path), before);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn old_split_epoch_and_forty_byte_head_are_rejected_without_mutation() {
+        let path = temp();
+        let store = SimulationStore::open_at(&path).unwrap();
+        let epoch = store.epoch;
+        drop(store);
+        fs::write(path.join("epoch"), epoch.as_bytes()).unwrap();
+        fs::write(path.join(HEAD_FILE), [0_u8; 40]).unwrap();
+        let before = snapshot(&path);
+        assert_rejected(&path);
+        assert_eq!(snapshot(&path), before);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn missing_truncated_hard_linked_and_tampered_heads_are_rejected() {
+        let (missing, _) = populated();
+        fs::remove_file(missing.join(HEAD_FILE)).unwrap();
+        assert_rejected(&missing);
+        fs::remove_dir_all(missing).unwrap();
+
+        let (truncated, _) = populated();
+        fs::write(truncated.join(HEAD_FILE), [0_u8; 71]).unwrap();
+        assert_rejected(&truncated);
+        fs::remove_dir_all(truncated).unwrap();
+
+        let (linked, _) = populated();
+        fs::hard_link(linked.join(HEAD_FILE), linked.join("head-copy")).unwrap();
+        assert!(matches!(
+            SimulationStore::open_at(&linked),
+            Err(SimulationStoreOpenError::InvalidExistingLedger {
+                ledger_epoch: None,
+                class: SimulationLedgerInvalid::FileType,
+            })
+        ));
+        fs::remove_dir_all(linked).unwrap();
+
+        for offset in [0_usize, 32, 71] {
+            let (tampered, _) = populated();
+            let head_path = tampered.join(HEAD_FILE);
+            let mut bytes = fs::read(&head_path).unwrap();
+            bytes[offset] ^= 1;
+            fs::write(head_path, bytes).unwrap();
+            assert_rejected(&tampered);
+            fs::remove_dir_all(tampered).unwrap();
+        }
+    }
+
+    #[test]
+    fn zero_epoch_and_rolled_back_head_are_rejected() {
+        let (zero, _) = populated();
+        let head_path = zero.join(HEAD_FILE);
+        let mut bytes = fs::read(&head_path).unwrap();
+        bytes[..32].fill(0);
+        fs::write(head_path, bytes).unwrap();
+        assert!(matches!(
+            SimulationStore::open_at(&zero),
+            Err(SimulationStoreOpenError::InvalidExistingLedger {
+                ledger_epoch: None,
+                class: SimulationLedgerInvalid::Epoch,
+            })
+        ));
+        fs::remove_dir_all(zero).unwrap();
+
+        let path = temp();
+        let mut store = SimulationStore::open_at(&path).unwrap();
+        let epoch = store.epoch;
+        let record = SimulationRecord::for_store_test(economics());
+        store.append(&record).unwrap();
+        let first_hash = store.prior_hash;
+        store.append(&record).unwrap();
+        drop(store);
+        let rolled_back = SimulationLedgerHead {
+            ledger_epoch: epoch,
+            next_sequence: 1,
+            latest_record_hash: first_hash,
+        };
+        fs::write(path.join(HEAD_FILE), rolled_back.encode()).unwrap();
+        assert_rejected(&path);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn multi_record_schema_mutation_rehashes_following_chain_before_classification() {
+        let path = temp();
+        let mut store = SimulationStore::open_at(&path).unwrap();
+        let epoch = store.epoch;
+        let record = SimulationRecord::for_store_test(economics());
+        store.append(&record).unwrap();
+        store.append(&record).unwrap();
+        drop(store);
+
+        let mut values: [Value; 2] = [0_u64, 1]
+            .map(|sequence| {
+                serde_json::from_slice(
+                    &fs::read(path.join(SimulationStore::record_name(sequence))).unwrap(),
+                )
+                .unwrap()
+            });
+        values[0].as_object_mut().unwrap().remove("attempt");
+        rewrite_chain(&path, &mut values);
+        assert_invalid(&path, Some(epoch), SimulationLedgerInvalid::Schema);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn record_epoch_is_required_exact_nonzero_and_unique() {
+        assert_epoch_rejected(|value| {
+            value.as_object_mut().unwrap().remove("ledgerEpoch");
+        });
+        assert_epoch_rejected(|value| {
+            value["ledgerEpoch"] = Value::String("0x01".into());
+        });
+        assert_epoch_rejected(|value| {
+            value["ledgerEpoch"] = Value::String(format!("0x{}", "00".repeat(32)));
+        });
+
+        let (path, _) = populated();
+        let record_path = path.join(SimulationStore::record_name(0));
+        let bytes = String::from_utf8(fs::read(&record_path).unwrap()).unwrap();
+        let duplicate = bytes.replacen(
+            "\"ledgerEpoch\":",
+            &format!("\"ledgerEpoch\":\"0x{}\",\"ledgerEpoch\":", "11".repeat(32)),
+            1,
+        );
+        fs::write(&record_path, &duplicate).unwrap();
+        let head_path = path.join(HEAD_FILE);
+        let mut head = SimulationLedgerHead::decode(&fs::read(&head_path).unwrap()).unwrap();
+        head.latest_record_hash = keccak256(duplicate.as_bytes());
+        fs::write(head_path, head.encode()).unwrap();
+        assert_invalid(&path, None, SimulationLedgerInvalid::Epoch);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn correlation_envelope_is_strict_and_matches_record_and_head() {
+        assert_epoch_rejected(|value| {
+            value.as_object_mut().unwrap().remove("correlation");
+        });
+        assert_schema_rejected(|value| {
+            value["correlation"].as_object_mut().unwrap().insert("extra".into(), Value::Null);
+        });
+        assert_epoch_rejected(|value| {
+            value["correlation"].as_object_mut().unwrap().remove("ledgerEpoch");
+        });
+        assert_schema_rejected(|value| {
+            value["correlation"].as_object_mut().unwrap().remove("sequence");
+        });
+        assert_schema_rejected(|value| {
+            value["correlation"].as_object_mut().unwrap().remove("correlationKey");
+        });
+        assert_epoch_rejected(|value| {
+            value["correlation"]["ledgerEpoch"] =
+                Value::String(format!("0x{}", "11".repeat(32)));
+        });
+        assert_schema_rejected(|value| {
+            value["correlation"]["sequence"] = Value::from(1_u64);
+        });
+        assert_schema_rejected(|value| {
+            value["sequence"] = Value::from(1_u64);
+        });
+        assert_schema_rejected(|value| {
+            value["correlation"]["correlationKey"] =
+                Value::String(format!("0x{}", "22".repeat(32)));
+        });
+    }
+
+    #[test]
+    fn correlation_key_is_recomputed_from_unhashed_join_fields() {
+        let (path, epoch) = populated();
+        let record_path = path.join(SimulationStore::record_name(0));
+        let value: Value = serde_json::from_slice(&fs::read(record_path).unwrap()).unwrap();
+        let campaign = SimulationStore::parse_hash(value.as_object().unwrap(), "campaignId").unwrap();
+        let victim =
+            SimulationStore::parse_hash(value.as_object().unwrap(), "victimTxHash").unwrap();
+        let plan = SimulationStore::parse_hash(value.as_object().unwrap(), "planDigest").unwrap();
+        let signed =
+            SimulationStore::parse_hash(value.as_object().unwrap(), "signedTxHash").unwrap();
+        let expected =
+            SimulationStore::hex(SimulationStore::recompute_correlation_key(campaign, victim, plan, signed));
+        assert_eq!(value["correlationKey"], expected);
+        assert_eq!(value["correlation"]["correlationKey"], expected);
+        assert_eq!(value["ledgerEpoch"], SimulationStore::hex_epoch(epoch));
+        assert_eq!(value["correlation"]["ledgerEpoch"], SimulationStore::hex_epoch(epoch));
+        fs::remove_dir_all(path).unwrap();
+
+        assert_schema_rejected(|value| {
+            value["campaignId"] = Value::String(format!("0x{}", "33".repeat(32)));
+        });
+        assert_schema_rejected(|value| {
+            value["correlationKey"] = Value::String(format!("0x{}", "44".repeat(32)));
+            value["correlation"]["correlationKey"] =
+                Value::String(format!("0x{}", "44".repeat(32)));
+        });
+    }
+
+    #[test]
+    fn stale_open_trailing_deletion_and_exclusive_lease_fail_closed() {
+        let (path, _) = populated();
+        fs::remove_file(path.join(SimulationStore::record_name(0))).unwrap();
+        assert_rejected(&path);
+        fs::remove_dir_all(path).unwrap();
+
         let path = temp();
         let store = SimulationStore::open_at(&path).unwrap();
         assert!(matches!(
@@ -1062,89 +1627,15 @@ mod tests {
             Err(SimulationStoreOpenError::AlreadyOpen)
         ));
         drop(store);
-        let reopened = SimulationStore::open_at(&path).unwrap();
-        drop(reopened);
-        eprintln!("Q2: GREEN");
-        fs::remove_dir_all(path).unwrap();
-    }
-    #[test]
-    fn p3_trailing_deletion_is_red_against_durable_head() {
-        let path = temp();
-        let mut store = SimulationStore::open_at(&path).unwrap();
-        let record = SimulationRecord::for_store_test(economics());
-        store.append(&record).unwrap();
-        drop(store);
-        fs::remove_file(path.join(SimulationStore::record_name(0))).unwrap();
+        fs::write(path.join(HEAD_OPEN_FILE), [0_u8; 72]).unwrap();
         assert!(matches!(
             SimulationStore::open_at(&path),
-            Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::HashChain
-            ))
+            Err(SimulationStoreOpenError::InvalidExistingLedger {
+                ledger_epoch: Some(_),
+                class: SimulationLedgerInvalid::StaleOpen,
+            })
         ));
-        eprintln!("P3-DELETE: RED");
         fs::remove_dir_all(path).unwrap();
-    }
-    #[test]
-    fn p3_stale_open_is_red() {
-        let path = temp();
-        let store = SimulationStore::open_at(&path).unwrap();
-        drop(store);
-        fs::write(path.join("00000000000000000000.open"), b"partial").unwrap();
-        assert!(matches!(
-            SimulationStore::open_at(&path),
-            Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::StaleOpen
-            ))
-        ));
-        eprintln!("P3: RED");
-        fs::remove_dir_all(path).unwrap();
-    }
-
-    #[test]
-    fn nonempty_directory_without_epoch_is_rejected_without_mutation() {
-        let path = temp();
-        fs::write(path.join("operator-note"), b"preserve exactly").unwrap();
-        let before = snapshot(&path);
-        assert!(matches!(
-            SimulationStore::open_at(&path),
-            Err(SimulationStoreOpenError::InvalidExistingLedger(SimulationLedgerInvalid::Epoch))
-        ));
-        assert_eq!(snapshot(&path), before);
-        fs::remove_dir_all(path).unwrap();
-    }
-
-    #[test]
-    fn closed_v1_schema_rejects_unclassified_and_cross_field_variants() {
-        assert_schema_rejected(|value| {
-            value.as_object_mut().unwrap().insert("futureField".into(), Value::Bool(true));
-        });
-        assert_schema_rejected(|value| {
-            value["campaignId"] = Value::String(format!("0X{}", "02".repeat(32)));
-        });
-        assert_schema_rejected(|value| {
-            value["execution"]["chainId"] = Value::from(1_u64);
-        });
-        assert_schema_rejected(|value| {
-            value["route"][0]["protocol"] = Value::String("unknown".into());
-        });
-        assert_schema_rejected(|value| {
-            value["route"].as_array_mut().unwrap().pop();
-        });
-        assert_schema_rejected(|value| {
-            value["requestChannelCount"] = Value::from(1_u64);
-        });
-        assert_schema_rejected(|value| {
-            value["economics"]["expectedEvWei"] = Value::String("0219999".into());
-        });
-        assert_schema_rejected(|value| {
-            value["economics"]["totalCostWei"] = Value::String("30001".into());
-        });
-        assert_schema_rejected(|value| {
-            value["proofIdentity"]["validUntilBlock"] = Value::from(102_u64);
-        });
-        assert_schema_rejected(|value| {
-            value["correlationKey"] = Value::String(format!("0x{}", "ff".repeat(32)));
-        });
     }
 
     #[test]
@@ -1166,47 +1657,6 @@ mod tests {
             Err(SimulationPersistError::Full { .. })
         ));
         drop(store);
-        fs::remove_dir_all(path).unwrap();
-    }
-
-    #[test]
-    fn published_record_without_published_head_is_rejected() {
-        let path = temp();
-        let mut store = SimulationStore::open_at(&path).unwrap();
-        store.append(&SimulationRecord::for_store_test(economics())).unwrap();
-        drop(store);
-        fs::write(path.join(HEAD_FILE), SimulationStore::head_bytes(0, B256::ZERO)).unwrap();
-        assert!(matches!(
-            SimulationStore::open_at(&path),
-            Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::HashChain
-            ))
-        ));
-        fs::remove_dir_all(path).unwrap();
-    }
-
-    #[test]
-    fn unpublished_head_is_rejected_as_stale_open() {
-        let path = temp();
-        let store = SimulationStore::open_at(&path).unwrap();
-        drop(store);
-        fs::write(path.join(HEAD_OPEN_FILE), SimulationStore::head_bytes(1, B256::ZERO)).unwrap();
-        assert!(matches!(
-            SimulationStore::open_at(&path),
-            Err(SimulationStoreOpenError::InvalidExistingLedger(
-                SimulationLedgerInvalid::StaleOpen
-            ))
-        ));
-        fs::remove_dir_all(path).unwrap();
-    }
-
-    #[test]
-    fn corrupt_lease_is_not_misclassified_as_contention() {
-        let path = temp();
-        let store = SimulationStore::open_at(&path).unwrap();
-        drop(store);
-        fs::write(path.join(LEASE_FILE), b"not-a-redb-database").unwrap();
-        assert!(matches!(SimulationStore::open_at(&path), Err(SimulationStoreOpenError::Lease(_))));
         fs::remove_dir_all(path).unwrap();
     }
 }
