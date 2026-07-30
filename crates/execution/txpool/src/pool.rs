@@ -320,9 +320,15 @@ where
                             let hash = insert.outcome.hash;
                             drop(guard);
                             drop(listeners);
-                            let removed = self.sidecars[pool_index]
+                            // Rolled back silently, with no `on_discarded`. The insertion was
+                            // never announced — `on_sidecar_inserted` is only reached on the
+                            // success path below — so a terminal event here would tell every
+                            // subscriber a hash they never saw enter the pool had just left it.
+                            // The caller learns of the rejection from the returned error, and
+                            // `add_transaction_and_subscribe` drops its hash listener on that
+                            // error path.
+                            self.sidecars[pool_index]
                                 .remove_transactions(&[hash], RemovalReason::Discarded);
-                            self.listeners.write().on_discarded(&removed);
                             return Err(Self::limit_rejection_error(hash, rejection));
                         }
                     }
