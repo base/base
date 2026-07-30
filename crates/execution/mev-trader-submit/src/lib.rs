@@ -42,18 +42,27 @@ mod arm;
 #[cfg(all(feature = "arm-live-egress", not(test)))]
 pub use arm::ProdBackend;
 #[cfg(feature = "t4e-handoff")]
-pub use arm::UnavailableSimulationHandoff;
+pub use arm::{
+    AdmittedCandidate, ProductionCandidateReceiver, ProductionHandoffClosed,
+    ProductionHandoffInstaller, ProductionHandoffState, ProductionReservation,
+    ProductionSimulationHandoff, ProductionSimulationHandoffStatus,
+    ProductionSimulationInstallError, ProductionSimulationWorkerOwner, ProductionWorkerError,
+    WorkerStartupFailure,
+};
+#[cfg(feature = "arm")]
+pub use arm::{
+    AuthorizationGateError, ProductionCandidateError, ProductionClaimError, ProductionClaimFailure,
+    ProductionClaimResult, ProductionCustodyFailure, ProductionLatchOutcome, ProductionSignFailure,
+    ProductionSignedField, ProductionSigningError, SimulationCorrelationEnvelopeV1,
+    SimulationCorrelationKey, SimulationEntrypointStatus, SimulationEntrypointUnavailable,
+    SimulationLedgerClosure, SimulationLedgerEpoch, SimulationLedgerInvalid, SimulationReservation,
+    SimulationReservationError, SimulationStoreOperation, SimulationSubmitError, SimulationWorker,
+    production_custody_preflight, try_claim_detailed,
+};
 #[cfg(feature = "t4e-handoff")]
 pub use arm::{CheckedCandidate, CodeHashProvider, CommittedStateAuthority, ProviderError};
 #[cfg(feature = "arm")]
 pub use arm::{RuntimeBackend, SimBackend};
-#[cfg(feature = "arm")]
-pub use arm::{
-    SimulationCorrelationEnvelopeV1, SimulationCorrelationKey, SimulationEntrypointStatus,
-    SimulationEntrypointUnavailable, SimulationLedgerClosure, SimulationLedgerEpoch,
-    SimulationLedgerInvalid, SimulationReservation, SimulationReservationError,
-    SimulationStoreOperation, SimulationSubmitError, SimulationWorker,
-};
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
 pub use arm::{SuppressionRollbackError, provision_suppression_anchor};
 

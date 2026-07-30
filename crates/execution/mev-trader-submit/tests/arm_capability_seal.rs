@@ -2981,7 +2981,7 @@ fn assert_seam_cfg_test(raw: &str, seam: &str) {
 fn gate_and_custody_seams_are_test_only() {
     let witness = arm_raw("witness.rs");
     // Gate-widening seams must never be reachable by production/arm-wiring code.
-    assert_seam_cfg_test(&witness, "issue_checked");
+    assert_seam_cfg_test(&witness, "issue_with_gate_for_test");
     assert_seam_cfg_test(&witness, "load_and_sign_with");
     assert_seam_cfg_test(&witness, "with_forced_gate");
     // The `force_gate_open` field is itself `#[cfg(test)]`.

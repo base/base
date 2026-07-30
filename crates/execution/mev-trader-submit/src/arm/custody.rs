@@ -58,6 +58,48 @@ pub(crate) enum CustodyError {
     Io,
 }
 
+/// Stable bounded class for production custody failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionCustodyFailure {
+    /// The pinned path was not canonical.
+    NotCanonical,
+    /// A parent component was a symlink.
+    SymlinkParent,
+    /// The object was not a regular file.
+    NotRegularFile,
+    /// The mode was not exactly `0600`.
+    BadMode,
+    /// The file owner did not match the service user.
+    WrongUid,
+    /// Running as root was refused.
+    RootUid,
+    /// The parent owner did not match the service user.
+    ParentUidMismatch,
+    /// Key bytes were malformed.
+    BadFormat,
+    /// The derived address did not match the compile-pinned wallet.
+    AddressMismatch,
+    /// Filesystem inspection or reading failed.
+    Io,
+}
+
+impl From<CustodyError> for ProductionCustodyFailure {
+    fn from(error: CustodyError) -> Self {
+        match error {
+            CustodyError::NotCanonical => Self::NotCanonical,
+            CustodyError::SymlinkParent => Self::SymlinkParent,
+            CustodyError::NotRegularFile => Self::NotRegularFile,
+            CustodyError::BadMode => Self::BadMode,
+            CustodyError::WrongUid => Self::WrongUid,
+            CustodyError::RootUid => Self::RootUid,
+            CustodyError::ParentUidMismatch => Self::ParentUidMismatch,
+            CustodyError::BadFormat => Self::BadFormat,
+            CustodyError::AddressMismatch => Self::AddressMismatch,
+            CustodyError::Io => Self::Io,
+        }
+    }
+}
+
 /// Returns the running process's real uid, libc-free, by reading the owner of
 /// `/proc/self` (owned by the process uid on Linux). `None` if unavailable.
 fn service_uid() -> Option<u32> {
@@ -121,7 +163,10 @@ pub(crate) struct HotWalletKey {
 
 impl core::fmt::Debug for HotWalletKey {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.debug_struct("HotWalletKey").field("address", &self.address).finish_non_exhaustive()
+        formatter
+            .debug_struct("HotWalletKey")
+            .field("address", &self.address)
+            .finish_non_exhaustive()
     }
 }
 
@@ -175,6 +220,11 @@ impl HotWalletKey {
     pub(crate) const fn address(&self) -> Address {
         self.address
     }
+}
+
+/// Opens the compile-pinned production key once, verifies its identity, and immediately drops it.
+pub fn production_custody_preflight() -> Result<(), ProductionCustodyFailure> {
+    HotWalletKey::load().map(drop).map_err(ProductionCustodyFailure::from)
 }
 
 /// The Blink searcher credential — a SEPARATE type and format (64 hex, no `0x`).
@@ -259,7 +309,10 @@ mod tests {
         let (key, _address) = tk::hot_wallet_key();
         let path = tk::write_hot_wallet(&dir.path, &key);
         let wrong = Address::repeat_byte(0x11);
-        assert_eq!(HotWalletKey::load_from(&path, wrong).unwrap_err(), CustodyError::AddressMismatch);
+        assert_eq!(
+            HotWalletKey::load_from(&path, wrong).unwrap_err(),
+            CustodyError::AddressMismatch
+        );
     }
 
     #[test]
@@ -287,10 +340,7 @@ mod tests {
     fn symlink_parent_is_fail_closed() {
         let dir = tk::TempDir::new("custody-sym");
         let real = dir.path.join("real");
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&real)
-            .unwrap();
+        std::fs::DirBuilder::new().mode(0o700).create(&real).unwrap();
         let (key, address) = tk::hot_wallet_key();
         let path = tk::write_hot_wallet(&real, &key);
         let _ = path;

@@ -27,14 +27,27 @@
 // fixture source injection, request builders, custody loaders) are NOT reachable
 // from outside the crate; fail_sink privately owns the process-lifetime poison anchor.
 mod claim;
+pub use claim::{
+    ProductionClaimError, ProductionClaimFailure, ProductionClaimResult, try_claim_arm,
+    try_claim_detailed,
+};
 mod custody;
+pub use custody::{ProductionCustodyFailure, production_custody_preflight};
 mod fail_sink;
-pub use fail_sink::ArmedFailSink;
+pub use fail_sink::{ArmedFailSink, ProductionLatchOutcome};
+#[cfg(feature = "t4e-handoff")]
+mod production_handoff;
 mod proofs;
+#[cfg(feature = "t4e-handoff")]
+pub use production_handoff::{
+    AdmittedCandidate, ProductionCandidateReceiver, ProductionHandoffClosed,
+    ProductionHandoffInstaller, ProductionHandoffShared, ProductionHandoffState,
+    ProductionPersistenceFailure, ProductionReservation, ProductionSimulationHandoff,
+    ProductionSimulationHandoffStatus, ProductionSimulationInstallError,
+    ProductionSimulationWorkerOwner, ProductionWorkerError, WorkerStartupFailure,
+};
 mod providers;
 mod simulation_entrypoint;
-#[cfg(feature = "t4e-handoff")]
-pub use simulation_entrypoint::UnavailableSimulationHandoff;
 pub use simulation_entrypoint::{
     SimulationEntrypoint, SimulationEntrypointStatus, SimulationEntrypointTerminal,
     SimulationEntrypointUnavailable, SimulationLedgerClosure, SimulationReservation,
@@ -67,10 +80,10 @@ mod transport;
 mod witness;
 
 // -- curated forward-B5 public surface (the ONLY items re-exported to the crate) --
-pub use claim::try_claim_arm;
 pub use proofs::{
     CodeHashProvider, DeploymentEvidence, DeploymentPayload, G7Attestation, G7Payload,
-    LiveRunAttestation, LiveRunPayload, ProviderError, SubmitSuppressionClear,
+    LiveRunAttestation, LiveRunPayload, ProofVerificationError, ProviderError,
+    SubmitSuppressionClear,
 };
 pub use providers::{
     CommittedStateAuthority, DeploymentIdentityError, DrawdownAuthority, MAX_PROCESS_IMAGE_BYTES,
@@ -90,9 +103,11 @@ pub use transport::{
 #[cfg(all(feature = "arm-live-egress", not(test)))]
 pub use transport::{LiveEgressPermit, ProdBackend};
 pub use witness::{
-    ArmRuntime, ArmRuntimeOpenError, AuthorizedCandidate, AuthorizedSignedSubmission,
-    CHAIN_ID_BASE, CheckedCandidate, DeploymentIdentity, DeploymentIdentitySource, DrawdownSource,
-    FreshnessSources, PairedSubmission, ProofBindings, ValidatedExecutionIdentity,
+    ArmRuntime, ArmRuntimeOpenError, AuthorizationGateError, AuthorizedCandidate,
+    AuthorizedSignedSubmission, CHAIN_ID_BASE, CheckedCandidate, DeploymentIdentity,
+    DeploymentIdentitySource, DrawdownSource, FreshnessSources, PairedSubmission,
+    ProductionCandidateError, ProductionSignFailure, ProductionSignedField, ProductionSigningError,
+    ProofBindings, ValidatedExecutionIdentity,
 };
 
 use base_mev_trader::KillReason;

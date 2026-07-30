@@ -25,14 +25,70 @@ use crate::assembler::ValidatedUnsignedAtomicTx as LegacyValidatedUnsignedAtomic
 #[cfg(feature = "t4e-handoff")]
 use crate::tx_authority::{BridgeConversionSeal, ValidatedUnsignedAtomicTx};
 
-use super::custody::{CustodyError, HotWalletKey};
+use super::custody::{CustodyError, HotWalletKey, ProductionCustodyFailure};
 use super::proofs::{
-    CodeHashProvider, DeploymentEvidence, G7Attestation, LiveRunAttestation, SubmitSuppressionClear,
+    CodeHashProvider, DeploymentEvidence, G7Attestation, LiveRunAttestation,
+    ProofVerificationError, SubmitSuppressionClear,
 };
 use super::request::{self, RequestSpec};
 use super::suppression::{SuppressionEpochStore, SuppressionFileStore, SuppressionRollbackError};
 use super::{ArmError, ArmedFailSink};
 use crate::PriorityEconomicsReceipt;
+use crate::signer::SignerError;
+
+/// Exact proof or authority failure that closes a production candidate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProductionCandidateError {
+    /// G7 proof verification failed.
+    G7(ProofVerificationError),
+    /// Live-window proof verification failed.
+    Live(ProofVerificationError),
+    /// Deployment proof verification failed.
+    Deployment(ProofVerificationError),
+    /// Authenticated proof campaigns differed.
+    CampaignMismatch,
+    /// Suppression state could not be read.
+    SuppressionUnavailable,
+    /// Submission was actively suppressed.
+    Suppressed,
+    /// Suppression state rolled back.
+    SuppressionRollback,
+    /// Suppression state was malformed.
+    SuppressionInvalid,
+    /// The process kill state was active or unavailable.
+    KillActive,
+    /// Settled loss was unavailable or incomplete.
+    SettledLoss(super::SettledLossUnavailableReason),
+    /// Committed state could not be read.
+    CommittedStateUnavailable,
+    /// The committed account was absent.
+    CommittedAccountAbsent,
+    /// The complete authorization gate refused the candidate.
+    Gate(AuthorizationGateError),
+}
+
+/// Exact authorization conjunction failure after checked proof import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorizationGateError {
+    /// Candidate principal differed from the submit context.
+    AmountMismatch,
+    /// The master submit gate closed.
+    SubmitGate(base_mev_trader::ClosedReason),
+    /// Claim victim differed from the candidate.
+    ClaimVictimMismatch,
+    /// Claim chain differed from Base.
+    ClaimChainMismatch,
+    /// Claim campaign differed from the candidate.
+    ClaimCampaignMismatch,
+    /// Claim-store identity differed from deployment evidence.
+    ClaimStoreIdentityMismatch,
+    /// Deployment executor differed from the candidate.
+    ExecutorMismatch,
+    /// Live proof did not cover the candidate campaign.
+    LiveCoverageMismatch,
+    /// G7 proof did not cover the candidate campaign.
+    G7CoverageMismatch,
+}
 
 /// Base chain id (compile-pinned).
 pub const CHAIN_ID_BASE: u64 = 8453;
@@ -311,8 +367,99 @@ impl CheckedCandidate {
     }
 }
 
-/// A candidate authorized by ALL five proofs + the R9 claim, carrying the proof
-/// bindings for the egress-moment re-validation.
+/// Stable signed-field identity for a production signature mismatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionSignedField {
+    /// Chain ID.
+    ChainId,
+    /// Nonce.
+    Nonce,
+    /// Gas limit.
+    Gas,
+    /// Maximum fee per gas.
+    MaxFeePerGas,
+    /// Maximum priority fee per gas.
+    MaxPriorityFeePerGas,
+    /// Destination.
+    To,
+    /// Value.
+    Value,
+    /// Calldata.
+    Data,
+}
+
+/// Stable bounded production signing failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionSignFailure {
+    /// Cryptographic signing failed.
+    Sign,
+    /// The envelope was not EIP-1559.
+    NotEip1559,
+    /// The signature was degenerate.
+    DegenerateSignature,
+    /// The fixed dummy signature was observed.
+    DummySignature,
+    /// The signature used high-s.
+    HighS,
+    /// The access list was not empty.
+    NonEmptyAccessList,
+    /// A signed field differed from the authorized transaction.
+    FieldMismatch(ProductionSignedField),
+    /// Signature recovery failed.
+    Unrecoverable,
+    /// The signer identity differed.
+    SignerMismatch,
+}
+
+/// Exact phase and latch result for production custody/signing failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionSigningError {
+    /// Existing process poison prevented custody access.
+    PrecheckPoisoned,
+    /// Loading the pinned key failed.
+    Custody {
+        /// Stable custody source.
+        reason: ProductionCustodyFailure,
+        /// Mandatory fail-stop latch outcome.
+        latch: super::ProductionLatchOutcome,
+    },
+    /// Signing or signed-envelope verification failed.
+    Sign {
+        /// Stable signing source.
+        reason: ProductionSignFailure,
+        /// Mandatory fail-stop latch outcome.
+        latch: super::ProductionLatchOutcome,
+    },
+}
+
+impl From<SignerError> for ProductionSignFailure {
+    fn from(error: SignerError) -> Self {
+        match error {
+            SignerError::Sign => Self::Sign,
+            SignerError::NotEip1559 => Self::NotEip1559,
+            SignerError::DegenerateSignature => Self::DegenerateSignature,
+            SignerError::DummySignature => Self::DummySignature,
+            SignerError::HighS => Self::HighS,
+            SignerError::NonEmptyAccessList => Self::NonEmptyAccessList,
+            SignerError::FieldMismatch(field) => Self::FieldMismatch(match field {
+                "chainId" => ProductionSignedField::ChainId,
+                "nonce" => ProductionSignedField::Nonce,
+                "gas" => ProductionSignedField::Gas,
+                "maxFeePerGas" => ProductionSignedField::MaxFeePerGas,
+                "maxPriorityFeePerGas" => ProductionSignedField::MaxPriorityFeePerGas,
+                "to" => ProductionSignedField::To,
+                "value" => ProductionSignedField::Value,
+                "data" => ProductionSignedField::Data,
+                _ => unreachable!("signer emitted an unknown field identity"),
+            }),
+            SignerError::Unrecoverable => Self::Unrecoverable,
+            SignerError::SignerMismatch => Self::SignerMismatch,
+        }
+    }
+}
+
+/// A candidate authorized by all five proofs and the R9 claim, carrying the proof
+/// bindings for egress-moment re-validation.
 #[derive(Debug)]
 pub struct AuthorizedCandidate {
     cand: CheckedCandidate,
@@ -320,16 +467,30 @@ pub struct AuthorizedCandidate {
 }
 
 impl AuthorizedCandidate {
-    /// Issue authorization iff EVERY predicate holds. Consumes `ctx` (submit gate),
-    /// the suppression clear, the G7 + live-run attestations, the R9 claim, and the
-    /// deployment evidence, binding them to the candidate. Any mismatch is `None`.
-    // Production entrypoint (forward B5 API); tests drive `issue_checked` to inject
-    // the gate outcome without invoking the production owner pin. A dependent crate
-    // can obtain the owner-pinned armed criterion through
-    // `base_mev_trader::production_arming_criteria`; B5 injects that verified value,
-    // and this crate never calls the owner-pin factory.
-    // `too_many_arguments`: the proof-conjunction deliberately consumes
-    // all five proofs + claim + candidate by value (linear ownership).
+    /// Issues the sole production witness with exact gate and binding failures.
+    #[allow(clippy::too_many_arguments)]
+    pub fn issue_detailed(
+        ctx: SubmitContext<'_>,
+        sup: SubmitSuppressionClear,
+        g7: G7Attestation,
+        claim: VictimClaim,
+        live: LiveRunAttestation,
+        deploy: DeploymentEvidence,
+        cand: CheckedCandidate,
+    ) -> Result<Self, ProductionCandidateError> {
+        if ctx.amount_in_wei != cand.id.amount {
+            return Err(ProductionCandidateError::Gate(AuthorizationGateError::AmountMismatch));
+        }
+        let gate = match submit_gate(ctx) {
+            SubmitDecision::Open => Ok(()),
+            SubmitDecision::Closed(reason) => {
+                Err(ProductionCandidateError::Gate(AuthorizationGateError::SubmitGate(reason)))
+            }
+        };
+        Self::issue_detailed_inner(gate, sup, g7, claim, live, deploy, cand)
+    }
+
+    /// Compatibility wrapper that deliberately collapses detailed production failures.
     #[allow(clippy::too_many_arguments)]
     pub fn issue(
         ctx: SubmitContext<'_>,
@@ -340,49 +501,48 @@ impl AuthorizedCandidate {
         deploy: DeploymentEvidence,
         cand: CheckedCandidate,
     ) -> Option<Self> {
-        // amount first (no clone_view of ctx before submit_gate consumes it): on an
-        // amount mismatch the gate is not even evaluated.
-        let gate_open = if ctx.amount_in_wei != cand.id.amount {
-            false
-        } else {
-            matches!(submit_gate(ctx), SubmitDecision::Open)
-        };
-        Self::issue_inner(gate_open, sup, g7, claim, live, deploy, cand)
+        Self::issue_detailed(ctx, sup, g7, claim, live, deploy, cand).ok()
     }
 
-    /// PRIVATE proof-binding conjunction with the submit-gate decision reduced to a
-    /// bool. It is a module-private `fn` — NOT `pub` — so no code outside
-    /// `witness.rs` (including post-G4 arm wiring) can invoke it to bypass the real
-    /// `submit_gate`. Production `issue` derives `gate_open` from the real gate; the
-    /// test-only `issue_checked` seam wraps it to inject a gate outcome without
-    /// invoking the production owner pin.
     #[allow(clippy::too_many_arguments)]
-    fn issue_inner(
-        gate_open: bool,
+    fn issue_detailed_inner(
+        gate: Result<(), ProductionCandidateError>,
         sup: SubmitSuppressionClear,
         g7: G7Attestation,
         claim: VictimClaim,
         live: LiveRunAttestation,
         deploy: DeploymentEvidence,
         cand: CheckedCandidate,
-    ) -> Option<Self> {
-        if !gate_open {
-            return None;
+    ) -> Result<Self, ProductionCandidateError> {
+        gate?;
+        if claim.victim_tx_hash() != cand.id.victim {
+            return Err(ProductionCandidateError::Gate(
+                AuthorizationGateError::ClaimVictimMismatch,
+            ));
         }
-        if claim.victim_tx_hash() != cand.id.victim
-            || claim.chain_id() != CHAIN_ID_BASE
-            || claim.campaign_id() != cand.id.campaign_id
-        {
-            return None;
+        if claim.chain_id() != CHAIN_ID_BASE {
+            return Err(ProductionCandidateError::Gate(AuthorizationGateError::ClaimChainMismatch));
+        }
+        if claim.campaign_id() != cand.id.campaign_id {
+            return Err(ProductionCandidateError::Gate(
+                AuthorizationGateError::ClaimCampaignMismatch,
+            ));
         }
         if claim.store_identity() != deploy.r9_store_identity() {
-            return None;
+            return Err(ProductionCandidateError::Gate(
+                AuthorizationGateError::ClaimStoreIdentityMismatch,
+            ));
         }
         if deploy.executor() != cand.id.executor {
-            return None;
+            return Err(ProductionCandidateError::Gate(AuthorizationGateError::ExecutorMismatch));
         }
-        if !live.covers(cand.id.campaign_id) || !g7.covers(cand.id.campaign_id) {
-            return None;
+        if !live.covers(cand.id.campaign_id) {
+            return Err(ProductionCandidateError::Gate(
+                AuthorizationGateError::LiveCoverageMismatch,
+            ));
+        }
+        if !g7.covers(cand.id.campaign_id) {
+            return Err(ProductionCandidateError::Gate(AuthorizationGateError::G7CoverageMismatch));
         }
         let bindings = ProofBindings {
             g7_expiry: g7.expiry(),
@@ -395,15 +555,13 @@ impl AuthorizedCandidate {
             r9_store_identity: deploy.r9_store_identity(),
             valid_until_block: cand.vtx.valid_until_block(),
         };
-        Some(Self { cand, bindings })
+        Ok(Self { cand, bindings })
     }
 
-    /// Test-only seam: exercise the proof-binding conjunction with the submit-gate
-    /// decision injected, without invoking the production owner pin. `#[cfg(test)]`
-    /// so it can NEVER be reached by production/arm-wiring code.
+    /// Test-only seam for the proof-binding conjunction without the production owner pin.
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn issue_checked(
+    pub(crate) fn issue_with_gate_for_test(
         gate_open: bool,
         sup: SubmitSuppressionClear,
         g7: G7Attestation,
@@ -412,7 +570,14 @@ impl AuthorizedCandidate {
         deploy: DeploymentEvidence,
         cand: CheckedCandidate,
     ) -> Option<Self> {
-        Self::issue_inner(gate_open, sup, g7, claim, live, deploy, cand)
+        let gate = if gate_open {
+            Ok(())
+        } else {
+            Err(ProductionCandidateError::Gate(AuthorizationGateError::SubmitGate(
+                base_mev_trader::ClosedReason::NotArmed,
+            )))
+        };
+        Self::issue_detailed_inner(gate, sup, g7, claim, live, deploy, cand).ok()
     }
 
     /// Load the funded hot wallet from custody and sign the validated tx. On any
@@ -425,7 +590,46 @@ impl AuthorizedCandidate {
         self,
         sink: &Arc<ArmedFailSink>,
     ) -> Result<AuthorizedSignedSubmission, ArmError> {
-        self.sign_inner(sink, HotWalletKey::load)
+        self.load_and_sign_detailed(sink).map_err(|error| match error {
+            ProductionSigningError::PrecheckPoisoned => ArmError::Poisoned,
+            ProductionSigningError::Custody { latch, .. }
+            | ProductionSigningError::Sign { latch, .. } => match latch {
+                super::ProductionLatchOutcome::Engaged => {
+                    ArmError::KillReason(KillReason::KeyOrSignatureFailure)
+                }
+                super::ProductionLatchOutcome::PersistFailed => ArmError::LatchPersistFailed,
+                super::ProductionLatchOutcome::AlreadyPoisoned => ArmError::Poisoned,
+            },
+        })
+    }
+
+    /// Loads and signs through the pinned production custody path with exact phase failure.
+    pub fn load_and_sign_detailed(
+        self,
+        sink: &Arc<ArmedFailSink>,
+    ) -> Result<AuthorizedSignedSubmission, ProductionSigningError> {
+        if sink.check().is_err() {
+            return Err(ProductionSigningError::PrecheckPoisoned);
+        }
+        let key = HotWalletKey::load().map_err(|error| ProductionSigningError::Custody {
+            reason: ProductionCustodyFailure::from(error),
+            latch: sink.latch_production(),
+        })?;
+        let signed = key.sign_unsigned(self.cand.vtx.unsigned_tx()).map_err(|error| {
+            ProductionSigningError::Sign {
+                reason: ProductionSignFailure::from(error),
+                latch: sink.latch_production(),
+            }
+        })?;
+        let raw_tx = Bytes::from(signed.raw);
+        let raw_tx_hash = keccak256(raw_tx.as_ref());
+        Ok(AuthorizedSignedSubmission {
+            cand: self.cand,
+            bindings: self.bindings,
+            raw_tx,
+            raw_tx_hash,
+            signer: key.address(),
+        })
     }
 
     /// Test-only seam: inject a temp-file loader so the success path is exercisable
@@ -945,7 +1149,7 @@ mod tests {
         let epoch_store = tk::epoch_store(&dir.path);
         let sup = SubmitSuppressionClear::read(&file, &epoch_store).expect("clear");
         let authorized =
-            AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand)
+            AuthorizedCandidate::issue_with_gate_for_test(true, sup, g7, claim, live, deploy, cand)
                 .expect("issue");
         Setup { _dir: dir, authorized }
     }
@@ -1016,7 +1220,10 @@ mod tests {
             SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
         // gate_open = false -> fail-closed.
         assert!(
-            AuthorizedCandidate::issue_checked(false, sup, g7, claim, live, deploy, cand).is_none()
+            AuthorizedCandidate::issue_with_gate_for_test(
+                false, sup, g7, claim, live, deploy, cand
+            )
+            .is_none()
         );
     }
 
@@ -1045,7 +1252,8 @@ mod tests {
         let sup =
             SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
         assert!(
-            AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).is_none()
+            AuthorizedCandidate::issue_with_gate_for_test(true, sup, g7, claim, live, deploy, cand)
+                .is_none()
         );
     }
 
@@ -1075,7 +1283,8 @@ mod tests {
         let sup =
             SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
         assert!(
-            AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).is_none()
+            AuthorizedCandidate::issue_with_gate_for_test(true, sup, g7, claim, live, deploy, cand)
+                .is_none()
         );
     }
 
@@ -1105,7 +1314,8 @@ mod tests {
         let sup =
             SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
         assert!(
-            AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).is_none()
+            AuthorizedCandidate::issue_with_gate_for_test(true, sup, g7, claim, live, deploy, cand)
+                .is_none()
         );
     }
 
@@ -1135,7 +1345,8 @@ mod tests {
         let sup =
             SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
         assert!(
-            AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).is_none()
+            AuthorizedCandidate::issue_with_gate_for_test(true, sup, g7, claim, live, deploy, cand)
+                .is_none()
         );
     }
 

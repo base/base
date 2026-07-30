@@ -10,9 +10,6 @@ use std::{
     thread::JoinHandle,
 };
 
-#[cfg(feature = "t4e-handoff")]
-use crate::{SealedUnsignedCandidate, T4eCandidateHandoff, T4eHandoffError};
-
 use super::{
     FreshnessSources, RuntimeBackend, SimBackend, SimulationCorrelationEnvelopeV1,
     SimulationPersistError, SimulationStore, SubmissionAttempt, SubmitOutcome, send_gated,
@@ -99,19 +96,16 @@ impl SimulationLedgerClosure {
                 capacity,
                 "simulation ledger closed"
             ),
-            Self::PersistenceFailed {
-                ledger_epoch,
-                next_sequence,
-                operation,
-                io_kind,
-            } => tracing::error!(
-                closure_reason = "PersistenceFailed",
-                ledger_epoch = ?ledger_epoch.as_bytes(),
-                next_sequence,
-                operation = ?operation,
-                io_kind = ?io_kind,
-                "simulation ledger closed"
-            ),
+            Self::PersistenceFailed { ledger_epoch, next_sequence, operation, io_kind } => {
+                tracing::error!(
+                    closure_reason = "PersistenceFailed",
+                    ledger_epoch = ?ledger_epoch.as_bytes(),
+                    next_sequence,
+                    operation = ?operation,
+                    io_kind = ?io_kind,
+                    "simulation ledger closed"
+                )
+            }
             Self::InvalidExistingLedger { ledger_epoch, class } => tracing::error!(
                 closure_reason = "InvalidExistingLedger",
                 ledger_epoch = ?ledger_epoch.map(|epoch| *epoch.as_bytes()),
@@ -429,46 +423,6 @@ impl Drop for SimulationWorker {
         }
     }
 }
-/// Rejecting T4e sink installed when a production prerequisite is unavailable.
-#[cfg(feature = "t4e-handoff")]
-#[derive(Debug)]
-pub struct UnavailableSimulationHandoff {
-    status: SimulationEntrypointStatus,
-}
-
-#[cfg(feature = "t4e-handoff")]
-impl UnavailableSimulationHandoff {
-    /// Builds a typed rejecting sink; it owns no candidate storage.
-    pub const fn new(reason: SimulationEntrypointUnavailable) -> Self {
-        Self { status: SimulationEntrypointStatus::Unavailable(reason) }
-    }
-
-    /// Returns the exact typed installation failure.
-    pub const fn status(&self) -> SimulationEntrypointStatus {
-        self.status
-    }
-
-    /// Builds the explicitly deferred production sink without opening or probing any runtime.
-    ///
-    /// Production remains rejection-only until
-    /// `Production T4e Simulation Installation + Settled-Loss Authority` installs the complete
-    /// real authority chain. The node-local committed-state authority exists, but settled-loss
-    /// authority and the remaining named installation prerequisites do not.
-    pub const fn deferred_production() -> Self {
-        Self::new(SimulationEntrypointUnavailable::ProductionInstallationDeferred)
-    }
-    /// Erases only the sink type, not its separately observable status.
-    pub fn into_handoff(self) -> Arc<dyn T4eCandidateHandoff> {
-        Arc::new(self)
-    }
-}
-
-#[cfg(feature = "t4e-handoff")]
-impl T4eCandidateHandoff for UnavailableSimulationHandoff {
-    fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {
-        Err(T4eHandoffError::Rejected)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -517,7 +471,7 @@ mod tests {
         let epoch_store = tk::epoch_store(&dir.path);
         let suppression =
             SubmitSuppressionClear::read(&suppression_file, &epoch_store).expect("suppression");
-        let authorized = AuthorizedCandidate::issue_checked(
+        let authorized = AuthorizedCandidate::issue_with_gate_for_test(
             true,
             suppression,
             tk::g7(campaign(), now + 100, now),
@@ -643,12 +597,10 @@ mod tests {
     #[test]
     fn closed_status_refuses_before_preparation() {
         let (worker, _) = idle_worker();
-        worker.entrypoint.set_ledger_closed(
-            SimulationLedgerClosure::InvalidExistingLedger {
-                ledger_epoch: None,
-                class: super::super::SimulationLedgerInvalid::Schema,
-            },
-        );
+        worker.entrypoint.set_ledger_closed(SimulationLedgerClosure::InvalidExistingLedger {
+            ledger_epoch: None,
+            class: super::super::SimulationLedgerInvalid::Schema,
+        });
         assert!(matches!(worker.try_reserve(), Err(SimulationReservationError::Closed)));
     }
 
@@ -871,10 +823,7 @@ mod tests {
         };
         worker.entrypoint.set_ledger_closed(reason);
 
-        assert!(matches!(
-            worker.try_reserve(),
-            Err(SimulationReservationError::Closed)
-        ));
+        assert!(matches!(worker.try_reserve(), Err(SimulationReservationError::Closed)));
         assert_eq!(worker.status(), SimulationEntrypointStatus::LedgerClosed(reason));
     }
 }

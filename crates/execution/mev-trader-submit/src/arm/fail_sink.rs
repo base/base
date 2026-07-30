@@ -12,6 +12,17 @@ use super::ArmError;
 #[cfg(not(test))]
 static PROCESS_POISON: AtomicBool = AtomicBool::new(false);
 
+/// Stable result of attempting the mandatory production fail-stop latch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionLatchOutcome {
+    /// The durable kill latch was engaged.
+    Engaged,
+    /// Durable persistence failed, while process poison remains set.
+    PersistFailed,
+    /// Process poison was already active before this operation.
+    AlreadyPoisoned,
+}
+
 #[derive(Debug)]
 struct ProcessPoison(#[cfg(not(test))] &'static AtomicBool, #[cfg(test)] Arc<AtomicBool>);
 
@@ -139,6 +150,25 @@ impl ArmedFailSink {
         match engaged {
             Ok(()) => ArmError::KillReason(reason),
             Err(_) => ArmError::LatchPersistFailed,
+        }
+    }
+
+    /// Attempts the key/signature fail-stop latch and preserves its exact stable outcome.
+    pub fn latch_production(&self) -> ProductionLatchOutcome {
+        if self.is_poisoned() {
+            return ProductionLatchOutcome::AlreadyPoisoned;
+        }
+        match self.latch(KillReason::KeyOrSignatureFailure) {
+            ArmError::KillReason(KillReason::KeyOrSignatureFailure) => {
+                ProductionLatchOutcome::Engaged
+            }
+            ArmError::LatchPersistFailed => ProductionLatchOutcome::PersistFailed,
+            ArmError::Poisoned => ProductionLatchOutcome::AlreadyPoisoned,
+            ArmError::KillReason(
+                KillReason::StrictMinOutPrincipalLoss | KillReason::DrawdownFloorBreach,
+            )
+            | ArmError::Freshness
+            | ArmError::AlreadyClaimed => unreachable!("fixed production latch reason"),
         }
     }
 }
