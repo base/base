@@ -268,7 +268,7 @@ mod tests {
         }
 
         fn sidecar_pools(&self) -> Vec<Arc<dyn SidecarPool<BasePooledTransaction>>> {
-            vec![self.pool.clone()]
+            vec![Arc::clone(&self.pool) as Arc<dyn SidecarPool<BasePooledTransaction>>]
         }
     }
 

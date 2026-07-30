@@ -2,6 +2,7 @@
 
 use std::{cmp::Reverse, sync::Arc};
 
+use alloy_primitives::TxHash;
 use reth_transaction_pool::{
     BestTransactions, TransactionOrdering, ValidPoolTransaction, error::InvalidPoolTransactionError,
 };
@@ -20,6 +21,23 @@ where
     base_fee: u64,
     next_protocol: Option<Arc<ValidPoolTransaction<T>>>,
     next_sidecar: Option<Arc<ValidPoolTransaction<T>>>,
+    /// Which arm produced the most recent [`Self::pop_best`], so [`BestTransactions::mark_invalid`]
+    /// can invalidate the stream a transaction actually came from.
+    ///
+    /// Provenance cannot be re-derived from `owns_sidecar`: the predicate answers "would this
+    /// transaction be routed to the sidecar arm", which coincides with "did it come from the
+    /// sidecar arm" only while every arm is populated consistently with the predicate. Nesting
+    /// breaks that coincidence — an inner merge built by [`Self::new`] discriminates on the
+    /// EIP-8130 transaction *type*, so a sidecar-typed transaction served by its protocol arm
+    /// would be misrouted, clearing the wrong buffered head.
+    last_yielded: Option<(TxHash, YieldedFrom)>,
+}
+
+/// Which arm of a [`MergeBestTransactions`] served a transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum YieldedFrom {
+    Protocol,
+    Sidecar,
 }
 
 impl<T: BasePooledTx, O> MergeBestTransactions<T, O>
@@ -58,6 +76,7 @@ where
             base_fee,
             next_protocol: None,
             next_sidecar: None,
+            last_yielded: None,
         }
     }
 
@@ -80,18 +99,24 @@ where
     }
 
     fn pop_best(&mut self) -> Option<Arc<ValidPoolTransaction<T>>> {
-        match (&self.next_protocol, &self.next_sidecar) {
+        let from = match (&self.next_protocol, &self.next_sidecar) {
             (Some(protocol), Some(sidecar)) => {
                 if self.protocol_is_better(protocol, sidecar) {
-                    self.next_protocol.take()
+                    YieldedFrom::Protocol
                 } else {
-                    self.next_sidecar.take()
+                    YieldedFrom::Sidecar
                 }
             }
-            (Some(_), None) => self.next_protocol.take(),
-            (None, Some(_)) => self.next_sidecar.take(),
-            (None, None) => None,
-        }
+            (Some(_), None) => YieldedFrom::Protocol,
+            (None, Some(_)) => YieldedFrom::Sidecar,
+            (None, None) => return None,
+        };
+        let transaction = match from {
+            YieldedFrom::Protocol => self.next_protocol.take(),
+            YieldedFrom::Sidecar => self.next_sidecar.take(),
+        }?;
+        self.last_yielded = Some((*transaction.hash(), from));
+        Some(transaction)
     }
 }
 
@@ -133,13 +158,27 @@ impl<T: BasePooledTx, O> BestTransactions for MergeBestTransactions<T, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
+    /// Invalidates `transaction` on the arm that served it.
+    ///
+    /// Provenance recorded by [`Self::pop_best`] is authoritative and is what callers exercise:
+    /// the payload builder marks the transaction it just took from `next`. Only a transaction
+    /// this iterator never yielded falls back to `owns_sidecar`, which is the best guess
+    /// available and matches the pre-provenance behaviour.
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
-        if (self.owns_sidecar)(&transaction.transaction) {
-            self.next_sidecar = None;
-            self.sidecar.mark_invalid(transaction, kind);
-        } else {
-            self.next_protocol = None;
-            self.protocol.mark_invalid(transaction, kind);
+        let from = match self.last_yielded {
+            Some((hash, from)) if hash == *transaction.hash() => from,
+            _ if (self.owns_sidecar)(&transaction.transaction) => YieldedFrom::Sidecar,
+            _ => YieldedFrom::Protocol,
+        };
+        match from {
+            YieldedFrom::Sidecar => {
+                self.next_sidecar = None;
+                self.sidecar.mark_invalid(transaction, kind);
+            }
+            YieldedFrom::Protocol => {
+                self.next_protocol = None;
+                self.protocol.mark_invalid(transaction, kind);
+            }
         }
     }
 
@@ -393,9 +432,11 @@ mod tests {
     }
 }
 
-// ===PROBE-START===
+/// Tests for nesting one [`MergeBestTransactions`] inside another, which is how more than two
+/// sources are combined. These pin the properties that make nesting equivalent to a flat N-way
+/// merge: priority order, tie-breaking, and `mark_invalid` routing.
 #[cfg(test)]
-mod nest_probe {
+mod nested_merge_tests {
     use std::{collections::VecDeque, time::Instant};
 
     use alloy_consensus::{Transaction, transaction::Recovered};
@@ -412,7 +453,7 @@ mod nest_probe {
     use super::*;
     use crate::{BaseOrdering, BasePooledTransaction};
 
-    // ---- PROBE A: does a nested merge coerce, generically? ----
+    // A nested merge must coerce to the boxed trait object an arm expects.
     fn assert_nests_generic<T: BasePooledTx, O: TransactionOrdering<Transaction = T>>(
         inner: MergeBestTransactions<T, O>,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>> {
@@ -499,9 +540,9 @@ mod nest_probe {
         })
     }
 
-    // ---- PROBE B: concrete 3-way nest, does it run and order correctly? ----
+    // Three sources, nested pairwise, must come out in priority order.
     #[test]
-    fn probe_nested_three_way_orders_by_priority() {
+    fn nested_three_way_orders_by_priority() {
         let now = Instant::now();
         let a = vpt(signed_tx(&PrivateKeySigner::random(), U256::ZERO, 0, 30, 1000, 0), now);
         let b = vpt(signed_tx(&PrivateKeySigner::random(), U256::from(1), 0, 20, 1000, 0), now);
@@ -525,9 +566,9 @@ mod nest_probe {
         assert_eq!(got, vec![hc, ha, hb], "expected priority order 40, 30, 20");
     }
 
-    // ---- PROBE C: nested tie-break: which arm wins an exact tie? ----
+    // An exact tie must resolve the same way regardless of nesting position.
     #[test]
-    fn probe_nested_tie_break_position_dependence() {
+    fn nested_tie_break_is_position_independent() {
         let now = Instant::now();
         // three transactions with IDENTICAL priority + identical timestamp; only hashes differ
         let x = vpt(signed_tx(&PrivateKeySigner::random(), U256::ZERO, 0, 10, 1000, 0), now);
@@ -553,9 +594,9 @@ mod nest_probe {
         assert_eq!(first, max_hash, "nested merge must still yield global max by hash tiebreak");
     }
 
-    // ---- PROBE D: nested mark_invalid routing with an explicit discriminator ----
+    // mark_invalid must reach the arm that served the transaction, through the nesting.
     #[test]
-    fn probe_nested_mark_invalid_routes_through_inner() {
+    fn nested_mark_invalid_routes_through_inner() {
         let now = Instant::now();
         let signer_p = PrivateKeySigner::random();
         let protocol = vec![
@@ -604,10 +645,10 @@ mod nest_probe {
         assert!(outer.next().is_none(), "descendant must be drained through two merge levels");
     }
 
-    // ---- PROBE E: does `max_by_key` pick the FIRST or the LAST maximum? ----
+    // `max_by_key` returns the LAST maximum, which is why the N-way reference below cannot
     #[test]
-    fn probe_max_by_key_returns_last_maximum() {
-        let heads = vec![("protocol", 5u64), ("sidecar", 5u64), ("extra", 5u64)];
+    fn max_by_key_returns_last_maximum() {
+        let heads = [("protocol", 5u64), ("sidecar", 5u64), ("extra", 5u64)];
         let picked = heads.iter().max_by_key(|(_, p)| *p).unwrap();
         assert_eq!(picked.0, "extra", "std max_by_key returns the LAST maximum");
 
@@ -615,9 +656,9 @@ mod nest_probe {
         assert_eq!(picked_first.0, "protocol", "reversing restores first-wins bias");
     }
 
-    // ---- PROBE F: is the merge key a strict total order (i.e. is `>=` bias reachable)? ----
+    // The merge key ends in the tx hash, so it is a strict total order and the `>=` bias in
     #[test]
-    fn probe_merge_key_is_total_order_so_ge_bias_is_unreachable() {
+    fn merge_key_is_total_order_so_ge_bias_is_unreachable() {
         let now = Instant::now();
         // identical fee, identical timestamp, different senders -> only the hash differs
         let p = vpt(signed_tx(&PrivateKeySigner::random(), U256::ZERO, 0, 10, 1000, 0), now);
@@ -636,7 +677,7 @@ mod nest_probe {
         let _ = assert_nests_generic(x);
     }
 
-    // ---- PROBE G: randomized equivalence, nested-pairwise vs reference N-way max_by_key ----
+    // Randomized differential test: nested pairwise merging must equal a flat N-way merge.
     fn reference_nway(
         mut arms: Vec<VecDeque<Arc<ValidPoolTransaction<BasePooledTransaction>>>>,
         base_fee: u64,
@@ -671,7 +712,7 @@ mod nest_probe {
     }
 
     #[test]
-    fn probe_nested_matches_reference_nway_on_randomized_input() {
+    fn nested_matches_reference_nway_on_randomized_input() {
         for seed in 0u128..40 {
             let now = Instant::now();
             let mut arms: Vec<Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>> =
@@ -682,7 +723,7 @@ mod nest_probe {
                     .wrapping_mul(6_364_136_223_846_793_005)
                     .wrapping_add(1_442_695_040_888_963_407);
                 let arm = (x >> 33) as usize % 4;
-                let tip = 1 + ((x >> 7) % 60) as u128;
+                let tip = 1 + ((x >> 7) % 60);
                 let ts = now + std::time::Duration::from_micros(((x >> 17) % 5) as u64);
                 let key = if arm == 0 { U256::ZERO } else { U256::from(arm) };
                 arms[arm].push(vpt(
@@ -716,4 +757,3 @@ mod nest_probe {
         }
     }
 }
-// ===PROBE-END===

@@ -227,6 +227,13 @@ where
         transaction.is_eip8130_sidecar_transaction()
     }
 
+    /// The registered sidecar holding `hash`, if any.
+    ///
+    /// Linear in the number of registered sidecars, and called from the membership hot paths
+    /// (`get`, `retain_unknown`, `on_propagated`, and once per tracked hash in
+    /// `reconcile_guard`). That is deliberate: sidecars are a handful of statically-registered
+    /// pools, one per node extension, not a per-transaction collection. If that ever stops being
+    /// true this wants a hash-to-pool index instead.
     fn sidecar_owning(&self, hash: &TxHash) -> Option<&Arc<dyn SidecarPool<T>>> {
         self.sidecars.iter().find(|pool| pool.contains(hash))
     }
@@ -307,11 +314,15 @@ where
                     }
                     (None, Some(admission)) => {
                         if let Err(rejection) = guard.try_admit(admission) {
+                            // Both locks go before the rollback: `remove_transactions` is
+                            // out-of-tree code, and holding `listeners` across it would deadlock
+                            // any implementation that reaches back into the pool.
                             let hash = insert.outcome.hash;
                             drop(guard);
+                            drop(listeners);
                             let removed = self.sidecars[pool_index]
                                 .remove_transactions(&[hash], RemovalReason::Discarded);
-                            listeners.on_discarded(&removed);
+                            self.listeners.write().on_discarded(&removed);
                             return Err(Self::limit_rejection_error(hash, rejection));
                         }
                     }
@@ -920,10 +931,9 @@ where
             size.pending += p;
             size.queued += q;
             size.total += p + q;
-            size.pending_size +=
-                sidecar.pending_transactions().iter().map(|tx| tx.encoded_length()).sum::<usize>();
-            size.queued_size +=
-                sidecar.queued_transactions().iter().map(|tx| tx.encoded_length()).sum::<usize>();
+            let (pending_size, queued_size) = sidecar.pending_and_queued_size();
+            size.pending_size += pending_size;
+            size.queued_size += queued_size;
         }
         size
     }
@@ -1427,6 +1437,11 @@ where
         let registered_removed =
             self.remove_from_registered_sidecars(registered, RemovalReason::Mined);
         self.release_from_guard(&registered_removed);
+        // No `on_mined` here, matching the `nonce_pool` line above: `on_mined` needs the block
+        // hash the transactions landed in, and this trait method is not given one. A subscriber
+        // from `add_transaction_and_subscribe` therefore sees no terminal event on this path —
+        // pre-existing for the 2D nonce pool and inherited by sidecars. The normal mined route,
+        // `on_canonical_state_change`, does have the block hash and does fire the event.
         removed.extend(registered_removed);
         removed
     }
@@ -1752,16 +1767,23 @@ where
             }
         }
         if !self.sidecars.is_empty() {
+            // Sidecar implementations are out-of-tree, so their maintenance runs with no pool
+            // lock held: a slow or reentrant one would otherwise stall every reader of
+            // `listeners` and `guard` for the duration of its callback. Results are collected
+            // first, then dispatched under the locks in one pass.
+            let outcomes = self
+                .sidecars
+                .iter()
+                .map(|sidecar| sidecar.on_canonical_state_change(&mined_transactions, now))
+                .collect::<Vec<_>>();
             let mut listeners = self.listeners.write();
             let mut guard = self.guard.write();
-            for sidecar in self.sidecars.iter() {
-                let (mined, discarded) =
-                    sidecar.on_canonical_state_change(&mined_transactions, now);
+            for (mined, discarded) in &outcomes {
                 if !mined.is_empty() {
-                    listeners.on_mined(&mined, block_hash);
+                    listeners.on_mined(mined, block_hash);
                 }
                 if !discarded.is_empty() {
-                    listeners.on_discarded(&discarded);
+                    listeners.on_discarded(discarded);
                 }
                 for transaction in mined.iter().chain(discarded.iter()) {
                     guard.release(transaction.hash());

@@ -1,4 +1,20 @@
-//! SPIKE ONLY: generic pluggable sidecar sub-pool seam.
+//! A generic, pluggable sidecar sub-pool seam.
+//!
+//! [`SidecarPool`] lets a crate outside this one contribute an extra sub-pool to
+//! [`BaseTransactionPool`](crate::BaseTransactionPool), alongside the protocol pool and the 2D
+//! nonce pool. The host keeps validation, listener broadcast, and the EIP-8130 admission guard;
+//! the sidecar owns storage and its own internal ordering.
+//!
+//! # Implementor contract
+//!
+//! - **Locking.** Every method is called with no pool lock held, and must not call back into the
+//!   pool that owns it. The host's own order, where it takes more than one, is `nonce_pool` →
+//!   `listeners` → `guard`.
+//! - **Claiming.** [`SidecarPool::claims`] must be stable for a given transaction and must not
+//!   overlap another registered sidecar; the first claimant in registration order wins.
+//! - **Account nonces.** The sender-query methods default to empty. Leave them that way unless
+//!   your transactions genuinely occupy the sender's account-nonce sequence — see
+//!   [`SidecarPool::transactions_by_sender`].
 
 use std::sync::Arc;
 
@@ -70,6 +86,19 @@ pub trait SidecarPool<T: BasePooledTx>: Send + Sync + std::fmt::Debug + 'static 
     fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>>;
     /// `(pending, queued)` counts, for the pool-status RPCs.
     fn pending_and_queued_txn_count(&self) -> (usize, usize);
+
+    /// `(pending, queued)` encoded byte totals, for the pool-status RPCs.
+    ///
+    /// Called from [`TransactionPool::pool_size`](reth_transaction_pool::TransactionPool), which
+    /// serves metrics and RPC, so it runs often. The default materializes both transaction
+    /// vectors just to sum their lengths; override it with a cached or otherwise `O(1)` figure if
+    /// your pool can, and the two allocations disappear from that path.
+    fn pending_and_queued_size(&self) -> (usize, usize) {
+        let pending =
+            self.pending_transactions().iter().map(|tx| tx.encoded_length()).sum::<usize>();
+        let queued = self.queued_transactions().iter().map(|tx| tx.encoded_length()).sum::<usize>();
+        (pending, queued)
+    }
     /// The hashes of every transaction this pool holds.
     fn all_hashes(&self) -> Vec<TxHash>;
 
@@ -98,6 +127,12 @@ pub trait SidecarPool<T: BasePooledTx>: Send + Sync + std::fmt::Debug + 'static 
     fn remove_transactions_by_sender(&self, sender: Address) -> Vec<Arc<ValidPoolTransaction<T>>>;
 
     /// Per-block maintenance. Returns `(mined, discarded)`.
+    ///
+    /// Defaults to evicting nothing, which is only correct for a pool that expires its own
+    /// entries some other way. A pool that returns empty here and never prunes elsewhere grows
+    /// without bound: nothing else drops its transactions when they are mined or go stale.
+    /// The returned transactions are what the host reports to listeners and releases from the
+    /// admission guard, so omitting a transaction here also leaks its guard slot.
     fn on_canonical_state_change(
         &self,
         _mined: &[TxHash],
