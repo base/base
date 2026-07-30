@@ -51,13 +51,15 @@ pub use arm::{
 };
 #[cfg(feature = "arm")]
 pub use arm::{
-    AuthorizationGateError, ProductionCandidateError, ProductionClaimError, ProductionClaimFailure,
-    ProductionClaimResult, ProductionCustodyFailure, ProductionLatchOutcome, ProductionSignFailure,
+    AuthorizationGateError, BlockNumHash, FinalizedChainAuthority, FinalizedChainError,
+    ProductionCandidateError, ProductionClaimError, ProductionClaimFailure, ProductionClaimResult,
+    ProductionCustodyFailure, ProductionLatchOutcome, ProductionSignFailure,
     ProductionSignedField, ProductionSigningError, SimulationCorrelationEnvelopeV1,
     SimulationCorrelationKey, SimulationEntrypointStatus, SimulationEntrypointUnavailable,
     SimulationLedgerClosure, SimulationLedgerEpoch, SimulationLedgerInvalid, SimulationReservation,
     SimulationReservationError, SimulationStoreOperation, SimulationSubmitError, SimulationWorker,
     production_custody_preflight, try_claim_detailed,
+];
 };
 #[cfg(feature = "t4e-handoff")]
 pub use arm::{CheckedCandidate, CodeHashProvider, CommittedStateAuthority, ProviderError};

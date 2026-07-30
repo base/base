@@ -77,13 +77,13 @@ use base_mev_trader::{
     T4bOutcomeCounters,
 };
 use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, NodeHooks};
-#[cfg(feature = "t4d-shadow")]
-use mev_trader_submit::{BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate};
 #[cfg(feature = "arm-sim")]
 use mev_trader_submit::{
-    CommittedStateAuthority, ProviderError, SimulationEntrypointStatus,
-    UnavailableSimulationHandoff,
+    BlockNumHash as SettledBlockNumHash, CommittedStateAuthority, FinalizedChainAuthority,
+    FinalizedChainError, ProviderError, SimulationEntrypointStatus, UnavailableSimulationHandoff,
 };
+#[cfg(feature = "t4d-shadow")]
+use mev_trader_submit::{BridgeError, InstalledSubmissionBridge, SealedUnsignedCandidate};
 #[cfg(feature = "t4b-shadow")]
 use mev_trader_submit::{
     PriorityEconomicsAuthority, SnapshotFreshnessToken, TxAuthorityAssembler, TxAuthorityError,
@@ -91,10 +91,10 @@ use mev_trader_submit::{
 };
 #[cfg(feature = "t4e-handoff")]
 use mev_trader_submit::{T4eCandidateHandoff, T4eHandoffError};
-#[cfg(feature = "arm-sim")]
-use reth_provider::BlockNumReader;
 #[cfg(feature = "t4b-shadow")]
 use reth_provider::{AccountReader, BlockReaderIdExt, BytecodeReader};
+#[cfg(feature = "arm-sim")]
+use reth_provider::{BlockHashReader, BlockIdReader, BlockNumReader};
 use reth_provider::{HeaderProvider, StateProviderBox, StateProviderFactory};
 #[cfg(feature = "edge-measurement")]
 use serde_json::{Value as JsonValue, json};
@@ -8466,6 +8466,44 @@ where
     }
 }
 
+#[cfg(feature = "arm-sim")]
+/// Node-local adapter for the canonical finalized chain used by settled-loss validation.
+#[derive(Debug, Clone)]
+pub struct CliFinalizedChainAuthority<Provider> {
+    provider: Provider,
+}
+
+#[cfg(feature = "arm-sim")]
+impl<Provider> CliFinalizedChainAuthority<Provider> {
+    /// Owns one clone of the in-process node provider.
+    pub fn new(provider: &Provider) -> Self
+    where
+        Provider: Clone,
+    {
+        Self { provider: provider.clone() }
+    }
+}
+
+#[cfg(feature = "arm-sim")]
+impl<Provider> FinalizedChainAuthority for CliFinalizedChainAuthority<Provider>
+where
+    Provider: BlockIdReader + BlockHashReader + Debug + Send + Sync,
+{
+    fn finalized_head(&self) -> Result<Option<SettledBlockNumHash>, FinalizedChainError> {
+        let head = BlockIdReader::finalized_block_num_hash(&self.provider)
+            .map_err(|_| FinalizedChainError::Provider)?
+            .ok_or(FinalizedChainError::Unavailable)?;
+        Ok(Some(SettledBlockNumHash { number: head.number, hash: head.hash }))
+    }
+
+    fn canonical_hash(&self, number: u64) -> Result<Option<B256>, FinalizedChainError> {
+        let hash = BlockHashReader::block_hash(&self.provider, number)
+            .map_err(|_| FinalizedChainError::Provider)?
+            .ok_or(FinalizedChainError::Unavailable)?;
+        Ok(Some(hash))
+    }
+}
+
 /// Exact-1 Phase A extension configuration with post-gate receive credential input.
 #[derive(Debug, Clone)]
 pub struct BaseNodeTraderConfig {
@@ -8486,6 +8524,16 @@ impl BaseNodeTraderConfig {
     /// Returns true only for the exact native `OsStr` bytes `1`.
     pub fn enabled(env: Option<&OsStr>) -> bool {
         env == Some(OsStr::new("1"))
+    }
+
+    #[cfg(feature = "arm-sim")]
+    const fn arm_sim_shadow_conjunction(t4a: bool, t4b: bool, t4d: bool) -> bool {
+        t4a && t4b && t4d
+    }
+
+    #[cfg(feature = "arm-sim")]
+    const fn arm_sim_activation_enabled(&self) -> bool {
+        Self::arm_sim_shadow_conjunction(self.t4a_shadow, self.t4b_shadow, self.t4d_shadow)
     }
 
     #[cfg(feature = "t4a-shadow")]
@@ -8738,11 +8786,12 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         hooks.add_node_started_hook(move |node| {
             #[cfg(feature = "arm-sim")]
-            tracing::error!(
-                status = ?self.config.arm_sim_status,
-                follow_up = "Production T4e Simulation Installation + Settled-Loss Authority",
-                "arm simulation production installation deferred; rejecting candidate handoff"
-            );
+            if self.config.arm_sim_activation_enabled() {
+                tracing::error!(
+                    status = ?self.config.arm_sim_status,
+                    "arm simulation production installation unavailable; rejecting candidate handoff"
+                );
+            }
             let chain_spec = node.chain_spec();
             let port = Arc::new(CliTraderSnapshotPort::new(
                 Arc::clone(&self.config.flashblocks),
@@ -8765,11 +8814,11 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                         .ok_or_else(|| eyre::eyre!("T4e handoff sink is not installed"))?;
                     #[cfg(not(feature = "t4e-handoff"))]
                     let handoff = ();
-                    let observer = t4d_shadow::observer(
-                        Arc::clone(&port),
-                        chain_spec.chain().id(),
-                        handoff,
-                    )?;
+                    let node_view =
+                        t4b_shadow::node_view(Arc::clone(&port), chain_spec.chain().id());
+                    let bridge =
+                        Arc::new(InstalledSubmissionBridge::base_mainnet(node_view)?);
+                    let observer = t4d_shadow::observer(Arc::clone(&bridge), handoff);
                     self.config.start_with_t4d_observer(observer)?
                 }
                 #[cfg(not(feature = "t4d-shadow"))]
@@ -9769,10 +9818,9 @@ mod t4d_shadow {
     };
 
     use super::{
-        BlockReaderIdExt, BridgeError, CandidateAssemblyView, CandidateTxShapeObserver,
-        CliTraderSnapshotPort, Debug, Header, HeaderProvider, InstalledSubmissionBridge,
-        SealedUnsignedCandidate, ShadowLatestSlot, ShadowSubmit, StateProviderFactory, T4bOutcome,
-        T4bOutcomeCounters, TxAuthorityError, t4b_shadow,
+        BridgeError, CandidateAssemblyView, CandidateTxShapeObserver, InstalledSubmissionBridge,
+        SealedUnsignedCandidate, ShadowLatestSlot, ShadowSubmit, T4bOutcome, T4bOutcomeCounters,
+        TxAuthorityError, t4b_shadow,
     };
     #[cfg(feature = "t4e-handoff")]
     use super::{T4eCandidateHandoff, T4eHandoffError};
@@ -9782,7 +9830,7 @@ mod t4d_shadow {
     #[cfg(not(feature = "t4e-handoff"))]
     type CandidateHandoff = ();
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(super) enum T4dTerminal {
         SealedFresh,
         AssemblyRejected,
@@ -9800,7 +9848,7 @@ mod t4d_shadow {
     }
 
     #[derive(Debug, Default)]
-    struct T4dTerminalCounters {
+    pub(super) struct T4dTerminalCounters {
         sealed_fresh: AtomicU64,
         assembly_rejected: AtomicU64,
         binding_rejected: AtomicU64,
@@ -9817,8 +9865,8 @@ mod t4d_shadow {
     }
 
     impl T4dTerminalCounters {
-        fn record(&self, terminal: T4dTerminal) {
-            let counter = match terminal {
+        fn counter(&self, terminal: T4dTerminal) -> &AtomicU64 {
+            match terminal {
                 T4dTerminal::SealedFresh => &self.sealed_fresh,
                 T4dTerminal::AssemblyRejected => &self.assembly_rejected,
                 T4dTerminal::BindingRejected => &self.binding_rejected,
@@ -9832,14 +9880,22 @@ mod t4d_shadow {
                 T4dTerminal::DeadlineNoHandoff => &self.deadline_no_handoff,
                 T4dTerminal::ShadowBusy => &self.shadow_busy,
                 T4dTerminal::ShadowClosed => &self.shadow_closed,
-            };
-            counter.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        pub(super) fn record(&self, terminal: T4dTerminal) {
+            self.counter(terminal).fetch_add(1, Ordering::Relaxed);
+        }
+
+        #[cfg(test)]
+        pub(super) fn count(&self, terminal: T4dTerminal) -> u64 {
+            self.counter(terminal).load(Ordering::Relaxed)
         }
     }
 
     #[derive(Debug)]
     pub(super) struct T4dShadowAuthority {
-        bridge: InstalledSubmissionBridge,
+        bridge: Arc<InstalledSubmissionBridge>,
         slot: ShadowLatestSlot<SealedUnsignedCandidate>,
         #[cfg(feature = "t4e-handoff")]
         handoff: Arc<dyn T4eCandidateHandoff>,
@@ -9882,11 +9938,20 @@ mod t4d_shadow {
         }
 
         #[cfg(feature = "t4e-handoff")]
-        fn handoff_terminal(error: T4eHandoffError) -> T4dTerminal {
-            match error {
-                T4eHandoffError::Busy => T4dTerminal::HandoffBusy,
-                T4eHandoffError::Closed => T4dTerminal::HandoffClosed,
-                T4eHandoffError::Rejected => T4dTerminal::HandoffRejected,
+        pub(super) fn handoff_outcome(
+            result: Result<(), T4eHandoffError>,
+        ) -> (T4bOutcome, T4dTerminal) {
+            match result {
+                Ok(()) => (T4bOutcome::SelectedUnsignedShape, T4dTerminal::SealedFresh),
+                Err(T4eHandoffError::Busy) => {
+                    (T4bOutcome::DeploymentIdentityRejected, T4dTerminal::HandoffBusy)
+                }
+                Err(T4eHandoffError::Closed) => {
+                    (T4bOutcome::DeploymentIdentityRejected, T4dTerminal::HandoffClosed)
+                }
+                Err(T4eHandoffError::Rejected) => {
+                    (T4bOutcome::DeploymentIdentityRejected, T4dTerminal::HandoffRejected)
+                }
             }
         }
     }
@@ -9924,10 +9989,10 @@ mod t4d_shadow {
                 return;
             };
             #[cfg(feature = "t4e-handoff")]
-            match self.handoff.try_handoff(candidate) {
-                Ok(()) => self.record(T4bOutcome::SelectedUnsignedShape, T4dTerminal::SealedFresh),
-                Err(error) => self
-                    .record(T4bOutcome::DeploymentIdentityRejected, Self::handoff_terminal(error)),
+            {
+                let (outcome, terminal) =
+                    Self::handoff_outcome(self.handoff.try_handoff(candidate));
+                self.record(outcome, terminal);
             }
             #[cfg(not(feature = "t4e-handoff"))]
             match self.bridge.revalidate_for_handoff(&candidate) {
@@ -9951,31 +10016,20 @@ mod t4d_shadow {
         }
     }
 
-    pub(super) fn observer<Provider>(
-        port: Arc<CliTraderSnapshotPort<Provider>>,
-        chain_id: u64,
+    pub(super) fn observer(
+        bridge: Arc<InstalledSubmissionBridge>,
         handoff: CandidateHandoff,
-    ) -> Result<Arc<dyn CandidateTxShapeObserver>, BridgeError>
-    where
-        Provider: StateProviderFactory
-            + HeaderProvider<Header = Header>
-            + BlockReaderIdExt
-            + Clone
-            + Debug
-            + Send
-            + Sync
-            + 'static,
-    {
-        let node = t4b_shadow::node_view(port, chain_id);
-        let bridge = InstalledSubmissionBridge::base_mainnet(node)?;
-        Ok(Arc::new(T4dShadowAuthority {
+    ) -> Arc<T4dShadowAuthority> {
+        #[cfg(not(feature = "t4e-handoff"))]
+        let _ = handoff;
+        Arc::new(T4dShadowAuthority {
             bridge,
             slot: ShadowLatestSlot::new(),
             #[cfg(feature = "t4e-handoff")]
             handoff,
             t4b_counters: T4bOutcomeCounters::default(),
             terminal_counters: T4dTerminalCounters::default(),
-        }))
+        })
     }
 }
 fn t4a_runtime_config(enabled: bool) -> eyre::Result<MevTraderRuntimeConfig> {
@@ -10146,6 +10200,80 @@ mod tests {
 
         fn finalized_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
             BlockIdReader::finalized_block_num_hash(&self.inner)
+        }
+    }
+
+    #[cfg(feature = "arm-sim")]
+    #[derive(Clone, Copy, Debug)]
+    enum FinalizedLookup {
+        Value(BlockNumHash),
+        Missing,
+        ProviderError,
+    }
+
+    #[cfg(feature = "arm-sim")]
+    #[derive(Clone, Debug)]
+    struct FinalizedProvider {
+        inner: MockEthProvider,
+        head: FinalizedLookup,
+        historical: FinalizedLookup,
+    }
+
+    #[cfg(feature = "arm-sim")]
+    impl BlockNumReader for FinalizedProvider {
+        fn chain_info(&self) -> ProviderResult<reth_chainspec::ChainInfo> {
+            BlockNumReader::chain_info(&self.inner)
+        }
+
+        fn best_block_number(&self) -> ProviderResult<u64> {
+            BlockNumReader::best_block_number(&self.inner)
+        }
+
+        fn last_block_number(&self) -> ProviderResult<u64> {
+            BlockNumReader::last_block_number(&self.inner)
+        }
+
+        fn block_number(&self, hash: B256) -> ProviderResult<Option<u64>> {
+            BlockNumReader::block_number(&self.inner, hash)
+        }
+    }
+
+    #[cfg(feature = "arm-sim")]
+    impl BlockIdReader for FinalizedProvider {
+        fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            Ok(None)
+        }
+
+        fn safe_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            Ok(None)
+        }
+
+        fn finalized_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            match self.head {
+                FinalizedLookup::Value(head) => Ok(Some(head)),
+                FinalizedLookup::Missing => Ok(None),
+                FinalizedLookup::ProviderError => Err(RethProviderError::BestBlockNotFound),
+            }
+        }
+    }
+
+    #[cfg(feature = "arm-sim")]
+    impl BlockHashReader for FinalizedProvider {
+        fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
+            match self.historical {
+                FinalizedLookup::Value(block) if block.number == number => Ok(Some(block.hash)),
+                FinalizedLookup::Value(_) | FinalizedLookup::Missing => Ok(None),
+                FinalizedLookup::ProviderError => Err(RethProviderError::BestBlockNotFound),
+            }
+        }
+
+        fn canonical_hashes_range(&self, start: u64, end: u64) -> ProviderResult<Vec<B256>> {
+            (start..end)
+                .map(|number| self.block_hash(number))
+                .collect::<ProviderResult<Vec<_>>>()?
+                .into_iter()
+                .collect::<Option<Vec<_>>>()
+                .ok_or(RethProviderError::BestBlockNotFound)
         }
     }
 
@@ -10333,6 +10461,39 @@ mod tests {
             bytecode_failure_authority.code_at_latest_committed(address),
             Err(ProviderError::Unavailable("committed runtime code is unavailable".to_string(),)),
         );
+    }
+
+    #[cfg(feature = "arm-sim")]
+    #[test]
+    fn finalized_chain_authority_preserves_values_absence_and_provider_errors() {
+        let block = BlockNumHash { number: 73, hash: B256::with_last_byte(7) };
+        let available = FinalizedProvider {
+            inner: MockEthProvider::default(),
+            head: FinalizedLookup::Value(block),
+            historical: FinalizedLookup::Value(block),
+        };
+        let authority = CliFinalizedChainAuthority::new(&available);
+        assert_eq!(
+            authority.finalized_head(),
+            Ok(Some(SettledBlockNumHash { number: block.number, hash: block.hash })),
+        );
+        assert_eq!(authority.canonical_hash(block.number), Ok(Some(block.hash)));
+
+        let missing = CliFinalizedChainAuthority::new(&FinalizedProvider {
+            inner: MockEthProvider::default(),
+            head: FinalizedLookup::Missing,
+            historical: FinalizedLookup::Missing,
+        });
+        assert_eq!(missing.finalized_head(), Err(FinalizedChainError::Unavailable));
+        assert_eq!(missing.canonical_hash(block.number), Err(FinalizedChainError::Unavailable));
+
+        let failed = CliFinalizedChainAuthority::new(&FinalizedProvider {
+            inner: MockEthProvider::default(),
+            head: FinalizedLookup::ProviderError,
+            historical: FinalizedLookup::ProviderError,
+        });
+        assert_eq!(failed.finalized_head(), Err(FinalizedChainError::Provider));
+        assert_eq!(failed.canonical_hash(block.number), Err(FinalizedChainError::Provider));
     }
 
     #[cfg(feature = "edge-measurement")]
@@ -10843,13 +11004,69 @@ mod tests {
             .split_once("mod t4d_shadow")
             .expect("T4d module")
             .1
-            .split_once("#[cfg(test)]")
-            .expect("test boundary")
+            .split_once("fn t4a_runtime_config")
+            .expect("T4d module end")
             .0;
         assert!(bounded.contains("assemble_sealed(view)"));
         assert!(bounded.contains("self.handoff.try_handoff(candidate)"));
         for forbidden in ["unsigned_tx", "calldata", "raw_tx"] {
             assert!(!bounded.contains(forbidden));
+        }
+    }
+
+    #[cfg(feature = "t4e-handoff")]
+    #[test]
+    fn t4d_handoff_results_drive_all_real_terminal_mappings() {
+        use t4d_shadow::{T4dShadowAuthority, T4dTerminal, T4dTerminalCounters};
+
+        let t4b_counters = T4bOutcomeCounters::default();
+        let t4d_counters = T4dTerminalCounters::default();
+        let cases = [
+            (
+                Ok(()),
+                T4bOutcome::SelectedUnsignedShape,
+                T4dTerminal::SealedFresh,
+            ),
+            (
+                Err(T4eHandoffError::Busy),
+                T4bOutcome::DeploymentIdentityRejected,
+                T4dTerminal::HandoffBusy,
+            ),
+            (
+                Err(T4eHandoffError::Closed),
+                T4bOutcome::DeploymentIdentityRejected,
+                T4dTerminal::HandoffClosed,
+            ),
+            (
+                Err(T4eHandoffError::Rejected),
+                T4bOutcome::DeploymentIdentityRejected,
+                T4dTerminal::HandoffRejected,
+            ),
+        ];
+
+        for (result, expected_outcome, expected_terminal) in cases {
+            let (outcome, terminal) = T4dShadowAuthority::handoff_outcome(result);
+            assert_eq!((outcome, terminal), (expected_outcome, expected_terminal));
+            t4b_counters.record(outcome);
+            t4d_counters.record(terminal);
+            assert_eq!(t4d_counters.count(terminal), 1);
+        }
+
+        assert_eq!(t4b_counters.count(T4bOutcome::SelectedUnsignedShape), 1);
+        assert_eq!(t4b_counters.count(T4bOutcome::DeploymentIdentityRejected), 3);
+    }
+
+    #[cfg(feature = "arm-sim")]
+    #[test]
+    fn arm_sim_activation_requires_every_existing_shadow_gate() {
+        for mask in 0_u8..8 {
+            let t4a = mask & 1 != 0;
+            let t4b = mask & 2 != 0;
+            let t4d = mask & 4 != 0;
+            assert_eq!(
+                BaseNodeTraderConfig::arm_sim_shadow_conjunction(t4a, t4b, t4d),
+                mask == 7,
+            );
         }
     }
 

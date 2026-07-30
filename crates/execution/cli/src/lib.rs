@@ -15,7 +15,7 @@ pub mod chainspec;
 pub mod commands;
 mod mev_trader;
 #[cfg(feature = "arm-sim")]
-pub use mev_trader::CliCommittedStateAuthority;
+pub use mev_trader::{CliCommittedStateAuthority, CliFinalizedChainAuthority};
 pub use mev_trader::{
     BaseNodeTraderConfig, BaseNodeTraderExtension, BaseNodeTraderStart, MevTraderPhaseAInstaller,
 };
