@@ -51,7 +51,8 @@ pub use arm::{RuntimeBackend, SimBackend};
 pub use arm::{
     SimulationCorrelationEnvelopeV1, SimulationCorrelationKey, SimulationEntrypointStatus,
     SimulationEntrypointUnavailable, SimulationLedgerClosure, SimulationLedgerEpoch,
-    SimulationLedgerInvalid, SimulationStoreOperation,
+    SimulationLedgerInvalid, SimulationReservation, SimulationReservationError,
+    SimulationStoreOperation, SimulationSubmitError, SimulationWorker,
 };
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
 pub use arm::{SuppressionRollbackError, provision_suppression_anchor};
