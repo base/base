@@ -355,6 +355,13 @@ pub struct MonitoringConfig {
     /// Optional Base consensus node JSON-RPC endpoint URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consensus_node_rpc: Option<Url>,
+    /// Expected L2 chain ID for this config, when known.
+    ///
+    /// Fixed for public presets (`mainnet`/`sepolia`/`zeronet`). For `-c
+    /// devnet`, populated from the live `optimism_rollupConfig` so doctor
+    /// compares against whatever chain ID that stack was started with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<u64>,
     /// Optional internal prover-service requester JSON-RPC endpoint URL.
     ///
     /// Used by the `basectl proofs` command group. The built-in presets leave
@@ -512,6 +519,7 @@ struct MonitoringConfigOverride {
     flashblocks_ws: Option<Url>,
     l1_rpc: Option<Url>,
     consensus_node_rpc: Option<Url>,
+    chain_id: Option<u64>,
     prover_rpc: Option<Url>,
     #[serde(alias = "hardforks")]
     upgrades: Option<UpgradeConfig>,
@@ -561,6 +569,7 @@ impl MonitoringConfig {
             flashblocks_ws: Url::parse("wss://mainnet.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-rpc.publicnode.com").unwrap(),
             consensus_node_rpc: None,
+            chain_id: Some(8453),
             prover_rpc: None,
             upgrades: Some(rollup.upgrades),
             system_config: rollup.l1_system_config_address,
@@ -586,6 +595,7 @@ impl MonitoringConfig {
             flashblocks_ws: Url::parse("wss://sepolia.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-sepolia-rpc.publicnode.com").unwrap(),
             consensus_node_rpc: None,
+            chain_id: Some(84532),
             prover_rpc: None,
             upgrades: Some(rollup.upgrades),
             system_config: rollup.l1_system_config_address,
@@ -617,6 +627,8 @@ impl MonitoringConfig {
             flashblocks_ws: Url::parse("ws://localhost:7111").unwrap(),
             l1_rpc: Url::parse("http://localhost:4545").unwrap(),
             consensus_node_rpc: Some(Url::parse("http://localhost:7549").unwrap()),
+            // Populated from optimism_rollupConfig in load_devnet.
+            chain_id: None,
             prover_rpc: None,
             upgrades: None,
             // These will be populated by fetch_rollup_config
@@ -765,6 +777,7 @@ impl MonitoringConfig {
         config.system_config = rollup_config.l1_system_config_address;
         config.batcher_address = rollup_config.genesis.system_config.map(|sc| sc.batcher_address);
         config.upgrades = Some(rollup_config.upgrades);
+        config.chain_id = Some(rollup_config.l2_chain_id.id());
 
         Ok(config)
     }
@@ -792,6 +805,7 @@ impl MonitoringConfig {
             flashblocks_ws: overrides.flashblocks_ws.unwrap_or(base.flashblocks_ws),
             l1_rpc: overrides.l1_rpc.unwrap_or(base.l1_rpc),
             consensus_node_rpc: overrides.consensus_node_rpc.or(base.consensus_node_rpc),
+            chain_id: overrides.chain_id.or(base.chain_id),
             prover_rpc: overrides.prover_rpc.or(base.prover_rpc),
             upgrades: overrides.upgrades.or(base.upgrades),
             system_config: overrides.system_config.unwrap_or(base.system_config),
@@ -878,6 +892,7 @@ mod tests {
         assert_eq!(devnet.l1_rpc.as_str(), "http://localhost:4545/");
         assert!(devnet.consensus_node_rpc.is_some());
         assert_eq!(devnet.consensus_node_rpc.unwrap().as_str(), "http://localhost:7549/");
+        assert_eq!(devnet.chain_id, None);
         let validators = devnet.validators.expect("devnet should include validator/RPC node");
         assert_eq!(validators.len(), 2);
         assert_eq!(validators[0].name, "base-client");
