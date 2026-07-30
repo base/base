@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+use syn::visit::Visit;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -105,6 +106,52 @@ fn production_submit_arm_tree() -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).expect("cargo tree UTF-8")
+}
+
+fn validate_node_egress_feature_tree(feature: &str) -> Result<(), String> {
+    let output = Command::new(env!("CARGO"))
+        .args([
+            "tree",
+            "--package",
+            "base-reth-node",
+            "--features",
+            feature,
+            "--invert",
+            "mev-trader-submit",
+            "--edges",
+            "features",
+            "--offline",
+        ])
+        .current_dir(manifest_dir().join("../../.."))
+        .output()
+        .map_err(|error| format!("execute node inverse feature tree: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "node inverse feature tree failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let tree = String::from_utf8(output.stdout)
+        .map_err(|_| "node inverse feature tree was not UTF-8".to_owned())?;
+    if !tree.contains("mev-trader-submit feature \"arm\"") {
+        return Err("node inverse feature tree lacked the arm positive control".to_owned());
+    }
+    if tree.contains("mev-trader-submit feature \"arm-live-egress\"") {
+        return Err("node inverse feature tree reached arm-live-egress".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn broadcastability_feature_tree_has_a_live_egress_negative_control() {
+    validate_node_egress_feature_tree("arm-sim").expect("A-CTL arm-sim excludes arm-live-egress");
+    eprintln!("A-CTL: GREEN");
+
+    assert!(
+        validate_node_egress_feature_tree("arm-live-egress").is_err(),
+        "A-NEG did not detect the live-egress feature"
+    );
+    eprintln!("A-NEG: RED (compile errors: 0)");
 }
 
 fn package<'a>(
@@ -1071,8 +1118,8 @@ fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
-fn item_has_cfg_test(item: &syn::Item) -> bool {
-    let attrs = match item {
+fn item_attributes(item: &syn::Item) -> &[syn::Attribute] {
+    match item {
         syn::Item::Const(item) => &item.attrs,
         syn::Item::Enum(item) => &item.attrs,
         syn::Item::ExternCrate(item) => &item.attrs,
@@ -1088,32 +1135,124 @@ fn item_has_cfg_test(item: &syn::Item) -> bool {
         syn::Item::Type(item) => &item.attrs,
         syn::Item::Union(item) => &item.attrs,
         syn::Item::Use(item) => &item.attrs,
-        syn::Item::Verbatim(_) => return false,
-        _ => return false,
-    };
-    has_cfg_test(attrs)
+        syn::Item::Verbatim(_) => &[],
+        _ => &[],
+    }
 }
 
-fn impl_item_has_cfg_test(item: &syn::ImplItem) -> bool {
-    let attrs: &[syn::Attribute] = match item {
+fn item_has_cfg_test(item: &syn::Item) -> bool {
+    has_cfg_test(item_attributes(item))
+}
+
+fn impl_item_attributes(item: &syn::ImplItem) -> &[syn::Attribute] {
+    match item {
         syn::ImplItem::Const(item) => &item.attrs,
         syn::ImplItem::Fn(item) => &item.attrs,
         syn::ImplItem::Type(item) => &item.attrs,
         syn::ImplItem::Macro(item) => &item.attrs,
         _ => &[],
-    };
-    has_cfg_test(attrs)
+    }
 }
 
-fn trait_item_has_cfg_test(item: &syn::TraitItem) -> bool {
-    let attrs: &[syn::Attribute] = match item {
+fn impl_item_has_cfg_test(item: &syn::ImplItem) -> bool {
+    has_cfg_test(impl_item_attributes(item))
+}
+
+fn trait_item_attributes(item: &syn::TraitItem) -> &[syn::Attribute] {
+    match item {
         syn::TraitItem::Const(item) => &item.attrs,
         syn::TraitItem::Fn(item) => &item.attrs,
         syn::TraitItem::Type(item) => &item.attrs,
         syn::TraitItem::Macro(item) => &item.attrs,
         _ => &[],
-    };
-    has_cfg_test(attrs)
+    }
+}
+
+fn trait_item_has_cfg_test(item: &syn::TraitItem) -> bool {
+    has_cfg_test(trait_item_attributes(item))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EgressCfgValue {
+    True,
+    False,
+    Unknown,
+}
+
+fn evaluate_egress_cfg(meta: &syn::Meta) -> Result<EgressCfgValue, String> {
+    match meta {
+        syn::Meta::Path(path) if path.is_ident("test") => Ok(EgressCfgValue::False),
+        syn::Meta::Path(_) => Ok(EgressCfgValue::Unknown),
+        syn::Meta::NameValue(value) if value.path.is_ident("feature") => {
+            let syn::Expr::Lit(expression) = &value.value else {
+                return Err("feature cfg value was not a literal".to_owned());
+            };
+            let syn::Lit::Str(feature) = &expression.lit else {
+                return Err("feature cfg value was not a string".to_owned());
+            };
+            if feature.value() == "arm-live-egress" {
+                Ok(EgressCfgValue::False)
+            } else {
+                Ok(EgressCfgValue::Unknown)
+            }
+        }
+        syn::Meta::NameValue(_) => Ok(EgressCfgValue::Unknown),
+        syn::Meta::List(list) => {
+            let nested = list
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                )
+                .map_err(|error| format!("cfg expression did not parse: {error}"))?;
+            if list.path.is_ident("all") {
+                let mut result = EgressCfgValue::True;
+                for meta in &nested {
+                    match evaluate_egress_cfg(meta)? {
+                        EgressCfgValue::False => return Ok(EgressCfgValue::False),
+                        EgressCfgValue::Unknown => result = EgressCfgValue::Unknown,
+                        EgressCfgValue::True => {}
+                    }
+                }
+                Ok(result)
+            } else if list.path.is_ident("any") {
+                let mut result = EgressCfgValue::False;
+                for meta in &nested {
+                    match evaluate_egress_cfg(meta)? {
+                        EgressCfgValue::True => return Ok(EgressCfgValue::True),
+                        EgressCfgValue::Unknown => result = EgressCfgValue::Unknown,
+                        EgressCfgValue::False => {}
+                    }
+                }
+                Ok(result)
+            } else if list.path.is_ident("not") {
+                if nested.len() != 1 {
+                    return Err("cfg(not(...)) did not have exactly one argument".to_owned());
+                }
+                let meta = nested.first().expect("cfg(not) cardinality checked");
+                match evaluate_egress_cfg(meta)? {
+                    EgressCfgValue::True => Ok(EgressCfgValue::False),
+                    EgressCfgValue::False => Ok(EgressCfgValue::True),
+                    EgressCfgValue::Unknown => Ok(EgressCfgValue::Unknown),
+                }
+            } else {
+                Ok(EgressCfgValue::Unknown)
+            }
+        }
+    }
+}
+
+fn cfg_reachable_without_live_egress(attrs: &[syn::Attribute]) -> Result<bool, String> {
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("cfg")) {
+        let syn::Meta::List(list) = &attr.meta else {
+            return Err("cfg attribute was not a list".to_owned());
+        };
+        let meta = list
+            .parse_args::<syn::Meta>()
+            .map_err(|error| format!("cfg did not parse: {error}"))?;
+        if evaluate_egress_cfg(&meta)? == EgressCfgValue::False {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn path_ends_with(path: &syn::Path, suffix: &[&str]) -> bool {
@@ -1264,8 +1403,6 @@ fn path_parts_resolve_identity(
 
 impl ProductionAliasCollector {
     fn collect_file(&mut self, file: &syn::File, module_root: &[String], canonical_source: bool) {
-        use syn::visit::Visit;
-
         self.module_scope = module_root.to_vec();
         self.file_root_len = module_root.len();
         self.canonical_source = canonical_source;
@@ -1980,8 +2117,6 @@ fn analyze_production_handoff(
     source: &ParsedProductionSource,
     aliases: &ProductionAliases,
 ) -> ProductionHandoffVisitor {
-    use syn::visit::Visit;
-
     let mut visitor = ProductionHandoffVisitor::new(aliases.clone(), source.module_root.clone());
     visitor.visit_file(&source.file);
     visitor
@@ -2138,8 +2273,6 @@ impl<'ast> syn::visit::Visit<'ast> for InstallConstructorBodyVisitor {
 }
 
 fn validate_installed_handoff_constructor(source: &str) -> Result<(), String> {
-    use syn::visit::Visit;
-
     let file = syn::parse_file(source)
         .map_err(|error| format!("production handoff source did not parse: {error}"))?;
     let methods = file
@@ -2329,8 +2462,6 @@ fn has_total_installed_handoff_body(
     aliases: &ProductionAliases,
     module_scope: &[String],
 ) -> bool {
-    use syn::visit::Visit;
-
     if try_handoff_candidate(method, aliases, module_scope).as_deref() != Some("candidate")
         || method.sig.inputs.len() != 2
         || !matches!(
@@ -2551,6 +2682,293 @@ fn submit_crate_sources() -> Result<Vec<(PathBuf, String)>, String> {
     let mut sources = Vec::new();
     collect_submit_rust_sources(&manifest_dir().join("src"), &mut sources)?;
     Ok(sources)
+}
+
+#[derive(Debug, Default)]
+struct ProductionEgressVisitor {
+    label: String,
+    findings: Vec<String>,
+}
+
+impl ProductionEgressVisitor {
+    fn new(label: String) -> Self {
+        Self { label, findings: Vec::new() }
+    }
+
+    fn reachable(&mut self, attrs: &[syn::Attribute]) -> bool {
+        match cfg_reachable_without_live_egress(attrs) {
+            Ok(reachable) => reachable,
+            Err(error) => {
+                self.findings.push(format!("{} has opaque cfg: {error}", self.label));
+                false
+            }
+        }
+    }
+
+    fn record_path(&mut self, segments: &[String]) {
+        if egress_path(segments) {
+            self.findings.push(format!(
+                "{} reaches egress path {}",
+                self.label,
+                segments.join("::")
+            ));
+        }
+    }
+
+    fn collect_use_tree(&mut self, tree: &syn::UseTree, prefix: &mut Vec<String>) {
+        match tree {
+            syn::UseTree::Path(path) => {
+                prefix.push(path.ident.to_string());
+                self.collect_use_tree(&path.tree, prefix);
+                prefix.pop();
+            }
+            syn::UseTree::Name(name) => {
+                prefix.push(name.ident.to_string());
+                self.record_path(prefix);
+                if prefix.as_slice() == ["std", "process"] {
+                    self.findings.push(format!(
+                        "{} imports the process namespace that contains Command",
+                        self.label
+                    ));
+                }
+                prefix.pop();
+            }
+            syn::UseTree::Rename(rename) => {
+                prefix.push(rename.ident.to_string());
+                self.record_path(prefix);
+                if prefix.as_slice() == ["libc"] {
+                    self.findings
+                        .push(format!("{} aliases libc and obscures raw fd calls", self.label));
+                }
+                if prefix.as_slice() == ["std", "process"] {
+                    self.findings.push(format!(
+                        "{} aliases the process namespace that contains Command",
+                        self.label
+                    ));
+                }
+                prefix.pop();
+            }
+            syn::UseTree::Group(group) => {
+                for tree in &group.items {
+                    self.collect_use_tree(tree, prefix);
+                }
+            }
+            syn::UseTree::Glob(_) => self.record_path(prefix),
+        }
+    }
+
+    fn inspect_macro(&mut self, mac: &syn::Macro) {
+        let compact = mac.tokens.to_string().split_whitespace().collect::<String>();
+        for forbidden in [
+            "std::net",
+            "std::os::unix::net",
+            "std::process::Command",
+            "TcpStream",
+            "UdpSocket",
+            "UnixStream",
+            "UnixDatagram",
+            "Command::new",
+            "libc::socket",
+            "libc::connect",
+            "libc::send",
+            "libc::sendto",
+            "libc::sendmsg",
+            "libc::write",
+            "libc::writev",
+        ] {
+            if compact.contains(forbidden) {
+                self.findings.push(format!(
+                    "{} reaches egress token `{forbidden}` through a macro",
+                    self.label
+                ));
+            }
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for ProductionEgressVisitor {
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if self.reachable(item_attributes(item)) {
+            syn::visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_impl_item(&mut self, item: &'ast syn::ImplItem) {
+        if self.reachable(impl_item_attributes(item)) {
+            syn::visit::visit_impl_item(self, item);
+        }
+    }
+
+    fn visit_trait_item(&mut self, item: &'ast syn::TraitItem) {
+        if self.reachable(trait_item_attributes(item)) {
+            syn::visit::visit_trait_item(self, item);
+        }
+    }
+
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        if self.reachable(&item.attrs) {
+            self.collect_use_tree(&item.tree, &mut Vec::new());
+        }
+    }
+
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        let segments =
+            path.segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<_>>();
+        self.record_path(&segments);
+        syn::visit::visit_path(self, path);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        self.inspect_macro(mac);
+    }
+
+    fn visit_foreign_item_fn(&mut self, function: &'ast syn::ForeignItemFn) {
+        if !self.reachable(&function.attrs) {
+            return;
+        }
+        if matches!(
+            function.sig.ident.to_string().as_str(),
+            "socket"
+                | "socketpair"
+                | "connect"
+                | "accept"
+                | "accept4"
+                | "send"
+                | "sendto"
+                | "sendmsg"
+                | "write"
+                | "writev"
+        ) {
+            self.findings.push(format!(
+                "{} declares raw egress function `{}`",
+                self.label, function.sig.ident
+            ));
+        }
+        syn::visit::visit_foreign_item_fn(self, function);
+    }
+}
+
+fn egress_path(segments: &[String]) -> bool {
+    let segment = |index: usize| segments.get(index).map(String::as_str);
+    let contains = |expected: &[&str]| {
+        segments
+            .windows(expected.len())
+            .any(|window| window.iter().map(String::as_str).eq(expected.iter().copied()))
+    };
+    contains(&["std", "net"])
+        || contains(&["std", "os", "unix", "net"])
+        || contains(&["std", "process", "Command"])
+        || segment(0) == Some("reqwest")
+        || contains(&["nix", "sys", "socket"])
+        || contains(&["nix", "unistd", "write"])
+        || contains(&["rustix", "net"])
+        || (segment(0) == Some("libc")
+            && segments.last().is_some_and(|function| {
+                matches!(
+                    function.as_str(),
+                    "socket"
+                        | "socketpair"
+                        | "connect"
+                        | "accept"
+                        | "accept4"
+                        | "send"
+                        | "sendto"
+                        | "sendmsg"
+                        | "write"
+                        | "writev"
+                        | "pwrite"
+                        | "pwritev"
+                )
+            }))
+        || segments.last().is_some_and(|item| {
+            matches!(
+                item.as_str(),
+                "TcpStream" | "UdpSocket" | "UnixStream" | "UnixDatagram" | "FromRawFd"
+            )
+        })
+}
+
+fn validate_no_production_egress(source_override: Option<(&Path, &str)>) -> Result<(), String> {
+    let mut override_applied = source_override.is_none();
+    for (path, source) in submit_crate_sources()? {
+        let analyzed_source = if let Some((override_path, replacement)) = source_override
+            && path.ends_with(override_path)
+        {
+            override_applied = true;
+            replacement
+        } else {
+            source.as_str()
+        };
+        let file = syn::parse_file(analyzed_source)
+            .map_err(|error| format!("submit source {} did not parse: {error}", path.display()))?;
+        let mut visitor = ProductionEgressVisitor::new(path.display().to_string());
+        visitor.visit_file(&file);
+        if !visitor.findings.is_empty() {
+            return Err(visitor.findings.join("; "));
+        }
+    }
+    if !override_applied {
+        return Err("egress source override did not match a crate source file".to_owned());
+    }
+    Ok(())
+}
+
+/// No production item anywhere in this crate may reach a host-egress primitive when `arm-live-egress` is off.
+#[test]
+fn production_egress_property_control_and_mutants() {
+    validate_no_production_egress(None).expect("E-CTL whole-crate egress property");
+    eprintln!("E-CTL: GREEN");
+
+    let transport_path = Path::new("src/arm/transport.rs");
+    let transport = read(manifest_dir().join(transport_path));
+    let entrypoint_path = Path::new("src/arm/simulation_entrypoint.rs");
+    let entrypoint = read(manifest_dir().join(entrypoint_path));
+
+    for (name, path, source, addition) in [
+        (
+            "E-1",
+            transport_path,
+            transport.as_str(),
+            "fn production_socket_mutant() {\n\
+             \tlet _ = std::net::TcpStream::connect(\"127.0.0.1:1\");\n\
+             }",
+        ),
+        (
+            "E-2",
+            transport_path,
+            transport.as_str(),
+            "#[cfg(not(test))]\n\
+             fn not_test_socket_mutant() {\n\
+             \tlet _ = std::net::TcpStream::connect(\"127.0.0.1:1\");\n\
+             }",
+        ),
+        (
+            "E-3",
+            entrypoint_path,
+            entrypoint.as_str(),
+            "fn entrypoint_socket_mutant() {\n\
+             \tlet _ = std::net::TcpStream::connect(\"127.0.0.1:1\");\n\
+             }",
+        ),
+        (
+            "E-4",
+            transport_path,
+            transport.as_str(),
+            "fn process_command_mutant() {\n\
+             \tlet _ = std::process::Command::new(\"curl\");\n\
+             }",
+        ),
+    ] {
+        let mutant = insert_before_test_module(source, addition);
+        assert_ne!(mutant, source, "{name} patch did not change source");
+        syn::parse_file(&mutant)
+            .unwrap_or_else(|error| panic!("{name} compile-shaped control: {error}"));
+        assert!(
+            validate_no_production_egress(Some((path, &mutant))).is_err(),
+            "{name} egress mutant remained GREEN"
+        );
+        eprintln!("{name}: RED (compile errors: 0)");
+    }
 }
 
 fn validate_installed_production_handoff(
