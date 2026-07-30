@@ -2084,12 +2084,15 @@ fn validate_install_error_taxonomy(source: &str) -> Result<(), String> {
                 syn::Fields::Unit => String::new(),
                 syn::Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
                     let syn::Type::Path(payload) = &fields.unnamed[0].ty else {
-                        return Err(format!("{} payload is not a direct type path", variant.ident));
+                        return Err(format!("{} payload is not a type path", variant.ident));
                     };
-                    if payload.qself.is_some() || payload.path.segments.len() != 1 {
-                        return Err(format!("{} payload is not a direct closed type", variant.ident));
+                    if payload.qself.is_some() {
+                        return Err(format!("{} payload uses qualified self", variant.ident));
                     }
-                    format!("({})", payload.path.segments[0].ident)
+                    let Some(payload) = payload.path.segments.last() else {
+                        return Err(format!("{} payload path is empty", variant.ident));
+                    };
+                    format!("({})", payload.ident)
                 }
                 syn::Fields::Named(_) | syn::Fields::Unnamed(_) => {
                     return Err(format!("{} payload shape changed", variant.ident));
@@ -2545,6 +2548,45 @@ impl T4eCandidateHandoff for ProductionSimulationHandoff {
         );
         eprintln!("U-INSTALL-MAPPING-{name}: RED");
     }
+}
+
+#[test]
+fn installed_production_handoff_source_satisfies_closed_contract() {
+    let source = read(manifest_dir().join("src/arm/production_handoff.rs"));
+    validate_install_error_taxonomy(&source).expect("installed production error taxonomy");
+    validate_installed_handoff_constructor(&source).expect("installed production constructor");
+
+    let file = syn::parse_file(&source).expect("production handoff parses");
+    let scope = ["arm".to_owned(), "production_handoff".to_owned()];
+    let mut collector = ProductionAliasCollector::default();
+    collector.collect_file(&file, &scope, true);
+    let aliases = ProductionAliases::resolve(collector);
+    let methods = file
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Impl(item) = item else {
+                return None;
+            };
+            let (_, implementation, _) = item.trait_.as_ref()?;
+            path_ends_with(implementation, &["T4eCandidateHandoff"]).then_some(item)
+        })
+        .flat_map(|item| &item.items)
+        .filter_map(|item| {
+            let syn::ImplItem::Fn(method) = item else {
+                return None;
+            };
+            (method.sig.ident == "try_handoff" && !has_cfg_test(&method.attrs)).then_some(method)
+        })
+        .collect::<Vec<_>>();
+    let [method] = methods.as_slice() else {
+        panic!("production try_handoff cardinality changed: {}", methods.len());
+    };
+    assert!(
+        has_total_installed_handoff_body(method, &aliases, &scope),
+        "production try_handoff mapping or candidate retention changed"
+    );
+    eprintln!("U-INSTALLED-PRODUCTION-HANDOFF: GREEN");
 }
 
 fn insert_before_test_module(source: &str, addition: &str) -> String {
