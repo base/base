@@ -47,6 +47,20 @@ pub use simulation_store::{
     SimulationPersistError, SimulationPersisted, SimulationStore, SimulationStoreOpenError,
     SimulationStoreOperation,
 };
+mod settled_loss;
+pub use settled_loss::{
+    ACCEPTED_HEAD_BYTES, BlockNumHash, BoundedUnresolvedSummaryV1, CanonicalMismatchClass,
+    FinalizedChainAuthority, FinalizedChainError, FrozenP2PopulationManifestV1,
+    INSTALL_BUNDLE_DOMAIN, MAX_CANONICAL_POPULATION_BYTES, MAX_CANONICAL_PROJECTION_BYTES,
+    MAX_FINALIZED_HEAD_LAG, MAX_POPULATION_MANIFEST_BYTES, MAX_PROJECTION_BYTES,
+    MAX_TERMINAL_ENTRIES, NodeLocalSettledLossAuthority, P2_POPULATION_MANIFEST_PATH,
+    POPULATION_CLOSURE_DOMAIN, PreparedSettledLossAuthority, R9_CLAIM_STORE_PATH,
+    SETTLED_LOSS_ANCHOR_PATH, SETTLED_LOSS_CHAIN_ID, SETTLED_LOSS_DOMAIN,
+    SETTLED_LOSS_PROJECTION_PATH, SETTLED_LOSS_SCHEMA_VERSION, SOURCE_ENTRY_BYTES, SettledLossLoad,
+    SettledLossUnavailableReason, SourceSubmissionManifestEntryV1, T4E_INSTALL_BUNDLE_PATH,
+    TERMINAL_ENTRY_BYTES, TerminalKindV1, TerminalSettlementEntryV1,
+    TerminalSettlementProjectionV1, UnresolvedReasonV1,
+};
 mod request;
 mod suppression;
 mod transport;

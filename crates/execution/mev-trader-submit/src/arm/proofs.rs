@@ -17,14 +17,36 @@
 use alloy_primitives::{Address, B256, Signature, keccak256};
 use base_mev_trader::{CampaignId, OWNER_ATTEST_ADDRESS, StoreIdentity};
 
-use super::suppression::{SuppressionEpochStore, SuppressionFileStore};
-use super::witness::CHAIN_ID_BASE;
+use super::{
+    settled_loss::verify_signature_shape,
+    suppression::{SuppressionEpochStore, SuppressionFileStore},
+    witness::CHAIN_ID_BASE,
+};
 
 // -- domain tags (byte-exact) -------------------------------------------------
 
 const G7_DOMAIN: &[u8] = b"base-mev/g7-closure/v1";
 const LIVE_DOMAIN: &[u8] = b"base-mev/live-run/v1";
 const DEPLOY_DOMAIN: &[u8] = b"base-mev/deploy/v1";
+
+/// Precise checked proof verification failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofVerificationError {
+    /// Signature bytes are not canonical or cannot recover.
+    CanonicalSignature,
+    /// The recovered signer differs from the compile-pinned owner.
+    SignerMismatch,
+    /// Authenticated campaign identities differ.
+    CampaignMismatch,
+    /// The live window has not begun.
+    WindowNotStarted,
+    /// The attestation is expired.
+    Expired,
+    /// Deployment chain, code, or identity evidence differs.
+    DeploymentIdentity,
+    /// The node-local committed-state provider is unavailable.
+    ProviderUnavailable,
+}
 
 /// EIP-191 recover-and-compare: returns true iff the 65-byte signature recovers to
 /// `owner` over `preimage`. Any malformed signature or recovery failure is false.
@@ -33,6 +55,23 @@ fn recover_matches(preimage: &[u8], signature: &[u8; 65], owner: Address) -> boo
         return false;
     };
     parsed.recover_address_from_msg(preimage).is_ok_and(|recovered| recovered == owner)
+}
+
+fn recover_owner_checked(
+    preimage: &[u8],
+    signature: &[u8; 65],
+) -> Result<(), ProofVerificationError> {
+    verify_signature_shape(signature).map_err(|_| ProofVerificationError::CanonicalSignature)?;
+    let owner = OWNER_ATTEST_ADDRESS.ok_or(ProofVerificationError::SignerMismatch)?;
+    let parsed = Signature::from_raw_array(signature)
+        .map_err(|_| ProofVerificationError::CanonicalSignature)?;
+    let recovered = parsed
+        .recover_address_from_msg(preimage)
+        .map_err(|_| ProofVerificationError::CanonicalSignature)?;
+    if recovered != owner {
+        return Err(ProofVerificationError::SignerMismatch);
+    }
+    Ok(())
 }
 
 // -- CodeHashProvider (keyless, in-process) -----------------------------------
@@ -124,8 +163,20 @@ pub struct G7Attestation {
 impl G7Attestation {
     /// Verifies against the compile-pinned owner and `expiry_unix > now`.
     pub fn verify(payload: &G7Payload, signature: &[u8; 65], now: u64) -> Option<Self> {
-        let owner = OWNER_ATTEST_ADDRESS?;
-        Self::verify_inner(payload, signature, now, owner)
+        Self::verify_checked(payload, signature, now).ok()
+    }
+
+    /// Verifies with precise failure semantics against the compile-pinned owner.
+    pub fn verify_checked(
+        payload: &G7Payload,
+        signature: &[u8; 65],
+        now: u64,
+    ) -> Result<Self, ProofVerificationError> {
+        if payload.expiry_unix <= now {
+            return Err(ProofVerificationError::Expired);
+        }
+        recover_owner_checked(&payload.preimage(), signature)?;
+        Ok(Self { campaign_id: payload.campaign_id, expiry_unix: payload.expiry_unix })
     }
 
     fn verify_inner(
@@ -205,8 +256,27 @@ pub struct LiveRunAttestation {
 impl LiveRunAttestation {
     /// Verifies against the compile-pinned owner and `window_start <= now < expiry`.
     pub fn verify(payload: &LiveRunPayload, signature: &[u8; 65], now: u64) -> Option<Self> {
-        let owner = OWNER_ATTEST_ADDRESS?;
-        Self::verify_inner(payload, signature, now, owner)
+        Self::verify_checked(payload, signature, now).ok()
+    }
+
+    /// Verifies with precise failure semantics against the compile-pinned owner.
+    pub fn verify_checked(
+        payload: &LiveRunPayload,
+        signature: &[u8; 65],
+        now: u64,
+    ) -> Result<Self, ProofVerificationError> {
+        if now < payload.window_start {
+            return Err(ProofVerificationError::WindowNotStarted);
+        }
+        if now >= payload.expiry_unix {
+            return Err(ProofVerificationError::Expired);
+        }
+        recover_owner_checked(&payload.preimage(), signature)?;
+        Ok(Self {
+            campaign_id: payload.campaign_id,
+            window_start: payload.window_start,
+            expiry_unix: payload.expiry_unix,
+        })
     }
 
     fn verify_inner(
@@ -347,8 +417,32 @@ impl DeploymentEvidence {
         signature: &[u8; 65],
         provider: &dyn CodeHashProvider,
     ) -> Option<Self> {
-        let owner = OWNER_ATTEST_ADDRESS?;
-        Self::verify_inner(payload, signature, provider, owner)
+        Self::verify_checked(payload, signature, provider).ok()
+    }
+
+    /// Verifies the owner signature, Base identity, and node-local runtime code with precise errors.
+    pub fn verify_checked(
+        payload: &DeploymentPayload,
+        signature: &[u8; 65],
+        provider: &dyn CodeHashProvider,
+    ) -> Result<Self, ProofVerificationError> {
+        if payload.chain_id != CHAIN_ID_BASE {
+            return Err(ProofVerificationError::DeploymentIdentity);
+        }
+        recover_owner_checked(&payload.preimage(), signature)?;
+        let onchain = provider
+            .code_hash_at_latest_committed(payload.executor)
+            .map_err(|_| ProofVerificationError::ProviderUnavailable)?;
+        if onchain != payload.code_hash {
+            return Err(ProofVerificationError::DeploymentIdentity);
+        }
+        Ok(Self {
+            executor: payload.executor,
+            code_hash: payload.code_hash,
+            binary_digest: payload.binary_digest,
+            deployment_digest: payload.deployment_digest,
+            r9_store_identity: payload.r9_store_identity,
+        })
     }
 
     fn verify_inner(
@@ -434,14 +528,19 @@ mod tests {
         // Expiry not strictly after now -> fail-closed.
         let payload = G7Payload { campaign_id: campaign(), g7_closure_epoch: 7, expiry_unix: now };
         let sig = tk::eip191_sign(&payload.preimage(), &tk::owner_key());
-        assert!(G7Attestation::verify_with_owner(&payload, &sig, now, tk::owner_address()).is_none());
+        assert!(
+            G7Attestation::verify_with_owner(&payload, &sig, now, tk::owner_address()).is_none()
+        );
 
         // Field mutation: a signature over a different payload does not verify.
-        let other = G7Payload { campaign_id: campaign(), g7_closure_epoch: 9, expiry_unix: now + 100 };
+        let other =
+            G7Payload { campaign_id: campaign(), g7_closure_epoch: 9, expiry_unix: now + 100 };
         let sig_other = tk::eip191_sign(&other.preimage(), &tk::owner_key());
-        let target = G7Payload { campaign_id: campaign(), g7_closure_epoch: 7, expiry_unix: now + 100 };
+        let target =
+            G7Payload { campaign_id: campaign(), g7_closure_epoch: 7, expiry_unix: now + 100 };
         assert!(
-            G7Attestation::verify_with_owner(&target, &sig_other, now, tk::owner_address()).is_none()
+            G7Attestation::verify_with_owner(&target, &sig_other, now, tk::owner_address())
+                .is_none()
         );
 
         // Wrong owner.
@@ -460,16 +559,23 @@ mod tests {
         assert!(attest.covers(campaign()));
 
         // Before window start.
-        let payload = LiveRunPayload { campaign_id: campaign(), window_start: now + 1, expiry_unix: now + 10 };
+        let payload = LiveRunPayload {
+            campaign_id: campaign(),
+            window_start: now + 1,
+            expiry_unix: now + 10,
+        };
         let sig = tk::eip191_sign(&payload.preimage(), &tk::owner_key());
         assert!(
-            LiveRunAttestation::verify_with_owner(&payload, &sig, now, tk::owner_address()).is_none()
+            LiveRunAttestation::verify_with_owner(&payload, &sig, now, tk::owner_address())
+                .is_none()
         );
         // At/after expiry.
-        let payload2 = LiveRunPayload { campaign_id: campaign(), window_start: 0, expiry_unix: now };
+        let payload2 =
+            LiveRunPayload { campaign_id: campaign(), window_start: 0, expiry_unix: now };
         let sig2 = tk::eip191_sign(&payload2.preimage(), &tk::owner_key());
         assert!(
-            LiveRunAttestation::verify_with_owner(&payload2, &sig2, now, tk::owner_address()).is_none()
+            LiveRunAttestation::verify_with_owner(&payload2, &sig2, now, tk::owner_address())
+                .is_none()
         );
     }
 
@@ -491,7 +597,8 @@ mod tests {
         assert_eq!(evidence.r9_store_identity(), store);
 
         // On-chain code hash mismatch -> None.
-        let wrong_chain = tk::FakeProvider { code_hash: B256::repeat_byte(0x99), block: 100, fail: false };
+        let wrong_chain =
+            tk::FakeProvider { code_hash: B256::repeat_byte(0x99), block: 100, fail: false };
         let payload = DeploymentPayload {
             chain_id: tk::CHAIN_ID,
             executor: tk::EXECUTOR,
@@ -502,8 +609,13 @@ mod tests {
         };
         let sig = tk::eip191_sign(&payload.preimage(), &tk::owner_key());
         assert!(
-            DeploymentEvidence::verify_with_owner(&payload, &sig, &wrong_chain, tk::owner_address())
-                .is_none()
+            DeploymentEvidence::verify_with_owner(
+                &payload,
+                &sig,
+                &wrong_chain,
+                tk::owner_address()
+            )
+            .is_none()
         );
         // Provider failure -> None.
         let failing = tk::FakeProvider { code_hash, block: 0, fail: true };

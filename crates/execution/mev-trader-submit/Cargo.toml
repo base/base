@@ -41,6 +41,7 @@ t4e-handoff = ["arm", "t4d-bridge"]
 # is the further-gated `arm-live-egress`. `arm` alone is broadcastability-0.
 arm = [
     "phase-b",
+    "dep:libc",
     "dep:redb",
     "dep:serde_json",
     "dep:sha2",
@@ -77,6 +78,7 @@ alloy-primitives = { workspace = true, features = ["std"], optional = true }
 alloy-sol-types = { workspace = true, features = ["std"], optional = true }
 k256 = { workspace = true, optional = true }
 rand_08 = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 # arm-tier optional deps (pulled only by `arm` / `arm-live-egress`).
 zeroize = { workspace = true, optional = true }
 redb = { workspace = true, optional = true }

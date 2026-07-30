@@ -45,6 +45,23 @@ pub trait CommittedStateAuthority {
     ) -> Result<Option<alloy_primitives::U256>, ProviderError>;
 }
 
+impl<A: CommittedStateAuthority + ?Sized> CommittedStateAuthority for std::sync::Arc<A> {
+    fn code_at_latest_committed(&self, address: Address) -> Result<Vec<u8>, ProviderError> {
+        (**self).code_at_latest_committed(address)
+    }
+
+    fn latest_committed_block(&self) -> Result<u64, ProviderError> {
+        (**self).latest_committed_block()
+    }
+
+    fn native_balance_at_latest_committed(
+        &self,
+        address: Address,
+    ) -> Result<Option<alloy_primitives::U256>, ProviderError> {
+        (**self).native_balance_at_latest_committed(address)
+    }
+}
+
 /// Production adapter from the node's committed-state authority to arm code-hash freshness.
 #[derive(Debug)]
 pub struct ProductionCodeHashProvider<A> {
