@@ -161,6 +161,7 @@ fn validate_s2_metadata(metadata: &serde_json::Value) -> Result<(), String> {
         "arm",
         &[
             "phase-b",
+            "dep:libc",
             "dep:redb",
             "dep:serde_json",
             "dep:sha2",
@@ -210,6 +211,7 @@ fn validate_s2_metadata(metadata: &serde_json::Value) -> Result<(), String> {
         "alloy-sol-types",
         "base-mev-trader",
         "k256",
+        "libc",
         "rand_08",
         "redb",
         "reqwest",
