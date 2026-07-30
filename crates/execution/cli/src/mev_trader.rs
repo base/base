@@ -80,6 +80,8 @@ use mev_trader_submit::{
     PriorityEconomicsAuthority, SnapshotFreshnessToken, TxAuthorityAssembler, TxAuthorityError,
     TxAuthorityNodeError, TxAuthorityNodeView, TxAuthorityStateRead, ValidatedUnsignedAtomicTx,
 };
+#[cfg(feature = "arm-sim")]
+use mev_trader_submit::{SimulationEntrypointStatus, UnavailableSimulationHandoff};
 #[cfg(feature = "t4e-handoff")]
 use mev_trader_submit::{T4eCandidateHandoff, T4eHandoffError};
 #[cfg(feature = "t4b-shadow")]
@@ -8385,6 +8387,8 @@ pub struct BaseNodeTraderConfig {
     t4d_shadow: bool,
     #[cfg(feature = "t4e-handoff")]
     t4e_handoff: Option<Arc<dyn T4eCandidateHandoff>>,
+    #[cfg(feature = "arm-sim")]
+    arm_sim_status: SimulationEntrypointStatus,
     #[cfg(feature = "edge-measurement")]
     edge_measurement: Result<Option<EdgeCliProducerConfigV1>, String>,
 }
@@ -8434,13 +8438,21 @@ impl BaseNodeTraderConfig {
         }
         let config = flashblocks_config.as_ref()?;
         let credential_file = std::env::var_os("MEV_TRADER_BLINK_CREDENTIAL_FILE");
+        #[cfg(feature = "arm-sim")]
+        let arm_sim_handoff = UnavailableSimulationHandoff::deferred_production();
+        #[cfg(feature = "arm-sim")]
+        let arm_sim_status = arm_sim_handoff.status();
         Some(Self {
             flashblocks: Arc::clone(&config.state),
             credential_file,
             t4a_shadow: Self::t4a_shadow_enabled(),
             t4b_shadow: Self::t4b_shadow_enabled(),
             t4d_shadow: Self::t4d_shadow_enabled(),
-            #[cfg(feature = "t4e-handoff")]
+            #[cfg(feature = "arm-sim")]
+            t4e_handoff: Some(arm_sim_handoff.into_handoff()),
+            #[cfg(feature = "arm-sim")]
+            arm_sim_status,
+            #[cfg(all(feature = "t4e-handoff", not(feature = "arm-sim")))]
             t4e_handoff: None,
             #[cfg(feature = "edge-measurement")]
             edge_measurement: EdgeCliProducerConfigV1::from_environment(),
@@ -8636,6 +8648,12 @@ impl FromExtensionConfig for BaseNodeTraderExtension {
 impl BaseNodeExtension for BaseNodeTraderExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         hooks.add_node_started_hook(move |node| {
+            #[cfg(feature = "arm-sim")]
+            tracing::error!(
+                status = ?self.config.arm_sim_status,
+                follow_up = "Production T4e Simulation Installation + Settled-Loss Authority",
+                "arm simulation production installation deferred; rejecting candidate handoff"
+            );
             let chain_spec = node.chain_spec();
             let port = Arc::new(CliTraderSnapshotPort::new(
                 Arc::clone(&self.config.flashblocks),
@@ -10330,6 +10348,12 @@ mod tests {
             t4a_shadow: false,
             t4b_shadow: false,
             t4d_shadow: false,
+            #[cfg(feature = "t4e-handoff")]
+            t4e_handoff: None,
+            #[cfg(feature = "arm-sim")]
+            arm_sim_status: SimulationEntrypointStatus::Unavailable(
+                mev_trader_submit::SimulationEntrypointUnavailable::ProductionInstallationDeferred,
+            ),
             edge_measurement,
         };
         let mut start = config.start_idle().expect("production node-start payload");
@@ -10396,10 +10420,17 @@ mod tests {
 
     #[cfg(feature = "t4d-shadow")]
     #[test]
-    fn t4d_shadow_drain_observes_only_bounded_bindings_and_drops_linear_candidate() {
+    fn t4d_shadow_drain_passes_only_the_linear_candidate_to_handoff() {
         const SOURCE: &str = include_str!("mev_trader.rs");
-        let bounded = SOURCE.split_once("fn observe_bounded_bindings").expect("observer").1;
-        assert!(bounded.contains("bindings = ?bindings"));
+        let bounded = SOURCE
+            .split_once("mod t4d_shadow")
+            .expect("T4d module")
+            .1
+            .split_once("#[cfg(test)]")
+            .expect("test boundary")
+            .0;
+        assert!(bounded.contains("assemble_sealed(view)"));
+        assert!(bounded.contains("self.handoff.try_handoff(candidate)"));
         for forbidden in ["unsigned_tx", "calldata", "raw_tx"] {
             assert!(!bounded.contains(forbidden));
         }

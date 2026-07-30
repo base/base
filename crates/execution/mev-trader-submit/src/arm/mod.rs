@@ -31,6 +31,20 @@ mod fail_sink;
 pub use fail_sink::ArmedFailSink;
 mod proofs;
 mod providers;
+mod simulation_entrypoint;
+#[cfg(feature = "t4e-handoff")]
+pub use simulation_entrypoint::UnavailableSimulationHandoff;
+pub use simulation_entrypoint::{
+    SimulationEntrypoint, SimulationEntrypointStatus, SimulationEntrypointTerminal,
+    SimulationEntrypointUnavailable, SimulationLedgerClosure,
+};
+mod simulation_store;
+pub use simulation_store::{
+    SIMULATION_LEDGER_PATH, SIMULATION_RECORD_CAPACITY, SIMULATION_RECORD_MAX_BYTES,
+    SimulationCorrelationEnvelopeV1, SimulationLedgerEpoch, SimulationLedgerInvalid,
+    SimulationPersistError, SimulationPersisted, SimulationStore, SimulationStoreOpenError,
+    SimulationStoreOperation,
+};
 mod request;
 mod suppression;
 mod transport;
@@ -54,8 +68,8 @@ pub use suppression::SuppressionRollbackError;
 pub use suppression::provision_suppression_anchor;
 pub use transport::{
     AttributionRetryToken, BackendPermit, EgressPlan, LiveLockClosed, RawBackend, RawEgress,
-    RuntimeBackend, SimBackend, SimEgressPermit, SimulationAttempt, SimulationRecord,
-    SubmissionAttempt, SubmitOutcome, send_gated,
+    RuntimeBackend, SimBackend, SimEgressPermit, SimulationAttempt, SimulationCorrelationKey,
+    SimulationRecord, SubmissionAttempt, SubmitOutcome, send_gated,
 };
 #[cfg(all(feature = "arm-live-egress", not(test)))]
 pub use transport::{LiveEgressPermit, ProdBackend};

@@ -14,13 +14,15 @@ use syn::{ext::IdentExt, visit::Visit};
 
 /// The exact production files under `src/arm/`. A NEW arm file must be added here
 /// (and re-reviewed) before it can ship (b7, fail-closed).
-const ARM_FILES: [&str; 10] = [
+const ARM_FILES: [&str; 12] = [
     "claim.rs",
     "custody.rs",
     "fail_sink.rs",
     "mod.rs",
     "proofs.rs",
     "providers.rs",
+    "simulation_entrypoint.rs",
+    "simulation_store.rs",
     "request.rs",
     "suppression.rs",
     "transport.rs",
@@ -196,14 +198,23 @@ fn arm_source_is_exactly_the_declared_set() {
 /// The complete root API. T4e adds the unsigned handoff/provider contract; S1-b
 /// adds only the sealed runtime selection and its two reviewed backends. Signing,
 /// raw permits, concrete freshness providers, and proof APIs remain private.
-const PUBLIC_API_ALLOWLIST: [&str; 8] = [
+const PUBLIC_API_ALLOWLIST: [&str; 17] = [
     "CheckedCandidate",
     "CodeHashProvider",
     "ProdBackend",
     "ProviderError",
     "RuntimeBackend",
     "SimBackend",
+    "SimulationCorrelationEnvelopeV1",
+    "SimulationCorrelationKey",
+    "SimulationEntrypointStatus",
+    "SimulationEntrypointUnavailable",
+    "SimulationLedgerClosure",
+    "SimulationLedgerEpoch",
+    "SimulationLedgerInvalid",
+    "SimulationStoreOperation",
     "SuppressionRollbackError",
+    "UnavailableSimulationHandoff",
     "provision_suppression_anchor",
 ];
 
@@ -343,6 +354,8 @@ fn reviewed_arm_module_tree(root: &Path) -> Result<(), String> {
         "fail_sink",
         "proofs",
         "providers",
+        "simulation_entrypoint",
+        "simulation_store",
         "request",
         "suppression",
         "transport",
@@ -1126,6 +1139,8 @@ fn arm_submodules_are_private() {
         "fail_sink",
         "proofs",
         "providers",
+        "simulation_entrypoint",
+        "simulation_store",
         "request",
         "suppression",
         "transport",
@@ -1154,6 +1169,26 @@ fn t4d_arm_surface_has_only_the_reviewed_unsigned_candidate_handoff() {
         public, expected,
         "arm PUBLIC exported-name set does not match the allowlist (alias to a non-allowlisted name?)"
     );
+    let store = arm_production("simulation_store.rs");
+    assert!(
+        !store.contains("pub struct SimulationLedgerHead")
+            && !store.contains("pub(crate) struct SimulationLedgerHead"),
+        "ledger head must remain private"
+    );
+    assert_eq!(
+        inherent_method_surface(&store, "SimulationLedgerEpoch"),
+        BTreeSet::from(["as_bytes".to_owned()]),
+        "ledger epoch constructor or mutator escaped"
+    );
+    assert_eq!(
+        inherent_method_surface(&store, "SimulationCorrelationEnvelopeV1"),
+        BTreeSet::from([
+            "correlation_key".to_owned(),
+            "ledger_epoch".to_owned(),
+            "sequence".to_owned(),
+        ]),
+        "correlation envelope constructor or mutator escaped"
+    );
     let lib = std::fs::read_to_string(manifest_dir().join("src").join("lib.rs")).expect("lib.rs");
     let parsed = parse(&lib);
     let arm_exports = parsed
@@ -1175,7 +1210,7 @@ fn t4d_arm_surface_has_only_the_reviewed_unsigned_candidate_handoff() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(arm_exports.len(), 4, "arm root surface must be four reviewed facades");
+    assert_eq!(arm_exports.len(), 6, "arm root surface must be six reviewed facades");
     let gates = arm_exports
         .iter()
         .map(|item| {
@@ -3070,8 +3105,8 @@ fn runtime_switch_and_funds_lock_sources_are_pinned() {
     let mut all_sequence_calls = SharedSequenceCalls::default();
     all_sequence_calls.visit_file(&parsed_full_transport);
     assert_eq!(
-        all_sequence_calls.0, 7,
-        "one production plus six test calls must share the sole sequence"
+        all_sequence_calls.0, 8,
+        "one production plus seven test calls must share the sole sequence"
     );
     let production_backend = transport
         .split_once("impl RawBackend for ProdBackend")
@@ -3101,13 +3136,21 @@ fn runtime_switch_and_funds_lock_sources_are_pinned() {
         assert!(!flag_block.contains(forbidden), "live flag gained forbidden source `{forbidden}`");
     }
     let cli_manifest = std::fs::read_to_string(cli_dir.join("Cargo.toml")).expect("CLI manifest");
+    assert!(
+        cli_manifest
+            .contains("arm-sim = [\n    \"t4e-handoff\",\n    \"mev-trader-submit/arm\",\n]")
+    );
     assert!(cli_manifest.contains(
-        "arm-live-egress = [\n    \"dep:mev-trader-submit\",\n    \"mev-trader-submit/arm-live-egress\",\n]"
+        "arm-live-egress = [\n    \"arm-sim\",\n    \"dep:mev-trader-submit\",\n    \"mev-trader-submit/arm-live-egress\",\n]"
     ));
     let node_manifest =
         std::fs::read_to_string(manifest_dir().join("../../../bin/node/Cargo.toml"))
             .expect("node manifest");
-    assert!(node_manifest.contains("arm-live-egress = [ \"base-execution-cli/arm-live-egress\" ]"));
+    assert!(node_manifest.contains("arm-sim = [ \"base-execution-cli/arm-sim\" ]"));
+    assert!(
+        node_manifest
+            .contains("arm-live-egress = [ \"arm-sim\", \"base-execution-cli/arm-live-egress\" ]")
+    );
 }
 
 #[test]

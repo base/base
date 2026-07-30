@@ -49,22 +49,51 @@ impl RequestSpec {
     pub fn body(&self) -> &[u8] {
         &self.body
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_simulation_store_test(channel: Channel) -> Self {
+        let method = match channel {
+            Channel::Inclusion => "eth_sendRawTransaction",
+            Channel::Attribution => "eth_sendBundle",
+        };
+        Self { channel, endpoint: BASE_NODE_RPC, method, body: Vec::new() }
+    }
+}
+fn encode_body(body: &serde_json::Value) -> Vec<u8> {
+    let encoded =
+        serde_json::to_vec(body).expect("serializing an internally built JSON value cannot fail");
+    debug_assert!(!encoded.is_empty(), "a JSON value always has a nonempty encoding");
+    encoded
+}
+fn inclusion_body(raw_hex: String) -> Vec<u8> {
+    encode_body(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_sendRawTransaction",
+        "params": [raw_hex],
+    }))
+}
+
+fn attribution_body(victim_hex: String, backrun_hex: String) -> Vec<u8> {
+    encode_body(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_sendBundle",
+        "params": [{
+            "txs": [victim_hex, backrun_hex],
+            "bidWei": "0",
+        }],
+    }))
 }
 
 /// Build the inclusion-channel `eth_sendRawTransaction` request for the backrun.
 pub(crate) fn build_inclusion(subm: &AuthorizedSignedSubmission) -> RequestSpec {
     let raw_hex = hex::encode_prefixed(subm.raw_tx().as_ref());
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "eth_sendRawTransaction",
-        "params": [raw_hex],
-    });
     RequestSpec {
         channel: Channel::Inclusion,
         endpoint: BASE_NODE_RPC,
         method: "eth_sendRawTransaction",
-        body: serde_json::to_vec(&body).unwrap_or_default(),
+        body: inclusion_body(raw_hex),
     }
 }
 
@@ -73,19 +102,50 @@ pub(crate) fn build_inclusion(subm: &AuthorizedSignedSubmission) -> RequestSpec 
 pub(crate) fn build_attribution(subm: &AuthorizedSignedSubmission) -> RequestSpec {
     let victim_hex = hex::encode_prefixed(subm.victim().as_slice());
     let backrun_hex = hex::encode_prefixed(subm.raw_tx().as_ref());
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "eth_sendBundle",
-        "params": [{
-            "txs": [victim_hex, backrun_hex],
-            "bidWei": "0",
-        }],
-    });
     RequestSpec {
         channel: Channel::Attribution,
         endpoint: BLINK_AUCTION_HOST,
         method: "eth_sendBundle",
-        body: serde_json::to_vec(&body).unwrap_or_default(),
+        body: attribution_body(victim_hex, backrun_hex),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inclusion_body_has_exact_nonempty_json_rpc_schema() {
+        let encoded = inclusion_body("0x0102".to_owned());
+
+        assert!(!encoded.is_empty());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&encoded).expect("valid JSON"),
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_sendRawTransaction",
+                "params": ["0x0102"],
+            }),
+        );
+    }
+
+    #[test]
+    fn attribution_body_has_exact_nonempty_ordered_bundle_schema_and_zero_bid() {
+        let encoded = attribution_body("0xvictim".to_owned(), "0xbackrun".to_owned());
+
+        assert!(!encoded.is_empty());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&encoded).expect("valid JSON"),
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_sendBundle",
+                "params": [{
+                    "txs": ["0xvictim", "0xbackrun"],
+                    "bidWei": "0",
+                }],
+            }),
+        );
     }
 }
