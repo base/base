@@ -1,0 +1,256 @@
+use alloc::{string::String, vec::Vec};
+
+use alloy_primitives::{Address, B256, FixedBytes, U256, keccak256};
+use alloy_sol_types::SolValue;
+use base_precompile_storage::{BasePrecompileError, Result};
+
+use crate::IB20;
+
+/// ERC-5267 `eip712Domain()` return tuple: (fields, name, version, chainId, verifyingContract, salt, extensions).
+pub type Eip712Domain = (FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>);
+
+/// Arguments for an EIP-2612 `permit`, grouping the ABI fields.
+///
+/// Hashing and signer recovery live here so every token variant's versioned `permit` logic derives
+/// the same digest from the same fields; the surrounding authorization and domain construction stay
+/// with each version.
+#[derive(Clone, Debug)]
+pub struct PermitArgs {
+    /// Token owner whose allowance is being set.
+    pub owner: Address,
+    /// Account being granted the allowance.
+    pub spender: Address,
+    /// Allowance amount.
+    pub value: U256,
+    /// Unix timestamp after which the signature is no longer valid.
+    pub deadline: U256,
+    /// Signature recovery id: 27 or 28.
+    pub v: u8,
+    /// Signature `r` component.
+    pub r: B256,
+    /// Signature `s` component.
+    pub s: B256,
+}
+
+impl PermitArgs {
+    /// `keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)")`
+    pub const TYPEHASH: B256 =
+        alloy_primitives::b256!("6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9");
+
+    /// EIP-191 prefix for structured data, followed by the EIP-712 version byte.
+    pub const EIP712_SIGNING_PREFIX: [u8; 2] = [0x19, 0x01];
+
+    /// Legacy `v` value for even-Y ECDSA recovery (`ecrecover`).
+    pub const RECOVERY_ID_EVEN_Y: u8 = 27;
+    /// Legacy `v` value for odd-Y ECDSA recovery (`ecrecover`).
+    pub const RECOVERY_ID_ODD_Y: u8 = 28;
+
+    /// Hashes the EIP-2612 `Permit` struct for `nonce`.
+    pub fn struct_hash(&self, nonce: U256) -> B256 {
+        keccak256(
+            (Self::TYPEHASH, self.owner, self.spender, self.value, nonce, self.deadline)
+                .abi_encode(),
+        )
+    }
+
+    /// Builds the EIP-712 signing digest: `keccak256("\x19\x01" ‖ domainSeparator ‖ structHash)`.
+    pub fn signing_hash(&self, domain_separator: B256, nonce: U256) -> B256 {
+        let struct_hash = self.struct_hash(nonce);
+        let mut buf = [0u8; 66];
+        buf[..2].copy_from_slice(&Self::EIP712_SIGNING_PREFIX);
+        buf[2..34].copy_from_slice(domain_separator.as_slice());
+        buf[34..66].copy_from_slice(struct_hash.as_slice());
+        keccak256(buf)
+    }
+
+    /// Validates a recovered ECDSA address against the declared `owner`.
+    ///
+    /// Returns `Err(InvalidSigner)` when `recovered` is `Address::ZERO` (matching Solidity's
+    /// explicit zero-address guard) or when `recovered != owner`.
+    pub fn validate_recovered_address(recovered: Address, owner: Address) -> Result<()> {
+        if recovered.is_zero() || recovered != owner {
+            return Err(BasePrecompileError::revert(IB20::InvalidSigner {
+                signer: recovered,
+                owner,
+            }));
+        }
+        Ok(())
+    }
+
+    /// Maps Ethereum `v` (27/28) to secp256k1 recovery parity, then recovers the signer.
+    pub fn recover_signer(&self, signing_hash: B256) -> Result<Address> {
+        let odd_y_parity = match self.v {
+            Self::RECOVERY_ID_EVEN_Y => false,
+            Self::RECOVERY_ID_ODD_Y => true,
+            _ => {
+                return Err(BasePrecompileError::revert(IB20::InvalidSigner {
+                    signer: Address::ZERO,
+                    owner: self.owner,
+                }));
+            }
+        };
+
+        let sig =
+            alloy_primitives::Signature::from_scalars_and_parity(self.r, self.s, odd_y_parity);
+        sig.recover_address_from_prehash(&signing_hash).map_err(|_| {
+            BasePrecompileError::revert(IB20::InvalidSigner {
+                signer: Address::ZERO,
+                owner: self.owner,
+            })
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, B256, U256, keccak256};
+    use alloy_sol_types::SolValue;
+    use base_precompile_storage::BasePrecompileError;
+    use k256::ecdsa::SigningKey;
+
+    use crate::{IB20, PermitArgs};
+
+    const SPENDER: Address = Address::repeat_byte(0xbb);
+    const DOMAIN_SEPARATOR: B256 = B256::repeat_byte(0x77);
+
+    // Anvil/Hardhat account 0 — well-known test key, never use in production.
+    const PRIVATE_KEY: [u8; 32] =
+        alloy_primitives::hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+
+    fn owner_address() -> Address {
+        let key = SigningKey::from_slice(&PRIVATE_KEY).unwrap();
+        let point = key.verifying_key().to_encoded_point(false);
+        let hash = keccak256(&point.as_bytes()[1..]);
+        Address::from_slice(&hash[12..])
+    }
+
+    fn sample_permit_args(owner: Address) -> PermitArgs {
+        PermitArgs {
+            owner,
+            spender: SPENDER,
+            value: U256::from(500u64),
+            deadline: U256::MAX,
+            v: PermitArgs::RECOVERY_ID_EVEN_Y,
+            r: B256::ZERO,
+            s: B256::ZERO,
+        }
+    }
+
+    /// Signs `args` with [`PRIVATE_KEY`] against `DOMAIN_SEPARATOR` at `nonce`.
+    fn signed_permit_args(owner: Address, nonce: U256) -> PermitArgs {
+        let mut args = sample_permit_args(owner);
+        let signing_hash = args.signing_hash(DOMAIN_SEPARATOR, nonce);
+
+        let signing_key = SigningKey::from_slice(&PRIVATE_KEY).unwrap();
+        let (sig, recid) = signing_key.sign_prehash_recoverable(signing_hash.as_slice()).unwrap();
+        let sig_bytes = sig.to_bytes();
+        args.r = B256::from_slice(&sig_bytes[..32]);
+        args.s = B256::from_slice(&sig_bytes[32..]);
+        args.v = if recid.is_y_odd() {
+            PermitArgs::RECOVERY_ID_ODD_Y
+        } else {
+            PermitArgs::RECOVERY_ID_EVEN_Y
+        };
+        args
+    }
+
+    #[test]
+    fn permit_typehash_matches_permit_type_string() {
+        let permit_type =
+            b"Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)";
+        assert_eq!(PermitArgs::TYPEHASH, keccak256(permit_type));
+    }
+
+    #[test]
+    fn permit_args_struct_hash_matches_abi_encode() {
+        let owner = owner_address();
+        let args = sample_permit_args(owner);
+        let nonce = U256::from(3u64);
+        let expected = keccak256(
+            (PermitArgs::TYPEHASH, owner, SPENDER, args.value, nonce, args.deadline).abi_encode(),
+        );
+
+        assert_eq!(args.struct_hash(nonce), expected);
+    }
+
+    #[test]
+    fn permit_args_signing_hash_matches_eip712_digest() {
+        let owner = owner_address();
+        let args = sample_permit_args(owner);
+        let nonce = U256::ZERO;
+        let struct_hash = args.struct_hash(nonce);
+        let mut expected_preimage = [0u8; 66];
+        expected_preimage[..2].copy_from_slice(&[0x19, 0x01]);
+        expected_preimage[2..34].copy_from_slice(DOMAIN_SEPARATOR.as_slice());
+        expected_preimage[34..66].copy_from_slice(struct_hash.as_slice());
+
+        assert_eq!(args.signing_hash(DOMAIN_SEPARATOR, nonce), keccak256(expected_preimage));
+    }
+
+    #[test]
+    fn permit_args_signing_hash_differs_by_nonce() {
+        let owner = owner_address();
+        let args = sample_permit_args(owner);
+
+        assert_ne!(
+            args.signing_hash(DOMAIN_SEPARATOR, U256::ZERO),
+            args.signing_hash(DOMAIN_SEPARATOR, U256::ONE)
+        );
+    }
+
+    #[test]
+    fn validate_recovered_address_rejects_zero_address() {
+        let owner = Address::repeat_byte(0xaa);
+
+        assert_eq!(
+            PermitArgs::validate_recovered_address(Address::ZERO, owner).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidSigner { signer: Address::ZERO, owner })
+        );
+    }
+
+    #[test]
+    fn validate_recovered_address_rejects_wrong_signer() {
+        let owner = Address::repeat_byte(0xaa);
+        let wrong = Address::repeat_byte(0xbb);
+
+        assert_eq!(
+            PermitArgs::validate_recovered_address(wrong, owner).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidSigner { signer: wrong, owner })
+        );
+    }
+
+    #[test]
+    fn validate_recovered_address_accepts_matching_signer() {
+        let owner = Address::repeat_byte(0xaa);
+        PermitArgs::validate_recovered_address(owner, owner).unwrap();
+    }
+
+    #[test]
+    fn permit_args_recover_signer_returns_owner() {
+        let owner = owner_address();
+        let args = signed_permit_args(owner, U256::ZERO);
+        let signing_hash = args.signing_hash(DOMAIN_SEPARATOR, U256::ZERO);
+
+        assert_eq!(args.recover_signer(signing_hash).unwrap(), owner);
+    }
+
+    #[test]
+    fn permit_args_recover_signer_rejects_invalid_v() {
+        let owner = owner_address();
+        let mut args = sample_permit_args(owner);
+        args.v = 26;
+
+        assert_eq!(
+            args.recover_signer(B256::ZERO).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidSigner { signer: Address::ZERO, owner })
+        );
+    }
+
+    #[test]
+    fn permit_args_recover_signer_rejects_invalid_signature() {
+        let owner = owner_address();
+        let args = sample_permit_args(owner);
+
+        assert!(args.recover_signer(B256::repeat_byte(0x11)).is_err());
+    }
+}

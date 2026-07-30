@@ -1635,4 +1635,15 @@ mod tests {
         tok.accounting_mut().initialized = false;
         assert!(!LOGIC.is_initialized(&tok).unwrap());
     }
+
+    /// Pins this version's frozen EIP-712 domain typehash to the exact type string it must hash.
+    /// The constant is duplicated per version so each fork's wire surface stays independently
+    /// frozen; without this check a typo in one copy would silently change that version's digest.
+    #[test]
+    fn domain_typehash_matches_eip712_domain_type() {
+        let domain_type =
+            b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
+        assert_eq!(super::DOMAIN_TYPEHASH, keccak256(domain_type));
+        assert_eq!(super::VERSION, b"1");
+    }
 }
