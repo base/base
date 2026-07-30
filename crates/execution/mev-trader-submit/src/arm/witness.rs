@@ -213,10 +213,11 @@ impl AuthorizedCandidate {
     /// Issue authorization iff EVERY predicate holds. Consumes `ctx` (submit gate),
     /// the suppression clear, the G7 + live-run attestations, the R9 claim, and the
     /// deployment evidence, binding them to the candidate. Any mismatch is `None`.
-    // Production entrypoint (forward B5 API); tests drive `issue_checked` (a
-    // dependent crate cannot self-forge an armed `ArmedCriteria` — the armed
-    // constructor is `#[cfg(test)]`-only — so B5 injects a verified value from
-    // `base_mev_trader::production_arming_criteria`, which this crate never calls).
+    // Production entrypoint (forward B5 API); tests drive `issue_checked` to inject
+    // the gate outcome without invoking the production owner pin. A dependent crate
+    // can obtain the owner-pinned armed criterion through
+    // `base_mev_trader::production_arming_criteria`; B5 injects that verified value,
+    // and this crate never calls the owner-pin factory.
     // `too_many_arguments`: the proof-conjunction deliberately consumes
     // all five proofs + claim + candidate by value (linear ownership).
     #[allow(clippy::too_many_arguments)]
@@ -243,8 +244,8 @@ impl AuthorizedCandidate {
     /// bool. It is a module-private `fn` — NOT `pub` — so no code outside
     /// `witness.rs` (including post-G4 arm wiring) can invoke it to bypass the real
     /// `submit_gate`. Production `issue` derives `gate_open` from the real gate; the
-    /// test-only `issue_checked` seam wraps it (a dependent crate cannot ARM
-    /// `ArmedCriteria`, so the real gate can never open in-crate tests).
+    /// test-only `issue_checked` seam wraps it to inject a gate outcome without
+    /// invoking the production owner pin.
     #[allow(clippy::too_many_arguments)]
     fn issue_inner(
         gate_open: bool,
@@ -288,7 +289,7 @@ impl AuthorizedCandidate {
     }
 
     /// Test-only seam: exercise the proof-binding conjunction with the submit-gate
-    /// decision injected (a dependent crate cannot ARM `ArmedCriteria`). `#[cfg(test)]`
+    /// decision injected, without invoking the production owner pin. `#[cfg(test)]`
     /// so it can NEVER be reached by production/arm-wiring code.
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
@@ -497,9 +498,9 @@ pub struct FreshnessSources<'a> {
     pub(crate) deployment_identity: &'a dyn DeploymentIdentitySource,
     pub(crate) clock: &'a dyn TimeSource,
     pub(crate) sink: Arc<ArmedFailSink>,
-    /// Test-only: OR-inject an open submit gate (a dependent crate cannot ARM
-    /// `ArmedCriteria`). Never present in a non-test build; can only widen the gate
-    /// to `Open` in tests, never close a real gate.
+    /// Test-only: OR-inject an open submit gate without invoking the production owner
+    /// pin. Never present in a non-test build; can only widen the gate to `Open` in
+    /// tests, never close a real gate.
     #[cfg(test)]
     pub force_gate_open: bool,
 }
