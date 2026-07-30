@@ -11,11 +11,12 @@ use alloy_primitives::{B256, U256, aliases::U24, keccak256};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_sol_types::SolCall;
 use base_mev_trader::{BackrunPlan, ExactProtocol, MeasurementContext};
+#[cfg(feature = "arm")]
+use mev_trader_submit::{PriorityEconomicsAuthority, assembler::assemble_validated};
 use mev_trader_submit::{
-    PriorityEconomicsAuthority,
     assembler::{
         AssembleError, AssembleInput, HopExecutionParams, assemble_unsigned_atomic_tx,
-        assemble_validated, encode_executor_calldata,
+        encode_executor_calldata,
     },
     fee::{FeeParityError, fee_bps_for_executor},
 };
@@ -341,6 +342,7 @@ fn self_applying_hop_with_fractional_fee_emits_zero_feebps() {
 }
 
 #[test]
+#[cfg(feature = "arm")]
 fn arm_validated_path_requires_fresh_gas_and_l1_fee_authority() {
     let (victim_raw, victim_hash) = victim_with_priority(37);
     let plan = backrun_plan([ExactProtocol::UniswapV2, ExactProtocol::UniswapV2], victim_hash);
