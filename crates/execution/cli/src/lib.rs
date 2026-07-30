@@ -14,11 +14,12 @@ pub mod chainspec;
 /// Base CLI commands.
 pub mod commands;
 mod mev_trader;
-#[cfg(feature = "arm-sim")]
-pub use mev_trader::{CliCommittedStateAuthority, CliFinalizedChainAuthority};
+
 pub use mev_trader::{
     BaseNodeTraderConfig, BaseNodeTraderExtension, BaseNodeTraderStart, MevTraderPhaseAInstaller,
 };
+#[cfg(feature = "arm-sim")]
+pub use mev_trader::{CliCommittedStateAuthority, CliFinalizedChainAuthority};
 #[cfg(feature = "edge-measurement")]
 pub use mev_trader::{
     EdgeAccountingObjectContractRowV1, EdgeAccountingObjectKeysV1, EdgeAccountingRuleContractRowV1,
