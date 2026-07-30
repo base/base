@@ -40,11 +40,10 @@ pub use bls12_381::{
 mod common;
 pub use common::{
     B20_MAX_SUPPLY_CAP, B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole,
-    Burnable, Configurable, Eip712Domain, IB20, Mintable, Pausable, PermitArgs, Permittable,
-    RoleManaged, Token, TokenAccounting, Transferable,
+    Eip712Domain, IB20, PermitArgs, Token, TokenAccounting,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use common::{FakePolicyAccounting, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
+pub use common::{FakePolicyAccounting, InMemoryTokenAccounting, TestStablecoinToken};
 
 mod observer;
 pub use observer::{EndGuard, NoopPrecompileCallObserver, PrecompileCallObserver};
