@@ -31,10 +31,14 @@ ingress families can still exceed the current 5 Ti RDS ceiling. Treat the
 windows as tunable and re-check hot/warm GiB/day before locking mainnet
 producer enablement.
 
-The table is list-partitioned by `retention_class` and range-partitioned by UTC
-`ingested_at` day. An app-owned maintenance worker creates upcoming partitions
-and drops expired ones with `DROP TABLE` rather than row `DELETE`. Configure the
-windows with:
+Each retention class has an independent table (`transaction_events_hot`,
+`transaction_events_warm`, or `transaction_events_cold`) range-partitioned by
+UTC `ingested_at` day. Audit-archiver routes inserts to the matching table and
+continues to read from `transaction_events`. Migration 002 leaves the legacy
+heap untouched, so queries will not see newly written partitioned rows until a
+later migration replaces that heap with a union view of the same name. An
+app-owned maintenance worker creates upcoming partitions and drops expired ones
+with `DROP TABLE` rather than row `DELETE`. Configure the windows with:
 
 - `TIPS_AUDIT_TRANSACTION_EVENT_HOT_RETENTION_DAYS`
 - `TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS`

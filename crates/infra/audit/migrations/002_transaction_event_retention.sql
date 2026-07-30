@@ -1,9 +1,10 @@
--- Replace the heap transaction_events table with retention-class/list partitions
--- whose leaves are daily UTC ingested_at ranges. Existing rows are discarded;
--- pause producers before applying this migration.
-DROP TABLE IF EXISTS transaction_events;
+-- Add three independent retention tables, each range-partitioned by UTC
+-- ingested_at day. Keep the legacy transaction_events heap intact; a future
+-- migration may drop it and create a union view under that name.
 
-CREATE TABLE transaction_events (
+-- Define the row and index shape once, then copy it into each independent
+-- partitioned parent. LIKE copies definitions only; the template stays empty.
+CREATE TABLE transaction_events_template (
     event_id TEXT NOT NULL,
     retention_class TEXT NOT NULL,
     schema_version TEXT NOT NULL,
@@ -18,29 +19,43 @@ CREATE TABLE transaction_events (
     payload_id TEXT,
     request_id TEXT,
     data JSONB NOT NULL,
-    PRIMARY KEY (event_id, retention_class, ingested_at),
-    CONSTRAINT transaction_events_retention_class_check
-        CHECK (retention_class IN ('hot', 'warm', 'cold'))
-) PARTITION BY LIST (retention_class);
-
-CREATE TABLE transaction_events_hot
-    PARTITION OF transaction_events FOR VALUES IN ('hot')
-    PARTITION BY RANGE (ingested_at);
-CREATE TABLE transaction_events_warm
-    PARTITION OF transaction_events FOR VALUES IN ('warm')
-    PARTITION BY RANGE (ingested_at);
-CREATE TABLE transaction_events_cold
-    PARTITION OF transaction_events FOR VALUES IN ('cold')
-    PARTITION BY RANGE (ingested_at);
-
-CREATE TABLE transaction_event_partition_registry (
-    retention_class TEXT NOT NULL,
-    partition_day DATE NOT NULL,
-    partition_name NAME NOT NULL UNIQUE,
-    PRIMARY KEY (retention_class, partition_day),
-    CONSTRAINT transaction_event_partition_registry_class_check
-        CHECK (retention_class IN ('hot', 'warm', 'cold'))
+    PRIMARY KEY (event_id, ingested_at)
 );
+CREATE INDEX ON transaction_events_template (tx_hash, event_time)
+    WHERE tx_hash IS NOT NULL;
+CREATE INDEX ON transaction_events_template (block_number, event_time)
+    WHERE block_number IS NOT NULL;
+CREATE INDEX ON transaction_events_template (block_hash, event_time)
+    WHERE block_hash IS NOT NULL;
+CREATE INDEX ON transaction_events_template (payload_id, event_time)
+    WHERE payload_id IS NOT NULL;
+CREATE INDEX ON transaction_events_template (producer, event_type, event_time);
+CREATE INDEX ON transaction_events_template (event_type, event_time DESC)
+    WHERE event_type IN (
+        'PROXY_REJECTED',
+        'PROXY_VALIDATION_REJECTED',
+        'SIMULATION_FAILED',
+        'TXPOOL_VALIDATED_INSERT_REJECTED',
+        'BUILDER_REJECTED'
+    );
+CREATE INDEX ON transaction_events_template ((data->>'bundle_hash'), event_time)
+    WHERE data ? 'bundle_hash';
+CREATE INDEX ON transaction_events_template ((data->>'bundle_id'), event_time)
+    WHERE data ? 'bundle_id';
+
+CREATE TABLE transaction_events_hot (
+    LIKE transaction_events_template INCLUDING ALL
+) PARTITION BY RANGE (ingested_at);
+ALTER TABLE transaction_events_hot ADD CHECK (retention_class = 'hot');
+CREATE TABLE transaction_events_warm (
+    LIKE transaction_events_template INCLUDING ALL
+) PARTITION BY RANGE (ingested_at);
+ALTER TABLE transaction_events_warm ADD CHECK (retention_class = 'warm');
+CREATE TABLE transaction_events_cold (
+    LIKE transaction_events_template INCLUDING ALL
+) PARTITION BY RANGE (ingested_at);
+ALTER TABLE transaction_events_cold ADD CHECK (retention_class = 'cold');
+DROP TABLE transaction_events_template;
 
 CREATE FUNCTION create_transaction_event_partition(
     p_retention_class TEXT,
@@ -70,13 +85,6 @@ BEGIN
     upper_bound := (p_partition_day + 1)::TIMESTAMP AT TIME ZONE 'UTC';
 
     IF to_regclass('public.' || quote_ident(child_name::TEXT)) IS NOT NULL THEN
-        INSERT INTO public.transaction_event_partition_registry (
-            retention_class,
-            partition_day,
-            partition_name
-        )
-        VALUES (p_retention_class, p_partition_day, child_name)
-        ON CONFLICT (retention_class, partition_day) DO NOTHING;
         RETURN FALSE;
     END IF;
 
@@ -87,19 +95,13 @@ BEGIN
         lower_bound,
         upper_bound
     );
-    -- The parent key cannot enforce event_id uniqueness without both partition
-    -- keys. This leaf index preserves retry dedupe within a UTC ingest day.
+    -- Parent uniqueness must include ingested_at. Preserve retry dedupe within
+    -- each UTC ingest day with a leaf-local event_id index.
     EXECUTE format(
         'CREATE UNIQUE INDEX %I ON public.%I (event_id)',
         child_index_name,
         child_name
     );
-    INSERT INTO public.transaction_event_partition_registry (
-        retention_class,
-        partition_day,
-        partition_name
-    )
-    VALUES (p_retention_class, p_partition_day, child_name);
     RETURN TRUE;
 END
 $$;
@@ -122,36 +124,6 @@ BEGIN
 END
 $$;
 
-CREATE INDEX transaction_events_partitioned_tx_hash_event_time_idx
-    ON transaction_events (tx_hash, event_time)
-    WHERE tx_hash IS NOT NULL;
-CREATE INDEX transaction_events_partitioned_block_number_event_time_idx
-    ON transaction_events (block_number, event_time)
-    WHERE block_number IS NOT NULL;
-CREATE INDEX transaction_events_partitioned_block_hash_event_time_idx
-    ON transaction_events (block_hash, event_time)
-    WHERE block_hash IS NOT NULL;
-CREATE INDEX transaction_events_partitioned_payload_id_event_time_idx
-    ON transaction_events (payload_id, event_time)
-    WHERE payload_id IS NOT NULL;
-CREATE INDEX transaction_events_partitioned_producer_event_type_event_time_idx
-    ON transaction_events (producer, event_type, event_time);
-CREATE INDEX transaction_events_partitioned_rejected_event_time_idx
-    ON transaction_events (event_type, event_time DESC)
-    WHERE event_type IN (
-        'PROXY_REJECTED',
-        'PROXY_VALIDATION_REJECTED',
-        'SIMULATION_FAILED',
-        'TXPOOL_VALIDATED_INSERT_REJECTED',
-        'BUILDER_REJECTED'
-    );
-CREATE INDEX transaction_events_partitioned_bundle_hash_event_time_idx
-    ON transaction_events ((data->>'bundle_hash'), event_time)
-    WHERE data ? 'bundle_hash';
-CREATE INDEX transaction_events_partitioned_bundle_id_event_time_idx
-    ON transaction_events ((data->>'bundle_id'), event_time)
-    WHERE data ? 'bundle_id';
-
 CREATE FUNCTION maintain_transaction_event_partitions(
     p_now TIMESTAMPTZ,
     p_premake_days INTEGER,
@@ -171,6 +143,7 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
     class_name TEXT;
+    parent_name NAME;
     retention_days INTEGER;
     day_offset INTEGER;
     partition_record RECORD;
@@ -185,14 +158,14 @@ BEGIN
         RAISE EXCEPTION 'retention days must satisfy hot <= warm <= cold';
     END IF;
 
-    -- All audit-archiver replicas may run the worker. Only one performs DDL in
-    -- a maintenance transaction; the others safely return no rows.
+    -- Every audit-archiver replica may run the worker. Only one performs DDL.
     IF NOT pg_try_advisory_xact_lock(744697762131337711) THEN
         RETURN;
     END IF;
 
     FOREACH class_name IN ARRAY ARRAY['hot', 'warm', 'cold']
     LOOP
+        parent_name := ('transaction_events_' || class_name)::NAME;
         retention_days := CASE class_name
             WHEN 'hot' THEN p_hot_days
             WHEN 'warm' THEN p_warm_days
@@ -213,26 +186,32 @@ BEGIN
         END LOOP;
 
         FOR partition_record IN
-            SELECT registry.partition_day, registry.partition_name
-            FROM public.transaction_event_partition_registry AS registry
-            WHERE registry.retention_class = class_name
+            SELECT
+                child.relname AS partition_name,
+                to_date(right(child.relname, 8), 'YYYYMMDD') AS partition_day
+            FROM pg_inherits AS inheritance
+            JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
+            JOIN pg_class AS child ON child.oid = inheritance.inhrelid
+            WHERE parent.oid = to_regclass('public.' || quote_ident(parent_name::TEXT))
+              AND child.relname ~ ('^' || parent_name::TEXT || '_[0-9]{8}$')
               AND (
-                  (registry.partition_day + 1)::TIMESTAMP AT TIME ZONE 'UTC'
-              ) <= p_now - make_interval(days => retention_days)
-            ORDER BY registry.partition_day
+                  to_date(right(child.relname, 8), 'YYYYMMDD') + 1
+              )::TIMESTAMP AT TIME ZONE 'UTC'
+                  <= p_now - make_interval(days => retention_days)
+            ORDER BY partition_day
         LOOP
             EXECUTE format('DROP TABLE public.%I', partition_record.partition_name);
-            DELETE FROM public.transaction_event_partition_registry AS registry
-            WHERE registry.retention_class = class_name
-              AND registry.partition_day = partition_record.partition_day;
             partitions_dropped := partitions_dropped + 1;
         END LOOP;
 
         SELECT
-            min(registry.partition_day)::TIMESTAMP AT TIME ZONE 'UTC'
+            min(to_date(right(child.relname, 8), 'YYYYMMDD'))::TIMESTAMP AT TIME ZONE 'UTC'
         INTO oldest_partition_start
-        FROM public.transaction_event_partition_registry AS registry
-        WHERE registry.retention_class = class_name;
+        FROM pg_inherits AS inheritance
+        JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
+        JOIN pg_class AS child ON child.oid = inheritance.inhrelid
+        WHERE parent.oid = to_regclass('public.' || quote_ident(parent_name::TEXT))
+          AND child.relname ~ ('^' || parent_name::TEXT || '_[0-9]{8}$');
 
         RETURN NEXT;
     END LOOP;
@@ -251,8 +230,9 @@ REVOKE ALL ON FUNCTION maintain_transaction_event_partitions(
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'audit_archiver') THEN
-        GRANT SELECT, INSERT, UPDATE, DELETE ON transaction_events TO audit_archiver;
-        GRANT SELECT ON transaction_event_partition_registry TO audit_archiver;
+        GRANT SELECT, INSERT, UPDATE, DELETE
+            ON transaction_events_hot, transaction_events_warm, transaction_events_cold
+            TO audit_archiver;
         GRANT EXECUTE ON FUNCTION maintain_transaction_event_partitions(
             TIMESTAMPTZ,
             INTEGER,

@@ -80,6 +80,15 @@ impl TransactionEventRetentionClass {
         }
     }
 
+    /// Class-specific partitioned table used for writes.
+    const fn table_name(self) -> &'static str {
+        match self {
+            Self::Hot => "transaction_events_hot",
+            Self::Warm => "transaction_events_warm",
+            Self::Cold => "transaction_events_cold",
+        }
+    }
+
     /// Classifies a transaction event at ingest.
     ///
     /// Event types not explicitly assigned to hot or cold default to warm. This
@@ -317,14 +326,14 @@ pub enum TransactionEventSchemaReadinessError {
         /// Required sqlx migration version.
         required_version: i64,
     },
-    /// The expected table is missing or not visible to the runtime role.
+    /// The expected read relation or retention tables are missing.
     #[error(
-        "transaction-event Postgres schema is not ready: public.transaction_events is missing or not visible to the runtime role; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
+        "transaction-event Postgres schema is not ready: public.transaction_events or its retention tables are missing; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
     )]
     TransactionEventsRelationMissing,
-    /// The table exists but has not been cut over to declarative partitioning.
+    /// One or more class-specific tables are not declaratively partitioned.
     #[error(
-        "transaction-event Postgres schema is not ready: public.transaction_events is not a partitioned table; complete the transaction-event retention cutover"
+        "transaction-event Postgres schema is not ready: hot, warm, and cold transaction event tables must be partitioned; complete the transaction-event retention cutover"
     )]
     TransactionEventsRelationNotPartitioned,
     /// The application-owned maintenance function is unavailable.
@@ -425,11 +434,13 @@ impl PgTransactionEventSink {
                 "SELECT \
                     to_regclass('_sqlx_migrations') IS NOT NULL AS migration_table_exists, \
                     to_regclass('public.transaction_events') IS NOT NULL AS transaction_events_relation_exists, \
-                    COALESCE(( \
-                        SELECT relkind = 'p' \
-                        FROM pg_class \
-                        WHERE oid = to_regclass('public.transaction_events') \
-                    ), FALSE) AS transaction_events_partitioned, \
+                    (SELECT count(*) = 3 \
+                     FROM pg_class \
+                     WHERE oid IN ( \
+                        to_regclass('public.transaction_events_hot'), \
+                        to_regclass('public.transaction_events_warm'), \
+                        to_regclass('public.transaction_events_cold') \
+                     ) AND relkind = 'p') AS transaction_events_partitioned, \
                     to_regprocedure( \
                         'public.maintain_transaction_event_partitions(timestamptz,integer,integer,integer,integer)' \
                     ) IS NOT NULL AS maintenance_function_exists",
@@ -546,7 +557,8 @@ impl PgTransactionEventSink {
 
     async fn insert_event_chunk(
         &self,
-        events: &[TransactionEvent],
+        retention_class: TransactionEventRetentionClass,
+        events: &[&TransactionEvent],
     ) -> std::result::Result<HashSet<String>, TransactionEventStorageError> {
         let ingested_at = Utc::now();
         let block_numbers: Vec<Option<i64>> = events
@@ -560,11 +572,12 @@ impl PgTransactionEventSink {
             })
             .collect::<std::result::Result<_, _>>()?;
 
-        let mut query_builder = QueryBuilder::new(
-            "INSERT INTO transaction_events \
+        let mut query_builder = QueryBuilder::new(format!(
+            "INSERT INTO {} \
              (event_id, retention_class, schema_version, event_time, ingested_at, producer, \
               event_type, network, tx_hash, block_hash, block_number, payload_id, request_id, data) ",
-        );
+            retention_class.table_name()
+        ));
 
         query_builder.push_values(
             events.iter().zip(block_numbers),
@@ -573,12 +586,10 @@ impl PgTransactionEventSink {
                 let block_hash = event.block_hash.map(|hash| hash.to_string());
                 let producer = event.producer.to_string();
                 let event_type = event.event_type.to_string();
-                let retention_class =
-                    TransactionEventRetentionClass::for_event_type(event.event_type).to_string();
                 let data = Value::Object(event.data.clone());
 
                 row.push_bind(&event.event_id)
-                    .push_bind(retention_class)
+                    .push_bind(retention_class.as_str())
                     .push_bind(&event.schema_version)
                     .push_bind(event.event_time)
                     .push_bind(ingested_at)
@@ -814,8 +825,21 @@ impl TransactionEventSink for PgTransactionEventSink {
         }
 
         let mut inserted_event_ids = HashSet::new();
-        for chunk in events.chunks(MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE) {
-            inserted_event_ids.extend(self.insert_event_chunk(chunk).await?);
+        for retention_class in [
+            TransactionEventRetentionClass::Hot,
+            TransactionEventRetentionClass::Warm,
+            TransactionEventRetentionClass::Cold,
+        ] {
+            let class_events = events
+                .iter()
+                .filter(|event| {
+                    TransactionEventRetentionClass::for_event_type(event.event_type)
+                        == retention_class
+                })
+                .collect::<Vec<_>>();
+            for chunk in class_events.chunks(MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE) {
+                inserted_event_ids.extend(self.insert_event_chunk(retention_class, chunk).await?);
+            }
         }
 
         Ok(TransactionEventInsertOutcome { inserted_event_ids })
