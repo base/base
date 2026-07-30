@@ -4,10 +4,14 @@ mod block;
 pub use block::{BlockCommand, BlockSummaryJson};
 
 mod cli;
-pub use cli::{
-    Cli, Commands, ConductorClusterActionArgs, ConductorCommands, ConductorLeaderArgs,
-    ConductorNodeActionArgs, ConductorStatusArgs, MonitorCommands, SequencerCommands,
-    SequencerNodeActionArgs, SequencerStartArgs, SequencerStatusArgs,
+pub use cli::{Cli, Commands, MonitorCommands};
+
+mod conductor;
+pub use conductor::{
+    ClusterNodeScope, ConductorAction, ConductorActionJson, ConductorActionName,
+    ConductorClusterActionArgs, ConductorCommand, ConductorCommands, ConductorFailureJson,
+    ConductorFanoutJson, ConductorLeaderArgs, ConductorNodeActionArgs, ConductorNodeJson,
+    ConductorStatusArgs, ConductorStatusJson, PausedSummaryJson,
 };
 
 mod doctor;
@@ -16,15 +20,28 @@ pub use doctor::DoctorCommand;
 mod p2p;
 pub use p2p::{
     AddTarget, BanAction, DestructiveClBulkArgs, DestructivePeerArgs, P2pArgs, P2pCommand,
-    P2pCommands, PeerAction, PeerActionJson, PeerBulkActionResultJson, PeerLayer, PeerTarget,
-    PeersJson,
+    P2pCommands, PeerAction, PeerActionJson, PeerBulkAction, PeerBulkActionResultJson, PeerLayer,
+    PeerTarget, PeersJson,
 };
+
+mod node_metrics;
+pub use node_metrics::NodeMetricsJson;
+
+mod outcome;
+pub use outcome::{CommandOutcome, OptionalValue};
 
 mod proofs;
 pub use proofs::{
-    ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand, ProofsCommands,
-    ProofsFinalizeArgs, ProofsFinalizeJson, ProofsListArgs, ProofsListJson, ProofsStatusArgs,
-    ProofsStatusJson,
+    ProofOutputStatus, ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand,
+    ProofsCommands, ProofsFinalizeArgs, ProofsFinalizeJson, ProofsListArgs, ProofsListJson,
+    ProofsStatusArgs, ProofsStatusJson,
+};
+
+mod sequencer;
+pub use sequencer::{
+    LeadershipStatus, SequencerAction, SequencerActionJson, SequencerCommand, SequencerCommands,
+    SequencerNodeActionArgs, SequencerNodeJson, SequencerRole, SequencerStartArgs,
+    SequencerStatusArgs, SequencerStatusJson, UnsafeHeadSource,
 };
 
 mod sync_status;

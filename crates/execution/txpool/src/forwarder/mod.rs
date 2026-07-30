@@ -9,7 +9,7 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::transaction::BundleTransaction;
+use crate::{NoExtensions, ValidatedTransactionExtensions, transaction::BundleTransaction};
 
 mod config;
 pub use config::ForwarderConfig;
@@ -34,6 +34,10 @@ pub struct SpawnedForwarder {
 impl SpawnedForwarder {
     /// Spawns one forwarder async task per builder URL, each subscribing to
     /// the given broadcast sender.
+    ///
+    /// Uses the default wire format, without extension fields. Generic
+    /// parameters cannot carry defaults on a function, so the extension-aware
+    /// variant is a separate method: [`Self::spawn_with_extensions`].
     pub fn spawn<T>(
         sender: &broadcast::Sender<Arc<ValidPoolTransaction<T>>>,
         config: ForwarderConfig,
@@ -42,6 +46,21 @@ impl SpawnedForwarder {
     where
         T: PoolTransaction + BundleTransaction + 'static,
         <T as PoolTransaction>::Consensus: alloy_eips::Encodable2718,
+    {
+        Self::spawn_with_extensions::<T, NoExtensions>(sender, config, executor)
+    }
+
+    /// Spawns one forwarder async task per builder URL, each relaying the wire
+    /// extension payload `E` alongside every transaction.
+    pub fn spawn_with_extensions<T, E>(
+        sender: &broadcast::Sender<Arc<ValidPoolTransaction<T>>>,
+        config: ForwarderConfig,
+        executor: &TaskExecutor,
+    ) -> Self
+    where
+        T: PoolTransaction + BundleTransaction + 'static,
+        <T as PoolTransaction>::Consensus: alloy_eips::Encodable2718,
+        E: ValidatedTransactionExtensions<T>,
     {
         let cancel = CancellationToken::new();
         let mut tasks = Vec::with_capacity(config.builder_urls.len());
@@ -64,7 +83,7 @@ impl SpawnedForwarder {
             };
 
             let receiver = sender.subscribe();
-            let forwarder = Forwarder::new(
+            let forwarder = Forwarder::<T, E>::new(
                 url.clone(),
                 client,
                 receiver,
