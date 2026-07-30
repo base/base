@@ -11,9 +11,10 @@
 //! It holds ZERO submission/signing/egress capability. The pre-arm P0 policy lift records
 //! P0-A/P0-C completion and the owner's P0-B minimal-path decision, including acceptance
 //! of the same-disk/whole-host rollback residual. It changes no arming gate: owner-signature
-//! handling is recover-only (EIP-191 `recover_address_from_msg`), the compile-time trust
-//! root remains UNSET, and the signature remains a placeholder. Production `is_armed()`
-//! therefore stays false until the separate owner G4 injection, rebuild, and review.
+//! handling is recover-only (EIP-191 `recover_address_from_msg`), and the compile-time
+//! trust root and owner signature are pinned. [`production_arming_criteria`] performs
+//! production verification and arms only when the pinned payload, digest, values, and
+//! signature all validate.
 
 #[cfg(test)]
 use std::{
@@ -29,7 +30,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
-// Compile-time trust anchors (immutable; the B1 owner address is unset).
+// Compile-time trust anchors (immutable; the G4 owner address is pinned).
 // ---------------------------------------------------------------------------
 
 /// SHA-256 of the canonical G4 criteria payload (base-mev prereg v2 §1, anchored
@@ -339,7 +340,7 @@ pub enum UnarmedReason {
     CriteriaVersionMismatch,
     /// A required criteria value was missing or unparseable.
     CriteriaValueParseFailed,
-    /// The trust-root owner address is unset (B1 default).
+    /// The supplied trust-root owner address is unset.
     OwnerAddressUnset,
     /// The 65-byte signature could not be parsed (bad parity byte).
     SignatureMalformed,
@@ -502,12 +503,11 @@ impl ArmedCriteria {
 }
 
 /// Builds the production arming criteria from the compile-time-embedded canonical
-/// payload, the pinned source commit, and the owner arm signature, then runs the
-/// fail-closed [`ArmedCriteria::load`]. Pure, argument-free, and fail-closed: in a
-/// production (non-test) build [`OWNER_ATTEST_ADDRESS`] is `None`, so the load closes
-/// on `OwnerAddressUnset` and the result is ALWAYS unarmed until the G4 owner
-/// injection (real address pin + real [`OWNER_ARM_SIGNATURE`] + rebuild/review). This
-/// crate wires NO production callsite; B5 links and injects the returned value.
+/// payload, pinned source commit, owner address, and owner arm signature, then runs
+/// the fail-closed [`ArmedCriteria::load`]. Pure and argument-free: the production
+/// pins produce armed criteria only when the payload, digest, values, and recovered
+/// signer all validate. This function grants no submission capability by itself;
+/// callers must separately supply its result to the gated arm path.
 pub fn production_arming_criteria() -> ArmedCriteria {
     let artifact = CriteriaArtifact {
         canonical_payload: CANONICAL_PAYLOAD.to_vec(),
@@ -736,10 +736,10 @@ pub enum KillStoreError {
 /// store. P0-A is merged, P0-C provisioning and identity pinning are complete, and the owner
 /// accepted the P0-B minimal path: no separate host, mount, or backup; a no-rollback operational
 /// invariant; and residual exposure when a same-disk or whole-host restore retreats all three
-/// stores. Those facts permit lifting the pre-arm FORBIDDEN posture once G4 re-review approves
-/// this policy change; they do not arm the system. Until the separate owner injection pins
-/// `OWNER_ATTEST_ADDRESS` and replaces `OWNER_ARM_SIGNATURE`, production remains unarmed; the
-/// anchor's fail-closed Engaged seed and every submit/egress path remain unchanged.
+/// stores. The compile-pinned owner and verified production signature now satisfy the criteria-pin
+/// predicate, but this test-only store does not arm or bypass any downstream gate; production
+/// construction remains owned by the external-anchor-backed store, whose fail-closed Engaged seed
+/// and submit/egress checks remain unchanged.
 #[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct FileKillStateStore {
@@ -1298,7 +1298,7 @@ mod tests {
 
     #[test]
     fn loader_unarmed_when_owner_address_unset() {
-        // Exercises the compile-time B1 production branch (trust root None).
+        // Exercises the explicit unset-owner test seam without changing the production pin.
         let criteria = ArmedCriteria::load_with_owner(&valid_artifact(), None);
         assert!(!criteria.is_armed());
         assert_eq!(criteria.unarmed_reason(), Some(UnarmedReason::OwnerAddressUnset));

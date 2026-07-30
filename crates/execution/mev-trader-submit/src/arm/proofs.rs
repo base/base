@@ -9,11 +9,10 @@
 //! * `base_mev_trader::VictimClaim` — the R9 at-most-once claim (re-used as-is).
 //!
 //! Owner signatures are EIP-191 (`recover_address_from_msg`) verified against the
-//! compile-pinned [`base_mev_trader::OWNER_ATTEST_ADDRESS`], which is `None` in
-//! every non-test build — so `verify` fails closed everywhere in production. The
-//! `#[cfg(test)] verify_with_owner` seam pins an explicit owner so positive
-//! vectors can be exercised (the dependency is compiled without `cfg(test)`, so
-//! its owner is `None`).
+//! compile-pinned [`base_mev_trader::OWNER_ATTEST_ADDRESS`]. Production `verify`
+//! uses that pin and succeeds only when the payload, signature, owner, and time
+//! checks all match. The `#[cfg(test)] verify_with_owner` seam accepts an explicit
+//! owner so independent positive and negative vectors can be exercised.
 
 use alloy_primitives::{Address, B256, Signature, keccak256};
 use base_mev_trader::{CampaignId, OWNER_ATTEST_ADDRESS, StoreIdentity};
@@ -144,7 +143,7 @@ impl G7Attestation {
         Some(Self { campaign_id: payload.campaign_id, expiry_unix: payload.expiry_unix })
     }
 
-    /// Test seam: verify against an explicit owner (dependency owner is `None`).
+    /// Test seam: verify against an explicit owner.
     #[cfg(test)]
     pub fn verify_with_owner(
         payload: &G7Payload,
@@ -450,7 +449,7 @@ mod tests {
         let wrong = alloy_primitives::Address::repeat_byte(0xEE);
         assert!(G7Attestation::verify_with_owner(&target, &good, now, wrong).is_none());
 
-        // Production `verify` fails closed (dependency OWNER is None).
+        // Production `verify` rejects a signature made by the distinct test owner.
         assert!(G7Attestation::verify(&target, &good, now).is_none());
     }
 
