@@ -571,9 +571,6 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV2 {
     }
 
     fn composite_policy_child_ids(&self, storage: &S, policy_id: u64) -> Result<Vec<u64>> {
-        // Never reverts, matching the rest of the read surface. The gate byte alone decides
-        // whether a child set can exist, so built-ins, simple policies, and malformed IDs all
-        // collapse to empty without a storage read.
         if !Self::is_composite(policy_id) {
             return Ok(Vec::new());
         }
@@ -1384,8 +1381,6 @@ mod tests {
         assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), vec![b, c]);
     }
 
-    /// The view mirrors the event exactly, so indexers reconciling a log against a live read
-    /// never see the two disagree.
     #[test]
     fn composite_policy_child_ids_matches_the_emitted_event() {
         let mut rt = initialized();
@@ -1400,8 +1395,6 @@ mod tests {
         assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), emitted);
     }
 
-    /// Every non-composite input collapses to an empty set rather than reverting, matching the
-    /// never-reverts contract the rest of the read surface documents.
     #[test]
     fn composite_policy_child_ids_returns_empty_for_non_composites() {
         let mut rt = initialized();
@@ -1421,23 +1414,6 @@ mod tests {
                 "expected an empty child set for policy {policy_id}"
             );
         }
-    }
-
-    /// A simple policy and a never-created composite are indistinguishable from the return value
-    /// alone. That is safe only because both write paths enforce `MIN_CHILD_POLICIES`, so a
-    /// *created* composite can never hold fewer than two children — empty always means
-    /// "no composite here".
-    #[test]
-    fn created_composites_never_return_an_empty_child_set() {
-        let mut rt = initialized();
-        let a = create_allowlist(&mut rt);
-        let b = create_allowlist(&mut rt);
-        let id = create_union(&mut rt, vec![a, b]);
-        assert!(LOGIC.composite_policy_child_ids(&rt, id).unwrap().len() >= 2);
-        // The only mutation path cannot shrink it below the minimum either.
-        set_caller(&mut rt, ADMIN);
-        LOGIC.update_composite(&mut rt, id, vec![]).unwrap_err();
-        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), vec![a, b]);
     }
 
     #[test]

@@ -55,10 +55,6 @@ mod tests {
         b256!("1ae189209c8c4875de2caa707322ea74f0d1f3e74a1104ecee6884e8984415da");
 
     /// Absolute wire fingerprint for Cobalt's (canonical) surface.
-    ///
-    /// Re-blessed when `compositePolicyChildIds` joined the surface — legitimate only because
-    /// Cobalt has never activated (`BaseUpgrade::LATEST` is Beryl, every real chain config leaves
-    /// `cobalt` unset). Once Cobalt ships, a change here means a new `abi/v3.rs` instead.
     const V2_ABI_FINGERPRINT: B256 =
         b256!("cc5f508d2cacd9b729ddbd7a7d9ed3788929fdbb237c286e5a9d8961a90cf656");
 

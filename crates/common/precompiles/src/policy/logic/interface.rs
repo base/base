@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use alloy_primitives::{Address, Bytes};
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::{IPolicyRegistry::PolicyType, PolicyAccounting};
+use crate::{IPolicyRegistry::PolicyType, PolicyAccounting, macros::reject_frozen_selector};
 
 /// The policy-registry logic interface.
 ///
@@ -95,10 +95,8 @@ pub trait PolicyRegistryLogic<S: PolicyAccounting> {
     /// Returns the staged pending admin for `policy_id`, or `Address::ZERO` if none.
     fn pending_policy_admin(&self, storage: &S, policy_id: u64) -> Result<Address>;
 
-    /// Returns a composite policy's child set, empty for anything else.
-    /// Composite support is a V2 feature; the V1 surface omits the selector, so this default is
-    /// unreachable and reverts to match the other composite defaults above.
+    /// (V2) Returns a composite policy's child set, empty for anything else.
     fn composite_policy_child_ids(&self, _storage: &S, _policy_id: u64) -> Result<Vec<u64>> {
-        Err(BasePrecompileError::Revert(Bytes::new()))
+        reject_frozen_selector!()
     }
 }

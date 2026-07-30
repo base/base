@@ -66,8 +66,7 @@ sol! {
         function policyExists(uint64 policyId) external view returns (bool);
         function policyAdmin(uint64 policyId) external view returns (address);
         function pendingPolicyAdmin(uint64 policyId) external view returns (address);
-        /// Introduced in V2 (Cobalt). Returns a composite policy's child set, in the order it
-        /// was last written. Empty for anything else. Never reverts.
+        /// Introduced in V2 (Cobalt). Read function for composite policy child IDs.
         function compositePolicyChildIds(uint64 policyId) external view returns (uint64[] memory);
     }
 }

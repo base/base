@@ -77,6 +77,29 @@ macro_rules! decode_precompile_call {
 
 pub(crate) use decode_precompile_call;
 
+/// Rejects a call as an unknown selector, freezing the observable behavior of every version that
+/// predates the selector.
+///
+/// Selectors added by a later fork live as **shared trait defaults** on the logic and accounting
+/// traits, so each version inherits these bodies until it explicitly overrides them. A version
+/// introduced *before* a selector existed must reject it exactly as it did at its activation fork.
+/// Returning `UnknownFunctionSelector` rather than an `Ok` or a real value keeps re-executing a
+/// historical block on a newer binary byte-identical to what the chain already committed; any other
+/// default would retroactively change an older version's state transition, i.e. a silent hardfork.
+///
+/// The `[0u8; 4]` is a placeholder: the dispatcher rejects these selectors on the raw calldata,
+/// before any version method is reached (see each precompile's fork gate in `route`), so a
+/// reachable call never actually returns this value.
+macro_rules! reject_frozen_selector {
+    () => {
+        ::core::result::Result::Err(
+            ::base_precompile_storage::BasePrecompileError::UnknownFunctionSelector([0u8; 4]),
+        )
+    };
+}
+
+pub(crate) use reject_frozen_selector;
+
 #[cfg(test)]
 mod tests {
     use alloy_sol_types::SolCall;
