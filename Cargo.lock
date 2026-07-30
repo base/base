@@ -13148,6 +13148,7 @@ dependencies = [
  "alloy-sol-types",
  "base-mev-trader",
  "k256",
+ "libc",
  "rand 0.8.6",
  "redb",
  "reqwest 0.13.4",

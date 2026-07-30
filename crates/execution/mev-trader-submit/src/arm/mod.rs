@@ -27,18 +27,47 @@
 // fixture source injection, request builders, custody loaders) are NOT reachable
 // from outside the crate; fail_sink privately owns the process-lifetime poison anchor.
 mod claim;
+pub use claim::{
+    ProductionClaimError, ProductionClaimFailure, ProductionClaimResult, try_claim_arm,
+    try_claim_detailed,
+};
 mod custody;
+pub use custody::{ProductionCustodyFailure, production_custody_preflight};
 mod fail_sink;
-pub use fail_sink::ArmedFailSink;
+pub use fail_sink::{ArmedFailSink, ProductionLatchOutcome};
+#[cfg(feature = "t4e-handoff")]
+mod production_bundle;
+#[cfg(feature = "t4e-handoff")]
+pub use production_bundle::{ProductionProofBundle, VerifiedProductionProofs};
+#[cfg(feature = "t4e-handoff")]
+mod production_handoff;
+#[cfg(feature = "t4e-handoff")]
+pub use production_handoff::{
+    AdmittedCandidate, ProductionArmFailure, ProductionArmRuntimeOpenFailure,
+    ProductionBridgeFailure, ProductionBundleInputs, ProductionCampaignBundleFailure,
+    ProductionCandidateReceiver, ProductionDeploymentFailure, ProductionHandoffClosed,
+    ProductionHandoffInstaller, ProductionHandoffShared, ProductionHandoffState,
+    ProductionInstallBundle, ProductionInstallDisposition, ProductionInstallInputs,
+    ProductionPersistenceFailure, ProductionProviderFailure, ProductionSimulationHandoff,
+    ProductionSimulationHandoffStatus, ProductionSimulationInstallError,
+    ProductionSimulationWorkerOwner, ProductionSpawnDisposition, ProductionStartup,
+    ProductionStoreOpenFailure, ProductionWorkerBootstrap, ProductionWorkerError, WorkerStartup,
+    WorkerStartupFailure,
+};
+mod producer;
 mod proofs;
+pub use producer::{
+    BoundedSubmissionIdV1, CanonicalDeploymentPairV1, CanonicalG7PairV1, CanonicalLivePairV1,
+    PopulationClosureFieldsV1, ProducerConformance, ProducerError, PublicationIoClass,
+    PublishedPopulationManifestV1, SignedInstallBundleV1, SignedPopulationManifestV1,
+    SignedProjectionV1, SourceLedgerRowV1, UnsignedInstallBundleV1, UnsignedPopulationManifestV1,
+};
 mod providers;
 mod simulation_entrypoint;
-#[cfg(feature = "t4e-handoff")]
-pub use simulation_entrypoint::UnavailableSimulationHandoff;
 pub use simulation_entrypoint::{
     SimulationEntrypoint, SimulationEntrypointStatus, SimulationEntrypointTerminal,
     SimulationEntrypointUnavailable, SimulationLedgerClosure, SimulationReservation,
-    SimulationReservationError, SimulationSubmitError, SimulationWorker,
+    SimulationWorker,
 };
 mod simulation_store;
 pub use simulation_store::{
@@ -47,16 +76,30 @@ pub use simulation_store::{
     SimulationPersistError, SimulationPersisted, SimulationStore, SimulationStoreOpenError,
     SimulationStoreOperation,
 };
+mod settled_loss;
+pub use settled_loss::{
+    ACCEPTED_HEAD_BYTES, BlockNumHash, BoundedUnresolvedSummaryV1, CanonicalMismatchClass,
+    FinalizedChainAuthority, FinalizedChainError, FrozenP2PopulationManifestV1,
+    INSTALL_BUNDLE_DOMAIN, MAX_CANONICAL_POPULATION_BYTES, MAX_CANONICAL_PROJECTION_BYTES,
+    MAX_FINALIZED_HEAD_LAG, MAX_POPULATION_MANIFEST_BYTES, MAX_PROJECTION_BYTES,
+    MAX_TERMINAL_ENTRIES, NodeLocalSettledLossAuthority, P2_POPULATION_MANIFEST_PATH,
+    POPULATION_CLOSURE_DOMAIN, PreparedSettledLossAuthority, R9_CLAIM_STORE_PATH,
+    SETTLED_LOSS_ANCHOR_PATH, SETTLED_LOSS_CHAIN_ID, SETTLED_LOSS_DOMAIN,
+    SETTLED_LOSS_PROJECTION_PATH, SETTLED_LOSS_SCHEMA_VERSION, SOURCE_ENTRY_BYTES, SettledLossLoad,
+    SettledLossReader, SettledLossUnavailableReason, SourceSubmissionManifestEntryV1,
+    T4E_INSTALL_BUNDLE_PATH, TERMINAL_ENTRY_BYTES, TerminalKindV1, TerminalSettlementEntryV1,
+    TerminalSettlementProjectionV1, UnresolvedReasonV1,
+};
 mod request;
 mod suppression;
 mod transport;
 mod witness;
 
 // -- curated forward-B5 public surface (the ONLY items re-exported to the crate) --
-pub use claim::try_claim_arm;
 pub use proofs::{
     CodeHashProvider, DeploymentEvidence, DeploymentPayload, G7Attestation, G7Payload,
-    LiveRunAttestation, LiveRunPayload, ProviderError, SubmitSuppressionClear,
+    LiveRunAttestation, LiveRunPayload, ProofVerificationError, ProviderError,
+    SubmitSuppressionClear,
 };
 pub use providers::{
     CommittedStateAuthority, DeploymentIdentityError, DrawdownAuthority, MAX_PROCESS_IMAGE_BYTES,
@@ -76,9 +119,11 @@ pub use transport::{
 #[cfg(all(feature = "arm-live-egress", not(test)))]
 pub use transport::{LiveEgressPermit, ProdBackend};
 pub use witness::{
-    ArmRuntime, ArmRuntimeOpenError, AuthorizedCandidate, AuthorizedSignedSubmission,
-    CHAIN_ID_BASE, CheckedCandidate, DeploymentIdentity, DeploymentIdentitySource, DrawdownSource,
-    FreshnessSources, PairedSubmission, ProofBindings, ValidatedExecutionIdentity,
+    ArmRuntime, ArmRuntimeOpenError, AuthorizationGateError, AuthorizedCandidate,
+    AuthorizedSignedSubmission, CHAIN_ID_BASE, CheckedCandidate, DeploymentIdentity,
+    DeploymentIdentitySource, DrawdownSource, FreshnessSources, PairedSubmission,
+    ProductionCandidateError, ProductionSignFailure, ProductionSignedField, ProductionSigningError,
+    ProofBindings, ValidatedExecutionIdentity,
 };
 
 use base_mev_trader::KillReason;

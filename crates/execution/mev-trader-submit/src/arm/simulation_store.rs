@@ -197,12 +197,18 @@ pub enum SimulationStoreOperation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimulationPersisted {
     correlation: SimulationCorrelationEnvelopeV1,
+    ledger_full_after_commit: bool,
 }
 
 impl SimulationPersisted {
     /// Returns the immutable durable correlation coordinates.
     pub const fn correlation(&self) -> &SimulationCorrelationEnvelopeV1 {
         &self.correlation
+    }
+
+    /// Returns whether this durable commit consumed the final ledger slot.
+    pub const fn ledger_full_after_commit(&self) -> bool {
+        self.ledger_full_after_commit
     }
 }
 
@@ -969,7 +975,10 @@ impl SimulationStore {
         self.publish_head(sequence + 1, record_hash, sequence)?;
         self.prior_hash = record_hash;
         self.next_sequence += 1;
-        Ok(SimulationPersisted { correlation })
+        Ok(SimulationPersisted {
+            correlation,
+            ledger_full_after_commit: self.next_sequence == SIMULATION_RECORD_CAPACITY,
+        })
     }
 
     fn publish_head(

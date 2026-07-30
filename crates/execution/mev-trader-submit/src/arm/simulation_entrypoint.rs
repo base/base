@@ -10,9 +10,6 @@ use std::{
     thread::JoinHandle,
 };
 
-#[cfg(feature = "t4e-handoff")]
-use crate::{SealedUnsignedCandidate, T4eCandidateHandoff, T4eHandoffError};
-
 use super::{
     FreshnessSources, RuntimeBackend, SimBackend, SimulationCorrelationEnvelopeV1,
     SimulationPersistError, SimulationStore, SubmissionAttempt, SubmitOutcome, send_gated,
@@ -21,8 +18,6 @@ use super::{
 /// Missing production prerequisite. No variant supplies fallback data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationEntrypointUnavailable {
-    /// Complete production T4e simulation installation is explicitly deferred.
-    ProductionInstallationDeferred,
     /// Durable local ledger could not open.
     PersistenceUnavailable,
     /// Entrypoint status mutex was poisoned.
@@ -99,19 +94,16 @@ impl SimulationLedgerClosure {
                 capacity,
                 "simulation ledger closed"
             ),
-            Self::PersistenceFailed {
-                ledger_epoch,
-                next_sequence,
-                operation,
-                io_kind,
-            } => tracing::error!(
-                closure_reason = "PersistenceFailed",
-                ledger_epoch = ?ledger_epoch.as_bytes(),
-                next_sequence,
-                operation = ?operation,
-                io_kind = ?io_kind,
-                "simulation ledger closed"
-            ),
+            Self::PersistenceFailed { ledger_epoch, next_sequence, operation, io_kind } => {
+                tracing::error!(
+                    closure_reason = "PersistenceFailed",
+                    ledger_epoch = ?ledger_epoch.as_bytes(),
+                    next_sequence,
+                    operation = ?operation,
+                    io_kind = ?io_kind,
+                    "simulation ledger closed"
+                )
+            }
             Self::InvalidExistingLedger { ledger_epoch, class } => tracing::error!(
                 closure_reason = "InvalidExistingLedger",
                 ledger_epoch = ?ledger_epoch.map(|epoch| *epoch.as_bytes()),
@@ -149,9 +141,8 @@ pub enum SimulationEntrypointTerminal {
     UnexpectedLiveOutcome,
 }
 
-/// Library execution seam for `send_gated`, fixed to `SimBackend`.
-///
-/// This seam is not production-installed until `Production T4e Simulation Installation + Settled-Loss Authority` supplies real settled-loss authority, proofs/claim-store/custody, the shared bridge, and consumes the PR #55 committed-state dependency already available here. Production `Ready`, `Busy`, and `Closed` handoff behavior remains deferred to that complete installer.
+/// Shared simulation-only execution/status seam installed by the production worker after the
+/// complete authority bundle has moved into that worker.
 #[derive(Debug)]
 pub struct SimulationEntrypoint {
     backend: SimBackend,
@@ -241,6 +232,11 @@ impl SimulationEntrypoint {
         }
     }
 
+    /// Latches an exact durable ledger closure for process-lifetime status.
+    pub fn close_ledger(&self, reason: SimulationLedgerClosure) {
+        self.set_ledger_closed(reason);
+    }
+
     fn close_worker(&self, admission: &AtomicU8, panicked: bool) {
         if let Ok(mut status) = self.status.lock()
             && *status == SimulationEntrypointStatus::Ready
@@ -253,12 +249,14 @@ impl SimulationEntrypoint {
     }
 }
 
-/// Non-blocking capacity-one handoff into the sole simulation egress owner.
-///
-/// Exported for `Production T4e Simulation Installation + Settled-Loss Authority`; construction
-/// here remains deferred until that follow-up supplies the complete authority chain.
+/// Sole production worker namespace for the T4e simulation path.
 #[derive(Debug)]
-pub struct SimulationWorker {
+pub struct SimulationWorker;
+
+/// Test-only legacy attempt worker retained for focused entrypoint persistence tests.
+#[cfg(test)]
+#[derive(Debug)]
+struct LegacySimulationWorker {
     sender: Option<SyncSender<AdmittedAttempt>>,
     admission: Arc<AtomicU8>,
     entrypoint: Arc<SimulationEntrypoint>,
@@ -275,6 +273,7 @@ pub struct SimulationReservation {
 }
 
 /// Typed pre-preparation admission refusal.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationReservationError {
     /// The sole running-or-queued admission slot is occupied.
@@ -285,6 +284,7 @@ pub enum SimulationReservationError {
 
 /// A post-preparation submission can fail only because the worker closed or its invariant broke;
 /// queue fullness is deliberately not an exposed outcome.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationSubmitError {
     /// The worker closed before accepting the reserved attempt.
@@ -293,6 +293,7 @@ pub enum SimulationSubmitError {
     AdmissionInvariant,
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 struct AdmittedAttempt {
     attempt: SubmissionAttempt,
@@ -303,6 +304,12 @@ const ADMISSION_FREE: u8 = 0;
 const ADMISSION_OCCUPIED: u8 = 1;
 const ADMISSION_CLOSED: u8 = 2;
 
+impl SimulationReservation {
+    /// Creates the reservation moved with the unified production handoff payload.
+    pub(crate) fn from_admission(admission: Arc<AtomicU8>) -> Self {
+        Self { admission }
+    }
+}
 impl Drop for SimulationReservation {
     fn drop(&mut self) {
         let _ = self.admission.compare_exchange(
@@ -314,7 +321,8 @@ impl Drop for SimulationReservation {
     }
 }
 
-impl SimulationWorker {
+#[cfg(test)]
+impl LegacySimulationWorker {
     /// Spawns the only thread permitted to call the synchronous simulation entrypoint.
     pub fn spawn<C, D>(
         runtime: super::ProductionB5Runtime<C, D>,
@@ -419,7 +427,8 @@ impl SimulationWorker {
     }
 }
 
-impl Drop for SimulationWorker {
+#[cfg(test)]
+impl Drop for LegacySimulationWorker {
     fn drop(&mut self) {
         self.sender.take();
         if let Some(thread) = self.thread.take()
@@ -427,46 +436,6 @@ impl Drop for SimulationWorker {
         {
             self.entrypoint.close_worker(&self.admission, true);
         }
-    }
-}
-/// Rejecting T4e sink installed when a production prerequisite is unavailable.
-#[cfg(feature = "t4e-handoff")]
-#[derive(Debug)]
-pub struct UnavailableSimulationHandoff {
-    status: SimulationEntrypointStatus,
-}
-
-#[cfg(feature = "t4e-handoff")]
-impl UnavailableSimulationHandoff {
-    /// Builds a typed rejecting sink; it owns no candidate storage.
-    pub const fn new(reason: SimulationEntrypointUnavailable) -> Self {
-        Self { status: SimulationEntrypointStatus::Unavailable(reason) }
-    }
-
-    /// Returns the exact typed installation failure.
-    pub const fn status(&self) -> SimulationEntrypointStatus {
-        self.status
-    }
-
-    /// Builds the explicitly deferred production sink without opening or probing any runtime.
-    ///
-    /// Production remains rejection-only until
-    /// `Production T4e Simulation Installation + Settled-Loss Authority` installs the complete
-    /// real authority chain. The node-local committed-state authority exists, but settled-loss
-    /// authority and the remaining named installation prerequisites do not.
-    pub const fn deferred_production() -> Self {
-        Self::new(SimulationEntrypointUnavailable::ProductionInstallationDeferred)
-    }
-    /// Erases only the sink type, not its separately observable status.
-    pub fn into_handoff(self) -> Arc<dyn T4eCandidateHandoff> {
-        Arc::new(self)
-    }
-}
-
-#[cfg(feature = "t4e-handoff")]
-impl T4eCandidateHandoff for UnavailableSimulationHandoff {
-    fn try_handoff(&self, _candidate: SealedUnsignedCandidate) -> Result<(), T4eHandoffError> {
-        Err(T4eHandoffError::Rejected)
     }
 }
 
@@ -517,7 +486,7 @@ mod tests {
         let epoch_store = tk::epoch_store(&dir.path);
         let suppression =
             SubmitSuppressionClear::read(&suppression_file, &epoch_store).expect("suppression");
-        let authorized = AuthorizedCandidate::issue_checked(
+        let authorized = AuthorizedCandidate::issue_with_gate_for_test(
             true,
             suppression,
             tk::g7(campaign(), now + 100, now),
@@ -538,7 +507,7 @@ mod tests {
         SubmissionAttempt::Initial(PairedSubmission::assemble(signed))
     }
 
-    fn gated_worker() -> (SimulationWorker, Arc<Barrier>, Arc<Barrier>) {
+    fn gated_worker() -> (LegacySimulationWorker, Arc<Barrier>, Arc<Barrier>) {
         let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
         let release = Arc::new(Barrier::new(2));
         let consumed = Arc::new(Barrier::new(2));
@@ -553,7 +522,7 @@ mod tests {
             while receiver.recv().is_ok() {}
         });
         (
-            SimulationWorker {
+            LegacySimulationWorker {
                 sender: Some(sender),
                 admission: Arc::new(AtomicU8::new(ADMISSION_FREE)),
                 entrypoint: Arc::new(SimulationEntrypoint::ready()),
@@ -564,7 +533,7 @@ mod tests {
         )
     }
 
-    fn idle_worker() -> (SimulationWorker, Arc<AtomicBool>) {
+    fn idle_worker() -> (LegacySimulationWorker, Arc<AtomicBool>) {
         let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
         let terminated = Arc::new(AtomicBool::new(false));
         let worker_terminated = Arc::clone(&terminated);
@@ -573,7 +542,7 @@ mod tests {
             worker_terminated.store(true, Ordering::Release);
         });
         (
-            SimulationWorker {
+            LegacySimulationWorker {
                 sender: Some(sender),
                 admission: Arc::new(AtomicU8::new(ADMISSION_FREE)),
                 entrypoint: Arc::new(SimulationEntrypoint::ready()),
@@ -583,7 +552,7 @@ mod tests {
         )
     }
 
-    fn forced_panicking_worker() -> (SimulationWorker, Arc<Barrier>, Arc<Barrier>) {
+    fn forced_panicking_worker() -> (LegacySimulationWorker, Arc<Barrier>, Arc<Barrier>) {
         let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
         let admission = Arc::new(AtomicU8::new(ADMISSION_FREE));
         let entrypoint = Arc::new(SimulationEntrypoint::ready());
@@ -604,7 +573,12 @@ mod tests {
             worker_closed.wait();
         });
         (
-            SimulationWorker { sender: Some(sender), admission, entrypoint, thread: Some(thread) },
+            LegacySimulationWorker {
+                sender: Some(sender),
+                admission,
+                entrypoint,
+                thread: Some(thread),
+            },
             release,
             closed,
         )
@@ -643,12 +617,10 @@ mod tests {
     #[test]
     fn closed_status_refuses_before_preparation() {
         let (worker, _) = idle_worker();
-        worker.entrypoint.set_ledger_closed(
-            SimulationLedgerClosure::InvalidExistingLedger {
-                ledger_epoch: None,
-                class: super::super::SimulationLedgerInvalid::Schema,
-            },
-        );
+        worker.entrypoint.set_ledger_closed(SimulationLedgerClosure::InvalidExistingLedger {
+            ledger_epoch: None,
+            class: super::super::SimulationLedgerInvalid::Schema,
+        });
         assert!(matches!(worker.try_reserve(), Err(SimulationReservationError::Closed)));
     }
 
@@ -686,7 +658,7 @@ mod tests {
     fn submit_classifies_disconnected_sender_and_releases_reservation() {
         let (sender, receiver) = sync_channel::<AdmittedAttempt>(1);
         drop(receiver);
-        let worker = SimulationWorker {
+        let worker = LegacySimulationWorker {
             sender: Some(sender),
             admission: Arc::new(AtomicU8::new(ADMISSION_FREE)),
             entrypoint: Arc::new(SimulationEntrypoint::ready()),
@@ -757,8 +729,12 @@ mod tests {
         let entrypoint = Arc::new(SimulationEntrypoint::ready());
         let observed = Arc::clone(&entrypoint);
         let thread = std::thread::spawn(|| panic!("forced uncaught worker termination"));
-        let worker =
-            SimulationWorker { sender: Some(sender), admission, entrypoint, thread: Some(thread) };
+        let worker = LegacySimulationWorker {
+            sender: Some(sender),
+            admission,
+            entrypoint,
+            thread: Some(thread),
+        };
 
         drop(worker);
 
@@ -871,10 +847,7 @@ mod tests {
         };
         worker.entrypoint.set_ledger_closed(reason);
 
-        assert!(matches!(
-            worker.try_reserve(),
-            Err(SimulationReservationError::Closed)
-        ));
+        assert!(matches!(worker.try_reserve(), Err(SimulationReservationError::Closed)));
         assert_eq!(worker.status(), SimulationEntrypointStatus::LedgerClosed(reason));
     }
 }

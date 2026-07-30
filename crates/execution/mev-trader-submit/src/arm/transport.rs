@@ -896,7 +896,8 @@ mod tests {
         let epoch_store = tk::epoch_store(&dir.path);
         let sup = SubmitSuppressionClear::read(&suppression_file, &epoch_store).unwrap();
         let authorized =
-            AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).unwrap();
+            AuthorizedCandidate::issue_with_gate_for_test(true, sup, g7, claim, live, deploy, cand)
+                .unwrap();
         let (key, address) = tk::hot_wallet_key();
         let wpath = tk::write_hot_wallet(&dir.path, &key);
         let sink = tk::sink(&dir.path);

@@ -8,12 +8,24 @@ use std::{
 #[cfg(test)]
 use std::path::Path;
 
+#[cfg(feature = "t4e-handoff")]
+use alloy_primitives::U256;
 use alloy_primitives::{Address, B256, keccak256};
 use base_mev_trader::{ArmedCriteria, DrawdownInput, StoreIdentity, VictimClaimStore};
+#[cfg(feature = "t4e-handoff")]
+use base_mev_trader::{KillState, SubmitContext, VictimClaim};
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "t4e-handoff")]
+use super::{
+    ProductionCandidateError, VerifiedProductionProofs,
+    witness::{AuthorizedCandidate, CheckedCandidate},
+};
 use super::{
     proofs::{CodeHashProvider, DeploymentEvidence, ProviderError},
+    settled_loss::{
+        FinalizedChainAuthority, NodeLocalSettledLossAuthority, SettledLossUnavailableReason,
+    },
     witness::{
         ArmRuntime, ArmRuntimeOpenError, DeploymentIdentity, DeploymentIdentitySource,
         DrawdownSource, FreshnessSources,
@@ -43,6 +55,23 @@ pub trait CommittedStateAuthority {
         &self,
         address: Address,
     ) -> Result<Option<alloy_primitives::U256>, ProviderError>;
+}
+
+impl<A: CommittedStateAuthority + ?Sized> CommittedStateAuthority for std::sync::Arc<A> {
+    fn code_at_latest_committed(&self, address: Address) -> Result<Vec<u8>, ProviderError> {
+        (**self).code_at_latest_committed(address)
+    }
+
+    fn latest_committed_block(&self) -> Result<u64, ProviderError> {
+        (**self).latest_committed_block()
+    }
+
+    fn native_balance_at_latest_committed(
+        &self,
+        address: Address,
+    ) -> Result<Option<alloy_primitives::U256>, ProviderError> {
+        (**self).native_balance_at_latest_committed(address)
+    }
 }
 
 /// Production adapter from the node's committed-state authority to arm code-hash freshness.
@@ -103,6 +132,12 @@ impl<A> ProductionDrawdownSource<A> {
     /// Installs an explicit realized-loss authority.
     pub const fn install(authority: A) -> Self {
         Self { authority }
+    }
+}
+impl<A: FinalizedChainAuthority> ProductionDrawdownSource<NodeLocalSettledLossAuthority<A>> {
+    /// Loads the authenticated projection without collapsing its bounded failure reason.
+    pub fn evaluate_checked(&self) -> Result<DrawdownInput, SettledLossUnavailableReason> {
+        self.authority.load_complete()
     }
 }
 
@@ -319,6 +354,56 @@ impl<C: CommittedStateAuthority, D: DrawdownAuthority> ProductionB5Runtime<C, D>
     /// Builds one egress-moment freshness view from the installed production providers.
     pub fn freshness<'a>(&'a self, armed: &'a ArmedCriteria) -> FreshnessSources<'a> {
         self.arm.freshness(armed, &self.drawdown, &self.code_hash, &self.deployment_identity)
+    }
+
+    /// Returns the same fail-stop sink owned by this production runtime.
+    pub const fn sink(&self) -> &std::sync::Arc<super::ArmedFailSink> {
+        self.arm.sink()
+    }
+}
+
+#[cfg(feature = "t4e-handoff")]
+impl<C, F> ProductionB5Runtime<C, super::NodeLocalSettledLossAuthority<F>>
+where
+    C: CommittedStateAuthority,
+    F: super::FinalizedChainAuthority,
+{
+    /// Authorizes only through this runtime's checked same-instance authorities.
+    pub fn authorize(
+        &self,
+        armed: &ArmedCriteria,
+        proofs: VerifiedProductionProofs,
+        claim: VictimClaim,
+        candidate: CheckedCandidate,
+    ) -> Result<AuthorizedCandidate, ProductionCandidateError> {
+        let suppression = self.arm.suppression_clear_checked()?;
+        let kill =
+            self.arm.sink().observe_kill().map_err(|_| ProductionCandidateError::KillActive)?;
+        if !matches!(kill, KillState::Clear { .. }) {
+            return Err(ProductionCandidateError::KillActive);
+        }
+        let drawdown = self
+            .drawdown
+            .authority
+            .load_complete()
+            .map_err(ProductionCandidateError::SettledLoss)?;
+        let identity = candidate.execution_identity();
+        let _committed_balance: U256 = self
+            .code_hash
+            .authority
+            .native_balance_at_latest_committed(super::custody::FUNDED_WALLET)
+            .map_err(|_| ProductionCandidateError::CommittedStateUnavailable)?
+            .ok_or(ProductionCandidateError::CommittedAccountAbsent)?;
+        let VerifiedProductionProofs { g7, live, deployment } = proofs;
+        AuthorizedCandidate::issue_detailed(
+            SubmitContext { armed, amount_in_wei: identity.amount(), drawdown, kill },
+            suppression,
+            g7,
+            claim,
+            live,
+            deployment,
+            candidate,
+        )
     }
 }
 

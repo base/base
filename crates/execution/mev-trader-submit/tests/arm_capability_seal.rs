@@ -14,15 +14,19 @@ use syn::{ext::IdentExt, visit::Visit};
 
 /// The exact production files under `src/arm/`. A NEW arm file must be added here
 /// (and re-reviewed) before it can ship (b7, fail-closed).
-const ARM_FILES: [&str; 12] = [
+const ARM_FILES: [&str; 16] = [
     "claim.rs",
     "custody.rs",
     "fail_sink.rs",
     "mod.rs",
     "proofs.rs",
+    "producer.rs",
     "providers.rs",
+    "production_bundle.rs",
+    "production_handoff.rs",
     "simulation_entrypoint.rs",
     "simulation_store.rs",
+    "settled_loss.rs",
     "request.rs",
     "suppression.rs",
     "transport.rs",
@@ -195,17 +199,78 @@ fn arm_source_is_exactly_the_declared_set() {
 
 // -- b9: the crate's public `arm` surface is EXACTLY the curated allowlist ------
 
-/// The complete root API. T4e adds the unsigned handoff/provider contract; S1-b
-/// adds only the sealed runtime selection and its two reviewed backends; S2 adds
-/// the deferred simulation consumer boundary. Signing, raw permits, concrete
-/// freshness providers, and proof APIs remain private.
-const PUBLIC_API_ALLOWLIST: [&str; 22] = [
+/// The complete root API. T4e adds only the reviewed checked authorities, exact-one
+/// production handoff, bounded worker/status types, and simulation-only runtime surface.
+const PUBLIC_API_ALLOWLIST: [&str; 91] = [
+    "AdmittedCandidate",
+    "AuthorizationGateError",
+    "BlockNumHash",
+    "BoundedSubmissionIdV1",
+    "BoundedUnresolvedSummaryV1",
+    "CanonicalDeploymentPairV1",
+    "CanonicalG7PairV1",
+    "CanonicalLivePairV1",
+    "CanonicalMismatchClass",
     "CheckedCandidate",
     "CodeHashProvider",
     "CommittedStateAuthority",
+    "FinalizedChainAuthority",
+    "FinalizedChainError",
+    "FrozenP2PopulationManifestV1",
+    "NodeLocalSettledLossAuthority",
+    "PopulationClosureFieldsV1",
+    "PreparedSettledLossAuthority",
     "ProdBackend",
+    "ProducerConformance",
+    "ProducerError",
+    "ProductionArmFailure",
+    "ProductionArmRuntimeOpenFailure",
+    "ProductionBridgeFailure",
+    "ProductionBundleInputs",
+    "ProductionCampaignBundleFailure",
+    "ProductionCandidateError",
+    "ProductionCandidateReceiver",
+    "ProductionClaimError",
+    "ProductionClaimFailure",
+    "ProductionClaimResult",
+    "ProductionCustodyFailure",
+    "ProductionDeploymentFailure",
+    "ProductionDrawdownSource",
+    "ProductionHandoffClosed",
+    "ProductionHandoffShared",
+    "ProductionHandoffInstaller",
+    "ProductionHandoffState",
+    "ProductionInstallBundle",
+    "ProductionInstallDisposition",
+    "ProductionInstallInputs",
+    "ProductionLatchOutcome",
+    "ProductionPersistenceFailure",
+    "ProductionProofBundle",
+    "ProductionProviderFailure",
+    "ProductionSignFailure",
+    "ProductionSignedField",
+    "ProductionSigningError",
+    "ProductionSimulationHandoff",
+    "ProductionSimulationHandoffStatus",
+    "ProductionSimulationInstallError",
+    "ProductionSimulationWorkerOwner",
+    "ProductionSpawnDisposition",
+    "ProductionStartup",
+    "ProductionStoreOpenFailure",
+    "ProductionWorkerBootstrap",
+    "ProductionWorkerError",
     "ProviderError",
+    "PublicationIoClass",
+    "PublishedPopulationManifestV1",
     "RuntimeBackend",
+    "SETTLED_LOSS_ANCHOR_PATH",
+    "SETTLED_LOSS_PROJECTION_PATH",
+    "SettledLossLoad",
+    "SettledLossReader",
+    "SettledLossUnavailableReason",
+    "SignedInstallBundleV1",
+    "SignedPopulationManifestV1",
+    "SignedProjectionV1",
     "SimBackend",
     "SimulationCorrelationEnvelopeV1",
     "SimulationCorrelationKey",
@@ -215,13 +280,19 @@ const PUBLIC_API_ALLOWLIST: [&str; 22] = [
     "SimulationLedgerEpoch",
     "SimulationLedgerInvalid",
     "SimulationReservation",
-    "SimulationReservationError",
     "SimulationStoreOperation",
-    "SimulationSubmitError",
-    "SimulationWorker",
+    "SourceLedgerRowV1",
     "SuppressionRollbackError",
-    "UnavailableSimulationHandoff",
+    "TerminalSettlementProjectionV1",
+    "UnsignedInstallBundleV1",
+    "UnsignedPopulationManifestV1",
+    "VerifiedProductionProofs",
+    "WorkerStartup",
+    "WorkerStartupFailure",
+    "SimulationWorker",
+    "production_custody_preflight",
     "provision_suppression_anchor",
+    "try_claim_detailed",
 ];
 
 static MODULE_FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -303,7 +374,9 @@ fn exact_module_declaration(
 }
 
 fn mod_is_private(src: &str, name: &str) -> bool {
-    exact_module_declaration(src, name, None).is_some()
+    let expected_cfg = matches!(name, "production_bundle" | "production_handoff")
+        .then_some("feature = \"t4e-handoff\"");
+    exact_module_declaration(src, name, expected_cfg).is_some()
 }
 
 fn exact_module_resolves_to(
@@ -360,8 +433,12 @@ fn reviewed_arm_module_tree(root: &Path) -> Result<(), String> {
         "fail_sink",
         "proofs",
         "providers",
+        "producer",
+        "production_bundle",
+        "production_handoff",
         "simulation_entrypoint",
         "simulation_store",
+        "settled_loss",
         "request",
         "suppression",
         "transport",
@@ -384,10 +461,12 @@ fn reviewed_arm_module_tree(root: &Path) -> Result<(), String> {
         ));
     }
     for child in expected_children {
+        let expected_cfg = matches!(child, "production_bundle" | "production_handoff")
+            .then_some("feature = \"t4e-handoff\"");
         exact_module_resolves_to(
             &arm_source,
             child,
-            None,
+            expected_cfg,
             arm_dir,
             src_dir,
             &arm_dir.join(format!("{child}.rs")),
@@ -1145,8 +1224,12 @@ fn arm_submodules_are_private() {
         "fail_sink",
         "proofs",
         "providers",
+        "producer",
+        "production_bundle",
+        "production_handoff",
         "simulation_entrypoint",
         "simulation_store",
+        "settled_loss",
         "request",
         "suppression",
         "transport",
@@ -1216,7 +1299,7 @@ fn t4d_arm_surface_has_only_the_reviewed_unsigned_candidate_handoff() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(arm_exports.len(), 6, "arm root surface must be six reviewed facades");
+    assert_eq!(arm_exports.len(), 5, "arm root surface must be five reviewed facades");
     let gates = arm_exports
         .iter()
         .map(|item| {
@@ -1377,13 +1460,16 @@ fn t4d_arm_surface_has_only_the_reviewed_unsigned_candidate_handoff() {
 /// surface of the injection-critical types. Adding ANY non-test method (constructor,
 /// mutator, or path/source setter) to these types must update this allowlist.
 fn arm_runtime_methods() -> BTreeSet<String> {
-    ["open", "sink", "suppression_clear", "freshness"].iter().map(|s| (*s).to_string()).collect()
+    ["open", "sink", "suppression_clear", "suppression_clear_checked", "freshness"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
 }
 fn freshness_sources_methods() -> BTreeSet<String> {
     ["revalidate"].iter().map(|s| (*s).to_string()).collect()
 }
 fn armed_fail_sink_methods() -> BTreeSet<String> {
-    ["from_anchored", "is_poisoned", "observe_kill", "check", "latch"]
+    ["from_anchored", "is_poisoned", "observe_kill", "check", "latch", "latch_production"]
         .iter()
         .map(|s| (*s).to_string())
         .collect()
@@ -1780,6 +1866,7 @@ fn has_exact_canonical_sink_construction(source: &str) -> bool {
 fn sink_macro_surface_is_reviewed(source: &str) -> bool {
     struct MacroInventory {
         reviewed_matches: usize,
+        reviewed_unreachable: usize,
         rejected: bool,
     }
 
@@ -1789,9 +1876,10 @@ fn sink_macro_surface_is_reviewed(source: &str) -> bool {
                 syn::Meta::List(list) if list.path.is_ident("cfg") => {
                     matches!(list.tokens.to_string().as_str(), "test" | "not (test)")
                 }
-                syn::Meta::List(list) if list.path.is_ident("derive") => {
-                    list.tokens.to_string() == "Debug"
-                }
+                syn::Meta::List(list) if list.path.is_ident("derive") => matches!(
+                    list.tokens.to_string().as_str(),
+                    "Debug" | "Debug , Clone , Copy , PartialEq , Eq"
+                ),
                 _ => false,
             };
             if !reviewed {
@@ -1810,12 +1898,19 @@ fn sink_macro_surface_is_reviewed(source: &str) -> bool {
             syn::visit::visit_item_use(self, item);
         }
         fn visit_macro(&mut self, mac: &'ast syn::Macro) {
-            let is_reviewed_matches = mac.path.leading_colon.is_none()
-                && mac.path.segments.len() == 1
-                && ident_name(&mac.path.segments[0].ident) == "matches"
-                && mac.tokens.to_string() == "state , KillState :: Clear { .. }";
-            if is_reviewed_matches {
+            let direct = mac.path.leading_colon.is_none() && mac.path.segments.len() == 1;
+            let name = mac.path.segments.first().map(|segment| ident_name(&segment.ident));
+            let tokens = mac.tokens.to_string();
+            if direct
+                && name.as_deref() == Some("matches")
+                && tokens == "state , KillState :: Clear { .. }"
+            {
                 self.reviewed_matches += 1;
+            } else if direct
+                && name.as_deref() == Some("unreachable")
+                && tokens == "\"fixed production latch reason\""
+            {
+                self.reviewed_unreachable += 1;
             } else {
                 self.rejected = true;
             }
@@ -1824,9 +1919,10 @@ fn sink_macro_surface_is_reviewed(source: &str) -> bool {
     }
 
     let file = parse(source);
-    let mut inventory = MacroInventory { reviewed_matches: 0, rejected: false };
+    let mut inventory =
+        MacroInventory { reviewed_matches: 0, reviewed_unreachable: 0, rejected: false };
     syn::visit::Visit::visit_file(&mut inventory, &file);
-    !inventory.rejected && inventory.reviewed_matches == 1
+    !inventory.rejected && inventory.reviewed_matches == 1 && inventory.reviewed_unreachable == 1
 }
 
 fn has_sibling_sink_construction_or_child_path(source: &str) -> bool {
@@ -1845,8 +1941,10 @@ fn constructor_surface_is_sealed() {
     let fail_sink = std::fs::read_to_string(arm_dir().join("fail_sink.rs")).expect("fail_sink.rs");
     let fail_sink_production = arm_production("fail_sink.rs");
     assert!(
-        modrs.contains("mod fail_sink;\npub use fail_sink::ArmedFailSink;"),
-        "fail sink must be a private child module grouped with its sole public re-export"
+        modrs.contains(
+            "mod fail_sink;\npub use fail_sink::{ArmedFailSink, ProductionLatchOutcome};"
+        ),
+        "fail sink must be a private child module grouped with its reviewed public re-exports"
     );
     assert!(
         armed_fail_sink_fields_are_private(&fail_sink),
@@ -1879,6 +1977,7 @@ fn constructor_surface_is_sealed() {
             "from_store_checked",
             "is_poisoned",
             "latch",
+            "latch_production",
             "new",
             "new_with_process_poison",
             "observe_kill",
@@ -2981,7 +3080,7 @@ fn assert_seam_cfg_test(raw: &str, seam: &str) {
 fn gate_and_custody_seams_are_test_only() {
     let witness = arm_raw("witness.rs");
     // Gate-widening seams must never be reachable by production/arm-wiring code.
-    assert_seam_cfg_test(&witness, "issue_checked");
+    assert_seam_cfg_test(&witness, "issue_with_gate_for_test");
     assert_seam_cfg_test(&witness, "load_and_sign_with");
     assert_seam_cfg_test(&witness, "with_forced_gate");
     // The `force_gate_open` field is itself `#[cfg(test)]`.
@@ -3424,13 +3523,14 @@ fn only_reviewed_workspace_edges_link_the_submit_crate() {
         .find(|package| package["name"] == "base-suppression-provision-bin")
         .expect("provisioning package");
     assert_eq!(provisioner["features"]["provision"], serde_json::json!(["dep:mev-trader-submit"]));
-    let provisioning_bin = provisioner["targets"]
-        .as_array()
-        .expect("provisioning targets")
-        .iter()
-        .find(|target| target["name"] == "base-mev-suppression-provision")
-        .expect("provisioning binary target");
-    assert_eq!(provisioning_bin["required-features"], serde_json::json!(["provision"]));
+    let provisioning_targets = provisioner["targets"].as_array().expect("provisioning targets");
+    for name in ["base-mev-suppression-provision", "base-mev-t4e-provision"] {
+        let provisioning_bin = provisioning_targets
+            .iter()
+            .find(|target| target["name"] == name)
+            .unwrap_or_else(|| panic!("missing provisioning binary target `{name}`"));
+        assert_eq!(provisioning_bin["required-features"], serde_json::json!(["provision"]));
+    }
 
     let cli =
         std::fs::read_to_string(manifest_dir().join("../cli/Cargo.toml")).expect("CLI manifest");

@@ -62,6 +62,15 @@ pub(crate) struct SuppressionFileRecord {
     pub suppressed: bool,
 }
 
+/// Stable checked suppression-file read class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SuppressionFileReadError {
+    /// File or writer state was unavailable.
+    Unavailable,
+    /// Canonical JSON fields were malformed.
+    Invalid,
+}
+
 /// Fresh reader over the suppression flag file.
 #[derive(Debug, Clone)]
 pub(crate) struct SuppressionFileStore {
@@ -116,6 +125,35 @@ impl SuppressionFileStore {
         let epoch = object.get("epoch")?.as_u64()?;
         let suppressed = object.get("suppressed")?.as_bool()?;
         Some(SuppressionFileRecord { epoch, suppressed })
+    }
+
+    /// Reads the guarded canonical record while preserving unavailable versus invalid.
+    pub(crate) fn read_fresh_guarded_checked(
+        &self,
+    ) -> Result<SuppressionFileRecord, SuppressionFileReadError> {
+        if self.lock_present() {
+            return Err(SuppressionFileReadError::Unavailable);
+        }
+        let bytes =
+            std::fs::read(&self.path).map_err(|_| SuppressionFileReadError::Unavailable)?;
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|_| SuppressionFileReadError::Invalid)?;
+        let object = value.as_object().ok_or(SuppressionFileReadError::Invalid)?;
+        if object.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+            return Err(SuppressionFileReadError::Invalid);
+        }
+        let epoch = object
+            .get("epoch")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or(SuppressionFileReadError::Invalid)?;
+        let suppressed = object
+            .get("suppressed")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or(SuppressionFileReadError::Invalid)?;
+        if self.lock_present() {
+            return Err(SuppressionFileReadError::Unavailable);
+        }
+        Ok(SuppressionFileRecord { epoch, suppressed })
     }
 
     /// Lock-guarded fresh read (the SINGLE authoritative read path used by both the

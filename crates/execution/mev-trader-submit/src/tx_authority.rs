@@ -1016,7 +1016,11 @@ mod tests {
 
     use super::*;
     #[cfg(feature = "t4e-handoff")]
-    use crate::arm::{CodeHashProvider, ProviderError};
+    use crate::arm::{
+        CodeHashProvider, ProductionHandoffClosed, ProductionHandoffInstaller,
+        ProductionSimulationHandoff, ProductionSimulationInstallError, ProviderError,
+        SimulationEntrypoint,
+    };
 
     #[derive(Debug)]
     struct TestFreshness(Arc<AtomicBool>);
@@ -2335,6 +2339,69 @@ mod tests {
             bridge.assemble_sealed_for_test(fixture.view()).is_ok(),
             "dropping the linear candidate must release the capacity-one guard"
         );
+    }
+
+    #[cfg(feature = "t4e-handoff")]
+    #[test]
+    fn production_handoff_reaches_rejected_ready_busy_and_closed_on_real_candidates() {
+        let unavailable = ProductionSimulationHandoff::unavailable(
+            ProductionSimulationInstallError::ActivationInvariant,
+        );
+        let rejected_fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let rejected_bridge = rejected_fixture.bridge();
+        let rejected = rejected_bridge
+            .assemble_sealed_for_test(rejected_fixture.view())
+            .expect("rejected candidate");
+        assert_eq!(unavailable.try_handoff(rejected), Err(T4eHandoffError::Rejected));
+
+        let installer = ProductionHandoffInstaller::new();
+        let handoff = installer.handoff();
+        let installing_fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let installing_bridge = installing_fixture.bridge();
+        let installing = installing_bridge
+            .assemble_sealed_for_test(installing_fixture.view())
+            .expect("installing candidate");
+        assert_eq!(handoff.try_handoff(installing), Err(T4eHandoffError::Rejected));
+
+        let receiver = installer
+            .publish_ready_for_test(Arc::new(SimulationEntrypoint::ready()))
+            .expect("publish ready");
+        let admitted_fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let admitted_bridge = admitted_fixture.bridge();
+        let admitted = admitted_bridge
+            .assemble_sealed_for_test(admitted_fixture.view())
+            .expect("admitted candidate");
+        assert_eq!(handoff.try_handoff(admitted), Ok(()));
+
+        let busy_fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let busy_bridge = busy_fixture.bridge();
+        let busy =
+            busy_bridge.assemble_sealed_for_test(busy_fixture.view()).expect("busy candidate");
+        assert_eq!(handoff.try_handoff(busy), Err(T4eHandoffError::Busy));
+
+        drop(receiver.receive().expect("ordered admitted candidate"));
+        handoff.close(ProductionHandoffClosed::Disconnected);
+        let closed_fixture = assembly_fixture(
+            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
+            None,
+        );
+        let closed_bridge = closed_fixture.bridge();
+        let closed = closed_bridge
+            .assemble_sealed_for_test(closed_fixture.view())
+            .expect("closed candidate");
+        assert_eq!(handoff.try_handoff(closed), Err(T4eHandoffError::Closed));
     }
 
     #[cfg(feature = "t4d-bridge")]
