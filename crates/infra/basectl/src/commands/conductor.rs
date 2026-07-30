@@ -13,7 +13,7 @@ use crate::{
     CommandOutcome, ConductorClusterSnapshot, ConductorCommandError, ConductorControl,
     ConductorFanoutAction, ConductorFanoutReport, ConductorNodeConfig, ConductorNodeFailure,
     ConductorNodeStatus, ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig,
-    OptionalValue,
+    NodeMetricsJson, OptionalValue,
 };
 
 /// Inspect and control an HA conductor cluster.
@@ -513,11 +513,13 @@ impl ConductorStatusJson {
                 ConductorNodeJson::from_node_status(node, status, snapshot.discovered)
             })
             .collect::<Vec<_>>();
-        let leader =
-            nodes.iter().find(|node| node.is_leader == Some(true)).map(|node| node.name.clone());
+        let leader = nodes
+            .iter()
+            .find(|node| node.metrics.is_leader == Some(true))
+            .map(|node| node.name.clone());
         let paused = PausedSummaryJson {
-            known: nodes.iter().filter(|node| node.conductor_paused.is_some()).count(),
-            paused: nodes.iter().filter(|node| node.conductor_paused == Some(true)).count(),
+            known: nodes.iter().filter(|node| node.metrics.conductor_paused.is_some()).count(),
+            paused: nodes.iter().filter(|node| node.metrics.conductor_paused == Some(true)).count(),
         };
 
         Self {
@@ -554,40 +556,13 @@ pub struct ConductorNodeJson {
     pub raft_addr: String,
     /// Conductor RPC URL.
     pub conductor_rpc: String,
-    /// Whether this node is leader.
-    pub is_leader: Option<bool>,
+    /// Metrics shared with sequencer node output.
+    #[serde(flatten)]
+    pub metrics: NodeMetricsJson,
     /// Whether the conductor is active.
     pub conductor_active: Option<bool>,
-    /// Whether the conductor is paused.
-    pub conductor_paused: Option<bool>,
     /// Whether the conductor is stopped.
     pub conductor_stopped: Option<bool>,
-    /// Whether the sequencer is healthy.
-    pub sequencer_healthy: Option<bool>,
-    /// Whether the sequencer is active.
-    pub sequencer_active: Option<bool>,
-    /// Unsafe L2 block number.
-    pub unsafe_l2_block: Option<u64>,
-    /// Unsafe L2 block hash.
-    pub unsafe_l2_hash: Option<String>,
-    /// Safe L2 block number.
-    pub safe_l2_block: Option<u64>,
-    /// Safe L2 block hash.
-    pub safe_l2_hash: Option<String>,
-    /// Finalized L2 block number.
-    pub finalized_l2_block: Option<u64>,
-    /// Current L1 block number.
-    pub current_l1_block: Option<u64>,
-    /// Head L1 block number.
-    pub head_l1_block: Option<u64>,
-    /// Consensus-layer peer count.
-    pub cl_peer_count: Option<u32>,
-    /// Execution-layer block number.
-    pub el_block: Option<u64>,
-    /// Whether the execution layer is syncing.
-    pub el_syncing: Option<bool>,
-    /// Execution-layer peer count.
-    pub el_peer_count: Option<u32>,
     /// Raft suffrage.
     pub suffrage: Option<&'static str>,
     /// Whether runtime discovery produced this node.
@@ -606,27 +581,9 @@ impl ConductorNodeJson {
             server_id: node.server_id.clone(),
             raft_addr: node.raft_addr.clone(),
             conductor_rpc: node.conductor_rpc.to_string(),
-            is_leader: status.and_then(|status| status.is_leader),
+            metrics: NodeMetricsJson::from_status(status),
             conductor_active: status.and_then(|status| status.conductor_active),
-            conductor_paused: status.and_then(|status| status.conductor_paused),
             conductor_stopped: status.and_then(|status| status.conductor_stopped),
-            sequencer_healthy: status.and_then(|status| status.sequencer_healthy),
-            sequencer_active: status.and_then(|status| status.sequencer_active),
-            unsafe_l2_block: status.and_then(|status| status.unsafe_l2_block),
-            unsafe_l2_hash: status
-                .and_then(|status| status.unsafe_l2_hash)
-                .map(|hash| hash.to_string()),
-            safe_l2_block: status.and_then(|status| status.safe_l2_block),
-            safe_l2_hash: status
-                .and_then(|status| status.safe_l2_hash)
-                .map(|hash| hash.to_string()),
-            finalized_l2_block: status.and_then(|status| status.finalized_l2_block),
-            current_l1_block: status.and_then(|status| status.current_l1_block),
-            head_l1_block: status.and_then(|status| status.head_l1_block),
-            cl_peer_count: status.and_then(|status| status.cl_peer_count),
-            el_block: status.and_then(|status| status.el_block),
-            el_syncing: status.and_then(|status| status.el_syncing),
-            el_peer_count: status.and_then(|status| status.el_peer_count),
             suffrage: status.and_then(|status| status.suffrage).map(|suffrage| match suffrage {
                 ServerSuffrage::Voter => "voter",
                 ServerSuffrage::Nonvoter => "nonvoter",
@@ -639,16 +596,16 @@ impl ConductorNodeJson {
     pub fn compact_status(&self) -> String {
         format!(
             "leader={} conductor_active={} conductor_paused={} conductor_stopped={} sequencer_active={} sequencer_healthy={} unsafe={} safe={} cl_peers={} el_peers={}",
-            OptionalValue::boolean(self.is_leader),
+            OptionalValue::boolean(self.metrics.is_leader),
             OptionalValue::boolean(self.conductor_active),
-            OptionalValue::boolean(self.conductor_paused),
+            OptionalValue::boolean(self.metrics.conductor_paused),
             OptionalValue::boolean(self.conductor_stopped),
-            OptionalValue::boolean(self.sequencer_active),
-            OptionalValue::boolean(self.sequencer_healthy),
-            OptionalValue::u64(self.unsafe_l2_block),
-            OptionalValue::u64(self.safe_l2_block),
-            OptionalValue::u32(self.cl_peer_count),
-            OptionalValue::u32(self.el_peer_count),
+            OptionalValue::boolean(self.metrics.sequencer_active),
+            OptionalValue::boolean(self.metrics.sequencer_healthy),
+            OptionalValue::u64(self.metrics.unsafe_l2_block),
+            OptionalValue::u64(self.metrics.safe_l2_block),
+            OptionalValue::u32(self.metrics.cl_peer_count),
+            OptionalValue::u32(self.metrics.el_peer_count),
         )
     }
 }
@@ -821,6 +778,45 @@ mod tests {
         assert!(compact.contains("conductor_paused=true"));
         assert!(compact.contains("sequencer_active=true"));
         assert!(compact.contains("sequencer_healthy=true"));
+    }
+
+    #[test]
+    fn node_json_flattens_shared_metrics_at_top_level() {
+        let value = serde_json::to_value(ConductorNodeJson::from_node_status(
+            &node("op-conductor-0"),
+            Some(&status("op-conductor-0", true, false)),
+            false,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            value,
+            json!({
+                "name": "op-conductor-0",
+                "serverId": "op-conductor-0",
+                "raftAddr": "op-conductor-0:5050",
+                "conductorRpc": "http://127.0.0.1:6545/",
+                "isLeader": true,
+                "sequencerActive": true,
+                "sequencerHealthy": true,
+                "conductorPaused": false,
+                "unsafeL2Block": 10,
+                "unsafeL2Hash": B256::with_last_byte(1).to_string(),
+                "safeL2Block": 8,
+                "safeL2Hash": B256::with_last_byte(2).to_string(),
+                "finalizedL2Block": 6,
+                "currentL1Block": 100,
+                "headL1Block": 101,
+                "clPeerCount": 3,
+                "elBlock": 10,
+                "elSyncing": false,
+                "elPeerCount": 4,
+                "conductorActive": true,
+                "conductorStopped": false,
+                "suffrage": null,
+                "discovered": false,
+            })
+        );
     }
 
     #[test]

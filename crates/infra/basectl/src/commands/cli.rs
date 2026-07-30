@@ -116,19 +116,26 @@ impl Cli {
         };
         let config = MonitoringConfig::load(&self.config).await?;
         match command {
-            Commands::Block(command) => command.run(config).await?,
-            Commands::SyncStatus(command) => command.run(config).await?,
-            Commands::P2p(command) => return command.run(config).await,
-            Commands::Txpool(command) => command.run(config).await?,
-            Commands::Conductor(command) => return command.run(config, conductor_rpc).await,
-            Commands::Sequencer(command) => return command.run(config, conductor_rpc).await,
-            Commands::Proofs(command) => return command.run(config).await,
-            Commands::Doctor(command) => return command.run(config).await,
-            Commands::Flashblocks => run_flashblocks_json(config).await?,
+            Commands::Block(command) => command.run(config).await.map(|()| CommandOutcome::Success),
+            Commands::SyncStatus(command) => {
+                command.run(config).await.map(|()| CommandOutcome::Success)
+            }
+            Commands::P2p(command) => command.run(config).await,
+            Commands::Txpool(command) => {
+                command.run(config).await.map(|()| CommandOutcome::Success)
+            }
+            Commands::Conductor(command) => command.run(config, conductor_rpc).await,
+            Commands::Sequencer(command) => {
+                command.run(config, conductor_rpc).await.map(|()| CommandOutcome::Success)
+            }
+            Commands::Proofs(command) => command.run(config).await,
+            Commands::Doctor(command) => command.run(config).await,
+            Commands::Flashblocks => {
+                run_flashblocks_json(config).await.map(|()| CommandOutcome::Success)
+            }
             // Handled by the pre-load match above; the compiler cannot narrow the type.
             Commands::Monitor { .. } => bail!("monitor reached post-load dispatch"),
         }
-        Ok(CommandOutcome::Success)
     }
 }
 

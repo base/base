@@ -11,8 +11,8 @@ use tracing::{debug, info, warn};
 use url::Url;
 
 use crate::{
-    CommandOutcome, ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig,
-    ConductorNodeStatus, ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig,
+    ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig, ConductorNodeStatus,
+    ConductorSource, Confirm, JsonOutput, KeyValueTable, MonitoringConfig, NodeMetricsJson,
     OptionalValue, SequencerCommandError, StateConvergenceTimeoutError, fetch_sequencer_active,
     start_sequencer, stop_sequencer,
 };
@@ -97,19 +97,14 @@ pub enum LeadershipStatus {
 
 impl SequencerCommand {
     /// Runs the selected sequencer subcommand.
-    pub async fn run(
-        self,
-        config: MonitoringConfig,
-        conductor_rpc: Option<Url>,
-    ) -> Result<CommandOutcome> {
+    pub async fn run(self, config: MonitoringConfig, conductor_rpc: Option<Url>) -> Result<()> {
         let source =
             config.resolve_conductor_source(conductor_rpc).map_err(SequencerCommandError::from)?;
         match self.command {
             SequencerCommands::Status(args) => run_status(config, source, args).await,
             SequencerCommands::Start(args) => run_start(config, source, args).await,
             SequencerCommands::Stop(args) => run_stop(config, source, args).await,
-        }?;
-        Ok(CommandOutcome::Success)
+        }
     }
 }
 
@@ -811,36 +806,9 @@ pub struct SequencerNodeJson {
     pub cl_rpc: String,
     /// Derived sequencer role.
     pub role: SequencerRole,
-    /// Whether this node is leader.
-    pub is_leader: Option<bool>,
-    /// Whether sequencing is active.
-    pub sequencer_active: Option<bool>,
-    /// Whether the sequencer is healthy.
-    pub sequencer_healthy: Option<bool>,
-    /// Whether the conductor is paused.
-    pub conductor_paused: Option<bool>,
-    /// Unsafe L2 block number.
-    pub unsafe_l2_block: Option<u64>,
-    /// Unsafe L2 block hash.
-    pub unsafe_l2_hash: Option<String>,
-    /// Safe L2 block number.
-    pub safe_l2_block: Option<u64>,
-    /// Safe L2 block hash.
-    pub safe_l2_hash: Option<String>,
-    /// Finalized L2 block number.
-    pub finalized_l2_block: Option<u64>,
-    /// Current L1 block number.
-    pub current_l1_block: Option<u64>,
-    /// Head L1 block number.
-    pub head_l1_block: Option<u64>,
-    /// Consensus-layer peer count.
-    pub cl_peer_count: Option<u32>,
-    /// Execution-layer block number.
-    pub el_block: Option<u64>,
-    /// Whether the execution layer is syncing.
-    pub el_syncing: Option<bool>,
-    /// Execution-layer peer count.
-    pub el_peer_count: Option<u32>,
+    /// Metrics shared with conductor node output.
+    #[serde(flatten)]
+    pub metrics: NodeMetricsJson,
     /// Whether runtime discovery produced this node.
     pub discovered: bool,
 }
@@ -852,30 +820,12 @@ impl SequencerNodeJson {
         status: Option<&ConductorNodeStatus>,
         discovered: bool,
     ) -> Self {
-        let is_leader = status.and_then(|status| status.is_leader);
+        let metrics = NodeMetricsJson::from_status(status);
         Self {
             name: node.name.clone(),
             cl_rpc: node.cl_rpc.to_string(),
-            role: SequencerRole::from_is_leader(is_leader),
-            is_leader,
-            sequencer_active: status.and_then(|status| status.sequencer_active),
-            sequencer_healthy: status.and_then(|status| status.sequencer_healthy),
-            conductor_paused: status.and_then(|status| status.conductor_paused),
-            unsafe_l2_block: status.and_then(|status| status.unsafe_l2_block),
-            unsafe_l2_hash: status
-                .and_then(|status| status.unsafe_l2_hash)
-                .map(|unsafe_l2_hash| unsafe_l2_hash.to_string()),
-            safe_l2_block: status.and_then(|status| status.safe_l2_block),
-            safe_l2_hash: status
-                .and_then(|status| status.safe_l2_hash)
-                .map(|safe_l2_hash| safe_l2_hash.to_string()),
-            finalized_l2_block: status.and_then(|status| status.finalized_l2_block),
-            current_l1_block: status.and_then(|status| status.current_l1_block),
-            head_l1_block: status.and_then(|status| status.head_l1_block),
-            cl_peer_count: status.and_then(|status| status.cl_peer_count),
-            el_block: status.and_then(|status| status.el_block),
-            el_syncing: status.and_then(|status| status.el_syncing),
-            el_peer_count: status.and_then(|status| status.el_peer_count),
+            role: SequencerRole::from_is_leader(metrics.is_leader),
+            metrics,
             discovered,
         }
     }
@@ -885,16 +835,16 @@ impl SequencerNodeJson {
         format!(
             "role={} active={} healthy={} paused={} unsafe={} safe={} finalized={} current_l1={} head_l1={} cl_peers={} el_peers={}",
             self.role.as_str(),
-            OptionalValue::boolean(self.sequencer_active),
-            OptionalValue::boolean(self.sequencer_healthy),
-            OptionalValue::boolean(self.conductor_paused),
-            OptionalValue::u64(self.unsafe_l2_block),
-            OptionalValue::u64(self.safe_l2_block),
-            OptionalValue::u64(self.finalized_l2_block),
-            OptionalValue::u64(self.current_l1_block),
-            OptionalValue::u64(self.head_l1_block),
-            OptionalValue::u32(self.cl_peer_count),
-            OptionalValue::u32(self.el_peer_count),
+            OptionalValue::boolean(self.metrics.sequencer_active),
+            OptionalValue::boolean(self.metrics.sequencer_healthy),
+            OptionalValue::boolean(self.metrics.conductor_paused),
+            OptionalValue::u64(self.metrics.unsafe_l2_block),
+            OptionalValue::u64(self.metrics.safe_l2_block),
+            OptionalValue::u64(self.metrics.finalized_l2_block),
+            OptionalValue::u64(self.metrics.current_l1_block),
+            OptionalValue::u64(self.metrics.head_l1_block),
+            OptionalValue::u32(self.metrics.cl_peer_count),
+            OptionalValue::u32(self.metrics.el_peer_count),
         )
     }
 }
@@ -908,10 +858,10 @@ mod tests {
 
     use super::{
         LeadershipStatus, OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS,
-        SequencerAction, SequencerActionJson, SequencerStatusJson, UnsafeHeadSource,
-        ensure_leader_target, ensure_start_allowed, ensure_start_request_matches_observed_head,
-        ensure_stop_allowed, parse_unsafe_head, resolve_start_hash,
-        wait_for_expected_state_with_fetch,
+        SequencerAction, SequencerActionJson, SequencerNodeJson, SequencerStatusJson,
+        UnsafeHeadSource, ensure_leader_target, ensure_start_allowed,
+        ensure_start_request_matches_observed_head, ensure_stop_allowed, parse_unsafe_head,
+        resolve_start_hash, wait_for_expected_state_with_fetch,
     };
     use crate::{
         ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus, NodeLookupError,
@@ -1246,6 +1196,41 @@ mod tests {
                 "node": "op-conductor-0",
                 "clRpc": "http://127.0.0.1:7545/",
                 "message": "sequencer stopped on op-conductor-0 (unsafe head unavailable)",
+            })
+        );
+    }
+
+    #[test]
+    fn node_json_flattens_shared_metrics_at_top_level() {
+        let value = serde_json::to_value(SequencerNodeJson::from_node_status(
+            &node("op-conductor-0"),
+            Some(&status("op-conductor-0", true, true)),
+            false,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            value,
+            json!({
+                "name": "op-conductor-0",
+                "clRpc": "http://127.0.0.1:7545/",
+                "role": "leader",
+                "isLeader": true,
+                "sequencerActive": true,
+                "sequencerHealthy": true,
+                "conductorPaused": false,
+                "unsafeL2Block": 10,
+                "unsafeL2Hash": B256::with_last_byte(1).to_string(),
+                "safeL2Block": 8,
+                "safeL2Hash": B256::with_last_byte(2).to_string(),
+                "finalizedL2Block": 6,
+                "currentL1Block": 100,
+                "headL1Block": 101,
+                "clPeerCount": 3,
+                "elBlock": 10,
+                "elSyncing": false,
+                "elPeerCount": 4,
+                "discovered": false,
             })
         );
     }

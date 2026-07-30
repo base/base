@@ -3,6 +3,10 @@
 use std::time::Duration;
 
 use alloy_primitives::B256;
+use alloy_transport::TransportError;
+use alloy_transport_http::reqwest;
+use base_prover_service_client::{ProverServiceClientBuildError, ProverServiceClientError};
+use jsonrpsee::core::client::Error as JsonRpcClientError;
 use thiserror::Error;
 
 /// Error returned when a CLI block reference cannot be parsed.
@@ -133,7 +137,7 @@ pub enum P2pCommandError {
 }
 
 /// Error returned by the `proofs` command group.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ProofsCommandError {
     /// The command could not resolve a prover-service RPC URL from flags or config.
@@ -148,22 +152,24 @@ pub enum ProofsCommandError {
         config_name: String,
     },
     /// The prover-service HTTP client could not be built.
-    #[error("failed to build prover-service client for {endpoint}: {message}")]
+    #[error("failed to build prover-service client for {endpoint}")]
     BuildClient {
         /// The prover-service RPC URL selected for the command.
         endpoint: String,
-        /// The client construction error message.
-        message: String,
+        /// The underlying client construction error.
+        #[source]
+        source: ProverServiceClientBuildError,
     },
     /// A prover-service JSON-RPC request failed.
-    #[error("prover-service request `{method}` failed against {endpoint}: {message}")]
+    #[error("prover-service request `{method}` failed against {endpoint}")]
     Rpc {
         /// The prover-service RPC URL selected for the command.
         endpoint: String,
         /// The prover-service JSON-RPC method that failed.
         method: &'static str,
-        /// The underlying client error message.
-        message: String,
+        /// The underlying client error.
+        #[source]
+        source: ProverServiceClientError,
     },
     /// The proof did not reach a terminal status within the wait window.
     #[error(
@@ -196,24 +202,26 @@ pub struct MissingConsensusRpcError {
 }
 
 /// Error returned by txpool RPC helpers and command execution.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum TxpoolCommandError {
     /// The txpool HTTP client could not be built.
-    #[error("failed to build txpool HTTP client for {rpc}: {message}")]
+    #[error("failed to build txpool HTTP client for {rpc}")]
     BuildHttpClient {
         /// The execution-layer RPC URL selected for the command.
         rpc: String,
-        /// The client construction error message.
-        message: String,
+        /// The underlying client construction error.
+        #[source]
+        source: reqwest::Error,
     },
     /// The txpool admin client could not be built.
-    #[error("failed to build txpool admin client for {rpc}: {message}")]
+    #[error("failed to build txpool admin client for {rpc}")]
     BuildAdminClient {
         /// The execution-layer RPC URL selected for the command.
         rpc: String,
-        /// The client construction error message.
-        message: String,
+        /// The underlying client construction error.
+        #[source]
+        source: JsonRpcClientError,
     },
     /// The selected RPC does not expose the requested txpool namespace method.
     #[error("txpool RPC method `{method}` is not exposed by {rpc}")]
@@ -232,24 +240,26 @@ pub enum TxpoolCommandError {
         method: &'static str,
     },
     /// A txpool namespace RPC call failed for a reason other than method availability.
-    #[error("txpool RPC method `{method}` failed on {rpc}: {message}")]
+    #[error("txpool RPC method `{method}` failed on {rpc}")]
     TxpoolRpc {
         /// The execution-layer RPC URL selected for the command.
         rpc: String,
         /// The txpool RPC method that failed.
         method: &'static str,
-        /// The RPC error message.
-        message: String,
+        /// The underlying RPC error.
+        #[source]
+        source: TransportError,
     },
     /// An admin namespace RPC call failed for a reason other than method availability.
-    #[error("admin RPC method `{method}` failed on {rpc}: {message}")]
+    #[error("admin RPC method `{method}` failed on {rpc}")]
     AdminRpc {
         /// The execution-layer RPC URL selected for the command.
         rpc: String,
         /// The admin RPC method that failed.
         method: &'static str,
-        /// The RPC error message.
-        message: String,
+        /// The underlying RPC error.
+        #[source]
+        source: JsonRpcClientError,
     },
 }
 
@@ -394,7 +404,41 @@ pub enum DoctorArgsError {
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error as _;
+
     use super::*;
+
+    #[test]
+    fn rpc_error_variants_preserve_source_chain() {
+        let proofs = ProofsCommandError::Rpc {
+            endpoint: "http://prover:8080/".to_string(),
+            method: "prover_getProof",
+            source: ProverServiceClientError::ProofFailure {
+                message: "witness generation failed".to_string(),
+            },
+        };
+        assert_eq!(
+            proofs.to_string(),
+            "prover-service request `prover_getProof` failed against http://prover:8080/"
+        );
+        assert_eq!(
+            proofs.source().expect("chained source").to_string(),
+            "proof failed: witness generation failed"
+        );
+
+        let txpool = TxpoolCommandError::AdminRpc {
+            rpc: "http://el:8545/".to_string(),
+            method: "admin_dropTransaction",
+            source: JsonRpcClientError::Custom("connection refused".to_string()),
+        };
+        assert_eq!(
+            txpool.to_string(),
+            "admin RPC method `admin_dropTransaction` failed on http://el:8545/"
+        );
+        assert!(
+            txpool.source().expect("chained source").to_string().contains("connection refused")
+        );
+    }
 
     #[test]
     fn node_lookup_errors_name_the_failing_command_group() {

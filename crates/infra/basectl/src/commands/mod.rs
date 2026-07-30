@@ -24,6 +24,9 @@ pub use p2p::{
     PeerTarget, PeersJson,
 };
 
+mod node_metrics;
+pub use node_metrics::NodeMetricsJson;
+
 mod outcome;
 pub use outcome::{CommandOutcome, OptionalValue};
 
