@@ -1,5 +1,5 @@
 use alloy_primitives::{B256, U256, keccak256};
-use base_common_genesis::{BaseUpgrade, UpgradeConfig};
+use base_common_genesis::{BaseUpgrade, RollupConfig, UpgradeConfig};
 use thiserror::Error;
 
 /// Error returned when an upgrade schedule cannot be represented by `ProtocolVersions`.
@@ -62,13 +62,25 @@ impl ScheduleId {
     }
 
     /// Clears upgrades above the activated prefix and returns its schedule ID.
-    pub fn pin(upgrades: &mut UpgradeConfig, l2_timestamp: u64) -> Result<B256, ScheduleIdError> {
-        let pinned_count = Self::activated_count(upgrades, l2_timestamp)?;
-        for &upgrade in &BaseUpgrade::CONTRACT_VARIANTS[pinned_count..] {
-            upgrades.clear_activation_timestamp(upgrade);
+    ///
+    /// Genesis-active upgrades stored with the local-only zero timestamp convention are first
+    /// normalized to the config's genesis timestamp, matching the contract schedule
+    /// representation. Boot loading rejects a zero genesis timestamp before reaching this, so
+    /// the [`ScheduleIdError::ZeroActivationTimestamp`] rejection is defense-in-depth for
+    /// callers passing an unvalidated config.
+    pub fn pin(config: &mut RollupConfig, l2_timestamp: u64) -> Result<B256, ScheduleIdError> {
+        for &upgrade in &BaseUpgrade::CONTRACT_VARIANTS {
+            if config.upgrades.activation_timestamp(upgrade) == Some(0) {
+                config.upgrades.set_activation_timestamp(upgrade, config.genesis.l2_time);
+            }
         }
 
-        Self::from_upgrades(upgrades, pinned_count)
+        let pinned_count = Self::activated_count(&config.upgrades, l2_timestamp)?;
+        for &upgrade in &BaseUpgrade::CONTRACT_VARIANTS[pinned_count..] {
+            config.upgrades.clear_activation_timestamp(upgrade);
+        }
+
+        Self::from_upgrades(&config.upgrades, pinned_count)
     }
 
     /// Extends the schedule hash chain with one registered upgrade.
@@ -85,7 +97,7 @@ impl ScheduleId {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::b256;
-    use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
+    use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
 
     use super::*;
 
@@ -153,27 +165,57 @@ mod tests {
 
             assert_eq!(ScheduleId::activated_count(&upgrades, 100).unwrap_err(), expected);
             assert_eq!(ScheduleId::from_upgrades(&upgrades, 1).unwrap_err(), expected);
-            assert_eq!(ScheduleId::pin(&mut upgrades, 100).unwrap_err(), expected);
+
+            // A zero genesis timestamp cannot normalize the zero convention away.
+            let mut config = RollupConfig { upgrades, ..Default::default() };
+            assert_eq!(ScheduleId::pin(&mut config, 100).unwrap_err(), expected);
         }
     }
 
     #[test]
-    fn pin_clears_only_entries_above_activated_prefix() {
-        let mut upgrades = UpgradeConfig {
-            regolith_time: Some(10),
-            canyon_time: Some(50),
-            delta_time: Some(30),
-            base: BaseUpgradeConfig { azul: Some(1_000), ..Default::default() },
+    fn pin_normalizes_genesis_active_zero_timestamps() {
+        let mut config = RollupConfig {
+            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
+            upgrades: UpgradeConfig {
+                regolith_time: Some(0),
+                canyon_time: Some(50),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
-        let schedule_id = ScheduleId::pin(&mut upgrades, 30).expect("valid schedule");
+        let schedule_id = ScheduleId::pin(&mut config, 60).expect("valid schedule");
 
-        assert_eq!(upgrades.regolith_time, Some(10));
-        assert_eq!(upgrades.canyon_time, Some(50));
-        assert_eq!(upgrades.delta_time, Some(30));
-        assert_eq!(upgrades.base.azul, None);
-        assert_eq!(schedule_id, ScheduleId::from_upgrades(&upgrades, 3).expect("valid schedule"));
+        assert_eq!(config.upgrades.regolith_time, Some(10));
+        assert_eq!(
+            schedule_id,
+            ScheduleId::next_link(ScheduleId::next_link(B256::ZERO, 0, 10), 1, 50)
+        );
+    }
+
+    #[test]
+    fn pin_clears_only_entries_above_activated_prefix() {
+        let mut config = RollupConfig {
+            upgrades: UpgradeConfig {
+                regolith_time: Some(10),
+                canyon_time: Some(50),
+                delta_time: Some(30),
+                base: BaseUpgradeConfig { azul: Some(1_000), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let schedule_id = ScheduleId::pin(&mut config, 30).expect("valid schedule");
+
+        assert_eq!(config.upgrades.regolith_time, Some(10));
+        assert_eq!(config.upgrades.canyon_time, Some(50));
+        assert_eq!(config.upgrades.delta_time, Some(30));
+        assert_eq!(config.upgrades.base.azul, None);
+        assert_eq!(
+            schedule_id,
+            ScheduleId::from_upgrades(&config.upgrades, 3).expect("valid schedule")
+        );
     }
 
     #[test]
