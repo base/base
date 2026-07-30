@@ -58,9 +58,9 @@ pub use metrics::{
 
 mod b20_asset;
 pub use b20_asset::{
-    Asset, AssetAccounting, AssetV1, AssetV2, AssetVersion, AssetVersions,
+    Asset, AssetAbi, AssetAccounting, AssetV1, AssetV2, AssetVersion, AssetVersions,
     B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage, B20AssetToken,
-    ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset,
+    ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset, IB20AssetV1, IB20AssetV2,
 };
 
 mod b20_stablecoin;

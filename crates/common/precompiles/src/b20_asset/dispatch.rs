@@ -8,10 +8,8 @@
 //! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
 //! routing responsibility; its version-defined business steps live on [`Asset`].
 
-use alloc::string::ToString;
-
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::{SolCall, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
@@ -103,32 +101,19 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        // Asset-specific and overridden selectors are caught here first.
+        // Asset-specific and overridden selectors are caught here first, decoded against the wire
+        // surface frozen at this version's fork. The ERC-8056 scheduled-multiplier selectors were
+        // introduced at Cobalt with `AssetV2`, so they are simply absent from the Beryl (`AssetV1`)
+        // surface: at V1 `asset_valid_selector` is false for them, this branch is skipped, and they
+        // fall through to the inherited `IB20` decode which rejects them as `UnknownFunctionSelector`
+        // (the two surfaces are disjoint). That keeps pre-Cobalt calldata returning the exact bytes
+        // it did at that version's activation fork — the structural replacement for the old
+        // hand-written fork gate.
+        let abi = version.abi();
         if let Some(selector) = BerylSelector::selector(calldata)
-            && IB20Asset::IB20AssetCalls::valid_selector(selector)
+            && abi.asset_valid_selector(selector)
         {
-            // Fork gate (pre-decode): the ERC-8056 scheduled-multiplier selectors were introduced
-            // at Cobalt with `AssetV2`. A version that predates them must reject them as an unknown
-            // selector *before* argument decoding, so pre-Cobalt calldata keeps returning
-            // `UnknownFunctionSelector` byte-for-byte as it did at that version's activation fork.
-            // Gating on the raw selector here (rather than per-arm in `handle_asset_call`,
-            // which only runs after a successful decode) is what preserves it.
-            if version < AssetVersion::V2
-                && (selector == IB20Asset::uiMultiplierCall::SELECTOR
-                    || selector == IB20Asset::newUIMultiplierCall::SELECTOR
-                    || selector == IB20Asset::effectiveAtCall::SELECTOR
-                    || selector == IB20Asset::balanceOfUICall::SELECTOR
-                    || selector == IB20Asset::totalSupplyUICall::SELECTOR
-                    || selector == IB20Asset::setUIMultiplierCall::SELECTOR
-                    || selector == IB20Asset::cancelScheduledMultiplierCall::SELECTOR
-                    || selector == IB20Asset::supportsInterfaceCall::SELECTOR)
-            {
-                return Err(BasePrecompileError::UnknownFunctionSelector(selector));
-            }
-            let call =
-                IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
-                    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
-                })?;
+            let call = abi.decode_asset(calldata)?;
             let label = call.as_label();
             let asset_observer = observer.clone();
             return observer.observe(label, move || {
@@ -136,7 +121,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             });
         }
 
-        // Fall through to inherited IB20 selectors.
+        // Fall through to inherited IB20 selectors (unchanged, shared surface).
         let call = decode_precompile_call!(calldata, IB20::IB20Calls);
         let label = call.as_label();
 
@@ -807,7 +792,8 @@ mod tests {
         }
         .abi_encode();
         let selector: [u8; 4] = calldata[..4].try_into().unwrap();
-        // Routed at V1 (Beryl) the ERC-8056 selector is gated out and stays unknown.
+        // Routed at V1 (Beryl) the ERC-8056 selector is absent from the frozen asset surface, so it
+        // falls through to the disjoint inherited IB20 decode and stays unknown.
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
         assert_eq!(
             err,
@@ -815,10 +801,12 @@ mod tests {
         );
     }
 
-    /// Pins the gate *ahead* of argument decoding: a pre-Cobalt (V1) call carrying an ERC-8056
+    /// Pins rejection *ahead* of argument decoding: a pre-Cobalt (V1) call carrying an ERC-8056
     /// selector but non-decodable arguments must still reject as `UnknownFunctionSelector`, exactly
-    /// as it did before the shared ABI enum grew; never `AbiDecodeFailed`. Moving the gate per-arm
-    /// (post-decode) would leak `AbiDecodeFailed` here and fork historical Beryl execution.
+    /// as it did before the shared ABI enum grew; never `AbiDecodeFailed`. This falls out of the
+    /// frozen V1 surface not declaring the selector — the asset branch is skipped before any
+    /// argument decode, and the disjoint inherited IB20 decode yields the unknown selector. A gate
+    /// that decoded first (post-decode) would leak `AbiDecodeFailed` here and fork historical Beryl.
     #[test]
     fn route_v1_rejects_scheduled_selector_with_malformed_args_as_unknown() {
         let mut token = make_token();

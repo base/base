@@ -1,23 +1,27 @@
 //! Version manager for the asset B-20 precompile.
 //!
-//! This module is the single owner of both version mappings: which version is
-//! active at a given hardfork ([`AssetVersions::from_base_upgrade`]), and which
-//! concrete implementation backs a version ([`AssetVersion::implementation`]).
-//! Centralizing fork routing here keeps hardfork logic auditable and off the
-//! execution path, and lets the dispatcher route calls without ever matching on
-//! the version itself.
+//! This module is the single owner of fork routing: which version is active at a
+//! given hardfork ([`AssetVersions::from_base_upgrade`]), which concrete
+//! implementation backs a version ([`AssetVersion::implementation`]), and which
+//! wire surface it decodes against ([`AssetVersion::abi`]). Centralizing fork
+//! routing here keeps hardfork logic auditable and off the execution path, and
+//! lets the dispatcher route calls without ever matching on the version itself.
 
+use alloc::string::ToString;
+
+use alloy_sol_types::SolInterface;
 use base_common_genesis::BaseUpgrade;
+use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::{Asset, AssetAccounting, AssetV1, AssetV2, PolicyAccounting};
+use crate::{
+    Asset, AssetAccounting, AssetV1, AssetV2, IB20Asset, IB20AssetV1, IB20AssetV2, PolicyAccounting,
+};
 
 /// An activated version of the asset B-20 precompile logic.
 ///
-/// Each variant maps to an immutable implementation via [`Self::implementation`]. Variants are
-/// declared in activation order, so the derived ordering is chronological: `v < AssetVersion::V2`
-/// means "a version that predates the Cobalt scheduled-multiplier surface", which the dispatcher
-/// uses to gate those selectors out of earlier versions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// Each variant maps to an immutable implementation via [`Self::implementation`] and to the wire
+/// surface frozen at its fork via [`Self::abi`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetVersion {
     /// Introduced at Beryl, the asset's activation fork.
     V1,
@@ -38,6 +42,67 @@ impl AssetVersion {
             Self::V1 => &V1,
             Self::V2 => &V2,
         }
+    }
+
+    /// Returns the wire (ABI) surface frozen for this version.
+    pub const fn abi(self) -> AssetAbi {
+        match self {
+            Self::V1 => AssetAbi::V1,
+            Self::V2 => AssetAbi::V2,
+        }
+    }
+}
+
+/// A frozen wire (ABI) surface of the asset B-20 precompile. Reached only through
+/// [`AssetVersion::abi`].
+///
+/// Covers only the asset-specific [`IB20Asset`] surface; the inherited [`crate::IB20`] surface is
+/// shared across versions (see `b20_asset::abi`) and is decoded directly in the dispatcher's
+/// fallthrough, not through this enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetAbi {
+    /// Wire surface activated at Beryl.
+    V1,
+    /// Wire surface activated at Cobalt.
+    V2,
+}
+
+impl AssetAbi {
+    /// Returns whether `selector` was dialable on this version's asset surface.
+    pub fn asset_valid_selector(self, selector: [u8; 4]) -> bool {
+        match self {
+            Self::V1 => IB20AssetV1::IB20AssetCalls::valid_selector(selector),
+            Self::V2 => IB20AssetV2::IB20AssetCalls::valid_selector(selector),
+        }
+    }
+
+    /// Validates `calldata` against this version's asset surface, mapping failures to
+    /// `AbiDecodeFailed`.
+    pub fn abi_decode_validate_asset(self, calldata: &[u8], selector: [u8; 4]) -> Result<()> {
+        match self {
+            Self::V1 => IB20AssetV1::IB20AssetCalls::abi_decode_validate(calldata).map(|_| ()),
+            Self::V2 => IB20AssetV2::IB20AssetCalls::abi_decode_validate(calldata).map(|_| ()),
+        }
+        .map_err(|error| BasePrecompileError::AbiDecodeFailed {
+            selector,
+            error: error.to_string(),
+        })
+    }
+
+    /// Gates `calldata` on this version's asset surface, then decodes it into the canonical
+    /// routable enum.
+    pub fn decode_asset(self, calldata: &[u8]) -> Result<IB20Asset::IB20AssetCalls> {
+        let Some(selector) = calldata.first_chunk::<4>().copied() else {
+            return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
+        };
+        if !self.asset_valid_selector(selector) {
+            return Err(BasePrecompileError::UnknownFunctionSelector(selector));
+        }
+        self.abi_decode_validate_asset(calldata, selector)?;
+
+        IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
+            BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
+        })
     }
 }
 
@@ -68,9 +133,12 @@ impl AssetVersions {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
+    use alloy_sol_types::{SolCall, SolInterface};
     use base_common_genesis::BaseUpgrade;
 
-    use crate::{AssetVersion, AssetVersions};
+    use crate::{AssetAbi, AssetVersion, AssetVersions, IB20Asset, IB20AssetV1, IB20AssetV2};
 
     #[test]
     fn resolves_none_before_beryl() {
@@ -85,5 +153,73 @@ mod tests {
     #[test]
     fn resolves_v2_at_cobalt() {
         assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(AssetVersion::V2));
+    }
+
+    /// The logic axis and the wire axis meet only here. Driven from the fork ladder so the whole
+    /// chain (upgrade -> version -> surface) is pinned, not just the inner lookup.
+    #[test]
+    fn each_fork_resolves_to_its_wire_surface() {
+        assert_eq!(AssetVersion::V1.abi(), AssetAbi::V1);
+        assert_eq!(AssetVersion::V2.abi(), AssetAbi::V2);
+
+        let beryl = AssetVersions::from_base_upgrade(BaseUpgrade::Beryl).unwrap();
+        let cobalt = AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt).unwrap();
+        assert_eq!(beryl.abi(), AssetAbi::V1);
+        assert_eq!(cobalt.abi(), AssetAbi::V2);
+    }
+
+    /// `SolInterface::NAME` lands in consensus data: the short-calldata branch of
+    /// `abi_decode_validate` builds its error from it, and `AbiDecodeFailed` puts that string on
+    /// the wire. Renaming either frozen interface would change historical revert payloads.
+    #[test]
+    fn surface_interface_names_are_frozen() {
+        assert_eq!(IB20AssetV1::IB20AssetCalls::NAME, "IB20AssetCalls");
+        assert_eq!(IB20AssetV2::IB20AssetCalls::NAME, "IB20AssetCalls");
+    }
+
+    /// `abi_decode_validate` short-circuits on `len < MIN_DATA_LENGTH + 4` before looking at the
+    /// selector. Equal minimums across surfaces is what makes truncated calldata for a *shared*
+    /// selector produce identical `AbiDecodeFailed` bytes at every fork, and it is not obvious from
+    /// the interface definitions. Both surfaces have zero-arg calls, so this is `0` on each.
+    #[test]
+    fn surfaces_share_a_minimum_calldata_length() {
+        assert_eq!(
+            IB20AssetV1::IB20AssetCalls::MIN_DATA_LENGTH,
+            IB20AssetV2::IB20AssetCalls::MIN_DATA_LENGTH
+        );
+    }
+
+    /// The dispatcher re-decodes against the canonical surface after a frozen surface accepts, so
+    /// every frozen selector must exist on canonical. The difference is exactly the 8 ERC-8056
+    /// scheduled-multiplier selectors Cobalt introduced.
+    #[test]
+    fn v1_selectors_are_a_subset_of_v2() {
+        let v1: Vec<[u8; 4]> = IB20AssetV1::IB20AssetCalls::selectors().collect();
+        for selector in &v1 {
+            assert!(
+                AssetAbi::V2.asset_valid_selector(*selector),
+                "V1 selector {selector:?} missing from the V2 surface"
+            );
+        }
+
+        let added: Vec<[u8; 4]> = IB20AssetV2::IB20AssetCalls::selectors()
+            .filter(|selector| !AssetAbi::V1.asset_valid_selector(*selector))
+            .collect();
+        assert_eq!(added.len(), 8);
+        for selector in [
+            IB20Asset::uiMultiplierCall::SELECTOR,
+            IB20Asset::newUIMultiplierCall::SELECTOR,
+            IB20Asset::effectiveAtCall::SELECTOR,
+            IB20Asset::balanceOfUICall::SELECTOR,
+            IB20Asset::totalSupplyUICall::SELECTOR,
+            IB20Asset::setUIMultiplierCall::SELECTOR,
+            IB20Asset::cancelScheduledMultiplierCall::SELECTOR,
+            IB20Asset::supportsInterfaceCall::SELECTOR,
+        ] {
+            assert!(
+                added.contains(&selector),
+                "expected scheduled selector {selector:?} in the V2 delta"
+            );
+        }
     }
 }

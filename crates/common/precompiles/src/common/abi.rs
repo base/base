@@ -197,9 +197,17 @@ impl IB20::IB20Calls {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256};
+    use alloc::vec::Vec;
+
+    use alloy_primitives::{Address, B256, U256, b256, keccak256};
+    use alloy_sol_types::{SolEnum, SolInterface};
 
     use crate::IB20;
+
+    /// Absolute wire fingerprint for the shared `IB20` surface, covering `PausableFeature::COUNT`
+    /// and each variant's ordinal.
+    const IB20_ABI_FINGERPRINT: B256 =
+        b256!("106ef4b7c288c9344d6906ba7ef99a740bd9621cdaed89d06b35abd313c13449");
 
     #[test]
     fn b20_call_labels_are_stable() {
@@ -215,5 +223,57 @@ mod tests {
             .as_label(),
             "precompile-b20-updateSupplyCap"
         );
+    }
+
+    /// The inherited `IB20` surface is shared across every asset/stablecoin version rather than
+    /// frozen per fork (see `b20_asset::abi`), because it has not moved across a hardfork. This pin
+    /// is the tripwire that keeps that decision honest: the first time `IB20` — or its
+    /// `PausableFeature` enum, the live `PolicyType`-class widening risk — grows, this fingerprint
+    /// changes and CI fails, forcing `IB20` to be split into frozen per-fork surfaces (as
+    /// `IB20Asset`/`IPolicyRegistry` already are) before the shared surface can move.
+    ///
+    /// Keccak of sorted call selectors, then sorted event topic0s, then sorted error selectors,
+    /// then `PausableFeature::COUNT`, then each `PausableFeature` ordinal. Order is fixed so a
+    /// single pin catches any wire-surface edit.
+    ///
+    /// The ordinals are load-bearing exactly as `B20Variant`'s are for the factory (see PR #4206):
+    /// `B20PausableFeature::mask` derives the pause storage bit as `1 << (feature as u8)`, so a
+    /// `sol!` reorder of `TRANSFER`/`MINT`/`BURN` would silently remap which bit each feature
+    /// toggles while leaving every selector, topic0, error selector and `COUNT` identical. Hashing
+    /// the ordinals is what makes that reorder visible. This mirrors the `enum_ordinals` term of the
+    /// shared `AbiFingerprint::compute` helper introduced in #4206; once that lands this test should
+    /// call it directly (the byte layout here is chosen to match, so no re-bless is needed).
+    #[test]
+    fn ib20_abi_fingerprint_is_pinned() {
+        let mut selectors: Vec<[u8; 4]> = IB20::IB20Calls::selectors().collect();
+        selectors.sort_unstable();
+
+        let mut event_hashes: Vec<B256> =
+            IB20::IB20Events::SELECTORS.iter().copied().map(B256::new).collect();
+        event_hashes.sort_unstable();
+
+        let mut error_selectors: Vec<[u8; 4]> = IB20::IB20Errors::selectors().collect();
+        error_selectors.sort_unstable();
+
+        let mut buf = Vec::with_capacity(
+            selectors.len() * 4 + event_hashes.len() * 32 + error_selectors.len() * 4 + 1,
+        );
+        for selector in &selectors {
+            buf.extend_from_slice(selector);
+        }
+        for hash in &event_hashes {
+            buf.extend_from_slice(hash.as_slice());
+        }
+        for selector in &error_selectors {
+            buf.extend_from_slice(selector);
+        }
+        buf.push(IB20::PausableFeature::COUNT as u8);
+        buf.extend([
+            IB20::PausableFeature::TRANSFER as u8,
+            IB20::PausableFeature::MINT as u8,
+            IB20::PausableFeature::BURN as u8,
+        ]);
+
+        assert_eq!(keccak256(&buf), IB20_ABI_FINGERPRINT);
     }
 }
