@@ -2178,6 +2178,146 @@ enum ProductionSimulationInstallError {
     }
 }
 
+#[derive(Default)]
+struct InstallConstructorBodyVisitor {
+    state_uses: usize,
+    fixed_state_constructions: usize,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for InstallConstructorBodyVisitor {
+    fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
+        if expression.path.segments.last().is_some_and(|segment| segment.ident == "state") {
+            self.state_uses += 1;
+        }
+        let segments =
+            expression.path.segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<_>>();
+        if segments.first().is_some_and(|segment| segment == "ProductionHandoffState")
+            || segments.as_slice() == ["Default", "default"]
+        {
+            self.fixed_state_constructions += 1;
+        }
+        syn::visit::visit_expr_path(self, expression);
+    }
+}
+
+fn validate_installed_handoff_constructor(source: &str) -> Result<(), String> {
+    use syn::visit::Visit;
+
+    let file = syn::parse_file(source)
+        .map_err(|error| format!("production handoff source did not parse: {error}"))?;
+    let methods = file
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Impl(item) = item else {
+                return None;
+            };
+            let syn::Type::Path(owner) = item.self_ty.as_ref() else {
+                return None;
+            };
+            (item.trait_.is_none()
+                && owner.qself.is_none()
+                && path_ends_with(&owner.path, &["ProductionSimulationHandoff"]))
+            .then_some(item)
+        })
+        .flat_map(|item| &item.items)
+        .filter_map(|item| {
+            let syn::ImplItem::Fn(method) = item else {
+                return None;
+            };
+            (method.sig.ident == "install" && !has_cfg_test(&method.attrs)).then_some(method)
+        })
+        .collect::<Vec<_>>();
+    let [method] = methods.as_slice() else {
+        return Err(format!(
+            "ProductionSimulationHandoff::install cardinality changed: {}",
+            methods.len()
+        ));
+    };
+    let [syn::FnArg::Typed(input)] = method.sig.inputs.iter().collect::<Vec<_>>().as_slice() else {
+        return Err("install must consume exactly one state input and no receiver".to_owned());
+    };
+    if !matches!(method.vis, syn::Visibility::Public(_))
+        || !matches!(
+            input.pat.as_ref(),
+            syn::Pat::Ident(binding)
+                if binding.ident == "state"
+                    && binding.by_ref.is_none()
+                    && binding.mutability.is_none()
+                    && binding.subpat.is_none()
+        )
+        || !matches!(
+            input.ty.as_ref(),
+            syn::Type::Path(state)
+                if state.qself.is_none()
+                    && path_ends_with(&state.path, &["ProductionHandoffState"])
+        )
+        || !matches!(
+            &method.sig.output,
+            syn::ReturnType::Type(_, output)
+                if matches!(
+                    output.as_ref(),
+                    syn::Type::Path(output)
+                        if output.qself.is_none() && path_ends_with(&output.path, &["Self"])
+                )
+        )
+    {
+        return Err("ProductionSimulationHandoff::install signature changed".to_owned());
+    }
+
+    let mut body = InstallConstructorBodyVisitor::default();
+    body.visit_block(&method.block);
+    if body.state_uses != 1 || body.fixed_state_constructions != 0 {
+        return Err(format!(
+            "install must move its supplied state exactly once without a fixed fallback: state_uses={}, fixed_states={}",
+            body.state_uses, body.fixed_state_constructions
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn installed_handoff_constructor_control_and_mutants() {
+    const CONTROL: &str = r#"
+impl ProductionSimulationHandoff {
+    pub fn install(state: ProductionHandoffState) -> Self {
+        Self {
+            shared: Arc::new(ProductionHandoffShared {
+                state: Mutex::new(state),
+            }),
+        }
+    }
+}
+"#;
+    validate_installed_handoff_constructor(CONTROL).expect("installed handoff constructor control");
+    eprintln!("U-INSTALL-CONSTRUCTOR: GREEN");
+
+    for (name, mutant) in [
+        (
+            "DEFAULT-UNAVAILABLE",
+            CONTROL.replace(
+                "Mutex::new(state)",
+                "Mutex::new(ProductionHandoffState::Unavailable(error))",
+            ),
+        ),
+        (
+            "DEFERRED-CONSTRUCTOR",
+            CONTROL.replace("pub fn install(", "pub fn deferred_production("),
+        ),
+        (
+            "SECOND-CONSTRUCTOR",
+            format!("{CONTROL}\n{CONTROL}"),
+        ),
+    ] {
+        assert_ne!(mutant, CONTROL, "{name} patch did not change source");
+        assert!(
+            validate_installed_handoff_constructor(&mutant).is_err(),
+            "{name} mutant remained GREEN"
+        );
+        eprintln!("U-INSTALL-CONSTRUCTOR-{name}: RED");
+    }
+}
+
 fn insert_before_test_module(source: &str, addition: &str) -> String {
     source.replacen(
         "#[cfg(test)]\nmod tests {",
