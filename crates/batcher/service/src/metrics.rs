@@ -18,6 +18,10 @@ base_metrics::define_metrics! {
     canonical_batches_total: counter,
     #[describe("Total shadow batches decoded by the shadow DA parity monitor")]
     shadow_batches_total: counter,
+    #[describe("Canonical channels waiting for completion or ordered decoding")]
+    canonical_pending_channels: gauge,
+    #[describe("Shadow channels waiting for completion or ordered decoding")]
+    shadow_pending_channels: gauge,
     #[describe("Canonical decoded batches waiting for a shadow comparison")]
     canonical_pending_batches: gauge,
     #[describe("Shadow decoded batches waiting for a canonical comparison")]

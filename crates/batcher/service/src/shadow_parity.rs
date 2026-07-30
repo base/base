@@ -340,6 +340,11 @@ impl ShadowParityMonitor {
                 evicted_channels = %evicted_channels,
                 "evicted stale shadow parity channels"
             );
+
+            let canonical = self.state.canonical.drain_ready_channels(&self.config.rollup_config);
+            let shadow = self.state.shadow.drain_ready_channels(&self.config.rollup_config);
+            ParitySide::Canonical.record_ingested(canonical);
+            ParitySide::Shadow.record_ingested(shadow);
         }
 
         let stats = self.state.compare_ready(block_number);
@@ -537,12 +542,7 @@ impl ShadowParityMonitor {
     /// Parse and ingest frame data from one DA payload.
     pub fn ingest_payload(&mut self, side: ParitySide, payload: &[u8], block_info: BlockInfo) {
         match self.state.ingest_payload(side, payload, block_info, &self.config.rollup_config) {
-            Ok(decoded) => {
-                if decoded.complete_channels > 0 {
-                    side.increment_complete_channels(decoded.complete_channels as u64);
-                    side.increment_batches(decoded.batches as u64);
-                }
-            }
+            Ok(decoded) => side.record_ingested(decoded),
             Err(e) => {
                 BatcherServiceMetrics::extraction_errors_total().increment(1);
                 warn!(
@@ -585,6 +585,14 @@ impl ParitySide {
             Self::Shadow => {
                 BatcherServiceMetrics::shadow_batches_total().increment(count);
             }
+        }
+    }
+
+    /// Record channels and batches decoded for this side.
+    pub fn record_ingested(self, ingested: IngestedPayload) {
+        if ingested.complete_channels > 0 {
+            self.increment_complete_channels(ingested.complete_channels as u64);
+            self.increment_batches(ingested.batches as u64);
         }
     }
 }
@@ -714,8 +722,11 @@ impl ParityState {
         stats
     }
 
-    /// Record pending-batch gauges.
+    /// Record pending channel and batch gauges.
     pub fn record_pending_metrics(&self) {
+        BatcherServiceMetrics::canonical_pending_channels()
+            .set(self.canonical.pending_channels() as f64);
+        BatcherServiceMetrics::shadow_pending_channels().set(self.shadow.pending_channels() as f64);
         BatcherServiceMetrics::canonical_pending_batches()
             .set(self.canonical.pending_batches() as f64);
         BatcherServiceMetrics::shadow_pending_batches().set(self.shadow.pending_batches() as f64);
@@ -791,7 +802,7 @@ impl ParitySideState {
         for frame in frames {
             self.ingest_frame(frame, block_info);
         }
-        Ok(self.drain_ready_channels(block_info.timestamp, rollup_config))
+        Ok(self.drain_ready_channels(rollup_config))
     }
 
     /// Ingest one frame.
@@ -813,25 +824,24 @@ impl ParitySideState {
         }
     }
 
-    /// Drain every ready channel into the decoded-batch queue.
-    pub fn drain_ready_channels(
-        &mut self,
-        inclusion_timestamp: u64,
-        rollup_config: &RollupConfig,
-    ) -> IngestedPayload {
-        let ready_ids = self
-            .channel_order
-            .iter()
-            .copied()
-            .filter(|id| self.channels.get(id).is_some_and(Channel::is_ready))
-            .collect::<Vec<_>>();
+    /// Drain the contiguous ready prefix into the decoded-batch queue.
+    pub fn drain_ready_channels(&mut self, rollup_config: &RollupConfig) -> IngestedPayload {
         let mut result = IngestedPayload::default();
 
-        for id in ready_ids {
-            let Some(channel) = self.channels.remove(&id) else { continue };
+        while let Some(id) = self.channel_order.front().copied() {
+            let Some(channel) = self.channels.get(&id) else {
+                self.channel_order.pop_front();
+                continue;
+            };
+            if !channel.is_ready() {
+                break;
+            }
+
+            let channel = self.channels.remove(&id).expect("channel was present");
+            self.channel_order.pop_front();
             match ParityNormalizer::try_normalize_channel(
                 &channel,
-                inclusion_timestamp,
+                channel.highest_l1_inclusion_block.timestamp,
                 rollup_config,
             ) {
                 Ok(batches) => {
@@ -850,7 +860,6 @@ impl ParitySideState {
                 }
             }
         }
-        self.channel_order.retain(|id| self.channels.contains_key(id));
 
         result
     }
@@ -869,7 +878,8 @@ impl ParitySideState {
             .copied()
             .filter(|id| {
                 self.channels.get(id).is_some_and(|channel| {
-                    channel.open_block_number().saturating_add(timeout) < l1_block
+                    !channel.is_ready()
+                        && channel.open_block_number().saturating_add(timeout) < l1_block
                 })
             })
             .collect::<Vec<_>>();
@@ -884,6 +894,11 @@ impl ParitySideState {
         let expired = expired.into_iter().collect::<HashSet<_>>();
         self.channel_order.retain(|id| !expired.contains(id));
         expired.len()
+    }
+
+    /// Number of channels waiting for completion or ordered decoding.
+    pub fn pending_channels(&self) -> usize {
+        self.channels.len()
     }
 
     /// Number of decoded batches waiting for comparison.
@@ -1197,7 +1212,7 @@ mod tests {
         state.ingest_frame(single_frame(corrupt_id, vec![0x02]), block_info);
         state.ingest_frame(single_frame(valid_id, encode_single_batch(&batch)), block_info);
 
-        let ingested = state.drain_ready_channels(0, &rollup_config);
+        let ingested = state.drain_ready_channels(&rollup_config);
 
         assert_eq!(ingested.complete_channels, 1);
         assert_eq!(ingested.batches, 1);
@@ -1205,6 +1220,70 @@ mod tests {
         assert_eq!(state.pending_batches(), 1);
         assert!(state.channels.is_empty());
         assert!(state.channel_order.is_empty());
+    }
+
+    #[test]
+    fn drain_ready_channels_waits_for_older_incomplete_channel() {
+        let rollup_config = test_rollup_config();
+        let mut state = ParitySideState::default();
+        let older_id = [1u8; Channel::ID_LENGTH];
+        let newer_id = [2u8; Channel::ID_LENGTH];
+        let older_batch = SingleBatch { timestamp: 1000, ..Default::default() };
+        let newer_batch = SingleBatch { timestamp: 1002, ..Default::default() };
+        let older_data = encode_single_batch(&older_batch);
+        let split = older_data.len() / 2;
+
+        state.ingest_frame(
+            Frame { id: older_id, number: 0, data: older_data[..split].to_vec(), is_last: false },
+            BlockInfo { number: 10, timestamp: 100, ..Default::default() },
+        );
+        state.ingest_frame(
+            single_frame(newer_id, encode_single_batch(&newer_batch)),
+            BlockInfo { number: 11, timestamp: 101, ..Default::default() },
+        );
+
+        assert_eq!(state.drain_ready_channels(&rollup_config), IngestedPayload::default());
+        assert_eq!(state.pending_channels(), 2);
+        assert_eq!(state.pending_batches(), 0);
+
+        state.ingest_frame(
+            Frame { id: older_id, number: 1, data: older_data[split..].to_vec(), is_last: true },
+            BlockInfo { number: 12, timestamp: 102, ..Default::default() },
+        );
+        let ingested = state.drain_ready_channels(&rollup_config);
+
+        assert_eq!(ingested.complete_channels, 2);
+        assert_eq!(ingested.batches, 2);
+        assert_eq!(state.pending_channels(), 0);
+        assert_eq!(
+            state.batches.iter().map(|batch| batch.start_timestamp).collect::<Vec<_>>(),
+            vec![1000, 1002]
+        );
+    }
+
+    #[test]
+    fn expired_incomplete_channel_releases_ready_successor() {
+        let rollup_config = test_rollup_config();
+        let mut state = ParitySideState::default();
+        let expired_id = [1u8; Channel::ID_LENGTH];
+        let ready_id = [2u8; Channel::ID_LENGTH];
+        let batch = SingleBatch { timestamp: 1000, ..Default::default() };
+        let block_info = BlockInfo { number: 10, timestamp: 100, ..Default::default() };
+
+        state.ingest_frame(
+            Frame { id: expired_id, number: 0, data: vec![0x01], is_last: false },
+            block_info,
+        );
+        state.ingest_frame(single_frame(ready_id, encode_single_batch(&batch)), block_info);
+
+        assert_eq!(state.drain_ready_channels(&rollup_config), IngestedPayload::default());
+        assert_eq!(state.evict_expired_channels(16, 100, &rollup_config), 1);
+        let ingested = state.drain_ready_channels(&rollup_config);
+
+        assert_eq!(ingested.complete_channels, 1);
+        assert_eq!(ingested.batches, 1);
+        assert_eq!(state.pending_channels(), 0);
+        assert_eq!(state.pending_batches(), 1);
     }
 
     #[test]
