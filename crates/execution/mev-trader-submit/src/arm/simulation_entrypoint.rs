@@ -34,7 +34,6 @@ pub enum SimulationEntrypointUnavailable {
     },
 }
 
-
 /// Sticky operator-visible ledger closure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SimulationLedgerClosure {
