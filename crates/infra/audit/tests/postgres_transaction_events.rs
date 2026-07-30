@@ -311,6 +311,13 @@ async fn postgres_partition_maintenance_creates_and_drops_class_windows() -> any
     assert!(counts.iter().any(|(class, count)| class == "hot" && *count >= 3));
     assert!(counts.iter().any(|(class, count)| class == "warm" && *count >= 3));
     assert!(counts.iter().any(|(class, count)| class == "cold" && *count >= 3));
+    for outcome in &outcomes {
+        assert!(
+            outcome.partitions_ahead_days.unwrap_or(-1) >= 2,
+            "expected at least two premade future days, got {:?}",
+            outcome.partitions_ahead_days
+        );
+    }
     for class in ["hot", "warm", "cold"] {
         let expired_partition =
             format!("transaction_events_{class}_{}", expired_day.format("%Y%m%d"));

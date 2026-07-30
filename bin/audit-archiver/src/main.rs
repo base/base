@@ -390,6 +390,7 @@ async fn run_partition_worker(
                             retention_class = %outcome.retention_class,
                             partitions_created = outcome.partitions_created,
                             partitions_dropped = outcome.partitions_dropped,
+                            partitions_ahead_days = ?outcome.partitions_ahead_days,
                             oldest_partition_start = ?outcome.oldest_partition_start,
                             "transaction event partition maintenance complete"
                         );
@@ -398,6 +399,7 @@ async fn run_partition_worker(
             }
             Err(err) => {
                 Metrics::transaction_event_partition_maintenance_failures().increment(1);
+                sink.record_partition_maintenance_last_success_age();
                 error!(error = %err, "transaction event partition maintenance failed");
             }
         }

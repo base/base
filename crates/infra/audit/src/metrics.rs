@@ -63,6 +63,11 @@ base_metrics::define_metrics! {
     #[describe("Age in seconds of the oldest retained transaction observability partition")]
     #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
     transaction_event_oldest_partition_age_seconds: gauge,
+    #[describe("UTC days from today to the newest premade transaction observability partition")]
+    #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
+    transaction_event_partitions_ahead_days: gauge,
+    #[describe("Seconds since this process last completed transaction observability partition maintenance")]
+    transaction_event_partition_maintenance_last_success_age_seconds: gauge,
     #[describe("Transaction observability partition maintenance failures")]
     transaction_event_partition_maintenance_failures: counter,
 }

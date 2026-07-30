@@ -1,6 +1,11 @@
 //! HTTP ingest path for transaction observability events.
 
-use std::{collections::HashSet, fmt, sync::Arc, time::Instant};
+use std::{
+    collections::HashSet,
+    fmt,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -169,6 +174,8 @@ pub struct TransactionEventPartitionMaintenanceOutcome {
     pub partitions_dropped: u64,
     /// Start of the oldest retained daily partition.
     pub oldest_partition_start: Option<DateTime<Utc>>,
+    /// UTC days from today to the newest retained daily partition.
+    pub partitions_ahead_days: Option<i64>,
 }
 
 /// Configuration for transaction event HTTP ingest.
@@ -381,6 +388,9 @@ pub trait TransactionEventSink: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct PgTransactionEventSink {
     pool: PgPool,
+    /// Shared across clones so every replica process tracks its own last
+    /// successful locked maintenance pass for freshness gauges.
+    last_maintenance_success: Arc<Mutex<Option<Instant>>>,
 }
 
 impl PgTransactionEventSink {
@@ -406,7 +416,7 @@ impl PgTransactionEventSink {
             .idle_timeout(None)
             .connect(database_url)
             .await?;
-        Ok(Self { pool })
+        Ok(Self::new(pool))
     }
 
     /// Runs pending Postgres migrations.
@@ -417,8 +427,8 @@ impl PgTransactionEventSink {
     }
 
     /// Creates a sink from an existing pool.
-    pub const fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool, last_maintenance_success: Arc::new(Mutex::new(None)) }
     }
 
     /// Checks whether transaction event Postgres storage is ready for runtime use.
@@ -493,7 +503,8 @@ impl PgTransactionEventSink {
     /// Creates upcoming daily partitions and drops expired partitions.
     ///
     /// The database function serializes concurrent calls from multiple replicas
-    /// with a transaction-scoped advisory lock.
+    /// with a transaction-scoped advisory lock. Replicas that lose the lock
+    /// receive no rows; only a locked pass refreshes success and ahead gauges.
     pub async fn maintain_partitions(
         &self,
         config: TransactionEventRetentionConfig,
@@ -505,7 +516,7 @@ impl PgTransactionEventSink {
         let now = Utc::now();
         let rows = sqlx::query(
             "SELECT retention_class, partitions_created, partitions_dropped, \
-             oldest_partition_start \
+             oldest_partition_start, partitions_ahead_days \
              FROM maintain_transaction_event_partitions($1, $2, $3, $4, $5)",
         )
         .bind(now)
@@ -523,11 +534,13 @@ impl PgTransactionEventSink {
             let partitions_created: i64 = row.try_get("partitions_created")?;
             let partitions_dropped: i64 = row.try_get("partitions_dropped")?;
             let oldest_partition_start = row.try_get("oldest_partition_start")?;
+            let partitions_ahead_days: Option<i64> = row.try_get("partitions_ahead_days")?;
             let outcome = TransactionEventPartitionMaintenanceOutcome {
                 retention_class,
                 partitions_created: u64::try_from(partitions_created)?,
                 partitions_dropped: u64::try_from(partitions_dropped)?,
                 oldest_partition_start,
+                partitions_ahead_days,
             };
 
             Metrics::transaction_event_partitions_created(retention_class.as_str())
@@ -540,9 +553,42 @@ impl PgTransactionEventSink {
                 Metrics::transaction_event_oldest_partition_age_seconds(retention_class.as_str())
                     .set(age_seconds);
             }
+            if let Some(ahead_days) = outcome.partitions_ahead_days {
+                Metrics::transaction_event_partitions_ahead_days(retention_class.as_str())
+                    .set(ahead_days as f64);
+            }
             outcomes.push(outcome);
         }
+
+        if !outcomes.is_empty() {
+            match self.last_maintenance_success.lock() {
+                Ok(mut last_success) => *last_success = Some(Instant::now()),
+                Err(_) => {
+                    error!(
+                        "transaction event partition maintenance success clock is poisoned; \
+                         freshness gauge will not advance"
+                    );
+                }
+            }
+        }
+        self.record_partition_maintenance_last_success_age();
+
         Ok(outcomes)
+    }
+
+    /// Refreshes the last-success age gauge from this process's last locked pass.
+    ///
+    /// Call after a failed maintenance attempt so the age continues to advance
+    /// even when the SQL round-trip errors.
+    pub fn record_partition_maintenance_last_success_age(&self) {
+        let Ok(last_success) = self.last_maintenance_success.lock() else {
+            return;
+        };
+        let Some(last_success) = *last_success else {
+            return;
+        };
+        Metrics::transaction_event_partition_maintenance_last_success_age_seconds()
+            .set(last_success.elapsed().as_secs_f64());
     }
 
     /// Checks optional transaction event storage readiness.

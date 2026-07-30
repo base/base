@@ -135,7 +135,8 @@ RETURNS TABLE (
     retention_class TEXT,
     partitions_created BIGINT,
     partitions_dropped BIGINT,
-    oldest_partition_start TIMESTAMPTZ
+    oldest_partition_start TIMESTAMPTZ,
+    partitions_ahead_days BIGINT
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -147,6 +148,8 @@ DECLARE
     retention_days INTEGER;
     day_offset INTEGER;
     partition_record RECORD;
+    today DATE;
+    newest_partition_day DATE;
 BEGIN
     IF p_premake_days < 1 OR p_premake_days > 31 THEN
         RAISE EXCEPTION 'premake days must be between 1 and 31';
@@ -163,6 +166,8 @@ BEGIN
         RETURN;
     END IF;
 
+    today := (p_now AT TIME ZONE 'UTC')::DATE;
+
     FOREACH class_name IN ARRAY ARRAY['hot', 'warm', 'cold']
     LOOP
         parent_name := ('transaction_events_' || class_name)::NAME;
@@ -174,12 +179,14 @@ BEGIN
         retention_class := class_name;
         partitions_created := 0;
         partitions_dropped := 0;
+        partitions_ahead_days := NULL;
+        oldest_partition_start := NULL;
 
         FOR day_offset IN 0..p_premake_days
         LOOP
             IF public.create_transaction_event_partition(
                 class_name,
-                (p_now AT TIME ZONE 'UTC')::DATE + day_offset
+                today + day_offset
             ) THEN
                 partitions_created := partitions_created + 1;
             END IF;
@@ -205,13 +212,18 @@ BEGIN
         END LOOP;
 
         SELECT
-            min(to_date(right(child.relname, 8), 'YYYYMMDD'))::TIMESTAMP AT TIME ZONE 'UTC'
-        INTO oldest_partition_start
+            min(to_date(right(child.relname, 8), 'YYYYMMDD'))::TIMESTAMP AT TIME ZONE 'UTC',
+            max(to_date(right(child.relname, 8), 'YYYYMMDD'))
+        INTO oldest_partition_start, newest_partition_day
         FROM pg_inherits AS inheritance
         JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
         JOIN pg_class AS child ON child.oid = inheritance.inhrelid
         WHERE parent.oid = to_regclass('public.' || quote_ident(parent_name::TEXT))
           AND child.relname ~ ('^' || parent_name::TEXT || '_[0-9]{8}$');
+
+        IF newest_partition_day IS NOT NULL THEN
+            partitions_ahead_days := newest_partition_day - today;
+        END IF;
 
         RETURN NEXT;
     END LOOP;
