@@ -713,18 +713,12 @@ mod tests {
         assert_eq!(err, base_precompile_storage::BasePrecompileError::under_overflow());
     }
 
-    /// Pins the classification predicate the `announce` inner-call loop keys on: every `Panic`
-    /// kind — including the enum-conversion (`0x21`) and array-out-of-bounds (`0x32`) classes —
-    /// plus `OutOfGas`, `Fatal`, and `SlotOverflow` must be a system error and therefore propagate
-    /// unchanged, whereas an ordinary contract revert (and a strict-decode failure) must not.
-    ///
-    /// The one inner-call system error reachable end-to-end is arithmetic overflow
-    /// (`Panic(UnderOverflow)`), pinned by [`announce_inner_system_error_propagates_unchanged`].
-    /// The enum and array-OOB classes have no inner-call selector that reaches them: strict ABI
-    /// decoding rejects an out-of-range enum as `AbiDecodeFailed` (an ordinary revert) before any
-    /// conversion guard runs, and no reachable path produces an array-OOB. Their propagation is
-    /// therefore pinned here at the `is_system_error()` predicate, guarding against a future change
-    /// that would silently reclassify a `Panic` as a wrappable revert.
+    /// Arithmetic overflow (`Panic(UnderOverflow)`) is the one inner-call system error reachable
+    /// end-to-end, pinned by [`announce_inner_system_error_propagates_unchanged`]. The enum (`0x21`)
+    /// and array-OOB (`0x32`) classes have no reachable inner-call selector — strict ABI decode
+    /// rejects an out-of-range enum as `AbiDecodeFailed` first — so this pins their propagation at
+    /// the `is_system_error()` predicate `announce` branches on, guarding against a change that
+    /// silently reclassifies a `Panic` as a wrappable revert.
     #[test]
     fn announce_inner_panic_classes_are_system_errors() {
         for err in [
@@ -743,8 +737,7 @@ mod tests {
             !BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: Bytes::new() })
                 .is_system_error()
         );
-        // A strict-decode failure (what an out-of-range enum inner call actually yields on the
-        // native precompile) is likewise not a system error, so it wraps rather than bubbling.
+        // A strict-decode failure (what an out-of-range enum inner call actually yields) also wraps.
         assert!(
             !BasePrecompileError::AbiDecodeFailed { selector: [0u8; 4], error: String::new() }
                 .is_system_error()
