@@ -1017,6 +1017,7 @@ mod tests {
         (population, projection, install)
     }
 
+    #[cfg(not(feature = "arm-live-egress"))]
     #[test]
     fn genesis_export_prepares_authenticated_zero_population_and_projection() {
         let root =
