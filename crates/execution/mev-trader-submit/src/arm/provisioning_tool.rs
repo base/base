@@ -1,8 +1,12 @@
-//! Signer-free preparation and attachment commands for T4e provisioning artifacts.
+#![cfg(feature = "arm-provisioning")]
 
+//! `arm-provisioning`-gated signer-free preparation and attachment for T4e artifacts.
+
+#[cfg(test)]
+use std::cell::RefCell;
 use std::{
-    fs::{self, DirBuilder, File, OpenOptions},
-    io::Write,
+    fs::{DirBuilder, File, OpenOptions},
+    io::{Read, Write},
     os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::Path,
 };
@@ -20,7 +24,17 @@ use super::{
 const EXPORT_SCHEMA: &str = "base-mev/t4e-frozen-export/v2";
 const XIP_DOMAIN: &[u8] = b"base-mev/postgres-snapshot-xip/v1";
 const MAX_EXPORT_BYTES: u64 = 128 * 1024 * 1024;
-const MAX_SIGNATURE_BYTES: u64 = 132;
+// The read bound deliberately admits the two 134-byte malformed text forms (CRLF and two LFs)
+// so canonical validation, rather than the byte cap, rejects them.
+const MAX_SIGNATURE_BYTES: u64 = 134;
+
+#[cfg(test)]
+thread_local! {
+    static READ_BOUNDED_AFTER_OPEN_HOOK: RefCell<Option<Box<dyn FnOnce()>>> =
+        const { RefCell::new(None) };
+    static READ_BOUNDED_AFTER_METADATA_HOOK: RefCell<Option<Box<dyn FnOnce()>>> =
+        const { RefCell::new(None) };
+}
 
 /// Closed signer-free provisioning-tool failure.
 #[derive(Debug)]
@@ -760,9 +774,8 @@ fn parse_signature_file(path: &Path) -> Result<[u8; 65], ProvisioningToolError> 
     if bytes.len() == 65 {
         return bytes.try_into().map_err(|_| input("Signature", None));
     }
-    let text =
-        std::str::from_utf8(&bytes).map_err(|_| input("Signature", None))?.trim_end_matches('\n');
-    signature(text)
+    let text = std::str::from_utf8(&bytes).map_err(|_| input("Signature", None))?;
+    signature(text.strip_suffix('\n').unwrap_or(text))
 }
 
 fn eip191_digest(preimage: &[u8]) -> B256 {
@@ -797,18 +810,49 @@ fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), ProvisioningToolError
 }
 
 fn read_bounded(path: &Path, maximum: u64) -> Result<Vec<u8>, ProvisioningToolError> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| ProvisioningToolError::Io)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|_| ProvisioningToolError::Io)?;
+    #[cfg(test)]
+    READ_BOUNDED_AFTER_OPEN_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+    read_bounded_file(file, maximum)
+}
+
+fn read_bounded_file(file: File, maximum: u64) -> Result<Vec<u8>, ProvisioningToolError> {
+    let metadata = file.metadata().map_err(|_| ProvisioningToolError::Io)?;
     if !metadata.file_type().is_file() || metadata.len() == 0 || metadata.len() > maximum {
         return Err(ProvisioningToolError::Io);
     }
-    fs::read(path).map_err(|_| ProvisioningToolError::Io)
+    #[cfg(test)]
+    READ_BOUNDED_AFTER_METADATA_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+    let read_limit = maximum.checked_add(1).ok_or(ProvisioningToolError::Io)?;
+    let mut bytes =
+        Vec::with_capacity(usize::try_from(metadata.len()).map_err(|_| ProvisioningToolError::Io)?);
+    file.take(read_limit).read_to_end(&mut bytes).map_err(|_| ProvisioningToolError::Io)?;
+    if bytes.is_empty() || bytes.len() as u64 > maximum {
+        return Err(ProvisioningToolError::Io);
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "arm-provisioning")]
     use std::{collections::BTreeMap, path::PathBuf};
-    use std::{fs, os::unix::fs::PermissionsExt};
+    use std::{
+        fs,
+        os::unix::fs::{PermissionsExt, symlink},
+    };
 
     use super::*;
     #[cfg(feature = "arm-provisioning")]
@@ -1015,6 +1059,115 @@ mod tests {
         .to_vec();
 
         (population, projection, install)
+    }
+
+    #[test]
+    fn signature_file_accepts_one_trailing_lf_but_rejects_noncanonical_whitespace() {
+        let root = std::env::temp_dir().join(format!("t4e-signature-input-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).expect("root");
+        let path = root.join("signature.hex");
+        let expected = [0x11; 65];
+        let canonical = hex_signature(expected);
+
+        fs::write(&path, format!("{canonical}\n")).expect("signature with LF");
+        assert_eq!(parse_signature_file(&path).expect("one trailing LF"), expected);
+
+        for (name, invalid, code) in [
+            ("two-lfs", format!("{canonical}\n\n").into_bytes(), "CanonicalHex"),
+            ("crlf", format!("{canonical}\r\n").into_bytes(), "CanonicalHex"),
+            (
+                "embedded-lf",
+                format!("{}\n{}", &canonical[..20], &canonical[20..]).into_bytes(),
+                "CanonicalHex",
+            ),
+            ("trailing-space", format!("{canonical} ").into_bytes(), "CanonicalHex"),
+            ("non-utf8-at-bound", vec![0xff; MAX_SIGNATURE_BYTES as usize], "Signature"),
+        ] {
+            fs::write(&path, invalid).expect("invalid signature");
+            assert!(
+                matches!(
+                    parse_signature_file(&path),
+                    Err(ProvisioningToolError::Input {
+                        code: actual,
+                        submission_id: None
+                    }) if actual == code
+                ),
+                "{name} must reach canonical signature validation and fail as {code}"
+            );
+        }
+        fs::write(&path, vec![b'x'; 135]).expect("one byte past sealed read bound");
+        assert!(
+            matches!(parse_signature_file(&path), Err(ProvisioningToolError::Io)),
+            "a 135-byte signature file must be rejected by the effective read bound"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn bounded_read_rejects_symlinks() {
+        let root = std::env::temp_dir().join(format!("t4e-bounded-symlink-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).expect("root");
+        let target = root.join("target");
+        let link = root.join("link");
+        fs::write(&target, b"canonical").expect("target");
+        symlink(&target, &link).expect("symlink");
+
+        assert_eq!(read_bounded(&target, 9).expect("regular file"), b"canonical");
+        assert!(read_bounded(&link, 9).is_err(), "symlink must fail closed");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn bounded_read_consumes_the_opened_handle_not_a_replaced_path() {
+        let root = std::env::temp_dir().join(format!("t4e-bounded-handle-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).expect("root");
+        let path = root.join("input");
+        let moved = root.join("opened");
+        fs::write(&path, b"opened").expect("input");
+        let hook_path = path.clone();
+        let hook_moved = moved.clone();
+        READ_BOUNDED_AFTER_OPEN_HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&hook_path, &hook_moved).expect("move opened file");
+                fs::write(&hook_path, b"replacement-is-deliberately-oversized")
+                    .expect("replacement");
+            }));
+        });
+
+        assert_eq!(read_bounded(&path, 16).expect("opened handle"), b"opened");
+        assert_eq!(fs::read(&moved).expect("hook moved opened inode"), b"opened");
+        assert_eq!(
+            fs::read(&path).expect("hook installed replacement"),
+            b"replacement-is-deliberately-oversized"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn bounded_read_rejects_an_opened_file_that_grows_past_the_limit() {
+        let root = std::env::temp_dir().join(format!("t4e-bounded-growth-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).expect("root");
+        let path = root.join("input");
+        fs::write(&path, b"opened").expect("input");
+        let hook_path = path.clone();
+        READ_BOUNDED_AFTER_METADATA_HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                let mut file =
+                    OpenOptions::new().append(true).open(&hook_path).expect("append opened file");
+                file.write_all(b"-grew-past-sixteen-bytes").expect("grow opened file");
+            }));
+        });
+
+        assert!(
+            read_bounded(&path, 16).is_err(),
+            "growth after metadata must be caught by bounded read and post-read recheck"
+        );
+        assert!(fs::metadata(&path).expect("grown file").len() > 16);
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[cfg(not(feature = "arm-live-egress"))]

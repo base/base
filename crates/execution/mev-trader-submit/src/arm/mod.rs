@@ -64,6 +64,7 @@ pub use producer::{
     UnsignedPopulationManifestV1, UnsignedProjectionV1,
 };
 mod provisioning_tool;
+#[cfg(feature = "arm-provisioning")]
 pub use provisioning_tool::{ParsedFrozenExportV2, ProvisioningToolError, T4eProvisioningTool};
 mod providers;
 mod simulation_entrypoint;
@@ -652,4 +653,5 @@ mod tests {
         assert!(sink.is_poisoned());
         assert!(matches!(sink.check(), Err(ArmError::Poisoned)));
     }
+
 }
