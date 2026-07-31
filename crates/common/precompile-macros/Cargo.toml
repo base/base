@@ -23,3 +23,4 @@ proc-macro2.workspace = true
 
 [dev-dependencies]
 alloy-primitives.workspace = true
+trybuild.workspace = true

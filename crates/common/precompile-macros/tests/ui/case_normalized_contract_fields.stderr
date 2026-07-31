@@ -1,0 +1,5 @@
+error: field `FOO` generates storage constant `FOO`, which conflicts with field `foo` after case normalization
+ --> tests/ui/case_normalized_contract_fields.rs:8:5
+  |
+8 |     FOO: u8,
+  |     ^^^
