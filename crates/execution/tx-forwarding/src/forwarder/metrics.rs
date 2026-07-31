@@ -1,4 +1,4 @@
-//! Metrics for the transaction forwarder.
+//! Metrics for transaction forwarders.
 
 use jsonrpsee::core::ClientError;
 
@@ -18,12 +18,6 @@ base_metrics::define_metrics! {
     #[describe("Total number of transactions rejected by the builder's pool within successful batch calls")]
     #[label(builder_url)]
     num_tx_rejected_in_batch: counter,
-    #[describe("Total lag events from the broadcast receiver")]
-    #[label(builder_url)]
-    batches_lagged: counter,
-    #[describe("Total individual transactions skipped due to lag")]
-    #[label(builder_url)]
-    txs_lagged: counter,
     #[describe("RPC round-trip latency in seconds (including retries)")]
     #[label(builder_url)]
     rpc_latency: histogram,
@@ -34,7 +28,7 @@ base_metrics::define_metrics! {
 
 impl ForwarderMetrics {
     /// Maps a [`ClientError`] to a static label for the `rpc_errors` metric.
-    pub const fn rpc_error_label(err: &ClientError) -> &'static str {
+    pub(super) const fn rpc_error_label(err: &ClientError) -> &'static str {
         match err {
             ClientError::Transport(_) => "transport",
             ClientError::RequestTimeout => "request_timeout",

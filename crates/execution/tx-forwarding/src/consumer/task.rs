@@ -6,44 +6,49 @@ use base_observability_events::{
 };
 use reth_transaction_pool::{PoolTransaction, TransactionPool, ValidPoolTransaction};
 use serde_json::{Map, json};
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, trace};
+use url::Url;
 
 use super::{config::ConsumerConfig, metrics::Metrics, validator::RecentlySent};
 
-/// Background consumer that drains the pool and broadcasts transactions.
+/// Background consumer that drains the pool for one destination.
 ///
-/// Each iteration creates a fresh `best_transactions()` snapshot, skips
-/// recently-sent hashes, and broadcasts new transactions. Downstream
-/// forwarders (one per builder) each subscribe to receive every transaction.
-pub struct Consumer<P: TransactionPool> {
+/// Each iteration creates a fresh `best_transactions()` snapshot and queues
+/// transactions not recently accepted by this destination's queue.
+pub(crate) struct DestinationConsumer<P: TransactionPool> {
     pool: P,
     config: ConsumerConfig,
     recently_sent: RecentlySent,
-    sender: broadcast::Sender<Arc<ValidPoolTransaction<P::Transaction>>>,
+    sender: mpsc::Sender<Arc<ValidPoolTransaction<P::Transaction>>>,
     cancel: CancellationToken,
+    builder_url: Url,
+    url_label: Arc<str>,
 }
 
-impl<P> Consumer<P>
+impl<P> DestinationConsumer<P>
 where
     P: TransactionPool + 'static,
     P::Transaction: PoolTransaction,
 {
-    /// Creates a new consumer.
-    pub fn new(
+    /// Creates a consumer for one destination.
+    pub(crate) fn new(
         pool: P,
         config: ConsumerConfig,
-        sender: broadcast::Sender<Arc<ValidPoolTransaction<P::Transaction>>>,
+        sender: mpsc::Sender<Arc<ValidPoolTransaction<P::Transaction>>>,
         cancel: CancellationToken,
+        builder_url: Url,
     ) -> Self {
         let recently_sent = RecentlySent::new(config.resend_after);
-        Self { pool, config, recently_sent, sender, cancel }
+        let url_label = builder_url.to_string().into();
+        Self { pool, config, recently_sent, sender, cancel, builder_url, url_label }
     }
 
     /// Blocking loop — runs until the [`CancellationToken`] is cancelled.
-    pub fn run(&mut self) {
+    pub(crate) fn run(&mut self) {
         info!(
+            builder_url = %self.builder_url,
             resend_after_ms = self.config.resend_after.as_millis() as u64,
             channel_capacity = self.config.channel_capacity,
             poll_interval_ms = self.config.poll_interval.as_millis() as u64,
@@ -72,22 +77,38 @@ where
                     continue;
                 }
 
-                if self.sender.send(tx).is_ok() {
-                    self.recently_sent.mark_sent(hash);
-                    txs_sent += 1;
-                    self.emit_builder_consumed_event(hash, iterator_index);
+                let mut pending = tx;
+                loop {
+                    match self.sender.try_send(pending) {
+                        Ok(()) => {
+                            self.recently_sent.mark_sent(hash);
+                            txs_sent += 1;
+                            self.emit_builder_consumed_event(hash, iterator_index);
+                            break;
+                        }
+                        Err(mpsc::error::TrySendError::Full(tx)) => {
+                            if self.cancel.is_cancelled() {
+                                return;
+                            }
+                            pending = tx;
+                            std::thread::sleep(self.config.poll_interval);
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => return,
+                    }
                 }
             }
 
-            Metrics::iterations().increment(1);
+            Metrics::iterations(Arc::clone(&self.url_label)).increment(1);
 
             if txs_read > 0 {
-                Metrics::txs_read().increment(txs_read);
-                Metrics::txs_sent().increment(txs_sent);
-                Metrics::txs_ignored().increment(txs_ignored);
-                Metrics::dedup_cache_size().set(self.recently_sent.len() as f64);
+                Metrics::txs_read(Arc::clone(&self.url_label)).increment(txs_read);
+                Metrics::txs_sent(Arc::clone(&self.url_label)).increment(txs_sent);
+                Metrics::txs_ignored(Arc::clone(&self.url_label)).increment(txs_ignored);
+                Metrics::dedup_cache_size(Arc::clone(&self.url_label))
+                    .set(self.recently_sent.len() as f64);
 
                 trace!(
+                    builder_url = %self.builder_url,
                     txs_read = txs_read,
                     txs_sent = txs_sent,
                     txs_ignored = txs_ignored,
@@ -109,6 +130,7 @@ where
         let data = Map::from_iter([
             ("source".to_string(), json!("best_transactions")),
             ("target".to_string(), json!("builder_forwarder")),
+            ("builder_url".to_string(), json!(self.builder_url.as_str())),
             ("iterator_index".to_string(), json!(iterator_index)),
             ("resend_after_ms".to_string(), json!(self.config.resend_after.as_millis() as u64)),
         ]);
@@ -125,9 +147,10 @@ where
     }
 }
 
-impl<P: TransactionPool> fmt::Debug for Consumer<P> {
+impl<P: TransactionPool> fmt::Debug for DestinationConsumer<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Consumer")
+        f.debug_struct("DestinationConsumer")
+            .field("builder_url", &self.builder_url)
             .field("config", &self.config)
             .field("recently_sent", &self.recently_sent)
             .finish_non_exhaustive()

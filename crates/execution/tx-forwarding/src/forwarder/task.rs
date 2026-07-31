@@ -2,6 +2,9 @@ use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, TxHash};
+use base_execution_txpool::{
+    BundleTransaction, NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions,
+};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -15,16 +18,10 @@ use jsonrpsee::{
 };
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 use serde_json::{Map, json};
-use tokio::{sync::broadcast, time};
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace, warn};
+use tokio::{sync::mpsc, time};
+use tracing::{debug, error, info, trace};
 
 use super::{config::ForwarderConfig, metrics::ForwarderMetrics};
-use crate::{
-    NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions,
-    transaction::BundleTransaction,
-};
-
 /// Sliding window rate limiter that tracks request timestamps.
 ///
 /// Maintains a bounded deque of send timestamps within a 1-second window.
@@ -74,23 +71,23 @@ impl RateLimiter {
     }
 }
 
-/// Async forwarder task that receives transactions from a broadcast channel
+/// Async forwarder task that receives transactions from a destination queue
 /// and sends them to a single builder via RPC.
 ///
 /// Under normal load, each transaction is sent immediately as a batch of 1.
 /// When the sliding window rate limit (`max_rps`) is hit, incoming
 /// transactions buffer and flush as a single batch (capped at
 /// `max_batch_size`) once the window opens.
-pub struct Forwarder<T: PoolTransaction, E = NoExtensions> {
+pub(crate) struct DestinationForwarder<T: PoolTransaction, E = NoExtensions> {
     builder_url: url::Url,
     /// Pre-computed URL label shared cheaply across metric emissions.
     url_label: Arc<str>,
     client: HttpClient,
-    receiver: broadcast::Receiver<Arc<ValidPoolTransaction<T>>>,
+    receiver: mpsc::Receiver<Arc<ValidPoolTransaction<T>>>,
     config: Arc<ForwarderConfig>,
-    cancel: CancellationToken,
     limiter: RateLimiter,
     buffer: Vec<BufferedTransaction<E>>,
+    buffer_limit: usize,
 }
 
 struct BufferedTransaction<E> {
@@ -98,29 +95,30 @@ struct BufferedTransaction<E> {
     tx_hash: TxHash,
 }
 
-impl<T, E> Forwarder<T, E>
+impl<T, E> DestinationForwarder<T, E>
 where
     T: PoolTransaction + BundleTransaction,
     <T as PoolTransaction>::Consensus: Encodable2718,
     E: ValidatedTransactionExtensions<T>,
 {
     /// Creates a new forwarder for a single builder endpoint.
-    pub fn new(
+    pub(crate) fn new(
         builder_url: url::Url,
         client: HttpClient,
-        receiver: broadcast::Receiver<Arc<ValidPoolTransaction<T>>>,
+        receiver: mpsc::Receiver<Arc<ValidPoolTransaction<T>>>,
         config: Arc<ForwarderConfig>,
-        cancel: CancellationToken,
+        queue_capacity: usize,
     ) -> Self {
         let limiter = RateLimiter::new(config.max_rps);
-        let initial_capacity = if config.max_batch_size == 0 { 256 } else { config.max_batch_size };
-        let buffer = Vec::with_capacity(initial_capacity);
+        let buffer_limit =
+            if config.max_batch_size == 0 { queue_capacity } else { config.max_batch_size };
+        let buffer = Vec::with_capacity(buffer_limit);
         let url_label: Arc<str> = builder_url.to_string().into();
-        Self { builder_url, url_label, client, receiver, config, cancel, limiter, buffer }
+        Self { builder_url, url_label, client, receiver, config, limiter, buffer, buffer_limit }
     }
 
-    /// Runs the forwarder loop until cancelled.
-    pub async fn run(mut self) {
+    /// Runs the forwarder loop until the destination queue closes.
+    pub(crate) async fn run(mut self) {
         info!(
             builder_url = %self.builder_url,
             max_rps = self.config.max_rps,
@@ -129,21 +127,20 @@ where
         );
 
         loop {
-            if self.cancel.is_cancelled() {
-                break;
-            }
-
             match self.limiter.check_rate_limit() {
                 None if !self.buffer.is_empty() => {
                     self.flush_buffer().await;
                     continue;
                 }
                 Some(wait) => {
+                    if self.buffer.len() >= self.buffer_limit {
+                        time::sleep(wait).await;
+                        continue;
+                    }
                     let closed = tokio::select! {
-                        _ = self.cancel.cancelled() => break,
                         _ = time::sleep(wait) => { continue; }
-                        result = self.receiver.recv() => {
-                            self.handle_recv(result)
+                        transaction = self.receiver.recv() => {
+                            self.handle_recv(transaction)
                         }
                     };
                     if closed {
@@ -154,12 +151,8 @@ where
                 _ => {}
             }
 
-            let closed = tokio::select! {
-                _ = self.cancel.cancelled() => break,
-                result = self.receiver.recv() => {
-                    self.handle_recv(result)
-                }
-            };
+            let transaction = self.receiver.recv().await;
+            let closed = self.handle_recv(transaction);
             if closed {
                 break;
             }
@@ -172,12 +165,9 @@ where
     }
 
     /// Returns `true` if the channel is closed and the forwarder should shut down.
-    fn handle_recv(
-        &mut self,
-        result: Result<Arc<ValidPoolTransaction<T>>, broadcast::error::RecvError>,
-    ) -> bool {
-        match result {
-            Ok(tx) => {
+    fn handle_recv(&mut self, transaction: Option<Arc<ValidPoolTransaction<T>>>) -> bool {
+        match transaction {
+            Some(tx) => {
                 let sender = *tx.sender_ref();
                 let tx_hash = *tx.transaction.hash();
                 let consensus = tx.transaction.clone_into_consensus();
@@ -202,21 +192,11 @@ where
                     .set(self.buffer.len() as f64);
                 false
             }
-            Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                warn!(
-                    builder_url = %self.builder_url,
-                    skipped = skipped,
-                    "forwarder lagged, dropped transactions",
-                );
-                ForwarderMetrics::batches_lagged(Arc::clone(&self.url_label)).increment(1);
-                ForwarderMetrics::txs_lagged(Arc::clone(&self.url_label)).increment(skipped);
-                false
-            }
-            Err(broadcast::error::RecvError::Closed) => {
+            None => {
                 info!(
                     builder_url = %self.builder_url,
                     buffered = self.buffer.len(),
-                    "broadcast channel closed",
+                    "destination queue closed",
                 );
                 true
             }
@@ -334,10 +314,7 @@ where
                         error = %err,
                         "RPC send failed, retrying",
                     );
-                    tokio::select! {
-                        _ = self.cancel.cancelled() => return,
-                        _ = time::sleep(backoff) => {}
-                    }
+                    time::sleep(backoff).await;
                 }
                 Err(err) => {
                     ForwarderMetrics::rpc_latency(Arc::clone(&self.url_label))
@@ -418,9 +395,9 @@ where
     }
 }
 
-impl<T: PoolTransaction, E> std::fmt::Debug for Forwarder<T, E> {
+impl<T: PoolTransaction, E> std::fmt::Debug for DestinationForwarder<T, E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Forwarder")
+        f.debug_struct("DestinationForwarder")
             .field("builder_url", &self.builder_url)
             .field("config", &self.config)
             .finish_non_exhaustive()

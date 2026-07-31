@@ -1,0 +1,56 @@
+use std::time::Duration;
+
+/// Configuration for transaction forwarders.
+///
+/// Each forwarder receives from its own queue and forwards transactions via
+/// `base_insertValidatedTransactions`.
+/// Under normal load, transactions are sent immediately (batch of 1). When the
+/// sliding window rate limit is hit, incoming transactions buffer and flush as
+/// a single batch once the window opens.
+#[derive(Debug, Clone)]
+pub(crate) struct ForwarderConfig {
+    /// Maximum RPC requests per second per forwarder (sliding window). 0 = unlimited.
+    pub(crate) max_rps: u32,
+    /// Maximum transactions per RPC request. 0 = unlimited.
+    pub(crate) max_batch_size: usize,
+    /// Maximum RPC send retries before dropping a batch.
+    pub(crate) max_retries: u32,
+    /// Base delay between retries (doubles each attempt).
+    pub(crate) retry_backoff: Duration,
+    /// Per-request timeout for the HTTP client.
+    pub(crate) request_timeout: Duration,
+}
+
+impl Default for ForwarderConfig {
+    fn default() -> Self {
+        Self {
+            max_rps: 200,
+            max_batch_size: 500,
+            max_retries: 3,
+            retry_backoff: Duration::from_millis(100),
+            request_timeout: Duration::from_secs(1),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults() {
+        let config = ForwarderConfig::default();
+        assert_eq!(config.max_rps, 200);
+        assert_eq!(config.max_batch_size, 500);
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.retry_backoff, Duration::from_millis(100));
+        assert_eq!(config.request_timeout, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn zero_means_unlimited() {
+        let config = ForwarderConfig { max_rps: 0, max_batch_size: 0, ..Default::default() };
+        assert_eq!(config.max_rps, 0);
+        assert_eq!(config.max_batch_size, 0);
+    }
+}

@@ -8,14 +8,14 @@ use alloy_primitives::B256;
 /// Number of [`RecentlySent::was_recently_sent`] calls between pruning sweeps.
 const PRUNE_INTERVAL: u64 = 1000;
 
-/// Hash-based deduplication tracker with a configurable time-to-live.
+/// Per-destination deduplication tracker with a configurable time-to-live.
 ///
-/// Tracks transaction hashes that have already been forwarded through the
-/// consumer broadcast channel. A transaction whose hash appears in the map
+/// Tracks transaction hashes accepted by one destination's queue. A transaction
+/// whose hash appears in the map
 /// and whose entry is younger than `resend_after` will be skipped. Expired
 /// entries are pruned periodically (every [`PRUNE_INTERVAL`] lookups) to
 /// bound memory.
-pub struct RecentlySent {
+pub(super) struct RecentlySent {
     seen: HashMap<B256, Instant>,
     resend_after: Duration,
     check_count: u64,
@@ -23,14 +23,14 @@ pub struct RecentlySent {
 
 impl RecentlySent {
     /// Creates a new tracker.
-    pub fn new(resend_after: Duration) -> Self {
+    pub(super) fn new(resend_after: Duration) -> Self {
         Self { seen: HashMap::new(), resend_after, check_count: 0 }
     }
 
     /// Returns `true` if the hash was sent within the `resend_after` window.
     ///
     /// Triggers a pruning sweep every [`PRUNE_INTERVAL`] calls.
-    pub fn was_recently_sent(&mut self, hash: &B256) -> bool {
+    pub(super) fn was_recently_sent(&mut self, hash: &B256) -> bool {
         self.check_count += 1;
         if self.check_count.is_multiple_of(PRUNE_INTERVAL) {
             self.prune_expired();
@@ -40,17 +40,18 @@ impl RecentlySent {
     }
 
     /// Records a hash as sent at the current instant.
-    pub fn mark_sent(&mut self, hash: B256) {
+    pub(super) fn mark_sent(&mut self, hash: B256) {
         self.seen.insert(hash, Instant::now());
     }
 
     /// Returns the current cache size.
-    pub fn len(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         self.seen.len()
     }
 
     /// Returns `true` when the cache is empty.
-    pub fn is_empty(&self) -> bool {
+    #[cfg(test)]
+    pub(super) fn is_empty(&self) -> bool {
         self.seen.is_empty()
     }
 
@@ -86,6 +87,18 @@ mod tests {
 
         tracker.mark_sent(hash);
         assert!(tracker.was_recently_sent(&hash));
+    }
+
+    #[test]
+    fn trackers_deduplicate_independently() {
+        let mut first_destination = RecentlySent::new(Duration::from_secs(5));
+        let mut second_destination = RecentlySent::new(Duration::from_secs(5));
+        let hash = B256::random();
+
+        first_destination.mark_sent(hash);
+
+        assert!(first_destination.was_recently_sent(&hash));
+        assert!(!second_destination.was_recently_sent(&hash));
     }
 
     #[test]

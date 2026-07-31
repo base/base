@@ -4886,9 +4886,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tokio-stream",
- "tokio-util",
  "tracing",
- "url",
 ]
 
 [[package]]
@@ -6514,8 +6512,20 @@ dependencies = [
 name = "base-tx-forwarding"
 version = "0.0.0"
 dependencies = [
+ "alloy-eips 2.2.0",
+ "alloy-primitives",
  "base-execution-txpool",
+ "base-metrics",
  "base-node-runner",
+ "base-observability-events",
+ "futures",
+ "jsonrpsee",
+ "metrics",
+ "reth-tasks",
+ "reth-transaction-pool",
+ "serde_json",
+ "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]

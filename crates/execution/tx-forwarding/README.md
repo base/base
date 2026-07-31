@@ -1,14 +1,18 @@
 # base-tx-forwarding
 
-Transaction forwarding extension for Base node. Forwards transactions from the mempool to builder RPC endpoints.
+Transaction forwarding service and node extension for Base. Forwards transactions from the mempool to builder RPC endpoints.
 
 ## Overview
 
 This crate provides:
 
-- **Transaction Consumer**: Subscribes to pool events and broadcasts transactions to forwarders
-- **Transaction Forwarder**: Batches and forwards transactions to builder RPC endpoints
-- **Resend Logic**: Automatically resends transactions that haven't been included after a configurable window
+- **`TxForwardingService`**: Starts one consumer and forwarder pipeline per destination
+- **`TxForwardingHandle`**: Gracefully stops consumers and drains destination queues
+- **Per-destination delivery**: Each builder has an independent bounded queue and deduplication cache
+- **Resend logic**: Automatically resends transactions that haven't been included after a configurable window
+
+A slow builder backpressures only its own consumer. Transactions are marked as recently sent only
+after that builder's queue accepts them, so another destination cannot suppress their delivery.
 
 ## CLI Flags
 

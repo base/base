@@ -12,14 +12,34 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# ethereum
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
+
+# reth
+reth-tasks.workspace = true
+reth-transaction-pool.workspace = true
+
 # workspace
+base-metrics.workspace = true
 base-node-runner.workspace = true
 base-execution-txpool.workspace = true
+base-observability-events.workspace = true
 
 # misc
 url.workspace = true
-tracing = { workspace = true, features = ["std"] }
+futures.workspace = true
+metrics = { workspace = true, optional = true }
+serde_json.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "time"] }
+jsonrpsee = { workspace = true, features = ["http-client"] }
 
 [dev-dependencies]
 # workspace
 base-node-runner = { workspace = true, features = ["test-utils"] }
+
+[features]
+default = ["metrics"]
+metrics = ["base-metrics/metrics", "dep:metrics"]
