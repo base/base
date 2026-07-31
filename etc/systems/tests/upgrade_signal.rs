@@ -51,7 +51,7 @@ async fn test_upgrade_signal_startup_apply_sets_rollup_config() -> Result<()> {
     let builder_config =
         rollup_config_via_rpc(&system.l2_stack().builder_consensus_rpc_url()).await?;
     assert_eq!(
-        builder_config.contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt),
+        builder_config.upgrade_activation_timestamp(BaseUpgrade::Cobalt),
         Some(COBALT_ACTIVATION_TIMESTAMP),
         "builder consensus should serve the L1-scheduled Cobalt activation"
     );
@@ -59,7 +59,7 @@ async fn test_upgrade_signal_startup_apply_sets_rollup_config() -> Result<()> {
     let client_config =
         rollup_config_via_rpc(&system.l2_stack().client_consensus_rpc_url()).await?;
     assert_eq!(
-        client_config.contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt),
+        client_config.upgrade_activation_timestamp(BaseUpgrade::Cobalt),
         Some(COBALT_ACTIVATION_TIMESTAMP),
         "client consensus should serve the L1-scheduled Cobalt activation"
     );
@@ -85,7 +85,7 @@ async fn test_upgrade_signal_follow_mode_startup_apply_sets_rollup_config() -> R
         .client_follow_rollup_config()
         .expect("client consensus should be running in follow mode");
     assert_eq!(
-        follow_config.contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt),
+        follow_config.upgrade_activation_timestamp(BaseUpgrade::Cobalt),
         Some(COBALT_ACTIVATION_TIMESTAMP),
         "follow consensus should apply the L1-scheduled Cobalt activation"
     );
@@ -103,7 +103,7 @@ async fn test_upgrade_signal_metrics_only_does_not_mutate_schedule() -> Result<(
     let builder_config =
         rollup_config_via_rpc(&system.l2_stack().builder_consensus_rpc_url()).await?;
     assert_ne!(
-        builder_config.contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt),
+        builder_config.upgrade_activation_timestamp(BaseUpgrade::Cobalt),
         Some(COBALT_ACTIVATION_TIMESTAMP),
         "metrics-only mode must not apply the L1 schedule to the rollup config"
     );
@@ -145,7 +145,7 @@ async fn test_upgrade_signal_execution_startup_apply_sets_chain_spec() -> Result
     let builder_config =
         rollup_config_via_rpc(&system.l2_stack().builder_consensus_rpc_url()).await?;
     assert_ne!(
-        builder_config.contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt),
+        builder_config.upgrade_activation_timestamp(BaseUpgrade::Cobalt),
         Some(COBALT_ACTIVATION_TIMESTAMP),
         "metrics-only consensus must not apply the schedule the execution node applied"
     );
@@ -207,7 +207,7 @@ async fn test_upgrade_signal_runtime_admin_reapplies_live_schedule_change() -> R
     let builder_config =
         rollup_config_via_rpc(&system.l2_stack().builder_consensus_rpc_url()).await?;
     assert_eq!(
-        builder_config.contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt),
+        builder_config.upgrade_activation_timestamp(BaseUpgrade::Cobalt),
         Some(COBALT_ACTIVATION_TIMESTAMP),
         "runtime-admin mode should apply the L1 schedule at startup"
     );
