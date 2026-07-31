@@ -8672,19 +8672,27 @@ impl BaseNodeTraderConfig {
     const fn t4d_shadow_enabled() -> bool {
         false
     }
-    fn admission_exporter_from_environment() -> Result<Option<AdmissionExporterConfigV1>, String> {
-        let Some(output_root) = std::env::var_os("MEV_TRADER_T4A_ADMISSION_OUTPUT_ROOT") else {
-            return Ok(None);
-        };
-        let run_id = std::env::var("MEV_TRADER_T4A_ADMISSION_RUN_ID").map_err(
-            |_| "MEV_TRADER_T4A_ADMISSION_RUN_ID is required with admission output root",
-        )?;
-        let boot_id = std::env::var("MEV_TRADER_T4A_ADMISSION_BOOT_ID").map_err(
-            |_| "MEV_TRADER_T4A_ADMISSION_BOOT_ID is required with admission output root",
-        )?;
+    fn admission_exporter_config(
+        output_root: Option<OsString>,
+        run_id: Option<String>,
+        boot_id: Option<String>,
+    ) -> Result<Option<AdmissionExporterConfigV1>, String> {
+        let Some(output_root) = output_root else { return Ok(None) };
+        let run_id = run_id
+            .ok_or("MEV_TRADER_T4A_ADMISSION_RUN_ID is required with admission output root")?;
+        let boot_id = boot_id
+            .ok_or("MEV_TRADER_T4A_ADMISSION_BOOT_ID is required with admission output root")?;
         AdmissionExporterConfigV1::new(PathBuf::from(output_root), run_id, boot_id)
             .map(Some)
             .map_err(|error| error.to_string())
+    }
+
+    fn admission_exporter_from_environment() -> Result<Option<AdmissionExporterConfigV1>, String> {
+        Self::admission_exporter_config(
+            std::env::var_os("MEV_TRADER_T4A_ADMISSION_OUTPUT_ROOT"),
+            std::env::var("MEV_TRADER_T4A_ADMISSION_RUN_ID").ok(),
+            std::env::var("MEV_TRADER_T4A_ADMISSION_BOOT_ID").ok(),
+        )
     }
 
     /// Applies exact-1 and flashblocks-present gates before consulting the credential environment.
@@ -11302,6 +11310,37 @@ mod tests {
         assert_eq!(t4b_counters.count(T4bOutcome::DeploymentIdentityRejected), 3);
     }
 
+    #[test]
+    fn admission_exporter_environment_contract_rejects_partial_configuration() {
+        assert!(
+            BaseNodeTraderConfig::admission_exporter_config(None, None, None).unwrap().is_none()
+        );
+        assert!(
+            BaseNodeTraderConfig::admission_exporter_config(
+                Some(OsString::from("/tmp/private")),
+                None,
+                Some("boot".into()),
+            )
+            .unwrap_err()
+            .contains("RUN_ID")
+        );
+        assert!(
+            BaseNodeTraderConfig::admission_exporter_config(
+                Some(OsString::from("/tmp/private")),
+                Some("run".into()),
+                None,
+            )
+            .unwrap_err()
+            .contains("BOOT_ID")
+        );
+        let configured = BaseNodeTraderConfig::admission_exporter_config(
+            Some(OsString::from("/tmp/private")),
+            Some("run".into()),
+            Some("boot".into()),
+        )
+        .unwrap();
+        assert!(configured.is_some());
+    }
     #[test]
     fn admission_exporter_runs_with_shadow_conjunction_off_and_no_credential() {
         let nonce =

@@ -24,10 +24,10 @@ use crate::{
     A1Counters, A1Outcome, A1Status, AdmissionConnectionReasonV1, AdmissionEconomicsV1,
     AdmissionExporterV1, AdmissionFrameV1, AdmissionTerminalReasonV1, AdmissionTerminalV1,
     BackrunPlan, BlinkVictim, CancellationProbe, CancellationToken, DedicatedAnalysisPool,
-    FixturePoolRegistry, FrameAuditPlan, FrameProcessOutcomeV1, FrameProcessor, FrameRejectionV1,
-    GlobalLifecycle, GlobalState, LatestSlot, LifecycleError, MeasurementContext, PairwiseEngine,
-    PairwiseError, PoolDescriptor, PoolRegistry, PoolStatePreparer, PoolUniverseSnapshot,
-    PortError, PreparationError, QueuedBlinkVictim, RegistryDigest, RegistryError, RegistryHasher,
+    FixturePoolRegistry, FrameProcessOutcomeV1, FrameProcessor, FrameRejectionV1, GlobalLifecycle,
+    GlobalState, LatestSlot, LifecycleError, MeasurementContext, PairwiseEngine, PairwiseError,
+    PoolDescriptor, PoolRegistry, PoolStatePreparer, PoolUniverseSnapshot, PortError,
+    PreparationError, QueuedBlinkVictim, RegistryDigest, RegistryError, RegistryHasher,
     RuntimeShutdown, ShadowLatestSlot, ShadowSlotCounters, SlotSubmit, SnapshotCaptureCoordinator,
     SoleWorker, TaskRun, TaskRunner, TaskState, TraderSnapshotPort, VictimFrame, Watchdog,
     WatchdogStatus, WorkerClaim,
@@ -225,6 +225,8 @@ pub trait CandidateTxShapeObserver: Debug + Send + Sync {
 pub enum ShadowOutcome {
     /// Victim execution or delta admission rejected the frame.
     FrameRejected,
+    /// Pool universe was not installed; frame admission was not attempted.
+    UniverseAbsent,
     /// Exact-parent pool code-hash admission rejected the frame.
     CodeHashRejected,
     /// Provider-free pool-state preparation rejected the frame.
@@ -251,6 +253,7 @@ pub enum ShadowOutcome {
 #[derive(Debug, Default)]
 pub struct ShadowOutcomeCounters {
     frame_rejected: AtomicU64,
+    universe_absent: AtomicU64,
     code_hash_rejected: AtomicU64,
     preparation_rejected: AtomicU64,
     v3_coverage: AtomicU64,
@@ -268,6 +271,7 @@ impl ShadowOutcomeCounters {
     pub fn record(&self, outcome: ShadowOutcome) {
         let counter = match outcome {
             ShadowOutcome::FrameRejected => &self.frame_rejected,
+            ShadowOutcome::UniverseAbsent => &self.universe_absent,
             ShadowOutcome::CodeHashRejected => &self.code_hash_rejected,
             ShadowOutcome::PreparationRejected => &self.preparation_rejected,
             ShadowOutcome::V3Coverage => &self.v3_coverage,
@@ -286,6 +290,7 @@ impl ShadowOutcomeCounters {
     pub fn count(&self, outcome: ShadowOutcome) -> u64 {
         let counter = match outcome {
             ShadowOutcome::FrameRejected => &self.frame_rejected,
+            ShadowOutcome::UniverseAbsent => &self.universe_absent,
             ShadowOutcome::CodeHashRejected => &self.code_hash_rejected,
             ShadowOutcome::PreparationRejected => &self.preparation_rejected,
             ShadowOutcome::V3Coverage => &self.v3_coverage,
@@ -908,25 +913,7 @@ impl MevTraderRuntime {
         let run = TaskRunner.run(&self.lifecycle, || {
             self.analysis.install(&probe, |probe| {
                 let Some(universe) = self.universe.as_ref() else {
-                    let audit = FrameAuditPlan::new(Vec::new(), BTreeMap::new())
-                        .map_err(|_| PortError::Incoherent)?;
-                    return match FrameProcessor::process_classified(
-                        port,
-                        &snapshot,
-                        &frame,
-                        frame_observed_at,
-                        chain_spec,
-                        &audit,
-                        probe,
-                    )? {
-                        FrameProcessOutcomeV1::Processed(processed) => {
-                            Ok((Some(processed), None, None))
-                        }
-                        FrameProcessOutcomeV1::Rejected(rejection) => {
-                            self.record_admission_rejection(generation, rejection);
-                            Ok((None, None, Some(ShadowOutcome::FrameRejected)))
-                        }
-                    };
+                    return Ok((None, None, Some(ShadowOutcome::UniverseAbsent)));
                 };
 
                 if !PoolCodeHashView::validate(port, &snapshot, universe, probe) {
@@ -1416,6 +1403,9 @@ impl MevTraderRuntime {
                         Some(ShadowOutcome::FrameRejected) => {
                             AdmissionTerminalReasonV1::ParentHeaderMismatch
                         }
+                        Some(ShadowOutcome::UniverseAbsent) => {
+                            AdmissionTerminalReasonV1::UniverseAbsent
+                        }
                         Some(ShadowOutcome::CodeHashRejected) => {
                             AdmissionTerminalReasonV1::PoolCodeHashMismatch
                         }
@@ -1432,7 +1422,7 @@ impl MevTraderRuntime {
                         Some(ShadowOutcome::NoPositivePlan | ShadowOutcome::Selected) => {
                             AdmissionTerminalReasonV1::EconomicsAuthorityUnavailable
                         }
-                        None => AdmissionTerminalReasonV1::ParentHeaderMismatch,
+                        None => AdmissionTerminalReasonV1::InternalFailure,
                     }
                 }
             },
@@ -1508,7 +1498,6 @@ mod tests {
     use alloy_eips::Decodable2718;
     #[cfg(feature = "edge-measurement")]
     use alloy_primitives::{Bytes, hex, keccak256, map::HashMap};
-    #[cfg(feature = "edge-measurement")]
     use alloy_rpc_types_engine::PayloadId;
     #[cfg(feature = "edge-measurement")]
     use base_common_consensus::BaseTxEnvelope;
@@ -1517,14 +1506,13 @@ mod tests {
 
     use super::*;
     use crate::{
-        AuditedWriteKey, DescriptorHasher, DescriptorPlanDigest, ExactProtocol, FieldKind,
-        FieldRead, FixturePoolRegistry, RegistryHasher, SnapshotHandleFactory, StorageReadPlan,
+        AuditedWriteKey, BundleVisitor, DescriptorHasher, DescriptorPlanDigest, ExactProtocol,
+        FieldKind, FieldRead, FixturePoolRegistry, PayloadVisitor, PendingSnapshotView,
+        RegistryHasher, SnapshotHandleFactory, StorageReadPlan, TransactionVisitor, VisitControl,
+        VisitSummary,
     };
     #[cfg(feature = "edge-measurement")]
-    use crate::{
-        BundleVisitor, MeasurementEncoder, PayloadVisitor, PendingSnapshotView,
-        ProducerEpochCutoffFieldsV1, TransactionVisitor, VisitControl, VisitSummary, WETH,
-    };
+    use crate::{MeasurementEncoder, ProducerEpochCutoffFieldsV1, WETH};
 
     #[derive(Debug)]
     struct EmptyPort;
@@ -1553,14 +1541,12 @@ mod tests {
     #[cfg(feature = "edge-measurement")]
     const SELECTED_RAW_VICTIM: &str = "02f86c8221058034839a4ae283021528942f16386bb37709016023232523ff6d9daf444be380841249c58bc080a001b927eda2af9b00b52a57be0885e0303c39dd2831732e14051c2336470fd468a0681bf120baf562915841a48601c2b54a6742511e535cf8f71c95115af7ff63bd";
 
-    #[cfg(feature = "edge-measurement")]
     #[derive(Debug)]
     struct SelectedFixtureView {
         parent_hash: B256,
         latest_header: Sealed<Header>,
     }
 
-    #[cfg(feature = "edge-measurement")]
     impl PendingSnapshotView for SelectedFixtureView {
         fn parent_hash(&self) -> B256 {
             self.parent_hash
@@ -1631,6 +1617,32 @@ mod tests {
             _visitor: &mut dyn BundleVisitor,
         ) -> Result<VisitSummary, PortError> {
             Ok(VisitSummary { visited: 0, complete: true })
+        }
+    }
+    #[derive(Debug)]
+    struct UniverseAbsentPort {
+        view: Arc<dyn PendingSnapshotView + Send + Sync>,
+        received_at: Instant,
+    }
+
+    impl TraderSnapshotPort for UniverseAbsentPort {
+        fn capture_latest(
+            &self,
+            factory: &SnapshotHandleFactory,
+        ) -> Result<Option<crate::SnapshotHandle>, PortError> {
+            factory.issue(Arc::clone(&self.view), self.received_at).map(Some)
+        }
+
+        fn is_current_authoritative(&self, handle: &crate::SnapshotHandle) -> bool {
+            handle.matches_capture(&self.view, self.received_at)
+        }
+
+        fn state_at_hash(&self, _block_hash: B256) -> Result<StateProviderBox, PortError> {
+            Err(PortError::ProviderUnavailable)
+        }
+
+        fn sealed_header_at_hash(&self, _block_hash: B256) -> Result<Sealed<Header>, PortError> {
+            Err(PortError::HeaderUnavailable)
         }
     }
 
@@ -1714,6 +1726,7 @@ mod tests {
     fn shadow_outcome_total(runtime: &MevTraderRuntime) -> u64 {
         [
             ShadowOutcome::FrameRejected,
+            ShadowOutcome::UniverseAbsent,
             ShadowOutcome::CodeHashRejected,
             ShadowOutcome::PreparationRejected,
             ShadowOutcome::V3Coverage,
@@ -1728,6 +1741,105 @@ mod tests {
         .into_iter()
         .map(|outcome| runtime.shadow_outcome_counters().count(outcome))
         .sum()
+    }
+    #[test]
+    fn admission_terminal_maps_every_runtime_outcome_without_inventing_unknown_causes() {
+        let cases = [
+            (ShadowOutcome::FrameRejected, AdmissionTerminalReasonV1::ParentHeaderMismatch),
+            (ShadowOutcome::UniverseAbsent, AdmissionTerminalReasonV1::UniverseAbsent),
+            (ShadowOutcome::CodeHashRejected, AdmissionTerminalReasonV1::PoolCodeHashMismatch),
+            (ShadowOutcome::PreparationRejected, AdmissionTerminalReasonV1::PreparationError),
+            (ShadowOutcome::V3Coverage, AdmissionTerminalReasonV1::V3Coverage),
+            (ShadowOutcome::AnalysisRejected, AdmissionTerminalReasonV1::PreparationError),
+            (ShadowOutcome::InternalFailure, AdmissionTerminalReasonV1::InternalFailure),
+            (ShadowOutcome::Cancelled, AdmissionTerminalReasonV1::Cancelled),
+            (ShadowOutcome::NoDirtyPools, AdmissionTerminalReasonV1::NoDirtyPool),
+            (ShadowOutcome::NoCandidate, AdmissionTerminalReasonV1::NoRoute),
+            (
+                ShadowOutcome::NoPositivePlan,
+                AdmissionTerminalReasonV1::EconomicsAuthorityUnavailable,
+            ),
+            (ShadowOutcome::Selected, AdmissionTerminalReasonV1::EconomicsAuthorityUnavailable),
+        ];
+        for (outcome, expected) in cases {
+            let terminal = MevTraderRuntime::admission_terminal(
+                TERMINAL_FRAME_BOUND,
+                Some(outcome),
+                None,
+                None,
+            );
+            assert_eq!(terminal.reason, expected);
+            if outcome != ShadowOutcome::UniverseAbsent {
+                assert_ne!(terminal.reason, AdmissionTerminalReasonV1::UniverseAbsent);
+            }
+        }
+
+        let unknown = MevTraderRuntime::admission_terminal(TERMINAL_NO_TRADE, None, None, None);
+        assert_eq!(unknown.reason, AdmissionTerminalReasonV1::InternalFailure);
+        let cancelled = MevTraderRuntime::admission_terminal(
+            TERMINAL_CANCELLED,
+            Some(ShadowOutcome::FrameRejected),
+            None,
+            None,
+        );
+        assert_eq!(cancelled.reason, AdmissionTerminalReasonV1::Cancelled);
+        let rejected = MevTraderRuntime::admission_terminal(
+            TERMINAL_NO_TRADE,
+            Some(ShadowOutcome::FrameRejected),
+            None,
+            Some(FrameRejectionV1 {
+                reason: AdmissionTerminalReasonV1::EvmTransactError,
+                missing_key_kind: None,
+                missing_key_address: None,
+                missing_storage_slot: None,
+            }),
+        );
+        assert_eq!(rejected.reason, AdmissionTerminalReasonV1::EvmTransactError);
+    }
+    #[test]
+    fn attached_exporter_persists_runtime_terminal_end_to_end() {
+        let nonce =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("base-runtime-admission-{nonce}"));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(
+            &root,
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o700),
+        )
+        .unwrap();
+        let exporter = AdmissionExporterV1::start(
+            crate::AdmissionExporterConfigV1::new(
+                root.clone(),
+                "runtime-run".into(),
+                "runtime-boot".into(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let config =
+            MevTraderRuntimeConfig::empty().unwrap().with_admission_exporter(Arc::clone(&exporter));
+        let runtime = MevTraderRuntime::start(config).unwrap();
+        runtime.test_deadline_millis.store(5_000, Ordering::Release);
+        let received_at = Instant::now();
+        let parent_hash = B256::with_last_byte(7);
+        let view: Arc<dyn PendingSnapshotView + Send + Sync> = Arc::new(SelectedFixtureView {
+            parent_hash,
+            latest_header: Sealed::new_unchecked(
+                Header { number: 100, parent_hash, ..Header::default() },
+                B256::with_last_byte(8),
+            ),
+        });
+        let port = UniverseAbsentPort { view, received_at };
+        runtime.submit_blink_victim(victim_at(received_at));
+        assert!(runtime.consume_once(&port, Arc::new(BaseChainSpec::mainnet())));
+        exporter.close().unwrap();
+
+        let segment =
+            std::fs::read_to_string(root.join("runtime-run/runtime-boot-000000.jsonl")).unwrap();
+        assert!(segment.contains("\"terminalReason\":\"universe_absent\""));
+        assert!(segment.contains("\"contractViolations\":0"));
+        assert!(segment.contains("\"valid\":true"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     fn code_descriptor(pool_byte: u8, protocol: ExactProtocol) -> PoolDescriptor {

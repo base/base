@@ -167,6 +167,8 @@ pub enum AdmissionTerminalReasonV1 {
     DeltaAccountCap,
     /// Victim delta exceeded the storage cap.
     DeltaStorageCap,
+    /// Pool universe was not installed; this is configuration unavailability, not frame rejection.
+    UniverseAbsent,
     /// Strict-cohort evidence was missing.
     MissingKey,
     /// Pool runtime code hash mismatched.
@@ -244,17 +246,17 @@ pub struct AdmissionFrameV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmissionEconomicsV1 {
     /// Closed disposition.
-    pub disposition: EconomicDispositionV1,
+    disposition: EconomicDispositionV1,
     /// Signed best modeled gross decimal.
-    pub best_modeled_gross_profit_wei_signed: Option<String>,
+    best_modeled_gross_profit_wei_signed: Option<String>,
     /// Modeled retained value decimal.
-    pub modeled_retained_value_wei: Option<String>,
+    modeled_retained_value_wei: Option<String>,
     /// Modeled total-cost decimal.
-    pub modeled_total_cost_wei: Option<String>,
+    modeled_total_cost_wei: Option<String>,
     /// Signed modeled expected-EV decimal.
-    pub modeled_expected_ev_wei_signed: Option<String>,
+    modeled_expected_ev_wei_signed: Option<String>,
     /// Canonical nonnegative shortfall decimal.
-    pub gross_shortfall_to_positive_wei: Option<String>,
+    gross_shortfall_to_positive_wei: Option<String>,
 }
 
 impl AdmissionEconomicsV1 {
@@ -287,7 +289,9 @@ impl AdmissionEconomicsV1 {
         }
     }
 
-    /// Constructs a gross-nonpositive record with the canonical strict-positive shortfall.
+    /// Constructs a gross-nonpositive record for a future economics-authority integration.
+    ///
+    /// The current Phase A runtime has no total-cost authority and cannot reach this disposition.
     pub fn gross_nonpositive(
         gross: I512,
         total_cost: U256,
@@ -302,7 +306,10 @@ impl AdmissionEconomicsV1 {
         })
     }
 
-    /// Constructs a complete EV disposition.
+    /// Constructs a complete EV disposition for a future economics-authority integration.
+    ///
+    /// The current Phase A runtime cannot reach EV dispositions until downstream economics reports
+    /// are wired back to this independent exporter.
     pub fn ev(
         gross: I512,
         retained: U256,
@@ -337,6 +344,64 @@ impl AdmissionEconomicsV1 {
         }
         U256::checked_from_limbs_slice(difference.into_raw().as_limbs())
             .ok_or(AdmissionExporterErrorV1::InvalidConfig)
+    }
+    fn contract_valid(&self, reason: AdmissionTerminalReasonV1) -> bool {
+        let shape_valid = match self.disposition {
+            EconomicDispositionV1::NotReached | EconomicDispositionV1::NoRoute => {
+                self.best_modeled_gross_profit_wei_signed.is_none()
+                    && self.modeled_retained_value_wei.is_none()
+                    && self.modeled_total_cost_wei.is_none()
+                    && self.modeled_expected_ev_wei_signed.is_none()
+                    && self.gross_shortfall_to_positive_wei.is_none()
+            }
+            EconomicDispositionV1::AuthorityUnavailable => {
+                self.best_modeled_gross_profit_wei_signed.is_some()
+                    && self.modeled_retained_value_wei.is_none()
+                    && self.modeled_total_cost_wei.is_none()
+                    && self.modeled_expected_ev_wei_signed.is_none()
+                    && self.gross_shortfall_to_positive_wei.is_none()
+            }
+            EconomicDispositionV1::GrossNonpositive => {
+                self.best_modeled_gross_profit_wei_signed.is_some()
+                    && self.modeled_retained_value_wei.is_none()
+                    && self.modeled_total_cost_wei.is_some()
+                    && self.modeled_expected_ev_wei_signed.is_none()
+                    && self.gross_shortfall_to_positive_wei.is_some()
+            }
+            EconomicDispositionV1::EvNonpositive | EconomicDispositionV1::EvPositive => {
+                self.best_modeled_gross_profit_wei_signed.is_some()
+                    && self.modeled_retained_value_wei.is_some()
+                    && self.modeled_total_cost_wei.is_some()
+                    && self.modeled_expected_ev_wei_signed.is_some()
+                    && self.gross_shortfall_to_positive_wei.is_some()
+            }
+        };
+        let reason_valid = match self.disposition {
+            EconomicDispositionV1::NoRoute => reason == AdmissionTerminalReasonV1::NoRoute,
+            EconomicDispositionV1::GrossNonpositive => {
+                reason == AdmissionTerminalReasonV1::GrossNonpositive
+            }
+            EconomicDispositionV1::AuthorityUnavailable => {
+                reason == AdmissionTerminalReasonV1::EconomicsAuthorityUnavailable
+            }
+            EconomicDispositionV1::EvNonpositive => {
+                reason == AdmissionTerminalReasonV1::EvNonpositive
+            }
+            EconomicDispositionV1::EvPositive => matches!(
+                reason,
+                AdmissionTerminalReasonV1::EvPositive | AdmissionTerminalReasonV1::T4ePersisted
+            ),
+            EconomicDispositionV1::NotReached => !matches!(
+                reason,
+                AdmissionTerminalReasonV1::NoRoute
+                    | AdmissionTerminalReasonV1::GrossNonpositive
+                    | AdmissionTerminalReasonV1::EconomicsAuthorityUnavailable
+                    | AdmissionTerminalReasonV1::EvNonpositive
+                    | AdmissionTerminalReasonV1::EvPositive
+                    | AdmissionTerminalReasonV1::T4ePersisted
+            ),
+        };
+        shape_valid && reason_valid
     }
 }
 
@@ -377,6 +442,28 @@ impl AdmissionTerminalV1 {
             missing_key_address: None,
             missing_storage_slot: None,
         }
+    }
+    fn contract_valid(&self) -> bool {
+        self.economics.contract_valid(self.reason)
+            && match self.missing_key_kind {
+                Some(
+                    MissingKeyKindV1::ReadPlanStorage | MissingKeyKindV1::ChangedButNotReadStorage,
+                ) => {
+                    self.reason == AdmissionTerminalReasonV1::MissingKey
+                        && self.missing_key_address.is_some()
+                        && self.missing_storage_slot.is_some()
+                }
+                Some(MissingKeyKindV1::AccountBalance | MissingKeyKindV1::AccountNonce) => {
+                    self.reason == AdmissionTerminalReasonV1::MissingKey
+                        && self.missing_key_address.is_some()
+                        && self.missing_storage_slot.is_none()
+                }
+                None => {
+                    self.reason != AdmissionTerminalReasonV1::MissingKey
+                        && self.missing_key_address.is_none()
+                        && self.missing_storage_slot.is_none()
+                }
+            }
     }
 }
 
@@ -593,6 +680,7 @@ struct FooterRecordV1<'a> {
     last_sequence: Option<u64>,
     sequence_gaps: u64,
     sequence_duplicates: u64,
+    contract_violations: u64,
     reconciliation_mismatch: bool,
     valid: bool,
 }
@@ -623,6 +711,7 @@ struct AdmissionWriterV1 {
     sequence_gaps: u64,
     sequence_duplicates: u64,
     unknown_terminals: u64,
+    contract_violations: u64,
 }
 
 impl AdmissionWriterV1 {
@@ -651,6 +740,7 @@ impl AdmissionWriterV1 {
             sequence_gaps: 0,
             sequence_duplicates: 0,
             unknown_terminals: 0,
+            contract_violations: 0,
         })
     }
 
@@ -725,6 +815,9 @@ impl AdmissionWriterV1 {
             let Some(terminal) = pending.terminal.take() else {
                 break;
             };
+            if !terminal.contract_valid() {
+                self.contract_violations = self.contract_violations.saturating_add(1);
+            }
             let queue_outcome = if self.queue_dropped.load(Ordering::Acquire) == 0 {
                 AdmissionQueueOutcomeV1::Accepted
             } else {
@@ -779,11 +872,13 @@ impl AdmissionWriterV1 {
             self.received = 0;
             self.terminal_events = 0;
             self.histogram.clear();
+            self.seen_sequences.clear();
             self.first_sequence = None;
             self.last_sequence = None;
             self.sequence_gaps = 0;
             self.sequence_duplicates = 0;
             self.unknown_terminals = 0;
+            self.contract_violations = 0;
         }
         Ok(())
     }
@@ -822,6 +917,7 @@ impl AdmissionWriterV1 {
             && self.sequence_gaps == 0
             && self.sequence_duplicates == 0
             && self.unknown_terminals == 0
+            && self.contract_violations == 0
             && !reconciliation_mismatch;
         let footer = FooterRecordV1 {
             schema_version: ADMISSION_SCHEMA_VERSION_V1,
@@ -839,6 +935,7 @@ impl AdmissionWriterV1 {
             last_sequence: self.last_sequence,
             sequence_gaps: self.sequence_gaps,
             sequence_duplicates: self.sequence_duplicates.saturating_add(self.unknown_terminals),
+            contract_violations: self.contract_violations,
             reconciliation_mismatch,
             valid,
         };
@@ -885,42 +982,75 @@ pub fn validate_admission_segment_v1(path: &Path) -> Result<bool, AdmissionExpor
     }
 
     fn economics_valid(object: &serde_json::Map<String, Value>) -> bool {
-        let gross = &object["bestModeledGrossProfitWeiSigned"];
-        let retained = &object["modeledRetainedValueWei"];
-        let cost = &object["modeledTotalCostWei"];
-        let ev = &object["modeledExpectedEvWeiSigned"];
-        let shortfall = &object["grossShortfallToPositiveWei"];
-        match object.get("economicDisposition").and_then(Value::as_str) {
-            Some("not_reached" | "no_route") => {
-                gross.is_null()
-                    && retained.is_null()
-                    && cost.is_null()
-                    && ev.is_null()
-                    && shortfall.is_null()
-            }
-            Some("authority_unavailable") => {
-                canonical_decimal(gross, true)
-                    && retained.is_null()
-                    && cost.is_null()
-                    && ev.is_null()
-                    && shortfall.is_null()
-            }
-            Some("gross_nonpositive") => {
-                canonical_decimal(gross, true)
-                    && retained.is_null()
-                    && canonical_decimal(cost, false)
-                    && ev.is_null()
-                    && canonical_decimal(shortfall, false)
-            }
-            Some("ev_nonpositive" | "ev_positive") => {
-                canonical_decimal(gross, true)
-                    && canonical_decimal(retained, false)
-                    && canonical_decimal(cost, false)
-                    && canonical_decimal(ev, true)
-                    && canonical_decimal(shortfall, false)
-            }
+        let (
+            Some(gross),
+            Some(retained),
+            Some(cost),
+            Some(ev),
+            Some(shortfall),
+            Some(disposition),
+            Some(reason),
+        ) = (
+            object.get("bestModeledGrossProfitWeiSigned"),
+            object.get("modeledRetainedValueWei"),
+            object.get("modeledTotalCostWei"),
+            object.get("modeledExpectedEvWeiSigned"),
+            object.get("grossShortfallToPositiveWei"),
+            object.get("economicDisposition").and_then(Value::as_str),
+            object.get("terminalReason").and_then(Value::as_str),
+        )
+        else {
+            return false;
+        };
+        let reason_valid = match disposition {
+            "no_route" => reason == "no_route",
+            "gross_nonpositive" => reason == "gross_nonpositive",
+            "authority_unavailable" => reason == "economics_authority_unavailable",
+            "ev_nonpositive" => reason == "ev_nonpositive",
+            "ev_positive" => matches!(reason, "ev_positive" | "t4e_persisted"),
+            "not_reached" => !matches!(
+                reason,
+                "no_route"
+                    | "gross_nonpositive"
+                    | "economics_authority_unavailable"
+                    | "ev_nonpositive"
+                    | "ev_positive"
+                    | "t4e_persisted"
+            ),
             _ => false,
-        }
+        };
+        reason_valid
+            && match disposition {
+                "not_reached" | "no_route" => {
+                    gross.is_null()
+                        && retained.is_null()
+                        && cost.is_null()
+                        && ev.is_null()
+                        && shortfall.is_null()
+                }
+                "authority_unavailable" => {
+                    canonical_decimal(gross, true)
+                        && retained.is_null()
+                        && cost.is_null()
+                        && ev.is_null()
+                        && shortfall.is_null()
+                }
+                "gross_nonpositive" => {
+                    canonical_decimal(gross, true)
+                        && retained.is_null()
+                        && canonical_decimal(cost, false)
+                        && ev.is_null()
+                        && canonical_decimal(shortfall, false)
+                }
+                "ev_nonpositive" | "ev_positive" => {
+                    canonical_decimal(gross, true)
+                        && canonical_decimal(retained, false)
+                        && canonical_decimal(cost, false)
+                        && canonical_decimal(ev, true)
+                        && canonical_decimal(shortfall, false)
+                }
+                _ => false,
+            }
     }
 
     let bytes = fs::read(path)?;
@@ -964,6 +1094,7 @@ pub fn validate_admission_segment_v1(path: &Path) -> Result<bool, AdmissionExpor
     let sequence_gaps = object.get("sequenceGaps").and_then(Value::as_u64);
     let sequence_duplicates = object.get("sequenceDuplicates").and_then(Value::as_u64);
     let reconciliation_mismatch = object.get("reconciliationMismatch").and_then(Value::as_bool);
+    let contract_violations = object.get("contractViolations").and_then(Value::as_u64);
     let contiguous = sequences
         .iter()
         .zip(sequences.iter().skip(1))
@@ -974,6 +1105,7 @@ pub fn validate_admission_segment_v1(path: &Path) -> Result<bool, AdmissionExpor
         && dropped == Some(0)
         && sequence_gaps == Some(0)
         && sequence_duplicates == Some(0)
+        && contract_violations == Some(0)
         && reconciliation_mismatch == Some(false)
         && contiguous)
 }
@@ -1098,7 +1230,7 @@ mod tests {
             (
                 "required-field",
                 Box::new(|rows| {
-                    rows[0]["economicDisposition"] = Value::from("authority_unavailable")
+                    rows[0].as_object_mut().unwrap().remove("bestModeledGrossProfitWeiSigned");
                 }),
             ),
             (
@@ -1112,6 +1244,102 @@ mod tests {
             let path = root.join(format!("{name}.jsonl"));
             write_records(&path, &rows);
             assert!(!validate_admission_segment_v1(&path).unwrap(), "{name}");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn writer_marks_malformed_economics_and_reason_contract_invalid() {
+        let root = temp_root("writer-contract");
+        let exporter = AdmissionExporterV1::start(
+            AdmissionExporterConfigV1::new(
+                root.clone(),
+                "run-contract".into(),
+                "boot-contract".into(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        exporter.record_received(1, frame(1));
+        exporter.record_terminal(
+            1,
+            AdmissionTerminalV1 {
+                stage: "economics".into(),
+                reason: AdmissionTerminalReasonV1::NoRoute,
+                dirty_pool_count: Some(1),
+                in_universe_dirty: Some(true),
+                analysis_completed: true,
+                economics: AdmissionEconomicsV1 {
+                    disposition: EconomicDispositionV1::GrossNonpositive,
+                    best_modeled_gross_profit_wei_signed: None,
+                    modeled_retained_value_wei: None,
+                    modeled_total_cost_wei: None,
+                    modeled_expected_ev_wei_signed: None,
+                    gross_shortfall_to_positive_wei: None,
+                },
+                missing_key_kind: None,
+                missing_key_address: None,
+                missing_storage_slot: None,
+            },
+        );
+        exporter.record_received(2, frame(2));
+        exporter.record_terminal(
+            2,
+            AdmissionTerminalV1 {
+                stage: "economics".into(),
+                reason: AdmissionTerminalReasonV1::NoRoute,
+                dirty_pool_count: Some(1),
+                in_universe_dirty: Some(true),
+                analysis_completed: true,
+                economics: AdmissionEconomicsV1 {
+                    disposition: EconomicDispositionV1::NoRoute,
+                    best_modeled_gross_profit_wei_signed: None,
+                    modeled_retained_value_wei: None,
+                    modeled_total_cost_wei: Some("0".into()),
+                    modeled_expected_ev_wei_signed: None,
+                    gross_shortfall_to_positive_wei: None,
+                },
+                missing_key_kind: None,
+                missing_key_address: None,
+                missing_storage_slot: None,
+            },
+        );
+        exporter.close().unwrap();
+
+        let rows = records(&root.join("run-contract/boot-contract-000000.jsonl"));
+        let footer = rows.last().unwrap();
+        assert_eq!(footer["contractViolations"], 2);
+        assert_eq!(footer["valid"], false);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bounded_rotation_writes_independently_valid_segments() {
+        let root = temp_root("rotation");
+        let mut config = AdmissionExporterConfigV1::new(
+            root.clone(),
+            "run-rotation".into(),
+            "boot-rotation".into(),
+        )
+        .unwrap();
+        config.max_segment_bytes = 1;
+        let exporter = AdmissionExporterV1::start(config).unwrap();
+        for generation in 0..2 {
+            exporter.record_received(generation, frame(generation as u8 + 1));
+            exporter.record_terminal(
+                generation,
+                AdmissionTerminalV1::before_economics(
+                    "frame",
+                    AdmissionTerminalReasonV1::NoDirtyPool,
+                ),
+            );
+        }
+        exporter.close().unwrap();
+
+        for segment in 0..2 {
+            let path = root.join(format!("run-rotation/boot-rotation-{segment:06}.jsonl"));
+            let rows = records(&path);
+            assert_eq!(rows.last().unwrap()["valid"], true);
+            assert!(validate_admission_segment_v1(&path).unwrap());
         }
         fs::remove_dir_all(root).unwrap();
     }
@@ -1165,6 +1393,21 @@ mod tests {
         let metadata = fs::symlink_metadata(&path).unwrap();
         assert!(metadata.file_type().is_file());
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        let target = temp_root("symlink-target");
+        let symlink_root = target.with_extension("link");
+        std::os::unix::fs::symlink(&target, &symlink_root).unwrap();
+        let error = AdmissionExporterV1::start(
+            AdmissionExporterConfigV1::new(
+                symlink_root.clone(),
+                "run-link".into(),
+                "boot-link".into(),
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+        assert!(matches!(error, AdmissionExporterErrorV1::InvalidConfig));
+        fs::remove_file(symlink_root).unwrap();
+        fs::remove_dir_all(target).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -310,7 +310,9 @@ impl FrameProcessor {
         frame: &VictimFrame,
         now: Instant,
     ) -> FrameRejectionV1 {
-        let reason = if now
+        let reason = if frame.raw_tx.len() > MAX_RAW_FRAME_BYTES {
+            AdmissionTerminalReasonV1::DecodeInvalid
+        } else if now
             .checked_duration_since(frame.received_at)
             .is_none_or(|age| age.as_millis() > u128::from(MAX_FRAME_AGE_MILLIS))
         {
@@ -1191,6 +1193,11 @@ mod tests {
         assert_eq!(
             FrameProcessor::decode_rejection(&snapshot, &frame, now).reason,
             AdmissionTerminalReasonV1::HashInvalid
+        );
+        frame.raw_tx = Bytes::from(vec![0; MAX_RAW_FRAME_BYTES + 1]);
+        assert_eq!(
+            FrameProcessor::decode_rejection(&snapshot, &frame, now).reason,
+            AdmissionTerminalReasonV1::DecodeInvalid
         );
     }
 
