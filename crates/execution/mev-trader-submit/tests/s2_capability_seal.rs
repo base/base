@@ -404,6 +404,78 @@ fn closure_s0_green_unknown_feature_dependency_and_live_tree_red() {
     eprintln!("S2: RED");
 }
 
+fn validate_projection_authentication_and_freshness(source: &str) -> Result<(), String> {
+    syn::parse_file(source)
+        .map_err(|error| format!("settled-loss source did not parse: {error}"))?;
+    let production = source
+        .split_once("\n#[cfg(test)]\nmod tests {")
+        .map(|(production, _)| production)
+        .ok_or_else(|| "settled-loss terminal test module marker changed".to_owned())?;
+
+    let hash_body_derivation = "let body_len = canonical.len() - 32 - 65;";
+    if production.matches(hash_body_derivation).count() != 2 {
+        return Err(
+            "projection content-hash body must exclude exactly content_hash and signature at both sites"
+                .to_owned(),
+        );
+    }
+
+    let authenticated_tail = "output.push(self.population_kind.encode());\n        output.extend_from_slice(&self.campaign_valid_until_block.to_be_bytes());\n        output.extend_from_slice(self.content_hash.as_slice());\n        output.extend_from_slice(&self.signature);";
+    if production.matches(authenticated_tail).count() != 1 {
+        return Err("projection v2 authenticated tail changed".to_owned());
+    }
+
+    let finality = sealed_region(
+        production,
+        "fn validate_finality_snapshot<A: FinalizedChainAuthority>(",
+        "fn validate_terminal_entry(",
+    )?;
+    let owner_bound = "if head.number > projection.campaign_valid_until_block {\n        return Err(SettledLossUnavailableReason::Stale);\n    }";
+    let live_lag_bound = "#[cfg(feature = \"arm-live-egress\")]\n    {\n        let lag = head\n            .number\n            .checked_sub(projection.finalized_block_number)\n            .ok_or(SettledLossUnavailableReason::FinalityUnavailable)?;\n        if lag > MAX_FINALIZED_HEAD_LAG {\n            return Err(SettledLossUnavailableReason::Stale);\n        }\n    }";
+    if finality.matches(owner_bound).count() != 1 || finality.matches(live_lag_bound).count() != 1 {
+        return Err("projection owner and live-lag freshness composition changed".to_owned());
+    }
+    let owner_offset =
+        finality.find(owner_bound).ok_or_else(|| "projection owner bound missing".to_owned())?;
+    let live_offset = finality
+        .find(live_lag_bound)
+        .ok_or_else(|| "projection live-lag bound missing".to_owned())?;
+    if owner_offset >= live_offset {
+        return Err(
+            "projection freshness checks are no longer owner-bound then live-lag".to_owned()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn projection_authentication_and_freshness_control_green_mutants_red() {
+    let source = read(manifest_dir().join("src/arm/settled_loss.rs"));
+    validate_projection_authentication_and_freshness(&source)
+        .expect("projection tail authentication and two-bound freshness are sealed");
+    eprintln!("G-4'/G-8': GREEN");
+
+    let lag_block = "    #[cfg(feature = \"arm-live-egress\")]\n    {\n        let lag = head\n            .number\n            .checked_sub(projection.finalized_block_number)\n            .ok_or(SettledLossUnavailableReason::FinalityUnavailable)?;\n        if lag > MAX_FINALIZED_HEAD_LAG {\n            return Err(SettledLossUnavailableReason::Stale);\n        }\n    }\n";
+    let lag_mutant = source.replacen(lag_block, "", 1);
+    assert_ne!(lag_mutant, source, "G-8' mutant did not change source");
+    assert!(
+        validate_projection_authentication_and_freshness(&lag_mutant).is_err(),
+        "G-8' live lag-128 deletion mutant survived"
+    );
+    eprintln!("G-8': RED (seal feature set: arm)");
+
+    let hash_mutant = source.replace(
+        "let body_len = canonical.len() - 32 - 65;",
+        "let body_len = canonical.len() - 32 - 65 - 9;",
+    );
+    assert_ne!(hash_mutant, source, "G-4' mutant did not change source");
+    assert!(
+        validate_projection_authentication_and_freshness(&hash_mutant).is_err(),
+        "G-4' unauthenticated-v2-tail mutant survived"
+    );
+    eprintln!("G-4': RED (seal feature set: arm)");
+}
+
 fn package_mut<'a>(metadata: &'a mut serde_json::Value, name: &str) -> &'a mut serde_json::Value {
     metadata["packages"]
         .as_array_mut()

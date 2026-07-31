@@ -12,9 +12,9 @@ use std::{
 };
 
 use alloy_primitives::{B256, Signature, U256, keccak256};
-use base_mev_trader::{DrawdownInput, LossProvenance};
 #[cfg(not(test))]
 use base_mev_trader::OWNER_ATTEST_ADDRESS;
+use base_mev_trader::{DrawdownInput, LossProvenance};
 
 use super::{DrawdownAuthority, ProviderError};
 
@@ -39,8 +39,12 @@ pub const SETTLED_LOSS_DOMAIN: &[u8; 35] = b"base-mev/t4e-terminal-settlement/v1
 pub const POPULATION_CLOSURE_DOMAIN: &[u8; 33] = b"base-mev/p2-population-closure/v1";
 /// Production install bundle signature domain.
 pub const INSTALL_BUNDLE_DOMAIN: &[u8; 30] = b"base-mev/t4e-install-bundle/v1";
-/// Wire schema version.
-pub const SETTLED_LOSS_SCHEMA_VERSION: u16 = 1;
+/// Frozen population wire schema version.
+pub const POPULATION_SCHEMA_VERSION: u16 = 2;
+/// Terminal projection wire schema version.
+pub const PROJECTION_SCHEMA_VERSION: u16 = 2;
+/// Production install-bundle wire schema version.
+pub const INSTALL_BUNDLE_SCHEMA_VERSION: u16 = 1;
 /// Base mainnet chain identifier.
 pub const SETTLED_LOSS_CHAIN_ID: u64 = 8453;
 /// Maximum accepted finalized-head lag.
@@ -52,9 +56,9 @@ pub const MAX_PROJECTION_BYTES: usize = 128 * 1024 * 1024;
 /// Maximum canonical population-manifest size.
 pub const MAX_POPULATION_MANIFEST_BYTES: usize = 40 * 1024 * 1024;
 /// Exact maximum canonical projection size at 200,000 entries.
-pub const MAX_CANONICAL_PROJECTION_BYTES: usize = 114_400_664;
+pub const MAX_CANONICAL_PROJECTION_BYTES: usize = 114_400_673;
 /// Exact maximum canonical population-manifest size at 200,000 entries.
-pub const MAX_CANONICAL_POPULATION_BYTES: usize = 33_800_256;
+pub const MAX_CANONICAL_POPULATION_BYTES: usize = 33_800_257;
 /// Fixed rollback-anchor size.
 pub const ACCEPTED_HEAD_BYTES: usize = 136;
 /// Fixed source manifest entry size.
@@ -70,6 +74,34 @@ const SECP256K1_HALF_ORDER: [u8; 32] = [
     0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b, 0x20, 0xa0,
 ];
+
+/// Authenticated frozen-population classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PopulationKindV1 {
+    /// A non-empty population retaining the original structural requirements.
+    Populated,
+    /// An explicitly authenticated empty population for no-egress genesis.
+    Genesis,
+}
+
+impl PopulationKindV1 {
+    /// Returns the exact one-byte wire discriminant.
+    pub const fn encode(self) -> u8 {
+        match self {
+            Self::Populated => 0x01,
+            Self::Genesis => 0x02,
+        }
+    }
+
+    /// Decodes the exact one-byte wire discriminant.
+    pub fn decode(value: u8) -> Result<Self, SettledLossUnavailableReason> {
+        match value {
+            0x01 => Ok(Self::Populated),
+            0x02 => Ok(Self::Genesis),
+            0x00 | 0x03..=u8::MAX => Err(SettledLossUnavailableReason::Malformed),
+        }
+    }
+}
 
 /// Canonical terminal classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -372,8 +404,9 @@ pub struct FrozenP2PopulationManifestV1 {
     source_snapshot_xip_hash: B256,
     source_snapshot_wal_lsn: u64,
     submission_count: u64,
-    source_manifest_hash: B256,
     entries: Vec<SourceSubmissionManifestEntryV1>,
+    population_kind: PopulationKindV1,
+    source_manifest_hash: B256,
     signature: [u8; 65],
 }
 
@@ -385,7 +418,7 @@ impl FrozenP2PopulationManifestV1 {
         }
         let mut reader = CanonicalReader::new(bytes);
         if reader.array::<33>()? != *POPULATION_CLOSURE_DOMAIN
-            || reader.u16()? != SETTLED_LOSS_SCHEMA_VERSION
+            || reader.u16()? != POPULATION_SCHEMA_VERSION
         {
             return Err(SettledLossUnavailableReason::Malformed);
         }
@@ -398,13 +431,19 @@ impl FrozenP2PopulationManifestV1 {
         let source_snapshot_xip_hash = reader.b256()?;
         let source_snapshot_wal_lsn = reader.u64()?;
         let submission_count = reader.u64()?;
-        let source_manifest_hash = reader.b256()?;
         let count = reader.u32()? as usize;
-        validate_count_before_allocation(count, reader.remaining(), SOURCE_ENTRY_BYTES, 65)?;
+        validate_count_before_allocation(
+            count,
+            reader.remaining(),
+            SOURCE_ENTRY_BYTES,
+            1 + 32 + 65,
+        )?;
         let mut entries = Vec::with_capacity(count);
         for _ in 0..count {
             entries.push(SourceSubmissionManifestEntryV1::decode(&mut reader)?);
         }
+        let population_kind = PopulationKindV1::decode(reader.u8()?)?;
+        let source_manifest_hash = reader.b256()?;
         let signature = reader.array::<65>()?;
         reader.finish()?;
         let manifest = Self {
@@ -417,8 +456,9 @@ impl FrozenP2PopulationManifestV1 {
             source_snapshot_xip_hash,
             source_snapshot_wal_lsn,
             submission_count,
-            source_manifest_hash,
             entries,
+            population_kind,
+            source_manifest_hash,
             signature,
         };
         let canonical = manifest.encode();
@@ -432,9 +472,9 @@ impl FrozenP2PopulationManifestV1 {
 
     /// Returns the exact canonical bytes.
     pub fn encode(&self) -> Vec<u8> {
-        let mut output = Vec::with_capacity(256 + self.entries.len() * SOURCE_ENTRY_BYTES);
+        let mut output = Vec::with_capacity(257 + self.entries.len() * SOURCE_ENTRY_BYTES);
         output.extend_from_slice(POPULATION_CLOSURE_DOMAIN);
-        output.extend_from_slice(&SETTLED_LOSS_SCHEMA_VERSION.to_be_bytes());
+        output.extend_from_slice(&POPULATION_SCHEMA_VERSION.to_be_bytes());
         output.extend_from_slice(self.campaign_id.as_slice());
         output.extend_from_slice(&self.chain_id.to_be_bytes());
         output.extend_from_slice(&self.source_window_start_ms.to_be_bytes());
@@ -444,11 +484,12 @@ impl FrozenP2PopulationManifestV1 {
         output.extend_from_slice(self.source_snapshot_xip_hash.as_slice());
         output.extend_from_slice(&self.source_snapshot_wal_lsn.to_be_bytes());
         output.extend_from_slice(&self.submission_count.to_be_bytes());
-        output.extend_from_slice(self.source_manifest_hash.as_slice());
         output.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
         for entry in &self.entries {
             entry.encode_into(&mut output);
         }
+        output.push(self.population_kind.encode());
+        output.extend_from_slice(self.source_manifest_hash.as_slice());
         output.extend_from_slice(&self.signature);
         output
     }
@@ -463,15 +504,31 @@ impl FrozenP2PopulationManifestV1 {
         &self.entries
     }
 
+    /// Returns the authenticated population classification.
+    pub const fn population_kind(&self) -> PopulationKindV1 {
+        self.population_kind
+    }
+
+    /// Returns the authenticated source-entry content hash.
+    pub const fn source_manifest_hash(&self) -> B256 {
+        self.source_manifest_hash
+    }
+
     fn validate_structure(&self) -> Result<(), SettledLossUnavailableReason> {
         let count = self.entries.len();
+        if cfg!(feature = "arm-live-egress") && self.population_kind == PopulationKindV1::Genesis {
+            return Err(SettledLossUnavailableReason::Malformed);
+        }
+        let kind_counts_valid = match self.population_kind {
+            PopulationKindV1::Populated => count != 0 && self.submission_count == count as u64,
+            PopulationKindV1::Genesis => count == 0 && self.submission_count == 0,
+        };
         if self.chain_id != SETTLED_LOSS_CHAIN_ID
             || self.campaign_id == B256::ZERO
             || self.source_window_start_ms >= self.source_window_end_ms
             || self.source_snapshot_xmin > self.source_snapshot_xmax
-            || count == 0
             || count > MAX_TERMINAL_ENTRIES
-            || self.submission_count != count as u64
+            || !kind_counts_valid
         {
             return Err(SettledLossUnavailableReason::Malformed);
         }
@@ -522,6 +579,8 @@ pub struct TerminalSettlementProjectionV1 {
     total_settled_loss_wei: U256,
     source_manifest_entries: Vec<SourceSubmissionManifestEntryV1>,
     terminal_entries: Vec<TerminalSettlementEntryV1>,
+    population_kind: PopulationKindV1,
+    campaign_valid_until_block: u64,
     content_hash: B256,
     signature: [u8; 65],
 }
@@ -534,7 +593,7 @@ impl TerminalSettlementProjectionV1 {
         }
         let mut reader = CanonicalReader::new(bytes);
         if reader.array::<35>()? != *SETTLED_LOSS_DOMAIN
-            || reader.u16()? != SETTLED_LOSS_SCHEMA_VERSION
+            || reader.u16()? != PROJECTION_SCHEMA_VERSION
         {
             return Err(SettledLossUnavailableReason::Malformed);
         }
@@ -573,7 +632,7 @@ impl TerminalSettlementProjectionV1 {
             source_count,
             reader.remaining(),
             SOURCE_ENTRY_BYTES,
-            4 + 32 + 65,
+            4 + 1 + 8 + 32 + 65,
         )?;
         let mut source_manifest_entries = Vec::with_capacity(source_count);
         for _ in 0..source_count {
@@ -584,12 +643,14 @@ impl TerminalSettlementProjectionV1 {
             terminal_count_wire,
             reader.remaining(),
             TERMINAL_ENTRY_BYTES,
-            32 + 65,
+            1 + 8 + 32 + 65,
         )?;
         let mut terminal_entries = Vec::with_capacity(terminal_count_wire);
         for _ in 0..terminal_count_wire {
             terminal_entries.push(TerminalSettlementEntryV1::decode(&mut reader)?);
         }
+        let population_kind = PopulationKindV1::decode(reader.u8()?)?;
+        let campaign_valid_until_block = reader.u64()?;
         let content_hash = reader.b256()?;
         let signature = reader.array::<65>()?;
         reader.finish()?;
@@ -622,6 +683,8 @@ impl TerminalSettlementProjectionV1 {
             total_settled_loss_wei,
             source_manifest_entries,
             terminal_entries,
+            population_kind,
+            campaign_valid_until_block,
             content_hash,
             signature,
         };
@@ -661,6 +724,8 @@ impl TerminalSettlementProjectionV1 {
         finalized_block_number: u64,
         finalized_block_hash: B256,
         previous_content_hash: B256,
+        population_kind: PopulationKindV1,
+        campaign_valid_until_block: u64,
         source_manifest_entries: Vec<SourceSubmissionManifestEntryV1>,
         terminal_entries: Vec<TerminalSettlementEntryV1>,
     ) -> Result<(Vec<u8>, Vec<u8>), SettledLossUnavailableReason> {
@@ -710,6 +775,8 @@ impl TerminalSettlementProjectionV1 {
             total_settled_loss_wei: totals[5],
             source_manifest_entries,
             terminal_entries,
+            population_kind,
+            campaign_valid_until_block,
             content_hash: B256::ZERO,
             signature: [0; 65],
         };
@@ -731,11 +798,11 @@ impl TerminalSettlementProjectionV1 {
     /// Returns the exact canonical projection bytes.
     pub fn encode(&self) -> Vec<u8> {
         let mut output = Vec::with_capacity(
-            664 + self.source_manifest_entries.len() * SOURCE_ENTRY_BYTES
+            673 + self.source_manifest_entries.len() * SOURCE_ENTRY_BYTES
                 + self.terminal_entries.len() * TERMINAL_ENTRY_BYTES,
         );
         output.extend_from_slice(SETTLED_LOSS_DOMAIN);
-        output.extend_from_slice(&SETTLED_LOSS_SCHEMA_VERSION.to_be_bytes());
+        output.extend_from_slice(&PROJECTION_SCHEMA_VERSION.to_be_bytes());
         output.extend_from_slice(self.campaign_id.as_slice());
         output.extend_from_slice(&self.chain_id.to_be_bytes());
         output.extend_from_slice(&self.source_window_start_ms.to_be_bytes());
@@ -770,6 +837,8 @@ impl TerminalSettlementProjectionV1 {
         for entry in &self.terminal_entries {
             entry.encode_into(&mut output);
         }
+        output.push(self.population_kind.encode());
+        output.extend_from_slice(&self.campaign_valid_until_block.to_be_bytes());
         output.extend_from_slice(self.content_hash.as_slice());
         output.extend_from_slice(&self.signature);
         output
@@ -795,6 +864,16 @@ impl TerminalSettlementProjectionV1 {
         BlockNumHash { number: self.finalized_block_number, hash: self.finalized_block_hash }
     }
 
+    /// Returns the authenticated population classification.
+    pub const fn population_kind(&self) -> PopulationKindV1 {
+        self.population_kind
+    }
+
+    /// Returns the owner-signed campaign anchor bound.
+    pub const fn campaign_valid_until_block(&self) -> u64 {
+        self.campaign_valid_until_block
+    }
+
     fn validate_structure(&self) -> Result<(), SettledLossUnavailableReason> {
         let source_count = self.source_manifest_entries.len();
         let terminal_count = self.terminal_entries.len();
@@ -802,14 +881,29 @@ impl TerminalSettlementProjectionV1 {
             .manifest_next_sequence
             .checked_sub(self.manifest_start_sequence)
             .ok_or(SettledLossUnavailableReason::Malformed)?;
+        if cfg!(feature = "arm-live-egress") && self.population_kind == PopulationKindV1::Genesis {
+            return Err(SettledLossUnavailableReason::Malformed);
+        }
+        let kind_counts_valid = match self.population_kind {
+            PopulationKindV1::Populated => expected_count != 0,
+            PopulationKindV1::Genesis => {
+                expected_count == 0
+                    && self.submission_count == 0
+                    && self.terminal_count == 0
+                    && self.unresolved_count == 0
+                    && source_count == 0
+                    && terminal_count == 0
+            }
+        };
         if self.chain_id != SETTLED_LOSS_CHAIN_ID
             || self.campaign_id == B256::ZERO
             || self.source_window_start_ms >= self.source_window_end_ms
             || self.source_snapshot_xmin > self.source_snapshot_xmax
             || self.projection_sequence == 0
             || self.manifest_start_sequence != 0
-            || expected_count == 0
             || expected_count > MAX_TERMINAL_ENTRIES as u64
+            || !kind_counts_valid
+            || self.campaign_valid_until_block < self.finalized_block_number
             || self.submission_count != expected_count
             || source_count as u64 != expected_count
             || terminal_count as u64 != expected_count
@@ -1257,6 +1351,7 @@ fn validate_manifest_equality(
         || manifest.submission_count != projection.submission_count
         || manifest.source_manifest_hash != projection.source_manifest_hash
         || manifest.signature != projection.population_closure_signature
+        || manifest.population_kind != projection.population_kind
         || manifest.entries != projection.source_manifest_entries
     {
         return Err(SettledLossUnavailableReason::ManifestMismatch);
@@ -1276,12 +1371,18 @@ fn validate_finality_snapshot<A: FinalizedChainAuthority>(
     if projection.finalized_block_number > head.number {
         return Err(SettledLossUnavailableReason::FinalityUnavailable);
     }
-    let lag = head
-        .number
-        .checked_sub(projection.finalized_block_number)
-        .ok_or(SettledLossUnavailableReason::FinalityUnavailable)?;
-    if lag > MAX_FINALIZED_HEAD_LAG {
+    if head.number > projection.campaign_valid_until_block {
         return Err(SettledLossUnavailableReason::Stale);
+    }
+    #[cfg(feature = "arm-live-egress")]
+    {
+        let lag = head
+            .number
+            .checked_sub(projection.finalized_block_number)
+            .ok_or(SettledLossUnavailableReason::FinalityUnavailable)?;
+        if lag > MAX_FINALIZED_HEAD_LAG {
+            return Err(SettledLossUnavailableReason::Stale);
+        }
     }
     let projection_hash = chain
         .canonical_hash(projection.finalized_block_number)
@@ -1767,7 +1868,7 @@ fn validate_count_before_allocation(
     entry_bytes: usize,
     trailing: usize,
 ) -> Result<(), SettledLossUnavailableReason> {
-    if count == 0 || count > MAX_TERMINAL_ENTRIES {
+    if count > MAX_TERMINAL_ENTRIES {
         return Err(SettledLossUnavailableReason::Malformed);
     }
     let required = count
@@ -1859,13 +1960,16 @@ mod tests {
 
     #[test]
     fn exact_wire_size_boundaries_are_pinned() {
+        assert_eq!(POPULATION_SCHEMA_VERSION, 2);
+        assert_eq!(PROJECTION_SCHEMA_VERSION, 2);
+        assert_eq!(INSTALL_BUNDLE_SCHEMA_VERSION, 1);
         assert_eq!(SOURCE_ENTRY_BYTES, 169);
         assert_eq!(TERMINAL_ENTRY_BYTES, 403);
         assert_eq!(
-            664 + MAX_TERMINAL_ENTRIES * (SOURCE_ENTRY_BYTES + TERMINAL_ENTRY_BYTES),
+            673 + MAX_TERMINAL_ENTRIES * (SOURCE_ENTRY_BYTES + TERMINAL_ENTRY_BYTES),
             MAX_CANONICAL_PROJECTION_BYTES
         );
-        assert_eq!(256 + MAX_TERMINAL_ENTRIES * SOURCE_ENTRY_BYTES, MAX_CANONICAL_POPULATION_BYTES);
+        assert_eq!(257 + MAX_TERMINAL_ENTRIES * SOURCE_ENTRY_BYTES, MAX_CANONICAL_POPULATION_BYTES);
         assert!(MAX_CANONICAL_PROJECTION_BYTES < MAX_PROJECTION_BYTES);
     }
 
@@ -2010,9 +2114,105 @@ mod tests {
             total_settled_loss_wei: U256::ZERO,
             source_manifest_entries: Vec::new(),
             terminal_entries,
+            population_kind: PopulationKindV1::Populated,
+            campaign_valid_until_block: finalized_block_number + MAX_FINALIZED_HEAD_LAG,
             content_hash: B256::ZERO,
             signature: [0u8; 65],
         }
+    }
+    fn empty_manifest(population_kind: PopulationKindV1) -> FrozenP2PopulationManifestV1 {
+        FrozenP2PopulationManifestV1 {
+            campaign_id: B256::repeat_byte(9),
+            chain_id: SETTLED_LOSS_CHAIN_ID,
+            source_window_start_ms: 1,
+            source_window_end_ms: 2,
+            source_snapshot_xmin: 1,
+            source_snapshot_xmax: 2,
+            source_snapshot_xip_hash: B256::repeat_byte(5),
+            source_snapshot_wal_lsn: 1,
+            submission_count: 0,
+            entries: Vec::new(),
+            population_kind,
+            source_manifest_hash: keccak256([]),
+            signature: [7; 65],
+        }
+    }
+
+    fn empty_genesis_projection(finalized_block_number: u64) -> TerminalSettlementProjectionV1 {
+        let mut projection =
+            projection_at(finalized_block_number, B256::repeat_byte(0xa1), Vec::new());
+        projection.population_kind = PopulationKindV1::Genesis;
+        projection.source_manifest_hash = keccak256([]);
+        projection.population_closure_signature = [7; 65];
+        projection
+    }
+
+    #[test]
+    fn population_kind_wire_discriminants_are_closed() {
+        assert_eq!(PopulationKindV1::Populated.encode(), 0x01);
+        assert_eq!(PopulationKindV1::Genesis.encode(), 0x02);
+        assert_eq!(PopulationKindV1::decode(0x00), Err(SettledLossUnavailableReason::Malformed));
+        assert_eq!(PopulationKindV1::decode(0x03), Err(SettledLossUnavailableReason::Malformed));
+    }
+
+    #[test]
+    fn kind_aware_structure_rejects_empty_populated_and_nonempty_genesis() {
+        assert_eq!(
+            empty_manifest(PopulationKindV1::Populated).validate_structure(),
+            Err(SettledLossUnavailableReason::Malformed)
+        );
+        let mut nonempty_genesis = empty_manifest(PopulationKindV1::Genesis);
+        nonempty_genesis.entries.push(SourceSubmissionManifestEntryV1::new(
+            0,
+            B256::repeat_byte(1),
+            B256::repeat_byte(2),
+            B256::repeat_byte(3),
+            B256::repeat_byte(4),
+            B256::repeat_byte(4),
+        ));
+        nonempty_genesis.submission_count = 1;
+        let mut encoded = Vec::new();
+        nonempty_genesis.entries[0].encode_into(&mut encoded);
+        nonempty_genesis.source_manifest_hash = keccak256(encoded);
+        assert_eq!(
+            nonempty_genesis.validate_structure(),
+            Err(SettledLossUnavailableReason::Malformed)
+        );
+    }
+
+    #[cfg(not(feature = "arm-live-egress"))]
+    #[test]
+    fn genesis_zero_structure_and_owner_bound_are_accepted_only_when_well_formed() {
+        assert!(empty_manifest(PopulationKindV1::Genesis).validate_structure().is_ok());
+        let mut projection = empty_genesis_projection(100);
+        assert!(projection.validate_structure().is_ok());
+        projection.campaign_valid_until_block = 99;
+        assert_eq!(projection.validate_structure(), Err(SettledLossUnavailableReason::Malformed));
+    }
+
+    #[cfg(feature = "arm-live-egress")]
+    #[test]
+    fn live_egress_build_rejects_genesis_unconditionally() {
+        assert_eq!(
+            empty_manifest(PopulationKindV1::Genesis).validate_structure(),
+            Err(SettledLossUnavailableReason::Malformed)
+        );
+        assert_eq!(
+            empty_genesis_projection(100).validate_structure(),
+            Err(SettledLossUnavailableReason::Malformed)
+        );
+    }
+
+    #[test]
+    fn manifest_equality_includes_population_kind() {
+        let manifest = empty_manifest(PopulationKindV1::Genesis);
+        let mut projection = empty_genesis_projection(100);
+        assert!(validate_manifest_equality(&manifest, &projection).is_ok());
+        projection.population_kind = PopulationKindV1::Populated;
+        assert_eq!(
+            validate_manifest_equality(&manifest, &projection),
+            Err(SettledLossUnavailableReason::ManifestMismatch)
+        );
     }
 
     #[test]
@@ -2084,6 +2284,29 @@ mod tests {
         assert!(stale.calls.lock().expect("calls").is_empty());
     }
 
+    #[cfg(feature = "arm-live-egress")]
+    #[test]
+    fn live_build_retains_lag_128_even_with_a_later_owner_bound() {
+        let finalized_hash = B256::repeat_byte(0xa1);
+        let mut projection = projection_at(100, finalized_hash, Vec::new());
+        projection.campaign_valid_until_block = 10_000;
+        let boundary = TestChain {
+            head: Ok(Some(BlockNumHash { number: 228, hash: B256::repeat_byte(0xff) })),
+            hashes: BTreeMap::from([(100, Ok(Some(finalized_hash)))]),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert!(validate_finality_snapshot(&boundary, &projection, true).is_ok());
+
+        let stale = TestChain {
+            head: Ok(Some(BlockNumHash { number: 229, hash: B256::repeat_byte(0xff) })),
+            hashes: BTreeMap::new(),
+            calls: Mutex::new(Vec::new()),
+        };
+        assert_eq!(
+            validate_finality_snapshot(&stale, &projection, true),
+            Err(SettledLossUnavailableReason::Stale)
+        );
+    }
     #[test]
     fn finalized_and_terminal_canonical_mismatches_remain_distinct() {
         let finalized_hash = B256::repeat_byte(0xa1);
