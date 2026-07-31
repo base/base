@@ -316,7 +316,10 @@ pub trait Storable: StorableType + Sized {
         match ctx.packed_offset() {
             None => {
                 for offset in 0..Self::SLOTS {
-                    storage.store(slot + U256::from(offset), U256::ZERO)?;
+                    let slot_addr = slot
+                        .checked_add(U256::from(offset))
+                        .ok_or(BasePrecompileError::SlotOverflow)?;
+                    storage.store(slot_addr, U256::ZERO)?;
                 }
                 Ok(())
             }
