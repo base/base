@@ -179,6 +179,14 @@ pub struct Args {
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
 
+    /// Maximum number of payload build tasks that may execute concurrently.
+    ///
+    /// base-builder uses reth's `--builder.max-tasks` CLI arg for this setting. This skipped
+    /// extension field is populated from reth's parsed `PayloadBuilderArgs` before node launch so
+    /// we do not duplicate or drift from reth's payload-builder CLI surface.
+    #[arg(skip = 3_usize)]
+    pub max_payload_tasks: usize,
+
     /// Whether to enable TIPS Resource Metering
     #[arg(long = "builder.enable-resource-metering", default_value = "false")]
     pub enable_resource_metering: bool,
@@ -274,6 +282,7 @@ impl Default for Args {
             state_root_gas_anchor_us: None,
             execution_metering_mode: ExecutionMeteringMode::Off,
             extra_block_deadline_secs: 20,
+            max_payload_tasks: 3,
             enable_resource_metering: false,
             max_uncompressed_block_size: None,
             metering_wait_duration_ms: None,
@@ -300,6 +309,8 @@ impl Args {
         self,
         metering_provider: SharedMeteringProvider,
     ) -> eyre::Result<BuilderConfig> {
+        eyre::ensure!(self.max_payload_tasks > 0, "max_payload_tasks must be greater than 0");
+
         if self.flashblock_execution_time_budget_us.is_some()
             || self.block_state_root_gas_limit.is_some()
             || self.state_root_gas_coefficient.is_some()
@@ -316,6 +327,7 @@ impl Args {
         Ok(BuilderConfig {
             block_time: Duration::from_millis(self.chain_block_time),
             block_time_leeway: Duration::from_secs(self.extra_block_deadline_secs),
+            max_payload_tasks: self.max_payload_tasks,
             da_config: Default::default(),
             gas_limit_config: Default::default(),
             sampling_ratio: self.sampling_ratio,
@@ -422,6 +434,33 @@ mod tests {
         let args = Args { extra_block_deadline_secs: input_secs, ..Default::default() };
         let config = convert(args);
         assert_eq!(config.block_time_leeway, Duration::from_secs(expected_secs));
+    }
+
+    #[rstest]
+    #[case::default_tasks(3, 3)]
+    #[case::custom_tasks(8, 8)]
+    fn max_payload_tasks_maps_correctly(#[case] input: usize, #[case] expected: usize) {
+        let args = Args { max_payload_tasks: input, ..Default::default() };
+        let config = convert(args);
+        assert_eq!(config.max_payload_tasks, expected);
+    }
+
+    #[test]
+    fn max_payload_tasks_rejects_zero() {
+        let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
+        let err = Args { max_payload_tasks: 0, ..Default::default() }
+            .into_builder_config(metering_provider)
+            .expect_err("zero max_payload_tasks should fail");
+        assert!(err.to_string().contains("max_payload_tasks must be greater than 0"));
+    }
+
+    #[test]
+    fn cli_parse_defaults_max_payload_tasks_when_arg_is_omitted() {
+        let parsed = CommandParser::parse_from(["test"]);
+        // Skipped field keeps the Default value until reth PayloadBuilderArgs copies it in.
+        assert_eq!(parsed.args.max_payload_tasks, 3);
+        let config = convert(parsed.args);
+        assert_eq!(config.max_payload_tasks, 3);
     }
 
     #[rstest]

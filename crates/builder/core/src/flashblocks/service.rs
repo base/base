@@ -97,6 +97,7 @@ impl<S> FlashblocksServiceBuilder<S> {
             payload_builder,
             true,
             self.config.block_time_leeway,
+            self.config.max_payload_tasks,
         );
 
         let (payload_service, payload_builder_handle) =

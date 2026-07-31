@@ -25,40 +25,48 @@ fn main() {
 
     let cli = base_cli_utils::parse_cli!(BuilderCli);
 
-    cli.run(|builder, builder_args| async move {
-        let rollup_args = builder_args.rollup_args.clone();
-        let builder =
-            StandardBaseRethNode::apply_initial_upgrade_signal(builder, &builder_args).await?;
+    cli.run_with_payload_builder_args(
+        |builder_args, payload_builder_args| {
+            builder_args.max_payload_tasks = payload_builder_args.max_payload_tasks;
+        },
+        |builder, builder_args| async move {
+            let rollup_args = builder_args.rollup_args.clone();
+            let builder =
+                StandardBaseRethNode::apply_initial_upgrade_signal(builder, &builder_args).await?;
 
-        let metering_provider: base_builder_core::SharedMeteringProvider =
-            Arc::new(builder_args.build_metering_store());
-        let transaction_events_enabled = builder_args.transaction_events.enabled;
-        GlobalTransactionEventWriter::init(
-            transaction_events_enabled.then(|| builder_args.transaction_events.writer_config()),
-        )?;
+            let metering_provider: base_builder_core::SharedMeteringProvider =
+                Arc::new(builder_args.build_metering_store());
+            let transaction_events_enabled = builder_args.transaction_events.enabled;
+            GlobalTransactionEventWriter::init(
+                transaction_events_enabled.then(|| builder_args.transaction_events.writer_config()),
+            )?;
 
-        let builder_config = builder_args
-            .into_builder_config(Arc::clone(&metering_provider))
-            .expect("Failed to convert rollup args to builder config");
-        let da_config = builder_config.da_config.clone();
-        let gas_limit_config = builder_config.gas_limit_config.clone();
-        let manifest_precheck_enabled = builder_config.manifest_precheck_enabled;
+            let builder_config = builder_args
+                .into_builder_config(Arc::clone(&metering_provider))
+                .expect("Failed to convert rollup args to builder config");
+            let da_config = builder_config.da_config.clone();
+            let gas_limit_config = builder_config.gas_limit_config.clone();
+            let manifest_precheck_enabled = builder_config.manifest_precheck_enabled;
 
-        let mut runner = BaseNodeRunner::new(rollup_args.clone())
-            .with_da_config(da_config)
-            .with_gas_limit_config(gas_limit_config)
-            .with_manifest_precheck_enabled(manifest_precheck_enabled)
-            .with_service_builder(FlashblocksServiceBuilder::new(builder_config));
-        runner.install_ext::<MeteringStoreExtension>(metering_provider);
-        runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
-        runner.install_ext::<BuilderApiExtension>(());
-        StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
-        runner.add_started_callback(|| {
-            base_cli_utils::register_version_metrics!();
-            Ok(())
-        });
+            let mut runner = BaseNodeRunner::new(rollup_args.clone())
+                .with_da_config(da_config)
+                .with_gas_limit_config(gas_limit_config)
+                .with_manifest_precheck_enabled(manifest_precheck_enabled)
+                .with_service_builder(FlashblocksServiceBuilder::new(builder_config));
+            runner.install_ext::<MeteringStoreExtension>(metering_provider);
+            runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
+            runner.install_ext::<BuilderApiExtension>(());
+            StandardBaseRethNode::install_upgrade_signal_runtime_extension(
+                &mut runner,
+                &rollup_args,
+            )?;
+            runner.add_started_callback(|| {
+                base_cli_utils::register_version_metrics!();
+                Ok(())
+            });
 
-        runner.run(builder).await
-    })
+            runner.run(builder).await
+        },
+    )
     .unwrap();
 }

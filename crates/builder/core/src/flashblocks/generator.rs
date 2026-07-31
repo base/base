@@ -3,7 +3,8 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use futures::{Future, FutureExt};
 use parking_lot::Mutex;
-use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
+use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PayloadTaskGuard, PrecachedState};
+use reth_execution_cache::SavedCache;
 use reth_node_api::{NodePrimitives, PayloadKind};
 use reth_payload_builder::{
     BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadId, PayloadJob,
@@ -14,6 +15,7 @@ use reth_primitives_traits::HeaderTy;
 use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFactory};
 use reth_revm::cached::CachedReads;
 use reth_tasks::Runtime;
+use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use tokio::{sync::watch, time::Sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
@@ -40,6 +42,8 @@ pub struct BlockPayloadJobGenerator<Client, Builder> {
     last_payload: Arc<Mutex<CancellationToken>>,
     /// Calculates and constructs payload job deadline timers.
     deadline: PayloadJobDeadline,
+    /// Restricts how many payload build tasks may execute at once.
+    payload_task_guard: PayloadTaskGuard,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
 }
@@ -55,6 +59,7 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
         builder: Builder,
         ensure_only_one_payload: bool,
         extra_block_deadline: std::time::Duration,
+        max_payload_tasks: usize,
     ) -> Self {
         Self {
             client,
@@ -63,6 +68,7 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
             ensure_only_one_payload,
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
             deadline: PayloadJobDeadline::new(extra_block_deadline),
+            payload_task_guard: PayloadTaskGuard::new(max_payload_tasks),
             pre_cached: None,
         }
     }
@@ -94,6 +100,8 @@ where
         input: BuildNewPayload<<Builder as PayloadBuilder>::Attributes>,
         id: PayloadId,
     ) -> Result<Self::Job, PayloadBuilderError> {
+        let BuildNewPayload { attributes, parent_hash, cache: execution_cache, state_root_handle } =
+            input;
         let cancel_token = if self.ensure_only_one_payload {
             // Cancel existing payload
             {
@@ -112,24 +120,24 @@ where
             CancellationToken::new()
         };
 
-        let parent_header = if input.parent_hash.is_zero() {
+        let parent_header = if parent_hash.is_zero() {
             // use latest block if parent is zero: genesis block
             self.client
                 .latest_header()?
-                .ok_or_else(|| PayloadBuilderError::MissingParentBlock(input.parent_hash))?
+                .ok_or_else(|| PayloadBuilderError::MissingParentBlock(parent_hash))?
         } else {
             self.client
-                .sealed_header_by_hash(input.parent_hash)?
-                .ok_or_else(|| PayloadBuilderError::MissingParentBlock(input.parent_hash))?
+                .sealed_header_by_hash(parent_hash)?
+                .ok_or_else(|| PayloadBuilderError::MissingParentBlock(parent_hash))?
         };
 
         info!("Spawn block building job");
 
-        let deadline = self.deadline.sleep(input.attributes.timestamp());
+        let deadline = self.deadline.sleep(attributes.timestamp());
 
         // Extract hash before moving parent_header into Arc to avoid cloning
         let parent_hash = parent_header.hash();
-        let config = PayloadConfig::new(Arc::new(parent_header), input.attributes, id);
+        let config = PayloadConfig::new(Arc::new(parent_header), attributes, id);
 
         // Create shared mutex for synchronizing cancellation with payload publishing
         let publish_guard = Arc::new(Mutex::new(()));
@@ -144,6 +152,9 @@ where
             publish_guard,
             deadline,
             cached_reads: self.maybe_pre_cached(parent_hash),
+            execution_cache,
+            state_root_handle,
+            payload_task_guard: self.payload_task_guard.clone(),
         };
 
         job.spawn_build_job();
@@ -214,6 +225,12 @@ where
     /// This is used to avoid reading the same state over and over again when new attempts are
     /// triggered, because during the building process we'll repeatedly execute the transactions.
     pub(crate) cached_reads: Option<CachedReads>,
+    /// Engine execution cache for this payload's parent state.
+    pub(crate) execution_cache: Option<SavedCache>,
+    /// Sparse-trie state-root task handle for this payload build.
+    pub(crate) state_root_handle: Option<PayloadStateRootHandle>,
+    /// Restricts how many payload build tasks may execute at once.
+    pub(crate) payload_task_guard: PayloadTaskGuard,
 }
 
 impl<Builder> std::fmt::Debug for BlockPayloadJob<Builder>
@@ -267,6 +284,10 @@ where
 pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     /// Previously cached disk reads
     pub cached_reads: CachedReads,
+    /// Engine execution cache for this payload's parent state.
+    pub execution_cache: Option<SavedCache>,
+    /// Sparse-trie state-root task handle for this payload build.
+    pub state_root_handle: Option<PayloadStateRootHandle>,
     /// How to configure the payload.
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
@@ -289,13 +310,26 @@ where
         let cancel = self.cancel.clone();
         let publish_guard = Arc::clone(&self.publish_guard);
         let build_error = Arc::clone(&self.build_error);
+        let execution_cache = self.execution_cache.take();
+        let state_root_handle = self.state_root_handle.take();
+        let payload_task_guard = self.payload_task_guard.clone();
 
         let (watch_tx, watch_rx) = watch::channel(None);
         self.payload_rx = Some(watch_rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
         self.executor.spawn_blocking_task(Box::pin(async move {
-            let args =
-                BuildArguments { cached_reads, config: payload_config, cancel, publish_guard };
+            let _permit = payload_task_guard
+                .acquire()
+                .await
+                .expect("payload task semaphore is never closed");
+            let args = BuildArguments {
+                cached_reads,
+                execution_cache,
+                state_root_handle,
+                config: payload_config,
+                cancel,
+                publish_guard,
+            };
             if let Err(e) = builder.try_build(args, &watch_tx).await {
                 warn!(error = %e, "Payload build task failed");
                 *build_error.lock() = Some(e.to_string());
@@ -509,6 +543,7 @@ mod tests {
             builder.clone(),
             false,
             std::time::Duration::from_secs(1),
+            3,
         );
 
         // this is not nice but necessary
