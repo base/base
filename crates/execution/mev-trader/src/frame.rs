@@ -5,7 +5,7 @@ use alloy_consensus::{
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_eips::{Decodable2718, Typed2718};
-use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_engine::PayloadId;
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
@@ -15,8 +15,9 @@ use reth_revm::{State, database::StateProviderDatabase};
 use revm::{DatabaseCommit, context_interface::result::ExecutionResult};
 
 use crate::{
-    CancellationProbe, DeltaGuard, FrameAuditPlan, MaterializedState, MeasurementContext,
-    PayloadVisitor, PortError, SnapshotHandle, StateMaterializer, TraderSnapshotPort, VisitControl,
+    AdmissionTerminalReasonV1, CancellationProbe, DeltaGuard, FrameAuditPlan, MaterializedState,
+    MeasurementContext, MissingKeyKindV1, PayloadVisitor, PortError, SnapshotHandle,
+    StateMaterializer, TraderSnapshotPort, VisitControl,
 };
 
 /// Maximum age accepted for an ingress victim frame.
@@ -231,6 +232,27 @@ impl PayloadVisitor for SnapshotCoherence {
 /// Validates and executes one victim frame against an authoritative captured snapshot.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct FrameProcessor;
+/// Typed persisted-admission rejection returned without collapsing into `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameRejectionV1 {
+    /// Terminal reason.
+    pub reason: AdmissionTerminalReasonV1,
+    /// Missing-key source when strict audit admission failed.
+    pub missing_key_kind: Option<MissingKeyKindV1>,
+    /// Missing-key account address.
+    pub missing_key_address: Option<Address>,
+    /// Missing storage slot.
+    pub missing_storage_slot: Option<U256>,
+}
+
+/// Classified frame-processing result.
+#[derive(Debug)]
+pub enum FrameProcessOutcomeV1 {
+    /// Authoritative victim processing completed.
+    Processed(ProcessedFrame),
+    /// Victim processing rejected with persisted taxonomy.
+    Rejected(FrameRejectionV1),
+}
 
 impl FrameProcessor {
     /// Decodes a frame only when all hash, sender, chain, type, generation, and age checks pass.
@@ -274,9 +296,133 @@ impl FrameProcessor {
         }
         Some(transaction)
     }
+    const fn rejection(reason: AdmissionTerminalReasonV1) -> FrameProcessOutcomeV1 {
+        FrameProcessOutcomeV1::Rejected(FrameRejectionV1 {
+            reason,
+            missing_key_kind: None,
+            missing_key_address: None,
+            missing_storage_slot: None,
+        })
+    }
 
-    /// Executes, validates and classifies, commits exactly once, materializes, then rechecks authority.
-    pub fn process(
+    fn decode_rejection(
+        snapshot: &SnapshotHandle,
+        frame: &VictimFrame,
+        now: Instant,
+    ) -> FrameRejectionV1 {
+        let reason = if frame.raw_tx.len() > MAX_RAW_FRAME_BYTES {
+            AdmissionTerminalReasonV1::DecodeInvalid
+        } else if now
+            .checked_duration_since(frame.received_at)
+            .is_none_or(|age| age.as_millis() > u128::from(MAX_FRAME_AGE_MILLIS))
+        {
+            AdmissionTerminalReasonV1::StaleFrame
+        } else if keccak256(&frame.raw_tx) != frame.transaction_hash {
+            AdmissionTerminalReasonV1::HashInvalid
+        } else if frame.parent_hash != snapshot.parent_hash()
+            || frame.block_number != snapshot.latest_block_number()
+            || snapshot.latest_flashblock_index() >= frame.victim_flashblock_index
+            || frame.victim_flashblock_index.checked_sub(snapshot.latest_flashblock_index())
+                > Some(1)
+            || snapshot.has_transaction_hash(frame.transaction_hash)
+        {
+            AdmissionTerminalReasonV1::ParentHeaderMismatch
+        } else {
+            match BaseTxEnvelope::decode_2718_exact(frame.raw_tx.as_ref()) {
+                Err(_) => AdmissionTerminalReasonV1::DecodeInvalid,
+                Ok(transaction) if *transaction.tx_hash() != frame.transaction_hash => {
+                    AdmissionTerminalReasonV1::HashInvalid
+                }
+                Ok(transaction) if transaction.ty() != frame.transaction_type => {
+                    AdmissionTerminalReasonV1::TypeInvalid
+                }
+                Ok(transaction) if transaction.chain_id() != Some(frame.chain_id) => {
+                    AdmissionTerminalReasonV1::ChainInvalid
+                }
+                Ok(transaction) if transaction.recover_signer().ok() != Some(frame.from) => {
+                    AdmissionTerminalReasonV1::SignerInvalid
+                }
+                Ok(_) => AdmissionTerminalReasonV1::TypeInvalid,
+            }
+        };
+        FrameRejectionV1 {
+            reason,
+            missing_key_kind: None,
+            missing_key_address: None,
+            missing_storage_slot: None,
+        }
+    }
+
+    fn delta_rejection(state: &revm::state::EvmState, audit: &FrameAuditPlan) -> FrameRejectionV1 {
+        if state.len() > crate::MAX_ACCOUNTS {
+            return match Self::rejection(AdmissionTerminalReasonV1::DeltaAccountCap) {
+                FrameProcessOutcomeV1::Rejected(rejection) => rejection,
+                FrameProcessOutcomeV1::Processed(_) => unreachable!(),
+            };
+        }
+        let storage_count =
+            state.values().map(|account| account.changed_storage_slots().count()).sum::<usize>();
+        if storage_count > crate::MAX_STORAGE_SLOTS {
+            return match Self::rejection(AdmissionTerminalReasonV1::DeltaStorageCap) {
+                FrameProcessOutcomeV1::Rejected(rejection) => rejection,
+                FrameProcessOutcomeV1::Processed(_) => unreachable!(),
+            };
+        }
+        for (address, account) in state {
+            let original = account.original_info();
+            if account.info.code_hash != original.code_hash {
+                return FrameRejectionV1 {
+                    reason: AdmissionTerminalReasonV1::CodeChange,
+                    missing_key_kind: None,
+                    missing_key_address: Some(*address),
+                    missing_storage_slot: None,
+                };
+            }
+            if account.info.balance != original.balance
+                && !audit.audited_writes().iter().any(|key| {
+                    matches!(key, crate::AuditedWriteKey::AccountBalance { address: allowed, .. } if allowed == address)
+                })
+            {
+                return FrameRejectionV1 {
+                    reason: AdmissionTerminalReasonV1::MissingKey,
+                    missing_key_kind: Some(MissingKeyKindV1::AccountBalance),
+                    missing_key_address: Some(*address),
+                    missing_storage_slot: None,
+                };
+            }
+            if account.info.nonce != original.nonce
+                && !audit.audited_writes().iter().any(|key| {
+                    matches!(key, crate::AuditedWriteKey::AccountNonce { address: allowed, .. } if allowed == address)
+                })
+            {
+                return FrameRejectionV1 {
+                    reason: AdmissionTerminalReasonV1::MissingKey,
+                    missing_key_kind: Some(MissingKeyKindV1::AccountNonce),
+                    missing_key_address: Some(*address),
+                    missing_storage_slot: None,
+                };
+            }
+            for (slot, _) in account.changed_storage_slots() {
+                if !audit.audited_writes().iter().any(|key| {
+                    matches!(key, crate::AuditedWriteKey::Storage { address: allowed, slot: allowed_slot, .. } if allowed == address && allowed_slot == slot)
+                }) {
+                    return FrameRejectionV1 {
+                        reason: AdmissionTerminalReasonV1::MissingKey,
+                        missing_key_kind: Some(MissingKeyKindV1::ChangedButNotReadStorage),
+                        missing_key_address: Some(*address),
+                        missing_storage_slot: Some(*slot),
+                    };
+                }
+            }
+        }
+        match Self::rejection(AdmissionTerminalReasonV1::InternalFailure) {
+            FrameProcessOutcomeV1::Rejected(rejection) => rejection,
+            FrameProcessOutcomeV1::Processed(_) => unreachable!(),
+        }
+    }
+
+    /// Executes and returns a typed persisted-admission rejection instead of collapsing into `None`.
+    pub fn process_classified(
         port: &dyn TraderSnapshotPort,
         snapshot: &SnapshotHandle,
         frame: &VictimFrame,
@@ -284,12 +430,12 @@ impl FrameProcessor {
         chain_spec: Arc<BaseChainSpec>,
         audit: &FrameAuditPlan,
         cancellation: &CancellationProbe,
-    ) -> Result<Option<ProcessedFrame>, PortError> {
+    ) -> Result<FrameProcessOutcomeV1, PortError> {
         if !port.is_current_authoritative(snapshot) {
-            return Ok(None);
+            return Ok(Self::rejection(AdmissionTerminalReasonV1::AuthorityMismatch));
         }
         let Some(payload_id) = SnapshotCoherence::validated_payload_id(snapshot)? else {
-            return Ok(None);
+            return Ok(Self::rejection(AdmissionTerminalReasonV1::ParentHeaderMismatch));
         };
 
         let latest_header = snapshot.latest_header();
@@ -298,16 +444,20 @@ impl FrameProcessor {
             || snapshot.canonical_block_number().checked_add(1)
                 != Some(snapshot.latest_block_number())
         {
-            return Ok(None);
+            return Ok(Self::rejection(AdmissionTerminalReasonV1::ParentHeaderMismatch));
         }
 
         let parent_header = port.sealed_header_at_hash(snapshot.parent_hash())?;
         if parent_header.hash() != snapshot.parent_hash()
             || parent_header.number != snapshot.canonical_block_number()
         {
-            return Ok(None);
+            return Ok(Self::rejection(AdmissionTerminalReasonV1::ParentHeaderMismatch));
         }
-        let Some(transaction) = Self::decode(snapshot, frame, now) else { return Ok(None) };
+        let Some(transaction) = Self::decode(snapshot, frame, now) else {
+            return Ok(FrameProcessOutcomeV1::Rejected(Self::decode_rejection(
+                snapshot, frame, now,
+            )));
+        };
 
         let provider = port.state_at_hash(snapshot.parent_hash())?;
         let database = StateProviderDatabase::new(provider);
@@ -318,13 +468,21 @@ impl FrameProcessor {
         let recovered = Recovered::new_unchecked(transaction, frame.from);
         let output = match evm.transact(evm_config.tx_env(&recovered)) {
             Ok(output) => output,
-            Err(_) => return Ok(None),
+            Err(_) => {
+                return Ok(Self::rejection(AdmissionTerminalReasonV1::EvmTransactError));
+            }
         };
         if !matches!(output.result, ExecutionResult::Success { .. }) {
-            return Ok(None);
+            return Ok(Self::rejection(AdmissionTerminalReasonV1::EvmRevert));
         }
-        let Ok(validated_delta) = DeltaGuard::validate_and_classify(&output.state, audit) else {
-            return Ok(None);
+        let validated_delta = match DeltaGuard::validate_and_classify(&output.state, audit) {
+            Ok(delta) => delta,
+            Err(_) => {
+                return Ok(FrameProcessOutcomeV1::Rejected(Self::delta_rejection(
+                    &output.state,
+                    audit,
+                )));
+            }
         };
 
         let mut commit = FrameCommitGuard::default();
@@ -338,9 +496,9 @@ impl FrameProcessor {
         if !cancellation.checkpoint(Instant::now(), current_authority) {
             cancellation.token().request_cancel();
             cancellation.acknowledge_drop();
-            return Ok(None);
+            return Ok(Self::rejection(AdmissionTerminalReasonV1::Deadline));
         }
-        Ok(Some(ProcessedFrame {
+        Ok(FrameProcessOutcomeV1::Processed(ProcessedFrame {
             materialized_state: materialized,
             measurement_context: MeasurementContext {
                 parent_hash: snapshot.parent_hash(),
@@ -351,6 +509,24 @@ impl FrameProcessor {
             },
             dirty_pools: validated_delta.dirty_pools,
         }))
+    }
+
+    /// Compatibility wrapper for callers that do not consume persisted rejection details.
+    pub fn process(
+        port: &dyn TraderSnapshotPort,
+        snapshot: &SnapshotHandle,
+        frame: &VictimFrame,
+        now: Instant,
+        chain_spec: Arc<BaseChainSpec>,
+        audit: &FrameAuditPlan,
+        cancellation: &CancellationProbe,
+    ) -> Result<Option<ProcessedFrame>, PortError> {
+        Self::process_classified(port, snapshot, frame, now, chain_spec, audit, cancellation).map(
+            |outcome| match outcome {
+                FrameProcessOutcomeV1::Processed(processed) => Some(processed),
+                FrameProcessOutcomeV1::Rejected(_) => None,
+            },
+        )
     }
 }
 
@@ -374,11 +550,15 @@ pub(crate) mod test_utils {
     use base_common_consensus::BaseTxEnvelope;
     use base_execution_chainspec::BaseChainSpec;
     use reth_provider::StateProviderBox;
+    use revm::state::{Account, EvmState, EvmStorageSlot, TransactionId};
 
-    use super::{FrameProcessor, ProcessedFrame, VictimFrame};
+    use super::{
+        AdmissionTerminalReasonV1, FrameProcessOutcomeV1, FrameProcessor, FrameRejectionV1,
+        ProcessedFrame, VictimFrame,
+    };
     use crate::{
-        BundleVisitor, CancellationProbe, CancellationToken, GlobalLifecycle, PayloadVisitor,
-        PendingSnapshotView, PortError, SnapshotCaptureCoordinator, SnapshotHandle,
+        BundleVisitor, CancellationProbe, CancellationToken, FrameAuditPlan, GlobalLifecycle,
+        PayloadVisitor, PendingSnapshotView, PortError, SnapshotCaptureCoordinator, SnapshotHandle,
         SnapshotHandleFactory, TraderSnapshotPort, TransactionVisitor, VisitControl, VisitSummary,
         registry,
     };
@@ -386,6 +566,58 @@ pub(crate) mod test_utils {
     const RAW_VICTIM: &str = "f8628080830186a0940000000000000000000000000000000000000000808082422da0840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565a025e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1";
     const BLOCK_NUMBER: u64 = 100;
     const PREDECESSOR_INDEX: u64 = 1;
+
+    pub(crate) fn code_change_rejection() -> FrameRejectionV1 {
+        let address = Address::with_last_byte(44);
+        let mut account = Account::default();
+        account.set_current_info_as_original();
+        account.info.code_hash = B256::with_last_byte(46);
+        account.mark_touch();
+        let state: EvmState = [(address, account)].into_iter().collect();
+        let audit = FrameAuditPlan::new(Vec::new(), BTreeMap::new()).expect("empty audit");
+        FrameProcessor::delta_rejection(&state, &audit)
+    }
+    pub(crate) fn production_rejection_shapes() -> Vec<FrameRejectionV1> {
+        let audit = FrameAuditPlan::new(Vec::new(), BTreeMap::new()).expect("empty audit");
+        let bare = match FrameProcessor::rejection(AdmissionTerminalReasonV1::AuthorityMismatch) {
+            FrameProcessOutcomeV1::Rejected(rejection) => rejection,
+            FrameProcessOutcomeV1::Processed(_) => unreachable!(),
+        };
+
+        let harness = TestFrameHarness::capture();
+        let mut invalid_frame = harness.frame.clone();
+        invalid_frame.transaction_hash = B256::ZERO;
+        let decoded =
+            FrameProcessor::decode_rejection(&harness.snapshot, &invalid_frame, Instant::now());
+
+        let address = Address::with_last_byte(51);
+        let mut balance = Account::default();
+        balance.set_current_info_as_original();
+        balance.info.balance = U256::from(1);
+        balance.mark_touch();
+        let balance =
+            FrameProcessor::delta_rejection(&[(address, balance)].into_iter().collect(), &audit);
+
+        let mut nonce = Account::default();
+        nonce.set_current_info_as_original();
+        nonce.info.nonce = 1;
+        nonce.mark_touch();
+        let nonce =
+            FrameProcessor::delta_rejection(&[(address, nonce)].into_iter().collect(), &audit);
+
+        let slot = U256::from(7);
+        let mut storage = Account::default();
+        storage.storage.insert(
+            slot,
+            EvmStorageSlot::new_changed(U256::ZERO, U256::from(1), TransactionId::ZERO),
+        );
+        storage.mark_touch();
+        let storage =
+            FrameProcessor::delta_rejection(&[(address, storage)].into_iter().collect(), &audit);
+
+        let fallback = FrameProcessor::delta_rejection(&EvmState::default(), &audit);
+        vec![bare, decoded, code_change_rejection(), balance, nonce, storage, fallback]
+    }
 
     #[derive(Debug)]
     struct ProofView {
@@ -810,6 +1042,12 @@ mod tests {
         assert!(DeltaGuard::permits(&changed_state, &[allowed]));
         assert!(!DeltaGuard::permits(&changed_state, &[allowed, allowed]));
         assert!(!DeltaGuard::permits(&changed_state, &[]));
+        let empty = FrameAuditPlan::new(Vec::new(), BTreeMap::new()).unwrap();
+        let rejection = FrameProcessor::delta_rejection(&changed_state, &empty);
+        assert_eq!(rejection.reason, AdmissionTerminalReasonV1::MissingKey);
+        assert_eq!(rejection.missing_key_kind, Some(MissingKeyKindV1::AccountBalance));
+        assert_eq!(rejection.missing_key_address, Some(address));
+        assert_eq!(rejection.missing_storage_slot, None);
 
         let mut code_changed = Account::default();
         code_changed.set_current_info_as_original();
@@ -818,6 +1056,17 @@ mod tests {
         code_changed.mark_touch();
         let code_changed_state: EvmState = [(address, code_changed)].into_iter().collect();
         assert!(!DeltaGuard::permits(&code_changed_state, &[allowed]));
+        let rejection = FrameProcessor::delta_rejection(&code_changed_state, &empty);
+        assert_eq!(rejection.reason, AdmissionTerminalReasonV1::CodeChange);
+        assert_eq!(rejection.missing_key_kind, None);
+        assert_eq!(rejection.missing_key_address, Some(address));
+        assert_eq!(rejection.missing_storage_slot, None);
+
+        let classifier_fallback = FrameProcessor::delta_rejection(&EvmState::default(), &empty);
+        assert_eq!(classifier_fallback.reason, AdmissionTerminalReasonV1::InternalFailure);
+        assert_eq!(classifier_fallback.missing_key_kind, None);
+        assert_eq!(classifier_fallback.missing_key_address, None);
+        assert_eq!(classifier_fallback.missing_storage_slot, None);
     }
 
     const LEGACY_TX: &str = "f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83";
@@ -998,6 +1247,21 @@ mod tests {
         let snapshot = snapshot_with(vec![(PayloadId::default(), 1)], None, now);
         frame.received_at = now - Duration::from_millis(MAX_FRAME_AGE_MILLIS + 1);
         assert!(FrameProcessor::decode(&snapshot, &frame, now).is_none());
+        assert_eq!(
+            FrameProcessor::decode_rejection(&snapshot, &frame, now).reason,
+            AdmissionTerminalReasonV1::StaleFrame
+        );
+        frame.received_at = now;
+        frame.transaction_hash = B256::ZERO;
+        assert_eq!(
+            FrameProcessor::decode_rejection(&snapshot, &frame, now).reason,
+            AdmissionTerminalReasonV1::HashInvalid
+        );
+        frame.raw_tx = Bytes::from(vec![0; MAX_RAW_FRAME_BYTES + 1]);
+        assert_eq!(
+            FrameProcessor::decode_rejection(&snapshot, &frame, now).reason,
+            AdmissionTerminalReasonV1::DecodeInvalid
+        );
     }
 
     #[test]

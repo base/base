@@ -18,6 +18,30 @@ only for immutable inspection and is not plan-construction authority.
 `BackrunPlan` and its canonical bytes are unsigned measurement evidence. The crate provides no
 transaction or envelope conversion, signing, submission, forwarding, or outbound transport for
 that evidence.
+## Persisted admission evidence
+
+The admission exporter is a sibling schema and writer, not an extension of the feature-gated edge
+economics writer. The execution CLI enables it from Blink configuration independently of T4a/T4b/T4d
+shadow conjunctions when all three values are present:
+`MEV_TRADER_T4A_ADMISSION_OUTPUT_ROOT`, `MEV_TRADER_T4A_ADMISSION_RUN_ID`, and
+`MEV_TRADER_T4A_ADMISSION_BOOT_ID`. Setting `OUTPUT_ROOT` without either identifier is a fail-closed
+node startup error. The output root must already exist as a private non-symlink directory; creating
+or provisioning the production state root remains a separate node-operation review. Records never
+contain raw transaction bytes, credentials, or state values.
+Footer `valid` deliberately combines two scopes: `exporterQueueDropped` is cumulative for the
+entire run because any queue loss invalidates the campaign, while sequence, contract, terminal, and
+reconciliation counters reset for each segment. Therefore `valid:false` can mean either a run-wide
+queue-loss failure or a segment-local failure; consumers must inspect the footer fields to distinguish
+the scope and must not interpret `valid` as segment-local health alone.
+
+This Phase A build has no downstream total-cost/EV callback. Consequently `gross_nonpositive`,
+`ev_nonpositive`, `ev_positive`, non-null `grossShortfallToPositiveWei`, and downstream
+T4b/T4d/handoff/T4e terminal reasons are schema-reserved but runtime-unreachable; completing that
+event-contract economics contract is explicitly deferred to the authority-integration phase.
+`cohortVersion` remains null until cohort configuration is installed. `dirtyPoolCount` and
+`inUniverseDirty` remain null before delta analysis; once present, `inUniverseDirty` is derived from
+the universe-validated dirty-pool set rather than an independent estimate. Generation overflow has
+no frame sequence to persist, and read-plan-storage identity awaits a typed materializer error.
 
 ## Offline latency evidence
 

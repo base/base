@@ -2,7 +2,7 @@
 use std::fmt;
 #[cfg(all(feature = "edge-measurement", test))]
 use std::os::unix::fs::FileExt;
-#[cfg(feature = "arm-sim")]
+#[cfg(any(feature = "arm-sim", feature = "edge-measurement"))]
 use std::time::Duration;
 #[cfg(feature = "edge-measurement")]
 use std::{
@@ -18,7 +18,7 @@ use std::{
             fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
         },
     },
-    path::{Component, Path, PathBuf},
+    path::{Component, Path},
     str::FromStr,
     sync::{
         Mutex, OnceLock,
@@ -29,6 +29,7 @@ use std::{
     collections::BTreeSet,
     ffi::{OsStr, OsString},
     fmt::Debug,
+    path::PathBuf,
     sync::{Arc, RwLock},
     time::Instant,
 };
@@ -59,10 +60,10 @@ use base_mev_trader::EdgeCandidateDetailOracleV1;
 #[cfg(feature = "arm-sim")]
 use base_mev_trader::production_arming_criteria;
 use base_mev_trader::{
-    A1Status, BlinkFeedClient, BlinkIngressConfig, BundleVisitor, MevTraderRuntime,
-    MevTraderRuntimeConfig, PayloadVisitor, PendingAccountNonce, PendingSnapshotView, PortError,
-    SnapshotHandle, SnapshotHandleFactory, TraderSnapshotPort, TransactionVisitor, VisitControl,
-    VisitSummary,
+    A1Status, AdmissionExporterConfigV1, AdmissionExporterV1, BlinkFeedClient, BlinkIngressConfig,
+    BundleVisitor, MevTraderRuntime, MevTraderRuntimeConfig, PayloadVisitor, PendingAccountNonce,
+    PendingSnapshotView, PortError, SnapshotHandle, SnapshotHandleFactory, TraderSnapshotPort,
+    TransactionVisitor, VisitControl, VisitSummary,
 };
 #[cfg(feature = "edge-measurement")]
 use base_mev_trader::{
@@ -8520,6 +8521,7 @@ pub struct BaseNodeTraderConfig {
     t4d_shadow: bool,
     #[cfg(feature = "t4e-handoff")]
     t4e_handoff: Option<Arc<dyn T4eCandidateHandoff>>,
+    admission_exporter: Result<Option<AdmissionExporterConfigV1>, String>,
     #[cfg(feature = "arm-sim")]
     production_simulation_handoff: Option<Arc<ProductionSimulationHandoff>>,
     #[cfg(feature = "arm-sim")]
@@ -8670,6 +8672,28 @@ impl BaseNodeTraderConfig {
     const fn t4d_shadow_enabled() -> bool {
         false
     }
+    fn admission_exporter_config(
+        output_root: Option<OsString>,
+        run_id: Option<String>,
+        boot_id: Option<String>,
+    ) -> Result<Option<AdmissionExporterConfigV1>, String> {
+        let Some(output_root) = output_root else { return Ok(None) };
+        let run_id = run_id
+            .ok_or("MEV_TRADER_T4A_ADMISSION_RUN_ID is required with admission output root")?;
+        let boot_id = boot_id
+            .ok_or("MEV_TRADER_T4A_ADMISSION_BOOT_ID is required with admission output root")?;
+        AdmissionExporterConfigV1::new(PathBuf::from(output_root), run_id, boot_id)
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+
+    fn admission_exporter_from_environment() -> Result<Option<AdmissionExporterConfigV1>, String> {
+        Self::admission_exporter_config(
+            std::env::var_os("MEV_TRADER_T4A_ADMISSION_OUTPUT_ROOT"),
+            std::env::var("MEV_TRADER_T4A_ADMISSION_RUN_ID").ok(),
+            std::env::var("MEV_TRADER_T4A_ADMISSION_BOOT_ID").ok(),
+        )
+    }
 
     /// Applies exact-1 and flashblocks-present gates before consulting the credential environment.
     pub fn from_inputs(
@@ -8698,6 +8722,7 @@ impl BaseNodeTraderConfig {
             t4a_shadow,
             t4b_shadow,
             t4d_shadow,
+            admission_exporter: Self::admission_exporter_from_environment(),
             #[cfg(feature = "arm-sim")]
             t4e_handoff,
             #[cfg(feature = "arm-sim")]
@@ -8769,6 +8794,19 @@ impl BaseNodeTraderConfig {
             .map_err(|error| eyre::eyre!("Blink edge owner installation failed: {error}"))?;
         Ok((runtime_config, Some(owner), Some(writer)))
     }
+    fn with_admission_exporter(
+        &self,
+        runtime_config: MevTraderRuntimeConfig,
+    ) -> eyre::Result<MevTraderRuntimeConfig> {
+        let Some(config) =
+            self.admission_exporter.as_ref().map_err(|error| eyre::eyre!(error.clone()))?
+        else {
+            return Ok(runtime_config);
+        };
+        let exporter = AdmissionExporterV1::start(config.clone())
+            .map_err(|error| eyre::eyre!("admission exporter startup failed: {error}"))?;
+        Ok(runtime_config.with_admission_exporter(exporter))
+    }
 
     /// Creates the sole snapshot subscription and receive-only A1 runtime.
     pub fn start_idle(self) -> eyre::Result<BaseNodeTraderStart> {
@@ -8806,6 +8844,7 @@ impl BaseNodeTraderConfig {
         self,
         runtime_config: MevTraderRuntimeConfig,
     ) -> eyre::Result<BaseNodeTraderStart> {
+        let runtime_config = self.with_admission_exporter(runtime_config)?;
         #[cfg(feature = "edge-measurement")]
         let (runtime_config, edge_owner, edge_writer) =
             self.with_edge_measurement(runtime_config)?;
@@ -9312,6 +9351,11 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                         }
                         #[cfg(not(feature = "edge-measurement"))]
                         let _ = handle.await;
+                    }
+                    if let Err(error) =
+                        tokio::task::block_in_place(|| runtime.close_admission_exporter())
+                    {
+                        tracing::error!(error = %error, "admission exporter durable close failed");
                     }
                     #[cfg(feature = "edge-measurement")]
                     if let Some(handle) = edge_writer_handle {
@@ -11139,6 +11183,7 @@ mod tests {
             t4d_shadow: false,
             #[cfg(feature = "t4e-handoff")]
             t4e_handoff: None,
+            admission_exporter: Ok(None),
             #[cfg(feature = "arm-sim")]
             production_simulation_handoff: Some(ProductionSimulationHandoff::unavailable(
                 ProductionSimulationInstallError::ActivationInvariant,
@@ -11265,6 +11310,110 @@ mod tests {
         assert_eq!(t4b_counters.count(T4bOutcome::DeploymentIdentityRejected), 3);
     }
 
+    #[test]
+    fn admission_exporter_environment_contract_rejects_partial_configuration() {
+        assert!(
+            BaseNodeTraderConfig::admission_exporter_config(None, None, None).unwrap().is_none()
+        );
+        assert!(
+            BaseNodeTraderConfig::admission_exporter_config(
+                Some(OsString::from("/tmp/private")),
+                None,
+                Some("boot".into()),
+            )
+            .unwrap_err()
+            .contains("RUN_ID")
+        );
+        assert!(
+            BaseNodeTraderConfig::admission_exporter_config(
+                Some(OsString::from("/tmp/private")),
+                Some("run".into()),
+                None,
+            )
+            .unwrap_err()
+            .contains("BOOT_ID")
+        );
+        let configured = BaseNodeTraderConfig::admission_exporter_config(
+            Some(OsString::from("/tmp/private")),
+            Some("run".into()),
+            Some("boot".into()),
+        )
+        .unwrap();
+        assert!(configured.is_some());
+    }
+    #[test]
+    fn admission_exporter_environment_names_map_to_their_fields() {
+        const CHILD_MARKER: &str = "BASE_MEV_ADMISSION_ENV_MAPPING_CHILD";
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            let configured = BaseNodeTraderConfig::admission_exporter_from_environment()
+                .unwrap()
+                .expect("complete child environment");
+            assert_eq!(configured.output_root, PathBuf::from("/tmp/admission-env-root"));
+            assert_eq!(configured.run_id, "distinct-run-id");
+            assert_eq!(configured.boot_id, "distinct-boot-id");
+            println!("admission-env-mapping-child=passed");
+            return;
+        }
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("admission_exporter_environment_names_map_to_their_fields")
+            .arg("--nocapture")
+            .env(CHILD_MARKER, "1")
+            .env("MEV_TRADER_T4A_ADMISSION_OUTPUT_ROOT", "/tmp/admission-env-root")
+            .env("MEV_TRADER_T4A_ADMISSION_RUN_ID", "distinct-run-id")
+            .env("MEV_TRADER_T4A_ADMISSION_BOOT_ID", "distinct-boot-id")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "child failed\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        assert!(stdout.contains("admission-env-mapping-child=passed"));
+    }
+    #[test]
+    fn admission_exporter_runs_with_shadow_conjunction_off_and_no_credential() {
+        let nonce =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("base-admission-cli-{nonce}"));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(
+            &root,
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o700),
+        )
+        .unwrap();
+        let admission_exporter = AdmissionExporterConfigV1::new(
+            root.clone(),
+            "run-off".to_owned(),
+            "boot-off".to_owned(),
+        )
+        .unwrap();
+        let config = BaseNodeTraderConfig {
+            flashblocks: Arc::new(FlashblocksState::default()),
+            credential_file: None,
+            t4a_shadow: false,
+            t4b_shadow: false,
+            t4d_shadow: false,
+            #[cfg(feature = "t4e-handoff")]
+            t4e_handoff: None,
+            admission_exporter: Ok(Some(admission_exporter)),
+            #[cfg(feature = "arm-sim")]
+            production_simulation_handoff: Some(ProductionSimulationHandoff::unavailable(
+                ProductionSimulationInstallError::ActivationInvariant,
+            )),
+            #[cfg(feature = "arm-sim")]
+            production_simulation_owner: None,
+            #[cfg(feature = "edge-measurement")]
+            edge_measurement: Ok(None),
+        };
+        let start = config.start_idle().unwrap();
+        assert_eq!(start.runtime.a1_status(), A1Status::DisabledNoConnect);
+        start.runtime.close_admission_exporter().unwrap();
+
+        let segment = std::fs::read_to_string(root.join("run-off/boot-off-000000.jsonl")).unwrap();
+        assert!(segment.contains("\"terminalReason\":\"credential_absent\""));
+        assert!(segment.contains("\"exporterQueueDropped\":0"));
+        assert!(segment.contains("\"valid\":true"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[cfg(feature = "arm-sim")]
     #[test]
     fn arm_sim_activation_requires_every_existing_shadow_gate() {
@@ -11312,6 +11461,7 @@ mod tests {
             t4b_shadow: false,
             t4d_shadow: false,
             t4e_handoff: Some(erased_handoff),
+            admission_exporter: Ok(None),
             production_simulation_handoff: Some(Arc::clone(&handoff)),
             production_simulation_owner: Some(owner),
             #[cfg(feature = "edge-measurement")]
