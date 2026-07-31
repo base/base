@@ -11342,6 +11342,34 @@ mod tests {
         assert!(configured.is_some());
     }
     #[test]
+    fn admission_exporter_environment_names_map_to_their_fields() {
+        const CHILD_MARKER: &str = "BASE_MEV_ADMISSION_ENV_MAPPING_CHILD";
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            let configured = BaseNodeTraderConfig::admission_exporter_from_environment()
+                .unwrap()
+                .expect("complete child environment");
+            assert_eq!(configured.output_root, PathBuf::from("/tmp/admission-env-root"));
+            assert_eq!(configured.run_id, "distinct-run-id");
+            assert_eq!(configured.boot_id, "distinct-boot-id");
+            println!("admission-env-mapping-child=passed");
+            return;
+        }
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("admission_exporter_environment_names_map_to_their_fields")
+            .arg("--nocapture")
+            .env(CHILD_MARKER, "1")
+            .env("MEV_TRADER_T4A_ADMISSION_OUTPUT_ROOT", "/tmp/admission-env-root")
+            .env("MEV_TRADER_T4A_ADMISSION_RUN_ID", "distinct-run-id")
+            .env("MEV_TRADER_T4A_ADMISSION_BOOT_ID", "distinct-boot-id")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "child failed\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        assert!(stdout.contains("admission-env-mapping-child=passed"));
+    }
+    #[test]
     fn admission_exporter_runs_with_shadow_conjunction_off_and_no_credential() {
         let nonce =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();

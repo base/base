@@ -415,7 +415,7 @@ impl FrameProcessor {
                 }
             }
         }
-        match Self::rejection(AdmissionTerminalReasonV1::MissingKey) {
+        match Self::rejection(AdmissionTerminalReasonV1::InternalFailure) {
             FrameProcessOutcomeV1::Rejected(rejection) => rejection,
             FrameProcessOutcomeV1::Processed(_) => unreachable!(),
         }
@@ -550,11 +550,15 @@ pub(crate) mod test_utils {
     use base_common_consensus::BaseTxEnvelope;
     use base_execution_chainspec::BaseChainSpec;
     use reth_provider::StateProviderBox;
+    use revm::state::{Account, EvmState, EvmStorageSlot, TransactionId};
 
-    use super::{FrameProcessor, ProcessedFrame, VictimFrame};
+    use super::{
+        AdmissionTerminalReasonV1, FrameProcessOutcomeV1, FrameProcessor, FrameRejectionV1,
+        ProcessedFrame, VictimFrame,
+    };
     use crate::{
-        BundleVisitor, CancellationProbe, CancellationToken, GlobalLifecycle, PayloadVisitor,
-        PendingSnapshotView, PortError, SnapshotCaptureCoordinator, SnapshotHandle,
+        BundleVisitor, CancellationProbe, CancellationToken, FrameAuditPlan, GlobalLifecycle,
+        PayloadVisitor, PendingSnapshotView, PortError, SnapshotCaptureCoordinator, SnapshotHandle,
         SnapshotHandleFactory, TraderSnapshotPort, TransactionVisitor, VisitControl, VisitSummary,
         registry,
     };
@@ -562,6 +566,58 @@ pub(crate) mod test_utils {
     const RAW_VICTIM: &str = "f8628080830186a0940000000000000000000000000000000000000000808082422da0840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565a025e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1";
     const BLOCK_NUMBER: u64 = 100;
     const PREDECESSOR_INDEX: u64 = 1;
+
+    pub(crate) fn code_change_rejection() -> FrameRejectionV1 {
+        let address = Address::with_last_byte(44);
+        let mut account = Account::default();
+        account.set_current_info_as_original();
+        account.info.code_hash = B256::with_last_byte(46);
+        account.mark_touch();
+        let state: EvmState = [(address, account)].into_iter().collect();
+        let audit = FrameAuditPlan::new(Vec::new(), BTreeMap::new()).expect("empty audit");
+        FrameProcessor::delta_rejection(&state, &audit)
+    }
+    pub(crate) fn production_rejection_shapes() -> Vec<FrameRejectionV1> {
+        let audit = FrameAuditPlan::new(Vec::new(), BTreeMap::new()).expect("empty audit");
+        let bare = match FrameProcessor::rejection(AdmissionTerminalReasonV1::AuthorityMismatch) {
+            FrameProcessOutcomeV1::Rejected(rejection) => rejection,
+            FrameProcessOutcomeV1::Processed(_) => unreachable!(),
+        };
+
+        let harness = TestFrameHarness::capture();
+        let mut invalid_frame = harness.frame.clone();
+        invalid_frame.transaction_hash = B256::ZERO;
+        let decoded =
+            FrameProcessor::decode_rejection(&harness.snapshot, &invalid_frame, Instant::now());
+
+        let address = Address::with_last_byte(51);
+        let mut balance = Account::default();
+        balance.set_current_info_as_original();
+        balance.info.balance = U256::from(1);
+        balance.mark_touch();
+        let balance =
+            FrameProcessor::delta_rejection(&[(address, balance)].into_iter().collect(), &audit);
+
+        let mut nonce = Account::default();
+        nonce.set_current_info_as_original();
+        nonce.info.nonce = 1;
+        nonce.mark_touch();
+        let nonce =
+            FrameProcessor::delta_rejection(&[(address, nonce)].into_iter().collect(), &audit);
+
+        let slot = U256::from(7);
+        let mut storage = Account::default();
+        storage.storage.insert(
+            slot,
+            EvmStorageSlot::new_changed(U256::ZERO, U256::from(1), TransactionId::ZERO),
+        );
+        storage.mark_touch();
+        let storage =
+            FrameProcessor::delta_rejection(&[(address, storage)].into_iter().collect(), &audit);
+
+        let fallback = FrameProcessor::delta_rejection(&EvmState::default(), &audit);
+        vec![bare, decoded, code_change_rejection(), balance, nonce, storage, fallback]
+    }
 
     #[derive(Debug)]
     struct ProofView {
@@ -1000,10 +1056,17 @@ mod tests {
         code_changed.mark_touch();
         let code_changed_state: EvmState = [(address, code_changed)].into_iter().collect();
         assert!(!DeltaGuard::permits(&code_changed_state, &[allowed]));
-        assert_eq!(
-            FrameProcessor::delta_rejection(&code_changed_state, &empty).reason,
-            AdmissionTerminalReasonV1::CodeChange
-        );
+        let rejection = FrameProcessor::delta_rejection(&code_changed_state, &empty);
+        assert_eq!(rejection.reason, AdmissionTerminalReasonV1::CodeChange);
+        assert_eq!(rejection.missing_key_kind, None);
+        assert_eq!(rejection.missing_key_address, Some(address));
+        assert_eq!(rejection.missing_storage_slot, None);
+
+        let classifier_fallback = FrameProcessor::delta_rejection(&EvmState::default(), &empty);
+        assert_eq!(classifier_fallback.reason, AdmissionTerminalReasonV1::InternalFailure);
+        assert_eq!(classifier_fallback.missing_key_kind, None);
+        assert_eq!(classifier_fallback.missing_key_address, None);
+        assert_eq!(classifier_fallback.missing_storage_slot, None);
     }
 
     const LEGACY_TX: &str = "f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83";

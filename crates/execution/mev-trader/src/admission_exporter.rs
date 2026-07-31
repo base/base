@@ -445,21 +445,55 @@ impl AdmissionTerminalV1 {
     }
     fn contract_valid(&self) -> bool {
         self.economics.contract_valid(self.reason)
-            && match self.missing_key_kind {
-                Some(
-                    MissingKeyKindV1::ReadPlanStorage | MissingKeyKindV1::ChangedButNotReadStorage,
-                ) => {
-                    self.reason == AdmissionTerminalReasonV1::MissingKey
-                        && self.missing_key_address.is_some()
-                        && self.missing_storage_slot.is_some()
-                }
-                Some(MissingKeyKindV1::AccountBalance | MissingKeyKindV1::AccountNonce) => {
-                    self.reason == AdmissionTerminalReasonV1::MissingKey
+            && match self.reason {
+                AdmissionTerminalReasonV1::MissingKey => match self.missing_key_kind {
+                    Some(
+                        MissingKeyKindV1::ReadPlanStorage
+                        | MissingKeyKindV1::ChangedButNotReadStorage,
+                    ) => self.missing_key_address.is_some() && self.missing_storage_slot.is_some(),
+                    Some(MissingKeyKindV1::AccountBalance | MissingKeyKindV1::AccountNonce) => {
+                        self.missing_key_address.is_some() && self.missing_storage_slot.is_none()
+                    }
+                    None => false,
+                },
+                AdmissionTerminalReasonV1::CodeChange => {
+                    self.missing_key_kind.is_none()
                         && self.missing_key_address.is_some()
                         && self.missing_storage_slot.is_none()
                 }
-                None => {
-                    self.reason != AdmissionTerminalReasonV1::MissingKey
+                AdmissionTerminalReasonV1::DecodeInvalid
+                | AdmissionTerminalReasonV1::HashInvalid
+                | AdmissionTerminalReasonV1::TypeInvalid
+                | AdmissionTerminalReasonV1::ChainInvalid
+                | AdmissionTerminalReasonV1::SignerInvalid
+                | AdmissionTerminalReasonV1::StaleFrame
+                | AdmissionTerminalReasonV1::ParentHeaderMismatch
+                | AdmissionTerminalReasonV1::AuthorityMismatch
+                | AdmissionTerminalReasonV1::EvmTransactError
+                | AdmissionTerminalReasonV1::EvmRevert
+                | AdmissionTerminalReasonV1::DeltaAccountCap
+                | AdmissionTerminalReasonV1::DeltaStorageCap
+                | AdmissionTerminalReasonV1::UniverseAbsent
+                | AdmissionTerminalReasonV1::PoolCodeHashMismatch
+                | AdmissionTerminalReasonV1::PreparationError
+                | AdmissionTerminalReasonV1::V3Coverage
+                | AdmissionTerminalReasonV1::Deadline
+                | AdmissionTerminalReasonV1::Cancelled
+                | AdmissionTerminalReasonV1::Shutdown
+                | AdmissionTerminalReasonV1::NoDirtyPool
+                | AdmissionTerminalReasonV1::NoRoute
+                | AdmissionTerminalReasonV1::GrossNonpositive
+                | AdmissionTerminalReasonV1::EconomicsAuthorityUnavailable
+                | AdmissionTerminalReasonV1::EvNonpositive
+                | AdmissionTerminalReasonV1::EvPositive
+                | AdmissionTerminalReasonV1::T4bReject
+                | AdmissionTerminalReasonV1::T4dReject
+                | AdmissionTerminalReasonV1::HandoffReject
+                | AdmissionTerminalReasonV1::T4ePersisted
+                | AdmissionTerminalReasonV1::InternalFailure
+                | AdmissionTerminalReasonV1::SlotClosed
+                | AdmissionTerminalReasonV1::GenerationOverflow => {
+                    self.missing_key_kind.is_none()
                         && self.missing_key_address.is_none()
                         && self.missing_storage_slot.is_none()
                 }
@@ -1174,6 +1208,16 @@ mod tests {
             U256::from(204)
         );
     }
+    #[test]
+    fn every_production_frame_rejection_shape_satisfies_the_writer_contract() {
+        for rejection in crate::frame::test_utils::production_rejection_shapes() {
+            let mut terminal = AdmissionTerminalV1::before_economics("frame", rejection.reason);
+            terminal.missing_key_kind = rejection.missing_key_kind;
+            terminal.missing_key_address = rejection.missing_key_address;
+            terminal.missing_storage_slot = rejection.missing_storage_slot;
+            assert!(terminal.contract_valid(), "{rejection:?}");
+        }
+    }
 
     #[test]
     fn exactly_one_and_shutdown_reconcile_with_no_zero_fallback() {
@@ -1305,10 +1349,12 @@ mod tests {
         );
         exporter.close().unwrap();
 
-        let rows = records(&root.join("run-contract/boot-contract-000000.jsonl"));
+        let path = root.join("run-contract/boot-contract-000000.jsonl");
+        let rows = records(&path);
         let footer = rows.last().unwrap();
         assert_eq!(footer["contractViolations"], 2);
         assert_eq!(footer["valid"], false);
+        assert!(!validate_admission_segment_v1(&path).unwrap());
         fs::remove_dir_all(root).unwrap();
     }
 

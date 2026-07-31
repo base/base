@@ -28,6 +28,11 @@ shadow conjunctions when all three values are present:
 node startup error. The output root must already exist as a private non-symlink directory; creating
 or provisioning the production state root remains a separate node-operation review. Records never
 contain raw transaction bytes, credentials, or state values.
+Footer `valid` deliberately combines two scopes: `exporterQueueDropped` is cumulative for the
+entire run because any queue loss invalidates the campaign, while sequence, contract, terminal, and
+reconciliation counters reset for each segment. Therefore `valid:false` can mean either a run-wide
+queue-loss failure or a segment-local failure; consumers must inspect the footer fields to distinguish
+the scope and must not interpret `valid` as segment-local health alone.
 
 This Phase A build has no downstream total-cost/EV callback. Consequently `gross_nonpositive`,
 `ev_nonpositive`, `ev_positive`, non-null `grossShortfallToPositiveWei`, and downstream

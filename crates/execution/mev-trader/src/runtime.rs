@@ -1379,9 +1379,7 @@ impl MevTraderRuntime {
             owner.record_terminal_and_resolve(generation, measurement_terminal, shadow_outcome);
         }
         self.record_a1(outcome);
-        if self.universe.is_some()
-            && let Some(shadow_outcome) = shadow_outcome
-        {
+        if let Some(shadow_outcome) = shadow_outcome {
             self.shadow_outcomes.record(shadow_outcome);
         }
         true
@@ -1434,7 +1432,18 @@ impl MevTraderRuntime {
                 .and_then(|measurement| measurement.best_modeled_gross_profit)
                 .map(AdmissionEconomicsV1::authority_unavailable)
                 .unwrap_or_else(AdmissionEconomicsV1::not_reached),
-            _ => AdmissionEconomicsV1::not_reached(),
+            Some(
+                ShadowOutcome::FrameRejected
+                | ShadowOutcome::UniverseAbsent
+                | ShadowOutcome::CodeHashRejected
+                | ShadowOutcome::PreparationRejected
+                | ShadowOutcome::V3Coverage
+                | ShadowOutcome::AnalysisRejected
+                | ShadowOutcome::InternalFailure
+                | ShadowOutcome::Cancelled
+                | ShadowOutcome::NoDirtyPools,
+            )
+            | None => AdmissionEconomicsV1::not_reached(),
         };
         let dirty_pool_count = measurement.map(|measurement| measurement.dirty_pool_count);
         let analysis_completed = matches!(
@@ -1744,35 +1753,41 @@ mod tests {
     }
     #[test]
     fn admission_terminal_maps_every_runtime_outcome_without_inventing_unknown_causes() {
-        let cases = [
-            (ShadowOutcome::FrameRejected, AdmissionTerminalReasonV1::ParentHeaderMismatch),
-            (ShadowOutcome::UniverseAbsent, AdmissionTerminalReasonV1::UniverseAbsent),
-            (ShadowOutcome::CodeHashRejected, AdmissionTerminalReasonV1::PoolCodeHashMismatch),
-            (ShadowOutcome::PreparationRejected, AdmissionTerminalReasonV1::PreparationError),
-            (ShadowOutcome::V3Coverage, AdmissionTerminalReasonV1::V3Coverage),
-            (ShadowOutcome::AnalysisRejected, AdmissionTerminalReasonV1::PreparationError),
-            (ShadowOutcome::InternalFailure, AdmissionTerminalReasonV1::InternalFailure),
-            (ShadowOutcome::Cancelled, AdmissionTerminalReasonV1::Cancelled),
-            (ShadowOutcome::NoDirtyPools, AdmissionTerminalReasonV1::NoDirtyPool),
-            (ShadowOutcome::NoCandidate, AdmissionTerminalReasonV1::NoRoute),
-            (
-                ShadowOutcome::NoPositivePlan,
-                AdmissionTerminalReasonV1::EconomicsAuthorityUnavailable,
-            ),
-            (ShadowOutcome::Selected, AdmissionTerminalReasonV1::EconomicsAuthorityUnavailable),
-        ];
-        for (outcome, expected) in cases {
-            let terminal = MevTraderRuntime::admission_terminal(
-                TERMINAL_FRAME_BOUND,
-                Some(outcome),
-                None,
-                None,
-            );
-            assert_eq!(terminal.reason, expected);
-            if outcome != ShadowOutcome::UniverseAbsent {
-                assert_ne!(terminal.reason, AdmissionTerminalReasonV1::UniverseAbsent);
-            }
+        macro_rules! assert_mappings {
+            ($($outcome:path => $expected:path),+ $(,)?) => {{
+                let expected_reason = |outcome: ShadowOutcome| match outcome {
+                    $($outcome => $expected,)+
+                };
+                $(
+                    let outcome = $outcome;
+                    let terminal = MevTraderRuntime::admission_terminal(
+                        TERMINAL_FRAME_BOUND,
+                        Some(outcome),
+                        None,
+                        None,
+                    );
+                    assert_eq!(terminal.reason, expected_reason(outcome));
+                    if outcome != ShadowOutcome::UniverseAbsent {
+                        assert_ne!(terminal.reason, AdmissionTerminalReasonV1::UniverseAbsent);
+                    }
+                )+
+            }};
         }
+
+        assert_mappings!(
+            ShadowOutcome::FrameRejected => AdmissionTerminalReasonV1::ParentHeaderMismatch,
+            ShadowOutcome::UniverseAbsent => AdmissionTerminalReasonV1::UniverseAbsent,
+            ShadowOutcome::CodeHashRejected => AdmissionTerminalReasonV1::PoolCodeHashMismatch,
+            ShadowOutcome::PreparationRejected => AdmissionTerminalReasonV1::PreparationError,
+            ShadowOutcome::V3Coverage => AdmissionTerminalReasonV1::V3Coverage,
+            ShadowOutcome::AnalysisRejected => AdmissionTerminalReasonV1::PreparationError,
+            ShadowOutcome::InternalFailure => AdmissionTerminalReasonV1::InternalFailure,
+            ShadowOutcome::Cancelled => AdmissionTerminalReasonV1::Cancelled,
+            ShadowOutcome::NoDirtyPools => AdmissionTerminalReasonV1::NoDirtyPool,
+            ShadowOutcome::NoCandidate => AdmissionTerminalReasonV1::NoRoute,
+            ShadowOutcome::NoPositivePlan => AdmissionTerminalReasonV1::EconomicsAuthorityUnavailable,
+            ShadowOutcome::Selected => AdmissionTerminalReasonV1::EconomicsAuthorityUnavailable,
+        );
 
         let unknown = MevTraderRuntime::admission_terminal(TERMINAL_NO_TRADE, None, None, None);
         assert_eq!(unknown.reason, AdmissionTerminalReasonV1::InternalFailure);
@@ -1832,6 +1847,7 @@ mod tests {
         let port = UniverseAbsentPort { view, received_at };
         runtime.submit_blink_victim(victim_at(received_at));
         assert!(runtime.consume_once(&port, Arc::new(BaseChainSpec::mainnet())));
+        assert_eq!(runtime.shadow_outcome_counters().count(ShadowOutcome::UniverseAbsent), 1);
         exporter.close().unwrap();
 
         let segment =
@@ -1839,6 +1855,56 @@ mod tests {
         assert!(segment.contains("\"terminalReason\":\"universe_absent\""));
         assert!(segment.contains("\"contractViolations\":0"));
         assert!(segment.contains("\"valid\":true"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn code_change_rejection_stays_valid_from_runtime_through_footer() {
+        let nonce =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("base-runtime-code-change-{nonce}"));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(
+            &root,
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o700),
+        )
+        .unwrap();
+        let exporter = AdmissionExporterV1::start(
+            crate::AdmissionExporterConfigV1::new(
+                root.clone(),
+                "code-change-run".into(),
+                "code-change-boot".into(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let config =
+            MevTraderRuntimeConfig::empty().unwrap().with_admission_exporter(Arc::clone(&exporter));
+        let runtime = MevTraderRuntime::start(config).unwrap();
+        runtime.submit_blink_victim(victim());
+
+        let rejection = crate::frame::test_utils::code_change_rejection();
+        assert_eq!(rejection.reason, AdmissionTerminalReasonV1::CodeChange);
+        assert_eq!(rejection.missing_key_kind, None);
+        assert!(rejection.missing_key_address.is_some());
+        assert_eq!(rejection.missing_storage_slot, None);
+        runtime.record_admission_rejection(0, rejection);
+        let terminal = AtomicU8::new(TERMINAL_UNCLAIMED);
+        assert!(runtime.claim_terminal(
+            0,
+            &terminal,
+            A1Outcome::NoTrade,
+            TERMINAL_NO_TRADE,
+            Some(ShadowOutcome::FrameRejected),
+        ));
+        exporter.close().unwrap();
+
+        let path = root.join("code-change-run/code-change-boot-000000.jsonl");
+        let segment = std::fs::read_to_string(&path).unwrap();
+        assert!(segment.contains("\"terminalReason\":\"code_change\""));
+        assert!(segment.contains("\"missingKeyAddress\":\"0x"));
+        assert!(segment.contains("\"contractViolations\":0"));
+        assert!(segment.contains("\"valid\":true"));
+        assert!(crate::validate_admission_segment_v1(&path).unwrap());
         std::fs::remove_dir_all(root).unwrap();
     }
 
