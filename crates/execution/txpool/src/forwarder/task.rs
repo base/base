@@ -37,18 +37,13 @@ struct RateLimiter {
 
 impl RateLimiter {
     fn new(max_rps: u32) -> Self {
-        let capacity = if max_rps == 0 { 0 } else { max_rps as usize };
-        Self { timestamps: VecDeque::with_capacity(capacity), max_rps }
+        Self { timestamps: VecDeque::with_capacity(max_rps as usize), max_rps }
     }
 
     fn prune(&mut self, now: Instant) {
         let window = std::time::Duration::from_secs(1);
-        while let Some(&front) = self.timestamps.front() {
-            if now.duration_since(front) >= window {
-                self.timestamps.pop_front();
-            } else {
-                break;
-            }
+        while self.timestamps.front().is_some_and(|front| now.duration_since(*front) >= window) {
+            self.timestamps.pop_front();
         }
     }
 
@@ -67,10 +62,9 @@ impl RateLimiter {
             return None;
         }
 
-        let oldest = self.timestamps.front().expect("non-empty after prune");
-        let window = std::time::Duration::from_secs(1);
-        let elapsed = now.duration_since(*oldest);
-        Some(window.saturating_sub(elapsed))
+        Some(std::time::Duration::from_secs(1).saturating_sub(
+            now.duration_since(*self.timestamps.front().expect("non-empty after prune")),
+        ))
     }
 
     fn record_send(&mut self) {
@@ -247,9 +241,8 @@ where
         if buffered.is_empty() {
             return;
         }
-        let tx_hashes: Vec<TxHash> = buffered.iter().map(|tx| tx.tx_hash).collect();
-        let batch: Vec<ValidatedTransaction<E>> =
-            buffered.into_iter().map(|tx| tx.transaction).collect();
+        let (tx_hashes, batch): (Vec<TxHash>, Vec<ValidatedTransaction<E>>) =
+            buffered.into_iter().map(|tx| (tx.tx_hash, tx.transaction)).unzip();
 
         trace!(
             builder_url = %self.builder_url,
