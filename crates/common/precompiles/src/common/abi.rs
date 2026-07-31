@@ -230,12 +230,9 @@ mod tests {
     /// changes and CI fails, forcing `IB20` to be split into frozen per-fork surfaces (as
     /// `IB20Asset`/`IPolicyRegistry` already are) before the shared surface can move.
     ///
-    /// Hashed via the shared [`AbiFingerprint::compute`], passing `PausableFeature::COUNT` and each
-    /// `PausableFeature` ordinal. The ordinals are load-bearing exactly as `B20Variant`'s are for
-    /// the factory (see PR #4206): `B20PausableFeature::mask` derives the pause storage bit as
-    /// `1 << (feature as u8)`, so a `sol!` reorder of `TRANSFER`/`MINT`/`BURN` would silently remap
-    /// which bit each feature toggles while leaving every selector, topic0, error selector and
-    /// `COUNT` identical. Passing the ordinals is what makes that reorder visible.
+    /// The `PausableFeature` ordinals are hashed too, not just `COUNT`: `B20PausableFeature::mask`
+    /// derives the pause bit as `1 << (feature as u8)`, so a `sol!` reorder would silently remap
+    /// which bit each feature toggles without moving any selector, topic0 or `COUNT`.
     #[test]
     fn ib20_abi_fingerprint_is_pinned() {
         let fingerprint = AbiFingerprint::compute(
