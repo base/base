@@ -201,11 +201,11 @@ impl IB20Asset::IB20AssetCalls {
 mod tests {
     use alloc::vec::Vec;
 
-    use alloy_primitives::{B256, FixedBytes, b256, keccak256};
+    use alloy_primitives::{B256, FixedBytes, b256};
     use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface};
 
     use super::{ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, IB20Asset};
-    use crate::{IB20, IB20AssetV1};
+    use crate::{AbiFingerprint, IB20, IB20AssetV1};
 
     /// Absolute wire fingerprint for Beryl's surface. Catches both-sides drift that relative
     /// V1==V2 asserts miss (alloy Display / signature changes that move every copy together).
@@ -216,57 +216,26 @@ mod tests {
     const V2_ABI_FINGERPRINT: B256 =
         b256!("93c921285631a963f969f6c6541689d116fc1046050ea82f889d6a5d833e8026");
 
-    /// Keccak of sorted call selectors, then sorted event topic0s, then sorted error selectors,
-    /// then an enum-count byte, then enum ordinals. Order is fixed so a single pin catches any
-    /// wire-surface edit.
-    ///
-    /// `IB20Asset` declares no enum, so the count byte is `0` and there are no ordinals. The layout
-    /// deliberately matches the shared `AbiFingerprint::compute` helper introduced in #4206 (called
-    /// here as if with `enum_count = 0` and empty ordinals); once that lands these fingerprints
-    /// should call it directly, and the matching layout means no re-bless is needed.
-    fn abi_fingerprint(
-        selectors: impl IntoIterator<Item = [u8; 4]>,
-        event_hashes: impl IntoIterator<Item = B256>,
-        error_selectors: impl IntoIterator<Item = [u8; 4]>,
-    ) -> B256 {
-        let mut selectors: Vec<[u8; 4]> = selectors.into_iter().collect();
-        selectors.sort_unstable();
-
-        let mut event_hashes: Vec<B256> = event_hashes.into_iter().collect();
-        event_hashes.sort_unstable();
-
-        let mut error_selectors: Vec<[u8; 4]> = error_selectors.into_iter().collect();
-        error_selectors.sort_unstable();
-
-        let mut buf = Vec::with_capacity(
-            selectors.len() * 4 + event_hashes.len() * 32 + error_selectors.len() * 4 + 1,
-        );
-        for selector in &selectors {
-            buf.extend_from_slice(selector);
-        }
-        for hash in &event_hashes {
-            buf.extend_from_slice(hash.as_slice());
-        }
-        for selector in &error_selectors {
-            buf.extend_from_slice(selector);
-        }
-        buf.push(0);
-        keccak256(&buf)
-    }
-
+    /// `IB20Asset` declares no enum, so both surfaces pass `enum_count = 0` and no ordinals to the
+    /// shared [`AbiFingerprint::compute`]. The pinned values above were blessed against the same
+    /// byte layout, so routing through the shared helper leaves them unchanged.
     fn v1_abi_fingerprint() -> B256 {
-        abi_fingerprint(
+        AbiFingerprint::compute(
             IB20AssetV1::IB20AssetCalls::selectors(),
             IB20AssetV1::IB20AssetEvents::SELECTORS.iter().copied().map(B256::new),
             IB20AssetV1::IB20AssetErrors::selectors(),
+            0,
+            [],
         )
     }
 
     fn v2_abi_fingerprint() -> B256 {
-        abi_fingerprint(
+        AbiFingerprint::compute(
             IB20Asset::IB20AssetCalls::selectors(),
             IB20Asset::IB20AssetEvents::SELECTORS.iter().copied().map(B256::new),
             IB20Asset::IB20AssetErrors::selectors(),
+            0,
+            [],
         )
     }
 
