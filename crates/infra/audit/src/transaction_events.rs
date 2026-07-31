@@ -1,7 +1,7 @@
 //! HTTP ingest path for transaction observability events.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt,
     sync::{Arc, Mutex},
     time::Instant,
@@ -65,7 +65,7 @@ pub const DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS: u32 = 90;
 const TRANSACTION_EVENT_PARTITION_MAINTENANCE_LOCK_ID: i64 = 744_697_762_131_337_711;
 
 /// Bounded retention class persisted with every transaction event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TransactionEventRetentionClass {
     /// High-volume success-path and repeated builder-decision events.
@@ -97,9 +97,8 @@ impl TransactionEventRetentionClass {
 
     /// Classifies a transaction event at ingest.
     ///
-    /// Event types not explicitly assigned to hot or cold default to warm. This
-    /// makes additions safe by default while keeping exceptional volume and
-    /// diagnostic-value choices visible in this fixed map.
+    /// The match is exhaustive so new `TransactionEventType` variants fail to
+    /// compile until they are assigned a retention class deliberately.
     pub const fn for_event_type(event_type: TransactionEventType) -> Self {
         match event_type {
             TransactionEventType::ProxyReceived
@@ -111,6 +110,19 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::BuilderConsidered
             | TransactionEventType::BuilderAccepted
             | TransactionEventType::BuilderRejected => Self::Hot,
+            TransactionEventType::IngressReceived
+            | TransactionEventType::SimulationStarted
+            | TransactionEventType::SimulationSucceeded
+            | TransactionEventType::IngressMeteringSendAttempt
+            | TransactionEventType::IngressMeteringSendSuccess
+            | TransactionEventType::Pending
+            | TransactionEventType::Queued
+            | TransactionEventType::PendingToQueued
+            | TransactionEventType::QueuedToPending
+            | TransactionEventType::TxpoolBuilderForwardAttempt
+            | TransactionEventType::TxpoolBuilderForwardSuccess
+            | TransactionEventType::TxpoolBuilderConsumed
+            | TransactionEventType::TxpoolValidatedInsertAccepted => Self::Warm,
             TransactionEventType::ProxyRejected
             | TransactionEventType::ProxyValidationRejected
             | TransactionEventType::ProxyBackendFailure
@@ -129,7 +141,6 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::BuilderFlashblockStarted
             | TransactionEventType::BuilderFlashblockPublished
             | TransactionEventType::BuilderFlashblockBuildStopped => Self::Cold,
-            _ => Self::Warm,
         }
     }
 }
@@ -161,6 +172,25 @@ impl Default for TransactionEventRetentionConfig {
             warm_days: DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS,
             cold_days: DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS,
         }
+    }
+}
+
+impl TransactionEventRetentionConfig {
+    /// Validates retention and premake bounds before partition maintenance.
+    pub fn validate(self) -> Result<Self> {
+        anyhow::ensure!(
+            (1..=31).contains(&self.premake_days),
+            "transaction event partition premake days must be between 1 and 31"
+        );
+        anyhow::ensure!(
+            self.hot_days > 0 && self.hot_days <= self.warm_days,
+            "transaction event retention days must satisfy 0 < hot <= warm"
+        );
+        anyhow::ensure!(
+            self.warm_days <= self.cold_days,
+            "transaction event retention days must satisfy warm <= cold"
+        );
+        Ok(self)
     }
 }
 
@@ -510,18 +540,7 @@ impl PgTransactionEventSink {
         &self,
         config: TransactionEventRetentionConfig,
     ) -> Result<Vec<TransactionEventPartitionMaintenanceOutcome>> {
-        anyhow::ensure!(
-            (1..=31).contains(&config.premake_days),
-            "transaction event partition premake days must be between 1 and 31"
-        );
-        anyhow::ensure!(
-            config.hot_days > 0 && config.hot_days <= config.warm_days,
-            "transaction event retention days must satisfy 0 < hot <= warm"
-        );
-        anyhow::ensure!(
-            config.warm_days <= config.cold_days,
-            "transaction event retention days must satisfy warm <= cold"
-        );
+        let config = config.validate()?;
 
         let now = Utc::now();
         let today = now.date_naive();
@@ -723,10 +742,11 @@ impl PgTransactionEventSink {
             },
         );
 
+        // Infer the leaf-local UNIQUE (event_id). An explicit ON CONFLICT
+        // (event_id) target is rejected on the partitioned parent because that
+        // uniqueness is not declared on the parent relation. Same-day same-class
+        // retries dedupe; cross-day or cross-class retries do not.
         query_builder.push(" ON CONFLICT DO NOTHING RETURNING event_id");
-        // Leaf partitions carry UNIQUE (event_id). Inference through the parent
-        // is enough for same-day same-class retries; cross-day or cross-class
-        // retries are not covered by this conflict target.
 
         let rows: Vec<(String,)> = query_builder
             .build_query_as()
@@ -739,8 +759,8 @@ impl PgTransactionEventSink {
 
     /// Returns events for one transaction hash sorted by event time.
     ///
-    /// Reads the legacy `transaction_events` relation. Until the later union-view
-    /// cutover, rows written to class tables are not visible here.
+    /// Dual-store window: reads the legacy `transaction_events` heap. Until the
+    /// later union-view cutover, rows written to class tables are not visible.
     pub async fn events_by_transaction_hash(
         &self,
         tx_hash: &str,
@@ -763,6 +783,9 @@ impl PgTransactionEventSink {
     }
 
     /// Returns events for one block number sorted by event time.
+    ///
+    /// Dual-store window: reads the legacy `transaction_events` heap. Until the
+    /// later union-view cutover, rows written to class tables are not visible.
     pub async fn events_by_block_number(
         &self,
         block_number: u64,
@@ -786,6 +809,9 @@ impl PgTransactionEventSink {
     }
 
     /// Returns events for one block hash sorted by event time.
+    ///
+    /// Dual-store window: reads the legacy `transaction_events` heap. Until the
+    /// later union-view cutover, rows written to class tables are not visible.
     pub async fn events_by_block_hash(
         &self,
         block_hash: &str,
@@ -808,6 +834,9 @@ impl PgTransactionEventSink {
     }
 
     /// Returns events for one bundle UUID or bundle hash sorted by event time.
+    ///
+    /// Dual-store window: reads the legacy `transaction_events` heap. Until the
+    /// later union-view cutover, rows written to class tables are not visible.
     pub async fn events_by_bundle(
         &self,
         bundle_key: &str,
@@ -843,6 +872,9 @@ impl PgTransactionEventSink {
     }
 
     /// Returns rejected transaction events sorted newest first for list views.
+    ///
+    /// Dual-store window: reads the legacy `transaction_events` heap. Until the
+    /// later union-view cutover, rows written to class tables are not visible.
     pub async fn rejected_transaction_events(
         &self,
         query: RejectedTransactionEventQuery,
@@ -937,19 +969,17 @@ impl TransactionEventSink for PgTransactionEventSink {
             return Ok(TransactionEventInsertOutcome { inserted_event_ids: HashSet::new() });
         }
 
+        let mut by_class: HashMap<TransactionEventRetentionClass, Vec<&TransactionEvent>> =
+            HashMap::new();
+        for event in events {
+            by_class
+                .entry(TransactionEventRetentionClass::for_event_type(event.event_type))
+                .or_default()
+                .push(event);
+        }
+
         let mut inserted_event_ids = HashSet::new();
-        for retention_class in [
-            TransactionEventRetentionClass::Hot,
-            TransactionEventRetentionClass::Warm,
-            TransactionEventRetentionClass::Cold,
-        ] {
-            let class_events = events
-                .iter()
-                .filter(|event| {
-                    TransactionEventRetentionClass::for_event_type(event.event_type)
-                        == retention_class
-                })
-                .collect::<Vec<_>>();
+        for (retention_class, class_events) in by_class {
             for chunk in class_events.chunks(MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE) {
                 inserted_event_ids.extend(self.insert_event_chunk(retention_class, chunk).await?);
             }
@@ -1380,6 +1410,21 @@ mod tests {
                 TransactionEventType::BuilderPayloadFinalized
             ),
             TransactionEventRetentionClass::Cold
+        );
+    }
+
+    #[test]
+    fn validates_transaction_event_retention_ordering() {
+        assert!(TransactionEventRetentionConfig::default().validate().is_ok());
+        assert!(
+            TransactionEventRetentionConfig {
+                premake_days: 7,
+                hot_days: 30,
+                warm_days: 7,
+                cold_days: 90,
+            }
+            .validate()
+            .is_err()
         );
     }
 

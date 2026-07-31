@@ -257,7 +257,8 @@ async fn run_server(args: Args) -> Result<()> {
         hot_days: args.transaction_event_hot_retention_days,
         warm_days: args.transaction_event_warm_retention_days,
         cold_days: args.transaction_event_cold_retention_days,
-    };
+    }
+    .validate()?;
     let retention_interval = Duration::from_secs(args.transaction_event_retention_interval_secs);
 
     info!(
