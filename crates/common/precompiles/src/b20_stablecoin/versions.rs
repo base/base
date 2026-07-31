@@ -9,7 +9,9 @@
 
 use base_common_genesis::BaseUpgrade;
 
-use crate::{PolicyAccounting, Stablecoin, StablecoinAccounting, StablecoinV1, StablecoinV2};
+use crate::{
+    B20Abi, PolicyAccounting, Stablecoin, StablecoinAccounting, StablecoinV1, StablecoinV2,
+};
 
 /// An activated version of the stablecoin B-20 precompile logic.
 ///
@@ -35,6 +37,18 @@ impl StablecoinVersion {
         match self {
             Self::V1 => &V1,
             Self::V2 => &V2,
+        }
+    }
+
+    /// Returns the frozen common [`B20Abi`] wire surface this version decodes against.
+    ///
+    /// Gating the shared surface per version is what freezes V1/Beryl against selectors and enum
+    /// members added to the canonical surface at a later fork (e.g. the Cobalt seize surface and its
+    /// `SEIZE` `PausableFeature` member).
+    pub const fn common_abi(self) -> B20Abi {
+        match self {
+            Self::V1 => B20Abi::V1,
+            Self::V2 => B20Abi::V2,
         }
     }
 }

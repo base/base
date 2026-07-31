@@ -15,7 +15,8 @@ impl B20PausableFeature {
         match feature {
             IB20::PausableFeature::TRANSFER
             | IB20::PausableFeature::MINT
-            | IB20::PausableFeature::BURN => Ok(()),
+            | IB20::PausableFeature::BURN
+            | IB20::PausableFeature::SEIZE => Ok(()),
             IB20::PausableFeature::__Invalid => Err(BasePrecompileError::enum_conversion_error()),
         }
     }
