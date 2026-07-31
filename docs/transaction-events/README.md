@@ -33,6 +33,8 @@ UTC `ingested_at` day. Audit-archiver routes inserts to the matching table and
 continues to read from `transaction_events`. Migration 002 leaves the legacy
 heap untouched, so queries will not see newly written partitioned rows until a
 later migration replaces that heap with a union view of the same name.
+`retention_class` is a write-routing column on the class tables only; read APIs
+do not return it.
 
 An app-owned maintenance worker creates upcoming partitions and drops expired
 ones with `DROP TABLE` rather than row `DELETE`. The migration exposes only

@@ -281,8 +281,6 @@ pub struct TransactionEventRecord {
     /// Event envelope.
     #[serde(flatten)]
     pub event: TransactionEvent,
-    /// Retention policy selected by audit-archiver at ingest.
-    pub retention_class: TransactionEventRetentionClass,
     /// Time when audit-archiver inserted the event.
     pub ingested_at: DateTime<Utc>,
 }
@@ -744,7 +742,7 @@ impl PgTransactionEventSink {
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
         let rows = sqlx::query(
-            "SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
+            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
              WHERE tx_hash = $1 \
@@ -767,7 +765,7 @@ impl PgTransactionEventSink {
         let block_number = i64::try_from(block_number)?;
         let limit = normalize_limit(limit);
         let rows = sqlx::query(
-            "SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
+            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
              WHERE block_number = $1 \
@@ -789,7 +787,7 @@ impl PgTransactionEventSink {
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
         let rows = sqlx::query(
-            "SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
+            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
              WHERE block_hash = $1 \
@@ -812,12 +810,12 @@ impl PgTransactionEventSink {
         let limit = normalize_limit(limit);
         let rows = sqlx::query(
             "WITH bundle_events AS ( \
-                SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
+                SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
                 network, tx_hash, block_hash, block_number, payload_id, request_id, data \
                 FROM transaction_events \
                 WHERE data ? 'bundle_hash' AND data->>'bundle_hash' = $1 \
                 UNION ALL \
-                SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
+                SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
                 network, tx_hash, block_hash, block_number, payload_id, request_id, data \
                 FROM transaction_events \
                 WHERE data ? 'bundle_id' AND data->>'bundle_id' = $1 \
@@ -825,7 +823,7 @@ impl PgTransactionEventSink {
                 SELECT DISTINCT ON (event_id) * FROM bundle_events \
                 ORDER BY event_id, event_time ASC, ingested_at ASC \
              ) \
-             SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
+             SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM deduped \
              ORDER BY event_time ASC, ingested_at ASC, event_id ASC \
@@ -848,7 +846,7 @@ impl PgTransactionEventSink {
         let to_block = query.to_block.map(i64::try_from).transpose()?;
 
         let rows = sqlx::query(
-            "SELECT event_id, retention_class, schema_version, event_time, ingested_at, producer, event_type, \
+            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
              WHERE event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED') \
@@ -902,11 +900,7 @@ fn record_from_row(row: sqlx::postgres::PgRow) -> Result<TransactionEventRecord>
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("transaction event data column is not a JSON object"))?,
     };
-    Ok(TransactionEventRecord {
-        event,
-        retention_class: parse_transaction_event_retention_class(row.try_get("retention_class")?)?,
-        ingested_at: row.try_get("ingested_at")?,
-    })
+    Ok(TransactionEventRecord { event, ingested_at: row.try_get("ingested_at")? })
 }
 
 fn parse_transaction_event_producer(producer: String) -> Result<TransactionEventProducer> {
@@ -917,13 +911,6 @@ fn parse_transaction_event_producer(producer: String) -> Result<TransactionEvent
 fn parse_transaction_event_type(event_type: String) -> Result<TransactionEventType> {
     let deserializer: StringDeserializer<SerdeValueError> = event_type.into_deserializer();
     Ok(TransactionEventType::deserialize(deserializer)?)
-}
-
-fn parse_transaction_event_retention_class(
-    retention_class: String,
-) -> Result<TransactionEventRetentionClass> {
-    let deserializer: StringDeserializer<SerdeValueError> = retention_class.into_deserializer();
-    Ok(TransactionEventRetentionClass::deserialize(deserializer)?)
 }
 
 fn metric_len_u64(len: usize) -> u64 {

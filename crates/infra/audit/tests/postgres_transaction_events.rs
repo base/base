@@ -61,6 +61,9 @@ fn event(event_id: &str) -> TransactionEvent {
 }
 
 async fn cleanup(pool: &PgPool, event_id: &str) {
+    let _ = pool
+        .execute(sqlx::query("DELETE FROM transaction_events WHERE event_id = $1").bind(event_id))
+        .await;
     for table_name in
         ["transaction_events_hot", "transaction_events_warm", "transaction_events_cold"]
     {
@@ -265,6 +268,73 @@ async fn postgres_sink_routes_events_to_class_specific_tables() -> anyhow::Resul
     .await?;
     assert_eq!(combined_count.0, 3);
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_reads_legacy_heap_and_miss_class_table_writes() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+
+    let legacy_event_id = unique_event_id();
+    let legacy = event(&legacy_event_id);
+    sqlx::query(
+        "INSERT INTO transaction_events \
+         (event_id, schema_version, event_time, ingested_at, producer, event_type, network, \
+          tx_hash, block_hash, block_number, payload_id, request_id, data) \
+         VALUES ($1, $2, $3, now(), $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+    )
+    .bind(&legacy.event_id)
+    .bind(&legacy.schema_version)
+    .bind(legacy.event_time)
+    .bind(legacy.producer.to_string())
+    .bind(legacy.event_type.to_string())
+    .bind(&legacy.network)
+    .bind(legacy.tx_hash.map(|hash| hash.to_string()))
+    .bind(legacy.block_hash.map(|hash| hash.to_string()))
+    .bind(legacy.block_number.map(i64::try_from).transpose()?)
+    .bind(&legacy.payload_id)
+    .bind(&legacy.request_id)
+    .bind(serde_json::Value::Object(legacy.data.clone()))
+    .execute(&pool)
+    .await?;
+
+    let legacy_rows = sink
+        .events_by_transaction_hash(
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+            10,
+        )
+        .await?;
+    assert!(
+        legacy_rows.iter().any(|row| row.event.event_id == legacy_event_id),
+        "legacy heap rows must remain readable after migration 002"
+    );
+
+    let class_event_id = unique_event_id();
+    let class_event = event(&class_event_id);
+    sink.insert_events(std::slice::from_ref(&class_event)).await?;
+    let class_count: (i64,) =
+        sqlx::query_as("SELECT count(*) FROM transaction_events_hot WHERE event_id = $1")
+            .bind(&class_event_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(class_count.0, 1);
+
+    let after_class_write = sink
+        .events_by_transaction_hash(
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+            50,
+        )
+        .await?;
+    assert!(
+        !after_class_write.iter().any(|row| row.event.event_id == class_event_id),
+        "class-table writes stay invisible on transaction_events until the later view cutover"
+    );
+
+    cleanup(&pool, &legacy_event_id).await;
+    cleanup(&pool, &class_event_id).await;
     Ok(())
 }
 
