@@ -153,8 +153,12 @@ just devnet tx-observability-smoke
 
 The smoke test sends one transaction through ingress, waits for Vector to ship
 JSONL events from ingress, proxyd, txpool tracing, and builder producers, and
-verifies `audit-archiver` can read the persisted events back from Postgres by
-transaction hash.
+checks that producers and the collection path are healthy. Until a later
+migration replaces the legacy `transaction_events` heap with a union view of the
+class tables, `audit-archiver` writes to `transaction_events_{hot,warm,cold}`
+while read APIs still query the heap, so the smoke test does **not** verify
+Postgres readback of newly ingested rows. Confirm ingest with class-table row
+counts or the `tips_audit_transaction_events_persisted` metric instead.
 
 For local Vector health, alert or inspect `component_discarded_events_total`.
 `parse_transaction_events` drops malformed JSONL lines, and
@@ -281,8 +285,14 @@ Recommended components:
 - attempt index when applicable
 
 If a source cannot produce an exactly deterministic ID, document why in the
-producer implementation and include enough fields in `data` for
-`audit-archiver` to enforce database-side uniqueness.
+producer implementation and include enough fields in `data` for operators to
+reconcile duplicates offline.
+
+`audit-archiver` enforces uniqueness with a leaf-local `UNIQUE (event_id)` index
+on each UTC daily partition of a retention-class table. Same-day retries of the
+same `event_id` into the same class are deduped; a retry that lands on a later
+UTC day (or into a different retention class after a map change) can insert
+again. Do not rely on a global, forever-unique primary key.
 
 ## proxyd Examples
 

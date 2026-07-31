@@ -63,10 +63,10 @@ base_metrics::define_metrics! {
     #[describe("Age in seconds of the oldest retained transaction observability partition")]
     #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
     transaction_event_oldest_partition_age_seconds: gauge,
-    #[describe("UTC days from today to the newest premade transaction observability partition")]
+    #[describe("UTC days from today to the newest premade transaction observability partition; only the advisory-lock winner refreshes this, so alert on max by retention_class (non-winners leave 0)")]
     #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
     transaction_event_partitions_ahead_days: gauge,
-    #[describe("Seconds since this process last completed transaction observability partition maintenance")]
+    #[describe("Seconds since this process last completed a locked transaction observability partition maintenance pass; pods that never won stay at 0, so do not alert on plain min/max across replicas")]
     transaction_event_partition_maintenance_last_success_age_seconds: gauge,
     #[describe("Transaction observability partition maintenance failures")]
     transaction_event_partition_maintenance_failures: counter,

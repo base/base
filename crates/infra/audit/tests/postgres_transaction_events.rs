@@ -339,6 +339,30 @@ async fn postgres_reads_legacy_heap_and_miss_class_table_writes() -> anyhow::Res
 }
 
 #[tokio::test]
+async fn postgres_sink_dedupes_same_day_event_id_retries() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let event_id = unique_event_id();
+    let event = event(&event_id);
+
+    let first = sink.insert_events(std::slice::from_ref(&event)).await?;
+    assert!(first.inserted_event_ids.contains(&event_id));
+    let second = sink.insert_events(std::slice::from_ref(&event)).await?;
+    assert!(second.inserted_event_ids.is_empty());
+
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let count: (i64,) =
+        sqlx::query_as("SELECT count(*) FROM transaction_events_hot WHERE event_id = $1")
+            .bind(&event_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(count.0, 1);
+    cleanup(&pool, &event_id).await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn postgres_partition_maintenance_creates_and_drops_class_windows() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;

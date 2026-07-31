@@ -349,7 +349,7 @@ pub enum TransactionEventSchemaReadinessError {
     PartitionMaintenanceFunctionMissing,
     /// The expected table exists but cannot be queried by the runtime role.
     #[error(
-        "transaction-event Postgres schema is not ready: runtime role cannot query public.transaction_events; verify audit_archiver privileges from 001_transaction_events.sql"
+        "transaction-event Postgres schema is not ready: runtime role cannot query public.transaction_events; verify audit_archiver privileges from 001_transaction_events.sql and 002_transaction_event_retention.sql"
     )]
     TransactionEventsRelationUnavailable {
         /// Underlying database error.
@@ -724,6 +724,9 @@ impl PgTransactionEventSink {
         );
 
         query_builder.push(" ON CONFLICT DO NOTHING RETURNING event_id");
+        // Leaf partitions carry UNIQUE (event_id). Inference through the parent
+        // is enough for same-day same-class retries; cross-day or cross-class
+        // retries are not covered by this conflict target.
 
         let rows: Vec<(String,)> = query_builder
             .build_query_as()
@@ -735,6 +738,9 @@ impl PgTransactionEventSink {
     }
 
     /// Returns events for one transaction hash sorted by event time.
+    ///
+    /// Reads the legacy `transaction_events` relation. Until the later union-view
+    /// cutover, rows written to class tables are not visible here.
     pub async fn events_by_transaction_hash(
         &self,
         tx_hash: &str,
