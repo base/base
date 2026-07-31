@@ -34,14 +34,10 @@ jobs:
             key: beryl
             base_anvil_ref: 6d744e03224977edd42a36699ba9ff42be25e8cb
             base_std_ref: v1.0.0
-          # Point to the base-std release tag once the Cobalt hardfork is ready; until then, pin the
-          # base-std main SHA that carries the behavior under test.
+          # Point to the base-std release tag once the Cobalt hardfork is ready.
           - fork: Cobalt
             key: cobalt
             base_anvil_ref: ae7557c4f8602caa1da0be33143bb2504c85b0c8
-            # base-std#176 merge commit: createPolicy / createPolicyWithAccounts revert
-            # IncompatiblePolicyType for a composite policyType. The gate runs those tests against
-            # base/base#4210's V2 binary (patched in), regression-locking base/base<->base-std parity.
             base_std_ref: f6522c560e30554a4bf01dccf32a100cbba76eb3
     env:
       FORK_NAME: ${{ matrix.fork }}
