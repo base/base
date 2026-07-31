@@ -3,7 +3,9 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use futures::{Future, FutureExt};
 use parking_lot::Mutex;
-use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PayloadTaskGuard, PrecachedState};
+use reth_basic_payload_builder::{
+    HeaderForPayload, PayloadConfig, PayloadTaskGuard, PrecachedState,
+};
 use reth_execution_cache::SavedCache;
 use reth_node_api::{NodePrimitives, PayloadKind};
 use reth_payload_builder::{
@@ -318,10 +320,8 @@ where
         self.payload_rx = Some(watch_rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
         self.executor.spawn_blocking_task(Box::pin(async move {
-            let _permit = payload_task_guard
-                .acquire()
-                .await
-                .expect("payload task semaphore is never closed");
+            let _permit =
+                payload_task_guard.acquire().await.expect("payload task semaphore is never closed");
             let args = BuildArguments {
                 cached_reads,
                 execution_cache,

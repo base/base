@@ -44,6 +44,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
 
+use super::block_builder::SharedStateRootHook;
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
     ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
@@ -52,8 +53,6 @@ use crate::{
         BuilderTransactionEventContext, emit_builder_transaction_event, rejection_reason_code,
     },
 };
-
-use super::block_builder::SharedStateRootHook;
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
 fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64) {
