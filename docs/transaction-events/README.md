@@ -15,7 +15,7 @@ one event JSON object per line, not a wrapped JSON batch.
 not the long-term archive. At ingest, the archiver assigns a `retention_class`
 from a fixed event-type map:
 
-| Class | Keep | Families |
+| Class | Default keep | Families |
 | --- | --- | --- |
 | `hot` | 7 days | Proxy success-path hops; `BUILDER_CONSIDERED`, `BUILDER_ACCEPTED`, `BUILDER_REJECTED` |
 | `warm` | 30 days | Default for remaining arrival, simulation, and forwarding events |
@@ -23,36 +23,22 @@ from a fixed event-type map:
 
 Unknown or newly added event types default to `warm`. Prefer changing the map
 deliberately when a new type is high-churn (`hot`) or high-value (`cold`).
-
-At the measured mainnet send rates (ingress sendRaw ≈ 696/s, builder decisions ≈
-272/s, proxyd ≈ 6 events/send), a tiered 7/30/90 policy is roughly an order of
-magnitude smaller than a uniform 90-day TTL, but full enablement of proxy and
-ingress families can still exceed the current 5 Ti RDS ceiling. Treat the
-windows as tunable and re-check hot/warm GiB/day before locking mainnet
-producer enablement.
+Retention windows and create-ahead distance are configurable on
+`audit-archiver`; treat the defaults as a starting point and size storage from
+observed ingest volume before enabling high-churn producers.
 
 Each retention class has an independent table (`transaction_events_hot`,
 `transaction_events_warm`, or `transaction_events_cold`) range-partitioned by
 UTC `ingested_at` day. Audit-archiver routes inserts to the matching table and
 continues to read from `transaction_events`. Migration 002 leaves the legacy
 heap untouched, so queries will not see newly written partitioned rows until a
-later migration replaces that heap with a union view of the same name. An
-app-owned maintenance worker handles retention policy, partition discovery,
-locking, and metrics, and drops expired partitions with `DROP TABLE` rather
-than row `DELETE`. The migration retains only narrowly scoped
-`SECURITY DEFINER` create/drop functions because Postgres requires table
-ownership for partition DDL. The worker emits
-`tips_audit_transaction_event_partitions_ahead_days` per class and
-`tips_audit_transaction_event_partition_maintenance_last_success_age_seconds`
-after each successful locked maintenance pass; page when ahead days fall below
-about two or when last success age exceeds roughly two retention intervals.
-Configure the windows with:
+later migration replaces that heap with a union view of the same name.
 
-- `TIPS_AUDIT_TRANSACTION_EVENT_HOT_RETENTION_DAYS`
-- `TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS`
-- `TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS`
-- `TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_PREMAKE_DAYS`
-- `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS`
+An app-owned maintenance worker creates upcoming partitions and drops expired
+ones with `DROP TABLE` rather than row `DELETE`. The migration exposes only
+narrowly scoped `SECURITY DEFINER` create/drop helpers because Postgres
+requires table ownership for partition DDL; policy, locking, discovery, and
+maintenance metrics live in the application.
 
 ## Configuration Fields
 
