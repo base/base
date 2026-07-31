@@ -91,6 +91,14 @@ impl AssetAbi {
 
     /// Gates `calldata` on this version's asset surface, then decodes it into the canonical
     /// routable enum.
+    ///
+    /// Where the frozen surface differs from canonical (`V1`), the calldata is first validated
+    /// against the frozen surface so a rejection carries that version's consensus error bytes, then
+    /// re-decoded into the canonical enum for routing. Where the frozen surface *is* canonical —
+    /// `V2`, which canonical aliases — that pre-validation would decode the identical type twice, so
+    /// it is skipped and the single canonical decode suffices (the same dead re-decode elided by
+    /// `FactoryAbi::decode` in #4206). The `match` is exhaustive so a later version whose frozen
+    /// surface diverges from canonical must add its own pre-validating arm.
     pub fn decode_asset(self, calldata: &[u8]) -> Result<IB20Asset::IB20AssetCalls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
@@ -98,7 +106,10 @@ impl AssetAbi {
         if !self.asset_valid_selector(selector) {
             return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }
-        self.abi_decode_validate_asset(calldata, selector)?;
+        match self {
+            Self::V1 => self.abi_decode_validate_asset(calldata, selector)?,
+            Self::V2 => {}
+        }
 
         IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
             BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
