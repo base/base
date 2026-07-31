@@ -644,6 +644,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
             IB20::PausableFeature::TRANSFER,
             IB20::PausableFeature::MINT,
             IB20::PausableFeature::BURN,
+            IB20::PausableFeature::SEIZE,
         ] {
             if (paused & B20PausableFeature::mask(feature)) != U256::ZERO {
                 features.push(feature);
@@ -1385,12 +1386,18 @@ mod tests {
             .pause(
                 &mut tok,
                 ADMIN,
-                vec![IB20::PausableFeature::MINT, IB20::PausableFeature::BURN],
+                vec![
+                    IB20::PausableFeature::MINT,
+                    IB20::PausableFeature::BURN,
+                    IB20::PausableFeature::SEIZE,
+                ],
                 true,
             )
             .unwrap();
-        assert_eq!(LOGIC.paused_features(&tok).unwrap().len(), 2);
-        assert!(LOGIC.is_paused(&tok, IB20::PausableFeature::BURN).unwrap());
+        let features = LOGIC.paused_features(&tok).unwrap();
+        assert_eq!(features.len(), 3);
+        assert!(features.contains(&IB20::PausableFeature::SEIZE));
+        assert!(LOGIC.is_paused(&tok, IB20::PausableFeature::SEIZE).unwrap());
     }
 
     // --- config / metadata ---

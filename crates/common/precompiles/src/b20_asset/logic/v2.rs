@@ -790,6 +790,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
             IB20::PausableFeature::TRANSFER,
             IB20::PausableFeature::MINT,
             IB20::PausableFeature::BURN,
+            IB20::PausableFeature::SEIZE,
         ] {
             if (paused & B20PausableFeature::mask(feature)) != U256::ZERO {
                 features.push(feature);
@@ -1661,6 +1662,14 @@ mod tests {
         assert!(LOGIC.is_paused(&tok, IB20::PausableFeature::MINT).unwrap());
         LOGIC.unpause(&mut tok, ADMIN, vec![IB20::PausableFeature::MINT], true).unwrap();
         assert!(!LOGIC.is_paused(&tok, IB20::PausableFeature::MINT).unwrap());
+    }
+
+    #[test]
+    fn paused_features_includes_seize() {
+        let mut tok = token();
+        LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::SEIZE], true).unwrap();
+        let features = LOGIC.paused_features(&tok).unwrap();
+        assert_eq!(features, vec![IB20::PausableFeature::SEIZE]);
     }
 
     // --- roles ---
