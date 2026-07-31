@@ -1,6 +1,6 @@
 //! Mode-B red-line capability seal for the B3-arm tier (§1.3 b1–b8). Author ≠
-//! reviewer: these are machine-checks a reviewer re-runs. Compiles only under
-//! `--features arm` (the acceptance lane); absent otherwise.
+//! reviewer: these are machine-checks a reviewer re-runs. Acceptance lanes are
+//! `--features arm` and `--features arm-provisioning`; their test sets differ.
 #![cfg(feature = "arm")]
 
 use std::{
@@ -9,6 +9,9 @@ use std::{
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
 };
+
+#[cfg(feature = "arm-provisioning")]
+use std::{ffi::CString, os::unix::ffi::OsStrExt, sync::mpsc, time::Duration};
 
 use syn::{ext::IdentExt, visit::Visit};
 
@@ -525,6 +528,99 @@ fn flatten_use(tree: &syn::UseTree, prefix: &[String], out: &mut Vec<UseLeaf>) {
             }
         }
         syn::UseTree::Glob(_) => out.push(UseLeaf::Glob { source_path: prefix.to_vec() }),
+    }
+}
+
+#[derive(Default)]
+struct ProvisioningToolPathFinder {
+    found: bool,
+    item_depth: usize,
+}
+
+impl<'ast> Visit<'ast> for ProvisioningToolPathFinder {
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if self.item_depth != 0 {
+            return;
+        }
+        self.item_depth += 1;
+        syn::visit::visit_item(self, item);
+        self.item_depth -= 1;
+    }
+
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        if path.segments.iter().any(|segment| ident_name(&segment.ident) == "provisioning_tool") {
+            self.found = true;
+        }
+        syn::visit::visit_path(self, path);
+    }
+
+    fn visit_use_tree(&mut self, tree: &'ast syn::UseTree) {
+        let names_provisioning_tool = match tree {
+            syn::UseTree::Name(name) => ident_name(&name.ident) == "provisioning_tool",
+            syn::UseTree::Rename(rename) => ident_name(&rename.ident) == "provisioning_tool",
+            syn::UseTree::Path(path) => ident_name(&path.ident) == "provisioning_tool",
+            syn::UseTree::Group(_) | syn::UseTree::Glob(_) => false,
+        };
+        if names_provisioning_tool {
+            self.found = true;
+        }
+        syn::visit::visit_use_tree(self, tree);
+    }
+}
+
+fn has_exact_arm_provisioning_gate(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        matches!(
+            &attr.meta,
+            syn::Meta::List(list)
+                if list.path.is_ident("cfg")
+                    && list.tokens.to_string() == "feature = \"arm-provisioning\""
+        )
+    })
+}
+
+#[derive(Default)]
+struct LiteralProvisioningToolItemGateSink {
+    count: usize,
+    gated_ancestor_depth: usize,
+    error: Option<String>,
+}
+
+impl<'ast> Visit<'ast> for LiteralProvisioningToolItemGateSink {
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        let own_gate = has_exact_arm_provisioning_gate(item_attrs(item));
+        let mut finder = ProvisioningToolPathFinder::default();
+        finder.visit_item(item);
+        if finder.found {
+            self.count += 1;
+            if !own_gate && self.gated_ancestor_depth == 0 {
+                self.error = Some(
+                    "item containing a literal provisioning_tool path lacks its own or an ancestor arm-provisioning gate"
+                        .to_owned(),
+                );
+                return;
+            }
+        }
+
+        if own_gate {
+            self.gated_ancestor_depth += 1;
+        }
+        syn::visit::visit_item(self, item);
+        if own_gate {
+            self.gated_ancestor_depth -= 1;
+        }
+    }
+}
+
+/// Checks literal `provisioning_tool` path segments. Local aliases are intentionally not resolved;
+/// the plain-`arm` compile lane and crate-root public allowlist remain the alias-laundering backstops.
+fn literal_provisioning_tool_path_items_have_effective_gates(src: &str) -> Result<usize, String> {
+    let parsed = parse(src);
+    let mut sink = LiteralProvisioningToolItemGateSink::default();
+    sink.visit_file(&parsed);
+    match sink.error {
+        Some(error) => Err(error),
+        None => Ok(sink.count),
     }
 }
 
@@ -1253,6 +1349,143 @@ fn arm_submodules_are_private() {
             "arm sub-module `{sub}` must be a plain `mod {sub};` (no visibility modifier)"
         );
     }
+}
+
+#[test]
+fn provisioning_tool_module_and_literal_path_items_have_effective_gates() {
+    let modrs = std::fs::read_to_string(arm_dir().join("mod.rs")).expect("mod.rs");
+    assert!(
+        exact_module_declaration(&modrs, "provisioning_tool", None).is_some(),
+        "provisioning_tool must use one bare private module declaration"
+    );
+    assert_eq!(
+        literal_provisioning_tool_path_items_have_effective_gates(&modrs)
+            .expect("literal provisioning_tool path items must have an effective gate"),
+        1,
+        "the reviewed facade has exactly one literal provisioning_tool path item"
+    );
+
+    let module = parse(
+        &std::fs::read_to_string(arm_dir().join("provisioning_tool.rs"))
+            .expect("provisioning_tool.rs"),
+    );
+    assert!(
+        matches!(
+            module.attrs.first().map(|attribute| &attribute.meta),
+            Some(syn::Meta::List(list))
+                if list.path.is_ident("cfg")
+                    && list.tokens.to_string() == "feature = \"arm-provisioning\""
+        ) && module.attrs.iter().filter(|attribute| attribute.path().is_ident("cfg")).count() == 1,
+        "provisioning_tool.rs must begin with the exact inner arm-provisioning gate"
+    );
+    let signature_bounds = module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Const(item) if item.ident == "MAX_SIGNATURE_BYTES" => Some(item),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        matches!(
+            signature_bounds.as_slice(),
+            [item]
+                if matches!(
+                    &*item.expr,
+                    syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Int(value),
+                        ..
+                    }) if value.base10_digits() == "134"
+                )
+        ),
+        "MAX_SIGNATURE_BYTES must remain 134; the 134/135-byte behavior tests seal its effective use"
+    );
+}
+
+#[test]
+fn provisioning_tool_literal_path_gate_fixtures() {
+    for fixture in [
+        "pub use provisioning_tool::T4eProvisioningTool as EscapeHatchTool;",
+        "pub type Esc = provisioning_tool::T4eProvisioningTool;",
+    ] {
+        assert!(
+            literal_provisioning_tool_path_items_have_effective_gates(fixture).is_err(),
+            "ungated literal provisioning path escaped the item sink: {fixture}"
+        );
+    }
+
+    for fixture in [
+        r#"
+            /// Offline provisioning-tool surface.
+            #[cfg(feature = "arm-provisioning")]
+            pub use provisioning_tool::T4eProvisioningTool;
+        "#,
+        r#"
+            #[cfg(feature = "arm-provisioning")]
+            mod wrapper {
+                pub use super::provisioning_tool::T4eProvisioningTool;
+            }
+        "#,
+    ] {
+        assert_eq!(
+            literal_provisioning_tool_path_items_have_effective_gates(fixture)
+                .expect("documentation and inherited gates must be accepted"),
+            1
+        );
+    }
+}
+
+#[cfg(feature = "arm-provisioning")]
+#[test]
+fn shipped_attach_surface_enforces_signature_format_and_rejects_fifo_without_blocking() {
+    let fixture = ModuleFixture::new("attach-surface");
+    fixture.write("request/unsigned.bin", "x");
+    fixture.write("request/preimage.bin", "x");
+    let signature = fixture.root.join("signature.hex");
+    let canonical = format!("0x{}\n", "11".repeat(65));
+    std::fs::write(&signature, &canonical).expect("canonical signature");
+
+    let error = mev_trader_submit::T4eProvisioningTool::attach(
+        "invalid-kind",
+        &fixture.root.join("request"),
+        &signature,
+        &fixture.root.join("output.bin"),
+    )
+    .expect_err("invalid kind after accepting exactly one LF");
+    assert_eq!(error.to_string(), "ArtifactKind");
+
+    std::fs::write(&signature, format!("{canonical}\n")).expect("two-LF signature");
+    let error = mev_trader_submit::T4eProvisioningTool::attach(
+        "invalid-kind",
+        &fixture.root.join("request"),
+        &signature,
+        &fixture.root.join("output.bin"),
+    )
+    .expect_err("two LFs must fail canonical validation");
+    assert_eq!(error.to_string(), "CanonicalHex");
+
+    let fifo = fixture.root.join("signature.fifo");
+    let fifo_name = CString::new(fifo.as_os_str().as_bytes()).expect("FIFO path");
+    // SAFETY: `fifo_name` is a live NUL-terminated path and the mode is valid.
+    assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0, "create FIFO");
+    let request = fixture.root.join("request");
+    let output = fixture.root.join("fifo-output.bin");
+    let (sender, receiver) = mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        let result = mev_trader_submit::T4eProvisioningTool::attach(
+            "invalid-kind",
+            &request,
+            &fifo,
+            &output,
+        )
+        .map_err(|error| error.to_string());
+        sender.send(result).expect("send attach result");
+    });
+    let result = receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("FIFO signature input must be rejected without blocking");
+    assert_eq!(result.expect_err("FIFO must fail closed"), "bounded provisioning I/O failed");
+    handle.join().expect("attach thread");
 }
 
 // -- b10: exported surface == curated allowlist (normalized, glob-rejecting) ----
