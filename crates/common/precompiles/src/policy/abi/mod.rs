@@ -42,12 +42,11 @@ impl IPolicyRegistry::PolicyType {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec::Vec;
-
-    use alloy_primitives::{Address, B256, b256, keccak256};
+    use alloy_primitives::{Address, B256, b256};
     use alloy_sol_types::{SolEnum, SolError, SolEvent, SolInterface};
 
     use super::{IPolicyRegistry, IPolicyRegistryV1};
+    use crate::AbiFingerprint;
 
     /// Absolute wire fingerprint for Beryl's surface. Catches both-sides drift that relative
     /// V1==V2 asserts miss (alloy Display / signature changes that move every copy together).
@@ -58,54 +57,29 @@ mod tests {
     const V2_ABI_FINGERPRINT: B256 =
         b256!("cc5f508d2cacd9b729ddbd7a7d9ed3788929fdbb237c286e5a9d8961a90cf656");
 
-    /// Keccak of sorted call selectors, then sorted event topic0s, then sorted error selectors,
-    /// then `PolicyType::COUNT`. Order is fixed so a single pin catches any wire-surface edit.
-    fn abi_fingerprint(
-        selectors: impl IntoIterator<Item = [u8; 4]>,
-        event_hashes: impl IntoIterator<Item = B256>,
-        error_selectors: impl IntoIterator<Item = [u8; 4]>,
-        policy_type_count: usize,
-    ) -> B256 {
-        let mut selectors: Vec<[u8; 4]> = selectors.into_iter().collect();
-        selectors.sort_unstable();
-
-        let mut event_hashes: Vec<B256> = event_hashes.into_iter().collect();
-        event_hashes.sort_unstable();
-
-        let mut error_selectors: Vec<[u8; 4]> = error_selectors.into_iter().collect();
-        error_selectors.sort_unstable();
-
-        let mut buf = Vec::with_capacity(
-            selectors.len() * 4 + event_hashes.len() * 32 + error_selectors.len() * 4 + 1,
-        );
-        for selector in &selectors {
-            buf.extend_from_slice(selector);
-        }
-        for hash in &event_hashes {
-            buf.extend_from_slice(hash.as_slice());
-        }
-        for selector in &error_selectors {
-            buf.extend_from_slice(selector);
-        }
-        buf.push(policy_type_count as u8);
-        keccak256(&buf)
-    }
-
+    /// These two surfaces pass no enum ordinals to [`AbiFingerprint`], so the pinned constants
+    /// above keep the values they were blessed with. `PolicyType` ordinals *are* load-bearing —
+    /// the discriminant rides the top byte of every policy ID via `PolicyRegistryV1::make_id` —
+    /// and `shared_policy_type_discriminants_agree_across_surfaces` below only catches a reorder
+    /// of one surface, not a simultaneous reorder of both. Feeding the ordinals in here would
+    /// close that, at the cost of re-blessing both constants; deliberately left as a follow-up.
     fn v1_abi_fingerprint() -> B256 {
-        abi_fingerprint(
+        AbiFingerprint::compute(
             IPolicyRegistryV1::IPolicyRegistryCalls::selectors(),
             IPolicyRegistryV1::IPolicyRegistryEvents::SELECTORS.iter().copied().map(B256::new),
             IPolicyRegistryV1::IPolicyRegistryErrors::selectors(),
             IPolicyRegistryV1::PolicyType::COUNT,
+            [],
         )
     }
 
     fn v2_abi_fingerprint() -> B256 {
-        abi_fingerprint(
+        AbiFingerprint::compute(
             IPolicyRegistry::IPolicyRegistryCalls::selectors(),
             IPolicyRegistry::IPolicyRegistryEvents::SELECTORS.iter().copied().map(B256::new),
             IPolicyRegistry::IPolicyRegistryErrors::selectors(),
             IPolicyRegistry::PolicyType::COUNT,
+            [],
         )
     }
 
