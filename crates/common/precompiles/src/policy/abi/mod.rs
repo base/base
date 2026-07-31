@@ -28,6 +28,7 @@ impl IPolicyRegistry::IPolicyRegistryCalls {
             Self::policyExists(_) => "policy.policyExists",
             Self::policyAdmin(_) => "policy.policyAdmin",
             Self::pendingPolicyAdmin(_) => "policy.pendingPolicyAdmin",
+            Self::compositePolicyChildIds(_) => "policy.compositePolicyChildIds",
         }
     }
 }
@@ -54,7 +55,7 @@ mod tests {
 
     /// Absolute wire fingerprint for Cobalt's (canonical) surface.
     const V2_ABI_FINGERPRINT: B256 =
-        b256!("047d1fceaa9beac82fd473d474bb7f3b6dcd720c9e62c86facc75ef6dd611631");
+        b256!("cc5f508d2cacd9b729ddbd7a7d9ed3788929fdbb237c286e5a9d8961a90cf656");
 
     /// These two surfaces pass no enum ordinals to [`AbiFingerprint`], so the pinned constants
     /// above keep the values they were blessed with. `PolicyType` ordinals *are* load-bearing —

@@ -7,6 +7,7 @@ use base_precompile_storage::Result;
 
 use crate::{
     AssetAccounting, B20AssetToken, Eip712Domain, IB20, PermitArgs, PolicyAccounting, Token,
+    macros::reject_frozen_selector,
 };
 
 /// The asset logic interface.

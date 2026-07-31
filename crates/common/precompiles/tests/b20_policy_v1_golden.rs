@@ -377,6 +377,20 @@ fn golden_update_composite_selector_unknown_in_v1() {
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::updateCompositeCall::SELECTOR.as_ref()));
 }
 
+#[test]
+fn golden_composite_child_ids_selector_unknown_in_v1() {
+    // Views bypass the activation gate but NOT the wire gate: the selector is absent from the
+    // frozen V1 surface, so Beryl must reject it as unknown rather than answering the read.
+    let mut s = fresh();
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::compositePolicyChildIdsCall { policyId: BLOCKLIST_ID }.abi_encode(),
+    );
+    assert!(rev);
+    assert_eq!(bytes, Bytes::from(IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR.as_ref()));
+}
+
 fn frozen_v1_abi_decode_failure(calldata: &[u8]) -> Bytes {
     let selector = calldata.first_chunk::<4>().copied().expect("calldata must carry a selector");
     let Err(error) = IPolicyRegistryV1::IPolicyRegistryCalls::abi_decode_validate(calldata) else {
@@ -1006,5 +1020,8 @@ fn v1_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
         // V2 ABI; unknown to V1. Goldens pin the UnknownFunctionSelector (old error) behavior.
         C::createCompositePolicy(_) => covered(&[golden_create_composite_selector_unknown_in_v1]),
         C::updateComposite(_) => covered(&[golden_update_composite_selector_unknown_in_v1]),
+        C::compositePolicyChildIds(_) => {
+            covered(&[golden_composite_child_ids_selector_unknown_in_v1])
+        }
     }
 }

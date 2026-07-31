@@ -2,10 +2,10 @@
 
 use alloc::vec::Vec;
 
-use alloy_primitives::{Address, Bytes};
-use base_precompile_storage::{BasePrecompileError, Result};
+use alloy_primitives::Address;
+use base_precompile_storage::Result;
 
-use crate::{IPolicyRegistry::PolicyType, PolicyAccounting};
+use crate::{IPolicyRegistry::PolicyType, PolicyAccounting, macros::reject_frozen_selector};
 
 /// The policy-registry logic interface.
 ///
@@ -29,8 +29,7 @@ pub trait PolicyRegistryLogic<S: PolicyAccounting> {
         accounts: Vec<Address>,
     ) -> Result<u64>;
 
-    /// Creates a composite (UNION/INTERSECT) policy over existing simple child policies.
-    /// Composite support is a V2 feature;
+    /// (V2) Creates a composite (UNION/INTERSECT) policy over existing simple child policies.
     fn create_composite_policy(
         &self,
         _storage: &mut S,
@@ -38,18 +37,17 @@ pub trait PolicyRegistryLogic<S: PolicyAccounting> {
         _policy_type: PolicyType,
         _child_policy_ids: Vec<u64>,
     ) -> Result<u64> {
-        Err(BasePrecompileError::Revert(Bytes::new()))
+        reject_frozen_selector!()
     }
 
-    /// Replaces a composite policy's child set in full.
-    /// Composite support is a V2 feature;
+    /// (V2) Replaces a composite policy's child set in full.
     fn update_composite(
         &self,
         _storage: &mut S,
         _policy_id: u64,
         _child_policy_ids: Vec<u64>,
     ) -> Result<()> {
-        Err(BasePrecompileError::Revert(Bytes::new()))
+        reject_frozen_selector!()
     }
 
     /// Stages a pending admin transfer for `policy_id`.
@@ -94,4 +92,9 @@ pub trait PolicyRegistryLogic<S: PolicyAccounting> {
 
     /// Returns the staged pending admin for `policy_id`, or `Address::ZERO` if none.
     fn pending_policy_admin(&self, storage: &S, policy_id: u64) -> Result<Address>;
+
+    /// (V2) Returns a composite policy's child set, empty for anything else.
+    fn composite_policy_child_ids(&self, _storage: &S, _policy_id: u64) -> Result<Vec<u64>> {
+        reject_frozen_selector!()
+    }
 }
