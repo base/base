@@ -28,5 +28,6 @@ base-execution-cli = { workspace = true, features = ["otlp"] }
 clap.workspace = true
 
 [features]
-default = [ "jemalloc" ]
+default = [ "jemalloc", "js-tracer" ]
 jemalloc = [ "base-execution-cli/jemalloc", "reth-cli-util/jemalloc" ]
+js-tracer = [ "base-execution-cli/js-tracer" ]

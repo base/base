@@ -106,6 +106,8 @@ jemalloc = [ "reth-node-core/jemalloc", "reth-node-metrics/jemalloc" ]
 jemalloc-prof = [ "jemalloc", "reth-node-metrics/jemalloc-prof" ]
 jemalloc-symbols = [ "jemalloc-prof", "reth-node-metrics/jemalloc-symbols" ]
 
+js-tracer = [ "base-node-core/js-tracer", "reth-node-builder/js-tracer" ]
+
 tracy = [ "reth-node-core/tracy", "reth-tracing/tracy" ]
 
 dev = [

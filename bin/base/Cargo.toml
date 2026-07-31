@@ -50,3 +50,7 @@ figment = { workspace = true, features = ["env", "toml"] }
 [dev-dependencies]
 base-common-genesis.workspace = true
 figment = { workspace = true, features = ["test"] }
+
+[features]
+default = [ "js-tracer" ]
+js-tracer = [ "base-execution-cli/js-tracer" ]
