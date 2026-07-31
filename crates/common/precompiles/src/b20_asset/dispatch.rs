@@ -101,14 +101,10 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        // Asset-specific and overridden selectors are caught here first, decoded against the wire
-        // surface frozen at this version's fork. The ERC-8056 scheduled-multiplier selectors were
-        // introduced at Cobalt with `AssetV2`, so they are simply absent from the Beryl (`AssetV1`)
-        // surface: at V1 `asset_valid_selector` is false for them, this branch is skipped, and they
-        // fall through to the inherited `IB20` decode which rejects them as `UnknownFunctionSelector`
-        // (the two surfaces are disjoint). That keeps pre-Cobalt calldata returning the exact bytes
-        // it did at that version's activation fork — the structural replacement for the old
-        // hand-written fork gate.
+        // Try the asset surface first, decoded against the wire surface frozen at this version's
+        // fork. Selectors a later fork added are absent from an older surface, so they fall through
+        // to the disjoint inherited `IB20` decode and stay `UnknownFunctionSelector` — the
+        // structural replacement for the old hand-written fork gate.
         let abi = version.abi();
         if let Some(selector) = BerylSelector::selector(calldata)
             && abi.asset_valid_selector(selector)

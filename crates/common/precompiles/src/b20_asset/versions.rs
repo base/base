@@ -101,6 +101,8 @@ impl AssetAbi {
     /// surface diverges from canonical must add its own pre-validating arm.
     pub fn decode_asset(self, calldata: &[u8]) -> Result<IB20Asset::IB20AssetCalls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
+            // Defensive: dispatch already filters sub-4-byte calldata via `BerylSelector::selector`,
+            // so this synthetic `[0u8; 4]` selector is not reachable consensus behavior.
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
         };
         if !self.asset_valid_selector(selector) {
