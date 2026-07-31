@@ -22,7 +22,7 @@ sol! {
             MINT,
             /// Burn operations.
             BURN,
-            /// Seize operations (`seizeWithMemo`). Legacy `burnBlocked` still gates on `BURN`.
+            /// Seize operations (`seizeWithMemo`).
             SEIZE
         }
 
