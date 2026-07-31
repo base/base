@@ -7,8 +7,8 @@ use base_mev_trader::{CampaignId, OWNER_ATTEST_ADDRESS, StoreIdentity};
 
 use super::{
     CodeHashProvider, DeploymentEvidence, DeploymentPayload, G7Attestation, G7Payload,
-    INSTALL_BUNDLE_DOMAIN, LiveRunAttestation, LiveRunPayload, ProductionCampaignBundleFailure,
-    ProductionCandidateError, ProofVerificationError, SETTLED_LOSS_SCHEMA_VERSION,
+    INSTALL_BUNDLE_DOMAIN, INSTALL_BUNDLE_SCHEMA_VERSION, LiveRunAttestation, LiveRunPayload,
+    ProductionCampaignBundleFailure, ProductionCandidateError, ProofVerificationError,
     settled_loss::{read_install_bundle_bytes, verify_signature_shape},
 };
 
@@ -77,7 +77,7 @@ impl ProductionProofBundle {
             return Err(ProductionCampaignBundleFailure::Identity);
         }
         let schema = u16::from_be_bytes(take::<2>(&canonical, &mut cursor));
-        if schema != SETTLED_LOSS_SCHEMA_VERSION {
+        if schema != INSTALL_BUNDLE_SCHEMA_VERSION {
             return Err(ProductionCampaignBundleFailure::Identity);
         }
         let generation = u64::from_be_bytes(take::<8>(&canonical, &mut cursor));
@@ -178,7 +178,7 @@ impl ProductionProofBundle {
         let deployment_hash = keccak256(&self.canonical[deployment_start..deployment_start + 221]);
         let mut content = Vec::with_capacity(30 + 2 + 8 + 32 * 3);
         content.extend_from_slice(INSTALL_BUNDLE_DOMAIN);
-        content.extend_from_slice(&SETTLED_LOSS_SCHEMA_VERSION.to_be_bytes());
+        content.extend_from_slice(&INSTALL_BUNDLE_SCHEMA_VERSION.to_be_bytes());
         content.extend_from_slice(&self.generation.to_be_bytes());
         content.extend_from_slice(g7_hash.as_slice());
         content.extend_from_slice(live_hash.as_slice());
@@ -218,7 +218,7 @@ mod tests {
     fn minimally_shaped() -> [u8; PRODUCTION_BUNDLE_BYTES] {
         let mut bytes = [0_u8; PRODUCTION_BUNDLE_BYTES];
         bytes[..30].copy_from_slice(INSTALL_BUNDLE_DOMAIN);
-        bytes[30..32].copy_from_slice(&SETTLED_LOSS_SCHEMA_VERSION.to_be_bytes());
+        bytes[30..32].copy_from_slice(&INSTALL_BUNDLE_SCHEMA_VERSION.to_be_bytes());
         bytes[32..40].copy_from_slice(&1_u64.to_be_bytes());
         bytes
     }

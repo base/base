@@ -64,7 +64,7 @@ pub use producer::{
     UnsignedPopulationManifestV1, UnsignedProjectionV1,
 };
 mod provisioning_tool;
-pub use provisioning_tool::{ParsedFrozenExportV1, ProvisioningToolError, T4eProvisioningTool};
+pub use provisioning_tool::{ParsedFrozenExportV2, ProvisioningToolError, T4eProvisioningTool};
 mod providers;
 mod simulation_entrypoint;
 pub use simulation_entrypoint::{
@@ -83,14 +83,15 @@ mod settled_loss;
 pub use settled_loss::{
     ACCEPTED_HEAD_BYTES, BlockNumHash, BoundedUnresolvedSummaryV1, CanonicalMismatchClass,
     FinalizedChainAuthority, FinalizedChainError, FrozenP2PopulationManifestV1,
-    INSTALL_BUNDLE_DOMAIN, MAX_CANONICAL_POPULATION_BYTES, MAX_CANONICAL_PROJECTION_BYTES,
-    MAX_FINALIZED_HEAD_LAG, MAX_POPULATION_MANIFEST_BYTES, MAX_PROJECTION_BYTES,
-    MAX_TERMINAL_ENTRIES, NodeLocalSettledLossAuthority, P2_POPULATION_MANIFEST_PATH,
-    POPULATION_CLOSURE_DOMAIN, PreparedSettledLossAuthority, R9_CLAIM_STORE_PATH,
+    INSTALL_BUNDLE_DOMAIN, INSTALL_BUNDLE_SCHEMA_VERSION, MAX_CANONICAL_POPULATION_BYTES,
+    MAX_CANONICAL_PROJECTION_BYTES, MAX_FINALIZED_HEAD_LAG, MAX_POPULATION_MANIFEST_BYTES,
+    MAX_PROJECTION_BYTES, MAX_TERMINAL_ENTRIES, NodeLocalSettledLossAuthority,
+    P2_POPULATION_MANIFEST_PATH, POPULATION_CLOSURE_DOMAIN, POPULATION_SCHEMA_VERSION,
+    PROJECTION_SCHEMA_VERSION, PopulationKindV1, PreparedSettledLossAuthority, R9_CLAIM_STORE_PATH,
     SETTLED_LOSS_ANCHOR_PATH, SETTLED_LOSS_CHAIN_ID, SETTLED_LOSS_DOMAIN,
-    SETTLED_LOSS_PROJECTION_PATH, SETTLED_LOSS_SCHEMA_VERSION, SOURCE_ENTRY_BYTES, SettledLossLoad,
-    SettledLossReader, SettledLossUnavailableReason, SourceSubmissionManifestEntryV1,
-    T4E_INSTALL_BUNDLE_PATH, TERMINAL_ENTRY_BYTES, TerminalKindV1, TerminalSettlementEntryV1,
+    SETTLED_LOSS_PROJECTION_PATH, SOURCE_ENTRY_BYTES, SettledLossLoad, SettledLossReader,
+    SettledLossUnavailableReason, SourceSubmissionManifestEntryV1, T4E_INSTALL_BUNDLE_PATH,
+    TERMINAL_ENTRY_BYTES, TerminalKindV1, TerminalSettlementEntryV1,
     TerminalSettlementProjectionV1, UnresolvedReasonV1,
 };
 mod request;

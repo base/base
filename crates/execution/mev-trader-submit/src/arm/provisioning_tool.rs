@@ -12,16 +12,15 @@ use serde_json::{Map, Value};
 
 use super::{
     BoundedSubmissionIdV1, CanonicalDeploymentPairV1, CanonicalG7PairV1, CanonicalLivePairV1,
-    PopulationClosureFieldsV1, ProducerConformance, ProducerError, ProjectionClosureFieldsV1,
-    SignedPopulationManifestV1, SourceLedgerRowV1, SourceSubmissionManifestEntryV1, TerminalKindV1,
-    TerminalSettlementEntryV1, UnresolvedReasonV1,
+    PopulationClosureFieldsV1, PopulationKindV1, ProducerConformance, ProducerError,
+    ProjectionClosureFieldsV1, SignedPopulationManifestV1, SourceLedgerRowV1,
+    SourceSubmissionManifestEntryV1, TerminalKindV1, TerminalSettlementEntryV1, UnresolvedReasonV1,
 };
 
-const EXPORT_SCHEMA: &str = "base-mev/t4e-frozen-export/v1";
+const EXPORT_SCHEMA: &str = "base-mev/t4e-frozen-export/v2";
 const XIP_DOMAIN: &[u8] = b"base-mev/postgres-snapshot-xip/v1";
 const MAX_EXPORT_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_SIGNATURE_BYTES: u64 = 132;
-const POPULATION_SOURCE_HASH_OFFSET: usize = 155;
 
 /// Closed signer-free provisioning-tool failure.
 #[derive(Debug)]
@@ -60,7 +59,7 @@ impl From<ProducerError> for ProvisioningToolError {
 
 /// Parsed, checked export fields used by both population and projection preparation.
 #[derive(Debug)]
-pub struct ParsedFrozenExportV1 {
+pub struct ParsedFrozenExportV2 {
     /// Campaign bound into every prepared artifact.
     pub campaign_id: B256,
     /// Source chain identifier.
@@ -77,6 +76,8 @@ pub struct ParsedFrozenExportV1 {
     pub source_snapshot_xip_hash: B256,
     /// WAL position captured under the frozen transaction.
     pub source_snapshot_wal_lsn: u64,
+    /// Authenticated population classification requested by the export.
+    pub population_kind: PopulationKindV1,
     /// Canonical source rows for population preparation.
     pub source_rows: Vec<SourceLedgerRowV1>,
     /// Source entries copied into the terminal projection.
@@ -91,7 +92,7 @@ pub struct T4eProvisioningTool;
 
 impl T4eProvisioningTool {
     /// Parses and validates one bounded canonical export.
-    pub fn parse_export(path: &Path) -> Result<ParsedFrozenExportV1, ProvisioningToolError> {
+    pub fn parse_export(path: &Path) -> Result<ParsedFrozenExportV2, ProvisioningToolError> {
         let bytes = read_bounded(path, MAX_EXPORT_BYTES)?;
         if !bytes.ends_with(b"\n") || bytes[..bytes.len() - 1].contains(&b'\n') {
             return Err(input("CanonicalExport", None));
@@ -111,6 +112,7 @@ impl T4eProvisioningTool {
                 "source_window_start_ms",
                 "source_window_end_ms",
                 "snapshot",
+                "population_kind",
                 "rows",
             ],
             "CanonicalExport",
@@ -125,6 +127,11 @@ impl T4eProvisioningTool {
         if chain_id != 8453 || source_window_start_ms >= source_window_end_ms {
             return Err(input("IdentityInvalid", None));
         }
+        let population_kind = match text(root, "population_kind", None)? {
+            "populated" => PopulationKindV1::Populated,
+            "genesis" => PopulationKindV1::Genesis,
+            _ => return Err(input("PopulationKind", None)),
+        };
         let snapshot = object(field(root, "snapshot", None)?, "SnapshotInvalid", None)?;
         exact_keys(
             snapshot,
@@ -168,8 +175,14 @@ impl T4eProvisioningTool {
         }
 
         let rows = array(field(root, "rows", None)?, "EmptyPopulation", None)?;
-        if rows.is_empty() {
-            return Err(input("EmptyPopulation", None));
+        match population_kind {
+            PopulationKindV1::Populated if rows.is_empty() => {
+                return Err(input("EmptyPopulation", None));
+            }
+            PopulationKindV1::Genesis if !rows.is_empty() => {
+                return Err(input("NonEmptyGenesis", None));
+            }
+            PopulationKindV1::Populated | PopulationKindV1::Genesis => {}
         }
         let mut source_rows = Vec::with_capacity(rows.len());
         let mut source_entries = Vec::with_capacity(rows.len());
@@ -378,7 +391,7 @@ impl T4eProvisioningTool {
                 U256::ZERO,
             ));
         }
-        Ok(ParsedFrozenExportV1 {
+        Ok(ParsedFrozenExportV2 {
             campaign_id,
             chain_id,
             source_window_start_ms,
@@ -387,6 +400,7 @@ impl T4eProvisioningTool {
             source_snapshot_xmax,
             source_snapshot_xip_hash,
             source_snapshot_wal_lsn,
+            population_kind,
             source_rows,
             source_entries,
             terminal_entries,
@@ -408,6 +422,7 @@ impl T4eProvisioningTool {
             parsed.source_snapshot_xmax,
             parsed.source_snapshot_xip_hash,
             parsed.source_snapshot_wal_lsn,
+            parsed.population_kind,
         );
         let unsigned = ProducerConformance::prepare_frozen_manifest(parsed.source_rows, closure)?;
         write_request(request_dir, unsigned.canonical_preimage(), unsigned.canonical_preimage())
@@ -430,6 +445,7 @@ impl T4eProvisioningTool {
             parsed.source_snapshot_xmax,
             parsed.source_snapshot_xip_hash,
             parsed.source_snapshot_wal_lsn,
+            parsed.population_kind,
         );
         let expected = ProducerConformance::prepare_frozen_manifest(parsed.source_rows, closure)?;
         let signed_bytes = read_bounded(signed_population, MAX_EXPORT_BYTES)?;
@@ -440,10 +456,12 @@ impl T4eProvisioningTool {
         {
             return Err(input("PopulationMembershipMismatch", None));
         }
-        let source_hash = B256::from_slice(
-            &signed.canonical_bytes()
-                [POPULATION_SOURCE_HASH_OFFSET..POPULATION_SOURCE_HASH_OFFSET + 32],
-        );
+        let source_hash_offset = expected
+            .canonical_preimage()
+            .len()
+            .checked_sub(32)
+            .ok_or_else(|| input("PopulationMembershipMismatch", None))?;
+        let source_hash = B256::from_slice(&expected.canonical_preimage()[source_hash_offset..]);
         let population_signature: [u8; 65] = signed.canonical_bytes()
             [signed.canonical_bytes().len() - 65..]
             .try_into()
@@ -458,6 +476,7 @@ impl T4eProvisioningTool {
                 "projection_sequence",
                 "finalized_block_number",
                 "finalized_block_hash",
+                "campaign_valid_until_block",
                 "previous_content_hash",
             ],
             "ProjectionFields",
@@ -469,6 +488,11 @@ impl T4eProvisioningTool {
             u64_decimal(text(fields, "finalized_block_number", None)?, "ProjectionFields", None)?;
         let finalized_block_hash =
             b256(text(fields, "finalized_block_hash", None)?, "ProjectionFields", None)?;
+        let campaign_valid_until_block = u64_decimal(
+            text(fields, "campaign_valid_until_block", None)?,
+            "ProjectionFields",
+            None,
+        )?;
         let previous_content_hash =
             b256(text(fields, "previous_content_hash", None)?, "ProjectionFields", None)?;
         let projection_closure = ProjectionClosureFieldsV1::new(
@@ -486,6 +510,8 @@ impl T4eProvisioningTool {
             finalized_block_number,
             finalized_block_hash,
             previous_content_hash,
+            parsed.population_kind,
+            campaign_valid_until_block,
         );
         let unsigned = ProducerConformance::prepare_terminal_projection(
             parsed.source_entries,
@@ -780,21 +806,28 @@ fn read_bounded(path: &Path, maximum: u64) -> Result<Vec<u8>, ProvisioningToolEr
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt, path::PathBuf};
+    #[cfg(feature = "arm-provisioning")]
+    use std::{collections::BTreeMap, path::PathBuf};
+    use std::{fs, os::unix::fs::PermissionsExt};
 
     use super::*;
+    #[cfg(feature = "arm-provisioning")]
     use crate::arm::{
         BlockNumHash, FinalizedChainAuthority, FinalizedChainError, NodeLocalSettledLossAuthority,
+    };
+    use crate::arm::{
         ProducerConformance,
         testkit::{eip191_sign, owner_key},
     };
 
+    #[cfg(feature = "arm-provisioning")]
     #[derive(Debug)]
     struct TestChain {
         head: BlockNumHash,
         hashes: BTreeMap<u64, B256>,
     }
 
+    #[cfg(feature = "arm-provisioning")]
     impl FinalizedChainAuthority for TestChain {
         fn finalized_head(&self) -> Result<Option<BlockNumHash>, FinalizedChainError> {
             Ok(Some(self.head))
@@ -813,9 +846,10 @@ mod tests {
         let xip_hash = keccak256([XIP_DOMAIN, &0u32.to_be_bytes()].concat());
         let json = format!(
             concat!(
-                "{{\"schema\":\"base-mev/t4e-frozen-export/v1\",",
+                "{{\"schema\":\"base-mev/t4e-frozen-export/v2\",",
                 "\"campaign_id\":\"0x{campaign}\",\"chain_id\":\"8453\",",
                 "\"source_window_start_ms\":\"0\",\"source_window_end_ms\":\"100\",",
+                "\"population_kind\":\"populated\",",
                 "\"snapshot\":{{\"xmin\":\"7\",\"xmax\":\"9\",\"xip\":[],",
                 "\"xip_hash\":\"0x{xip}\",\"wal_lsn\":\"12\",\"canonical_text\":\"7:9:\"}},",
                 "\"rows\":[{{\"submission_id\":\"fixture-1\",\"chain_id\":\"8453\",",
@@ -835,6 +869,23 @@ mod tests {
             terminal = "33".repeat(32),
         );
         fs::write(path, json).expect("export");
+    }
+    fn fixture_genesis_export(path: &Path) {
+        let xip_hash = keccak256([XIP_DOMAIN, &0u32.to_be_bytes()].concat());
+        let json = format!(
+            concat!(
+                "{{\"schema\":\"base-mev/t4e-frozen-export/v2\",",
+                "\"campaign_id\":\"0x{campaign}\",\"chain_id\":\"8453\",",
+                "\"source_window_start_ms\":\"0\",\"source_window_end_ms\":\"100\",",
+                "\"population_kind\":\"genesis\",",
+                "\"snapshot\":{{\"xmin\":\"7\",\"xmax\":\"9\",\"xip\":[],",
+                "\"xip_hash\":\"0x{xip}\",\"wal_lsn\":\"12\",\"canonical_text\":\"7:9:\"}},",
+                "\"rows\":[]}}\n"
+            ),
+            campaign = "99".repeat(32),
+            xip = hex::encode(xip_hash),
+        );
+        fs::write(path, json).expect("genesis export");
     }
 
     fn prepare_signed_artifacts(root: &Path, export: &Path) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
@@ -866,7 +917,8 @@ mod tests {
             &projection_fields,
             format!(
                 "{{\"projection_sequence\":\"1\",\"finalized_block_number\":\"1100\",\
-                 \"finalized_block_hash\":\"0x{}\",\"previous_content_hash\":\"0x{}\"}}",
+                 \"finalized_block_hash\":\"0x{}\",\"previous_content_hash\":\"0x{}\",\
+                 \"campaign_valid_until_block\":\"1228\"}}",
                 "44".repeat(32),
                 "00".repeat(32),
             ),
@@ -966,6 +1018,99 @@ mod tests {
     }
 
     #[test]
+    fn genesis_export_prepares_authenticated_zero_population_and_projection() {
+        let root =
+            std::env::temp_dir().join(format!("t4e-genesis-provisioning-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).expect("root");
+        let export = root.join("export.json");
+        fixture_genesis_export(&export);
+
+        let population_request = root.join("population-request");
+        T4eProvisioningTool::prepare_population(&export, &population_request)
+            .expect("prepare genesis population");
+        let population_preimage =
+            fs::read(population_request.join("preimage.bin")).expect("population preimage");
+        let population_signature = eip191_sign(&population_preimage, &owner_key());
+        let population = ProducerConformance::attach_population_signature_bytes(
+            population_preimage,
+            population_signature,
+        )
+        .expect("attach genesis population");
+        let decoded_population =
+            crate::arm::FrozenP2PopulationManifestV1::decode_checked(population.canonical_bytes())
+                .expect("decode genesis population");
+        assert_eq!(decoded_population.population_kind(), PopulationKindV1::Genesis);
+        assert!(decoded_population.entries().is_empty());
+        let population_bytes = population.canonical_bytes();
+        let population_kind_offset = population_bytes.len() - (1 + 32 + 65);
+        assert_eq!(population_bytes[population_kind_offset], PopulationKindV1::Genesis.encode());
+
+        let population_path = root.join("population.bin");
+        fs::write(&population_path, population.canonical_bytes()).expect("population");
+        let projection_fields = root.join("projection-fields.json");
+        fs::write(
+            &projection_fields,
+            format!(
+                "{{\"projection_sequence\":\"1\",\"finalized_block_number\":\"1100\",\
+                 \"finalized_block_hash\":\"0x{}\",\"previous_content_hash\":\"0x{}\",\
+                 \"campaign_valid_until_block\":\"2000\"}}",
+                "44".repeat(32),
+                "00".repeat(32),
+            ),
+        )
+        .expect("projection fields");
+        let projection_request = root.join("projection-request");
+        T4eProvisioningTool::prepare_projection(
+            &export,
+            &population_path,
+            &projection_fields,
+            &projection_request,
+        )
+        .expect("prepare genesis projection");
+        let projection_body =
+            fs::read(projection_request.join("unsigned.bin")).expect("projection body");
+        let projection_preimage =
+            fs::read(projection_request.join("preimage.bin")).expect("projection preimage");
+        let projection_signature = eip191_sign(&projection_preimage, &owner_key());
+        let projection = ProducerConformance::attach_projection_signature_bytes(
+            projection_body,
+            projection_preimage,
+            projection_signature,
+        )
+        .expect("attach genesis projection");
+        let decoded_projection = crate::arm::TerminalSettlementProjectionV1::decode_checked(
+            projection.canonical_bytes(),
+        )
+        .expect("decode genesis projection");
+        assert_eq!(decoded_projection.population_kind(), PopulationKindV1::Genesis);
+        assert_eq!(decoded_projection.campaign_valid_until_block(), 2_000);
+        assert_eq!(decoded_projection.total_settled_loss_wei(), U256::ZERO);
+        let projection_bytes = projection.canonical_bytes();
+        let projection_kind_offset = projection_bytes.len() - (1 + 8 + 32 + 65);
+        assert_eq!(projection_bytes[projection_kind_offset], PopulationKindV1::Genesis.encode());
+        assert_eq!(
+            &projection_bytes[projection_kind_offset + 1..projection_kind_offset + 9],
+            &2_000u64.to_be_bytes()
+        );
+
+        let mut zero_kind = projection_bytes.to_vec();
+        zero_kind[projection_kind_offset] = 0;
+        assert!(crate::arm::TerminalSettlementProjectionV1::decode_checked(&zero_kind).is_err());
+
+        let mut expiry_after_signature = Vec::with_capacity(projection_bytes.len());
+        expiry_after_signature.extend_from_slice(&projection_bytes[..projection_kind_offset + 1]);
+        expiry_after_signature.extend_from_slice(&projection_bytes[projection_kind_offset + 9..]);
+        expiry_after_signature.extend_from_slice(
+            &projection_bytes[projection_kind_offset + 1..projection_kind_offset + 9],
+        );
+        assert!(
+            crate::arm::TerminalSettlementProjectionV1::decode_checked(&expiry_after_signature,)
+                .is_err()
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+    #[test]
     fn export_prepare_attach_all_three_artifacts_without_a_key_surface() {
         let root =
             std::env::temp_dir().join(format!("t4e-provisioning-tool-{}", std::process::id()));
@@ -977,6 +1122,7 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
+    #[cfg(feature = "arm-provisioning")]
     #[test]
     #[ignore = "must run in an isolated namespace for compile-pinned paths"]
     fn real_export_publishes_all_artifacts_and_prepare_complete_accepts() {

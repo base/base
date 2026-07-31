@@ -202,7 +202,7 @@ fn arm_source_is_exactly_the_declared_set() {
 
 /// The complete root API. T4e adds only the reviewed checked authorities, exact-one
 /// production handoff, bounded worker/status types, and simulation-only runtime surface.
-const PUBLIC_API_ALLOWLIST: [&str; 100] = [
+const PUBLIC_API_ALLOWLIST: [&str; 101] = [
     "AdmittedCandidate",
     "AuthorizationGateError",
     "BlockNumHash",
@@ -220,6 +220,7 @@ const PUBLIC_API_ALLOWLIST: [&str; 100] = [
     "FrozenP2PopulationManifestV1",
     "NodeLocalSettledLossAuthority",
     "PopulationClosureFieldsV1",
+    "PopulationKindV1",
     "PreparedSettledLossAuthority",
     "ProdBackend",
     "ProducerConformance",
@@ -260,7 +261,7 @@ const PUBLIC_API_ALLOWLIST: [&str; 100] = [
     "ProductionStoreOpenFailure",
     "ProductionWorkerBootstrap",
     "ProductionWorkerError",
-    "ParsedFrozenExportV1",
+    "ParsedFrozenExportV2",
     "ProviderError",
     "ProjectionClosureFieldsV1",
     "ProvisioningToolError",

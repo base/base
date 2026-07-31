@@ -60,7 +60,8 @@ pub use arm::{
     AuthorizationGateError, BlockNumHash, BoundedSubmissionIdV1, BoundedUnresolvedSummaryV1,
     CanonicalDeploymentPairV1, CanonicalG7PairV1, CanonicalLivePairV1, CanonicalMismatchClass,
     FinalizedChainAuthority, FinalizedChainError, FrozenP2PopulationManifestV1,
-    NodeLocalSettledLossAuthority, PopulationClosureFieldsV1, PreparedSettledLossAuthority,
+    NodeLocalSettledLossAuthority, PopulationClosureFieldsV1, PopulationKindV1,
+    PreparedSettledLossAuthority,
     ProducerConformance, ProducerError, ProductionCandidateError, ProductionClaimError,
     ProductionClaimFailure, ProductionClaimResult, ProductionCustodyFailure,
     ProductionDrawdownSource, ProductionLatchOutcome, ProductionSignFailure, ProductionSignedField,
@@ -80,7 +81,7 @@ pub use arm::{
 pub use arm::{CheckedCandidate, CodeHashProvider, CommittedStateAuthority, ProviderError};
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
 pub use arm::{
-    ParsedFrozenExportV1, ProvisioningToolError, SuppressionRollbackError, T4eProvisioningTool,
+    ParsedFrozenExportV2, ProvisioningToolError, SuppressionRollbackError, T4eProvisioningTool,
     provision_suppression_anchor,
 };
 

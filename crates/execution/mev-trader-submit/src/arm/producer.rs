@@ -16,11 +16,12 @@ use alloy_primitives::{Address, B256, keccak256};
 use base_mev_trader::{ClaimStoreError, VictimClaimConfig, VictimClaimStore};
 
 use super::settled_loss::{
-    FrozenP2PopulationManifestV1, INSTALL_BUNDLE_DOMAIN, MAX_POPULATION_MANIFEST_BYTES,
-    MAX_PROJECTION_BYTES, P2_POPULATION_MANIFEST_PATH, SETTLED_LOSS_PROJECTION_PATH,
-    SETTLED_LOSS_SCHEMA_VERSION, SourceSubmissionManifestEntryV1, T4E_INSTALL_BUNDLE_PATH,
-    TerminalSettlementEntryV1, TerminalSettlementProjectionV1, proc_fd_path, read_strict_bytes,
-    validate_directory_inventory, verify_canonical_signature, verify_signature_shape,
+    FrozenP2PopulationManifestV1, INSTALL_BUNDLE_DOMAIN, INSTALL_BUNDLE_SCHEMA_VERSION,
+    MAX_POPULATION_MANIFEST_BYTES, MAX_PROJECTION_BYTES, P2_POPULATION_MANIFEST_PATH,
+    POPULATION_SCHEMA_VERSION, PopulationKindV1, SETTLED_LOSS_PROJECTION_PATH,
+    SourceSubmissionManifestEntryV1, T4E_INSTALL_BUNDLE_PATH, TerminalSettlementEntryV1,
+    TerminalSettlementProjectionV1, proc_fd_path, read_strict_bytes, validate_directory_inventory,
+    verify_canonical_signature, verify_signature_shape,
 };
 
 const INSTALL_BUNDLE_BYTES: usize = 584;
@@ -345,10 +346,12 @@ pub struct PopulationClosureFieldsV1 {
     source_snapshot_xmax: u64,
     source_snapshot_xip_hash: B256,
     source_snapshot_wal_lsn: u64,
+    population_kind: PopulationKindV1,
 }
 
 impl PopulationClosureFieldsV1 {
     /// Constructs explicit closure fields; validation occurs during manifest preparation.
+    #[expect(clippy::too_many_arguments, reason = "the canonical population closure is explicit")]
     pub const fn new(
         campaign_id: B256,
         chain_id: u64,
@@ -358,6 +361,7 @@ impl PopulationClosureFieldsV1 {
         source_snapshot_xmax: u64,
         source_snapshot_xip_hash: B256,
         source_snapshot_wal_lsn: u64,
+        population_kind: PopulationKindV1,
     ) -> Self {
         Self {
             campaign_id,
@@ -368,6 +372,7 @@ impl PopulationClosureFieldsV1 {
             source_snapshot_xmax,
             source_snapshot_xip_hash,
             source_snapshot_wal_lsn,
+            population_kind,
         }
     }
 }
@@ -421,6 +426,8 @@ pub struct ProjectionClosureFieldsV1 {
     finalized_block_number: u64,
     finalized_block_hash: B256,
     previous_content_hash: B256,
+    population_kind: PopulationKindV1,
+    campaign_valid_until_block: u64,
 }
 
 impl ProjectionClosureFieldsV1 {
@@ -441,6 +448,8 @@ impl ProjectionClosureFieldsV1 {
         finalized_block_number: u64,
         finalized_block_hash: B256,
         previous_content_hash: B256,
+        population_kind: PopulationKindV1,
+        campaign_valid_until_block: u64,
     ) -> Self {
         Self {
             campaign_id,
@@ -457,6 +466,8 @@ impl ProjectionClosureFieldsV1 {
             finalized_block_number,
             finalized_block_hash,
             previous_content_hash,
+            population_kind,
+            campaign_valid_until_block,
         }
     }
 }
@@ -532,7 +543,7 @@ impl ProducerConformance {
         }
         let mut hash_preimage = Vec::with_capacity(136);
         hash_preimage.extend_from_slice(INSTALL_BUNDLE_DOMAIN);
-        hash_preimage.extend_from_slice(&SETTLED_LOSS_SCHEMA_VERSION.to_be_bytes());
+        hash_preimage.extend_from_slice(&INSTALL_BUNDLE_SCHEMA_VERSION.to_be_bytes());
         hash_preimage.extend_from_slice(&generation.to_be_bytes());
         hash_preimage.extend_from_slice(keccak256(g7.canonical).as_slice());
         hash_preimage.extend_from_slice(keccak256(live.canonical).as_slice());
@@ -541,7 +552,7 @@ impl ProducerConformance {
 
         let mut canonical_body = Vec::with_capacity(INSTALL_BUNDLE_BYTES - 65 + 62);
         canonical_body.extend_from_slice(INSTALL_BUNDLE_DOMAIN);
-        canonical_body.extend_from_slice(&SETTLED_LOSS_SCHEMA_VERSION.to_be_bytes());
+        canonical_body.extend_from_slice(&INSTALL_BUNDLE_SCHEMA_VERSION.to_be_bytes());
         canonical_body.extend_from_slice(&generation.to_be_bytes());
         canonical_body.extend_from_slice(&g7.canonical);
         canonical_body.extend_from_slice(&live.canonical);
@@ -588,6 +599,8 @@ impl ProducerConformance {
                 closure.finalized_block_number,
                 closure.finalized_block_hash,
                 closure.previous_content_hash,
+                closure.population_kind,
+                closure.campaign_valid_until_block,
                 source_entries,
                 terminal_entries,
             )
@@ -680,7 +693,12 @@ impl ProducerConformance {
         rows: Vec<SourceLedgerRowV1>,
         closure: PopulationClosureFieldsV1,
     ) -> Result<UnsignedPopulationManifestV1, ProducerError> {
-        if rows.is_empty() || rows.len() > super::settled_loss::MAX_TERMINAL_ENTRIES {
+        if rows.len() > super::settled_loss::MAX_TERMINAL_ENTRIES {
+            return Err(ProducerError::Bounds);
+        }
+        if matches!(closure.population_kind, PopulationKindV1::Populated) && rows.is_empty()
+            || matches!(closure.population_kind, PopulationKindV1::Genesis) && !rows.is_empty()
+        {
             return Err(ProducerError::Bounds);
         }
         if closure.campaign_id == B256::ZERO
@@ -739,9 +757,9 @@ impl ProducerConformance {
 
         let submission_count = u64::try_from(rows.len()).map_err(|_| ProducerError::Bounds)?;
         let source_manifest_hash = keccak256(&encoded_entries);
-        let mut canonical_preimage = Vec::with_capacity(191 + encoded_entries.len());
+        let mut canonical_preimage = Vec::with_capacity(192 + encoded_entries.len());
         canonical_preimage.extend_from_slice(super::settled_loss::POPULATION_CLOSURE_DOMAIN);
-        canonical_preimage.extend_from_slice(&SETTLED_LOSS_SCHEMA_VERSION.to_be_bytes());
+        canonical_preimage.extend_from_slice(&POPULATION_SCHEMA_VERSION.to_be_bytes());
         canonical_preimage.extend_from_slice(closure.campaign_id.as_slice());
         canonical_preimage.extend_from_slice(&closure.chain_id.to_be_bytes());
         canonical_preimage.extend_from_slice(&closure.source_window_start_ms.to_be_bytes());
@@ -751,11 +769,12 @@ impl ProducerConformance {
         canonical_preimage.extend_from_slice(closure.source_snapshot_xip_hash.as_slice());
         canonical_preimage.extend_from_slice(&closure.source_snapshot_wal_lsn.to_be_bytes());
         canonical_preimage.extend_from_slice(&submission_count.to_be_bytes());
-        canonical_preimage.extend_from_slice(source_manifest_hash.as_slice());
         canonical_preimage.extend_from_slice(
             &u32::try_from(rows.len()).map_err(|_| ProducerError::Bounds)?.to_be_bytes(),
         );
         canonical_preimage.extend_from_slice(&encoded_entries);
+        canonical_preimage.push(closure.population_kind.encode());
+        canonical_preimage.extend_from_slice(source_manifest_hash.as_slice());
         Ok(UnsignedPopulationManifestV1 { canonical_preimage })
     }
 
@@ -813,7 +832,7 @@ fn validate_install_bundle(bytes: &[u8]) -> Result<(), ProducerError> {
     if bytes.len() != INSTALL_BUNDLE_BYTES
         || bytes[..INSTALL_BUNDLE_DOMAIN.len()] != INSTALL_BUNDLE_DOMAIN[..]
         || u16::from_be_bytes(bytes[30..32].try_into().map_err(|_| ProducerError::Decode)?)
-            != SETTLED_LOSS_SCHEMA_VERSION
+            != INSTALL_BUNDLE_SCHEMA_VERSION
         || u64::from_be_bytes(bytes[32..40].try_into().map_err(|_| ProducerError::Decode)?) == 0
     {
         return Err(ProducerError::Canonicality);
@@ -1086,15 +1105,19 @@ mod tests {
     use std::{
         fs,
         os::unix::fs::{PermissionsExt, symlink},
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::*;
 
+    static TEMP_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
     fn private_directory() -> std::path::PathBuf {
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH).expect("time").as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("t4e-producer-{}-{nonce}", std::process::id()));
+        let sequence = TEMP_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir()
+            .join(format!("t4e-producer-{}-{nonce}-{sequence}", std::process::id()));
         fs::create_dir(&path).expect("create private directory");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).expect("private mode");
         path
@@ -1110,6 +1133,7 @@ mod tests {
             9,
             B256::repeat_byte(0x22),
             12,
+            PopulationKindV1::Populated,
         )
     }
 
@@ -1174,20 +1198,21 @@ mod tests {
         )
         .expect("prepare manifest");
         let bytes = unsigned.canonical_preimage();
-        assert_eq!(bytes.len(), 191 + super::super::settled_loss::SOURCE_ENTRY_BYTES);
+        assert_eq!(bytes.len(), 192 + super::super::settled_loss::SOURCE_ENTRY_BYTES);
         assert_eq!(&bytes[..33], super::super::settled_loss::POPULATION_CLOSURE_DOMAIN);
         assert_eq!(&bytes[147..155], &1u64.to_be_bytes());
-        assert_eq!(&bytes[187..191], &1u32.to_be_bytes());
-        assert_eq!(&bytes[191..199], &0u64.to_be_bytes());
+        assert_eq!(&bytes[155..159], &1u32.to_be_bytes());
+        assert_eq!(&bytes[159..167], &0u64.to_be_bytes());
 
         let mut id_preimage = Vec::new();
         id_preimage.extend_from_slice(b"base-mev/p2-submission-id/v1");
         id_preimage.extend_from_slice(&12u32.to_be_bytes());
         id_preimage.extend_from_slice(b"submission-a");
-        assert_eq!(&bytes[199..231], keccak256(id_preimage).as_slice());
-        assert_eq!(bytes[327], 1);
-        assert_eq!(&bytes[328..360], B256::repeat_byte(0x44).as_slice());
-        assert_eq!(&bytes[155..187], keccak256(&bytes[191..]).as_slice());
+        assert_eq!(&bytes[167..199], keccak256(id_preimage).as_slice());
+        assert_eq!(bytes[295], 1);
+        assert_eq!(&bytes[296..328], B256::repeat_byte(0x44).as_slice());
+        assert_eq!(bytes[328], PopulationKindV1::Populated.encode());
+        assert_eq!(&bytes[329..361], keccak256(&bytes[159..328]).as_slice());
     }
 
     #[test]
@@ -1264,15 +1289,17 @@ mod tests {
             1_100,
             B256::repeat_byte(0x60),
             B256::ZERO,
+            PopulationKindV1::Populated,
+            1_228,
         );
-        let unsigned = ProducerConformance::prepare_terminal_projection(
-            vec![source],
-            vec![terminal],
-            fields,
-        )
-        .expect("prepare projection");
+        let unsigned =
+            ProducerConformance::prepare_terminal_projection(vec![source], vec![terminal], fields)
+                .expect("prepare projection");
         assert_eq!(unsigned.signature_preimage().len(), SETTLED_LOSS_DOMAIN.len() + 32);
-        assert_eq!(&unsigned.signature_preimage()[..SETTLED_LOSS_DOMAIN.len()], SETTLED_LOSS_DOMAIN);
+        assert_eq!(
+            &unsigned.signature_preimage()[..SETTLED_LOSS_DOMAIN.len()],
+            SETTLED_LOSS_DOMAIN
+        );
         assert_eq!(
             &unsigned.canonical_body()[unsigned.canonical_body().len() - 32..],
             &unsigned.signature_preimage()[SETTLED_LOSS_DOMAIN.len()..],
@@ -1283,7 +1310,7 @@ mod tests {
             .expect("attach projection signature");
         assert_eq!(
             signed.canonical_bytes().len(),
-            664 + super::super::settled_loss::SOURCE_ENTRY_BYTES
+            673 + super::super::settled_loss::SOURCE_ENTRY_BYTES
                 + super::super::settled_loss::TERMINAL_ENTRY_BYTES,
         );
     }
