@@ -37,8 +37,11 @@ UTC `ingested_at` day. Audit-archiver routes inserts to the matching table and
 continues to read from `transaction_events`. Migration 002 leaves the legacy
 heap untouched, so queries will not see newly written partitioned rows until a
 later migration replaces that heap with a union view of the same name. An
-app-owned maintenance worker creates upcoming partitions and drops expired ones
-with `DROP TABLE` rather than row `DELETE`. The worker emits
+app-owned maintenance worker handles retention policy, partition discovery,
+locking, and metrics, and drops expired partitions with `DROP TABLE` rather
+than row `DELETE`. The migration retains only narrowly scoped
+`SECURITY DEFINER` create/drop functions because Postgres requires table
+ownership for partition DDL. The worker emits
 `tips_audit_transaction_event_partitions_ahead_days` per class and
 `tips_audit_transaction_event_partition_maintenance_last_success_age_seconds`
 after each successful locked maintenance pass; page when ahead days fall below

@@ -18,7 +18,7 @@ use axum::{
     routing::post,
 };
 use base_observability_events::{TransactionEvent, TransactionEventProducer, TransactionEventType};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{
     Deserialize, Serialize,
     de::{
@@ -62,6 +62,7 @@ pub const DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS: u32 = 7;
 pub const DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS: u32 = 30;
 /// Default retention for high-value transaction event families.
 pub const DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS: u32 = 90;
+const TRANSACTION_EVENT_PARTITION_MAINTENANCE_LOCK_ID: i64 = 744_697_762_131_337_711;
 
 /// Bounded retention class persisted with every transaction event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -343,9 +344,9 @@ pub enum TransactionEventSchemaReadinessError {
         "transaction-event Postgres schema is not ready: hot, warm, and cold transaction event tables must be partitioned; complete the transaction-event retention cutover"
     )]
     TransactionEventsRelationNotPartitioned,
-    /// The application-owned maintenance function is unavailable.
+    /// The owner-privileged partition maintenance functions are unavailable.
     #[error(
-        "transaction-event Postgres schema is not ready: partition maintenance function is missing; run migration 002_transaction_event_retention.sql"
+        "transaction-event Postgres schema is not ready: partition maintenance functions are missing; run migration 002_transaction_event_retention.sql"
     )]
     PartitionMaintenanceFunctionMissing,
     /// The expected table exists but cannot be queried by the runtime role.
@@ -439,7 +440,7 @@ impl PgTransactionEventSink {
             migration_table_exists,
             transaction_events_relation_exists,
             transaction_events_partitioned,
-            maintenance_function_exists,
+            maintenance_functions_exist,
         ): (bool, bool, bool, bool) = sqlx::query_as(
                 "SELECT \
                     to_regclass('_sqlx_migrations') IS NOT NULL AS migration_table_exists, \
@@ -452,8 +453,10 @@ impl PgTransactionEventSink {
                         to_regclass('public.transaction_events_cold') \
                      ) AND relkind = 'p') AS transaction_events_partitioned, \
                     to_regprocedure( \
-                        'public.maintain_transaction_event_partitions(timestamptz,integer,integer,integer,integer)' \
-                    ) IS NOT NULL AS maintenance_function_exists",
+                        'public.create_transaction_event_partition(text,date)' \
+                    ) IS NOT NULL AND to_regprocedure( \
+                        'public.drop_transaction_event_partition(text,date)' \
+                    ) IS NOT NULL AS maintenance_functions_exist",
             )
             .fetch_one(&self.pool)
             .await
@@ -487,7 +490,7 @@ impl PgTransactionEventSink {
                 TransactionEventSchemaReadinessError::TransactionEventsRelationNotPartitioned,
             );
         }
-        if !maintenance_function_exists {
+        if !maintenance_functions_exist {
             return Err(TransactionEventSchemaReadinessError::PartitionMaintenanceFunctionMissing);
         }
 
@@ -502,73 +505,144 @@ impl PgTransactionEventSink {
 
     /// Creates upcoming daily partitions and drops expired partitions.
     ///
-    /// The database function serializes concurrent calls from multiple replicas
-    /// with a transaction-scoped advisory lock. Replicas that lose the lock
-    /// receive no rows; only a locked pass refreshes success and ahead gauges.
+    /// Policy, catalog discovery, and orchestration live here. The database
+    /// exposes only narrowly scoped `SECURITY DEFINER` create/drop primitives,
+    /// because Postgres requires table ownership for partition DDL.
     pub async fn maintain_partitions(
         &self,
         config: TransactionEventRetentionConfig,
     ) -> Result<Vec<TransactionEventPartitionMaintenanceOutcome>> {
-        let premake_days = i32::try_from(config.premake_days)?;
-        let hot_days = i32::try_from(config.hot_days)?;
-        let warm_days = i32::try_from(config.warm_days)?;
-        let cold_days = i32::try_from(config.cold_days)?;
-        let now = Utc::now();
-        let rows = sqlx::query(
-            "SELECT retention_class, partitions_created, partitions_dropped, \
-             oldest_partition_start, partitions_ahead_days \
-             FROM maintain_transaction_event_partitions($1, $2, $3, $4, $5)",
-        )
-        .bind(now)
-        .bind(premake_days)
-        .bind(hot_days)
-        .bind(warm_days)
-        .bind(cold_days)
-        .fetch_all(&self.pool)
-        .await?;
+        anyhow::ensure!(
+            (1..=31).contains(&config.premake_days),
+            "transaction event partition premake days must be between 1 and 31"
+        );
+        anyhow::ensure!(
+            config.hot_days > 0 && config.hot_days <= config.warm_days,
+            "transaction event retention days must satisfy 0 < hot <= warm"
+        );
+        anyhow::ensure!(
+            config.warm_days <= config.cold_days,
+            "transaction event retention days must satisfy warm <= cold"
+        );
 
-        let mut outcomes = Vec::with_capacity(rows.len());
-        for row in rows {
-            let retention_class =
-                parse_transaction_event_retention_class(row.try_get("retention_class")?)?;
-            let partitions_created: i64 = row.try_get("partitions_created")?;
-            let partitions_dropped: i64 = row.try_get("partitions_dropped")?;
-            let oldest_partition_start = row.try_get("oldest_partition_start")?;
-            let partitions_ahead_days: Option<i64> = row.try_get("partitions_ahead_days")?;
+        let now = Utc::now();
+        let today = now.date_naive();
+        let mut transaction = self.pool.begin().await?;
+        let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
+            .bind(TRANSACTION_EVENT_PARTITION_MAINTENANCE_LOCK_ID)
+            .fetch_one(&mut *transaction)
+            .await?;
+        if !locked {
+            self.record_partition_maintenance_last_success_age();
+            return Ok(Vec::new());
+        }
+
+        let classes = [
+            (TransactionEventRetentionClass::Hot, config.hot_days),
+            (TransactionEventRetentionClass::Warm, config.warm_days),
+            (TransactionEventRetentionClass::Cold, config.cold_days),
+        ];
+        let mut outcomes = Vec::with_capacity(classes.len());
+        for (retention_class, retention_days) in classes {
+            let mut partitions_created = 0;
+            for day_offset in 0..=config.premake_days {
+                let partition_day = today + Duration::days(i64::from(day_offset));
+                let created: bool =
+                    sqlx::query_scalar("SELECT create_transaction_event_partition($1, $2)")
+                        .bind(retention_class.as_str())
+                        .bind(partition_day)
+                        .fetch_one(&mut *transaction)
+                        .await?;
+                partitions_created += u64::from(created);
+            }
+
+            let parent_name = retention_class.table_name();
+            let partition_name_pattern = format!("^{parent_name}_[0-9]{{8}}$");
+            let partition_days: Vec<NaiveDate> = sqlx::query_scalar(
+                "SELECT to_date(right(child.relname, 8), 'YYYYMMDD') \
+                 FROM pg_inherits AS inheritance \
+                 JOIN pg_class AS parent ON parent.oid = inheritance.inhparent \
+                 JOIN pg_namespace AS parent_namespace \
+                   ON parent_namespace.oid = parent.relnamespace \
+                 JOIN pg_class AS child ON child.oid = inheritance.inhrelid \
+                 JOIN pg_namespace AS child_namespace \
+                   ON child_namespace.oid = child.relnamespace \
+                 WHERE parent.relname = $1 \
+                   AND parent_namespace.nspname = 'public' \
+                   AND child_namespace.nspname = 'public' \
+                   AND child.relname ~ $2 \
+                 ORDER BY 1",
+            )
+            .bind(parent_name)
+            .bind(partition_name_pattern)
+            .fetch_all(&mut *transaction)
+            .await?;
+
+            let cutoff = now - Duration::days(i64::from(retention_days));
+            let mut partitions_dropped = 0;
+            let mut retained_partition_days = Vec::with_capacity(partition_days.len());
+            for partition_day in partition_days {
+                let upper_bound = (partition_day + Duration::days(1))
+                    .and_hms_opt(0, 0, 0)
+                    .expect("UTC partition boundary is a valid timestamp")
+                    .and_utc();
+                if upper_bound <= cutoff {
+                    let dropped: bool =
+                        sqlx::query_scalar("SELECT drop_transaction_event_partition($1, $2)")
+                            .bind(retention_class.as_str())
+                            .bind(partition_day)
+                            .fetch_one(&mut *transaction)
+                            .await?;
+                    partitions_dropped += u64::from(dropped);
+                } else {
+                    retained_partition_days.push(partition_day);
+                }
+            }
+
+            let oldest_partition_start = retained_partition_days.first().map(|day| {
+                day.and_hms_opt(0, 0, 0)
+                    .expect("UTC partition boundary is a valid timestamp")
+                    .and_utc()
+            });
+            let partitions_ahead_days =
+                retained_partition_days.last().map(|newest| (*newest - today).num_days());
             let outcome = TransactionEventPartitionMaintenanceOutcome {
                 retention_class,
-                partitions_created: u64::try_from(partitions_created)?,
-                partitions_dropped: u64::try_from(partitions_dropped)?,
+                partitions_created,
+                partitions_dropped,
                 oldest_partition_start,
                 partitions_ahead_days,
             };
+            outcomes.push(outcome);
+        }
 
-            Metrics::transaction_event_partitions_created(retention_class.as_str())
+        transaction.commit().await?;
+
+        for outcome in &outcomes {
+            Metrics::transaction_event_partitions_created(outcome.retention_class.as_str())
                 .increment(outcome.partitions_created);
-            Metrics::transaction_event_partitions_dropped(retention_class.as_str())
+            Metrics::transaction_event_partitions_dropped(outcome.retention_class.as_str())
                 .increment(outcome.partitions_dropped);
             if let Some(oldest) = outcome.oldest_partition_start {
                 let age_seconds =
                     now.signed_duration_since(oldest).to_std().map_or(0.0, |age| age.as_secs_f64());
-                Metrics::transaction_event_oldest_partition_age_seconds(retention_class.as_str())
-                    .set(age_seconds);
+                Metrics::transaction_event_oldest_partition_age_seconds(
+                    outcome.retention_class.as_str(),
+                )
+                .set(age_seconds);
             }
             if let Some(ahead_days) = outcome.partitions_ahead_days {
-                Metrics::transaction_event_partitions_ahead_days(retention_class.as_str())
+                Metrics::transaction_event_partitions_ahead_days(outcome.retention_class.as_str())
                     .set(ahead_days as f64);
             }
-            outcomes.push(outcome);
         }
-
-        if !outcomes.is_empty() {
-            match self.last_maintenance_success.lock() {
-                Ok(mut last_success) => *last_success = Some(Instant::now()),
-                Err(_) => {
-                    error!(
-                        "transaction event partition maintenance success clock is poisoned; \
-                         freshness gauge will not advance"
-                    );
-                }
+        match self.last_maintenance_success.lock() {
+            Ok(mut last_success) => *last_success = Some(Instant::now()),
+            Err(_) => {
+                error!(
+                    "transaction event partition maintenance success clock is poisoned; \
+                     freshness gauge will not advance"
+                );
             }
         }
         self.record_partition_maintenance_last_success_age();

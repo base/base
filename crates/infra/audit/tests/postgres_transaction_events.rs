@@ -168,9 +168,8 @@ async fn transaction_events_ready_after_required_migration() -> anyhow::Result<(
             'transaction_events_warm'::regclass, \
             'transaction_events_cold'::regclass \
           ) AND relkind = 'p'), \
-         to_regprocedure( \
-            'maintain_transaction_event_partitions(timestamptz,integer,integer,integer,integer)' \
-         ) IS NOT NULL",
+         to_regprocedure('create_transaction_event_partition(text,date)') IS NOT NULL \
+           AND to_regprocedure('drop_transaction_event_partition(text,date)') IS NOT NULL",
     )
     .fetch_one(&pool)
     .await?;
@@ -328,6 +327,26 @@ async fn postgres_partition_maintenance_creates_and_drops_class_windows() -> any
         assert!(!exists.0, "expired {class} partition was not dropped");
     }
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_partition_maintenance_skips_when_another_replica_holds_lock() -> anyhow::Result<()>
+{
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let mut transaction = pool.begin().await?;
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(744697762131337711)")
+        .fetch_one(&mut *transaction)
+        .await?;
+    assert!(locked);
+
+    let outcomes = sink.maintain_partitions(TransactionEventRetentionConfig::default()).await?;
+    assert!(outcomes.is_empty());
+
+    transaction.rollback().await?;
     Ok(())
 }
 

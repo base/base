@@ -106,6 +106,49 @@ BEGIN
 END
 $$;
 
+CREATE FUNCTION drop_transaction_event_partition(
+    p_retention_class TEXT,
+    p_partition_day DATE
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    parent_name NAME;
+    child_name NAME;
+BEGIN
+    IF p_retention_class NOT IN ('hot', 'warm', 'cold') THEN
+        RAISE EXCEPTION 'invalid transaction event retention class: %', p_retention_class;
+    END IF;
+
+    parent_name := ('transaction_events_' || p_retention_class)::NAME;
+    child_name :=
+        ('transaction_events_' || p_retention_class || '_' || to_char(p_partition_day, 'YYYYMMDD'))::NAME;
+
+    -- Restrict this owner-privileged operation to a partition attached to the
+    -- expected transaction-event parent.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_inherits AS inheritance
+        JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
+        JOIN pg_namespace AS parent_namespace ON parent_namespace.oid = parent.relnamespace
+        JOIN pg_class AS child ON child.oid = inheritance.inhrelid
+        JOIN pg_namespace AS child_namespace ON child_namespace.oid = child.relnamespace
+        WHERE parent.relname = parent_name
+          AND parent_namespace.nspname = 'public'
+          AND child.relname = child_name
+          AND child_namespace.nspname = 'public'
+    ) THEN
+        RETURN FALSE;
+    END IF;
+
+    EXECUTE format('DROP TABLE public.%I', child_name);
+    RETURN TRUE;
+END
+$$;
+
 DO $$
 DECLARE
     first_day DATE := (now() AT TIME ZONE 'UTC')::DATE;
@@ -124,120 +167,8 @@ BEGIN
 END
 $$;
 
-CREATE FUNCTION maintain_transaction_event_partitions(
-    p_now TIMESTAMPTZ,
-    p_premake_days INTEGER,
-    p_hot_days INTEGER,
-    p_warm_days INTEGER,
-    p_cold_days INTEGER
-)
-RETURNS TABLE (
-    retention_class TEXT,
-    partitions_created BIGINT,
-    partitions_dropped BIGINT,
-    oldest_partition_start TIMESTAMPTZ,
-    partitions_ahead_days BIGINT
-)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, public
-AS $$
-DECLARE
-    class_name TEXT;
-    parent_name NAME;
-    retention_days INTEGER;
-    day_offset INTEGER;
-    partition_record RECORD;
-    today DATE;
-    newest_partition_day DATE;
-BEGIN
-    IF p_premake_days < 1 OR p_premake_days > 31 THEN
-        RAISE EXCEPTION 'premake days must be between 1 and 31';
-    END IF;
-    IF p_hot_days < 1 OR p_warm_days < 1 OR p_cold_days < 1 THEN
-        RAISE EXCEPTION 'retention days must be positive';
-    END IF;
-    IF p_hot_days > p_warm_days OR p_warm_days > p_cold_days THEN
-        RAISE EXCEPTION 'retention days must satisfy hot <= warm <= cold';
-    END IF;
-
-    -- Every audit-archiver replica may run the worker. Only one performs DDL.
-    IF NOT pg_try_advisory_xact_lock(744697762131337711) THEN
-        RETURN;
-    END IF;
-
-    today := (p_now AT TIME ZONE 'UTC')::DATE;
-
-    FOREACH class_name IN ARRAY ARRAY['hot', 'warm', 'cold']
-    LOOP
-        parent_name := ('transaction_events_' || class_name)::NAME;
-        retention_days := CASE class_name
-            WHEN 'hot' THEN p_hot_days
-            WHEN 'warm' THEN p_warm_days
-            ELSE p_cold_days
-        END;
-        retention_class := class_name;
-        partitions_created := 0;
-        partitions_dropped := 0;
-        partitions_ahead_days := NULL;
-        oldest_partition_start := NULL;
-
-        FOR day_offset IN 0..p_premake_days
-        LOOP
-            IF public.create_transaction_event_partition(
-                class_name,
-                today + day_offset
-            ) THEN
-                partitions_created := partitions_created + 1;
-            END IF;
-        END LOOP;
-
-        FOR partition_record IN
-            SELECT
-                child.relname AS partition_name,
-                to_date(right(child.relname, 8), 'YYYYMMDD') AS partition_day
-            FROM pg_inherits AS inheritance
-            JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
-            JOIN pg_class AS child ON child.oid = inheritance.inhrelid
-            WHERE parent.oid = to_regclass('public.' || quote_ident(parent_name::TEXT))
-              AND child.relname ~ ('^' || parent_name::TEXT || '_[0-9]{8}$')
-              AND (
-                  to_date(right(child.relname, 8), 'YYYYMMDD') + 1
-              )::TIMESTAMP AT TIME ZONE 'UTC'
-                  <= p_now - make_interval(days => retention_days)
-            ORDER BY partition_day
-        LOOP
-            EXECUTE format('DROP TABLE public.%I', partition_record.partition_name);
-            partitions_dropped := partitions_dropped + 1;
-        END LOOP;
-
-        SELECT
-            min(to_date(right(child.relname, 8), 'YYYYMMDD'))::TIMESTAMP AT TIME ZONE 'UTC',
-            max(to_date(right(child.relname, 8), 'YYYYMMDD'))
-        INTO oldest_partition_start, newest_partition_day
-        FROM pg_inherits AS inheritance
-        JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
-        JOIN pg_class AS child ON child.oid = inheritance.inhrelid
-        WHERE parent.oid = to_regclass('public.' || quote_ident(parent_name::TEXT))
-          AND child.relname ~ ('^' || parent_name::TEXT || '_[0-9]{8}$');
-
-        IF newest_partition_day IS NOT NULL THEN
-            partitions_ahead_days := newest_partition_day - today;
-        END IF;
-
-        RETURN NEXT;
-    END LOOP;
-END
-$$;
-
 REVOKE ALL ON FUNCTION create_transaction_event_partition(TEXT, DATE) FROM PUBLIC;
-REVOKE ALL ON FUNCTION maintain_transaction_event_partitions(
-    TIMESTAMPTZ,
-    INTEGER,
-    INTEGER,
-    INTEGER,
-    INTEGER
-) FROM PUBLIC;
+REVOKE ALL ON FUNCTION drop_transaction_event_partition(TEXT, DATE) FROM PUBLIC;
 
 DO $$
 BEGIN
@@ -245,13 +176,10 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE, DELETE
             ON transaction_events_hot, transaction_events_warm, transaction_events_cold
             TO audit_archiver;
-        GRANT EXECUTE ON FUNCTION maintain_transaction_event_partitions(
-            TIMESTAMPTZ,
-            INTEGER,
-            INTEGER,
-            INTEGER,
-            INTEGER
-        ) TO audit_archiver;
+        GRANT EXECUTE ON FUNCTION create_transaction_event_partition(TEXT, DATE)
+            TO audit_archiver;
+        GRANT EXECUTE ON FUNCTION drop_transaction_event_partition(TEXT, DATE)
+            TO audit_archiver;
     END IF;
 END
 $$;
