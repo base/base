@@ -5,6 +5,14 @@ pub use blink_ingress::{
     A1Counters, A1Outcome, A1Status, BlinkCredential, BlinkFeedClient, BlinkIngressConfig,
     BlinkVictim, QueuedBlinkVictim, RuntimeShutdown,
 };
+mod admission_exporter;
+pub use admission_exporter::{
+    ADMISSION_MAX_SEGMENT_BYTES_V1, ADMISSION_QUEUE_CAPACITY_V1, ADMISSION_SCHEMA_VERSION_V1,
+    AdmissionConnectionReasonV1, AdmissionEconomicsV1, AdmissionExporterConfigV1,
+    AdmissionExporterErrorV1, AdmissionExporterV1, AdmissionFrameV1, AdmissionQueueOutcomeV1,
+    AdmissionTerminalReasonV1, AdmissionTerminalV1, EconomicDispositionV1, MissingKeyKindV1,
+    validate_admission_segment_v1,
+};
 mod port;
 #[cfg(feature = "edge-measurement")]
 pub use port::EdgeSnapshotEvidenceV1;
@@ -46,8 +54,9 @@ pub use edge_measurement::{
 
 mod frame;
 pub use frame::{
-    DeltaError, DirtyPoolSet, FrameCommitGuard, FrameProcessor, MAX_FRAME_AGE_MILLIS,
-    MAX_RAW_FRAME_BYTES, ProcessedFrame, SnapshotCoherence, ValidatedFrameDelta, VictimFrame,
+    DeltaError, DirtyPoolSet, FrameCommitGuard, FrameProcessOutcomeV1, FrameProcessor,
+    FrameRejectionV1, MAX_FRAME_AGE_MILLIS, MAX_RAW_FRAME_BYTES, ProcessedFrame, SnapshotCoherence,
+    ValidatedFrameDelta, VictimFrame,
 };
 
 mod registry;

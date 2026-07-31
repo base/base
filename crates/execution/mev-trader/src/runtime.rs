@@ -10,22 +10,24 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU8, AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(feature = "t4b-shadow")]
 use alloy_primitives::Bytes;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, aliases::I512};
 use base_execution_chainspec::BaseChainSpec;
 use thiserror::Error;
 use tokio::{sync::Notify, time};
 
 use crate::{
-    A1Counters, A1Outcome, A1Status, BackrunPlan, BlinkVictim, CancellationProbe,
-    CancellationToken, DedicatedAnalysisPool, FixturePoolRegistry, FrameAuditPlan, FrameProcessor,
+    A1Counters, A1Outcome, A1Status, AdmissionConnectionReasonV1, AdmissionEconomicsV1,
+    AdmissionExporterV1, AdmissionFrameV1, AdmissionTerminalReasonV1, AdmissionTerminalV1,
+    BackrunPlan, BlinkVictim, CancellationProbe, CancellationToken, DedicatedAnalysisPool,
+    FixturePoolRegistry, FrameAuditPlan, FrameProcessOutcomeV1, FrameProcessor, FrameRejectionV1,
     GlobalLifecycle, GlobalState, LatestSlot, LifecycleError, MeasurementContext, PairwiseEngine,
-    PairwiseError, PoolDescriptor, PoolStatePreparer, PoolUniverseSnapshot, PortError,
-    PreparationError, QueuedBlinkVictim, RegistryDigest, RegistryError, RegistryHasher,
+    PairwiseError, PoolDescriptor, PoolRegistry, PoolStatePreparer, PoolUniverseSnapshot,
+    PortError, PreparationError, QueuedBlinkVictim, RegistryDigest, RegistryError, RegistryHasher,
     RuntimeShutdown, ShadowLatestSlot, ShadowSlotCounters, SlotSubmit, SnapshotCaptureCoordinator,
     SoleWorker, TaskRun, TaskRunner, TaskState, TraderSnapshotPort, VictimFrame, Watchdog,
     WatchdogStatus, WorkerClaim,
@@ -314,6 +316,8 @@ pub struct ShadowFrameMeasurement {
     pub discovered_candidate_count: u32,
     /// Typed terminal measurement outcome.
     pub outcome: ShadowOutcome,
+    /// Best signed gross across discovered candidates, including nonpositive candidates.
+    pub best_modeled_gross_profit: Option<I512>,
     /// At most one positive-gross measurement-only plan.
     pub plan: Option<BackrunPlan>,
 }
@@ -343,10 +347,10 @@ impl From<LifecycleError> for RuntimeInstallError {
 
 /// Exact empty-registry configuration used by the receive-only runtime.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(any(feature = "t4b-shadow", feature = "edge-measurement")), derive(PartialEq, Eq))]
 pub struct MevTraderRuntimeConfig {
     registry: FixturePoolRegistry,
     universe: Option<PoolUniverseSnapshot>,
+    admission_exporter: Option<Arc<AdmissionExporterV1>>,
     #[cfg(feature = "edge-measurement")]
     edge_owner: Option<Arc<EdgeMeasurementOwnerV1>>,
     #[cfg(feature = "t4b-shadow")]
@@ -362,6 +366,7 @@ impl MevTraderRuntimeConfig {
         Ok(Self {
             registry,
             universe: None,
+            admission_exporter: None,
             #[cfg(feature = "edge-measurement")]
             edge_owner: None,
             #[cfg(feature = "t4b-shadow")]
@@ -376,11 +381,18 @@ impl MevTraderRuntimeConfig {
         Ok(Self {
             registry,
             universe: Some(snapshot),
+            admission_exporter: None,
             #[cfg(feature = "edge-measurement")]
             edge_owner: None,
             #[cfg(feature = "t4b-shadow")]
             observer: None,
         })
+    }
+
+    /// Installs the persisted admission exporter independently of shadow-arm features.
+    pub fn with_admission_exporter(mut self, exporter: Arc<AdmissionExporterV1>) -> Self {
+        self.admission_exporter = Some(exporter);
+        self
     }
 
     /// Installs the sole process-local T4b observer before runtime startup.
@@ -420,6 +432,9 @@ pub struct MevTraderRuntime {
     watchdog: Watchdog,
     counters: Arc<A1Counters>,
     shadow_outcomes: ShadowOutcomeCounters,
+    admission_exporter: Option<Arc<AdmissionExporterV1>>,
+    admission_measurements: Mutex<BTreeMap<u64, ShadowFrameMeasurement>>,
+    admission_rejections: Mutex<BTreeMap<u64, FrameRejectionV1>>,
     #[cfg(feature = "edge-measurement")]
     edge_measurement: Option<Arc<EdgeMeasurementOwnerV1>>,
     #[cfg(feature = "t4b-shadow")]
@@ -455,6 +470,9 @@ impl MevTraderRuntime {
             watchdog: Watchdog,
             counters: Arc::new(A1Counters::default()),
             shadow_outcomes: ShadowOutcomeCounters::default(),
+            admission_exporter: config.admission_exporter,
+            admission_measurements: Mutex::new(BTreeMap::new()),
+            admission_rejections: Mutex::new(BTreeMap::new()),
             #[cfg(feature = "edge-measurement")]
             edge_measurement: config.edge_owner,
             #[cfg(feature = "t4b-shadow")]
@@ -507,10 +525,41 @@ impl MevTraderRuntime {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                Ok(_) => return,
+                Ok(_) => {
+                    if A1Status::from_u8(current) != next {
+                        self.record_admission_connection(A1Status::from_u8(current), next);
+                    }
+                    return;
+                }
                 Err(observed) => current = observed,
             }
         }
+    }
+    fn record_admission_connection(&self, previous: A1Status, next: A1Status) {
+        let reason = match next {
+            A1Status::DisabledNoConnect => Some(AdmissionConnectionReasonV1::CredentialAbsent),
+            A1Status::Subscribed => Some(AdmissionConnectionReasonV1::Connected),
+            A1Status::Retrying | A1Status::DisabledPermanent
+                if previous == A1Status::Subscribed =>
+            {
+                Some(AdmissionConnectionReasonV1::Disconnected)
+            }
+            A1Status::Retrying | A1Status::DisabledPermanent => {
+                Some(AdmissionConnectionReasonV1::ConnectFailed)
+            }
+            A1Status::Off | A1Status::Connecting | A1Status::AwaitingAck | A1Status::Closed => None,
+        };
+        if let (Some(exporter), Some(reason)) = (self.admission_exporter.as_ref(), reason) {
+            exporter.record_connection(reason, Self::unix_millis());
+        }
+    }
+
+    fn unix_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+            .unwrap_or(0)
     }
 
     /// Returns the fixed counters shared by ingress and runtime control.
@@ -599,6 +648,13 @@ impl MevTraderRuntime {
     pub const fn shutdown(&self) -> &Arc<RuntimeShutdown> {
         &self.shutdown
     }
+    /// Durably closes the independent admission exporter after runtime tasks have joined.
+    pub fn close_admission_exporter(&self) -> Result<(), crate::AdmissionExporterErrorV1> {
+        if let Some(exporter) = self.admission_exporter.as_ref() {
+            exporter.close()?;
+        }
+        Ok(())
+    }
 
     /// Assigns a checked generation and performs capacity-one latest-wins submission.
     pub(crate) fn submit_blink_victim(&self, victim: BlinkVictim) {
@@ -623,18 +679,6 @@ impl MevTraderRuntime {
         #[cfg(feature = "edge-measurement")]
         if let Some((owner, true)) = admission {
             owner.observe_ledger_result_admitted(owner.ledger().record_observed());
-        }
-        if self.shutdown.is_cancelled() || self.lifecycle.state() != GlobalState::Running {
-            self.record_a1(A1Outcome::SlotClosed);
-            #[cfg(feature = "edge-measurement")]
-            if let Some((owner, true)) = admission {
-                owner.emit_blink_reject_admitted(
-                    "runtime-lifecycle-closed",
-                    BlinkRejectReasonV3::SlotClosed,
-                );
-                owner.observe_ledger_result_admitted(owner.ledger().record_slot_closed());
-            }
-            return;
         }
         let generation =
             match self.generation.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |generation| {
@@ -661,6 +705,40 @@ impl MevTraderRuntime {
                     return;
                 }
             };
+        if let Some(exporter) = self.admission_exporter.as_ref() {
+            exporter.record_received(
+                generation,
+                AdmissionFrameV1 {
+                    victim_tx_hash: victim.hash(),
+                    sender: victim.from(),
+                    block_number: victim.block_number(),
+                    flashblock_index: victim.flashblock_index(),
+                    registry_digest: self.registry.registry_digest().0,
+                    cohort_version: None,
+                    observed_at_ms: Self::unix_millis(),
+                    deadline_ms: crate::DEADLINE_MILLIS,
+                },
+            );
+        }
+        if self.shutdown.is_cancelled() || self.lifecycle.state() != GlobalState::Running {
+            self.record_a1(A1Outcome::SlotClosed);
+            self.record_admission_terminal(
+                generation,
+                AdmissionTerminalV1::before_economics(
+                    "runtime_admission",
+                    AdmissionTerminalReasonV1::SlotClosed,
+                ),
+            );
+            #[cfg(feature = "edge-measurement")]
+            if let Some((owner, true)) = admission {
+                owner.emit_blink_reject_admitted(
+                    "runtime-lifecycle-closed",
+                    BlinkRejectReasonV3::SlotClosed,
+                );
+                owner.observe_ledger_result_admitted(owner.ledger().record_slot_closed());
+            }
+            return;
+        }
 
         if let Some((active_generation, token)) =
             self.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref().cloned()
@@ -686,10 +764,44 @@ impl MevTraderRuntime {
             }
             owner.record_submission_admitted(generation, submission);
         }
+        match submission {
+            SlotSubmit::Replaced => {
+                if let Some(replaced_generation) = generation.checked_sub(1) {
+                    self.record_admission_terminal(
+                        replaced_generation,
+                        AdmissionTerminalV1::before_economics(
+                            "runtime_queue",
+                            AdmissionTerminalReasonV1::Cancelled,
+                        ),
+                    );
+                }
+            }
+            SlotSubmit::Closed => {
+                self.record_admission_terminal(
+                    generation,
+                    AdmissionTerminalV1::before_economics(
+                        "runtime_queue",
+                        AdmissionTerminalReasonV1::SlotClosed,
+                    ),
+                );
+            }
+            SlotSubmit::Accepted => {}
+        }
         self.record_a1(outcome);
         if outcome != A1Outcome::SlotClosed {
             self.slot_notify.notify_one();
         }
+    }
+    fn record_admission_terminal(&self, generation: u64, terminal: AdmissionTerminalV1) {
+        if let Some(exporter) = self.admission_exporter.as_ref() {
+            exporter.record_terminal(generation, terminal);
+        }
+    }
+    fn record_admission_rejection(&self, generation: u64, rejection: FrameRejectionV1) {
+        self.admission_rejections
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(generation, rejection);
     }
 
     fn generation_is_latest(&self, generation: u64) -> bool {
@@ -798,7 +910,7 @@ impl MevTraderRuntime {
                 let Some(universe) = self.universe.as_ref() else {
                     let audit = FrameAuditPlan::new(Vec::new(), BTreeMap::new())
                         .map_err(|_| PortError::Incoherent)?;
-                    return FrameProcessor::process(
+                    return match FrameProcessor::process_classified(
                         port,
                         &snapshot,
                         &frame,
@@ -806,8 +918,15 @@ impl MevTraderRuntime {
                         chain_spec,
                         &audit,
                         probe,
-                    )
-                    .map(|processed| (processed, None, None));
+                    )? {
+                        FrameProcessOutcomeV1::Processed(processed) => {
+                            Ok((Some(processed), None, None))
+                        }
+                        FrameProcessOutcomeV1::Rejected(rejection) => {
+                            self.record_admission_rejection(generation, rejection);
+                            Ok((None, None, Some(ShadowOutcome::FrameRejected)))
+                        }
+                    };
                 };
 
                 if !PoolCodeHashView::validate(port, &snapshot, universe, probe) {
@@ -820,7 +939,7 @@ impl MevTraderRuntime {
                     };
                     return Ok((None, None, Some(outcome)));
                 }
-                let Some(processed) = FrameProcessor::process(
+                let processed = match FrameProcessor::process_classified(
                     port,
                     &snapshot,
                     &frame,
@@ -828,16 +947,19 @@ impl MevTraderRuntime {
                     chain_spec,
                     universe.audit(),
                     probe,
-                )?
-                else {
-                    let outcome = if probe
-                        .checkpoint(Instant::now(), port.is_current_authoritative(&snapshot))
-                    {
-                        ShadowOutcome::FrameRejected
-                    } else {
-                        ShadowOutcome::Cancelled
-                    };
-                    return Ok((None, None, Some(outcome)));
+                )? {
+                    FrameProcessOutcomeV1::Processed(processed) => processed,
+                    FrameProcessOutcomeV1::Rejected(rejection) => {
+                        self.record_admission_rejection(generation, rejection);
+                        let outcome = if probe
+                            .checkpoint(Instant::now(), port.is_current_authoritative(&snapshot))
+                        {
+                            ShadowOutcome::FrameRejected
+                        } else {
+                            ShadowOutcome::Cancelled
+                        };
+                        return Ok((None, None, Some(outcome)));
+                    }
                 };
 
                 let context = *processed.measurement_context();
@@ -862,6 +984,7 @@ impl MevTraderRuntime {
                             prepared_pool_count: 0,
                             discovered_candidate_count: 0,
                             outcome,
+                            best_modeled_gross_profit: None,
                             plan: None,
                         };
                         return Ok((Some(processed), Some(measurement), None));
@@ -893,6 +1016,7 @@ impl MevTraderRuntime {
                             prepared_pool_count,
                             discovered_candidate_count: 0,
                             outcome,
+                            best_modeled_gross_profit: None,
                             plan: None,
                         };
                         return Ok((Some(processed), Some(measurement), None));
@@ -916,6 +1040,7 @@ impl MevTraderRuntime {
                                 prepared_pool_count,
                                 discovered_candidate_count,
                                 outcome,
+                                best_modeled_gross_profit: None,
                                 plan: None,
                             };
                             return Ok((Some(processed), Some(measurement), None));
@@ -958,6 +1083,8 @@ impl MevTraderRuntime {
                 } else {
                     ShadowOutcome::NoPositivePlan
                 };
+                let best_modeled_gross_profit =
+                    candidates.iter().map(|candidate| candidate.gross_profit).max();
                 let measurement = ShadowFrameMeasurement {
                     context,
                     registry_digest: universe.registry_digest(),
@@ -965,6 +1092,7 @@ impl MevTraderRuntime {
                     prepared_pool_count,
                     discovered_candidate_count,
                     outcome,
+                    best_modeled_gross_profit,
                     plan,
                 };
                 Ok((Some(processed), Some(measurement), None))
@@ -1035,6 +1163,12 @@ impl MevTraderRuntime {
                         .as_ref()
                         .map(|measurement| measurement.outcome)
                         .or_else(|| self.universe.as_ref().map(|_| ShadowOutcome::FrameRejected));
+                    if let Some(measurement) = measurement.as_ref() {
+                        self.admission_measurements
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .insert(generation, measurement.clone());
+                    }
                     if self.claim_terminal(
                         generation,
                         &terminal,
@@ -1207,7 +1341,7 @@ impl MevTraderRuntime {
 
     fn claim_terminal(
         &self,
-        _generation: u64,
+        generation: u64,
         terminal: &AtomicU8,
         outcome: A1Outcome,
         terminal_value: u8,
@@ -1229,6 +1363,25 @@ impl MevTraderRuntime {
             );
             return false;
         }
+        let measurement = self
+            .admission_measurements
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&generation);
+        let rejection = self
+            .admission_rejections
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&generation);
+        self.record_admission_terminal(
+            generation,
+            Self::admission_terminal(
+                terminal_value,
+                shadow_outcome,
+                measurement.as_ref(),
+                rejection,
+            ),
+        );
         #[cfg(feature = "edge-measurement")]
         if let Some(owner) = self.edge_measurement.as_ref() {
             let measurement_terminal = match terminal_value {
@@ -1236,7 +1389,7 @@ impl MevTraderRuntime {
                 TERMINAL_FRAME_BOUND | TERMINAL_NO_TRADE => BlinkGenerationTerminalV1::Processed,
                 _ => BlinkGenerationTerminalV1::InternalFailure,
             };
-            owner.record_terminal_and_resolve(_generation, measurement_terminal, shadow_outcome);
+            owner.record_terminal_and_resolve(generation, measurement_terminal, shadow_outcome);
         }
         self.record_a1(outcome);
         if self.universe.is_some()
@@ -1245,6 +1398,75 @@ impl MevTraderRuntime {
             self.shadow_outcomes.record(shadow_outcome);
         }
         true
+    }
+    fn admission_terminal(
+        terminal_value: u8,
+        shadow_outcome: Option<ShadowOutcome>,
+        measurement: Option<&ShadowFrameMeasurement>,
+        rejection: Option<FrameRejectionV1>,
+    ) -> AdmissionTerminalV1 {
+        let reason = rejection.map_or_else(
+            || {
+                if terminal_value == TERMINAL_CANCELLED {
+                    AdmissionTerminalReasonV1::Cancelled
+                } else if terminal_value == TERMINAL_INTERNAL_FAILURE {
+                    AdmissionTerminalReasonV1::InternalFailure
+                } else {
+                    match shadow_outcome {
+                        Some(ShadowOutcome::FrameRejected) => {
+                            AdmissionTerminalReasonV1::ParentHeaderMismatch
+                        }
+                        Some(ShadowOutcome::CodeHashRejected) => {
+                            AdmissionTerminalReasonV1::PoolCodeHashMismatch
+                        }
+                        Some(
+                            ShadowOutcome::PreparationRejected | ShadowOutcome::AnalysisRejected,
+                        ) => AdmissionTerminalReasonV1::PreparationError,
+                        Some(ShadowOutcome::V3Coverage) => AdmissionTerminalReasonV1::V3Coverage,
+                        Some(ShadowOutcome::InternalFailure) => {
+                            AdmissionTerminalReasonV1::InternalFailure
+                        }
+                        Some(ShadowOutcome::Cancelled) => AdmissionTerminalReasonV1::Cancelled,
+                        Some(ShadowOutcome::NoDirtyPools) => AdmissionTerminalReasonV1::NoDirtyPool,
+                        Some(ShadowOutcome::NoCandidate) => AdmissionTerminalReasonV1::NoRoute,
+                        Some(ShadowOutcome::NoPositivePlan | ShadowOutcome::Selected) => {
+                            AdmissionTerminalReasonV1::EconomicsAuthorityUnavailable
+                        }
+                        None => AdmissionTerminalReasonV1::ParentHeaderMismatch,
+                    }
+                }
+            },
+            |rejection| rejection.reason,
+        );
+        let economics = match shadow_outcome {
+            Some(ShadowOutcome::NoCandidate) => AdmissionEconomicsV1::no_route(),
+            Some(ShadowOutcome::NoPositivePlan | ShadowOutcome::Selected) => measurement
+                .and_then(|measurement| measurement.best_modeled_gross_profit)
+                .map(AdmissionEconomicsV1::authority_unavailable)
+                .unwrap_or_else(AdmissionEconomicsV1::not_reached),
+            _ => AdmissionEconomicsV1::not_reached(),
+        };
+        let dirty_pool_count = measurement.map(|measurement| measurement.dirty_pool_count);
+        let analysis_completed = matches!(
+            shadow_outcome,
+            Some(
+                ShadowOutcome::NoDirtyPools
+                    | ShadowOutcome::NoCandidate
+                    | ShadowOutcome::NoPositivePlan
+                    | ShadowOutcome::Selected
+            )
+        );
+        AdmissionTerminalV1 {
+            stage: "t4a".to_owned(),
+            reason,
+            dirty_pool_count,
+            in_universe_dirty: dirty_pool_count.map(|count| count > 0),
+            analysis_completed,
+            economics,
+            missing_key_kind: rejection.and_then(|rejection| rejection.missing_key_kind),
+            missing_key_address: rejection.and_then(|rejection| rejection.missing_key_address),
+            missing_storage_slot: rejection.and_then(|rejection| rejection.missing_storage_slot),
+        }
     }
 
     fn clear_active(

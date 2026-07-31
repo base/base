@@ -18,6 +18,15 @@ only for immutable inspection and is not plan-construction authority.
 `BackrunPlan` and its canonical bytes are unsigned measurement evidence. The crate provides no
 transaction or envelope conversion, signing, submission, forwarding, or outbound transport for
 that evidence.
+## Persisted admission evidence
+
+The admission exporter is a sibling schema and writer, not an extension of the feature-gated edge
+economics writer. The execution CLI enables it from Blink configuration independently of T4a/T4b/T4d
+shadow conjunctions when all three values are present:
+`MEV_TRADER_T4A_ADMISSION_OUTPUT_ROOT`, `MEV_TRADER_T4A_ADMISSION_RUN_ID`, and
+`MEV_TRADER_T4A_ADMISSION_BOOT_ID`. The output root must already exist as a private non-symlink
+directory; creating or provisioning the production state root remains a separate node-operation
+review. Records never contain raw transaction bytes, credentials, or state values.
 
 ## Offline latency evidence
 

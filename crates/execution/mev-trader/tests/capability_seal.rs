@@ -34,7 +34,8 @@ const NORMAL_DEPENDENCIES: [&str; 24] = [
     "tokio-tungstenite",
     "tracing",
 ];
-const SOURCE_FILES: [&str; 15] = [
+const SOURCE_FILES: [&str; 16] = [
+    "admission_exporter.rs",
     "blink_ingress.rs",
     "edge_measurement.rs",
     "frame.rs",
@@ -773,15 +774,19 @@ fn a2_proof_binding_and_test_support_have_bounded_api_shape() {
     assert_eq!(frame_production.matches("pub const fn materialized_state").count(), 1);
     assert_eq!(frame_production.matches("pub const fn measurement_context").count(), 1);
     assert_eq!(frame_production.matches("pub const fn dirty_pools").count(), 2);
-    assert_eq!(frame_production.matches("Ok(Some(ProcessedFrame {").count(), 1);
+    assert_eq!(
+        frame_production.matches("Ok(FrameProcessOutcomeV1::Processed(ProcessedFrame {").count(),
+        1
+    );
     assert!(!frame_production.contains("impl Default for ProcessedFrame"));
     assert!(!frame_production.contains("&mut MaterializedState"));
     assert!(!frame_production.contains("&mut MeasurementContext"));
     let final_authority = frame_production
         .find("let current_authority = port.is_current_authoritative(snapshot);")
         .expect("final authority check");
-    let proof_construction =
-        frame_production.find("Ok(Some(ProcessedFrame {").expect("sole proof construction");
+    let proof_construction = frame_production
+        .find("Ok(FrameProcessOutcomeV1::Processed(ProcessedFrame {")
+        .expect("sole proof construction");
     assert!(final_authority < proof_construction);
 
     assert_eq!(
@@ -852,11 +857,12 @@ fn a2_proof_binding_and_test_support_have_bounded_api_shape() {
     assert!(!pairwise.contains("impl BackrunPlan {"));
 
     assert!(crate_root.contains(
-        "DeltaError, DirtyPoolSet, FrameCommitGuard, FrameProcessor, MAX_FRAME_AGE_MILLIS,"
+        "DeltaError, DirtyPoolSet, FrameCommitGuard, FrameProcessOutcomeV1, FrameProcessor,"
     ));
     assert!(crate_root.contains(
-        "MAX_RAW_FRAME_BYTES, ProcessedFrame, SnapshotCoherence, ValidatedFrameDelta, VictimFrame,"
+        "FrameRejectionV1, MAX_FRAME_AGE_MILLIS, MAX_RAW_FRAME_BYTES, ProcessedFrame, SnapshotCoherence,"
     ));
+    assert!(crate_root.contains("ValidatedFrameDelta, VictimFrame,"));
     assert!(!crate_root.contains("test_utils"));
     assert_eq!(runtime_production.matches("PairwiseEngine::discover(").count(), 1);
     assert_eq!(runtime_production.matches("PairwiseEngine::select_measurement(").count(), 1);
