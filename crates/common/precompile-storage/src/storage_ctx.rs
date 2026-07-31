@@ -332,17 +332,14 @@ impl CheckpointGuard<'_> {
     /// because `drop` may run during unwinding where a second panic would abort.
     pub fn commit(mut self) {
         let checkpoint = self.checkpoint.take();
-        match checkpoint {
-            Some(checkpoint) => {
-                self.storage.with_storage(|storage| {
-                    #[cfg(any(test, feature = "test-utils"))]
-                    storage.assert_latest_checkpoint(checkpoint);
-                    #[cfg(not(any(test, feature = "test-utils")))]
-                    let _ = checkpoint;
-                    storage.commit_latest_checkpoint();
-                });
-            }
-            None => {}
+        if let Some(checkpoint) = checkpoint {
+            self.storage.with_storage(|storage| {
+                #[cfg(any(test, feature = "test-utils"))]
+                storage.assert_latest_checkpoint(checkpoint);
+                #[cfg(not(any(test, feature = "test-utils")))]
+                let _ = checkpoint;
+                storage.commit_latest_checkpoint();
+            });
         }
     }
 }
