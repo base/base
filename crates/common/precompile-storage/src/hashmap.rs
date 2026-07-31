@@ -300,6 +300,15 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         self.snapshots.pop();
     }
 
+    fn assert_latest_checkpoint(&self, checkpoint: JournalCheckpoint) {
+        assert!(!self.snapshots.is_empty(), "checkpoint_commit called with no active checkpoint");
+        assert_eq!(
+            checkpoint.journal_i,
+            self.snapshots.len() - 1,
+            "out-of-order checkpoint commit (expected top of stack)"
+        );
+    }
+
     fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
         assert_eq!(
             checkpoint.journal_i,
@@ -666,5 +675,15 @@ mod tests {
         p.sstore(ADDR, KEY, U256::from(42u64)).unwrap();
         p.commit_latest_checkpoint();
         assert_eq!(p.sload(ADDR, KEY).unwrap(), U256::from(42u64));
+    }
+
+    #[test]
+    #[should_panic(expected = "out-of-order checkpoint commit (expected top of stack)")]
+    fn assert_latest_checkpoint_rejects_out_of_order_checkpoint() {
+        let mut p = HashMapStorageProvider::new(1);
+        let outer = p.checkpoint();
+        p.checkpoint();
+
+        p.assert_latest_checkpoint(outer);
     }
 }
