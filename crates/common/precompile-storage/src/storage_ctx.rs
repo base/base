@@ -332,7 +332,7 @@ impl CheckpointGuard<'_> {
     /// because `drop` may run during unwinding where a second panic would abort.
     pub fn commit(mut self) {
         if self.checkpoint.take().is_some() {
-            self.storage.with_storage(|s| s.checkpoint_commit());
+            self.storage.with_storage(|s| s.commit_latest_checkpoint());
         }
     }
 }

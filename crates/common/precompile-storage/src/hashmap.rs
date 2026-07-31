@@ -295,7 +295,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         JournalCheckpoint { log_i: 0, journal_i: idx, selfdestructed_i: 0 }
     }
 
-    fn checkpoint_commit(&mut self) {
+    fn commit_latest_checkpoint(&mut self) {
         assert!(!self.snapshots.is_empty(), "checkpoint_commit called with no active checkpoint");
         self.snapshots.pop();
     }
@@ -660,11 +660,11 @@ mod tests {
     }
 
     #[test]
-    fn checkpoint_commit_does_not_revert_mutations() {
+    fn commit_latest_checkpoint_does_not_revert_mutations() {
         let mut p = HashMapStorageProvider::new(1);
         p.checkpoint();
         p.sstore(ADDR, KEY, U256::from(42u64)).unwrap();
-        p.checkpoint_commit();
+        p.commit_latest_checkpoint();
         assert_eq!(p.sload(ADDR, KEY).unwrap(), U256::from(42u64));
     }
 }

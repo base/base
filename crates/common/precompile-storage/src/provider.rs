@@ -122,8 +122,11 @@ pub trait PrecompileStorageProvider {
 
     /// Creates a new journal checkpoint for atomic state management.
     fn checkpoint(&mut self) -> JournalCheckpoint;
-    /// Commits all state changes since the last checkpoint.
-    fn checkpoint_commit(&mut self);
+    /// Commits the most recently created active checkpoint.
+    ///
+    /// Keeps all state changes made since that checkpoint was opened. Commit is
+    /// always stack-top / LIFO and does not target an older checkpoint token.
+    fn commit_latest_checkpoint(&mut self);
     /// Reverts all state changes back to the given checkpoint.
     fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint);
 

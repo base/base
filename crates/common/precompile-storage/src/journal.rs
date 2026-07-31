@@ -220,7 +220,7 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         self.internals.checkpoint()
     }
 
-    fn checkpoint_commit(&mut self) {
+    fn commit_latest_checkpoint(&mut self) {
         self.internals.checkpoint_commit();
     }
 
