@@ -207,21 +207,17 @@ impl IB20::IB20Calls {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec::Vec;
-
-    use alloy_primitives::{Address, B256, U256, b256, keccak256};
+    use alloy_primitives::{Address, B256, U256, b256};
     use alloy_sol_types::{SolEnum, SolInterface};
 
     use super::IB20;
-    use crate::IB20V1;
+    use crate::{AbiFingerprint, IB20V1};
 
     /// Absolute wire fingerprint for Beryl's surface. Catches both-sides drift that relative
     /// V1==V2 asserts miss (alloy Display / signature changes that move every copy together).
     ///
-    /// Layout: keccak of sorted call selectors, then sorted event topic0s, then sorted error
-    /// selectors, then `PausableFeature::COUNT`, then each `PausableFeature` ordinal.
-    ///
-    /// The ordinals are load-bearing exactly as `B20Variant`'s are for the factory (see PR #4206):
+    /// This surface passes its `PausableFeature` ordinals to [`AbiFingerprint`], and they are
+    /// load-bearing exactly as `B20Variant`'s are for the factory:
     /// `B20PausableFeature::mask` derives the pause storage bit as `1 << (feature as u8)`, so a
     /// `sol!` reorder of `TRANSFER`/`MINT`/`BURN` would silently remap which bit each feature
     /// toggles while leaving every selector, topic0, error selector and `COUNT` identical.
@@ -232,70 +228,31 @@ mod tests {
     const V2_ABI_FINGERPRINT: B256 =
         b256!("106ef4b7c288c9344d6906ba7ef99a740bd9621cdaed89d06b35abd313c13449");
 
-    fn abi_fingerprint(
-        selectors: impl IntoIterator<Item = [u8; 4]>,
-        event_hashes: impl IntoIterator<Item = B256>,
-        error_selectors: impl IntoIterator<Item = [u8; 4]>,
-        pausable: impl IntoIterator<Item = u8>,
-        pausable_count: u8,
-    ) -> B256 {
-        let mut selectors: Vec<[u8; 4]> = selectors.into_iter().collect();
-        selectors.sort_unstable();
-
-        let mut event_hashes: Vec<B256> = event_hashes.into_iter().collect();
-        event_hashes.sort_unstable();
-
-        let mut error_selectors: Vec<[u8; 4]> = error_selectors.into_iter().collect();
-        error_selectors.sort_unstable();
-
-        let ordinals: Vec<u8> = pausable.into_iter().collect();
-
-        let mut buf = Vec::with_capacity(
-            selectors.len() * 4
-                + event_hashes.len() * 32
-                + error_selectors.len() * 4
-                + 1
-                + ordinals.len(),
-        );
-        for selector in &selectors {
-            buf.extend_from_slice(selector);
-        }
-        for hash in &event_hashes {
-            buf.extend_from_slice(hash.as_slice());
-        }
-        for selector in &error_selectors {
-            buf.extend_from_slice(selector);
-        }
-        buf.push(pausable_count);
-        buf.extend(ordinals);
-        keccak256(&buf)
-    }
-
     fn v1_abi_fingerprint() -> B256 {
-        abi_fingerprint(
+        AbiFingerprint::compute(
             IB20V1::IB20Calls::selectors(),
             IB20V1::IB20Events::SELECTORS.iter().copied().map(B256::new),
             IB20V1::IB20Errors::selectors(),
+            IB20V1::PausableFeature::COUNT,
             [
                 IB20V1::PausableFeature::TRANSFER as u8,
                 IB20V1::PausableFeature::MINT as u8,
                 IB20V1::PausableFeature::BURN as u8,
             ],
-            IB20V1::PausableFeature::COUNT as u8,
         )
     }
 
     fn v2_abi_fingerprint() -> B256 {
-        abi_fingerprint(
+        AbiFingerprint::compute(
             IB20::IB20Calls::selectors(),
             IB20::IB20Events::SELECTORS.iter().copied().map(B256::new),
             IB20::IB20Errors::selectors(),
+            IB20::PausableFeature::COUNT,
             [
                 IB20::PausableFeature::TRANSFER as u8,
                 IB20::PausableFeature::MINT as u8,
                 IB20::PausableFeature::BURN as u8,
             ],
-            IB20::PausableFeature::COUNT as u8,
         )
     }
 

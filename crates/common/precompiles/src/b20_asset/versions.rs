@@ -309,6 +309,14 @@ mod tests {
                     );
                 }
             }
+            for selector in IB20::IB20Calls::selectors() {
+                if wire.common_b20.valid_selector(selector) {
+                    assert!(
+                        !wire.asset.valid_selector(selector),
+                        "selector {selector:?} owned by both common and asset"
+                    );
+                }
+            }
         }
     }
 
