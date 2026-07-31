@@ -1,7 +1,7 @@
 //! Shared business logic for all Base-native token variants.
 
 mod abi;
-pub use abi::IB20;
+pub use abi::{B20Abi, IB20, IB20V1, IB20V2};
 
 #[cfg(any(test, feature = "test-utils"))]
 mod abi_fingerprint;

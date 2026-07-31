@@ -1,4 +1,14 @@
-//! ABI definition for the `IB20` interface.
+//! The shared B-20 wire surface frozen at Cobalt. Also the canonical live surface, re-exported
+//! unqualified by [`super`]. A new wire surface goes in a new `abi/vN.rs`; see [`super`].
+//!
+//! Being canonical, this module also owns the surface's [`IB20::IB20Calls::as_label`] mapping and
+//! the absolute fingerprints for every frozen common surface.
+//!
+//! # Frozen — do not edit
+//!
+//! The interface stays named `IB20`, because `SolInterface::NAME` reaches the wire through
+//! `AbiDecodeFailed` on short calldata. `PausableFeature` ordinals are also consensus data:
+//! `B20PausableFeature::mask` derives pause storage bits as `1 << (feature as u8)`.
 
 use alloy_sol_types::sol;
 
@@ -197,9 +207,64 @@ impl IB20::IB20Calls {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::{Address, B256, U256, b256};
+    use alloy_sol_types::{SolEnum, SolInterface};
 
-    use crate::IB20;
+    use super::IB20;
+    use crate::{AbiFingerprint, IB20V1};
+
+    /// Absolute wire fingerprint for Beryl's surface. Catches both-sides drift that relative
+    /// V1==V2 asserts miss (alloy Display / signature changes that move every copy together).
+    ///
+    /// This surface passes its `PausableFeature` ordinals to [`AbiFingerprint`], and they are
+    /// load-bearing exactly as `B20Variant`'s are for the factory:
+    /// `B20PausableFeature::mask` derives the pause storage bit as `1 << (feature as u8)`, so a
+    /// `sol!` reorder of `TRANSFER`/`MINT`/`BURN` would silently remap which bit each feature
+    /// toggles while leaving every selector, topic0, error selector and `COUNT` identical.
+    const V1_ABI_FINGERPRINT: B256 =
+        b256!("106ef4b7c288c9344d6906ba7ef99a740bd9621cdaed89d06b35abd313c13449");
+
+    /// Absolute wire fingerprint for Cobalt's (canonical) surface. Identical to V1 today.
+    const V2_ABI_FINGERPRINT: B256 =
+        b256!("106ef4b7c288c9344d6906ba7ef99a740bd9621cdaed89d06b35abd313c13449");
+
+    fn v1_abi_fingerprint() -> B256 {
+        AbiFingerprint::compute(
+            IB20V1::IB20Calls::selectors(),
+            IB20V1::IB20Events::SELECTORS.iter().copied().map(B256::new),
+            IB20V1::IB20Errors::selectors(),
+            IB20V1::PausableFeature::COUNT,
+            [
+                IB20V1::PausableFeature::TRANSFER as u8,
+                IB20V1::PausableFeature::MINT as u8,
+                IB20V1::PausableFeature::BURN as u8,
+            ],
+        )
+    }
+
+    fn v2_abi_fingerprint() -> B256 {
+        AbiFingerprint::compute(
+            IB20::IB20Calls::selectors(),
+            IB20::IB20Events::SELECTORS.iter().copied().map(B256::new),
+            IB20::IB20Errors::selectors(),
+            IB20::PausableFeature::COUNT,
+            [
+                IB20::PausableFeature::TRANSFER as u8,
+                IB20::PausableFeature::MINT as u8,
+                IB20::PausableFeature::BURN as u8,
+            ],
+        )
+    }
+
+    #[test]
+    fn v1_abi_fingerprint_is_pinned() {
+        assert_eq!(v1_abi_fingerprint(), V1_ABI_FINGERPRINT);
+    }
+
+    #[test]
+    fn v2_abi_fingerprint_is_pinned() {
+        assert_eq!(v2_abi_fingerprint(), V2_ABI_FINGERPRINT);
+    }
 
     #[test]
     fn b20_call_labels_are_stable() {
@@ -215,5 +280,13 @@ mod tests {
             .as_label(),
             "precompile-b20-updateSupplyCap"
         );
+    }
+
+    /// `SolInterface::NAME` lands in consensus data: the short-calldata branch of
+    /// `abi_decode_validate` builds its error from it, and `AbiDecodeFailed` puts that string on
+    /// the wire. Renaming the frozen interface would change historical revert payloads.
+    #[test]
+    fn interface_name_is_frozen() {
+        assert_eq!(IB20::IB20Calls::NAME, "IB20Calls");
     }
 }

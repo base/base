@@ -248,6 +248,10 @@ fn resolver_maps_forks_to_versions() {
     assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(AssetVersion::V2));
 }
 
+/// The 8 ERC-8056 scheduled-multiplier selectors were introduced at Cobalt (`AssetV2`). At V1
+/// (Beryl) they are absent from the frozen asset wire surface, so `route` falls through to the
+/// disjoint inherited `IB20` decode and rejects them as `UnknownFunctionSelector`, byte-identically
+/// to the deleted hand-written fork gate.
 #[test]
 fn golden_v2_selectors_unknown_at_v1() {
     let mut s = fresh();
@@ -2798,9 +2802,9 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_announce_unprivileged_requires_role,
         ]),
 
-        // ERC-8056 scheduled-multiplier surface: introduced at V2 (Cobalt). On the frozen V1
-        // (Beryl) these selectors are version-gated and stay unknown; V2 behavior is cross-
-        // validated by the base-std suite in live-precompile mode.
+        // ERC-8056 scheduled-multiplier surface: introduced at V2 (Cobalt). The frozen V1 (Beryl)
+        // wire surface does not declare these selectors, so they stay unknown at V1; V2 behavior is
+        // cross-validated by the base-std suite in live-precompile mode.
         SC::uiMultiplier(_)
         | SC::newUIMultiplier(_)
         | SC::effectiveAt(_)
