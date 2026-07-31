@@ -41,6 +41,10 @@ pub fn namespace(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// By default this expands through `crate::macros::base_precompile!` in the invoking crate. Callers
 /// outside `base-common-precompiles` can pass `macro_path = path::to::wrapper_macro` to override the
 /// runtime wrapper macro.
+///
+/// Optional bare `install` generates `Self::install`, registering at `<Storage>::ADDRESS` — the
+/// same address used for storage construction. Parenthesized `install(...)` is rejected so
+/// dispatch and storage addresses cannot desynchronize.
 #[proc_macro_attribute]
 pub fn precompile(attr: TokenStream, item: TokenStream) -> TokenStream {
     precompile::expand(attr, item)
