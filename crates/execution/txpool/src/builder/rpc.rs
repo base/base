@@ -229,6 +229,22 @@ mod tests {
         BuilderApiImpl::new(NoopTransactionPool::<BasePooledTransaction>::new())
     }
 
+    fn validated_transaction<E>(
+        sender: Address,
+        raw: Bytes,
+        extensions: E,
+    ) -> ValidatedTransaction<E> {
+        ValidatedTransaction {
+            sender,
+            raw,
+            min_block_number: None,
+            max_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+            extensions,
+        }
+    }
+
     // ==========================================================================
     // Wire extension tests
     // ==========================================================================
@@ -271,15 +287,7 @@ mod tests {
         let handler = extension_handler();
         let (sender, raw) = create_eip1559_tx();
 
-        let tx = ValidatedTransaction {
-            sender,
-            raw,
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            extensions: TestExtensions { reject: Some(true) },
-        };
+        let tx = validated_transaction(sender, raw, TestExtensions { reject: Some(true) });
 
         let err = handler.insert_validated_transaction(tx).await.unwrap_err();
         assert_eq!(
@@ -299,15 +307,7 @@ mod tests {
         let handler = extension_handler();
         let (sender, raw) = create_eip1559_tx();
 
-        let tx = ValidatedTransaction {
-            sender,
-            raw,
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            extensions: TestExtensions { reject: None },
-        };
+        let tx = validated_transaction(sender, raw, TestExtensions { reject: None });
 
         let err = handler.insert_validated_transaction(tx).await.unwrap_err();
         // The extension passed, so the request got as far as the noop pool,
@@ -335,15 +335,11 @@ mod tests {
     async fn decode_invalid_bytes_returns_invalid_params() {
         let handler = handler();
 
-        let tx = ValidatedTransaction {
-            sender: Address::repeat_byte(0x01),
-            raw: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            extensions: NoExtensions {},
-        };
+        let tx = validated_transaction(
+            Address::repeat_byte(0x01),
+            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            NoExtensions {},
+        );
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err(), "expected decode error for invalid bytes");
@@ -365,15 +361,7 @@ mod tests {
     async fn decode_empty_bytes_returns_invalid_params() {
         let handler = handler();
 
-        let tx = ValidatedTransaction {
-            sender: Address::ZERO,
-            raw: Bytes::new(),
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            extensions: NoExtensions {},
-        };
+        let tx = validated_transaction(Address::ZERO, Bytes::new(), NoExtensions {});
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err(), "expected decode error for empty bytes");
@@ -394,15 +382,7 @@ mod tests {
         let (sender, full_raw) = create_deposit_tx();
         let truncated = Bytes::from(full_raw[..full_raw.len() / 2].to_vec());
 
-        let tx = ValidatedTransaction {
-            sender,
-            raw: truncated,
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            extensions: NoExtensions {},
-        };
+        let tx = validated_transaction(sender, truncated, NoExtensions {});
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err(), "expected decode error for truncated tx");
@@ -420,15 +400,11 @@ mod tests {
         let handler = handler();
 
         // Type byte 0xFF is not a valid EIP-2718 tx type
-        let tx = ValidatedTransaction {
-            sender: Address::repeat_byte(0x01),
-            raw: Bytes::from_static(&[0xFF, 0x01, 0x02, 0x03]),
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            extensions: NoExtensions {},
-        };
+        let tx = validated_transaction(
+            Address::repeat_byte(0x01),
+            Bytes::from_static(&[0xFF, 0x01, 0x02, 0x03]),
+            NoExtensions {},
+        );
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err(), "expected decode error for invalid type byte");
@@ -441,15 +417,8 @@ mod tests {
     async fn decode_single_byte_returns_invalid_params() {
         let handler = handler();
 
-        let tx = ValidatedTransaction {
-            sender: Address::ZERO,
-            raw: Bytes::from_static(&[0x02]), // Just type byte, no payload
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            extensions: NoExtensions {},
-        };
+        // Just the type byte, without a payload.
+        let tx = validated_transaction(Address::ZERO, Bytes::from_static(&[0x02]), NoExtensions {});
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err());
@@ -463,15 +432,11 @@ mod tests {
         let handler = handler();
 
         // Legacy tx (type 0x00) followed by invalid RLP
-        let tx = ValidatedTransaction {
-            sender: Address::ZERO,
-            raw: Bytes::from_static(&[0x00, 0x01, 0x02]),
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            extensions: NoExtensions {},
-        };
+        let tx = validated_transaction(
+            Address::ZERO,
+            Bytes::from_static(&[0x00, 0x01, 0x02]),
+            NoExtensions {},
+        );
 
         let result = handler.insert_validated_transaction(tx).await;
         let err = result.unwrap_err();
@@ -483,15 +448,7 @@ mod tests {
         let handler = handler();
 
         let (sender, raw) = create_eip1559_tx();
-        let tx = ValidatedTransaction {
-            sender,
-            raw,
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            extensions: NoExtensions {},
-        };
+        let tx = validated_transaction(sender, raw, NoExtensions {});
 
         let result = handler.insert_validated_transaction(tx).await;
         let err = result.unwrap_err();

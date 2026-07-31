@@ -954,19 +954,7 @@ where
     ) {
         let mut current_size = 0;
         for hash in tx_hashes {
-            if let Some(transaction) = self.protocol_pool.get(hash) {
-                let Some((pooled, encoded_length)) = pooled_element(&transaction) else {
-                    continue;
-                };
-                current_size += encoded_length;
-                if limit.exceeds(current_size) {
-                    break;
-                }
-                out.push(pooled);
-                continue;
-            }
-
-            let Some(transaction) = self.nonce_pool.read().get(hash) else {
+            let Some(transaction) = self.get(hash) else {
                 continue;
             };
             let Some((pooled, encoded_length)) = pooled_element(&transaction) else {
@@ -1614,9 +1602,7 @@ impl<T: BasePooledTx> SidecarListeners<T> {
     fn broadcast_new(&mut self, event: NewTransactionEvent<T>) {
         self.new_all.retain(|listener| listener.try_send(event.clone()).is_ok());
         if event.transaction.propagate {
-            let propagate_event = event.clone();
-            self.new_propagate
-                .retain(|listener| listener.try_send(propagate_event.clone()).is_ok());
+            self.new_propagate.retain(|listener| listener.try_send(event.clone()).is_ok());
         }
     }
 }
@@ -1656,14 +1642,13 @@ fn merge_receivers<T: Send + 'static>(
 fn pooled_element<T: BasePooledTx>(
     transaction: &Arc<ValidPoolTransaction<T>>,
 ) -> Option<(<T as PoolTransaction>::Pooled, usize)> {
-    let encoded_length = transaction.encoded_length();
     transaction
         .transaction
         .clone()
         .try_into_pooled()
         .ok()
         .map(|recovered| recovered.into_parts().0)
-        .map(|pooled| (pooled, encoded_length))
+        .map(|pooled| (pooled, transaction.encoded_length()))
 }
 
 #[cfg(test)]
@@ -1757,15 +1742,26 @@ mod tests {
         nonce_sequence: u64,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
+        signed_8130(signer, nonce_key, nonce_sequence, 0, max_fee_per_gas, 50_000)
+    }
+
+    fn signed_8130(
+        signer: &PrivateKeySigner,
+        nonce_key: U256,
+        nonce_sequence: u64,
+        expiry: u64,
+        max_fee_per_gas: u128,
+        gas_limit: u64,
+    ) -> BasePooledTransaction {
         let tx = TxEip8130 {
             chain_id: test_chain_id(),
             sender: None,
             nonce_key,
             nonce_sequence,
-            expiry: 0,
+            expiry,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas,
-            gas_limit: 50_000,
+            gas_limit,
             account_changes: Vec::new(),
             calls: Vec::new(),
             metadata: Bytes::new(),
@@ -1783,25 +1779,7 @@ mod tests {
         expiry: u64,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        let tx = TxEip8130 {
-            chain_id: test_chain_id(),
-            sender: None,
-            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
-            nonce_sequence: 0,
-            expiry,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas,
-            gas_limit: 50_000,
-            account_changes: Vec::new(),
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer: None,
-        };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        let pooled = ConsensusPooledTransaction::Eip8130(signed);
-        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+        signed_8130(signer, Eip8130Constants::NONCE_KEY_MAX, 0, expiry, max_fee_per_gas, 50_000)
     }
 
     fn valid_pool_transaction(
@@ -1965,25 +1943,7 @@ mod tests {
         expiry: u64,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        let tx = TxEip8130 {
-            chain_id: test_chain_id(),
-            sender: None,
-            nonce_key,
-            nonce_sequence,
-            expiry,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas,
-            gas_limit: 1_000_000,
-            account_changes: Vec::new(),
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer: None,
-        };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        let pooled = ConsensusPooledTransaction::Eip8130(signed);
-        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+        signed_8130(signer, nonce_key, nonce_sequence, expiry, max_fee_per_gas, 1_000_000)
     }
 
     #[tokio::test]

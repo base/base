@@ -169,6 +169,12 @@ impl ManifestStale {
 
 #[cfg(test)]
 mod tests {
+    //! Manifest unit tests.
+    //!
+    //! [`FailingDatabase`] is hand-written because [`revm::Database`] is an external trait and
+    //! every read must return the same custom associated error type; `automock` cannot be attached
+    //! to that trait.
+
     use alloy_primitives::B256;
     use revm::{
         Database,
