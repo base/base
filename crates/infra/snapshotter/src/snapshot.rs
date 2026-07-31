@@ -349,6 +349,30 @@ impl SnapshotGenerator {
             );
         }
 
+        let proofs_files = proofs_source_files(source_datadir)?;
+        if !proofs_files.is_empty() {
+            let (proofs_size, proofs_output_files) =
+                package_single_component(output_dir, "proofs.tar.zst", &proofs_files)?;
+            let proofs_decompressed_size: u64 = proofs_output_files.iter().map(|f| f.size).sum();
+            info!(
+                component = "proofs",
+                compressed_size = proofs_size,
+                decompressed_size = proofs_decompressed_size,
+                file_count = proofs_files.len(),
+                "packaged proofs database"
+            );
+            components.insert(
+                "proofs".to_string(),
+                ComponentManifest::Single(SingleArchive {
+                    file: "proofs.tar.zst".to_string(),
+                    size: proofs_size,
+                    decompressed_size: proofs_decompressed_size,
+                    blake3: None,
+                    output_files: proofs_output_files,
+                }),
+            );
+        }
+
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .context("system clock is before UNIX epoch")?
@@ -548,6 +572,14 @@ fn rocksdb_source_files(source_datadir: &Path) -> Result<Vec<PlannedFile>> {
         return Ok(Vec::new());
     }
     collect_files_recursive(&rocksdb_dir, Path::new("rocksdb"))
+}
+
+fn proofs_source_files(source_datadir: &Path) -> Result<Vec<PlannedFile>> {
+    let proofs_dir = source_datadir.join("proofs");
+    if !proofs_dir.exists() {
+        return Ok(Vec::new());
+    }
+    collect_files_recursive(&proofs_dir, Path::new("proofs"))
 }
 
 fn looks_like_db_dir(path: &Path) -> Result<bool> {
@@ -928,6 +960,100 @@ mod tests {
         assert!(
             files.iter().any(|f| f.file_name().unwrap() == "manifest.json"),
             "should produce manifest.json"
+        );
+    }
+
+    #[test]
+    fn generate_manifest_creates_proofs_archive() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let db_dir = source.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
+
+        let proofs_dir = source.path().join("proofs");
+        std::fs::create_dir_all(&proofs_dir).unwrap();
+        std::fs::write(proofs_dir.join("CURRENT"), b"MANIFEST-000014\n").unwrap();
+        std::fs::write(proofs_dir.join("IDENTITY"), b"identity-bytes").unwrap();
+        std::fs::write(proofs_dir.join("LOCK"), b"").unwrap();
+        std::fs::write(proofs_dir.join("MANIFEST-000014"), b"manifest-data").unwrap();
+        std::fs::write(proofs_dir.join("OPTIONS-000007"), b"options-data").unwrap();
+        std::fs::write(proofs_dir.join("000060.sst"), b"sst-data").unwrap();
+        std::fs::write(proofs_dir.join("000801.log"), b"wal-data").unwrap();
+
+        let remote = HashMap::new();
+        let files = SnapshotGenerator::generate_manifest(
+            source.path(),
+            output.path(),
+            8453,
+            Some(0),
+            Some(500_000),
+            &remote,
+        )
+        .unwrap();
+
+        assert!(
+            files.iter().any(|f| f.file_name().unwrap() == "proofs.tar.zst"),
+            "should produce proofs.tar.zst when proofs/ exists"
+        );
+
+        let manifest_content =
+            std::fs::read_to_string(output.path().join("manifest.json")).unwrap();
+        let manifest: SnapshotManifest = serde_json::from_str(&manifest_content).unwrap();
+        let ComponentManifest::Single(proofs) = manifest
+            .components
+            .get("proofs")
+            .expect("manifest should include proofs component")
+        else {
+            panic!("proofs component should be a Single archive");
+        };
+
+        assert_eq!(proofs.file, "proofs.tar.zst", "proofs archive filename");
+        assert_eq!(proofs.output_files.len(), 7, "exactly 7 proofs DB files should be packaged");
+        assert!(
+            proofs.output_files.iter().all(|f| f.path.starts_with("proofs/")),
+            "all proofs output paths should be under proofs/"
+        );
+        assert!(
+            proofs.output_files.iter().any(|f| f.path == "proofs/000060.sst"),
+            "should include SST file under proofs/"
+        );
+        assert!(
+            proofs.output_files.iter().any(|f| f.path == "proofs/CURRENT"),
+            "should include CURRENT under proofs/"
+        );
+    }
+
+    #[test]
+    fn generate_manifest_skips_proofs_when_missing() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let db_dir = source.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
+
+        let remote = HashMap::new();
+        let files = SnapshotGenerator::generate_manifest(
+            source.path(),
+            output.path(),
+            8453,
+            Some(0),
+            Some(500_000),
+            &remote,
+        )
+        .unwrap();
+
+        assert!(
+            !files.iter().any(|f| f.file_name().unwrap() == "proofs.tar.zst"),
+            "should not produce proofs.tar.zst when proofs/ is missing"
+        );
+
+        let manifest_content =
+            std::fs::read_to_string(output.path().join("manifest.json")).unwrap();
+        let manifest: SnapshotManifest = serde_json::from_str(&manifest_content).unwrap();
+        assert!(
+            !manifest.components.contains_key("proofs"),
+            "manifest should omit proofs component when proofs/ is missing"
         );
     }
 
