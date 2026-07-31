@@ -406,7 +406,94 @@ impl<T: PoolTransaction, E> std::fmt::Debug for DestinationForwarder<T, E> {
 
 #[cfg(test)]
 mod tests {
+    use std::{net::SocketAddr, sync::Mutex, time::Duration};
+
+    use alloy_consensus::transaction::{Recovered, Transaction};
+    use alloy_primitives::{Address, B256, TxKind, U256};
+    use base_common_consensus::{BaseTransactionSigned, TxDeposit};
+    use base_execution_txpool::{BasePooledTransaction, ExtensionError};
+    use jsonrpsee::{RpcModule, http_client::HttpClientBuilder, server::Server};
+    use reth_transaction_pool::{TransactionOrigin, identifier::TransactionId};
+    use serde::{Deserialize, Serialize};
+    use serde_json::Value;
+
     use super::*;
+
+    #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+    struct TestExtensions {
+        test_tag: String,
+    }
+
+    impl ValidatedTransactionExtensions<BasePooledTransaction> for TestExtensions {
+        fn extract(_tx: &ValidPoolTransaction<BasePooledTransaction>) -> Self {
+            Self { test_tag: "forwarded".to_string() }
+        }
+
+        fn apply(self, tx: BasePooledTransaction) -> Result<BasePooledTransaction, ExtensionError> {
+            Ok(tx)
+        }
+    }
+
+    fn transaction(nonce: u64) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        let sender = Address::repeat_byte((nonce + 1) as u8);
+        let signed: BaseTransactionSigned = TxDeposit {
+            source_hash: B256::with_last_byte(nonce as u8),
+            from: sender,
+            to: TxKind::Call(Address::repeat_byte(0x42)),
+            mint: 0,
+            value: U256::from(nonce),
+            gas_limit: 21_000,
+            is_system_transaction: false,
+            input: Bytes::new(),
+        }
+        .into();
+        let encoded_length = signed.encoded_2718().len();
+        let transaction =
+            BasePooledTransaction::new(Recovered::new_unchecked(signed, sender), encoded_length);
+        Arc::new(ValidPoolTransaction {
+            transaction_id: TransactionId::new(0u64.into(), transaction.nonce()),
+            transaction,
+            propagate: true,
+            timestamp: Instant::now(),
+            origin: TransactionOrigin::External,
+            authority_ids: None,
+        })
+    }
+
+    fn config(max_rps: u32, max_batch_size: usize) -> Arc<ForwarderConfig> {
+        Arc::new(ForwarderConfig {
+            max_rps,
+            max_batch_size,
+            max_retries: 0,
+            retry_backoff: Duration::ZERO,
+            request_timeout: Duration::from_secs(1),
+        })
+    }
+
+    async fn rpc_server() -> (url::Url, Arc<Mutex<Vec<Value>>>, jsonrpsee::server::ServerHandle) {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let mut module = RpcModule::new(Arc::clone(&received));
+        module
+            .register_method("base_insertValidatedTransaction", |params, received, _| {
+                let (transaction,): (Value,) = params.parse()?;
+                received.lock().unwrap().push(transaction);
+                Ok::<_, jsonrpsee::types::ErrorObjectOwned>(())
+            })
+            .unwrap();
+        let server = Server::builder().build(SocketAddr::from(([127, 0, 0, 1], 0))).await.unwrap();
+        let address = server.local_addr().unwrap();
+        let handle = server.start(module);
+        (url::Url::parse(&format!("http://{address}")).unwrap(), received, handle)
+    }
+
+    fn forwarder<E: ValidatedTransactionExtensions<BasePooledTransaction>>(
+        url: url::Url,
+        receiver: mpsc::Receiver<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+        config: Arc<ForwarderConfig>,
+    ) -> DestinationForwarder<BasePooledTransaction, E> {
+        let client = HttpClientBuilder::default().build(url.as_str()).unwrap();
+        DestinationForwarder::new(url, client, receiver, config, 16)
+    }
 
     #[test]
     fn rate_limiter_unlimited_when_zero() {
@@ -430,5 +517,68 @@ mod tests {
         }
 
         assert!(limiter.check_rate_limit().is_some());
+    }
+
+    #[tokio::test]
+    async fn queue_closure_drains_buffered_transactions_and_writes_extensions() {
+        let (url, received, _server) = rpc_server().await;
+        let (sender, receiver) = mpsc::channel(4);
+        drop(sender);
+        let mut forwarder = forwarder::<TestExtensions>(url, receiver, config(1, 0));
+        for nonce in 0..3 {
+            assert!(!forwarder.handle_recv(Some(transaction(nonce))));
+        }
+        forwarder.limiter.record_send();
+
+        forwarder.run().await;
+
+        let received = received.lock().unwrap();
+        assert_eq!(received.len(), 3);
+        assert!(received.iter().all(|tx| tx["test_tag"] == "forwarded"));
+        assert!(received.iter().all(|tx| tx.get("extensions").is_none()));
+    }
+
+    #[tokio::test]
+    async fn flush_buffer_chunks_transactions_at_max_batch_size() {
+        let (url, received, _server) = rpc_server().await;
+        let (_sender, receiver) = mpsc::channel(1);
+        let mut forwarder = forwarder::<NoExtensions>(url, receiver, config(1, 2));
+        for nonce in 0..5 {
+            assert!(!forwarder.handle_recv(Some(transaction(nonce))));
+        }
+
+        forwarder.flush_buffer().await;
+        assert_eq!(forwarder.buffer.len(), 3);
+        assert!(forwarder.limiter.check_rate_limit().is_some());
+        assert_eq!(received.lock().unwrap().len(), 2);
+
+        forwarder.flush_buffer().await;
+        assert_eq!(forwarder.buffer.len(), 1);
+        assert_eq!(received.lock().unwrap().len(), 4);
+
+        forwarder.flush_buffer().await;
+        assert!(forwarder.buffer.is_empty());
+        assert_eq!(received.lock().unwrap().len(), 5);
+    }
+
+    #[tokio::test]
+    async fn run_buffers_transactions_until_the_rate_limit_reopens() {
+        let (url, received, _server) = rpc_server().await;
+        let (sender, receiver) = mpsc::channel(5);
+        for nonce in 0..5 {
+            sender.send(transaction(nonce)).await.unwrap();
+        }
+        drop(sender);
+
+        let mut forwarder = forwarder::<NoExtensions>(url, receiver, config(1, 2));
+        forwarder.limiter.record_send();
+        let task = tokio::spawn(forwarder.run());
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(received.lock().unwrap().is_empty());
+        assert!(!task.is_finished());
+
+        tokio::time::timeout(Duration::from_secs(4), task).await.unwrap().unwrap();
+        assert_eq!(received.lock().unwrap().len(), 5);
     }
 }

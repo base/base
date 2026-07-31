@@ -15,7 +15,11 @@ use tracing::{error, info, warn};
 use crate::{TxForwardingConfig, consumer::DestinationConsumer, forwarder::DestinationForwarder};
 
 /// Maximum time allowed for destination queues and in-flight requests to drain.
+#[cfg(not(test))]
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+/// Short deadline used by unit tests that verify forced shutdown.
+#[cfg(test)]
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// Owns transaction forwarding configuration and starts destination pipelines.
 #[derive(Debug)]
@@ -173,4 +177,69 @@ pub struct ShutdownReport {
     pub task_failures: usize,
     /// Whether draining forwarders exceeded the shutdown timeout.
     pub timed_out: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::oneshot;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn shutdown_cancels_consumers_before_waiting_for_forwarders() {
+        let consumer_cancel = CancellationToken::new();
+        let consumer_signal = consumer_cancel.child_token();
+        let (consumer_stopped, wait_for_consumer) = oneshot::channel();
+        let consumer_task = tokio::spawn(async move {
+            consumer_signal.cancelled().await;
+            consumer_stopped.send(()).unwrap();
+        });
+        let forwarder_task = tokio::spawn(async move {
+            wait_for_consumer.await.unwrap();
+        });
+        let handle = TxForwardingHandle {
+            consumer_cancel,
+            consumer_tasks: vec![consumer_task],
+            forwarder_tasks: vec![forwarder_task],
+        };
+
+        let report = handle.shutdown().await;
+
+        assert_eq!(report.consumers_completed, 1);
+        assert_eq!(report.forwarders_completed, 1);
+        assert_eq!(report.task_failures, 0);
+        assert!(!report.timed_out);
+    }
+
+    #[tokio::test]
+    async fn shutdown_reports_join_failures() {
+        let handle = TxForwardingHandle {
+            consumer_cancel: CancellationToken::new(),
+            consumer_tasks: vec![tokio::spawn(async { panic!("consumer failed") })],
+            forwarder_tasks: vec![tokio::spawn(async { panic!("forwarder failed") })],
+        };
+
+        let report = handle.shutdown().await;
+
+        assert_eq!(report.consumers_completed, 0);
+        assert_eq!(report.forwarders_completed, 0);
+        assert_eq!(report.task_failures, 2);
+        assert!(!report.timed_out);
+    }
+
+    #[tokio::test]
+    async fn shutdown_aborts_forwarders_after_timeout() {
+        let handle = TxForwardingHandle {
+            consumer_cancel: CancellationToken::new(),
+            consumer_tasks: Vec::new(),
+            forwarder_tasks: vec![tokio::spawn(std::future::pending())],
+        };
+
+        let report = handle.shutdown().await;
+
+        assert_eq!(report.consumers_completed, 0);
+        assert_eq!(report.forwarders_completed, 0);
+        assert_eq!(report.task_failures, 1);
+        assert!(report.timed_out);
+    }
 }

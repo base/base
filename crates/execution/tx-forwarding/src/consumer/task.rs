@@ -77,25 +77,12 @@ where
                     continue;
                 }
 
-                let mut pending = tx;
-                loop {
-                    match self.sender.try_send(pending) {
-                        Ok(()) => {
-                            self.recently_sent.mark_sent(hash);
-                            txs_sent += 1;
-                            self.emit_builder_consumed_event(hash, iterator_index);
-                            break;
-                        }
-                        Err(mpsc::error::TrySendError::Full(tx)) => {
-                            if self.cancel.is_cancelled() {
-                                return;
-                            }
-                            pending = tx;
-                            std::thread::sleep(self.config.poll_interval);
-                        }
-                        Err(mpsc::error::TrySendError::Closed(_)) => return,
-                    }
+                if !self.enqueue(tx) {
+                    return;
                 }
+                self.recently_sent.mark_sent(hash);
+                txs_sent += 1;
+                self.emit_builder_consumed_event(hash, iterator_index);
             }
 
             Metrics::iterations(Arc::clone(&self.url_label)).increment(1);
@@ -123,6 +110,23 @@ where
         }
 
         info!("consumer cancelled, shutting down");
+    }
+
+    /// Waits for this destination's queue to accept the exact transaction.
+    fn enqueue(&self, mut pending: Arc<ValidPoolTransaction<P::Transaction>>) -> bool {
+        loop {
+            match self.sender.try_send(pending) {
+                Ok(()) => return true,
+                Err(mpsc::error::TrySendError::Full(tx)) => {
+                    if self.cancel.is_cancelled() {
+                        return false;
+                    }
+                    pending = tx;
+                    std::thread::sleep(self.config.poll_interval);
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => return false,
+            }
+        }
     }
 
     fn emit_builder_consumed_event(&self, tx_hash: TxHash, iterator_index: u64) {
@@ -154,5 +158,93 @@ impl<P: TransactionPool> fmt::Debug for DestinationConsumer<P> {
             .field("config", &self.config)
             .field("recently_sent", &self.recently_sent)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use alloy_consensus::transaction::Recovered;
+    use alloy_primitives::{Address, B256, TxKind, U256};
+    use base_common_consensus::{BaseTransactionSigned, TxDeposit};
+    use base_execution_txpool::BasePooledTransaction;
+    use reth_transaction_pool::{
+        TransactionOrigin, identifier::TransactionId, noop::NoopTransactionPool,
+    };
+
+    use super::*;
+
+    fn transaction(nonce: u64) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        let sender = Address::repeat_byte((nonce + 1) as u8);
+        let signed: BaseTransactionSigned = TxDeposit {
+            source_hash: B256::with_last_byte(nonce as u8),
+            from: sender,
+            to: TxKind::Call(Address::repeat_byte(0x42)),
+            mint: 0,
+            value: U256::from(nonce),
+            gas_limit: 21_000,
+            is_system_transaction: false,
+            input: Default::default(),
+        }
+        .into();
+        let transaction = BasePooledTransaction::new(Recovered::new_unchecked(signed, sender), 128);
+        Arc::new(ValidPoolTransaction {
+            transaction_id: TransactionId::new(0u64.into(), nonce),
+            transaction,
+            propagate: true,
+            timestamp: Instant::now(),
+            origin: TransactionOrigin::External,
+            authority_ids: None,
+        })
+    }
+
+    fn consumer(
+        sender: mpsc::Sender<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+        cancel: CancellationToken,
+    ) -> DestinationConsumer<NoopTransactionPool<BasePooledTransaction>> {
+        DestinationConsumer::new(
+            NoopTransactionPool::new(),
+            ConsumerConfig {
+                resend_after: Duration::from_secs(4),
+                channel_capacity: 1,
+                poll_interval: Duration::from_millis(1),
+            },
+            sender,
+            cancel,
+            "http://builder.test".parse().unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn full_queue_retries_the_exact_transaction() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        sender.try_send(transaction(0)).unwrap();
+        let expected = transaction(1);
+        let expected_hash = *expected.hash();
+        let consumer = consumer(sender, CancellationToken::new());
+        let enqueue = tokio::task::spawn_blocking(move || consumer.enqueue(expected));
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!enqueue.is_finished());
+        assert_eq!(*receiver.recv().await.unwrap().hash(), *transaction(0).hash());
+        assert!(enqueue.await.unwrap());
+        assert_eq!(*receiver.recv().await.unwrap().hash(), expected_hash);
+    }
+
+    #[tokio::test]
+    async fn cancellation_stops_a_full_queue_retry() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        sender.try_send(transaction(0)).unwrap();
+        let cancel = CancellationToken::new();
+        let consumer = consumer(sender, cancel.child_token());
+        let enqueue = tokio::task::spawn_blocking(move || consumer.enqueue(transaction(1)));
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        cancel.cancel();
+
+        assert!(!enqueue.await.unwrap());
+        assert_eq!(*receiver.recv().await.unwrap().hash(), *transaction(0).hash());
+        assert!(receiver.try_recv().is_err());
     }
 }
