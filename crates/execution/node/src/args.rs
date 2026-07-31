@@ -318,6 +318,12 @@ fn mib_to_usize(size_mib: u64) -> usize {
     usize::try_from(size_mib.saturating_mul(MIB)).unwrap_or(usize::MAX)
 }
 
+/// Provides access to shared rollup arguments.
+pub trait HasRollupArgs {
+    /// Returns the shared rollup arguments.
+    fn rollup_args(&self) -> &RollupArgs;
+}
+
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
@@ -474,6 +480,12 @@ pub struct RollupArgs {
     pub upgrade_signal_l1_rpc: UpgradeSignalL1RpcArgs,
 }
 
+impl HasRollupArgs for RollupArgs {
+    fn rollup_args(&self) -> &RollupArgs {
+        self
+    }
+}
+
 impl Default for RollupArgs {
     fn default() -> Self {
         Self {
@@ -514,6 +526,12 @@ mod tests {
     struct CommandParser<T: Args> {
         #[command(flatten)]
         args: T,
+    }
+
+    #[test]
+    fn rollup_args_provides_itself() {
+        let args = RollupArgs::default();
+        assert!(std::ptr::eq(args.rollup_args(), &args));
     }
 
     #[test]
