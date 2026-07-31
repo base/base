@@ -84,17 +84,18 @@ impl B20Guards {
         }
     }
 
-    /// Ensures `account` is seizable, i.e. blocked by the current seizable-account policy.
+    /// Ensures `account` is seizable, i.e. a member of the current seize-holder policy.
     ///
-    /// Mirrors [`Self::ensure_blocked`] but consults `SEIZABLE_ACCOUNT_POLICY` instead of the
+    /// Mirrors [`Self::ensure_blocked`] but consults `SEIZE_HOLDER_POLICY` instead of the
     /// transfer-sender policy: an account is seizable only when the configured registry policy does
-    /// not authorize it. Used by the seize operation class. Enforced unconditionally, including in
-    /// the factory bootstrap window.
+    /// not authorize it. Used by `seizeWithMemo`. Enforced unconditionally, including in the factory
+    /// bootstrap window. Reverts `AccountNotSeizable` (distinct from `ensure_blocked`'s
+    /// `AccountNotBlocked`) so the seize path and the deprecated `burnBlocked` report separately.
     pub fn ensure_seizable<T: Token + ?Sized>(token: &T, account: Address) -> Result<()> {
-        let policy_scope = B20PolicyType::SeizableAccount.id();
+        let policy_scope = B20PolicyType::SeizeHolder.id();
         let policy_id = token.accounting().policy_id(policy_scope)?;
         if token.policy().is_authorized(token.policy_storage(), policy_id, account)? {
-            Err(BasePrecompileError::revert(IB20::AccountNotBlocked { account }))
+            Err(BasePrecompileError::revert(IB20::AccountNotSeizable { account }))
         } else {
             Ok(())
         }
@@ -125,7 +126,7 @@ mod tests {
 
     fn token_with_seizable_policy(account: Address) -> TestStablecoinToken {
         let mut accounting = InMemoryTokenAccounting::new(Address::repeat_byte(0x20));
-        accounting.policy_ids.insert(B20PolicyType::SeizableAccount.id(), EXTERNAL_POLICY_ID);
+        accounting.policy_ids.insert(B20PolicyType::SeizeHolder.id(), EXTERNAL_POLICY_ID);
 
         let mut policy = FakePolicyAccounting::new();
         policy.allow(EXTERNAL_POLICY_ID, account);
@@ -173,7 +174,7 @@ mod tests {
         // Authorized (allowed) under the seizable policy => not seizable => reverts.
         assert_eq!(
             B20Guards::ensure_seizable(&token, allowed).unwrap_err(),
-            BasePrecompileError::revert(IB20::AccountNotBlocked { account: allowed })
+            BasePrecompileError::revert(IB20::AccountNotSeizable { account: allowed })
         );
         // Not authorized (denied) => seizable => ok.
         B20Guards::ensure_seizable(&token, denied).unwrap();
@@ -190,14 +191,14 @@ mod tests {
         // `allowed` is authorized by transfer-sender AND by unset seizable (ALWAYS_ALLOW).
         assert_eq!(
             B20Guards::ensure_seizable(&token, allowed).unwrap_err(),
-            BasePrecompileError::revert(IB20::AccountNotBlocked { account: allowed })
+            BasePrecompileError::revert(IB20::AccountNotSeizable { account: allowed })
         );
 
         // `denied` is NOT authorized by transfer-sender, but still not seizable because the
         // seizable policy is unset (ALWAYS_ALLOW) — proving the two scopes are independent.
         assert_eq!(
             B20Guards::ensure_seizable(&token, denied).unwrap_err(),
-            BasePrecompileError::revert(IB20::AccountNotBlocked { account: denied })
+            BasePrecompileError::revert(IB20::AccountNotSeizable { account: denied })
         );
     }
 

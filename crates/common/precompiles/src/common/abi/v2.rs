@@ -21,7 +21,9 @@ sol! {
             /// Mint operations.
             MINT,
             /// Burn operations.
-            BURN
+            BURN,
+            /// Seize operations (`seizeWithMemo`). Legacy `burnBlocked` still gates on `BURN`.
+            SEIZE
         }
 
         // Errors
@@ -46,6 +48,7 @@ sol! {
         error PolicyNotFound(uint64 policyId);
         error UnsupportedPolicyType(bytes32 policyScope);
         error AccountNotBlocked(address account);
+        error AccountNotSeizable(address account);
         error ExpiredSignature(uint256 deadline);
         error InvalidSigner(address signer, address owner);
         error LastAdminCannotRenounce();
@@ -57,7 +60,7 @@ sol! {
         event Approval(address indexed owner, address indexed spender, uint256 amount);
         event Memo(address indexed caller, bytes32 indexed memo);
         event BurnedBlocked(address indexed caller, address indexed from, uint256 amount);
-        event TransferredFromSeizable(address indexed caller, address indexed from, address indexed to, uint256 amount);
+        event Seized(address indexed caller, address indexed from, address indexed to, uint256 amount);
         event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
         event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
         event RoleAdminChanged(bytes32 indexed role, bytes32 indexed previousAdminRole, bytes32 indexed newAdminRole);
@@ -76,6 +79,7 @@ sol! {
         function MINT_ROLE() external view returns (bytes32);
         function BURN_ROLE() external view returns (bytes32);
         function BURN_BLOCKED_ROLE() external view returns (bytes32);
+        function SEIZE_ROLE() external view returns (bytes32);
         function PAUSE_ROLE() external view returns (bytes32);
         function UNPAUSE_ROLE() external view returns (bytes32);
         function METADATA_ROLE() external view returns (bytes32);
@@ -85,6 +89,7 @@ sol! {
         function TRANSFER_RECEIVER_POLICY() external view returns (bytes32);
         function TRANSFER_EXECUTOR_POLICY() external view returns (bytes32);
         function MINT_RECEIVER_POLICY() external view returns (bytes32);
+        function SEIZE_HOLDER_POLICY() external view returns (bytes32);
 
         // ERC-20
         function name() external view returns (string);
@@ -111,6 +116,9 @@ sol! {
         function burn(uint256 amount) external;
         function burnWithMemo(uint256 amount, bytes32 memo) external;
         function burnBlocked(address from, uint256 amount) external;
+
+        // Seize
+        function seizeWithMemo(address from, address to, uint256 amount, bytes32 memo) external returns (bool);
 
         // Roles
         function hasRole(bytes32 role, address account) external view returns (bool);
@@ -164,6 +172,7 @@ impl IB20::IB20Calls {
             Self::MINT_ROLE(_) => "precompile-b20-MINT_ROLE",
             Self::BURN_ROLE(_) => "precompile-b20-BURN_ROLE",
             Self::BURN_BLOCKED_ROLE(_) => "precompile-b20-BURN_BLOCKED_ROLE",
+            Self::SEIZE_ROLE(_) => "precompile-b20-SEIZE_ROLE",
             Self::PAUSE_ROLE(_) => "precompile-b20-PAUSE_ROLE",
             Self::UNPAUSE_ROLE(_) => "precompile-b20-UNPAUSE_ROLE",
             Self::METADATA_ROLE(_) => "precompile-b20-METADATA_ROLE",
@@ -171,6 +180,7 @@ impl IB20::IB20Calls {
             Self::TRANSFER_RECEIVER_POLICY(_) => "precompile-b20-TRANSFER_RECEIVER_POLICY",
             Self::TRANSFER_EXECUTOR_POLICY(_) => "precompile-b20-TRANSFER_EXECUTOR_POLICY",
             Self::MINT_RECEIVER_POLICY(_) => "precompile-b20-MINT_RECEIVER_POLICY",
+            Self::SEIZE_HOLDER_POLICY(_) => "precompile-b20-SEIZE_HOLDER_POLICY",
             Self::hasRole(_) => "precompile-b20-hasRole",
             Self::getRoleAdmin(_) => "precompile-b20-getRoleAdmin",
             Self::pausedFeatures(_) => "precompile-b20-pausedFeatures",
@@ -188,6 +198,7 @@ impl IB20::IB20Calls {
             Self::burn(_) => "precompile-b20-burn",
             Self::burnWithMemo(_) => "precompile-b20-burnWithMemo",
             Self::burnBlocked(_) => "precompile-b20-burnBlocked",
+            Self::seizeWithMemo(_) => "precompile-b20-seizeWithMemo",
             Self::pause(_) => "precompile-b20-pause",
             Self::unpause(_) => "precompile-b20-unpause",
             Self::updateSupplyCap(_) => "precompile-b20-updateSupplyCap",
@@ -224,9 +235,11 @@ mod tests {
     const V1_ABI_FINGERPRINT: B256 =
         b256!("106ef4b7c288c9344d6906ba7ef99a740bd9621cdaed89d06b35abd313c13449");
 
-    /// Absolute wire fingerprint for Cobalt's (canonical) surface. Identical to V1 today.
+    /// Absolute wire fingerprint for Cobalt's (canonical) surface. Diverges from V1: Cobalt adds
+    /// the seize surface (`seizeWithMemo`, the `SEIZE_ROLE`/`SEIZE_HOLDER_POLICY` getters, the
+    /// `Seized` event, the `AccountNotSeizable` error, and the `SEIZE` pause feature).
     const V2_ABI_FINGERPRINT: B256 =
-        b256!("106ef4b7c288c9344d6906ba7ef99a740bd9621cdaed89d06b35abd313c13449");
+        b256!("ff1784b934ecfc840872a07cf0a7716f1818bed4ad1e57dda75ec2a919417be1");
 
     fn v1_abi_fingerprint() -> B256 {
         AbiFingerprint::compute(
@@ -252,6 +265,7 @@ mod tests {
                 IB20::PausableFeature::TRANSFER as u8,
                 IB20::PausableFeature::MINT as u8,
                 IB20::PausableFeature::BURN as u8,
+                IB20::PausableFeature::SEIZE as u8,
             ],
         )
     }

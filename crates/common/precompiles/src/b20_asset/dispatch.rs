@@ -141,6 +141,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
             C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
             C::BURN_BLOCKED_ROLE(_) => B20TokenRole::BurnBlocked.id().abi_encode().into(),
+            C::SEIZE_ROLE(_) => B20TokenRole::Seize.id().abi_encode().into(),
             C::PAUSE_ROLE(_) => B20TokenRole::Pause.id().abi_encode().into(),
             C::UNPAUSE_ROLE(_) => B20TokenRole::Unpause.id().abi_encode().into(),
             C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
@@ -154,6 +155,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 B20PolicyType::TransferExecutor.id().abi_encode().into()
             }
             C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
+            C::SEIZE_HOLDER_POLICY(_) => B20PolicyType::SeizeHolder.id().abi_encode().into(),
 
             // --- Role reads ---
             C::hasRole(c) => logic.has_role(self, c.role, c.account)?.abi_encode().into(),
@@ -235,6 +237,12 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             C::burnBlocked(c) => {
                 logic.burn_blocked(self, caller, c.from, c.amount, privileged)?;
                 Bytes::new()
+            }
+
+            // --- Seize ---
+            C::seizeWithMemo(c) => {
+                logic.seize_with_memo(self, caller, c.from, c.to, c.amount, c.memo)?;
+                true.abi_encode().into()
             }
 
             // --- Pause ---

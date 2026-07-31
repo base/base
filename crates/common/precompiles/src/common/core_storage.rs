@@ -83,7 +83,7 @@ pub struct B20CoreStorage {
     /// Seizable-account policy ID, consulted by the seize operations.
     #[accessor]
     #[mutator]
-    pub seizable_policy_id: u64, // slot 14, offset 0
+    pub seize_holder_policy_id: u64, // slot 14, offset 0
     /// Reserved padding to close slot 14.
     pub seize_reserved: FixedBytes<24>, // slot 14, offset 8
 }
@@ -129,8 +129,8 @@ mod tests {
         assert_eq!(__packing_b20_core_storage::PAUSED_LOC.offset_slots, 11);
         assert_eq!(__packing_b20_core_storage::SUPPLY_CAP_LOC.offset_slots, 12);
         assert_eq!(__packing_b20_core_storage::NONCES_LOC.offset_slots, 13);
-        assert_eq!(__packing_b20_core_storage::SEIZABLE_POLICY_ID_LOC.offset_slots, 14);
-        assert_eq!(__packing_b20_core_storage::SEIZABLE_POLICY_ID_LOC.offset_bytes, 0);
+        assert_eq!(__packing_b20_core_storage::SEIZE_HOLDER_POLICY_ID_LOC.offset_slots, 14);
+        assert_eq!(__packing_b20_core_storage::SEIZE_HOLDER_POLICY_ID_LOC.offset_bytes, 0);
         assert_eq!(__packing_b20_core_storage::SEIZE_RESERVED_LOC.offset_slots, 14);
         assert_eq!(__packing_b20_core_storage::SEIZE_RESERVED_LOC.offset_bytes, 8);
     }
