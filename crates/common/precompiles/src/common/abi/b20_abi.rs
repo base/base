@@ -44,7 +44,12 @@ impl B20Abi {
     /// Decodes `calldata` into a routable call, gated on this wire surface.
     ///
     /// The frozen surface decides what is dialable and owns any error bytes; the canonical surface
-    /// then produces the value the dispatcher matches on.
+    /// then produces the value the dispatcher matches on. Where the frozen surface differs from
+    /// canonical (`V1`), the calldata is validated against the frozen surface first for that
+    /// version's consensus error bytes. Where the frozen surface *is* canonical (`V2`, which `IB20`
+    /// aliases), that pre-validation would decode the identical type twice, so it is skipped. The
+    /// `match` is exhaustive so a later surface that diverges from canonical must add its own
+    /// pre-validating arm.
     pub fn decode(self, calldata: &[u8]) -> Result<IB20::IB20Calls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
@@ -52,7 +57,10 @@ impl B20Abi {
         if !self.valid_selector(selector) {
             return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }
-        self.abi_decode_validate(calldata, selector)?;
+        match self {
+            Self::V1 => self.abi_decode_validate(calldata, selector)?,
+            Self::V2 => {}
+        }
 
         IB20::IB20Calls::abi_decode_validate(calldata).map_err(|error| {
             BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
