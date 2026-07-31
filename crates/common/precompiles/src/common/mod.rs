@@ -3,6 +3,11 @@
 mod abi;
 pub use abi::IB20;
 
+#[cfg(any(test, feature = "test-utils"))]
+mod abi_fingerprint;
+#[cfg(any(test, feature = "test-utils"))]
+pub use abi_fingerprint::AbiFingerprint;
+
 mod core_storage;
 pub use core_storage::B20CoreStorage;
 
