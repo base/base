@@ -34,13 +34,13 @@ jobs:
             key: beryl
             base_anvil_ref: 6d744e03224977edd42a36699ba9ff42be25e8cb
             base_std_ref: v1.0.0
-          # Pinned to the base-std seize-surface branch (BOP-440, PR #186) so the Cobalt seize
+          # Pinned to the base-std seize-surface merge (BOP-440, #186) so the Cobalt seize
           # entrypoints cross-validate against the renamed reference. Move to the base-std release
-          # tag / merge SHA once #186 lands.
+          # tag once the Cobalt hardfork is ready.
           - fork: Cobalt
             key: cobalt
             base_anvil_ref: ae7557c4f8602caa1da0be33143bb2504c85b0c8
-            base_std_ref: stephancilliers/bop-440-seize-rename
+            base_std_ref: 96e96870937fa8c2ef5ad21a8433a9e5bdce07fa
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
