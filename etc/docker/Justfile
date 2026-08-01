@@ -5,7 +5,6 @@ _ha := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ha.yml"
 _base := "-f etc/docker/docker-compose.yml"
 _env := "--env-file etc/docker/devnet-env"
 _yaml_to_env := "etc/scripts/yaml-to-compose-env.py"
-_env_eth := "--env-file etc/docker/devnet-env --env-file etc/docker/devnet-eth-env"
 _eth := "--profile eth-l1"
 _all_profiles := "--profile eth-l1 --profile profiling"
 
@@ -23,7 +22,7 @@ up-single zk='dry-run':
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
 profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
-    docker compose {{ _env_eth }} {{ _ha }} {{ _eth }} --profile profiling up -d --no-build
+    docker compose {{ _env }} {{ _ha }} {{ _eth }} --profile profiling up -d --no-build
 
 # Stops devnet and deletes all data
 down:
@@ -93,7 +92,7 @@ conductor:
 
 # Stops devnet+ingress, deletes data, and starts fresh with full ingress stack (eth-l1)
 ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")
-    docker compose {{ _env_eth }} {{ _base }} -f etc/docker/docker-compose.ingress.yml {{ _eth }} up -d --no-build
+    docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml {{ _eth }} up -d --no-build
 
 # Stops devnet+ingress and deletes all data
 ingress-down:
@@ -193,7 +192,7 @@ _up-devnet compose_profile zk:
         ;;
     esac
 
-    env_files=({{ _env_eth }})
+    env_files=({{ _env }})
     l1_profile=({{ _eth }})
 
     case "$zk_mode" in
