@@ -21,7 +21,10 @@ use reth_transaction_pool::{
     TransactionValidationTaskExecutor, TransactionValidator, ValidPoolTransaction,
     pool::{AddedTransactionState, TransactionEvent},
 };
-use tokio::{spawn, sync::mpsc};
+use tokio::{
+    spawn,
+    sync::mpsc::{self, error::TrySendError},
+};
 use tracing::debug;
 
 use crate::{
@@ -1580,7 +1583,9 @@ impl<T: BasePooledTx> SidecarListeners<T> {
     }
 
     fn broadcast_all(&mut self, event: FullTransactionEvent<T>) {
-        self.all_events.retain(|listener| listener.try_send(event.clone()).is_ok());
+        self.all_events.retain(|listener| {
+            !matches!(listener.try_send(event.clone()), Err(TrySendError::Closed(_)))
+        });
     }
 
     fn broadcast_pending_transaction(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
@@ -1592,17 +1597,24 @@ impl<T: BasePooledTx> SidecarListeners<T> {
     }
 
     fn broadcast_pending(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
-        self.pending_all.retain(|listener| listener.try_send(*transaction.hash()).is_ok());
+        self.pending_all.retain(|listener| {
+            !matches!(listener.try_send(*transaction.hash()), Err(TrySendError::Closed(_)))
+        });
         if transaction.propagate {
-            self.pending_propagate
-                .retain(|listener| listener.try_send(*transaction.hash()).is_ok());
+            self.pending_propagate.retain(|listener| {
+                !matches!(listener.try_send(*transaction.hash()), Err(TrySendError::Closed(_)))
+            });
         }
     }
 
     fn broadcast_new(&mut self, event: NewTransactionEvent<T>) {
-        self.new_all.retain(|listener| listener.try_send(event.clone()).is_ok());
+        self.new_all.retain(|listener| {
+            !matches!(listener.try_send(event.clone()), Err(TrySendError::Closed(_)))
+        });
         if event.transaction.propagate {
-            self.new_propagate.retain(|listener| listener.try_send(event.clone()).is_ok());
+            self.new_propagate.retain(|listener| {
+                !matches!(listener.try_send(event.clone()), Err(TrySendError::Closed(_)))
+            });
         }
     }
 }
@@ -1882,6 +1894,67 @@ mod tests {
         assert!(matches!(replacement_events.next().await, Some(TransactionEvent::Pending)));
         assert!(nonce_pool.get(&original_hash).is_none());
         assert!(nonce_pool.get(&replacement_hash).is_some());
+    }
+
+    #[test]
+    fn full_sidecar_listener_channels_remain_subscribed() {
+        let signer = signer();
+        let transaction =
+            Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(3), 0, 1_000)));
+        let hash = *transaction.hash();
+        let mut listeners = SidecarListeners::default();
+
+        let (all_tx, mut all_rx) = mpsc::channel(1);
+        let (pending_all_tx, mut pending_all_rx) = mpsc::channel(1);
+        let (pending_propagate_tx, mut pending_propagate_rx) = mpsc::channel(1);
+        let (new_all_tx, mut new_all_rx) = mpsc::channel(1);
+        let (new_propagate_tx, mut new_propagate_rx) = mpsc::channel(1);
+        listeners.all_events.push(all_tx);
+        listeners.pending_all.push(pending_all_tx);
+        listeners.pending_propagate.push(pending_propagate_tx);
+        listeners.new_all.push(new_all_tx);
+        listeners.new_propagate.push(new_propagate_tx);
+
+        listeners.broadcast_all(FullTransactionEvent::Discarded(hash));
+        listeners.broadcast_all(FullTransactionEvent::Discarded(hash));
+        listeners.broadcast_pending(&transaction);
+        listeners.broadcast_pending(&transaction);
+        let event = NewTransactionEvent::pending(Arc::clone(&transaction));
+        listeners.broadcast_new(event.clone());
+        listeners.broadcast_new(event.clone());
+
+        assert_eq!(listeners.all_events.len(), 1);
+        assert_eq!(listeners.pending_all.len(), 1);
+        assert_eq!(listeners.pending_propagate.len(), 1);
+        assert_eq!(listeners.new_all.len(), 1);
+        assert_eq!(listeners.new_propagate.len(), 1);
+
+        assert!(all_rx.try_recv().is_ok());
+        assert_eq!(pending_all_rx.try_recv(), Ok(hash));
+        assert_eq!(pending_propagate_rx.try_recv(), Ok(hash));
+        assert!(new_all_rx.try_recv().is_ok());
+        assert!(new_propagate_rx.try_recv().is_ok());
+
+        listeners.broadcast_all(FullTransactionEvent::Discarded(hash));
+        listeners.broadcast_pending(&transaction);
+        listeners.broadcast_new(event.clone());
+
+        assert!(all_rx.try_recv().is_ok());
+        assert_eq!(pending_all_rx.try_recv(), Ok(hash));
+        assert_eq!(pending_propagate_rx.try_recv(), Ok(hash));
+        assert!(new_all_rx.try_recv().is_ok());
+        assert!(new_propagate_rx.try_recv().is_ok());
+
+        drop((all_rx, pending_all_rx, pending_propagate_rx, new_all_rx, new_propagate_rx));
+        listeners.broadcast_all(FullTransactionEvent::Discarded(hash));
+        listeners.broadcast_pending(&transaction);
+        listeners.broadcast_new(event);
+
+        assert!(listeners.all_events.is_empty());
+        assert!(listeners.pending_all.is_empty());
+        assert!(listeners.pending_propagate.is_empty());
+        assert!(listeners.new_all.is_empty());
+        assert!(listeners.new_propagate.is_empty());
     }
 
     type IntegrationPool = BaseTransactionPool<

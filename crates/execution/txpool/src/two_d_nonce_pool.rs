@@ -250,9 +250,6 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
 
         if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
-            let sender_id = self.senders.sender_id_or_create(transaction.sender());
-            transaction.transaction_id = TransactionId::new(sender_id, transaction.nonce());
-            let transaction = Arc::new(transaction);
             let replaced = if let Some(existing) = self.nonce_free.get(&replay_id) {
                 if existing.is_underpriced(&transaction, &self.price_bump_config) {
                     return Err(PoolError::new(hash, PoolErrorKind::ReplacementUnderpriced));
@@ -261,6 +258,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             } else {
                 None
             };
+            let sender_id = self.senders.sender_id_or_create(transaction.sender());
+            transaction.transaction_id = TransactionId::new(sender_id, transaction.nonce());
+            let transaction = Arc::new(transaction);
             if let Some(existing) = &replaced {
                 self.hashes.remove(existing.hash());
             }
@@ -279,8 +279,28 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         })?;
 
         let lane_id = (sender, nonce_key);
-        let sender_id = self.senders.sender_id_or_create(sender);
         let nonce = transaction.nonce();
+        if nonce < state_nonce {
+            return Err(PoolError::new(
+                hash,
+                PoolErrorKind::InvalidTransaction(InvalidPoolTransactionError::Consensus(
+                    InvalidTransactionError::NonceNotConsistent { tx: nonce, state: state_nonce },
+                )),
+            ));
+        }
+
+        let replaced = if let Some(existing) =
+            self.lanes.get(&lane_id).and_then(|lane| lane.transactions.get(&nonce))
+        {
+            if existing.is_underpriced(&transaction, &self.price_bump_config) {
+                return Err(PoolError::new(hash, PoolErrorKind::ReplacementUnderpriced));
+            }
+            Some(Arc::clone(existing))
+        } else {
+            None
+        };
+
+        let sender_id = self.senders.sender_id_or_create(sender);
         transaction.transaction_id = TransactionId::new(sender_id, nonce);
         let transaction = Arc::new(transaction);
         let lane = self.lanes.entry(lane_id).or_insert_with(|| NonceLane {
@@ -291,32 +311,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         // move backward after a reorg lowers the on-chain channel nonce, allowing
         // now-valid transactions to be accepted instead of treating them as
         // already executed under the pre-reorg lane cursor.
-        if state_nonce != lane.next_nonce {
-            lane.next_nonce = state_nonce;
-        }
+        lane.next_nonce = state_nonce;
         let pending_len_before = lane.consecutive_pending_len();
-
-        if nonce < lane.next_nonce {
-            return Err(PoolError::new(
-                hash,
-                PoolErrorKind::InvalidTransaction(InvalidPoolTransactionError::Consensus(
-                    InvalidTransactionError::NonceNotConsistent {
-                        tx: nonce,
-                        state: lane.next_nonce,
-                    },
-                )),
-            ));
-        }
-
-        let replaced: Option<Arc<ValidPoolTransaction<T>>> =
-            if let Some(existing) = lane.transactions.get(&nonce) {
-                if existing.is_underpriced(&transaction, &self.price_bump_config) {
-                    return Err(PoolError::new(hash, PoolErrorKind::ReplacementUnderpriced));
-                }
-                Some(Arc::clone(existing))
-            } else {
-                None
-            };
 
         lane.transactions.insert(nonce, Arc::clone(&transaction));
         self.hashes.insert(hash, Arc::clone(&transaction));
@@ -860,6 +856,63 @@ mod tests {
         assert!(pool.get(&original_hash).is_none());
         assert!(pool.get(&replacement_hash).is_some());
         assert_eq!(pool.all_transactions().len(), 1);
+    }
+
+    #[test]
+    fn stale_nonce_rejection_does_not_mutate_lane() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let nonce_key = U256::from(8);
+        let first = valid_pool_transaction(signed_channel_tx(&signer, nonce_key, 0, 1_000));
+        let second = valid_pool_transaction(signed_channel_tx(&signer, nonce_key, 1, 1_000));
+        pool.insert_validated(first, 0).unwrap();
+        pool.insert_validated(second, 0).unwrap();
+
+        let lane_id = (signer.address(), nonce_key);
+        let hashes_before = pool.all_hashes();
+        let counts_before = pool.pending_and_queued_txn_count();
+        let rejected = valid_pool_transaction(signed_channel_tx(&signer, nonce_key, 0, 1_250));
+
+        assert!(matches!(
+            pool.insert_validated(rejected, 1).unwrap_err().kind,
+            PoolErrorKind::InvalidTransaction(_)
+        ));
+        assert_eq!(pool.lanes.get(&lane_id).map(|lane| lane.next_nonce), Some(0));
+        assert_eq!(pool.all_hashes(), hashes_before);
+        assert_eq!(pool.pending_and_queued_txn_count(), counts_before);
+
+        let new_signer = PrivateKeySigner::random();
+        let new_lane_id = (new_signer.address(), nonce_key);
+        let rejected = valid_pool_transaction(signed_channel_tx(&new_signer, nonce_key, 0, 1_000));
+        assert!(pool.senders.sender_id(&new_signer.address()).is_none());
+
+        assert!(pool.insert_validated(rejected, 1).is_err());
+        assert!(pool.senders.sender_id(&new_signer.address()).is_none());
+        assert!(!pool.lanes.contains_key(&new_lane_id));
+    }
+
+    #[test]
+    fn underpriced_replacement_does_not_mutate_lane() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let nonce_key = U256::from(9);
+        let first = valid_pool_transaction(signed_channel_tx(&signer, nonce_key, 0, 1_000));
+        let second = valid_pool_transaction(signed_channel_tx(&signer, nonce_key, 1, 1_000));
+        pool.insert_validated(first, 0).unwrap();
+        pool.insert_validated(second, 0).unwrap();
+
+        let lane_id = (signer.address(), nonce_key);
+        let hashes_before = pool.all_hashes();
+        let counts_before = pool.pending_and_queued_txn_count();
+        let rejected = valid_pool_transaction(signed_channel_tx(&signer, nonce_key, 1, 1_050));
+
+        assert!(matches!(
+            pool.insert_validated(rejected, 1).unwrap_err().kind,
+            PoolErrorKind::ReplacementUnderpriced
+        ));
+        assert_eq!(pool.lanes.get(&lane_id).map(|lane| lane.next_nonce), Some(0));
+        assert_eq!(pool.all_hashes(), hashes_before);
+        assert_eq!(pool.pending_and_queued_txn_count(), counts_before);
     }
 
     #[test]
