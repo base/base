@@ -103,11 +103,6 @@ services:
       - NODE_HEALTHCHECK_HTTP_PORT=${L2_SEQ1_HTTP_PORT}
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_SEQ1_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-sequencer-1
-      # L1 beacon + slot duration are mode-driven (eth/l3 env file). Unset beacon in base-l1.
-      - BASE_NODE_L1_BEACON
-      - BASE_NODE_L1_CALLDATA_ONLY
-      - BASE_NODE_L1_SLOT_DURATION_OVERRIDE
-      - BASE_NODE_L1_TX_FORMAT
     command:
       - sequencer
       - --chain
@@ -154,10 +149,14 @@ services:
       - --rpc.gascap=600000000
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
+      - --l1-beacon
+      - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-config-file
       - /genesis/l2/rollup.json
       - --l1-config-file
       - /genesis/el/chain-config.json
+      - --l1-slot-duration-override
+      - "4"
       - --rpc.port
       - "${L2_SEQ1_CL_RPC_PORT}"
       - --rpc.enable-admin
@@ -213,11 +212,6 @@ services:
       - NODE_HEALTHCHECK_HTTP_PORT=${L2_SEQ2_HTTP_PORT}
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_SEQ2_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-sequencer-2
-      # L1 beacon + slot duration are mode-driven (eth/l3 env file). Unset beacon in base-l1.
-      - BASE_NODE_L1_BEACON
-      - BASE_NODE_L1_CALLDATA_ONLY
-      - BASE_NODE_L1_SLOT_DURATION_OVERRIDE
-      - BASE_NODE_L1_TX_FORMAT
     command:
       - sequencer
       - --chain
@@ -264,10 +258,14 @@ services:
       - --rpc.gascap=600000000
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
+      - --l1-beacon
+      - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-config-file
       - /genesis/l2/rollup.json
       - --l1-config-file
       - /genesis/el/chain-config.json
+      - --l1-slot-duration-override
+      - "4"
       - --rpc.port
       - "${L2_SEQ2_CL_RPC_PORT}"
       - --rpc.enable-admin

@@ -59,12 +59,6 @@ group "devnet" {
   targets = concat(DEVNET_TARGETS, ["da-server"])
 }
 
-# L3 dev-multiproof services, built only on the `up-l3` path (alongside nitro-host-local).
-# Kept out of the shared `devnet` group so the default eth-l1 devnet does not build them.
-group "devnet-l3" {
-  targets = ["proposer", "challenger"]
-}
-
 group "ingress" {
   targets = concat(DEVNET_TARGETS, INGRESS_EXTRA_TARGETS)
 }
