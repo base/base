@@ -2,7 +2,6 @@
 
 use std::time::Duration;
 
-
 use crate::MevTraderPhaseAInstaller;
 use base_bundle_extension::BundleExtension;
 use base_flashblocks::FlashblocksConfig;

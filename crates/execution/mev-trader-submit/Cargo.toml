@@ -26,6 +26,8 @@ phase-b = [
 
 tx-authority = [
     "dep:base-mev-trader",
+    "dep:base-common-evm",
+    "dep:base-common-flz",
     "base-mev-trader/t4b-shadow",
     "dep:alloy-consensus",
     "dep:alloy-eips",
@@ -71,6 +73,8 @@ presign = ["dep:alloy-primitives", "dep:sha2"]
 
 [dependencies]
 # All optional: each is pulled only by its owning explicit feature.
+base-common-evm = { workspace = true, features = ["std"], optional = true }
+base-common-flz = { workspace = true, features = ["std"], optional = true }
 base-mev-trader = { workspace = true, optional = true }
 alloy-consensus = { workspace = true, features = ["std"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }

@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "base-mev/synthetic-reachability-input/v1",
+  "identity": "synthetic_reachability_golden",
+  "claim": "pool and fee environment are synthetic/reachability-only; this evidence does not represent live economics",
+  "fingerprint": "6bfd6ac93d75158834332f53ef1e98ab8ebf053c793fc98e5b8ab78823413b24",
+  "chainId": 8453,
+  "spec": "Beryl",
+  "header": {
+    "number": 36000000,
+    "timestamp": 1800000000,
+    "gasLimit": 30000000,
+    "baseFeePerGas": "1",
+    "realisticBaseFeePerGas": "5000000",
+    "beneficiary": "0x2222222222222222222222222222222222222222",
+    "parentHash": "0x1414141414141414141414141414141414141414141414141414141414141414",
+    "prevRandao": "0x1515151515151515151515151515151515151515151515151515151515151515",
+    "excessBlobGas": 1
+  },
+  "route": {
+    "tokens": [
+      "0x4200000000000000000000000000000000000006",
+      "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "0x4200000000000000000000000000000000000006"
+    ],
+    "pools": [
+      "0x1000000000000000000000000000000000000001",
+      "0x1000000000000000000000000000000000000002"
+    ],
+    "protocols": ["uniswap_v2", "aerodrome_volatile"],
+    "feeBps": [30, 5],
+    "zeroForOne": [true, false],
+    "startAmountWei": "1000000000000000000"
+  },
+  "execution": {
+    "executor": "0x2000000000000000000000000000000000000002",
+    "adapters": [
+      "0x00000000000000000000000000000000000000a1",
+      "0x00000000000000000000000000000000000000a2"
+    ],
+    "sender": "0x98e1e2a84557d49496d1bfe31ea7b5a6c59fd0f9",
+    "recipient": "0x1810cbfa042e8199121021f056afe8b31028cf55",
+    "nonce": 0,
+    "gasLimit": 12000000,
+    "deadline": 1000000,
+    "valueWei": "0",
+    "accessList": []
+  },
+  "victim": {
+    "sender": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+    "expectedHash": "0x2727272727272727272727272727272727272727272727272727272727272727",
+    "pool": "0x1000000000000000000000000000000000000001",
+    "direction": "weth_to_usdc",
+    "amountInDivisor": 1000,
+    "nonce": 0,
+    "deadline": 1000000
+  },
+  "realisticVariant": {
+    "amountInDivisor": 1000000,
+    "actualGasUsed": 50000,
+    "l1FeeWei": "1000000"
+  },
+  "canonicalShapeL1Fee": {
+    "label": "canonical-shape L1 fee upper bound",
+    "length": 256,
+    "zeroBytes": 1,
+    "nonZeroBytes": 255,
+    "fastLzSize": 264,
+    "digest": "0x2626262626262626262626262626262626262626262626262626262626262626",
+    "feeWei": "1000000"
+  },
+  "grossOptimismUnverified": true,
+  "netRanked": false
+}

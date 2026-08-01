@@ -10,13 +10,13 @@ use alloy_primitives::{Address, B256};
 #[cfg(feature = "t4e-handoff")]
 use base_mev_trader::CampaignId;
 use base_mev_trader::{
-    CancellationProbe, CandidateAssemblyView, ExactProtocol, GlobalState, MeasurementContext,
-    TaskState,
+    CancellationProbe, ExactProtocol, GlobalState, MeasurementContext, TaskState,
 };
 
+use super::TxAuthorityAssembler;
 use super::{
-    DeployedContractIdentity, InstalledExecutionIdentity, TxAuthorityAssembler, TxAuthorityError,
-    TxAuthorityNodeView, ValidatedUnsignedAtomicTx,
+    DeployedContractIdentity, InstalledExecutionIdentity, TxAuthorityError, TxAuthorityNodeView,
+    ValidatedUnsignedAtomicTx,
 };
 #[cfg(feature = "t4e-handoff")]
 use crate::{CheckedCandidate, CodeHashProvider};
@@ -157,7 +157,6 @@ pub trait T4eCandidateHandoff: Debug + Send + Sync {
 /// Submit-owned facade that keeps assembly and freshness on one node authority.
 #[derive(Debug)]
 pub struct InstalledSubmissionBridge {
-    assembler: TxAuthorityAssembler,
     node: Arc<dyn TxAuthorityNodeView>,
     installation: Arc<InstallationSeal>,
 }
@@ -165,41 +164,15 @@ pub struct InstalledSubmissionBridge {
 impl InstalledSubmissionBridge {
     /// Installs the reviewed Base-mainnet identities against one owned node view.
     pub fn base_mainnet(node: Arc<dyn TxAuthorityNodeView>) -> Result<Self, BridgeError> {
-        let assembler =
-            TxAuthorityAssembler::base_mainnet(Arc::clone(&node)).map_err(BridgeError::Assembly)?;
-        Ok(Self { assembler, node, installation: Arc::new(InstallationSeal) })
+        Ok(Self { node, installation: Arc::new(InstallationSeal) })
     }
 
-    #[cfg(test)]
-    pub(super) fn install_for_test(
-        node: Arc<dyn TxAuthorityNodeView>,
-        executor: DeployedContractIdentity,
-        sender: Address,
-        adapters: super::ProtocolAdapterMapping,
-    ) -> Result<Self, BridgeError> {
-        let assembler =
-            TxAuthorityAssembler::install(Arc::clone(&node), executor, sender, adapters)
-                .map_err(BridgeError::Assembly)?;
-        Ok(Self { assembler, node, installation: Arc::new(InstallationSeal) })
-    }
-
-    /// Assembles and seals one linear unsigned candidate without exposing transaction bytes.
-    pub fn assemble_sealed(
+    /// Seals an already-finalized T4b candidate without exposing transaction bytes.
+    pub fn seal_finalized(
         &self,
-        view: CandidateAssemblyView<'_>,
+        detail: ValidatedUnsignedAtomicTx,
+        probe: CancellationProbe,
     ) -> Result<SealedUnsignedCandidate, BridgeError> {
-        let probe = view.probe().clone();
-        let detail = self.assembler.assemble_validated(view).map_err(Self::assembly_error)?;
-        self.seal_unsigned(detail, probe)
-    }
-
-    #[cfg(test)]
-    pub(super) fn assemble_sealed_for_test(
-        &self,
-        view: super::AuthorityAssemblyView<'_>,
-    ) -> Result<SealedUnsignedCandidate, BridgeError> {
-        let probe = view.probe.clone();
-        let detail = self.assembler.assemble_view(view).map_err(Self::assembly_error)?;
         self.seal_unsigned(detail, probe)
     }
 
@@ -212,6 +185,9 @@ impl InstalledSubmissionBridge {
         provider: &dyn CodeHashProvider,
     ) -> Result<CheckedCandidate, BridgeError> {
         self.revalidate_for_handoff(&candidate, provider)?;
+        if !candidate.detail.economics().admitted() {
+            return Err(BridgeError::BindingRejected);
+        }
         let SealedUnsignedCandidate { detail, bindings: _, installation: _, probe: _ } = candidate;
         Ok(CheckedCandidate::from_authority(
             detail,
@@ -336,14 +312,6 @@ impl InstalledSubmissionBridge {
             return Err(BridgeError::BindingRejected);
         }
         Ok(())
-    }
-
-    const fn assembly_error(error: TxAuthorityError) -> BridgeError {
-        match error {
-            TxAuthorityError::Cancelled => BridgeError::Cancelled,
-            TxAuthorityError::DeadlineNoShape => BridgeError::DeadlineNoHandoff,
-            error => BridgeError::Assembly(error),
-        }
     }
 
     fn checkpoint(probe: &CancellationProbe) -> Result<(), BridgeError> {

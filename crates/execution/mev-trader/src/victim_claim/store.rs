@@ -192,16 +192,14 @@ pub(super) fn try_claim_txn(
             write.open_table(CLAIM_TABLE).map_err(|e| ClaimStoreError::Io(e.to_string()))?;
         // Resolve the lookup (and validate any existing record fail-closed) in a
         // statement so the read guard's borrow is released before `insert`.
-        let already = match table
-            .get(&key)
-            .map_err(|e| ClaimStoreError::Corruption(e.to_string()))?
-        {
-            Some(guard) => {
-                verify_claim_record(guard.value())?;
-                true
-            }
-            None => false,
-        };
+        let already =
+            match table.get(&key).map_err(|e| ClaimStoreError::Corruption(e.to_string()))? {
+                Some(guard) => {
+                    verify_claim_record(guard.value())?;
+                    true
+                }
+                None => false,
+            };
         if already {
             false
         } else {

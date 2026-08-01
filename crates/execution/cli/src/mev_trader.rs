@@ -55,6 +55,8 @@ use base_flashblocks::{
 #[cfg(all(feature = "edge-measurement", test))]
 use base_flashblocks::{ClockStatusV1, PayloadFirstKeyV1, WireObservationV1};
 use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState, PendingBlocks};
+#[cfg(all(feature = "t4b-shadow", not(feature = "edge-measurement")))]
+use base_mev_trader::AuditedWriteKey;
 #[cfg(all(feature = "edge-measurement", test))]
 use base_mev_trader::EdgeCandidateDetailOracleV1;
 #[cfg(feature = "arm-sim")]
@@ -77,9 +79,11 @@ use base_mev_trader::{
 };
 #[cfg(feature = "t4b-shadow")]
 use base_mev_trader::{
-    CandidateAssemblyView, CandidateTxShapeObserver, ShadowLatestSlot, ShadowSubmit, T4bOutcome,
-    T4bOutcomeCounters,
+    CandidateAssemblyView, CandidateTxShapeObserver, MaterializedState, PriorityEconomicsLedgerV2,
+    ShadowLatestSlot, ShadowSubmit, T4bOutcome, T4bOutcomeCounters,
 };
+#[cfg(feature = "priority-economics-capture")]
+use base_mev_trader::{StateFixtureCaptureConfigV1, WriterV1};
 use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, NodeHooks};
 #[cfg(feature = "arm-sim")]
 use mev_trader_submit::{
@@ -8522,6 +8526,8 @@ pub struct BaseNodeTraderConfig {
     #[cfg(feature = "t4e-handoff")]
     t4e_handoff: Option<Arc<dyn T4eCandidateHandoff>>,
     admission_exporter: Result<Option<AdmissionExporterConfigV1>, String>,
+    #[cfg(feature = "priority-economics-capture")]
+    priority_economics_capture: Result<Option<StateFixtureCaptureConfigV1>, String>,
     #[cfg(feature = "arm-sim")]
     production_simulation_handoff: Option<Arc<ProductionSimulationHandoff>>,
     #[cfg(feature = "arm-sim")]
@@ -8694,6 +8700,39 @@ impl BaseNodeTraderConfig {
             std::env::var("MEV_TRADER_T4A_ADMISSION_BOOT_ID").ok(),
         )
     }
+    #[cfg(feature = "priority-economics-capture")]
+    fn priority_economics_capture_from_environment()
+    -> Result<Option<StateFixtureCaptureConfigV1>, String> {
+        const ENABLED: &str = "MEV_TRADER_PRIORITY_ECONOMICS_CAPTURE";
+        const ROOT: &str = "MEV_TRADER_PRIORITY_ECONOMICS_CAPTURE_ROOT";
+        const REVIEWED_ROOT: &str = "MEV_TRADER_PRIORITY_ECONOMICS_CAPTURE_REVIEWED_ROOT";
+
+        let enabled = std::env::var_os(ENABLED);
+        let root = std::env::var_os(ROOT);
+        let reviewed_root = std::env::var_os(REVIEWED_ROOT);
+        if enabled.is_none() && root.is_none() && reviewed_root.is_none() {
+            return Ok(None);
+        }
+        let (Some(enabled), Some(root), Some(reviewed_root)) = (enabled, root, reviewed_root)
+        else {
+            return Err("priority economics capture configuration must be all-or-none".to_owned());
+        };
+        if enabled != OsStr::new("1") {
+            return Err("priority economics capture owner flag must be exactly 1".to_owned());
+        }
+        StateFixtureCaptureConfigV1::new(true, PathBuf::from(root), PathBuf::from(reviewed_root))
+            .map(Some)
+            .map_err(|_| {
+                "priority economics capture roots must be equal canonical roots".to_owned()
+            })
+    }
+
+    #[cfg(feature = "priority-economics-capture")]
+    fn take_priority_economics_capture_writer(&mut self) -> eyre::Result<Option<WriterV1>> {
+        let capture = std::mem::replace(&mut self.priority_economics_capture, Ok(None))
+            .map_err(|error| eyre::eyre!(error))?;
+        Ok(capture.map(WriterV1::new))
+    }
 
     /// Applies exact-1 and flashblocks-present gates before consulting the credential environment.
     pub fn from_inputs(
@@ -8723,6 +8762,8 @@ impl BaseNodeTraderConfig {
             t4b_shadow,
             t4d_shadow,
             admission_exporter: Self::admission_exporter_from_environment(),
+            #[cfg(feature = "priority-economics-capture")]
+            priority_economics_capture: Self::priority_economics_capture_from_environment(),
             #[cfg(feature = "arm-sim")]
             t4e_handoff,
             #[cfg(feature = "arm-sim")]
@@ -8976,10 +9017,13 @@ impl FromExtensionConfig for BaseNodeTraderExtension {
 impl BaseNodeExtension for BaseNodeTraderExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         hooks.add_node_started_hook(move |node| {
-            #[cfg(feature = "arm-sim")]
+            #[cfg(any(feature = "arm-sim", feature = "priority-economics-capture"))]
             let mut config = self.config;
-            #[cfg(not(feature = "arm-sim"))]
+            #[cfg(not(any(feature = "arm-sim", feature = "priority-economics-capture")))]
             let config = self.config;
+            #[cfg(feature = "priority-economics-capture")]
+            let mut priority_economics_capture =
+                config.take_priority_economics_capture_writer()?;
             let chain_spec = node.chain_spec();
             let port = Arc::new(CliTraderSnapshotPort::new(
                 Arc::clone(&config.flashblocks),
@@ -9033,7 +9077,14 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                                 .t4e_handoff
                                 .clone()
                                 .ok_or_else(|| eyre::eyre!("T4e handoff sink is not installed"))?;
-                            let observer = t4d_shadow::observer(bridge, handoff);
+                            let observer = t4d_shadow::observer(
+                                Arc::clone(&port),
+                                chain_spec.chain().id(),
+                                bridge,
+                                handoff,
+                                #[cfg(feature = "priority-economics-capture")]
+                                priority_economics_capture.take(),
+                            )?;
                             config.start_with_t4d_observer(observer)?
                         } else {
                             config.start_with_runtime_config(t4a_runtime_config(true)?)?
@@ -9052,7 +9103,14 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                             t4b_shadow::node_view(Arc::clone(&port), chain_spec.chain().id());
                         let bridge =
                             Arc::new(InstalledSubmissionBridge::base_mainnet(node_view)?);
-                        let observer = t4d_shadow::observer(bridge, handoff);
+                        let observer = t4d_shadow::observer(
+                            Arc::clone(&port),
+                            chain_spec.chain().id(),
+                            bridge,
+                            handoff,
+                            #[cfg(feature = "priority-economics-capture")]
+                            priority_economics_capture.take(),
+                        )?;
                         config.start_with_t4d_observer(observer)?
                     }
                 }
@@ -9061,8 +9119,12 @@ impl BaseNodeExtension for BaseNodeTraderExtension {
                     unreachable!("T4d opt-in is unavailable without the compiled feature")
                 }
             } else if config.t4b_shadow {
-                let observer =
-                    t4b_shadow::observer(Arc::clone(&port), chain_spec.chain().id())?;
+                let observer = t4b_shadow::observer(
+                    Arc::clone(&port),
+                    chain_spec.chain().id(),
+                    #[cfg(feature = "priority-economics-capture")]
+                    priority_economics_capture.take(),
+                )?;
                 config.start_with_t4b_observer(observer)?
             } else {
                 config.start_idle()?
@@ -9785,17 +9847,2204 @@ mod t4a_provisioning {
 
 #[cfg(feature = "t4b-shadow")]
 mod t4b_shadow {
-    use std::sync::{Arc, Weak};
-
-    use super::{
-        AccountReader, Address, B256, BlockReaderIdExt, BytecodeReader, CandidateAssemblyView,
-        CandidateTxShapeObserver, CliTraderSnapshotPort, Debug, Header, HeaderProvider,
-        PendingSnapshotRecord, PriorityEconomicsAuthority, ShadowLatestSlot, ShadowSubmit,
-        SnapshotFreshnessToken, SnapshotHandle, StateProviderFactory, T4bOutcome,
-        T4bOutcomeCounters, TraderSnapshotPort, TxAuthorityAssembler, TxAuthorityError,
-        TxAuthorityNodeError, TxAuthorityNodeView, TxAuthorityStateRead, ValidatedUnsignedAtomicTx,
+    #[cfg(feature = "priority-economics-capture")]
+    use std::sync::{
+        Mutex,
+        mpsc::{Receiver, SyncSender, TryRecvError, sync_channel},
+    };
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        convert::Infallible,
+        error::Error,
+        fmt::{self, Display},
+        num::NonZeroUsize,
+        sync::{Arc, Weak},
     };
 
+    use alloy_consensus::SignableTransaction;
+    use alloy_primitives::{Address, B256, U256, address, keccak256};
+    use base_common_consensus::{BaseTxEnvelope, Predeploys};
+    use base_common_evm::L1BlockInfo;
+    use base_execution_chainspec::BaseChainSpec;
+    use base_execution_evm::BaseEvmConfig;
+    #[cfg(feature = "priority-economics-capture")]
+    use base_mev_trader::{
+        AccountV1, AuditAccessKindV1, AuditObservedValueV1, AuditPhaseV1, AuditReadV1, InputV1,
+        OutcomeV1, PublicationGateV1, PublicationOutcomeV1, SelectedPartsV1, StorageV1, WriterV1,
+    };
+    use reth_evm::{ConfigureEvm, Evm};
+    use reth_primitives_traits::Recovered;
+    use reth_revm::{State, database::StateProviderDatabase};
+    use revm::{
+        Database, DatabaseCommit,
+        context_interface::result::EVMError,
+        database_interface::DBErrorMarker,
+        primitives::{AddressMap, KECCAK_EMPTY, StorageKey, StorageValue},
+        state::{
+            Account, AccountId, AccountInfo, AccountStatus, EvmState, EvmStorageSlot, TransactionId,
+        },
+    };
+    use revm_bytecode::Bytecode;
+
+    use super::{
+        AccountReader, AuditedWriteKey, BlockReaderIdExt, BytecodeReader, CandidateAssemblyView,
+        CandidateTxShapeObserver, CliTraderSnapshotPort, Debug, Header, HeaderProvider,
+        MaterializedState, PendingSnapshotRecord, PriorityEconomicsAuthority,
+        PriorityEconomicsLedgerV2, ShadowLatestSlot, ShadowSubmit, SnapshotFreshnessToken,
+        SnapshotHandle, StateProviderFactory, T4bOutcome, T4bOutcomeCounters, TraderSnapshotPort,
+        TxAuthorityAssembler, TxAuthorityError, TxAuthorityNodeError, TxAuthorityNodeView,
+        TxAuthorityStateRead, ValidatedUnsignedAtomicTx,
+    };
+    #[cfg(feature = "priority-economics-capture")]
+    use mev_trader_submit::CheckedBindingsView;
+    use mev_trader_submit::{
+        CandidateEconomicsEvidence, CandidateExecutionAdapter, CanonicalEnvelopeFactory,
+        TxAuthorityExecutionRequest,
+    };
+
+    /// The only legal phases in an audited selected-route execution.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    pub enum AuditPhase {
+        /// Reads needed to establish the recipient's WETH balance.
+        PreWeth,
+        /// Reads performed by the candidate EVM execution.
+        Candidate,
+        /// Reads needed to establish the recipient's post-execution WETH balance.
+        PostWeth,
+        /// Reads performed while fetching canonical L1 fee inputs.
+        L1Fetch,
+        /// Terminal phase; no further reads are accepted.
+        Sealed,
+    }
+
+    /// The kind and owned result of one audited database access.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum AuditedAccessKindV1 {
+        /// An account lookup and its presence-preserving result.
+        Basic {
+            /// Looked-up address.
+            address: Address,
+            /// Complete account information returned by the database.
+            account: Option<AccountInfo>,
+        },
+        /// A bytecode lookup.
+        CodeByHash {
+            /// Requested code hash.
+            code_hash: B256,
+            /// Returned bytecode.
+            code: Bytecode,
+        },
+        /// A storage lookup.
+        Storage {
+            /// Storage owner.
+            address: Address,
+            /// Optional database-local account identifier.
+            account_id: Option<AccountId>,
+            /// Requested slot.
+            slot: StorageKey,
+            /// Returned value.
+            value: StorageValue,
+        },
+        /// A block-hash lookup.
+        BlockHash {
+            /// Requested block number.
+            number: u64,
+            /// Returned block hash.
+            hash: B256,
+        },
+    }
+
+    impl AuditedAccessKindV1 {
+        fn same_key(&self, other: &Self) -> bool {
+            match (self, other) {
+                (Self::Basic { address: left, .. }, Self::Basic { address: right, .. }) => {
+                    left == right
+                }
+                (
+                    Self::CodeByHash { code_hash: left, .. },
+                    Self::CodeByHash { code_hash: right, .. },
+                ) => left == right,
+                (
+                    Self::Storage {
+                        address: left_address,
+                        account_id: left_id,
+                        slot: left_slot,
+                        ..
+                    },
+                    Self::Storage {
+                        address: right_address,
+                        account_id: right_id,
+                        slot: right_slot,
+                        ..
+                    },
+                ) => {
+                    left_address == right_address && left_id == right_id && left_slot == right_slot
+                }
+                (Self::BlockHash { number: left, .. }, Self::BlockHash { number: right, .. }) => {
+                    left == right
+                }
+                _ => false,
+            }
+        }
+    }
+
+    /// One successful caller-level database access with a monotonic ordinal.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct AuditedAccessV1 {
+        phase: AuditPhase,
+        ordinal: u64,
+        kind: AuditedAccessKindV1,
+    }
+
+    impl AuditedAccessV1 {
+        /// Returns the phase in which this access occurred.
+        pub const fn phase(&self) -> AuditPhase {
+            self.phase
+        }
+
+        /// Returns the zero-based caller-level access ordinal.
+        pub const fn ordinal(&self) -> u64 {
+            self.ordinal
+        }
+
+        /// Returns the owned access result.
+        pub const fn kind(&self) -> &AuditedAccessKindV1 {
+            &self.kind
+        }
+        #[cfg(all(test, feature = "priority-economics-capture"))]
+        pub(super) const fn new_for_capture_test(
+            phase: AuditPhase,
+            ordinal: u64,
+            kind: AuditedAccessKindV1,
+        ) -> Self {
+            Self { phase, ordinal, kind }
+        }
+    }
+
+    #[cfg(feature = "priority-economics-capture")]
+    pub(super) fn capture_audit_reads(audit: &[AuditedAccessV1]) -> Option<Vec<AuditReadV1>> {
+        type AuditReadKey = (
+            AuditPhaseV1,
+            AuditAccessKindV1,
+            Option<Address>,
+            Option<u32>,
+            Option<U256>,
+            Option<B256>,
+            Option<u64>,
+            AuditObservedValueV1,
+        );
+
+        let capture_phase = |phase| match phase {
+            AuditPhase::PreWeth => AuditPhaseV1::PreWeth,
+            AuditPhase::Candidate => AuditPhaseV1::Candidate,
+            AuditPhase::PostWeth => AuditPhaseV1::PostWeth,
+            AuditPhase::L1Fetch => AuditPhaseV1::L1Fetch,
+            AuditPhase::Sealed => AuditPhaseV1::Sealed,
+        };
+        let mut drafts = BTreeMap::<AuditReadKey, (u64, u64, u64)>::new();
+        for access in audit {
+            let read_key = match access.kind() {
+                AuditedAccessKindV1::Basic { address, account } => {
+                    let account_identity = account
+                        .as_ref()
+                        .and_then(|info| info.account_id)
+                        .and_then(|identity| u32::try_from(identity.get()).ok());
+                    let observed_value = match account {
+                        Some(info) => AuditObservedValueV1::Account {
+                            balance: info.balance,
+                            nonce: info.nonce,
+                            code_hash: info.code_hash,
+                            code: info.code.as_ref().map(|code| code.original_bytes()),
+                        },
+                        None => AuditObservedValueV1::AbsentAccount,
+                    };
+                    (
+                        capture_phase(access.phase()),
+                        AuditAccessKindV1::Basic,
+                        Some(*address),
+                        account_identity,
+                        None,
+                        None,
+                        None,
+                        observed_value,
+                    )
+                }
+                AuditedAccessKindV1::CodeByHash { code_hash, code } => (
+                    capture_phase(access.phase()),
+                    AuditAccessKindV1::CodeByHash,
+                    None,
+                    None,
+                    None,
+                    Some(*code_hash),
+                    None,
+                    AuditObservedValueV1::Code(code.original_bytes()),
+                ),
+                AuditedAccessKindV1::Storage { address, account_id, slot, value } => (
+                    capture_phase(access.phase()),
+                    AuditAccessKindV1::Storage,
+                    Some(*address),
+                    account_id.and_then(|identity| u32::try_from(identity.get()).ok()),
+                    Some(*slot),
+                    None,
+                    None,
+                    AuditObservedValueV1::Storage(*value),
+                ),
+                AuditedAccessKindV1::BlockHash { number, hash } => (
+                    capture_phase(access.phase()),
+                    AuditAccessKindV1::BlockHash,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(*number),
+                    AuditObservedValueV1::BlockHash(*hash),
+                ),
+            };
+            let occurrence =
+                drafts.entry(read_key).or_insert((access.ordinal(), access.ordinal(), 0));
+            occurrence.1 = access.ordinal();
+            occurrence.2 = occurrence.2.checked_add(1)?;
+        }
+
+        drafts
+            .into_iter()
+            .map(
+                |(
+                    (
+                        phase,
+                        access_kind,
+                        address,
+                        account_identity,
+                        slot,
+                        code_hash,
+                        block_number,
+                        observed_value,
+                    ),
+                    (first_ordinal, last_ordinal, occurrences),
+                )| {
+                    AuditReadV1::new(
+                        phase,
+                        access_kind,
+                        address,
+                        account_identity,
+                        slot,
+                        code_hash,
+                        block_number,
+                        observed_value,
+                        first_ordinal,
+                        last_ordinal,
+                        occurrences,
+                    )
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()
+            .ok()
+    }
+
+    /// Bounded identity of a database operation, without returned data or raw error text.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum AuditedOperationV1 {
+        /// An account lookup.
+        Basic(Address),
+        /// A bytecode lookup.
+        CodeByHash(B256),
+        /// A storage lookup.
+        Storage {
+            /// Storage owner.
+            address: Address,
+            /// Requested slot.
+            slot: StorageKey,
+        },
+        /// A block-hash lookup.
+        BlockHash(u64),
+    }
+
+    impl AuditedOperationV1 {
+        const fn tag(self) -> &'static str {
+            match self {
+                Self::Basic(_) => "basic",
+                Self::CodeByHash(_) => "code_by_hash",
+                Self::Storage { .. } => "storage",
+                Self::BlockHash(_) => "block_hash",
+            }
+        }
+    }
+
+    /// Bounded evidence for one wrapped-database failure.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct AuditedFailureV1 {
+        phase: AuditPhase,
+        ordinal: u64,
+        operation: AuditedOperationV1,
+        fatal: bool,
+    }
+
+    impl AuditedFailureV1 {
+        /// Returns the phase in which the wrapped database failed.
+        const fn phase(&self) -> AuditPhase {
+            self.phase
+        }
+
+        /// Returns the monotonic caller-level access ordinal.
+        const fn ordinal(&self) -> u64 {
+            self.ordinal
+        }
+
+        /// Returns the bounded operation identity.
+        const fn operation(&self) -> AuditedOperationV1 {
+            self.operation
+        }
+
+        /// Returns the wrapped error's fatal/nonfatal classification.
+        const fn is_fatal(&self) -> bool {
+            self.fatal
+        }
+    }
+
+    /// Independently bounded audited-database resources.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum AuditedResource {
+        /// Total caller read attempts.
+        TotalAccesses,
+        /// Distinct account addresses.
+        UniqueAccounts,
+        /// Distinct `(address, slot)` storage keys.
+        UniqueStorageKeys,
+        /// Aggregate successfully returned bytecode bytes.
+        AggregateCodeBytes,
+        /// Distinct block numbers requested through `BLOCKHASH`.
+        BlockHashKeys,
+    }
+
+    impl AuditedResource {
+        const fn label(self) -> &'static str {
+            match self {
+                Self::TotalAccesses => "total_accesses",
+                Self::UniqueAccounts => "unique_accounts",
+                Self::UniqueStorageKeys => "unique_storage_keys",
+                Self::AggregateCodeBytes => "aggregate_code_bytes",
+                Self::BlockHashKeys => "block_hash_keys",
+            }
+        }
+    }
+
+    /// Reason that a completed audit phase does not satisfy its exact contract.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum AuditPhaseIncompleteReason {
+        /// The phase had the wrong total access cardinality.
+        AccessCardinality,
+        /// The phase had the wrong access method or key identity.
+        AccessIdentity,
+        /// Candidate execution performed no database access.
+        CandidateEmpty,
+        /// A caller attempted a read after sealing.
+        SealedRead,
+        /// L1 overhead was read when the upstream conditional branch did not select it.
+        UnexpectedL1Overhead,
+        /// L1 overhead was omitted when the upstream conditional branch selected it.
+        MissingL1Overhead,
+    }
+
+    impl AuditPhaseIncompleteReason {
+        const fn label(self) -> &'static str {
+            match self {
+                Self::AccessCardinality => "access_cardinality",
+                Self::AccessIdentity => "access_identity",
+                Self::CandidateEmpty => "candidate_empty",
+                Self::SealedRead => "sealed_read",
+                Self::UnexpectedL1Overhead => "unexpected_l1_overhead",
+                Self::MissingL1Overhead => "missing_l1_overhead",
+            }
+        }
+    }
+
+    /// Checked resource limits for [`AuditedDatabase`].
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct AuditedDatabaseLimits {
+        total_accesses: usize,
+        unique_accounts: usize,
+        unique_storage_keys: usize,
+        aggregate_code_bytes: usize,
+        block_hash_keys: usize,
+    }
+
+    impl AuditedDatabaseLimits {
+        /// Production total caller-read bound.
+        const PRODUCTION_TOTAL_ACCESSES: usize = 16_384;
+        /// Production distinct-account bound, matching the capture contract.
+        const PRODUCTION_UNIQUE_ACCOUNTS: usize = 256;
+        /// Production distinct-storage-key bound, matching the capture contract.
+        const PRODUCTION_UNIQUE_STORAGE_KEYS: usize = 8_192;
+        /// Production aggregate-code-byte bound, matching the capture contract.
+        const PRODUCTION_AGGREGATE_CODE_BYTES: usize = 4 * 1024 * 1024;
+        /// Production distinct-block-hash-key bound.
+        const PRODUCTION_BLOCK_HASH_KEYS: usize = 256;
+    }
+
+    impl Default for AuditedDatabaseLimits {
+        fn default() -> Self {
+            Self {
+                total_accesses: Self::PRODUCTION_TOTAL_ACCESSES,
+                unique_accounts: Self::PRODUCTION_UNIQUE_ACCOUNTS,
+                unique_storage_keys: Self::PRODUCTION_UNIQUE_STORAGE_KEYS,
+                aggregate_code_bytes: Self::PRODUCTION_AGGREGATE_CODE_BYTES,
+                block_hash_keys: Self::PRODUCTION_BLOCK_HASH_KEYS,
+            }
+        }
+    }
+
+    /// Error returned by an audited database.
+    #[derive(Debug)]
+    pub enum AuditedDatabaseError<E> {
+        /// The wrapped database rejected the operation.
+        Inner(E),
+        /// A supplied limit was zero.
+        InvalidLimit {
+            /// Invalid resource.
+            resource: &'static str,
+        },
+        /// A caller read would exceed an independent resource limit.
+        ResourceLimit {
+            /// Exhausted resource.
+            resource: &'static str,
+            /// Configured bound.
+            limit: usize,
+        },
+        /// The monotonic caller-level ordinal cannot be incremented.
+        OrdinalOverflow,
+        /// Candidate bytecode attempted to use BLOCKHASH.
+        CandidateBlockHashForbidden {
+            /// Requested block number.
+            number: u64,
+        },
+        /// A phase transition did not follow the fixed DFA.
+        InvalidPhaseTransition {
+            /// Current phase.
+            from: AuditPhase,
+            /// Requested phase.
+            to: AuditPhase,
+        },
+        /// The current phase did not satisfy its exact read contract.
+        PhaseIncomplete {
+            /// Incomplete phase.
+            phase: AuditPhase,
+            /// Bounded reason.
+            reason: &'static str,
+        },
+        /// Repeated reads of one key returned different values.
+        IncoherentRepeatedRead,
+    }
+
+    impl<E: Display> Display for AuditedDatabaseError<E> {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::Inner(error) => write!(formatter, "audited database inner error: {error}"),
+                Self::InvalidLimit { resource } => {
+                    write!(formatter, "zero audited database limit for {resource}")
+                }
+                Self::ResourceLimit { resource, limit } => {
+                    write!(formatter, "audited database {resource} limit {limit} exceeded")
+                }
+                Self::OrdinalOverflow => formatter.write_str("audited database ordinal overflow"),
+                Self::CandidateBlockHashForbidden { number } => {
+                    write!(formatter, "candidate BLOCKHASH is forbidden for block {number}")
+                }
+                Self::InvalidPhaseTransition { from, to } => {
+                    write!(formatter, "invalid audit phase transition from {from:?} to {to:?}")
+                }
+                Self::PhaseIncomplete { phase, reason } => {
+                    write!(formatter, "incomplete audit phase {phase:?}: {reason}")
+                }
+                Self::IncoherentRepeatedRead => {
+                    formatter.write_str("incoherent repeated audited database read")
+                }
+            }
+        }
+    }
+
+    impl<E: Error + 'static> Error for AuditedDatabaseError<E> {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            match self {
+                Self::Inner(error) => Some(error),
+                _ => None,
+            }
+        }
+    }
+
+    impl<E: DBErrorMarker> DBErrorMarker for AuditedDatabaseError<E> {
+        fn is_fatal(&self) -> bool {
+            match self {
+                Self::Inner(error) => error.is_fatal(),
+                _ => true,
+            }
+        }
+    }
+
+    /// A bounded database wrapper that records successful reads and raw-free inner failures.
+    #[derive(Debug)]
+    pub struct AuditedDatabase<DB> {
+        inner: DB,
+        phase: AuditPhase,
+        next_ordinal: u64,
+        limits: AuditedDatabaseLimits,
+        caller_reads: usize,
+        aggregate_code_bytes: usize,
+        accounts: BTreeSet<Address>,
+        storage_keys: BTreeSet<(Address, StorageKey)>,
+        block_hash_keys: BTreeSet<u64>,
+        accesses: Vec<AuditedAccessV1>,
+        failures: Vec<AuditedFailureV1>,
+    }
+
+    impl<DB> AuditedDatabase<DB> {
+        /// Wraps a database in the initial `PreWeth` phase with production limits.
+        pub fn new(inner: DB) -> Self {
+            Self::with_limits(inner, AuditedDatabaseLimits::default())
+                .expect("production audited database limits are nonzero")
+        }
+
+        fn with_limits(
+            inner: DB,
+            limits: AuditedDatabaseLimits,
+        ) -> Result<Self, AuditedDatabaseError<Infallible>> {
+            for (resource, limit) in [
+                (AuditedResource::TotalAccesses, limits.total_accesses),
+                (AuditedResource::UniqueAccounts, limits.unique_accounts),
+                (AuditedResource::UniqueStorageKeys, limits.unique_storage_keys),
+                (AuditedResource::AggregateCodeBytes, limits.aggregate_code_bytes),
+                (AuditedResource::BlockHashKeys, limits.block_hash_keys),
+            ] {
+                if limit == 0 {
+                    return Err(AuditedDatabaseError::InvalidLimit { resource: resource.label() });
+                }
+            }
+            Ok(Self {
+                inner,
+                phase: AuditPhase::PreWeth,
+                next_ordinal: 0,
+                limits,
+                caller_reads: 0,
+                aggregate_code_bytes: 0,
+                accounts: BTreeSet::new(),
+                storage_keys: BTreeSet::new(),
+                block_hash_keys: BTreeSet::new(),
+                accesses: Vec::new(),
+                failures: Vec::new(),
+            })
+        }
+
+        /// Returns the current audit phase.
+        pub const fn phase(&self) -> AuditPhase {
+            self.phase
+        }
+
+        /// Advances the exact `PreWeth -> Candidate -> PostWeth -> L1Fetch -> Sealed` DFA.
+        pub fn transition<E>(&mut self, to: AuditPhase) -> Result<(), AuditedDatabaseError<E>> {
+            let valid = matches!(
+                (self.phase, to),
+                (AuditPhase::PreWeth, AuditPhase::Candidate)
+                    | (AuditPhase::Candidate, AuditPhase::PostWeth)
+                    | (AuditPhase::PostWeth, AuditPhase::L1Fetch)
+                    | (AuditPhase::L1Fetch, AuditPhase::Sealed)
+            );
+            if !valid {
+                return Err(AuditedDatabaseError::InvalidPhaseTransition { from: self.phase, to });
+            }
+            self.validate_phase()?;
+            self.phase = to;
+            Ok(())
+        }
+
+        /// Returns all successful owned accesses accumulated so far.
+        pub fn accesses(&self) -> &[AuditedAccessV1] {
+            &self.accesses
+        }
+
+        /// Returns the number of bounded, raw-free wrapped-database failures.
+        pub fn failure_count(&self) -> usize {
+            self.failures.len()
+        }
+
+        /// Returns the phase for one retained failure.
+        pub fn failure_phase(&self, index: usize) -> Option<AuditPhase> {
+            self.failures.get(index).map(AuditedFailureV1::phase)
+        }
+
+        /// Returns the monotonic ordinal for one retained failure.
+        pub fn failure_ordinal(&self, index: usize) -> Option<u64> {
+            self.failures.get(index).map(AuditedFailureV1::ordinal)
+        }
+
+        /// Returns the bounded operation tag for one retained failure.
+        pub fn failure_operation_tag(&self, index: usize) -> Option<&'static str> {
+            self.failures.get(index).map(|failure| failure.operation().tag())
+        }
+
+        /// Returns the fatal classification for one retained failure.
+        pub fn failure_is_fatal(&self, index: usize) -> Option<bool> {
+            self.failures.get(index).map(AuditedFailureV1::is_fatal)
+        }
+
+        /// Consumes a sealed wrapper into its database and owned access log.
+        pub fn into_sealed_parts<E>(
+            self,
+        ) -> Result<(DB, Vec<AuditedAccessV1>), AuditedDatabaseError<E>> {
+            if self.phase != AuditPhase::Sealed {
+                return Err(AuditedDatabaseError::InvalidPhaseTransition {
+                    from: self.phase,
+                    to: AuditPhase::Sealed,
+                });
+            }
+            Ok((self.inner, self.accesses))
+        }
+
+        fn phase_accesses(&self) -> impl Iterator<Item = &AuditedAccessV1> {
+            self.accesses.iter().filter(|access| access.phase == self.phase)
+        }
+
+        fn validate_phase<E>(&self) -> Result<(), AuditedDatabaseError<E>> {
+            let count = self.phase_accesses().count();
+            match self.phase {
+                AuditPhase::PreWeth | AuditPhase::PostWeth => {
+                    if count != 1 {
+                        return Err(AuditedDatabaseError::PhaseIncomplete {
+                            phase: self.phase,
+                            reason: AuditPhaseIncompleteReason::AccessCardinality.label(),
+                        });
+                    }
+                    if !matches!(
+                        self.phase_accesses().next().map(AuditedAccessV1::kind),
+                        Some(AuditedAccessKindV1::Storage { .. })
+                    ) {
+                        return Err(AuditedDatabaseError::PhaseIncomplete {
+                            phase: self.phase,
+                            reason: AuditPhaseIncompleteReason::AccessIdentity.label(),
+                        });
+                    }
+                    if self.phase == AuditPhase::PostWeth {
+                        let storage_key = |access: &AuditedAccessV1| match access.kind() {
+                            AuditedAccessKindV1::Storage { address, slot, .. } => {
+                                Some((*address, *slot))
+                            }
+                            _ => None,
+                        };
+                        let pre = self
+                            .accesses
+                            .iter()
+                            .find(|access| access.phase == AuditPhase::PreWeth)
+                            .and_then(storage_key);
+                        let post = self.phase_accesses().next().and_then(storage_key);
+                        if pre.is_none() || pre != post {
+                            return Err(AuditedDatabaseError::PhaseIncomplete {
+                                phase: self.phase,
+                                reason: AuditPhaseIncompleteReason::AccessIdentity.label(),
+                            });
+                        }
+                    }
+                }
+                AuditPhase::Candidate if count == 0 => {
+                    return Err(AuditedDatabaseError::PhaseIncomplete {
+                        phase: self.phase,
+                        reason: AuditPhaseIncompleteReason::CandidateEmpty.label(),
+                    });
+                }
+                AuditPhase::L1Fetch => self.validate_l1_fetch()?,
+                AuditPhase::Candidate | AuditPhase::Sealed => {}
+            }
+            Ok(())
+        }
+
+        fn validate_l1_fetch<E>(&self) -> Result<(), AuditedDatabaseError<E>> {
+            let mut basic = 0usize;
+            let mut base_fee = 0usize;
+            let mut blob_base_fee = 0usize;
+            let mut fee_scalars = 0usize;
+            let mut operator_and_da = 0usize;
+            let mut overhead = 0usize;
+            let mut empty_ecotone_scalars = None;
+            for access in self.phase_accesses() {
+                match access.kind() {
+                    AuditedAccessKindV1::Basic { address, .. }
+                        if *address == Predeploys::L1_BLOCK_INFO =>
+                    {
+                        basic += 1;
+                    }
+                    AuditedAccessKindV1::Storage { address, slot, value, .. }
+                        if *address == Predeploys::L1_BLOCK_INFO =>
+                    {
+                        if *slot == L1BlockInfo::L1_BASE_FEE_SLOT {
+                            base_fee += 1;
+                        } else if *slot == L1BlockInfo::ECOTONE_L1_BLOB_BASE_FEE_SLOT {
+                            blob_base_fee += 1;
+                        } else if *slot == L1BlockInfo::ECOTONE_L1_FEE_SCALARS_SLOT {
+                            fee_scalars += 1;
+                            let bytes = value.to_be_bytes::<32>();
+                            empty_ecotone_scalars = Some(
+                                bytes[L1BlockInfo::BASE_FEE_SCALAR_OFFSET
+                                    ..L1BlockInfo::BLOB_BASE_FEE_SCALAR_OFFSET + 4]
+                                    == L1BlockInfo::EMPTY_SCALARS,
+                            );
+                        } else if *slot == L1BlockInfo::OPERATOR_FEE_SCALARS_SLOT {
+                            operator_and_da += 1;
+                        } else if *slot == L1BlockInfo::L1_OVERHEAD_SLOT {
+                            overhead += 1;
+                        } else {
+                            return Err(AuditedDatabaseError::PhaseIncomplete {
+                                phase: self.phase,
+                                reason: AuditPhaseIncompleteReason::AccessIdentity.label(),
+                            });
+                        }
+                    }
+                    _ => {
+                        return Err(AuditedDatabaseError::PhaseIncomplete {
+                            phase: self.phase,
+                            reason: AuditPhaseIncompleteReason::AccessIdentity.label(),
+                        });
+                    }
+                }
+            }
+            if basic != 1
+                || base_fee != 1
+                || blob_base_fee != 1
+                || fee_scalars != 1
+                || operator_and_da != 2
+            {
+                return Err(AuditedDatabaseError::PhaseIncomplete {
+                    phase: self.phase,
+                    reason: AuditPhaseIncompleteReason::AccessCardinality.label(),
+                });
+            }
+            match (empty_ecotone_scalars, overhead) {
+                (Some(true), 0) => Err(AuditedDatabaseError::PhaseIncomplete {
+                    phase: self.phase,
+                    reason: AuditPhaseIncompleteReason::MissingL1Overhead.label(),
+                }),
+                (Some(false), 1) => Err(AuditedDatabaseError::PhaseIncomplete {
+                    phase: self.phase,
+                    reason: AuditPhaseIncompleteReason::UnexpectedL1Overhead.label(),
+                }),
+                (Some(true), 1) | (Some(false), 0) => Ok(()),
+                _ => Err(AuditedDatabaseError::PhaseIncomplete {
+                    phase: self.phase,
+                    reason: AuditPhaseIncompleteReason::AccessCardinality.label(),
+                }),
+            }
+        }
+
+        fn check_common<E>(&mut self) -> Result<u64, AuditedDatabaseError<E>> {
+            if self.phase == AuditPhase::Sealed {
+                return Err(AuditedDatabaseError::PhaseIncomplete {
+                    phase: AuditPhase::Sealed,
+                    reason: AuditPhaseIncompleteReason::SealedRead.label(),
+                });
+            }
+            if self.caller_reads >= self.limits.total_accesses {
+                return Err(AuditedDatabaseError::ResourceLimit {
+                    resource: AuditedResource::TotalAccesses.label(),
+                    limit: self.limits.total_accesses,
+                });
+            }
+            let ordinal = self.next_ordinal;
+            self.next_ordinal =
+                ordinal.checked_add(1).ok_or(AuditedDatabaseError::OrdinalOverflow)?;
+            self.caller_reads += 1;
+            Ok(ordinal)
+        }
+
+        fn check_account<E>(&self, address: Address) -> Result<(), AuditedDatabaseError<E>> {
+            if !self.accounts.contains(&address)
+                && self.accounts.len() >= self.limits.unique_accounts
+            {
+                return Err(AuditedDatabaseError::ResourceLimit {
+                    resource: AuditedResource::UniqueAccounts.label(),
+                    limit: self.limits.unique_accounts,
+                });
+            }
+            Ok(())
+        }
+
+        fn check_storage<E>(
+            &self,
+            address: Address,
+            slot: StorageKey,
+        ) -> Result<(), AuditedDatabaseError<E>> {
+            if !self.storage_keys.contains(&(address, slot))
+                && self.storage_keys.len() >= self.limits.unique_storage_keys
+            {
+                return Err(AuditedDatabaseError::ResourceLimit {
+                    resource: AuditedResource::UniqueStorageKeys.label(),
+                    limit: self.limits.unique_storage_keys,
+                });
+            }
+            Ok(())
+        }
+
+        fn check_block_hash<E>(&self, number: u64) -> Result<(), AuditedDatabaseError<E>> {
+            if !self.block_hash_keys.contains(&number)
+                && self.block_hash_keys.len() >= self.limits.block_hash_keys
+            {
+                return Err(AuditedDatabaseError::ResourceLimit {
+                    resource: AuditedResource::BlockHashKeys.label(),
+                    limit: self.limits.block_hash_keys,
+                });
+            }
+            Ok(())
+        }
+
+        fn check_code_bytes<E>(&self, code_len: usize) -> Result<(), AuditedDatabaseError<E>> {
+            let updated = self.aggregate_code_bytes.checked_add(code_len).ok_or(
+                AuditedDatabaseError::ResourceLimit {
+                    resource: AuditedResource::AggregateCodeBytes.label(),
+                    limit: self.limits.aggregate_code_bytes,
+                },
+            )?;
+            if updated > self.limits.aggregate_code_bytes {
+                return Err(AuditedDatabaseError::ResourceLimit {
+                    resource: AuditedResource::AggregateCodeBytes.label(),
+                    limit: self.limits.aggregate_code_bytes,
+                });
+            }
+            Ok(())
+        }
+
+        fn record<E>(
+            &mut self,
+            ordinal: u64,
+            kind: AuditedAccessKindV1,
+        ) -> Result<(), AuditedDatabaseError<E>> {
+            if self.accesses.iter().any(|access| {
+                access.phase == self.phase && access.kind.same_key(&kind) && access.kind != kind
+            }) {
+                return Err(AuditedDatabaseError::IncoherentRepeatedRead);
+            }
+            let code_len = match &kind {
+                AuditedAccessKindV1::Basic { account, .. } => account
+                    .as_ref()
+                    .and_then(|account| account.code.as_ref())
+                    .map_or(0, Bytecode::len),
+                AuditedAccessKindV1::CodeByHash { code, .. } => code.len(),
+                AuditedAccessKindV1::Storage { .. } | AuditedAccessKindV1::BlockHash { .. } => 0,
+            };
+            self.check_code_bytes(code_len)?;
+            self.aggregate_code_bytes += code_len;
+            self.accesses.push(AuditedAccessV1 { phase: self.phase, ordinal, kind });
+            Ok(())
+        }
+
+        fn record_inner_failure(
+            &mut self,
+            ordinal: u64,
+            operation: AuditedOperationV1,
+            fatal: bool,
+        ) {
+            self.failures.push(AuditedFailureV1 { phase: self.phase, ordinal, operation, fatal });
+        }
+    }
+
+    impl<DB: Database> Database for AuditedDatabase<DB> {
+        type Error = AuditedDatabaseError<DB::Error>;
+
+        fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+            let ordinal = self.check_common()?;
+            self.check_account(address)?;
+            self.accounts.insert(address);
+            let account = match self.inner.basic(address) {
+                Ok(account) => account,
+                Err(error) => {
+                    self.record_inner_failure(
+                        ordinal,
+                        AuditedOperationV1::Basic(address),
+                        error.is_fatal(),
+                    );
+                    return Err(AuditedDatabaseError::Inner(error));
+                }
+            };
+            self.check_code_bytes(
+                account.as_ref().and_then(|account| account.code.as_ref()).map_or(0, Bytecode::len),
+            )?;
+            self.record(ordinal, AuditedAccessKindV1::Basic { address, account: account.clone() })?;
+            Ok(account)
+        }
+
+        fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+            let ordinal = self.check_common()?;
+            let code = match self.inner.code_by_hash(code_hash) {
+                Ok(code) => code,
+                Err(error) => {
+                    self.record_inner_failure(
+                        ordinal,
+                        AuditedOperationV1::CodeByHash(code_hash),
+                        error.is_fatal(),
+                    );
+                    return Err(AuditedDatabaseError::Inner(error));
+                }
+            };
+            self.check_code_bytes(code.len())?;
+            self.record(
+                ordinal,
+                AuditedAccessKindV1::CodeByHash { code_hash, code: code.clone() },
+            )?;
+            Ok(code)
+        }
+
+        fn storage(
+            &mut self,
+            address: Address,
+            slot: StorageKey,
+        ) -> Result<StorageValue, Self::Error> {
+            let ordinal = self.check_common()?;
+            self.check_account(address)?;
+            self.check_storage(address, slot)?;
+            self.accounts.insert(address);
+            self.storage_keys.insert((address, slot));
+            let value = match self.inner.storage(address, slot) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.record_inner_failure(
+                        ordinal,
+                        AuditedOperationV1::Storage { address, slot },
+                        error.is_fatal(),
+                    );
+                    return Err(AuditedDatabaseError::Inner(error));
+                }
+            };
+            self.record(
+                ordinal,
+                AuditedAccessKindV1::Storage { address, account_id: None, slot, value },
+            )?;
+            Ok(value)
+        }
+
+        fn storage_by_account_id(
+            &mut self,
+            address: Address,
+            account_id: AccountId,
+            slot: StorageKey,
+        ) -> Result<StorageValue, Self::Error> {
+            let ordinal = self.check_common()?;
+            self.check_account(address)?;
+            self.check_storage(address, slot)?;
+            self.accounts.insert(address);
+            self.storage_keys.insert((address, slot));
+            let value = match self.inner.storage_by_account_id(address, account_id, slot) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.record_inner_failure(
+                        ordinal,
+                        AuditedOperationV1::Storage { address, slot },
+                        error.is_fatal(),
+                    );
+                    return Err(AuditedDatabaseError::Inner(error));
+                }
+            };
+            self.record(
+                ordinal,
+                AuditedAccessKindV1::Storage { address, account_id: Some(account_id), slot, value },
+            )?;
+            Ok(value)
+        }
+
+        fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+            if self.phase == AuditPhase::Candidate {
+                return Err(AuditedDatabaseError::CandidateBlockHashForbidden { number });
+            }
+            let ordinal = self.check_common()?;
+            self.check_block_hash(number)?;
+            self.block_hash_keys.insert(number);
+            let hash = match self.inner.block_hash(number) {
+                Ok(hash) => hash,
+                Err(error) => {
+                    self.record_inner_failure(
+                        ordinal,
+                        AuditedOperationV1::BlockHash(number),
+                        error.is_fatal(),
+                    );
+                    return Err(AuditedDatabaseError::Inner(error));
+                }
+            };
+            self.record(ordinal, AuditedAccessKindV1::BlockHash { number, hash })?;
+            Ok(hash)
+        }
+    }
+
+    impl<DB: DatabaseCommit> DatabaseCommit for AuditedDatabase<DB> {
+        fn commit(&mut self, changes: AddressMap<Account>) {
+            self.inner.commit(changes);
+        }
+    }
+
+    /// Candidate addresses and state fields that may be changed.
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub struct CandidateAccessAllowlistV1 {
+        accounts: BTreeSet<Address>,
+        balance_accounts: BTreeSet<Address>,
+        nonce_accounts: BTreeSet<Address>,
+        storage_accounts: BTreeSet<Address>,
+    }
+
+    impl CandidateAccessAllowlistV1 {
+        /// Creates a checked candidate access allowlist.
+        pub fn new(
+            accounts: impl IntoIterator<Item = Address>,
+            balance_accounts: impl IntoIterator<Item = Address>,
+            nonce_accounts: impl IntoIterator<Item = Address>,
+            storage_accounts: impl IntoIterator<Item = Address>,
+        ) -> Self {
+            Self {
+                accounts: accounts.into_iter().collect(),
+                balance_accounts: balance_accounts.into_iter().collect(),
+                nonce_accounts: nonce_accounts.into_iter().collect(),
+                storage_accounts: storage_accounts.into_iter().collect(),
+            }
+        }
+
+        /// Returns whether an account may appear in candidate state.
+        pub fn allows_account(&self, address: Address) -> bool {
+            self.accounts.contains(&address)
+        }
+
+        /// Returns whether an account balance may change.
+        pub fn allows_balance(&self, address: Address) -> bool {
+            self.balance_accounts.contains(&address)
+        }
+
+        /// Returns whether an account nonce may change.
+        pub fn allows_nonce(&self, address: Address) -> bool {
+            self.nonce_accounts.contains(&address)
+        }
+
+        /// Returns whether storage owned by an account may change.
+        pub fn allows_storage(&self, address: Address, _slot: StorageKey) -> bool {
+            self.storage_accounts.contains(&address)
+        }
+    }
+
+    /// Owned state keys accessed by candidate execution.
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub struct CandidateAccessedStateV1 {
+        accounts: BTreeSet<Address>,
+        storage: BTreeSet<(Address, StorageKey)>,
+        code_hashes: BTreeSet<B256>,
+    }
+
+    impl CandidateAccessedStateV1 {
+        /// Creates an owned accessed-state summary.
+        pub fn new(
+            accounts: impl IntoIterator<Item = Address>,
+            storage: impl IntoIterator<Item = (Address, StorageKey)>,
+            code_hashes: impl IntoIterator<Item = B256>,
+        ) -> Self {
+            Self {
+                accounts: accounts.into_iter().collect(),
+                storage: storage.into_iter().collect(),
+                code_hashes: code_hashes.into_iter().collect(),
+            }
+        }
+
+        /// Returns accessed accounts.
+        pub const fn accounts(&self) -> &BTreeSet<Address> {
+            &self.accounts
+        }
+
+        /// Returns accessed storage keys.
+        pub const fn storage(&self) -> &BTreeSet<(Address, StorageKey)> {
+            &self.storage
+        }
+
+        /// Returns accessed code hashes.
+        pub const fn code_hashes(&self) -> &BTreeSet<B256> {
+            &self.code_hashes
+        }
+    }
+
+    /// Stable fail-closed candidate state collection errors.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum CandidateStateCollectionError {
+        /// Candidate created an account.
+        Created {
+            /// Created account.
+            address: Address,
+        },
+        /// Candidate self-destructed an account.
+        SelfDestructed {
+            /// Self-destructed account.
+            address: Address,
+        },
+        /// Candidate produced a status outside the allowed mask.
+        DisallowedStatus {
+            /// Account carrying the disallowed status.
+            address: Address,
+            /// Raw status bits observed by the collector.
+            status_bits: u8,
+        },
+        /// Candidate changed an account's code hash.
+        CodeHashMutation {
+            /// Account whose code hash changed.
+            address: Address,
+        },
+        /// Candidate changed an account's code bytes.
+        CodeMutation {
+            /// Account whose code bytes changed.
+            address: Address,
+        },
+        /// Candidate changed an account's database-local identifier.
+        AccountIdMutation {
+            /// Account whose local identifier changed.
+            address: Address,
+        },
+        /// Candidate removed code that was present in the original account.
+        CodeDisappeared {
+            /// Account whose code disappeared.
+            address: Address,
+        },
+        /// Candidate touched an address outside the account allowlist.
+        AccountOutsideAllowlist {
+            /// Non-allowlisted account.
+            address: Address,
+        },
+        /// Candidate changed a balance outside the balance allowlist.
+        BalanceOutsideAllowlist {
+            /// Account with a non-allowlisted balance change.
+            address: Address,
+        },
+        /// Candidate changed a nonce outside the nonce allowlist.
+        NonceOutsideAllowlist {
+            /// Account with a non-allowlisted nonce change.
+            address: Address,
+        },
+        /// Candidate touched a storage slot outside the storage allowlist.
+        StorageOutsideAllowlist {
+            /// Storage-owning account.
+            address: Address,
+            /// Non-allowlisted storage slot.
+            slot: StorageKey,
+        },
+        /// Hydrated code did not match its unchanged committed hash.
+        IncoherentCodeHydration {
+            /// Account with incoherent hydrated code.
+            address: Address,
+        },
+    }
+
+    /// Cardinality proof for the linear candidate execution.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct CandidateExecutionCardinalityV1 {
+        adapter_entries: u8,
+        evm_transacts: u8,
+        victim_commits: u8,
+        candidate_commits: u8,
+    }
+
+    impl CandidateExecutionCardinalityV1 {
+        /// Creates a checked cardinality proof.
+        pub fn checked(
+            adapter_entries: u8,
+            evm_transacts: u8,
+            victim_commits: u8,
+            candidate_commits: u8,
+        ) -> Result<Self, T4bOverlayError> {
+            if adapter_entries != 1
+                || evm_transacts != 1
+                || victim_commits != 1
+                || candidate_commits != 1
+            {
+                return Err(T4bOverlayError::ExecutionCardinality);
+            }
+            Ok(Self { adapter_entries, evm_transacts, victim_commits, candidate_commits })
+        }
+
+        /// Returns adapter entry count.
+        pub const fn adapter_entries(&self) -> u8 {
+            self.adapter_entries
+        }
+
+        /// Returns EVM transact count.
+        pub const fn evm_transacts(&self) -> u8 {
+            self.evm_transacts
+        }
+
+        /// Returns victim overlay commit count.
+        pub const fn victim_commits(&self) -> u8 {
+            self.victim_commits
+        }
+
+        /// Returns candidate commit count.
+        pub const fn candidate_commits(&self) -> u8 {
+            self.candidate_commits
+        }
+    }
+    #[derive(Debug, Default)]
+    struct CandidateExecutionCardinalityTrackerV1 {
+        cardinality: CandidateExecutionCardinalityV1,
+    }
+
+    impl CandidateExecutionCardinalityTrackerV1 {
+        fn increment(value: &mut u8) -> Result<(), T4bOverlayError> {
+            *value = value.checked_add(1).ok_or(T4bOverlayError::ExecutionCardinality)?;
+            Ok(())
+        }
+
+        fn record_adapter_entry(&mut self) -> Result<(), T4bOverlayError> {
+            Self::increment(&mut self.cardinality.adapter_entries)
+        }
+
+        fn record_evm_transact(&mut self) -> Result<(), T4bOverlayError> {
+            Self::increment(&mut self.cardinality.evm_transacts)
+        }
+
+        fn record_victim_commit(&mut self) -> Result<(), T4bOverlayError> {
+            Self::increment(&mut self.cardinality.victim_commits)
+        }
+
+        fn record_candidate_commit(&mut self) -> Result<(), T4bOverlayError> {
+            Self::increment(&mut self.cardinality.candidate_commits)
+        }
+
+        fn checked(self) -> Result<CandidateExecutionCardinalityV1, T4bOverlayError> {
+            CandidateExecutionCardinalityV1::checked(
+                self.cardinality.adapter_entries,
+                self.cardinality.evm_transacts,
+                self.cardinality.victim_commits,
+                self.cardinality.candidate_commits,
+            )
+        }
+    }
+
+    /// Fail-closed selected-route overlay execution error.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum T4bOverlayError {
+        /// The checked parent state could not be opened.
+        ParentStateUnavailable,
+        /// Materialized victim nonce did not fit the locked state representation.
+        NonceOverflow,
+        /// Victim overlay data was incoherent.
+        IncoherentVictimOverlay,
+        /// Candidate EVM execution failed.
+        CandidateExecution,
+        /// Candidate bytecode attempted to use BLOCKHASH.
+        CandidateBlockHashForbidden {
+            /// Requested block number.
+            number: u64,
+        },
+        /// Candidate execution did not succeed.
+        CandidateReverted,
+        /// Candidate output violated the access allowlist.
+        CandidateState(CandidateStateCollectionError),
+        /// WETH accounting underflowed or was otherwise incoherent.
+        WethAccounting,
+        /// L1 fee inputs or canonical envelope evidence were unavailable.
+        L1Evidence,
+        /// Linear entry/transact/commit cardinality was violated.
+        ExecutionCardinality,
+    }
+
+    /// Result of optional state-fixture capture after successful finalize.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum T4bCaptureDispositionV1 {
+        /// Capture is not compiled or not configured.
+        Disabled,
+        /// A raw-free fixture was persisted after finalize.
+        Written,
+        /// Capture failed without changing economics evidence or disposition.
+        Failed,
+    }
+    #[cfg(feature = "priority-economics-capture")]
+    type T4bExecutedAccountsV1 = BTreeMap<Address, (Option<AccountInfo>, BTreeMap<U256, U256>)>;
+
+    #[cfg(feature = "priority-economics-capture")]
+    type T4bCaptureBuilderV1 = Box<dyn FnOnce(U256) -> Option<InputV1> + Send>;
+    #[cfg(feature = "priority-economics-capture")]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum T4bCapturePublishErrorV1 {
+        Disconnected,
+    }
+
+    #[cfg(feature = "priority-economics-capture")]
+    #[derive(Debug)]
+    enum T4bCaptureReceiveV1 {
+        Input(InputV1),
+        BuilderAbsent,
+        Empty,
+        Disconnected,
+    }
+
+    #[cfg(feature = "priority-economics-capture")]
+    struct T4bCaptureSinkV1 {
+        sender: SyncSender<Option<T4bCaptureBuilderV1>>,
+    }
+
+    #[cfg(feature = "priority-economics-capture")]
+    impl Debug for T4bCaptureSinkV1 {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.debug_struct("T4bCaptureSinkV1").finish_non_exhaustive()
+        }
+    }
+
+    #[cfg(feature = "priority-economics-capture")]
+    impl T4bCaptureSinkV1 {
+        fn publish(
+            self,
+            builder: Option<T4bCaptureBuilderV1>,
+        ) -> Result<(), T4bCapturePublishErrorV1> {
+            self.sender.send(builder).map_err(|_| T4bCapturePublishErrorV1::Disconnected)
+        }
+    }
+
+    #[cfg(feature = "priority-economics-capture")]
+    #[derive(Debug)]
+    struct T4bCaptureTokenV1 {
+        receiver: Receiver<Option<T4bCaptureBuilderV1>>,
+    }
+
+    #[cfg(feature = "priority-economics-capture")]
+    impl T4bCaptureTokenV1 {
+        fn pair() -> (T4bCaptureSinkV1, Self) {
+            let (sender, receiver) = sync_channel(1);
+            (T4bCaptureSinkV1 { sender }, Self { receiver })
+        }
+
+        fn take(self, amount_in_wei: U256) -> T4bCaptureReceiveV1 {
+            match self.receiver.try_recv() {
+                Ok(Some(builder)) => builder(amount_in_wei)
+                    .map_or(T4bCaptureReceiveV1::BuilderAbsent, T4bCaptureReceiveV1::Input),
+                Ok(None) => T4bCaptureReceiveV1::BuilderAbsent,
+                Err(TryRecvError::Empty) => T4bCaptureReceiveV1::Empty,
+                Err(TryRecvError::Disconnected) => T4bCaptureReceiveV1::Disconnected,
+            }
+        }
+    }
+
+    /// Consumed in-node adapter that owns the provider and victim-overlay capabilities.
+    #[derive(Debug)]
+    pub struct T4bParentOverlayAdapter<Provider> {
+        provider: Provider,
+        materialized: MaterializedState,
+        #[cfg(feature = "priority-economics-capture")]
+        capture_sink: Option<T4bCaptureSinkV1>,
+    }
+
+    impl<Provider> T4bParentOverlayAdapter<Provider> {
+        /// Creates the one-shot provider adapter after preparation succeeds.
+        pub const fn new(provider: Provider, materialized: MaterializedState) -> Self {
+            Self {
+                provider,
+                materialized,
+                #[cfg(feature = "priority-economics-capture")]
+                capture_sink: None,
+            }
+        }
+        #[cfg(feature = "priority-economics-capture")]
+        fn with_capture_sink(mut self, capture_sink: T4bCaptureSinkV1) -> Self {
+            self.capture_sink = Some(capture_sink);
+            self
+        }
+
+        /// Applies the canonical victim patch with presence-preserving account construction.
+        pub fn apply_materialized_overlay<DB>(
+            database: &mut DB,
+            materialized: &MaterializedState,
+        ) -> Result<(), T4bOverlayError>
+        where
+            DB: Database + DatabaseCommit,
+        {
+            if materialized.writes.windows(2).any(|pair| pair[0].key >= pair[1].key) {
+                return Err(T4bOverlayError::IncoherentVictimOverlay);
+            }
+
+            #[derive(Default)]
+            struct MaterializedAccount {
+                balance: Option<U256>,
+                nonce: Option<U256>,
+                storage: BTreeMap<StorageKey, StorageValue>,
+            }
+
+            let mut accounts = BTreeMap::<Address, MaterializedAccount>::new();
+            for write in &materialized.writes {
+                let row = accounts.entry(write.key.address()).or_default();
+                match write.key {
+                    AuditedWriteKey::AccountBalance { .. } => {
+                        if row.balance.replace(write.value).is_some() {
+                            return Err(T4bOverlayError::IncoherentVictimOverlay);
+                        }
+                    }
+                    AuditedWriteKey::AccountNonce { .. } => {
+                        if row.nonce.replace(write.value).is_some() {
+                            return Err(T4bOverlayError::IncoherentVictimOverlay);
+                        }
+                    }
+                    AuditedWriteKey::Storage { slot, .. } => {
+                        if row.storage.insert(slot, write.value).is_some() {
+                            return Err(T4bOverlayError::IncoherentVictimOverlay);
+                        }
+                    }
+                }
+            }
+
+            let mut patch = AddressMap::default();
+            for (address, materialized) in accounts {
+                let parent = Database::basic(database, address)
+                    .map_err(|_| T4bOverlayError::ParentStateUnavailable)?;
+                let mut account = match parent {
+                    Some(info) => Account::from(info),
+                    None => Account::new_not_existing(TransactionId::ZERO),
+                };
+                if let Some(balance) = materialized.balance {
+                    account.info.balance = balance;
+                }
+                if let Some(nonce) = materialized.nonce {
+                    account.info.nonce =
+                        u64::try_from(nonce).map_err(|_| T4bOverlayError::NonceOverflow)?;
+                }
+                for (slot, present) in materialized.storage {
+                    let original = Database::storage(database, address, slot)
+                        .map_err(|_| T4bOverlayError::ParentStateUnavailable)?;
+                    account.storage.insert(
+                        slot,
+                        EvmStorageSlot::new_changed(original, present, TransactionId::ZERO),
+                    );
+                }
+                account.mark_touch();
+                patch.insert(address, account);
+            }
+            DatabaseCommit::commit(database, patch);
+            Ok(())
+        }
+
+        /// Consumes the adapter into its provider and canonical materialized overlay.
+        pub fn into_parts(self) -> (Provider, MaterializedState) {
+            (self.provider, self.materialized)
+        }
+    }
+
+    impl<Provider> T4bParentOverlayAdapter<Provider> {
+        fn collect_candidate_state(
+            state: &EvmState,
+            allowlist: &CandidateAccessAllowlistV1,
+            audit: &[AuditedAccessV1],
+        ) -> Result<CandidateAccessedStateV1, T4bOverlayError> {
+            let allowed_status =
+                AccountStatus::Touched | AccountStatus::Cold | AccountStatus::LoadedAsNotExisting;
+            let mut accounts = BTreeSet::new();
+            let mut storage = BTreeSet::new();
+            let mut code_hashes = BTreeSet::new();
+
+            for (address, account) in state {
+                if account.is_created() || account.is_created_locally() {
+                    return Err(T4bOverlayError::CandidateState(
+                        CandidateStateCollectionError::Created { address: *address },
+                    ));
+                }
+                if account.is_selfdestructed() || account.is_selfdestructed_locally() {
+                    return Err(T4bOverlayError::CandidateState(
+                        CandidateStateCollectionError::SelfDestructed { address: *address },
+                    ));
+                }
+                let disallowed = account.status.difference(allowed_status);
+                if !disallowed.is_empty() {
+                    return Err(T4bOverlayError::CandidateState(
+                        CandidateStateCollectionError::DisallowedStatus {
+                            address: *address,
+                            status_bits: disallowed.bits(),
+                        },
+                    ));
+                }
+
+                let original = account.original_info();
+                if account.info.code_hash != original.code_hash {
+                    return Err(T4bOverlayError::CandidateState(
+                        CandidateStateCollectionError::CodeHashMutation { address: *address },
+                    ));
+                }
+                if account.info.account_id != original.account_id {
+                    return Err(T4bOverlayError::CandidateState(
+                        CandidateStateCollectionError::AccountIdMutation { address: *address },
+                    ));
+                }
+                match (&original.code, &account.info.code) {
+                    (Some(_), None) => {
+                        return Err(T4bOverlayError::CandidateState(
+                            CandidateStateCollectionError::CodeDisappeared { address: *address },
+                        ));
+                    }
+                    (Some(original_code), Some(current_code))
+                        if original_code != current_code
+                            || original_code.hash_slow() != original.code_hash
+                            || current_code.hash_slow() != original.code_hash =>
+                    {
+                        return Err(T4bOverlayError::CandidateState(
+                            CandidateStateCollectionError::CodeMutation { address: *address },
+                        ));
+                    }
+                    (None, Some(current_code))
+                        if original.code_hash == KECCAK_EMPTY && current_code.is_empty() => {}
+                    (None, Some(current_code)) => {
+                        let matching = audit
+                            .iter()
+                            .filter(|access| {
+                                access.phase == AuditPhase::Candidate
+                                    && matches!(
+                                        &access.kind,
+                                        AuditedAccessKindV1::CodeByHash { code_hash, code }
+                                            if *code_hash == original.code_hash &&
+                                                code == current_code &&
+                                                code.hash_slow() == original.code_hash
+                                    )
+                            })
+                            .count();
+                        if matching != 1 {
+                            return Err(T4bOverlayError::CandidateState(
+                                CandidateStateCollectionError::IncoherentCodeHydration {
+                                    address: *address,
+                                },
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+                if !allowlist.allows_account(*address) {
+                    return Err(T4bOverlayError::CandidateState(
+                        CandidateStateCollectionError::AccountOutsideAllowlist {
+                            address: *address,
+                        },
+                    ));
+                }
+                if account.info.balance != original.balance && !allowlist.allows_balance(*address) {
+                    return Err(T4bOverlayError::CandidateState(
+                        CandidateStateCollectionError::BalanceOutsideAllowlist {
+                            address: *address,
+                        },
+                    ));
+                }
+                if account.info.nonce != original.nonce && !allowlist.allows_nonce(*address) {
+                    return Err(T4bOverlayError::CandidateState(
+                        CandidateStateCollectionError::NonceOutsideAllowlist { address: *address },
+                    ));
+                }
+
+                accounts.insert(*address);
+                code_hashes.insert(account.info.code_hash);
+                for (slot, value) in &account.storage {
+                    storage.insert((*address, *slot));
+                    if value.is_changed() && !allowlist.allows_storage(*address, *slot) {
+                        return Err(T4bOverlayError::CandidateState(
+                            CandidateStateCollectionError::StorageOutsideAllowlist {
+                                address: *address,
+                                slot: *slot,
+                            },
+                        ));
+                    }
+                }
+            }
+            Ok(CandidateAccessedStateV1::new(accounts, storage, code_hashes))
+        }
+
+        fn weth_balance_slot(recipient: Address) -> StorageKey {
+            let mut preimage = [0u8; 64];
+            preimage[12..32].copy_from_slice(recipient.as_slice());
+            preimage[63] = 3;
+            U256::from_be_bytes(keccak256(preimage).0)
+        }
+
+        #[cfg(feature = "priority-economics-capture")]
+        fn capture_builder(
+            bindings: &CheckedBindingsView<'_>,
+            header: &Header,
+            audit: &[AuditedAccessV1],
+            executed_accounts: &T4bExecutedAccountsV1,
+            materialized: &MaterializedState,
+            candidate_state: &EvmState,
+            recipient_weth_address: Address,
+            recipient_weth_slot: U256,
+            pre_weth: U256,
+            post_weth: U256,
+            canonical_l1_digest: B256,
+            canonical_l1_fee: U256,
+            economics_preimage: Vec<u8>,
+        ) -> Option<T4bCaptureBuilderV1> {
+            #[derive(Default)]
+            struct StorageDraft {
+                value: U256,
+                provenance_bits: u8,
+                first_ordinal: u64,
+                last_ordinal: u64,
+                occurrences: u64,
+            }
+            #[derive(Default)]
+            struct AccountDraft {
+                info: Option<Option<AccountInfo>>,
+                provenance_bits: u8,
+                storage: BTreeMap<U256, StorageDraft>,
+            }
+            const PROVENANCE_AUDIT_LOG: u8 = 1;
+            const PROVENANCE_EVM_STATE: u8 = 2;
+            const PROVENANCE_EXPLICIT_WETH: u8 = 4;
+            const PROVENANCE_L1_FETCH: u8 = 8;
+
+            let matching_weth_read = |phase, expected| {
+                audit
+                    .iter()
+                    .filter(|access| {
+                        access.phase() == phase
+                            && matches!(
+                                access.kind(),
+                                AuditedAccessKindV1::Storage {
+                                    address,
+                                    slot,
+                                    value,
+                                    ..
+                                } if *address == recipient_weth_address
+                                    && *slot == recipient_weth_slot
+                                    && *value == expected
+                            )
+                    })
+                    .count()
+            };
+            if matching_weth_read(AuditPhase::PreWeth, pre_weth) != 1
+                || matching_weth_read(AuditPhase::PostWeth, post_weth) != 1
+                || !audit.iter().any(|access| access.phase() == AuditPhase::L1Fetch)
+            {
+                return None;
+            }
+
+            let phase_tag = |phase| match phase {
+                AuditPhase::PreWeth => 1,
+                AuditPhase::Candidate => 2,
+                AuditPhase::PostWeth => 3,
+                AuditPhase::L1Fetch => 4,
+                AuditPhase::Sealed => 5,
+            };
+            let audit_provenance = |phase| {
+                PROVENANCE_AUDIT_LOG
+                    | match phase {
+                        AuditPhase::PreWeth | AuditPhase::PostWeth => PROVENANCE_EXPLICIT_WETH,
+                        AuditPhase::L1Fetch => PROVENANCE_L1_FETCH,
+                        AuditPhase::Candidate | AuditPhase::Sealed => 0,
+                    }
+            };
+            let mut drafts = BTreeMap::<Address, AccountDraft>::new();
+            let mut audit_preimage = b"base-mev/state-fixture-audit/v1\0".to_vec();
+            for access in audit {
+                audit_preimage.push(phase_tag(access.phase()));
+                audit_preimage.extend_from_slice(&access.ordinal().to_be_bytes());
+                match access.kind() {
+                    AuditedAccessKindV1::Basic { address, account } => {
+                        audit_preimage.push(0);
+                        audit_preimage.extend_from_slice(address.as_slice());
+                        let draft = drafts.entry(*address).or_default();
+                        if draft.info.is_none() {
+                            draft.info = Some(account.clone());
+                        }
+                        draft.provenance_bits |= audit_provenance(access.phase());
+                    }
+                    AuditedAccessKindV1::CodeByHash { code_hash, code } => {
+                        audit_preimage.push(1);
+                        audit_preimage.extend_from_slice(code_hash.as_slice());
+                        audit_preimage.extend_from_slice(code.original_bytes().as_ref());
+                    }
+                    AuditedAccessKindV1::Storage { address, slot, value, .. } => {
+                        audit_preimage.push(2);
+                        audit_preimage.extend_from_slice(address.as_slice());
+                        audit_preimage.extend_from_slice(&slot.to_be_bytes::<32>());
+                        audit_preimage.extend_from_slice(&value.to_be_bytes::<32>());
+                    }
+                    AuditedAccessKindV1::BlockHash { number, hash } => {
+                        audit_preimage.push(3);
+                        audit_preimage.extend_from_slice(&number.to_be_bytes());
+                        audit_preimage.extend_from_slice(hash.as_slice());
+                    }
+                }
+            }
+            let audit_reads = capture_audit_reads(audit)?;
+            for (address, account) in candidate_state {
+                let draft = drafts.entry(*address).or_default();
+                if draft.info.is_none() {
+                    draft.info = Some(Some(account.original_info().clone()));
+                }
+                draft.provenance_bits |= PROVENANCE_EVM_STATE;
+                for (slot, value) in &account.storage {
+                    let row = draft.storage.entry(*slot).or_default();
+                    if row.occurrences == 0 {
+                        row.value = value.original_value();
+                        row.first_ordinal = u64::try_from(audit.len()).ok()?;
+                        row.last_ordinal = row.first_ordinal;
+                        row.occurrences = 1;
+                    }
+                    row.provenance_bits |= PROVENANCE_EVM_STATE;
+                }
+            }
+            for (address, (info, storage)) in executed_accounts {
+                let draft = drafts.entry(*address).or_default();
+                if draft.info.is_none() {
+                    draft.info = Some(info.clone());
+                }
+                draft.provenance_bits |= PROVENANCE_EVM_STATE;
+                for (slot, value) in storage {
+                    let row = draft.storage.entry(*slot).or_default();
+                    if row.occurrences == 0 {
+                        row.value = *value;
+                        row.first_ordinal = u64::try_from(audit.len()).ok()?;
+                        row.last_ordinal = row.first_ordinal;
+                        row.occurrences = 1;
+                    }
+                    row.provenance_bits |= PROVENANCE_EVM_STATE;
+                }
+            }
+
+            let materialized_ordinal = u64::try_from(audit.len()).ok()?;
+            for write in &materialized.writes {
+                let draft = drafts.get_mut(&write.key.address())?;
+                draft.provenance_bits |= PROVENANCE_EVM_STATE;
+                match write.key {
+                    AuditedWriteKey::AccountBalance { .. } => {
+                        let info = draft.info.as_ref()?.as_ref()?;
+                        if info.balance != write.value {
+                            return None;
+                        }
+                    }
+                    AuditedWriteKey::AccountNonce { .. } => {
+                        let info = draft.info.as_ref()?.as_ref()?;
+                        if U256::from(info.nonce) != write.value {
+                            return None;
+                        }
+                    }
+                    AuditedWriteKey::Storage { slot, .. } => {
+                        let row = draft.storage.entry(slot).or_default();
+                        if row.occurrences == 0 {
+                            row.value = write.value;
+                            row.first_ordinal = materialized_ordinal;
+                            row.last_ordinal = materialized_ordinal;
+                            row.occurrences = 1;
+                        } else if row.value != write.value {
+                            return None;
+                        }
+                        row.provenance_bits |= PROVENANCE_EVM_STATE;
+                    }
+                }
+            }
+
+            let required_accounts = materialized
+                .writes
+                .iter()
+                .map(|write| write.key.address())
+                .chain(candidate_state.keys().copied())
+                .chain(executed_accounts.keys().copied())
+                .collect::<BTreeSet<_>>();
+            if required_accounts.iter().any(|address| !drafts.contains_key(address)) {
+                return None;
+            }
+
+            let mut accounts = Vec::with_capacity(drafts.len());
+            for (address, draft) in drafts {
+                let account = draft.info?;
+                let (exists, balance, nonce, code_hash, code) = match account {
+                    Some(info) => {
+                        let code = match info.code {
+                            Some(code) => code.original_bytes(),
+                            None if info.code_hash == KECCAK_EMPTY => Default::default(),
+                            None => audit.iter().find_map(|access| match access.kind() {
+                                AuditedAccessKindV1::CodeByHash { code_hash, code }
+                                    if *code_hash == info.code_hash =>
+                                {
+                                    Some(code.original_bytes())
+                                }
+                                _ => None,
+                            })?,
+                        };
+                        (true, info.balance, info.nonce, info.code_hash, code)
+                    }
+                    None => (false, U256::ZERO, 0, KECCAK_EMPTY, Default::default()),
+                };
+                let storage = draft
+                    .storage
+                    .into_iter()
+                    .map(|(slot, row)| {
+                        StorageV1::new(
+                            slot,
+                            row.value,
+                            row.provenance_bits,
+                            row.first_ordinal,
+                            row.last_ordinal,
+                            row.occurrences,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .ok()?;
+                accounts.push(
+                    AccountV1::new(
+                        address,
+                        exists,
+                        balance,
+                        nonce,
+                        code_hash,
+                        code,
+                        storage,
+                        draft.provenance_bits,
+                    )
+                    .ok()?,
+                );
+            }
+
+            let hops = bindings.route_hops();
+            let adapters = bindings.resolved_adapters();
+            let victim = bindings.frame().victim;
+            let directed_key = bindings.route_digest();
+            let pools = bindings.route_pools();
+            let tokens = bindings.route_tokens();
+            let adapter_addresses = [adapters[0].address(), adapters[1].address()];
+            let sender = bindings.sender();
+            let executor = bindings.executor().address();
+            let recipient = bindings.kickback_recipient();
+            let adapter_code_hashes = [adapters[0].runtime_hash(), adapters[1].runtime_hash()];
+            let hop_fees = [hops[0].fee_pips, hops[1].fee_pips];
+            let hop_zero_for_one =
+                [hops[0].token_in < hops[0].token_out, hops[1].token_in < hops[1].token_out];
+            let route_digest = bindings.route_digest();
+            let state_digest = bindings.state_digest();
+            let access_digest = bindings.access_digest();
+            let chain_id = bindings.beryl_env().chain_id();
+            let parent_hash = bindings.parent_hash();
+            let header_identity_digest = bindings.header_identity_digest();
+            let header = header.clone();
+            let audit_digest = keccak256(audit_preimage);
+            Some(Box::new(move |amount_in_wei| {
+                let mut economics_preimage = economics_preimage;
+                economics_preimage.extend_from_slice(&amount_in_wei.to_be_bytes::<32>());
+                let economics_evidence_digest = keccak256(economics_preimage);
+                let selected = SelectedPartsV1::new(
+                    victim,
+                    directed_key,
+                    pools,
+                    tokens,
+                    adapter_addresses,
+                    sender,
+                    executor,
+                    recipient,
+                    adapter_code_hashes,
+                    hop_fees,
+                    hop_zero_for_one,
+                    amount_in_wei,
+                    route_digest,
+                    header.hash_slow(),
+                    state_digest,
+                    access_digest,
+                )
+                .ok()?;
+                InputV1::seal(
+                    chain_id,
+                    header.number,
+                    header.hash_slow(),
+                    parent_hash,
+                    header.timestamp,
+                    header.gas_limit,
+                    header.beneficiary,
+                    header.base_fee_per_gas?,
+                    header.mix_hash,
+                    header.excess_blob_gas,
+                    recipient_weth_address,
+                    recipient,
+                    recipient_weth_slot,
+                    pre_weth,
+                    post_weth,
+                    canonical_l1_digest,
+                    canonical_l1_fee,
+                    header_identity_digest,
+                    selected,
+                    accounts,
+                    audit_reads,
+                    audit_digest,
+                    economics_evidence_digest,
+                )
+                .ok()
+            }))
+        }
+    }
+    impl<Provider> CandidateExecutionAdapter for T4bParentOverlayAdapter<Provider>
+    where
+        Provider: StateProviderFactory,
+    {
+        type Error = T4bOverlayError;
+
+        fn execute_candidate(
+            self,
+            request: TxAuthorityExecutionRequest<'_>,
+        ) -> Result<CandidateEconomicsEvidence, Self::Error> {
+            let mut cardinality = CandidateExecutionCardinalityTrackerV1::default();
+            cardinality.record_adapter_entry()?;
+            let parts = request.into_parts();
+            let (tx, bindings) = parts.into_tx_and_bindings();
+            #[cfg(not(feature = "priority-economics-capture"))]
+            let (provider, materialized) = self.into_parts();
+            #[cfg(feature = "priority-economics-capture")]
+            let Self { provider, materialized, capture_sink } = self;
+
+            let frame = bindings.frame();
+            let parent_hash = bindings.parent_hash();
+            let beryl = bindings.beryl_env();
+            let parent_header = bindings.parent_header();
+            if frame.parent_hash != parent_hash
+                || frame.block_number != beryl.block_number()
+                || frame.victim.is_zero()
+                || bindings.header_identity_digest().is_zero()
+                || beryl.chain_id() != 8_453
+            {
+                return Err(T4bOverlayError::IncoherentVictimOverlay);
+            }
+
+            let deployment = bindings.deployment_witness();
+            let nonce = bindings.nonce_witness();
+            let freshness = bindings.freshness_witness();
+            if deployment.validated_parent() != parent_hash
+                || nonce.sender() != bindings.sender()
+                || nonce.parent_hash() != parent_hash
+                || nonce.shape_nonce() != tx.nonce
+                || nonce.pending_overlay_nonce().unwrap_or(nonce.committed_nonce()) != tx.nonce
+                || freshness.parent_hash() != parent_hash
+                || freshness.snapshot_parent_hash() != parent_hash
+                || freshness.valid_until_block() < beryl.block_number()
+                || freshness.snapshot_identity_digest().is_zero()
+            {
+                return Err(T4bOverlayError::IncoherentVictimOverlay);
+            }
+            let evidence_digests = [
+                bindings.frame_digest(),
+                bindings.plan_digest(),
+                bindings.route_digest(),
+                bindings.shape_digest(),
+                bindings.overlay_digest(),
+                bindings.order_digest(),
+                bindings.state_digest(),
+                bindings.access_digest(),
+                bindings.unsigned_signing_hash(),
+            ];
+            if evidence_digests.iter().any(B256::is_zero) {
+                return Err(T4bOverlayError::IncoherentVictimOverlay);
+            }
+
+            let executor = bindings.executor();
+            let resolved_adapters = bindings.resolved_adapters();
+            let deployment_adapters = deployment.route_adapters();
+            if deployment.executor().address() != executor.address()
+                || deployment.executor().runtime_hash() != executor.runtime_hash()
+                || deployment_adapters[0].address() != resolved_adapters[0].address()
+                || deployment_adapters[0].runtime_hash() != resolved_adapters[0].runtime_hash()
+                || deployment_adapters[1].address() != resolved_adapters[1].address()
+                || deployment_adapters[1].runtime_hash() != resolved_adapters[1].runtime_hash()
+            {
+                return Err(T4bOverlayError::IncoherentVictimOverlay);
+            }
+
+            let route_hops = bindings.route_hops();
+            let route_pools = bindings.route_pools();
+            let route_tokens = bindings.route_tokens();
+            let route_protocols = bindings.route_protocols();
+            if route_hops[0].pool != route_pools[0]
+                || route_hops[1].pool != route_pools[1]
+                || route_hops[0].token_in != route_tokens[0]
+                || route_hops[0].token_out != route_tokens[1]
+                || route_hops[1].token_in != route_tokens[1]
+                || route_hops[1].token_out != route_tokens[2]
+                || route_hops[0].protocol != route_protocols[0]
+                || route_hops[1].protocol != route_protocols[1]
+            {
+                return Err(T4bOverlayError::IncoherentVictimOverlay);
+            }
+
+            let weth = address!("4200000000000000000000000000000000000006");
+            let sender = bindings.sender();
+            let recipient = bindings.kickback_recipient();
+            let coinbase = bindings.header_coinbase();
+            let accounts = BTreeSet::from([
+                sender,
+                executor.address(),
+                recipient,
+                weth,
+                route_pools[0],
+                route_pools[1],
+                route_tokens[0],
+                route_tokens[1],
+                route_tokens[2],
+                resolved_adapters[0].address(),
+                resolved_adapters[1].address(),
+                coinbase,
+            ]);
+            let balance_accounts = accounts.clone();
+            let storage_accounts = BTreeSet::from([
+                executor.address(),
+                weth,
+                route_pools[0],
+                route_pools[1],
+                route_tokens[0],
+                route_tokens[1],
+                route_tokens[2],
+            ]);
+            let allowlist = CandidateAccessAllowlistV1::new(
+                accounts,
+                balance_accounts,
+                [sender],
+                storage_accounts,
+            );
+
+            let state_provider = provider
+                .state_by_block_hash(parent_hash)
+                .map_err(|_| T4bOverlayError::ParentStateUnavailable)?;
+            let database = StateProviderDatabase::new(state_provider);
+            let mut state = State::builder().with_database(database).with_bundle_update().build();
+            Self::apply_materialized_overlay(&mut state, &materialized)?;
+            cardinality.record_victim_commit()?;
+            let mut audited = AuditedDatabase::new(state);
+
+            let weth_slot = Self::weth_balance_slot(recipient);
+            let pre_weth = Database::storage(&mut audited, weth, weth_slot)
+                .map_err(|_| T4bOverlayError::WethAccounting)?;
+            audited
+                .transition::<T4bOverlayError>(AuditPhase::Candidate)
+                .map_err(|_| T4bOverlayError::ExecutionCardinality)?;
+
+            let mut header = parent_header.inner().clone();
+            header.number = beryl.block_number();
+            header.timestamp = beryl.timestamp();
+            header.gas_limit = beryl.gas_limit();
+            header.base_fee_per_gas = Some(beryl.base_fee_per_gas());
+            header.mix_hash = beryl.prev_randao();
+            header.excess_blob_gas = beryl.excess_blob_gas();
+            header.beneficiary = coinbase;
+            let evm_config = BaseEvmConfig::base(Arc::new(BaseChainSpec::mainnet()));
+            let evm_env =
+                evm_config.evm_env(&header).map_err(|_| T4bOverlayError::CandidateExecution)?;
+            let spec = evm_env.cfg_env.spec;
+            let recovered =
+                Recovered::new_unchecked(
+                    BaseTxEnvelope::Eip1559(tx.clone().into_signed(
+                        alloy_primitives::Signature::new(U256::ZERO, U256::ZERO, false),
+                    )),
+                    sender,
+                );
+            let output = {
+                let mut evm = evm_config.evm_with_env(&mut audited, evm_env);
+                cardinality.record_evm_transact()?;
+                evm.transact(recovered).map_err(|error| match error {
+                    EVMError::Database(AuditedDatabaseError::CandidateBlockHashForbidden {
+                        number,
+                    }) => T4bOverlayError::CandidateBlockHashForbidden { number },
+                    _ => T4bOverlayError::CandidateExecution,
+                })?
+            };
+            if !output.result.is_success() {
+                return Err(T4bOverlayError::CandidateReverted);
+            }
+            let gas_used = U256::from(output.result.tx_gas_used());
+            let accessed =
+                Self::collect_candidate_state(&output.state, &allowlist, audited.accesses())?;
+            if accessed.accounts().is_empty() {
+                return Err(T4bOverlayError::CandidateExecution);
+            }
+            #[cfg(feature = "priority-economics-capture")]
+            let candidate_state = output.state.clone();
+            DatabaseCommit::commit(&mut audited, output.state);
+            cardinality.record_candidate_commit()?;
+
+            audited
+                .transition::<T4bOverlayError>(AuditPhase::PostWeth)
+                .map_err(|_| T4bOverlayError::ExecutionCardinality)?;
+            let post_weth = Database::storage(&mut audited, weth, weth_slot)
+                .map_err(|_| T4bOverlayError::WethAccounting)?;
+            let weth_delta = CandidateEconomicsEvidence::checked_weth_delta(pre_weth, post_weth)
+                .map_err(|_| T4bOverlayError::WethAccounting)?;
+
+            audited
+                .transition::<T4bOverlayError>(AuditPhase::L1Fetch)
+                .map_err(|_| T4bOverlayError::ExecutionCardinality)?;
+            let mut l1 =
+                L1BlockInfo::try_fetch(&mut audited, U256::from(beryl.block_number()), spec)
+                    .map_err(|_| T4bOverlayError::L1Evidence)?;
+            let canonical_l1 = CanonicalEnvelopeFactory::calculate_l1_evidence(tx, &mut l1, spec)
+                .map_err(|_| T4bOverlayError::L1Evidence)?;
+            audited
+                .transition::<T4bOverlayError>(AuditPhase::Sealed)
+                .map_err(|_| T4bOverlayError::ExecutionCardinality)?;
+            let (state, audit) = audited
+                .into_sealed_parts::<T4bOverlayError>()
+                .map_err(|_| T4bOverlayError::ExecutionCardinality)?;
+            if audit.is_empty() {
+                return Err(T4bOverlayError::CandidateExecution);
+            }
+            #[cfg(feature = "priority-economics-capture")]
+            let executed_accounts = state
+                .cache
+                .accounts
+                .iter()
+                .map(|(address, cached)| {
+                    let account = cached.account.as_ref();
+                    (
+                        *address,
+                        (
+                            account.map(|account| account.info.clone()),
+                            account
+                                .map(|account| {
+                                    account
+                                        .storage
+                                        .iter()
+                                        .map(|(slot, value)| (*slot, *value))
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                        ),
+                    )
+                })
+                .collect::<T4bExecutedAccountsV1>();
+            #[cfg(not(feature = "priority-economics-capture"))]
+            let _ = state;
+
+            let authority = PriorityEconomicsAuthority::new(
+                gas_used,
+                canonical_l1.fee(),
+                U256::from(beryl.base_fee_per_gas()),
+                beryl.block_number(),
+            );
+            #[cfg(feature = "priority-economics-capture")]
+            let capture_builder = if capture_sink.is_some() {
+                let canonical_l1_selected = canonical_l1.selected();
+                let mut economics_preimage = b"base-mev/finalized-economics-evidence/v1\0".to_vec();
+                economics_preimage.extend_from_slice(&gas_used.to_be_bytes::<32>());
+                economics_preimage.extend_from_slice(&canonical_l1.fee().to_be_bytes::<32>());
+                economics_preimage.extend_from_slice(canonical_l1_selected.digest().as_slice());
+                economics_preimage.extend_from_slice(&pre_weth.to_be_bytes::<32>());
+                economics_preimage.extend_from_slice(&post_weth.to_be_bytes::<32>());
+                economics_preimage.extend_from_slice(bindings.frame_digest().as_slice());
+                economics_preimage.extend_from_slice(bindings.plan_digest().as_slice());
+                economics_preimage.extend_from_slice(bindings.route_digest().as_slice());
+                economics_preimage.extend_from_slice(bindings.shape_digest().as_slice());
+                economics_preimage.extend_from_slice(bindings.state_digest().as_slice());
+                economics_preimage.extend_from_slice(bindings.access_digest().as_slice());
+                Self::capture_builder(
+                    &bindings,
+                    &header,
+                    &audit,
+                    &executed_accounts,
+                    &materialized,
+                    &candidate_state,
+                    weth,
+                    weth_slot,
+                    pre_weth,
+                    post_weth,
+                    canonical_l1_selected.digest(),
+                    canonical_l1.fee(),
+                    economics_preimage,
+                )
+            } else {
+                None
+            };
+            let evidence =
+                CandidateEconomicsEvidence::try_new(authority, weth_delta, canonical_l1, bindings)
+                    .map_err(|_| T4bOverlayError::CandidateExecution)?;
+            let _cardinality = cardinality.checked()?;
+            #[cfg(feature = "priority-economics-capture")]
+            if let Some(capture_sink) = capture_sink {
+                let _capture_publication = capture_sink.publish(capture_builder);
+            }
+            Ok(evidence)
+        }
+    }
     #[derive(Debug)]
     struct CliSnapshotFreshness<Provider> {
         port: Weak<CliTraderSnapshotPort<Provider>>,
@@ -9917,24 +12166,99 @@ mod t4b_shadow {
                 record: Arc::downgrade(&record),
             }))
         }
-
-        fn priority_economics(
-            &self,
-            _snapshot: &SnapshotHandle,
-            _plan: &base_mev_trader::BackrunPlan,
-        ) -> Result<PriorityEconomicsAuthority, TxAuthorityNodeError> {
-            // Integration boundary: the live candidate simulator and OP fee oracle do not yet
-            // publish same-block gas/L1-fee authority. Missing authority must reject, never use
-            // the transaction gas limit or a fitted sample constant.
-            Err(TxAuthorityNodeError::Unavailable)
-        }
     }
 
     #[derive(Debug)]
-    struct T4bShadowAuthority {
+    pub(super) struct T4bShadowAuthority<Provider> {
         assembler: TxAuthorityAssembler,
+        provider: Provider,
         slot: ShadowLatestSlot<ValidatedUnsignedAtomicTx>,
+        economics_ledger: PriorityEconomicsLedgerV2,
         counters: T4bOutcomeCounters,
+        #[cfg(feature = "priority-economics-capture")]
+        capture: Mutex<Option<WriterV1>>,
+        #[cfg(feature = "priority-economics-capture")]
+        capture_disposition: Mutex<T4bCaptureDispositionV1>,
+    }
+    impl<Provider> T4bShadowAuthority<Provider>
+    where
+        Provider: StateProviderFactory + Clone,
+    {
+        #[cfg(feature = "priority-economics-capture")]
+        fn publish_capture(
+            &self,
+            finalized: Result<ValidatedUnsignedAtomicTx, TxAuthorityError>,
+            token: T4bCaptureTokenV1,
+            writer: WriterV1,
+        ) -> Result<ValidatedUnsignedAtomicTx, TxAuthorityError> {
+            let publication = PublicationGateV1::publish(
+                finalized,
+                |detail| {
+                    let Some(amount_in_wei) = detail.priority_economics().amount_in_wei() else {
+                        return Err(());
+                    };
+                    match token.take(amount_in_wei) {
+                        T4bCaptureReceiveV1::Input(input) => Ok(input),
+                        T4bCaptureReceiveV1::BuilderAbsent
+                        | T4bCaptureReceiveV1::Empty
+                        | T4bCaptureReceiveV1::Disconnected => Err(()),
+                    }
+                },
+                writer,
+            );
+            let disposition = match &publication {
+                PublicationOutcomeV1::FinalizeRejected(_)
+                | PublicationOutcomeV1::BuilderFailed { .. } => T4bCaptureDispositionV1::Failed,
+                PublicationOutcomeV1::WriterOutcome { receipt, .. } => match receipt.outcome() {
+                    OutcomeV1::Disabled => T4bCaptureDispositionV1::Disabled,
+                    OutcomeV1::Written => T4bCaptureDispositionV1::Written,
+                    OutcomeV1::Failed(_) => T4bCaptureDispositionV1::Failed,
+                },
+            };
+            *self.capture_disposition.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                disposition;
+            publication.into_finalized()
+        }
+        #[cfg(feature = "t4d-shadow")]
+        pub(super) fn assemble_finalized(
+            &self,
+            view: &CandidateAssemblyView<'_>,
+        ) -> Result<ValidatedUnsignedAtomicTx, TxAuthorityError> {
+            let pre = match self.assembler.prepare_pre_economics(view) {
+                Ok(pre) => pre,
+                Err(error) => return Err(error),
+            };
+            #[cfg(feature = "priority-economics-capture")]
+            let capture =
+                self.capture.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+            #[cfg(feature = "priority-economics-capture")]
+            let (capture_sink, capture_token, capture_writer) = match capture {
+                Some(writer) => {
+                    let (sink, token) = T4bCaptureTokenV1::pair();
+                    (Some(sink), Some(token), Some(writer))
+                }
+                None => (None, None, None),
+            };
+            let adapter = T4bParentOverlayAdapter::new(
+                self.provider.clone(),
+                view.processed().materialized_state().clone(),
+            );
+            #[cfg(feature = "priority-economics-capture")]
+            let adapter = match capture_sink {
+                Some(sink) => adapter.with_capture_sink(sink),
+                None => adapter,
+            };
+            let ready = pre
+                .execute_once(adapter)
+                .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?;
+            let finalized = self.assembler.finalize(ready, &self.economics_ledger);
+            #[cfg(feature = "priority-economics-capture")]
+            let finalized = match (capture_token, capture_writer) {
+                (Some(token), Some(writer)) => self.publish_capture(finalized, token, writer),
+                _ => finalized,
+            };
+            finalized
+        }
     }
 
     pub(super) const fn outcome(error: TxAuthorityError) -> T4bOutcome {
@@ -9944,6 +12268,9 @@ mod t4b_shadow {
             }
             TxAuthorityError::FeeAuthorityRejected => T4bOutcome::FeeAuthorityRejected,
             TxAuthorityError::PriorityEconomicsRejected => T4bOutcome::PriorityEconomicsRejected,
+            TxAuthorityError::PriorityEconomicsLedgerUnavailable => {
+                T4bOutcome::PriorityEconomicsLedgerUnavailable
+            }
             TxAuthorityError::RequoteRejected => T4bOutcome::RequoteRejected,
             TxAuthorityError::DeploymentIdentityRejected => T4bOutcome::DeploymentIdentityRejected,
             TxAuthorityError::NonceWitnessUnavailable => T4bOutcome::NonceWitnessUnavailable,
@@ -9957,19 +12284,69 @@ mod t4b_shadow {
         }
     }
 
-    impl CandidateTxShapeObserver for T4bShadowAuthority {
-        fn try_observe(&self, view: CandidateAssemblyView<'_>) -> T4bOutcome {
-            let outcome = match self.assembler.assemble_validated(view) {
-                Ok(detail) => match self.slot.try_submit(detail) {
-                    ShadowSubmit::Accepted => T4bOutcome::SelectedUnsignedShape,
-                    ShadowSubmit::DroppedBusy => T4bOutcome::ShadowDroppedBusy,
-                    ShadowSubmit::Closed => T4bOutcome::ShadowClosed,
-                    ShadowSubmit::ReplacedOldUnobserved => {
-                        self.slot.close();
-                        T4bOutcome::ShadowClosed
-                    }
-                },
-                Err(error) => outcome(error),
+    impl<Provider> CandidateTxShapeObserver for T4bShadowAuthority<Provider>
+    where
+        Provider: StateProviderFactory + Clone + Debug + Send + Sync + 'static,
+    {
+        fn try_observe(&self, view: &CandidateAssemblyView<'_>) -> T4bOutcome {
+            let pre = match self.assembler.prepare_pre_economics(view) {
+                Ok(pre) => pre,
+                Err(error) => {
+                    let outcome = outcome(error);
+                    self.counters.record(outcome);
+                    return outcome;
+                }
+            };
+            #[cfg(feature = "priority-economics-capture")]
+            let capture =
+                self.capture.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+            #[cfg(feature = "priority-economics-capture")]
+            let (capture_sink, capture_token, capture_writer) = match capture {
+                Some(writer) => {
+                    let (sink, token) = T4bCaptureTokenV1::pair();
+                    (Some(sink), Some(token), Some(writer))
+                }
+                None => (None, None, None),
+            };
+            let adapter = T4bParentOverlayAdapter::new(
+                self.provider.clone(),
+                view.processed().materialized_state().clone(),
+            );
+            #[cfg(feature = "priority-economics-capture")]
+            let adapter = match capture_sink {
+                Some(sink) => adapter.with_capture_sink(sink),
+                None => adapter,
+            };
+            let ready = match pre.execute_once(adapter) {
+                Ok(ready) => ready,
+                Err(_) => {
+                    let outcome = T4bOutcome::PriorityEconomicsRejected;
+                    self.counters.record(outcome);
+                    return outcome;
+                }
+            };
+            let finalized = self.assembler.finalize(ready, &self.economics_ledger);
+            #[cfg(feature = "priority-economics-capture")]
+            let finalized = match (capture_token, capture_writer) {
+                (Some(token), Some(writer)) => self.publish_capture(finalized, token, writer),
+                _ => finalized,
+            };
+            let detail = match finalized {
+                Ok(detail) => detail,
+                Err(error) => {
+                    let outcome = outcome(error);
+                    self.counters.record(outcome);
+                    return outcome;
+                }
+            };
+            let outcome = match self.slot.try_submit(detail) {
+                ShadowSubmit::Accepted => T4bOutcome::SelectedUnsignedShape,
+                ShadowSubmit::DroppedBusy => T4bOutcome::ShadowDroppedBusy,
+                ShadowSubmit::Closed => T4bOutcome::ShadowClosed,
+                ShadowSubmit::ReplacedOldUnobserved => {
+                    self.slot.close();
+                    T4bOutcome::ShadowClosed
+                }
             };
             if outcome != T4bOutcome::SelectedUnsignedShape {
                 self.counters.record(outcome);
@@ -10036,9 +12413,42 @@ mod t4b_shadow {
         Arc::new(T4bNodeView { port, chain_id })
     }
 
+    pub(super) fn authority<Provider>(
+        port: &Arc<CliTraderSnapshotPort<Provider>>,
+        chain_id: u64,
+        #[cfg(feature = "priority-economics-capture")] capture: Option<WriterV1>,
+    ) -> Result<T4bShadowAuthority<Provider>, TxAuthorityError>
+    where
+        Provider: StateProviderFactory
+            + HeaderProvider<Header = Header>
+            + BlockReaderIdExt
+            + Clone
+            + Debug
+            + Send
+            + Sync
+            + 'static,
+    {
+        let node = node_view(Arc::clone(port), chain_id);
+        let assembler = TxAuthorityAssembler::base_mainnet(node)?;
+        Ok(T4bShadowAuthority {
+            assembler,
+            provider: port.provider.clone(),
+            slot: ShadowLatestSlot::new(),
+            economics_ledger: PriorityEconomicsLedgerV2::new(
+                NonZeroUsize::new(16_384).expect("nonzero economics ledger capacity"),
+            ),
+            counters: T4bOutcomeCounters::default(),
+            #[cfg(feature = "priority-economics-capture")]
+            capture: Mutex::new(capture),
+            #[cfg(feature = "priority-economics-capture")]
+            capture_disposition: Mutex::new(T4bCaptureDispositionV1::Disabled),
+        })
+    }
+
     pub(super) fn observer<Provider>(
         port: Arc<CliTraderSnapshotPort<Provider>>,
         chain_id: u64,
+        #[cfg(feature = "priority-economics-capture")] capture: Option<WriterV1>,
     ) -> Result<Arc<dyn CandidateTxShapeObserver>, TxAuthorityError>
     where
         Provider: StateProviderFactory
@@ -10050,27 +12460,36 @@ mod t4b_shadow {
             + Sync
             + 'static,
     {
-        let node = node_view(port, chain_id);
-        let assembler = TxAuthorityAssembler::base_mainnet(node)?;
-        Ok(Arc::new(T4bShadowAuthority {
-            assembler,
-            slot: ShadowLatestSlot::new(),
-            counters: T4bOutcomeCounters::default(),
-        }))
+        Ok(Arc::new(authority(
+            &port,
+            chain_id,
+            #[cfg(feature = "priority-economics-capture")]
+            capture,
+        )?))
     }
 }
+#[cfg(feature = "t4b-shadow")]
+pub use t4b_shadow::{
+    AuditPhase, AuditedAccessKindV1, AuditedAccessV1, AuditedDatabase, AuditedDatabaseError,
+    CandidateAccessAllowlistV1, CandidateAccessedStateV1, CandidateExecutionCardinalityV1,
+    CandidateStateCollectionError, T4bCaptureDispositionV1, T4bOverlayError,
+    T4bParentOverlayAdapter,
+};
 
 #[cfg(feature = "t4d-shadow")]
 mod t4d_shadow {
+    #[cfg(feature = "priority-economics-capture")]
+    use base_mev_trader::WriterV1;
     use std::sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     };
 
     use super::{
-        BridgeError, CandidateAssemblyView, CandidateTxShapeObserver, InstalledSubmissionBridge,
-        SealedUnsignedCandidate, ShadowLatestSlot, ShadowSubmit, T4bOutcome, T4bOutcomeCounters,
-        TxAuthorityError, t4b_shadow,
+        BlockReaderIdExt, BridgeError, CandidateAssemblyView, CandidateTxShapeObserver,
+        CliTraderSnapshotPort, Debug, Header, HeaderProvider, InstalledSubmissionBridge,
+        SealedUnsignedCandidate, ShadowLatestSlot, ShadowSubmit, StateProviderFactory, T4bOutcome,
+        T4bOutcomeCounters, TxAuthorityError, t4b_shadow,
     };
     #[cfg(feature = "t4e-handoff")]
     use super::{T4eCandidateHandoff, T4eHandoffError};
@@ -10085,8 +12504,11 @@ mod t4d_shadow {
         SealedFresh,
         AssemblyRejected,
         BindingRejected,
+        #[cfg(feature = "t4e-handoff")]
         HandoffBusy,
+        #[cfg(feature = "t4e-handoff")]
         HandoffClosed,
+        #[cfg(feature = "t4e-handoff")]
         HandoffRejected,
         CrossInstallation,
         SnapshotStale,
@@ -10102,8 +12524,11 @@ mod t4d_shadow {
         sealed_fresh: AtomicU64,
         assembly_rejected: AtomicU64,
         binding_rejected: AtomicU64,
+        #[cfg(feature = "t4e-handoff")]
         handoff_busy: AtomicU64,
+        #[cfg(feature = "t4e-handoff")]
         handoff_closed: AtomicU64,
+        #[cfg(feature = "t4e-handoff")]
         handoff_rejected: AtomicU64,
         cross_installation: AtomicU64,
         snapshot_stale: AtomicU64,
@@ -10120,8 +12545,11 @@ mod t4d_shadow {
                 T4dTerminal::SealedFresh => &self.sealed_fresh,
                 T4dTerminal::AssemblyRejected => &self.assembly_rejected,
                 T4dTerminal::BindingRejected => &self.binding_rejected,
+                #[cfg(feature = "t4e-handoff")]
                 T4dTerminal::HandoffBusy => &self.handoff_busy,
+                #[cfg(feature = "t4e-handoff")]
                 T4dTerminal::HandoffClosed => &self.handoff_closed,
+                #[cfg(feature = "t4e-handoff")]
                 T4dTerminal::HandoffRejected => &self.handoff_rejected,
                 T4dTerminal::CrossInstallation => &self.cross_installation,
                 T4dTerminal::SnapshotStale => &self.snapshot_stale,
@@ -10144,7 +12572,8 @@ mod t4d_shadow {
     }
 
     #[derive(Debug)]
-    pub(super) struct T4dShadowAuthority {
+    pub(super) struct T4dShadowAuthority<Provider> {
+        authority: t4b_shadow::T4bShadowAuthority<Provider>,
         bridge: Arc<InstalledSubmissionBridge>,
         slot: ShadowLatestSlot<SealedUnsignedCandidate>,
         #[cfg(feature = "t4e-handoff")]
@@ -10153,7 +12582,7 @@ mod t4d_shadow {
         terminal_counters: T4dTerminalCounters,
     }
 
-    impl T4dShadowAuthority {
+    impl<Provider> T4dShadowAuthority<Provider> {
         pub(super) const fn bridge_error(error: BridgeError) -> (T4bOutcome, T4dTerminal) {
             match error {
                 BridgeError::Assembly(TxAuthorityError::ObservationBusy) => {
@@ -10206,9 +12635,20 @@ mod t4d_shadow {
         }
     }
 
-    impl CandidateTxShapeObserver for T4dShadowAuthority {
-        fn try_observe(&self, view: CandidateAssemblyView<'_>) -> T4bOutcome {
-            let candidate = match self.bridge.assemble_sealed(view) {
+    impl<Provider> CandidateTxShapeObserver for T4dShadowAuthority<Provider>
+    where
+        Provider: StateProviderFactory + Clone + Debug + Send + Sync + 'static,
+    {
+        fn try_observe(&self, view: &CandidateAssemblyView<'_>) -> T4bOutcome {
+            let detail = match self.authority.assemble_finalized(view) {
+                Ok(detail) => detail,
+                Err(error) => {
+                    let outcome = t4b_shadow::outcome(error);
+                    self.record(outcome, T4dTerminal::AssemblyRejected);
+                    return outcome;
+                }
+            };
+            let candidate = match self.bridge.seal_finalized(detail, view.probe().clone()) {
                 Ok(candidate) => candidate,
                 Err(error) => {
                     let (outcome, terminal) = Self::bridge_error(error);
@@ -10266,20 +12706,39 @@ mod t4d_shadow {
         }
     }
 
-    pub(super) fn observer(
+    pub(super) fn observer<Provider>(
+        port: Arc<CliTraderSnapshotPort<Provider>>,
+        chain_id: u64,
         bridge: Arc<InstalledSubmissionBridge>,
         handoff: CandidateHandoff,
-    ) -> Arc<T4dShadowAuthority> {
+        #[cfg(feature = "priority-economics-capture")] capture: Option<WriterV1>,
+    ) -> Result<Arc<T4dShadowAuthority<Provider>>, TxAuthorityError>
+    where
+        Provider: StateProviderFactory
+            + HeaderProvider<Header = Header>
+            + BlockReaderIdExt
+            + Clone
+            + Debug
+            + Send
+            + Sync
+            + 'static,
+    {
         #[cfg(not(feature = "t4e-handoff"))]
         let _ = handoff;
-        Arc::new(T4dShadowAuthority {
+        Ok(Arc::new(T4dShadowAuthority {
+            authority: t4b_shadow::authority(
+                &port,
+                chain_id,
+                #[cfg(feature = "priority-economics-capture")]
+                capture,
+            )?,
             bridge,
             slot: ShadowLatestSlot::new(),
             #[cfg(feature = "t4e-handoff")]
             handoff,
             t4b_counters: T4bOutcomeCounters::default(),
             terminal_counters: T4dTerminalCounters::default(),
-        })
+        }))
     }
 }
 fn t4a_runtime_config(enabled: bool) -> eyre::Result<MevTraderRuntimeConfig> {
@@ -11184,6 +13643,8 @@ mod tests {
             #[cfg(feature = "t4e-handoff")]
             t4e_handoff: None,
             admission_exporter: Ok(None),
+            #[cfg(feature = "priority-economics-capture")]
+            priority_economics_capture: Ok(None),
             #[cfg(feature = "arm-sim")]
             production_simulation_handoff: Some(ProductionSimulationHandoff::unavailable(
                 ProductionSimulationInstallError::ActivationInvariant,
@@ -11252,6 +13713,68 @@ mod tests {
         assert_eq!(slot.try_take(), Some(2));
         slot.close();
         assert_eq!(slot.try_submit(3_u64), ShadowSubmit::Closed);
+        #[cfg(feature = "priority-economics-capture")]
+        {
+            let address = Address::repeat_byte(0x44);
+            let storage_slot = U256::from(7);
+            let pre = U256::from(100);
+            let post = U256::from(140);
+            let audit = vec![
+                AuditedAccessV1::new_for_capture_test(
+                    AuditPhase::PreWeth,
+                    2,
+                    AuditedAccessKindV1::Storage {
+                        address,
+                        account_id: None,
+                        slot: storage_slot,
+                        value: pre,
+                    },
+                ),
+                AuditedAccessV1::new_for_capture_test(
+                    AuditPhase::PostWeth,
+                    9,
+                    AuditedAccessKindV1::Storage {
+                        address,
+                        account_id: None,
+                        slot: storage_slot,
+                        value: post,
+                    },
+                ),
+            ];
+            assert_eq!(
+                t4b_shadow::capture_audit_reads(&audit),
+                Some(vec![
+                    base_mev_trader::AuditReadV1::new(
+                        base_mev_trader::AuditPhaseV1::PreWeth,
+                        base_mev_trader::AuditAccessKindV1::Storage,
+                        Some(address),
+                        None,
+                        Some(storage_slot),
+                        None,
+                        None,
+                        base_mev_trader::AuditObservedValueV1::Storage(pre),
+                        2,
+                        2,
+                        1,
+                    )
+                    .unwrap(),
+                    base_mev_trader::AuditReadV1::new(
+                        base_mev_trader::AuditPhaseV1::PostWeth,
+                        base_mev_trader::AuditAccessKindV1::Storage,
+                        Some(address),
+                        None,
+                        Some(storage_slot),
+                        None,
+                        None,
+                        base_mev_trader::AuditObservedValueV1::Storage(post),
+                        9,
+                        9,
+                        1,
+                    )
+                    .unwrap(),
+                ])
+            );
+        }
     }
 
     #[cfg(feature = "t4d-shadow")]
@@ -11265,7 +13788,8 @@ mod tests {
             .split_once("fn t4a_runtime_config")
             .expect("T4d module end")
             .0;
-        assert!(bounded.contains("assemble_sealed(view)"));
+        assert!(bounded.contains("self.authority.assemble_finalized(view)"));
+        assert!(bounded.contains("self.bridge.seal_finalized(detail, view.probe().clone())"));
         assert!(bounded.contains("self.handoff.try_handoff(candidate)"));
         for forbidden in ["unsigned_tx", "calldata", "raw_tx"] {
             assert!(!bounded.contains(forbidden));
@@ -11395,6 +13919,8 @@ mod tests {
             #[cfg(feature = "t4e-handoff")]
             t4e_handoff: None,
             admission_exporter: Ok(Some(admission_exporter)),
+            #[cfg(feature = "priority-economics-capture")]
+            priority_economics_capture: Ok(None),
             #[cfg(feature = "arm-sim")]
             production_simulation_handoff: Some(ProductionSimulationHandoff::unavailable(
                 ProductionSimulationInstallError::ActivationInvariant,
@@ -11462,6 +13988,8 @@ mod tests {
             t4d_shadow: false,
             t4e_handoff: Some(erased_handoff),
             admission_exporter: Ok(None),
+            #[cfg(feature = "priority-economics-capture")]
+            priority_economics_capture: Ok(None),
             production_simulation_handoff: Some(Arc::clone(&handoff)),
             production_simulation_owner: Some(owner),
             #[cfg(feature = "edge-measurement")]

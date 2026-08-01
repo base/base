@@ -259,6 +259,8 @@ fn validate_s2_metadata(metadata: &serde_json::Value) -> Result<(), String> {
         "alloy-primitives",
         "alloy-sol-types",
         "base-mev-trader",
+        "base-common-evm",
+        "base-common-flz",
         "k256",
         "libc",
         "rand_08",

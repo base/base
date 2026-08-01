@@ -134,8 +134,7 @@ impl SuppressionFileStore {
         if self.lock_present() {
             return Err(SuppressionFileReadError::Unavailable);
         }
-        let bytes =
-            std::fs::read(&self.path).map_err(|_| SuppressionFileReadError::Unavailable)?;
+        let bytes = std::fs::read(&self.path).map_err(|_| SuppressionFileReadError::Unavailable)?;
         let value: serde_json::Value =
             serde_json::from_slice(&bytes).map_err(|_| SuppressionFileReadError::Invalid)?;
         let object = value.as_object().ok_or(SuppressionFileReadError::Invalid)?;
@@ -188,7 +187,9 @@ impl SuppressionEpochStore {
     /// never auto-creates a fresh (hw=0) anchor that would defeat rollback
     /// detection.
     #[cfg(any(test, feature = "arm-provisioning"))]
-    pub(crate) fn bootstrap(path: impl AsRef<std::path::Path>) -> Result<Self, SuppressionRollbackError> {
+    pub(crate) fn bootstrap(
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<Self, SuppressionRollbackError> {
         // `Database::create` also OPENS an existing valid DB, so bootstrap MUST be
         // IDEMPOTENT: it seeds `hw -> 0` only when the key is ABSENT, and PRESERVES
         // an existing high-water mark (re-running the provisioning build must never
@@ -272,8 +273,10 @@ impl SuppressionEpochStore {
     /// mark. An epoch below the mark is a fail-closed rollback; a persistence
     /// failure is fail-closed I/O. Success means the mark is durably `>= epoch`.
     pub(crate) fn observe(&self, epoch: u64) -> Result<(), SuppressionRollbackError> {
-        let mut write =
-            self.db.begin_write().map_err(|error| SuppressionRollbackError::Io(error.to_string()))?;
+        let mut write = self
+            .db
+            .begin_write()
+            .map_err(|error| SuppressionRollbackError::Io(error.to_string()))?;
         write.set_durability(Durability::Immediate);
         // Resolve the decision with the table borrow fully released before deciding
         // to commit or abort `write` (mirrors the R9 claim-store pattern).

@@ -1,0 +1,20 @@
+diff --git a/crates/execution/cli/src/mev_trader.rs b/crates/execution/cli/src/mev_trader.rs
+--- a/crates/execution/cli/src/mev_trader.rs
++++ b/crates/execution/cli/src/mev_trader.rs
+@@ -100,2 +100,16 @@
++#[cfg(feature = "t4b-mutant-egress")]
++#[derive(Debug)]
++pub struct T4bMutantEgressProbe;
++
++#[cfg(feature = "t4b-mutant-egress")]
++impl T4bMutantEgressProbe {
++    pub fn send() {
++        let _ = Client::new()
++            .post("http://127.0.0.1:9/gjc-t4b-mutant-egress")
++            .body("gjc-t4b-mutant-egress")
++            .send();
++    }
++}
++
+ #[cfg(feature = "t4b-shadow")]
+ mod t4b_shadow {

@@ -1,0 +1,9 @@
+diff --git a/crates/execution/cli/src/mev_trader.rs b/crates/execution/cli/src/mev_trader.rs
+--- a/crates/execution/cli/src/mev_trader.rs
++++ b/crates/execution/cli/src/mev_trader.rs
+@@ -200,3 +200,5 @@
+ impl CandidateTxShapeObserver for T4bShadowAuthority {
+     fn try_observe(&self, view: &CandidateAssemblyView<'_>) -> T4bOutcome {
++        #[cfg(feature = "t4b-mutant-egress")]
++        super::T4bMutantEgressProbe::send();
+         let pre = match self.assembler.prepare_pre_economics(view) {

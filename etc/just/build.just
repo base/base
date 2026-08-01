@@ -35,7 +35,7 @@ elfs:
 
 # Builds the workspace with maxperf
 maxperf:
-    cargo build --workspace --profile maxperf --features jemalloc
+    cargo build --workspace --profile maxperf --features jemalloc,base-execution-cli/t4b-shadow
 
 # Builds the base node binary
 node:

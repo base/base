@@ -15,6 +15,13 @@ pub mod chainspec;
 pub mod commands;
 mod mev_trader;
 
+#[cfg(feature = "t4b-shadow")]
+pub use mev_trader::{
+    AuditPhase, AuditedAccessKindV1, AuditedAccessV1, AuditedDatabase, AuditedDatabaseError,
+    CandidateAccessAllowlistV1, CandidateAccessedStateV1, CandidateExecutionCardinalityV1,
+    CandidateStateCollectionError, T4bCaptureDispositionV1, T4bOverlayError,
+    T4bParentOverlayAdapter,
+};
 pub use mev_trader::{
     BaseNodeTraderConfig, BaseNodeTraderExtension, BaseNodeTraderStart, MevTraderPhaseAInstaller,
 };

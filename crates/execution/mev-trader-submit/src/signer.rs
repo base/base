@@ -12,7 +12,7 @@ use alloy_primitives::{Address, B256, Signature, U256, b256, keccak256};
 use k256::ecdsa::SigningKey;
 use rand_08::rngs::OsRng;
 
-use crate::assembler::dummy_signature;
+use crate::canonical_envelope::dummy_signature;
 
 /// secp256k1 `n/2`. A canonical transaction signature must have `s <= n/2`
 /// (EIP-2 low-s). Matches the TS `SECP256K1_HALF_ORDER`.

@@ -89,8 +89,7 @@ impl SimulationLedgerHead {
     fn decode(bytes: &[u8]) -> Result<Self, SimulationLedgerInvalid> {
         let bytes: &[u8; Self::ENCODED_LEN] =
             bytes.try_into().map_err(|_| SimulationLedgerInvalid::HashChain)?;
-        let epoch: [u8; 32] =
-            bytes[..32].try_into().map_err(|_| SimulationLedgerInvalid::Epoch)?;
+        let epoch: [u8; 32] = bytes[..32].try_into().map_err(|_| SimulationLedgerInvalid::Epoch)?;
         if epoch.iter().all(|byte| *byte == 0) {
             return Err(SimulationLedgerInvalid::Epoch);
         }
@@ -398,9 +397,8 @@ impl SimulationStore {
         CreateChild: FnOnce(&Path) -> io::Result<()>,
         SyncParent: FnOnce(&Parent) -> io::Result<()>,
     {
-        let parent = directory
-            .parent()
-            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let parent =
+            directory.parent().ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
         let parent_handle = open_parent(parent)?;
         create_child(directory)?;
         sync_parent(&parent_handle)
@@ -432,9 +430,7 @@ impl SimulationStore {
             .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
         fs::rename(&open_path, directory.join(HEAD_FILE))
             .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
-        directory_handle
-            .sync_all()
-            .map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
+        directory_handle.sync_all().map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
         Ok((epoch, 0, B256::ZERO))
     }
 
@@ -461,9 +457,8 @@ impl SimulationStore {
         {
             let entry = entry.map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
             let name = entry.file_name();
-            let name = name
-                .to_str()
-                .ok_or_else(|| invalid(SimulationLedgerInvalid::UnknownEntry))?;
+            let name =
+                name.to_str().ok_or_else(|| invalid(SimulationLedgerInvalid::UnknownEntry))?;
             let file_type =
                 entry.file_type().map_err(|error| SimulationStoreOpenError::Io(error.kind()))?;
             let metadata =
@@ -495,8 +490,8 @@ impl SimulationStore {
 
         let mut prior_hash = B256::ZERO;
         for (expected, sequence) in sequences.iter().copied().enumerate() {
-            let expected = u64::try_from(expected)
-                .map_err(|_| invalid(SimulationLedgerInvalid::Sequence))?;
+            let expected =
+                u64::try_from(expected).map_err(|_| invalid(SimulationLedgerInvalid::Sequence))?;
             if sequence != expected {
                 return Err(invalid(SimulationLedgerInvalid::Sequence));
             }
@@ -544,7 +539,9 @@ impl SimulationStore {
                 SimulationStoreOpenError::Io(error.kind())
             }
         })?;
-        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() || metadata.nlink() != 1
+        if !metadata.file_type().is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.nlink() != 1
         {
             return Err(SimulationStoreOpenError::InvalidExistingLedger {
                 ledger_epoch: None,
@@ -655,8 +652,7 @@ impl SimulationStore {
             return Err(invalid());
         }
 
-        let block =
-            Self::exact_object(object, epoch, "blockIdentity", &["number", "parentHash"])?;
+        let block = Self::exact_object(object, epoch, "blockIdentity", &["number", "parentHash"])?;
         let block_number = block
             .get("number")
             .and_then(Value::as_u64)
@@ -1000,11 +996,9 @@ impl SimulationStore {
             next_sequence,
             latest_record_hash: record_hash,
         };
-        file.write_all(&head.encode())
-            .and_then(|()| file.sync_all())
-            .map_err(|error| {
-                self.write_error(failed_sequence, SimulationStoreOperation::UpdateHead, error)
-            })?;
+        file.write_all(&head.encode()).and_then(|()| file.sync_all()).map_err(|error| {
+            self.write_error(failed_sequence, SimulationStoreOperation::UpdateHead, error)
+        })?;
         fs::rename(&open_path, &head_path).map_err(|error| {
             self.write_error(failed_sequence, SimulationStoreOperation::UpdateHead, error)
         })?;
@@ -1125,12 +1119,7 @@ impl SimulationStore {
         Self::hex(B256::from(*epoch.as_bytes()))
     }
 
-    fn recompute_correlation_key(
-        campaign: B256,
-        victim: B256,
-        plan: B256,
-        signed: B256,
-    ) -> B256 {
+    fn recompute_correlation_key(campaign: B256, victim: B256, plan: B256, signed: B256) -> B256 {
         let mut input = Vec::with_capacity(32 * 4 + 30);
         input.extend_from_slice(b"base-mev/simulation-correlation/v1");
         input.extend_from_slice(campaign.as_slice());
@@ -1291,10 +1280,7 @@ mod tests {
         let path = temp();
         let store = SimulationStore::open_at(&path).unwrap();
         let epoch = store.epoch;
-        assert_eq!(
-            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o700
-        );
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o700);
         let initialized_head = fs::read(path.join(HEAD_FILE)).unwrap();
         assert_eq!(initialized_head.len(), SimulationLedgerHead::ENCODED_LEN);
         assert_eq!(&initialized_head[..32], epoch.as_bytes());
@@ -1357,20 +1343,14 @@ mod tests {
             (result.map_err(|error| error.kind()), events.into_inner())
         };
 
-        assert_eq!(
-            exercise(None),
-            (Ok(()), vec!["open-parent", "create-child", "sync-parent"])
-        );
+        assert_eq!(exercise(None), (Ok(()), vec!["open-parent", "create-child", "sync-parent"]));
         assert_eq!(
             exercise(Some("open-parent")),
             (Err(io::ErrorKind::PermissionDenied), vec!["open-parent"])
         );
         assert_eq!(
             exercise(Some("create-child")),
-            (
-                Err(io::ErrorKind::AlreadyExists),
-                vec!["open-parent", "create-child"],
-            )
+            (Err(io::ErrorKind::AlreadyExists), vec!["open-parent", "create-child"],)
         );
         assert_eq!(
             exercise(Some("sync-parent")),
@@ -1518,13 +1498,12 @@ mod tests {
         store.append(&record).unwrap();
         drop(store);
 
-        let mut values: [Value; 2] = [0_u64, 1]
-            .map(|sequence| {
-                serde_json::from_slice(
-                    &fs::read(path.join(SimulationStore::record_name(sequence))).unwrap(),
-                )
-                .unwrap()
-            });
+        let mut values: [Value; 2] = [0_u64, 1].map(|sequence| {
+            serde_json::from_slice(
+                &fs::read(path.join(SimulationStore::record_name(sequence))).unwrap(),
+            )
+            .unwrap()
+        });
         values[0].as_object_mut().unwrap().remove("attempt");
         rewrite_chain(&path, &mut values);
         assert_invalid(&path, Some(epoch), SimulationLedgerInvalid::Schema);
@@ -1578,8 +1557,7 @@ mod tests {
             value["correlation"].as_object_mut().unwrap().remove("correlationKey");
         });
         assert_epoch_rejected(|value| {
-            value["correlation"]["ledgerEpoch"] =
-                Value::String(format!("0x{}", "11".repeat(32)));
+            value["correlation"]["ledgerEpoch"] = Value::String(format!("0x{}", "11".repeat(32)));
         });
         assert_schema_rejected(|value| {
             value["correlation"]["sequence"] = Value::from(1_u64);
@@ -1598,14 +1576,16 @@ mod tests {
         let (path, epoch) = populated();
         let record_path = path.join(SimulationStore::record_name(0));
         let value: Value = serde_json::from_slice(&fs::read(record_path).unwrap()).unwrap();
-        let campaign = SimulationStore::parse_hash(value.as_object().unwrap(), "campaignId").unwrap();
+        let campaign =
+            SimulationStore::parse_hash(value.as_object().unwrap(), "campaignId").unwrap();
         let victim =
             SimulationStore::parse_hash(value.as_object().unwrap(), "victimTxHash").unwrap();
         let plan = SimulationStore::parse_hash(value.as_object().unwrap(), "planDigest").unwrap();
         let signed =
             SimulationStore::parse_hash(value.as_object().unwrap(), "signedTxHash").unwrap();
-        let expected =
-            SimulationStore::hex(SimulationStore::recompute_correlation_key(campaign, victim, plan, signed));
+        let expected = SimulationStore::hex(SimulationStore::recompute_correlation_key(
+            campaign, victim, plan, signed,
+        ));
         assert_eq!(value["correlationKey"], expected);
         assert_eq!(value["correlation"]["correlationKey"], expected);
         assert_eq!(value["ledgerEpoch"], SimulationStore::hex_epoch(epoch));
