@@ -190,6 +190,12 @@ skip = [
     # reqwest version mismatch: alloy use 0.12.x, newer deps use 0.13.x
     "reqwest",
 
+    # JavaScript tracer version mismatches from boa dependencies
+    "phf",
+    "phf_shared",
+    "rustc_version",
+    "semver",
+
     # quick-error version mismatch: proptest -> rusty-fork uses 1.x, other deps use 2.x
     "quick-error",
 
