@@ -5,5 +5,8 @@ pub(super) use config::ForwarderConfig;
 
 mod metrics;
 
+mod request;
+pub use request::{ForwardRequest, InsertValidatedTransaction};
+
 mod task;
 pub(super) use task::DestinationForwarder;

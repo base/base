@@ -1,10 +1,6 @@
 use std::{collections::VecDeque, sync::Arc, time::Instant};
 
-use alloy_eips::Encodable2718;
-use alloy_primitives::{Bytes, TxHash};
-use base_execution_txpool::{
-    BundleTransaction, NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions,
-};
+use alloy_primitives::TxHash;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -16,12 +12,11 @@ use jsonrpsee::{
     },
     http_client::HttpClient,
 };
-use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 use serde_json::{Map, json};
 use tokio::{sync::mpsc, time};
 use tracing::{debug, error, info, trace};
 
-use super::{config::ForwarderConfig, metrics::ForwarderMetrics};
+use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::ForwardRequest};
 /// Sliding window rate limiter that tracks request timestamps.
 ///
 /// Maintains a bounded deque of send timestamps within a 1-second window.
@@ -71,41 +66,35 @@ impl RateLimiter {
     }
 }
 
-/// Async forwarder task that receives transactions from a destination queue
-/// and sends them to a single builder via RPC.
+/// Async forwarder task that receives requests from a destination queue and
+/// sends them to a single builder via RPC.
 ///
-/// Under normal load, each transaction is sent immediately as a batch of 1.
-/// When the sliding window rate limit (`max_rps`) is hit, incoming
-/// transactions buffer and flush as a single batch (capped at
-/// `max_batch_size`) once the window opens.
-pub(crate) struct DestinationForwarder<T: PoolTransaction, E = NoExtensions> {
+/// Under normal load, each request is sent immediately as a batch of 1. When
+/// the sliding window rate limit (`max_rps`) is hit, incoming requests buffer
+/// and flush as a single batch (capped at `max_batch_size`) once the window
+/// opens.
+///
+/// Requests are relayed in the order the queue yields them, and a batch
+/// preserves that order, so a producer may rely on submission order between
+/// requests to the same destination.
+pub(crate) struct DestinationForwarder<R> {
     builder_url: url::Url,
     /// Pre-computed URL label shared cheaply across metric emissions.
     url_label: Arc<str>,
     client: HttpClient,
-    receiver: mpsc::Receiver<Arc<ValidPoolTransaction<T>>>,
+    receiver: mpsc::Receiver<R>,
     config: Arc<ForwarderConfig>,
     limiter: RateLimiter,
-    buffer: Vec<BufferedTransaction<E>>,
+    buffer: Vec<R>,
     buffer_limit: usize,
 }
 
-struct BufferedTransaction<E> {
-    transaction: ValidatedTransaction<E>,
-    tx_hash: TxHash,
-}
-
-impl<T, E> DestinationForwarder<T, E>
-where
-    T: PoolTransaction + BundleTransaction,
-    <T as PoolTransaction>::Consensus: Encodable2718,
-    E: ValidatedTransactionExtensions<T>,
-{
+impl<R: ForwardRequest> DestinationForwarder<R> {
     /// Creates a new forwarder for a single builder endpoint.
     pub(crate) fn new(
         builder_url: url::Url,
         client: HttpClient,
-        receiver: mpsc::Receiver<Arc<ValidPoolTransaction<T>>>,
+        receiver: mpsc::Receiver<R>,
         config: Arc<ForwarderConfig>,
         queue_capacity: usize,
     ) -> Self {
@@ -165,29 +154,10 @@ where
     }
 
     /// Returns `true` if the channel is closed and the forwarder should shut down.
-    fn handle_recv(&mut self, transaction: Option<Arc<ValidPoolTransaction<T>>>) -> bool {
-        match transaction {
-            Some(tx) => {
-                let sender = *tx.sender_ref();
-                let tx_hash = *tx.transaction.hash();
-                let consensus = tx.transaction.clone_into_consensus();
-                let raw = Bytes::from(consensus.inner().encoded_2718());
-                let min_block_number = tx.transaction.min_block_number();
-                let max_block_number = tx.transaction.max_block_number();
-                let min_timestamp = tx.transaction.min_timestamp_millis();
-                let max_timestamp = tx.transaction.max_timestamp_millis();
-                self.buffer.push(BufferedTransaction {
-                    transaction: ValidatedTransaction {
-                        sender,
-                        raw,
-                        min_block_number,
-                        max_block_number,
-                        min_timestamp,
-                        max_timestamp,
-                        extensions: E::extract(&tx),
-                    },
-                    tx_hash,
-                });
+    fn handle_recv(&mut self, request: Option<R>) -> bool {
+        match request {
+            Some(request) => {
+                self.buffer.push(request);
                 ForwarderMetrics::buffer_size(Arc::clone(&self.url_label))
                     .set(self.buffer.len() as f64);
                 false
@@ -215,14 +185,12 @@ where
         } else {
             self.buffer.len().min(self.config.max_batch_size)
         };
-        let buffered: Vec<BufferedTransaction<E>> = self.buffer.drain(..batch_size).collect();
+        let batch: Vec<R> = self.buffer.drain(..batch_size).collect();
         ForwarderMetrics::buffer_size(Arc::clone(&self.url_label)).set(self.buffer.len() as f64);
 
-        if buffered.is_empty() {
+        if batch.is_empty() {
             return;
         }
-        let (tx_hashes, batch): (Vec<TxHash>, Vec<ValidatedTransaction<E>>) =
-            buffered.into_iter().map(|tx| (tx.tx_hash, tx.transaction)).unzip();
 
         trace!(
             builder_url = %self.builder_url,
@@ -231,18 +199,23 @@ where
             "flushing batch",
         );
 
-        self.send_with_retries(batch, tx_hashes).await;
+        self.send_with_retries(batch).await;
         self.limiter.record_send();
     }
 
-    async fn send_with_retries(&self, batch: Vec<ValidatedTransaction<E>>, tx_hashes: Vec<TxHash>) {
+    async fn send_with_retries(&self, batch: Vec<R>) {
+        // Parallel to `batch` by index, so a batch response entry maps back to the request that
+        // produced it. Collected once up front because both are read on every retry attempt.
+        let tx_hashes: Vec<Option<TxHash>> = batch.iter().map(ForwardRequest::tx_hash).collect();
+        let methods: Vec<&'static str> = batch.iter().map(ForwardRequest::method).collect();
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
-            for tx_hash in &tx_hashes {
+            for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
                 self.emit_forward_event(
                     TransactionEventType::TxpoolBuilderForwardAttempt,
-                    Some(*tx_hash),
+                    *tx_hash,
+                    method,
                     Some(attempt),
                     Map::from_iter([
                         ("attempt".to_string(), json!(attempt)),
@@ -261,13 +234,15 @@ where
                     let mut ok_count = 0u64;
                     let mut err_count = 0u64;
                     for (idx, res) in response.into_iter().enumerate() {
-                        let tx_hash = tx_hashes.get(idx).copied();
+                        let tx_hash = tx_hashes.get(idx).copied().flatten();
+                        let method = methods.get(idx).copied().unwrap_or_default();
                         match res {
                             Ok(()) => {
                                 ok_count += 1;
                                 self.emit_forward_event(
                                     TransactionEventType::TxpoolBuilderForwardSuccess,
                                     tx_hash,
+                                    method,
                                     Some(attempt),
                                     Map::from_iter([
                                         ("attempt".to_string(), json!(attempt)),
@@ -285,6 +260,7 @@ where
                                 self.emit_forward_event(
                                     TransactionEventType::TxpoolBuilderForwardFailure,
                                     tx_hash,
+                                    method,
                                     Some(attempt),
                                     Map::from_iter([
                                         ("attempt".to_string(), json!(attempt)),
@@ -319,10 +295,11 @@ where
                 Err(err) => {
                     ForwarderMetrics::rpc_latency(Arc::clone(&self.url_label))
                         .record(overall_start.elapsed().as_secs_f64());
-                    for tx_hash in &tx_hashes {
+                    for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
                         self.emit_forward_event(
                             TransactionEventType::TxpoolBuilderForwardDropped,
-                            Some(*tx_hash),
+                            *tx_hash,
+                            method,
                             Some(attempt),
                             Map::from_iter([
                                 ("drop_reason".to_string(), json!("rpc_failure")),
@@ -351,13 +328,14 @@ where
         }
     }
 
-    async fn send_batch(
-        &self,
-        batch: &[ValidatedTransaction<E>],
-    ) -> Result<BatchResponse<'_, ()>, ClientError> {
+    async fn send_batch(&self, batch: &[R]) -> Result<BatchResponse<'_, ()>, ClientError> {
         let mut request = BatchRequestBuilder::new();
-        for tx in batch {
-            request.insert("base_insertValidatedTransaction", (tx,)).expect("valid method name");
+        for item in batch {
+            // A payload that will not serialize fails the whole batch rather than panicking the
+            // task. `ParseError` is classified non-retryable below, which is correct: re-encoding
+            // the same value fails identically, so retrying would only delay the drop.
+            let params = item.params().map_err(ClientError::ParseError)?;
+            request.insert(item.method(), params).expect("valid method name");
         }
         self.client.batch_request(request).await
     }
@@ -373,12 +351,12 @@ where
         &self,
         event_type: TransactionEventType,
         tx_hash: Option<TxHash>,
+        rpc_method: &'static str,
         attempt: Option<u32>,
         mut data: Map<String, serde_json::Value>,
     ) {
         data.entry("target".to_string()).or_insert_with(|| json!("builder_forwarder"));
-        data.entry("rpc_method".to_string())
-            .or_insert_with(|| json!("base_insertValidatedTransaction"));
+        data.entry("rpc_method".to_string()).or_insert_with(|| json!(rpc_method));
         let attempt_id = attempt.map(|attempt| attempt.to_string()).unwrap_or_default();
 
         let _ = transaction_event!(
@@ -395,7 +373,7 @@ where
     }
 }
 
-impl<T: PoolTransaction, E> std::fmt::Debug for DestinationForwarder<T, E> {
+impl<R> std::fmt::Debug for DestinationForwarder<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DestinationForwarder")
             .field("builder_url", &self.builder_url)
@@ -408,56 +386,74 @@ impl<T: PoolTransaction, E> std::fmt::Debug for DestinationForwarder<T, E> {
 mod tests {
     use std::{net::SocketAddr, sync::Mutex, time::Duration};
 
-    use alloy_consensus::transaction::{Recovered, Transaction};
-    use alloy_primitives::{Address, B256, TxKind, U256};
-    use base_common_consensus::{BaseTransactionSigned, TxDeposit};
-    use base_execution_txpool::{BasePooledTransaction, ExtensionError};
-    use jsonrpsee::{RpcModule, http_client::HttpClientBuilder, server::Server};
-    use reth_transaction_pool::{TransactionOrigin, identifier::TransactionId};
+    use alloy_primitives::{Address, B256, Bytes};
+    use base_execution_txpool::{NoExtensions, ValidatedTransaction};
+    use jsonrpsee::{
+        RpcModule, core::params::ArrayParams, http_client::HttpClientBuilder, server::Server,
+    };
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
 
-    use super::*;
+    use super::{super::request::InsertValidatedTransaction, *};
 
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     struct TestExtensions {
         test_tag: String,
     }
 
-    impl ValidatedTransactionExtensions<BasePooledTransaction> for TestExtensions {
-        fn extract(_tx: &ValidPoolTransaction<BasePooledTransaction>) -> Self {
-            Self { test_tag: "forwarded".to_string() }
-        }
-
-        fn apply(self, tx: BasePooledTransaction) -> Result<BasePooledTransaction, ExtensionError> {
-            Ok(tx)
+    /// One insert request, tagged by `nonce` so ordering assertions can name it.
+    fn transaction<E: Default>(nonce: u64) -> InsertValidatedTransaction<E> {
+        InsertValidatedTransaction {
+            transaction: ValidatedTransaction {
+                sender: Address::repeat_byte((nonce + 1) as u8),
+                raw: Bytes::from(vec![nonce as u8]),
+                min_block_number: None,
+                max_block_number: None,
+                min_timestamp: None,
+                max_timestamp: None,
+                extensions: E::default(),
+            },
+            tx_hash: B256::with_last_byte(nonce as u8),
         }
     }
 
-    fn transaction(nonce: u64) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
-        let sender = Address::repeat_byte((nonce + 1) as u8);
-        let signed: BaseTransactionSigned = TxDeposit {
-            source_hash: B256::with_last_byte(nonce as u8),
-            from: sender,
-            to: TxKind::Call(Address::repeat_byte(0x42)),
-            mint: 0,
-            value: U256::from(nonce),
-            gas_limit: 21_000,
-            is_system_transaction: false,
-            input: Bytes::new(),
+    fn tagged(nonce: u64) -> InsertValidatedTransaction<TestExtensions> {
+        let mut request = transaction::<TestExtensions>(nonce);
+        request.transaction.extensions.test_tag = "forwarded".to_string();
+        request
+    }
+
+    /// A two-method request, standing in for a downstream producer that relays more than inserts
+    /// over one destination queue.
+    #[derive(Debug)]
+    enum TestRequest {
+        Insert(Box<ValidatedTransaction>),
+        Remove(TxHash),
+    }
+
+    impl ForwardRequest for TestRequest {
+        fn method(&self) -> &'static str {
+            match self {
+                Self::Insert(_) => "base_insertValidatedTransaction",
+                Self::Remove(_) => "test_removeTransaction",
+            }
         }
-        .into();
-        let encoded_length = signed.encoded_2718().len();
-        let transaction =
-            BasePooledTransaction::new(Recovered::new_unchecked(signed, sender), encoded_length);
-        Arc::new(ValidPoolTransaction {
-            transaction_id: TransactionId::new(0u64.into(), transaction.nonce()),
-            transaction,
-            propagate: true,
-            timestamp: Instant::now(),
-            origin: TransactionOrigin::External,
-            authority_ids: None,
-        })
+
+        fn params(&self) -> Result<ArrayParams, serde_json::Error> {
+            let mut params = ArrayParams::new();
+            match self {
+                Self::Insert(transaction) => params.insert(transaction.as_ref())?,
+                Self::Remove(hash) => params.insert(hash)?,
+            }
+            Ok(params)
+        }
+
+        fn tx_hash(&self) -> Option<TxHash> {
+            match self {
+                Self::Insert(_) => None,
+                Self::Remove(hash) => Some(*hash),
+            }
+        }
     }
 
     fn config(max_rps: u32, max_batch_size: usize) -> Arc<ForwarderConfig> {
@@ -470,27 +466,37 @@ mod tests {
         })
     }
 
-    async fn rpc_server() -> (url::Url, Arc<Mutex<Vec<Value>>>, jsonrpsee::server::ServerHandle) {
-        let received = Arc::new(Mutex::new(Vec::new()));
+    /// Records `(method, params)` for every call, in arrival order.
+    type Calls = Arc<Mutex<Vec<(String, Value)>>>;
+
+    async fn rpc_server() -> (url::Url, Calls, jsonrpsee::server::ServerHandle) {
+        let received: Calls = Arc::new(Mutex::new(Vec::new()));
         let mut module = RpcModule::new(Arc::clone(&received));
-        module
-            .register_method("base_insertValidatedTransaction", |params, received, _| {
-                let (transaction,): (Value,) = params.parse()?;
-                received.lock().unwrap().push(transaction);
-                Ok::<_, jsonrpsee::types::ErrorObjectOwned>(())
-            })
-            .unwrap();
+        for method in ["base_insertValidatedTransaction", "test_removeTransaction"] {
+            module
+                .register_method(method, move |params, received, _| {
+                    let (argument,): (Value,) = params.parse()?;
+                    received.lock().unwrap().push((method.to_string(), argument));
+                    Ok::<_, jsonrpsee::types::ErrorObjectOwned>(())
+                })
+                .unwrap();
+        }
         let server = Server::builder().build(SocketAddr::from(([127, 0, 0, 1], 0))).await.unwrap();
         let address = server.local_addr().unwrap();
         let handle = server.start(module);
         (url::Url::parse(&format!("http://{address}")).unwrap(), received, handle)
     }
 
-    fn forwarder<E: ValidatedTransactionExtensions<BasePooledTransaction>>(
+    /// Params of every recorded call, dropping the method name.
+    fn payloads(received: &Calls) -> Vec<Value> {
+        received.lock().unwrap().iter().map(|(_, params)| params.clone()).collect()
+    }
+
+    fn forwarder<R: ForwardRequest>(
         url: url::Url,
-        receiver: mpsc::Receiver<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+        receiver: mpsc::Receiver<R>,
         config: Arc<ForwarderConfig>,
-    ) -> DestinationForwarder<BasePooledTransaction, E> {
+    ) -> DestinationForwarder<R> {
         let client = HttpClientBuilder::default().build(url.as_str()).unwrap();
         DestinationForwarder::new(url, client, receiver, config, 16)
     }
@@ -524,15 +530,15 @@ mod tests {
         let (url, received, _server) = rpc_server().await;
         let (sender, receiver) = mpsc::channel(4);
         drop(sender);
-        let mut forwarder = forwarder::<TestExtensions>(url, receiver, config(1, 0));
+        let mut forwarder = forwarder(url, receiver, config(1, 0));
         for nonce in 0..3 {
-            assert!(!forwarder.handle_recv(Some(transaction(nonce))));
+            assert!(!forwarder.handle_recv(Some(tagged(nonce))));
         }
         forwarder.limiter.record_send();
 
         forwarder.run().await;
 
-        let received = received.lock().unwrap();
+        let received = payloads(&received);
         assert_eq!(received.len(), 3);
         assert!(received.iter().all(|tx| tx["test_tag"] == "forwarded"));
         assert!(received.iter().all(|tx| tx.get("extensions").is_none()));
@@ -542,7 +548,8 @@ mod tests {
     async fn flush_buffer_chunks_transactions_at_max_batch_size() {
         let (url, received, _server) = rpc_server().await;
         let (_sender, receiver) = mpsc::channel(1);
-        let mut forwarder = forwarder::<NoExtensions>(url, receiver, config(1, 2));
+        let mut forwarder =
+            forwarder::<InsertValidatedTransaction<NoExtensions>>(url, receiver, config(1, 2));
         for nonce in 0..5 {
             assert!(!forwarder.handle_recv(Some(transaction(nonce))));
         }
@@ -570,7 +577,8 @@ mod tests {
         }
         drop(sender);
 
-        let mut forwarder = forwarder::<NoExtensions>(url, receiver, config(1, 2));
+        let mut forwarder =
+            forwarder::<InsertValidatedTransaction<NoExtensions>>(url, receiver, config(1, 2));
         forwarder.limiter.record_send();
         let task = tokio::spawn(forwarder.run());
 
@@ -580,5 +588,44 @@ mod tests {
 
         tokio::time::timeout(Duration::from_secs(4), task).await.unwrap().unwrap();
         assert_eq!(received.lock().unwrap().len(), 5);
+    }
+
+    /// A producer may mix request kinds on one destination queue and rely on submission order.
+    ///
+    /// This is the property a downstream caller needs when a removal supersedes an earlier insert:
+    /// if the removal overtook it, the destination would delete nothing and then keep a request
+    /// that was meant to be withdrawn. Batching must not reorder, so `max_rps` is set to force all
+    /// four into a single batch rather than four separate sends.
+    #[tokio::test]
+    async fn a_batch_preserves_submission_order_across_request_kinds() {
+        let (url, received, _server) = rpc_server().await;
+        let (sender, receiver) = mpsc::channel(8);
+        let removed = B256::repeat_byte(0x7e);
+        let insert =
+            |nonce| TestRequest::Insert(Box::new(transaction::<NoExtensions>(nonce).transaction));
+        sender.send(insert(0)).await.unwrap();
+        sender.send(TestRequest::Remove(removed)).await.unwrap();
+        sender.send(insert(1)).await.unwrap();
+        sender.send(TestRequest::Remove(B256::repeat_byte(0x7f))).await.unwrap();
+        drop(sender);
+
+        let mut forwarder = forwarder(url, receiver, config(1, 0));
+        // Consume the one available slot so everything buffers into a single batch.
+        forwarder.limiter.record_send();
+        forwarder.run().await;
+
+        let calls = received.lock().unwrap();
+        let methods: Vec<&str> = calls.iter().map(|(method, _)| method.as_str()).collect();
+        assert_eq!(
+            methods,
+            [
+                "base_insertValidatedTransaction",
+                "test_removeTransaction",
+                "base_insertValidatedTransaction",
+                "test_removeTransaction",
+            ],
+            "a batch must reach the destination in submission order",
+        );
+        assert_eq!(calls[1].1, json!(removed), "each entry keeps its own params");
     }
 }

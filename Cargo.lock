@@ -6534,6 +6534,7 @@ dependencies = [
  "reth-transaction-pool",
  "serde",
  "serde_json",
+ "thiserror 2.0.19",
  "tokio",
  "tokio-util",
  "tracing",

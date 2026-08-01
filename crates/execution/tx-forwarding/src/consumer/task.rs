@@ -1,6 +1,10 @@
 use std::{fmt, sync::Arc};
 
-use alloy_primitives::TxHash;
+use alloy_eips::Encodable2718;
+use alloy_primitives::{Bytes, TxHash};
+use base_execution_txpool::{
+    BundleTransaction, NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions,
+};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -12,31 +16,39 @@ use tracing::{info, trace};
 use url::Url;
 
 use super::{config::ConsumerConfig, metrics::Metrics, validator::RecentlySent};
+use crate::forwarder::InsertValidatedTransaction;
 
 /// Background consumer that drains the pool for one destination.
 ///
 /// Each iteration creates a fresh `best_transactions()` snapshot and queues
 /// transactions not recently accepted by this destination's queue.
-pub(crate) struct DestinationConsumer<P: TransactionPool> {
+///
+/// Conversion to the builder-RPC wire form happens here rather than in the
+/// forwarder: this is the component that holds a [`ValidPoolTransaction`], and
+/// it runs on a blocking thread, which keeps the EIP-2718 encoding off the
+/// async runtime.
+pub(crate) struct DestinationConsumer<P: TransactionPool, E = NoExtensions> {
     pool: P,
     config: ConsumerConfig,
     recently_sent: RecentlySent,
-    sender: mpsc::Sender<Arc<ValidPoolTransaction<P::Transaction>>>,
+    sender: mpsc::Sender<InsertValidatedTransaction<E>>,
     cancel: CancellationToken,
     builder_url: Url,
     url_label: Arc<str>,
 }
 
-impl<P> DestinationConsumer<P>
+impl<P, E> DestinationConsumer<P, E>
 where
     P: TransactionPool + 'static,
-    P::Transaction: PoolTransaction,
+    P::Transaction: PoolTransaction + BundleTransaction,
+    <P::Transaction as PoolTransaction>::Consensus: Encodable2718,
+    E: ValidatedTransactionExtensions<P::Transaction>,
 {
     /// Creates a consumer for one destination.
     pub(crate) fn new(
         pool: P,
         config: ConsumerConfig,
-        sender: mpsc::Sender<Arc<ValidPoolTransaction<P::Transaction>>>,
+        sender: mpsc::Sender<InsertValidatedTransaction<E>>,
         cancel: CancellationToken,
         builder_url: Url,
     ) -> Self {
@@ -113,7 +125,8 @@ where
     }
 
     /// Waits for this destination's queue to accept the exact transaction.
-    fn enqueue(&self, mut pending: Arc<ValidPoolTransaction<P::Transaction>>) -> bool {
+    fn enqueue(&self, transaction: Arc<ValidPoolTransaction<P::Transaction>>) -> bool {
+        let mut pending = Self::to_wire(&transaction);
         loop {
             match self.sender.try_send(pending) {
                 Ok(()) => return true,
@@ -126,6 +139,28 @@ where
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => return false,
             }
+        }
+    }
+
+    /// Converts a pooled transaction into the request the forwarder relays.
+    ///
+    /// Done once per transaction rather than once per queue-full retry: the encoding is the
+    /// expensive part and the result is what the queue carries.
+    fn to_wire(
+        transaction: &Arc<ValidPoolTransaction<P::Transaction>>,
+    ) -> InsertValidatedTransaction<E> {
+        let consensus = transaction.transaction.clone_into_consensus();
+        InsertValidatedTransaction {
+            transaction: ValidatedTransaction {
+                sender: *transaction.sender_ref(),
+                raw: Bytes::from(consensus.inner().encoded_2718()),
+                min_block_number: transaction.transaction.min_block_number(),
+                max_block_number: transaction.transaction.max_block_number(),
+                min_timestamp: transaction.transaction.min_timestamp_millis(),
+                max_timestamp: transaction.transaction.max_timestamp_millis(),
+                extensions: E::extract(transaction),
+            },
+            tx_hash: *transaction.transaction.hash(),
         }
     }
 
@@ -151,7 +186,7 @@ where
     }
 }
 
-impl<P: TransactionPool> fmt::Debug for DestinationConsumer<P> {
+impl<P: TransactionPool, E> fmt::Debug for DestinationConsumer<P, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DestinationConsumer")
             .field("builder_url", &self.builder_url)
@@ -199,10 +234,17 @@ mod tests {
         })
     }
 
+    type TestConsumer = DestinationConsumer<NoopTransactionPool<BasePooledTransaction>>;
+
+    /// The queued form of `transaction(nonce)`, for seeding a queue directly.
+    fn wire(nonce: u64) -> InsertValidatedTransaction {
+        TestConsumer::to_wire(&transaction(nonce))
+    }
+
     fn consumer(
-        sender: mpsc::Sender<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+        sender: mpsc::Sender<InsertValidatedTransaction>,
         cancel: CancellationToken,
-    ) -> DestinationConsumer<NoopTransactionPool<BasePooledTransaction>> {
+    ) -> TestConsumer {
         DestinationConsumer::new(
             NoopTransactionPool::new(),
             ConsumerConfig {
@@ -216,10 +258,23 @@ mod tests {
         )
     }
 
+    /// The wire form must carry the fields the builder RPC needs, or the queue would move
+    /// well-formed-looking rows that the destination rejects.
+    #[test]
+    fn to_wire_carries_the_sender_hash_and_encoded_bytes() {
+        let transaction = transaction(3);
+
+        let converted = TestConsumer::to_wire(&transaction);
+
+        assert_eq!(converted.tx_hash, *transaction.hash());
+        assert_eq!(converted.transaction.sender, *transaction.sender_ref());
+        assert!(!converted.transaction.raw.is_empty(), "the envelope must be encoded");
+    }
+
     #[tokio::test]
     async fn full_queue_retries_the_exact_transaction() {
         let (sender, mut receiver) = mpsc::channel(1);
-        sender.try_send(transaction(0)).unwrap();
+        sender.try_send(wire(0)).unwrap();
         let expected = transaction(1);
         let expected_hash = *expected.hash();
         let consumer = consumer(sender, CancellationToken::new());
@@ -227,15 +282,15 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(10)).await;
         assert!(!enqueue.is_finished());
-        assert_eq!(*receiver.recv().await.unwrap().hash(), *transaction(0).hash());
+        assert_eq!(receiver.recv().await.unwrap().tx_hash, wire(0).tx_hash);
         assert!(enqueue.await.unwrap());
-        assert_eq!(*receiver.recv().await.unwrap().hash(), expected_hash);
+        assert_eq!(receiver.recv().await.unwrap().tx_hash, expected_hash);
     }
 
     #[tokio::test]
     async fn cancellation_stops_a_full_queue_retry() {
         let (sender, mut receiver) = mpsc::channel(1);
-        sender.try_send(transaction(0)).unwrap();
+        sender.try_send(wire(0)).unwrap();
         let cancel = CancellationToken::new();
         let consumer = consumer(sender, cancel.child_token());
         let enqueue = tokio::task::spawn_blocking(move || consumer.enqueue(transaction(1)));
@@ -244,7 +299,7 @@ mod tests {
         cancel.cancel();
 
         assert!(!enqueue.await.unwrap());
-        assert_eq!(*receiver.recv().await.unwrap().hash(), *transaction(0).hash());
+        assert_eq!(receiver.recv().await.unwrap().tx_hash, wire(0).tx_hash);
         assert!(receiver.try_recv().is_err());
     }
 }

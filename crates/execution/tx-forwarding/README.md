@@ -14,6 +14,39 @@ This crate provides:
 A slow builder backpressures only its own consumer. Transactions are marked as recently sent only
 after that builder's queue accepts them, so another destination cannot suppress their delivery.
 
+## Forwarding without the pool
+
+`TxForwardingService::spawn_requests` starts the same transport — batching, rate limiting, retries,
+metrics and shutdown — driven by queues the caller owns rather than by draining a `TransactionPool`.
+Use it when requests arrive by push, or when a producer needs its own overflow policy.
+
+A request is anything implementing `ForwardRequest`, which supplies a per-call method name and
+params. Because the method is chosen per request, one destination queue may carry several kinds of
+call, and a batch preserves submission order between them:
+
+```rust,ignore
+enum Message {
+    Insert(Box<ValidatedTransaction<MyExtensions>>),
+    Remove(TxHash),
+}
+
+impl ForwardRequest for Message {
+    fn method(&self) -> &'static str {
+        match self {
+            Self::Insert(_) => "base_insertValidatedTransaction",
+            Self::Remove(_) => "my_removeTransaction",
+        }
+    }
+    // ...
+}
+
+let (sender, receiver) = tokio::sync::mpsc::channel(1024);
+let handle = TxForwardingService::new(config).spawn_requests(vec![(url, receiver)], &executor)?;
+```
+
+Unlike `spawn`, an endpoint that cannot be turned into a client is a `ForwardingSetupError` rather
+than a logged skip, so a caller never silently forwards to fewer destinations than it asked for.
+
 ## CLI Flags
 
 | Flag | Type | Default | Description |

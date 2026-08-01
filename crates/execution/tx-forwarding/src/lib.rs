@@ -14,6 +14,7 @@ mod extension;
 pub use extension::TxForwardingExtension;
 
 mod forwarder;
+pub use forwarder::{ForwardRequest, InsertValidatedTransaction};
 
 mod service;
-pub use service::{ShutdownReport, TxForwardingHandle, TxForwardingService};
+pub use service::{ForwardingSetupError, ShutdownReport, TxForwardingHandle, TxForwardingService};

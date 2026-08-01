@@ -28,11 +28,13 @@ base-observability-events.workspace = true
 
 # misc
 url.workspace = true
+serde.workspace = true
 futures.workspace = true
-metrics = { workspace = true, optional = true }
+tracing.workspace = true
+thiserror.workspace = true
 serde_json.workspace = true
 tokio-util.workspace = true
-tracing.workspace = true
+metrics = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 

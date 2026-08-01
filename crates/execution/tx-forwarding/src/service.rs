@@ -11,8 +11,30 @@ use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
+use url::Url;
 
-use crate::{TxForwardingConfig, consumer::DestinationConsumer, forwarder::DestinationForwarder};
+use crate::{
+    TxForwardingConfig,
+    consumer::DestinationConsumer,
+    forwarder::{DestinationForwarder, ForwardRequest},
+};
+
+/// Why a forwarding destination could not be started.
+#[derive(Debug, thiserror::Error)]
+pub enum ForwardingSetupError {
+    /// A destination endpoint could not be turned into an RPC client.
+    #[error("cannot build an RPC client for destination `{url}`: {source}")]
+    Client {
+        /// The offending endpoint.
+        url: Url,
+        /// The underlying client-construction failure.
+        ///
+        /// Boxed to keep the `Err` variant small: the success path is the common one, and an
+        /// unboxed client error would widen every `Result` this returns to its size.
+        #[source]
+        source: Box<jsonrpsee::core::client::Error>,
+    },
+}
 
 /// Maximum time allowed for destination queues and in-flight requests to drain.
 #[cfg(not(test))]
@@ -82,14 +104,16 @@ impl TxForwardingService {
             };
 
             let (sender, receiver) = mpsc::channel(consumer_config.channel_capacity);
-            let mut consumer = DestinationConsumer::new(
+            // `E` is named explicitly: nothing else in this expression pins the queue's item type,
+            // since both ends are generic over it.
+            let mut consumer = DestinationConsumer::<P, E>::new(
                 pool.clone(),
                 consumer_config.clone(),
                 sender,
                 consumer_cancel.child_token(),
                 builder_url.clone(),
             );
-            let forwarder = DestinationForwarder::<P::Transaction, E>::new(
+            let forwarder = DestinationForwarder::new(
                 builder_url.clone(),
                 client,
                 receiver,
@@ -107,6 +131,57 @@ impl TxForwardingService {
         }
 
         TxForwardingHandle { consumer_cancel, consumer_tasks, forwarder_tasks }
+    }
+
+    /// Starts one forwarder per destination, driven by queues the caller owns.
+    ///
+    /// The pool-polling consumer is bypassed entirely: the caller produces requests itself and
+    /// holds the sending halves. Use this when requests arrive by push rather than by draining a
+    /// [`TransactionPool`], while still getting this crate's batching, rate limiting, retries,
+    /// metrics and shutdown. The caller chooses its queue capacity and its own overflow policy,
+    /// which is the point — a producer holding a lock needs to drop rather than wait, and only it
+    /// knows which messages may be dropped independently.
+    ///
+    /// Requests reach a destination in queue order, so a producer may rely on submission order.
+    ///
+    /// Unlike [`Self::spawn`], an unusable endpoint is an error rather than a logged skip: a caller
+    /// that asked for N destinations and silently got N-1 has a delivery hole it cannot observe.
+    pub fn spawn_requests<R: ForwardRequest>(
+        &self,
+        destinations: Vec<(Url, mpsc::Receiver<R>)>,
+        executor: &TaskExecutor,
+    ) -> Result<TxForwardingHandle, ForwardingSetupError> {
+        let forwarder_config = Arc::new(self.config.forwarder_config());
+        let queue_capacity = self.config.consumer_config().channel_capacity;
+        let mut forwarder_tasks = Vec::with_capacity(destinations.len());
+
+        for (url, receiver) in destinations {
+            let client = HttpClientBuilder::default()
+                .request_timeout(forwarder_config.request_timeout)
+                .build(url.as_str())
+                .map_err(|source| ForwardingSetupError::Client {
+                    url: url.clone(),
+                    source: Box::new(source),
+                })?;
+
+            let forwarder = DestinationForwarder::new(
+                url.clone(),
+                client,
+                receiver,
+                Arc::clone(&forwarder_config),
+                queue_capacity,
+            );
+            forwarder_tasks.push(executor.spawn_task(Box::pin(async move {
+                forwarder.run().await;
+            })));
+            info!(destination = %url, "started request forwarding destination");
+        }
+
+        Ok(TxForwardingHandle {
+            consumer_cancel: CancellationToken::new(),
+            consumer_tasks: Vec::new(),
+            forwarder_tasks,
+        })
     }
 }
 
@@ -181,9 +256,97 @@ pub struct ShutdownReport {
 
 #[cfg(test)]
 mod tests {
+    use std::{net::SocketAddr, sync::Mutex, time::Duration};
+
+    use alloy_primitives::{Address, B256, Bytes};
+    use base_execution_txpool::ValidatedTransaction;
+    use jsonrpsee::{RpcModule, server::Server};
+    use reth_tasks::{RuntimeBuilder, RuntimeConfig, TokioConfig};
+    use serde_json::Value;
     use tokio::sync::oneshot;
 
     use super::*;
+    use crate::InsertValidatedTransaction;
+
+    /// A [`TaskExecutor`] attached to the test's own tokio runtime, so spawned forwarders share it
+    /// rather than standing up a second one per test.
+    fn test_runtime() -> TaskExecutor {
+        RuntimeBuilder::new(
+            RuntimeConfig::default()
+                .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
+        )
+        .build()
+        .expect("test runtime builds")
+    }
+
+    fn insert(byte: u8) -> InsertValidatedTransaction {
+        InsertValidatedTransaction {
+            transaction: ValidatedTransaction {
+                sender: Address::repeat_byte(byte),
+                raw: Bytes::from(vec![byte]),
+                min_block_number: None,
+                max_block_number: None,
+                min_timestamp: None,
+                max_timestamp: None,
+                extensions: Default::default(),
+            },
+            tx_hash: B256::repeat_byte(byte),
+        }
+    }
+
+    /// An endpoint a caller asked for but that cannot be reached must fail startup rather than be
+    /// skipped, so a delivery hole is never silent. `Url` parses a `ws` scheme happily; the HTTP
+    /// client is what rejects it.
+    #[tokio::test]
+    async fn spawn_requests_rejects_an_unusable_endpoint() {
+        let runtime = test_runtime();
+        let (_sender, receiver) = mpsc::channel::<InsertValidatedTransaction>(1);
+        let url: Url = "ws://destination.invalid".parse().expect("parses as a url");
+
+        let error = TxForwardingService::new(TxForwardingConfig::new(vec![url.clone()]))
+            .spawn_requests(vec![(url.clone(), receiver)], &runtime)
+            .expect_err("an unusable endpoint must fail startup");
+
+        let ForwardingSetupError::Client { url: reported, .. } = error;
+        assert_eq!(reported, url, "the error must name the offending endpoint");
+    }
+
+    /// Requests a caller pushes onto its own queue reach the destination, and shutdown drains what
+    /// is still queued rather than dropping it.
+    #[tokio::test]
+    async fn spawn_requests_delivers_from_a_caller_owned_queue() {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let mut module = RpcModule::new(Arc::clone(&received));
+        module
+            .register_method("base_insertValidatedTransaction", |params, received, _| {
+                let (transaction,): (Value,) = params.parse()?;
+                received.lock().unwrap().push(transaction);
+                Ok::<_, jsonrpsee::types::ErrorObjectOwned>(())
+            })
+            .unwrap();
+        let server = Server::builder().build(SocketAddr::from(([127, 0, 0, 1], 0))).await.unwrap();
+        let url: Url = format!("http://{}", server.local_addr().unwrap()).parse().unwrap();
+        let _handle = server.start(module);
+
+        let runtime = test_runtime();
+        let (sender, receiver) = mpsc::channel(4);
+        sender.send(insert(1)).await.unwrap();
+        sender.send(insert(2)).await.unwrap();
+        drop(sender);
+
+        let forwarding = TxForwardingService::new(TxForwardingConfig::new(vec![url.clone()]))
+            .spawn_requests(vec![(url, receiver)], &runtime)
+            .expect("a reachable endpoint starts");
+
+        let report = tokio::time::timeout(Duration::from_secs(5), forwarding.shutdown())
+            .await
+            .expect("shutdown must not hang");
+
+        assert_eq!(report.forwarders_completed, 1);
+        assert_eq!(report.task_failures, 0);
+        assert!(!report.timed_out);
+        assert_eq!(received.lock().unwrap().len(), 2, "both queued requests must be delivered");
+    }
 
     #[tokio::test]
     async fn shutdown_cancels_consumers_before_waiting_for_forwarders() {
