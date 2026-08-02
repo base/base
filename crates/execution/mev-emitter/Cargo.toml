@@ -15,6 +15,7 @@ workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
+base-common-evm = { workspace = true, features = ["std"] }
 num-bigint = "0.4.6"
 num-traits = "0.2.19"
 
