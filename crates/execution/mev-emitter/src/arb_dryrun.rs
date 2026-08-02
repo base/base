@@ -9,6 +9,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, I256, U256, keccak256};
+use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
@@ -76,11 +77,11 @@ pub struct DryRunConfig {
 pub struct DryRunNetCostConfig {
     /// L2 gas cost in wei.
     pub l2_gas_cost_wei: u128,
-    /// Ecotone L1 data fee inputs.
+    /// L1 data fee inputs.
     pub l1_data_fee: EcotoneL1DataFeeConfig,
 }
 
-/// Ecotone L1 data fee inputs matching the TS oracle model.
+/// L1 data fee inputs consumed by the canonical Base fee calculator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EcotoneL1DataFeeConfig {
     /// Raw calldata bytes.
@@ -96,19 +97,22 @@ pub struct EcotoneL1DataFeeConfig {
 }
 
 impl EcotoneL1DataFeeConfig {
-    /// Computes the Ecotone L1 data fee with checked integer arithmetic.
-    /// Checked `u128` overflow returns `None` intentionally, so callers degrade
-    /// conservatively instead of fabricating an L1 data fee.
+    /// Computes the current Beryl L1 data fee through the canonical Base EVM calculator.
+    ///
+    /// A result outside `u128` returns `None`, so callers degrade conservatively
+    /// instead of fabricating an L1 data fee.
     pub fn fee_wei(&self) -> Option<u128> {
-        let calldata_gas = calldata_gas(&self.calldata)?;
-        if calldata_gas == 0 {
-            return Some(0);
-        }
-        let base_fee_component =
-            self.base_fee_scalar.checked_mul(16)?.checked_mul(self.l1_base_fee_wei)?;
-        let blob_fee_component = self.blob_base_fee_scalar.checked_mul(self.blob_base_fee_wei)?;
-        let weighted = base_fee_component.checked_add(blob_fee_component)?;
-        calldata_gas.checked_mul(weighted)?.checked_div(16 * FEE_DENOMINATOR)
+        let mut l1_block_info = L1BlockInfo {
+            l1_base_fee: U256::from(self.l1_base_fee_wei),
+            l1_base_fee_scalar: U256::from(self.base_fee_scalar),
+            l1_blob_base_fee: Some(U256::from(self.blob_base_fee_wei)),
+            l1_blob_base_fee_scalar: Some(U256::from(self.blob_base_fee_scalar)),
+            ..Default::default()
+        };
+        l1_block_info
+            .calculate_tx_l1_cost(&self.calldata, BaseSpecId::new(BaseUpgrade::Beryl))
+            .try_into()
+            .ok()
     }
 }
 
@@ -1195,9 +1199,6 @@ pub fn load_pool_baseline_from_path(path: impl AsRef<Path>) -> Result<Vec<PoolSt
         format!("failed to parse arb dry-run pool baseline {}: {err}", path.display())
     })
 }
-fn calldata_gas(calldata: &[u8]) -> Option<u128> {
-    calldata.iter().try_fold(0u128, |gas, byte| gas.checked_add(if *byte == 0 { 4 } else { 16 }))
-}
 
 // WP-N2: in-node signed net is capability metadata only. It assumes tip=0 and applies no
 // Blink/OFA kickback haircut, so downstream TS drainer c1 remains the authoritative go/no-go net.
@@ -2178,17 +2179,19 @@ mod tests {
     }
 
     #[test]
-    fn ecotone_l1_data_fee_matches_ts_goldens() {
+    fn beryl_l1_data_fee_records_fjord_delta_from_ecotone_goldens() {
         assert_eq!(oracle_l1_fee(Vec::new()).fee_wei(), Some(0));
         assert_eq!(oracle_l1_fee(vec![0xff; 100]).fee_wei(), Some(74_793_100_000));
-        assert_eq!(
-            oracle_l1_fee(vec![0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff]).fee_wei(),
-            Some(3_739_655_000)
-        );
+
+        let mixed_short =
+            oracle_l1_fee(vec![0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff]).fee_wei();
+        assert_eq!(mixed_short, Some(74_793_100_000));
+        // The removed Ecotone-only implementation returned 3_739_655_000 wei.
+        assert_eq!(mixed_short.unwrap() - 3_739_655_000, 71_053_445_000);
     }
 
     #[test]
-    fn ecotone_l1_data_fee_preserves_scaling_and_blob_addition() {
+    fn beryl_l1_data_fee_preserves_scaling_and_records_short_calldata_delta() {
         let mut base_only = oracle_l1_fee(vec![0xff; 100]);
         base_only.blob_base_fee_scalar = 0;
         assert_eq!(base_only.fee_wei(), Some(8_808_000_000));
@@ -2201,17 +2204,20 @@ mod tests {
         doubled.l1_base_fee_wei *= 2;
         doubled.blob_base_fee_wei *= 2;
         assert_eq!(doubled.fee_wei(), Some(149_586_200_000));
+
         let fixture = oracle_l1_fee(vec![0xff; 4]);
-        assert_eq!(fixture.fee_wei(), Some(2_991_724_000));
+        assert_eq!(fixture.fee_wei(), Some(74_793_100_000));
+        // The removed Ecotone-only implementation returned 2_991_724_000 wei.
+        assert_eq!(fixture.fee_wei().unwrap() - 2_991_724_000, 71_801_376_000);
 
         let mut fixture_no_blob = fixture.clone();
         fixture_no_blob.blob_base_fee_scalar = 0;
-        assert_eq!(fixture_no_blob.fee_wei(), Some(352_320_000));
+        assert_eq!(fixture_no_blob.fee_wei(), Some(8_808_000_000));
 
         let mut fixture_doubled_no_blob = fixture_no_blob.clone();
         fixture_doubled_no_blob.l1_base_fee_wei *= 2;
-        assert_eq!(fixture_doubled_no_blob.fee_wei(), Some(704_640_000));
-        assert_eq!(fixture.fee_wei().unwrap() - fixture_no_blob.fee_wei().unwrap(), 2_639_404_000);
+        assert_eq!(fixture_doubled_no_blob.fee_wei(), Some(17_616_000_000));
+        assert_eq!(fixture.fee_wei().unwrap() - fixture_no_blob.fee_wei().unwrap(), 65_985_100_000);
     }
 
     #[test]
