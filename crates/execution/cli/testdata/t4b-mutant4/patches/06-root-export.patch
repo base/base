@@ -1,0 +1,13 @@
+diff --git a/crates/execution/cli/src/lib.rs b/crates/execution/cli/src/lib.rs
+--- a/crates/execution/cli/src/lib.rs
++++ b/crates/execution/cli/src/lib.rs
+@@ -1,7 +1,9 @@
+ #[cfg(feature = "t4b-shadow")]
+ pub use mev_trader::{
+     AuditPhase, AuditedAccessKindV1, AuditedAccessV1, AuditedDatabase,
+     AuditedDatabaseError, CandidateAccessAllowlistV1, CandidateAccessedStateV1,
+     CandidateExecutionCardinalityV1, CandidateStateCollectionError,
+     T4bCaptureDispositionV1, T4bOverlayError, T4bParentOverlayAdapter,
+ };
++#[cfg(feature = "t4b-mutant-egress")]
++pub use mev_trader::T4bMutantEgressProbe;

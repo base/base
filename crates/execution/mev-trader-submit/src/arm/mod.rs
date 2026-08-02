@@ -653,5 +653,4 @@ mod tests {
         assert!(sink.is_poisoned());
         assert!(matches!(sink.check(), Err(ArmError::Poisoned)));
     }
-
 }

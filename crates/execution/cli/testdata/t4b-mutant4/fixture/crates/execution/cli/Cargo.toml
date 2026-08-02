@@ -1,0 +1,21 @@
+mev-trader-submit = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
+reqwest = { workspace = true, features = ["blocking"], optional = true }
+
+[dev-dependencies]
+# filler
+priority-economics-capture = [
+	"t4b-shadow",
+	"base-mev-trader/priority-economics-capture",
+]
+t4b-shadow = [
+	"t4a-shadow",
+	"base-mev-trader/t4b-shadow",
+	"dep:mev-trader-submit",
+	"mev-trader-submit/tx-authority",
+]
+t4b-mutant-egress = ["t4b-shadow", "dep:reqwest"]
+t4d-shadow = [

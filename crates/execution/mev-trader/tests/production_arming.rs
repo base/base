@@ -18,7 +18,10 @@ fn production_arming_criteria_is_armed_with_g4_owner_and_signature() {
     let criteria = production_arming_criteria();
     // Structural lock A: post-G4 the compile-time trust root is the pinned owner
     // address and the arm signature recovers to it, so the criteria evaluate armed.
-    assert!(criteria.is_armed(), "production arming criteria must be armed post-G4 owner-attest pin");
+    assert!(
+        criteria.is_armed(),
+        "production arming criteria must be armed post-G4 owner-attest pin"
+    );
     assert_eq!(
         criteria.unarmed_reason(),
         None,

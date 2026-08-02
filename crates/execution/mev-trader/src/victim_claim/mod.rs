@@ -170,9 +170,7 @@ fn verify_store_path(db_path: &Path) -> Result<(), ClaimStoreError> {
     let dir_meta =
         std::fs::symlink_metadata(parent).map_err(|e| ClaimStoreError::Io(e.to_string()))?;
     if !dir_meta.file_type().is_dir() {
-        return Err(ClaimStoreError::Io(
-            "claim store parent is not a directory".to_string(),
-        ));
+        return Err(ClaimStoreError::Io("claim store parent is not a directory".to_string()));
     }
     #[cfg(unix)]
     {
@@ -188,9 +186,7 @@ fn verify_store_path(db_path: &Path) -> Result<(), ClaimStoreError> {
     if let Ok(meta) = std::fs::symlink_metadata(db_path)
         && !meta.file_type().is_file()
     {
-        return Err(ClaimStoreError::Io(
-            "claim store path must be a regular file".to_string(),
-        ));
+        return Err(ClaimStoreError::Io("claim store path must be a regular file".to_string()));
     }
     Ok(())
 }
@@ -218,14 +214,14 @@ impl VictimClaimStore {
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     };
 
-    use alloy_primitives::{hex, B256};
+    use alloy_primitives::{B256, hex};
 
-    use super::{store, VictimClaimConfig, VictimClaimStore};
     use super::{ClaimResult, ClaimStoreError};
+    use super::{VictimClaimConfig, VictimClaimStore, store};
     use crate::victim_claim::CampaignId;
 
     const CHAIN_ID: u64 = 8453;
@@ -266,10 +262,8 @@ mod tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|elapsed| elapsed.as_nanos())
                 .unwrap_or(0);
-            let path = std::env::temp_dir().join(format!(
-                "r9-victim-claim-{}-{seq}-{nanos}",
-                std::process::id()
-            ));
+            let path = std::env::temp_dir()
+                .join(format!("r9-victim-claim-{}-{seq}-{nanos}", std::process::id()));
             std::fs::create_dir_all(&path).expect("temp dir");
             // The store requires a private (0700) containing directory.
             #[cfg(unix)]
@@ -496,8 +490,7 @@ mod tests {
             // A write-phase failure never let the bytes reach the file, so the
             // record is provably absent on reopen.
             FailPhase::Write => {
-                let claimed =
-                    store::test_probe_claimed(&config.db_path, CHAIN_ID, target).unwrap();
+                let claimed = store::test_probe_claimed(&config.db_path, CHAIN_ID, target).unwrap();
                 assert!(!claimed, "a failed write must not durably record a claim");
             }
             // A sync-phase failure means the bytes may already have landed

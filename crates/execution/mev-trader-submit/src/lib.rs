@@ -6,6 +6,13 @@
 #[cfg(feature = "phase-b")]
 pub mod assembler;
 #[cfg(feature = "tx-authority")]
+mod canonical_envelope;
+#[cfg(feature = "tx-authority")]
+pub use canonical_envelope::{
+    CanonicalEnvelopeError, CanonicalEnvelopeFactory, CanonicalEnvelopeFeeEvidence,
+    CanonicalEnvelopeOwner, CanonicalL1EnvelopeEvidence, MAX_CANONICAL_ENVELOPE_LEN,
+};
+#[cfg(feature = "tx-authority")]
 mod calldata;
 #[cfg(any(feature = "phase-b", feature = "tx-authority"))]
 mod economics;
@@ -28,8 +35,11 @@ pub use tx_authority::{
 pub use tx_authority::{BridgeConversionSeal, T4eCandidateHandoff, T4eHandoffError};
 #[cfg(feature = "tx-authority")]
 pub use tx_authority::{
-    DeployedContractIdentity, InstalledExecutionIdentity, ProtocolAdapterMapping,
-    SnapshotFreshnessToken, TxAuthorityAssembler, TxAuthorityError, TxAuthorityNodeError,
+    CandidateEconomicsEvidence, CandidateExecutionAdapter, CheckedBerylEnvInputs, CheckedBindings,
+    CheckedBindingsView, DeployedContractIdentity, DeploymentWitness, EconomicsReadyCandidate,
+    ExecuteOnceError, FreshnessWitness, InstalledExecutionIdentity, NonceWitness,
+    PreEconomicsCandidate, ProtocolAdapterMapping, SnapshotFreshnessToken, TxAuthorityAssembler,
+    TxAuthorityError, TxAuthorityExecutionParts, TxAuthorityExecutionRequest, TxAuthorityNodeError,
     TxAuthorityNodeView, TxAuthorityStateRead, UnsignedTxShapeObservation,
     ValidatedUnsignedAtomicTx,
 };
@@ -61,21 +71,20 @@ pub use arm::{
     CanonicalDeploymentPairV1, CanonicalG7PairV1, CanonicalLivePairV1, CanonicalMismatchClass,
     FinalizedChainAuthority, FinalizedChainError, FrozenP2PopulationManifestV1,
     NodeLocalSettledLossAuthority, PopulationClosureFieldsV1, PopulationKindV1,
-    PreparedSettledLossAuthority,
-    ProducerConformance, ProducerError, ProductionCandidateError, ProductionClaimError,
-    ProductionClaimFailure, ProductionClaimResult, ProductionCustodyFailure,
+    PreparedSettledLossAuthority, ProducerConformance, ProducerError, ProductionCandidateError,
+    ProductionClaimError, ProductionClaimFailure, ProductionClaimResult, ProductionCustodyFailure,
     ProductionDrawdownSource, ProductionLatchOutcome, ProductionSignFailure, ProductionSignedField,
     ProductionSigningError, ProjectionClosureFieldsV1, PublicationIoClass,
     PublishedPopulationManifestV1, RuntimeBackend, SETTLED_LOSS_ANCHOR_PATH,
-    SETTLED_LOSS_PROJECTION_PATH, SettledLossLoad, SettledLossReader,
-    SettledLossUnavailableReason, SignedInstallBundleV1, SignedPopulationManifestV1,
-    SignedProjectionV1, SimBackend, SimulationCorrelationEnvelopeV1, SimulationCorrelationKey,
-    SimulationEntrypointStatus, SimulationEntrypointUnavailable, SimulationLedgerClosure,
-    SimulationLedgerEpoch, SimulationLedgerInvalid, SimulationReservation,
-    SimulationStoreOperation, SourceLedgerRowV1, SourceSubmissionManifestEntryV1,
-    TerminalKindV1, TerminalSettlementEntryV1, TerminalSettlementProjectionV1,
-    UnresolvedReasonV1, UnsignedInstallBundleV1, UnsignedPopulationManifestV1,
-    UnsignedProjectionV1, production_custody_preflight, try_claim_detailed,
+    SETTLED_LOSS_PROJECTION_PATH, SettledLossLoad, SettledLossReader, SettledLossUnavailableReason,
+    SignedInstallBundleV1, SignedPopulationManifestV1, SignedProjectionV1, SimBackend,
+    SimulationCorrelationEnvelopeV1, SimulationCorrelationKey, SimulationEntrypointStatus,
+    SimulationEntrypointUnavailable, SimulationLedgerClosure, SimulationLedgerEpoch,
+    SimulationLedgerInvalid, SimulationReservation, SimulationStoreOperation, SourceLedgerRowV1,
+    SourceSubmissionManifestEntryV1, TerminalKindV1, TerminalSettlementEntryV1,
+    TerminalSettlementProjectionV1, UnresolvedReasonV1, UnsignedInstallBundleV1,
+    UnsignedPopulationManifestV1, UnsignedProjectionV1, production_custody_preflight,
+    try_claim_detailed,
 };
 #[cfg(feature = "t4e-handoff")]
 pub use arm::{CheckedCandidate, CodeHashProvider, CommittedStateAuthority, ProviderError};

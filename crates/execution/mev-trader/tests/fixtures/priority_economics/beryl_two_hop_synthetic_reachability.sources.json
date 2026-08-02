@@ -1,0 +1,112 @@
+{
+  "schemaVersion": "base-mev/synthetic-reachability-sources/v1",
+  "sources": [
+    {
+      "id": "candidate-route-and-sizing",
+      "repo": "https://github.com/simjaemun2/base-mev",
+      "commit": "b956a309a5feb0a769d6d5c3419c4a9eee23253b",
+      "path": "fixtures/graph-arb-parity-corpus.json",
+      "blob": "4c545db380d385afb8fdf440d71a2eea749afe71",
+      "lines": "12-48,303-366,591-594",
+      "pointers": [
+        "/candidateCases[name=canonical-negative-cycle-candidates]/expected/candidates[fingerprint=6bfd6ac93d75158834332f53ef1e98ab8ebf053c793fc98e5b8ab78823413b24]",
+        "/sizingCases[name=sizing-6bfd6ac93d751588]"
+      ]
+    },
+    {
+      "id": "r61-deploy-manifest",
+      "repo": "https://github.com/simjaemun2/base",
+      "commit": "15ebc01d64d25b37a5c83226e0ca47a3267ef6d8",
+      "path": "crates/execution/mev-trader-submit/tests/fixtures/r61-manifest.json",
+      "blob": "9d3d1c05c32ee5760f020b79739b2bd5aab72741",
+      "pointers": [
+        "/contracts[name=BlinkAtomicExecutor|UniV2Adapter|AerodromeAdapter]",
+        "/dependency_fixtures[name=MockUniV2Pool|MockAerodromePool|MockWETH|MockERC20]"
+      ]
+    },
+    {
+      "id": "r61-constructor-oracle",
+      "repo": "https://github.com/simjaemun2/base",
+      "commit": "15ebc01d64d25b37a5c83226e0ca47a3267ef6d8",
+      "path": "crates/execution/mev-trader-submit/tests/r61_cross_repo_oracle.rs",
+      "blob": "09d1f27f67dab7094bde884396b86385e8728e7a",
+      "lines": "19-28,250-269,272-314"
+    },
+    {
+      "id": "candidate-unsigned-constructor",
+      "repo": "https://github.com/simjaemun2/base",
+      "commit": "15ebc01d64d25b37a5c83226e0ca47a3267ef6d8",
+      "path": "crates/execution/mev-trader-submit/src/assembler.rs",
+      "blob": "940ae261b334e731de75042fd0b134ff5912b18e",
+      "lines": "28-45,279-350",
+      "functions": ["encode_executor_calldata", "assemble_unsigned_atomic_tx"]
+    },
+    {
+      "id": "victim-public-account",
+      "repo": "https://github.com/simjaemun2/base",
+      "commit": "15ebc01d64d25b37a5c83226e0ca47a3267ef6d8",
+      "path": "crates/utilities/test-utils/src/accounts.rs",
+      "blob": "5450dcbbe650b808e233aa8411bd31a19cb20f28",
+      "lines": "12-65",
+      "functions": ["Account::address"]
+    },
+    {
+      "id": "beryl-header-builder",
+      "repo": "https://github.com/simjaemun2/base",
+      "commit": "15ebc01d64d25b37a5c83226e0ca47a3267ef6d8",
+      "path": "crates/execution/chainspec/src/builder.rs",
+      "blob": "e0a94dba03f3be7fa0756a52ce1e63b4de8e556f",
+      "lines": "135-171",
+      "functions": ["beryl_activated"]
+    },
+    {
+      "id": "realistic-base-fee",
+      "repo": "https://github.com/simjaemun2/base-mev",
+      "commit": "8389f8fb1e945f661f0fd6631122439f3dd9dfbf",
+      "path": "fixtures/scenarios/weth-arb-47517462/scenario.json",
+      "blob": "9c576321a0dcc01b307d1a2d6b00774e6ccec283",
+      "pointers": ["/blockEnv/baseFeePerGas"]
+    },
+    {
+      "id": "upstream-l1-authority",
+      "repo": "https://github.com/simjaemun2/base",
+      "commit": "15ebc01d64d25b37a5c83226e0ca47a3267ef6d8",
+      "path": "crates/common/evm/src/l1block.rs",
+      "blob": "eda082f8278b64052e41d346f54309c072c0b166",
+      "lines": "75-86,139-191,298,328-403,657-690",
+      "functions": ["L1BlockInfo::try_fetch", "L1BlockInfo::clear_tx_l1_cost", "L1BlockInfo::calculate_tx_l1_cost"]
+    },
+    {
+      "id": "direct-provider-frame",
+      "repo": "https://github.com/simjaemun2/base",
+      "commit": "15ebc01d64d25b37a5c83226e0ca47a3267ef6d8",
+      "path": "crates/execution/mev-trader/src/frame.rs",
+      "blob": "b52e2f6b2b3c1790b959170e762433c9421ef4c6",
+      "lines": "450-469"
+    },
+    {
+      "id": "direct-provider-cli",
+      "repo": "https://github.com/simjaemun2/base",
+      "commit": "15ebc01d64d25b37a5c83226e0ca47a3267ef6d8",
+      "path": "crates/execution/cli/src/mev_trader.rs",
+      "blob": "3b4c571135c96e14f4ac1b6857883c1f81fe09f2",
+      "lines": "6848,8984,9086,9921-9930"
+    },
+    {
+      "id": "submit-feature-graph",
+      "repo": "https://github.com/simjaemun2/base",
+      "commit": "15ebc01d64d25b37a5c83226e0ca47a3267ef6d8",
+      "path": "crates/execution/mev-trader-submit/Cargo.toml",
+      "blob": "ad32672c110ac9f761aa2f19b41319222a555d48",
+      "lines": "14-49"
+    },
+    {
+      "id": "submit-root-api",
+      "repo": "https://github.com/simjaemun2/base",
+      "commit": "15ebc01d64d25b37a5c83226e0ca47a3267ef6d8",
+      "path": "crates/execution/mev-trader-submit/src/lib.rs",
+      "blob": "177ba8d384ec07788eb94f7cdd67be0e8d07ca4f",
+      "lines": "6-22"
+    }
+  ]
+}

@@ -9,12 +9,13 @@
 //! remains the legacy rung-3 stub.
 #![cfg(feature = "phase-b")]
 
+use crate::canonical_envelope::dummy_signature;
 use alloy_consensus::{SignableTransaction, TxEnvelope};
 use alloy_eips::{
     eip2718::{Decodable2718, Encodable2718},
     eip2930::AccessList,
 };
-use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
 use base_mev_trader::{BackrunPlan, MeasurementContext, MeasurementEncoder};
 
 #[cfg(feature = "arm")]
@@ -25,27 +26,10 @@ use crate::{
     fee::{FeeParityError, fee_bps_for_executor},
 };
 
-/// The fixed high-entropy dummy signature `r` — FastLZ-incompressible, NOT
-/// key-derived. Byte-matches the TS `MEASUREMENT_DUMMY_SIGNATURE.r`.
-const DUMMY_R: B256 = b256!("5fdab2bc3e0846351de15a51b4f354bf4a4ce227302de002ac790bacef8ba802");
-/// The fixed dummy signature `s` — an intentional EIP-2 HIGH-S value
-/// (`s > secp256k1 n/2`) making the envelope non-broadcastable. Byte-matches the
-/// TS `MEASUREMENT_DUMMY_SIGNATURE.s`.
-const DUMMY_S: B256 = b256!("adccfdc48b0427d6d60ddfacca470a52f6924a603539118d356c152d1f0b5986");
-/// The fixed dummy `yParity` (1). Byte-matches the TS dummy signature.
-const DUMMY_Y_PARITY: bool = true;
-
 /// The rung-1 envelope kind tag (mirrors the TS `kind`).
 pub const UNSIGNED_ATOMIC_TX_KIND: &str = "blink-ofa-dummy-atomic-tx/v2";
 /// The rung-1 dummy signature kind tag (mirrors the TS `signatureKind`).
 pub const DUMMY_SIGNATURE_KIND: &str = "fixed-invalid-high-s-dummy";
-
-/// The fixed dummy signature as an [`alloy_primitives::Signature`] (raw, NOT
-/// normalized — the high-s value is preserved so the envelope stays invalid).
-pub(crate) const fn dummy_signature() -> Signature {
-    Signature::new(U256::from_be_bytes(DUMMY_R.0), U256::from_be_bytes(DUMMY_S.0), DUMMY_Y_PARITY)
-}
-
 /// Per-hop execution parameters NOT carried by the measurement [`BackrunPlan`].
 ///
 /// R8 fee-SOURCE: the sizing fee is NO LONGER a caller input. It is carried in the

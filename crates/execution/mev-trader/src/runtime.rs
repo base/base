@@ -167,6 +167,8 @@ pub enum T4bOutcome {
     FeeAuthorityRejected,
     /// Candidate did not have strictly positive checked EV at Blink's pinned priority.
     PriorityEconomicsRejected,
+    /// Finalized economics could not be retained in the bounded production ledger.
+    PriorityEconomicsLedgerUnavailable,
     /// A coherent snapshot-local nonce witness was unavailable.
     NonceWitnessUnavailable,
     /// Another unsigned-shape observation already holds the single guard.
@@ -191,7 +193,7 @@ pub enum T4bOutcome {
 #[cfg(feature = "t4b-shadow")]
 #[derive(Debug, Default)]
 pub struct T4bOutcomeCounters {
-    counts: [AtomicU64; 15],
+    counts: [AtomicU64; 16],
 }
 
 #[cfg(feature = "t4b-shadow")]
@@ -211,7 +213,7 @@ impl T4bOutcomeCounters {
 #[cfg(feature = "t4b-shadow")]
 pub trait CandidateTxShapeObserver: Debug + Send + Sync {
     /// Attempts exactly one observation without retaining the borrowed view.
-    fn try_observe(&self, view: CandidateAssemblyView<'_>) -> T4bOutcome;
+    fn try_observe(&self, view: &CandidateAssemblyView<'_>) -> T4bOutcome;
 
     /// Drains at most one observer-owned detail from the existing control task.
     fn drain_one(&self);
@@ -1059,7 +1061,7 @@ impl MevTraderRuntime {
                         victim_raw: &frame.raw_tx,
                         probe,
                     };
-                    let _ = observer.try_observe(view);
+                    let _ = observer.try_observe(&view);
                 }
                 let outcome = if processed.dirty_pools().is_empty() {
                     ShadowOutcome::NoDirtyPools

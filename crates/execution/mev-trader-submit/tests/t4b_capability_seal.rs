@@ -100,7 +100,9 @@ struct AstSeal {
     node_view_impls: usize,
     pending_view_impls: usize,
     base_mainnet_calls: usize,
-    assemble_sealed_calls: usize,
+    seal_finalized_calls: usize,
+    dummy_envelope_calls: usize,
+    capture_channel_send_calls: usize,
     encode_validated_calls: usize,
     observe_candidate_calls: usize,
     spawn_calls: usize,
@@ -117,6 +119,8 @@ struct AstSeal {
     t4d_observer_calls: usize,
     strict_unsigned_handoff: bool,
     allow_victim_envelope: bool,
+    bounded_capture_sender: bool,
+    in_bounded_capture_sink_impl: bool,
 }
 
 impl AstSeal {
@@ -174,7 +178,7 @@ impl AstSeal {
     fn count_call(&mut self, name: &str) {
         match name {
             "base_mainnet" => self.base_mainnet_calls += 1,
-            "assemble_sealed" => self.assemble_sealed_calls += 1,
+            "seal_finalized" => self.seal_finalized_calls += 1,
             "encode_validated" => self.encode_validated_calls += 1,
             "observe_candidate" | "try_observe" => self.observe_candidate_calls += 1,
             "send" => {
@@ -269,16 +273,33 @@ impl<'ast> Visit<'ast> for AstSeal {
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
+        if is_dummy_envelope_call(call) {
+            self.dummy_envelope_calls += 1;
+            self.visit_expr(&call.receiver);
+            return;
+        }
+        if self.in_bounded_capture_sink_impl && is_capture_channel_send(call) {
+            self.capture_channel_send_calls += 1;
+            self.visit_expr(&call.receiver);
+            for argument in &call.args {
+                self.visit_expr(argument);
+            }
+            return;
+        }
         self.count_call(&call.method.to_string());
         syn::visit::visit_expr_method_call(self, call);
     }
 
-    fn visit_expr_field(&mut self, field: &'ast ExprField) {
-        if matches!(&field.member, Member::Named(name) if name == "send") {
-            self.visit_expr(&field.base);
-            return;
+    fn visit_item_struct(&mut self, item: &'ast ItemStruct) {
+        if item.ident == "T4bCaptureSinkV1" {
+            self.bounded_capture_sender = matches!(item.vis, Visibility::Inherited)
+                && item.fields.iter().any(|field| {
+                    field.ident.as_ref().is_some_and(|ident| ident == "sender")
+                        && matches!(field.vis, Visibility::Inherited)
+                        && is_bounded_capture_sender_type(&field.ty)
+                });
         }
-        syn::visit::visit_expr_field(self, field);
+        syn::visit::visit_item_struct(self, item);
     }
 
     fn visit_item_impl(&mut self, item: &'ast ItemImpl) {
@@ -293,7 +314,11 @@ impl<'ast> Visit<'ast> for AstSeal {
                 _ => {}
             }
         }
+        let previous = self.in_bounded_capture_sink_impl;
+        self.in_bounded_capture_sink_impl = self.bounded_capture_sender
+            && self_type_name(item).as_deref() == Some("T4bCaptureSinkV1");
         syn::visit::visit_item_impl(self, item);
+        self.in_bounded_capture_sink_impl = previous;
     }
 
     fn visit_expr_struct(&mut self, item: &'ast ExprStruct) {
@@ -618,6 +643,44 @@ fn public_item_attrs(item: &Item) -> Option<&[Attribute]> {
     }
 }
 
+#[derive(Default)]
+struct CanonicalEnvelopePathVisitor {
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for CanonicalEnvelopePathVisitor {
+    fn visit_path(&mut self, path: &'ast Path) {
+        if path.segments.iter().any(|segment| segment.ident == "canonical_envelope") {
+            self.found = true;
+        }
+        syn::visit::visit_path(self, path);
+    }
+}
+
+fn public_item_mentions_canonical_envelope(item: &Item) -> bool {
+    let mut visitor = CanonicalEnvelopePathVisitor::default();
+    visitor.visit_item(item);
+    visitor.found
+}
+
+fn public_impl_mentions_canonical_envelope(item: &ItemImpl) -> bool {
+    item.items.iter().any(|member| {
+        let is_public = item.trait_.is_some()
+            || match member {
+                ImplItem::Const(item) => matches!(item.vis, Visibility::Public(_)),
+                ImplItem::Fn(item) => matches!(item.vis, Visibility::Public(_)),
+                ImplItem::Type(item) => matches!(item.vis, Visibility::Public(_)),
+                _ => false,
+            };
+        if !is_public {
+            return false;
+        }
+        let mut visitor = CanonicalEnvelopePathVisitor::default();
+        visitor.visit_impl_item(member);
+        visitor.found
+    })
+}
+
 fn meta_requires_test(meta: &Meta) -> bool {
     match meta {
         Meta::Path(path) => path.is_ident("test"),
@@ -672,9 +735,43 @@ impl<'a> AuthoritySurfaceInventory<'a> {
         let mut exports = BTreeSet::new();
         let mut violations = BTreeSet::new();
         for item in &self.submit_lib.items {
+            if let Item::Impl(item_impl) = item {
+                if public_impl_mentions_canonical_envelope(item_impl) {
+                    violations
+                        .insert(format!("canonical-envelope public impl escape: {item_impl:?}"));
+                }
+                continue;
+            }
             let Some(attrs) = public_item_attrs(item) else {
                 continue;
             };
+            let canonical_root_escape = match item {
+                Item::Use(item) => use_leaves(item)
+                    .iter()
+                    .any(|leaf| leaf.source.iter().any(|segment| segment == "canonical_envelope")),
+                Item::ExternCrate(item) => item.ident == "canonical_envelope",
+                Item::Macro(item) => {
+                    item.mac
+                        .path
+                        .segments
+                        .iter()
+                        .any(|segment| segment.ident == "canonical_envelope")
+                        || item.mac.tokens.to_string().contains("canonical_envelope")
+                }
+                Item::Mod(item) => item.ident == "canonical_envelope",
+                _ => public_item_mentions_canonical_envelope(item),
+            };
+            if feature == "tx-authority" && canonical_root_escape {
+                if !has_cfg_feature(attrs, feature) {
+                    violations.insert(format!("ungated canonical-envelope root escape: {item:?}"));
+                    continue;
+                }
+                if !matches!(item, Item::Use(_)) {
+                    violations
+                        .insert(format!("non-contract canonical-envelope root escape: {item:?}"));
+                    continue;
+                }
+            }
             if feature != "t4d-bridge" && !matches!(item, Item::Use(_)) {
                 continue;
             }
@@ -693,10 +790,17 @@ impl<'a> AuthoritySurfaceInventory<'a> {
                 let authority_export = leaf.source.first().map(String::as_str)
                     == Some("tx_authority")
                     && leaf.source.len() == 2;
+                let canonical_export = leaf.source.first().map(String::as_str)
+                    == Some("canonical_envelope")
+                    && leaf.source.len() == 2
+                    && leaf.source[1] != "self";
                 let economics_export = leaf.source.as_slice()
                     == ["economics", "PriorityEconomicsAuthority"]
                     || leaf.source.as_slice() == ["economics", "PriorityEconomicsReceipt"];
-                if (!authority_export && !economics_export) || leaf.renamed || leaf.glob {
+                if (!authority_export && !canonical_export && !economics_export)
+                    || leaf.renamed
+                    || leaf.glob
+                {
                     violations.insert(format!("{:?} as {}", leaf.source, leaf.public_name));
                 } else {
                     exports.insert(leaf.public_name);
@@ -831,6 +935,89 @@ fn path_is(expr: &Expr, expected: &str) -> bool {
     )
 }
 
+fn path_is_exact(expr: &Expr, expected: &[&str]) -> bool {
+    let Expr::Path(path) = expr else {
+        return false;
+    };
+    path.path.segments.iter().map(|segment| segment.ident.to_string()).eq(expected.iter().copied())
+}
+
+fn is_dummy_envelope_call(call: &ExprMethodCall) -> bool {
+    if call.method != "into_signed" || call.args.len() != 1 {
+        return false;
+    }
+    let Some(Expr::Call(signature)) = call.args.first() else {
+        return false;
+    };
+    if !path_is_exact(&signature.func, &["alloy_primitives", "Signature", "new"])
+        || signature.args.len() != 3
+    {
+        return false;
+    }
+    let mut arguments = signature.args.iter();
+    path_is_exact(arguments.next().expect("length checked"), &["U256", "ZERO"])
+        && path_is_exact(arguments.next().expect("length checked"), &["U256", "ZERO"])
+        && matches!(
+            arguments.next(),
+            Some(Expr::Lit(literal))
+                if matches!(&literal.lit, Lit::Bool(value) if !value.value)
+        )
+}
+
+fn is_bounded_capture_sender_type(ty: &Type) -> bool {
+    let Type::Path(sender) = ty else {
+        return false;
+    };
+    let Some(sender_segment) = sender.path.segments.last() else {
+        return false;
+    };
+    if sender.qself.is_some()
+        || sender.path.segments.len() != 1
+        || sender_segment.ident != "SyncSender"
+    {
+        return false;
+    }
+    let syn::PathArguments::AngleBracketed(sender_args) = &sender_segment.arguments else {
+        return false;
+    };
+    let Some(syn::GenericArgument::Type(Type::Path(option))) = sender_args.args.first() else {
+        return false;
+    };
+    if sender_args.args.len() != 1 {
+        return false;
+    }
+    let Some(option_segment) = option.path.segments.last() else {
+        return false;
+    };
+    if option.qself.is_some() || option.path.segments.len() != 1 || option_segment.ident != "Option"
+    {
+        return false;
+    }
+    let syn::PathArguments::AngleBracketed(option_args) = &option_segment.arguments else {
+        return false;
+    };
+    let Some(syn::GenericArgument::Type(Type::Path(builder))) = option_args.args.first() else {
+        return false;
+    };
+    option_args.args.len() == 1
+        && builder.qself.is_none()
+        && builder.path.segments.len() == 1
+        && builder.path.segments.last().is_some_and(|segment| {
+            segment.ident == "T4bCaptureBuilderV1"
+                && matches!(segment.arguments, syn::PathArguments::None)
+        })
+}
+fn is_capture_channel_send(call: &ExprMethodCall) -> bool {
+    if call.method != "send" || call.args.len() != 1 {
+        return false;
+    }
+    matches!(
+        call.receiver.as_ref(),
+        Expr::Field(ExprField { base, member: Member::Named(member), .. })
+            if member == "sender" && path_is(base, "self")
+    )
+}
+
 fn literal_index(expr: &Expr) -> Option<usize> {
     let Expr::Lit(literal) = expr else {
         return None;
@@ -952,7 +1139,7 @@ impl<'ast> Visit<'ast> for WitnessConstructionSeal {
             Some("UnsignedTxShapeObservation") => {
                 self.observation_fields.push(item.fields.iter().cloned().collect());
             }
-            Some("ValidatedUnsignedAtomicTx") => {
+            Some("PreEconomicsCandidate") | Some("ValidatedUnsignedAtomicTx") => {
                 self.output_fields.push(item.fields.iter().cloned().collect());
             }
             Some("InstalledExecutionIdentity") => self.installed_identity_constructions += 1,
@@ -1354,8 +1541,8 @@ fn authoritative_uses(file: &File, external: bool) -> (ImportedAuthority, usize,
 #[test]
 fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let submit_lib =
-        syn::parse_file(&read(crate_dir.join("src/lib.rs"))).expect("submit lib parses");
+    let submit_lib_source = read(crate_dir.join("src/lib.rs"));
+    let submit_lib = syn::parse_file(&submit_lib_source).expect("submit lib parses");
     let authority = parse_production(&read(crate_dir.join("src/tx_authority.rs")));
     let inventory = AuthoritySurfaceInventory::new(&submit_lib, &authority);
 
@@ -1364,9 +1551,26 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
     assert_eq!(
         exports,
         BTreeSet::from([
+            "CandidateEconomicsEvidence".to_owned(),
+            "CandidateExecutionAdapter".to_owned(),
+            "CanonicalEnvelopeError".to_owned(),
+            "CanonicalEnvelopeFactory".to_owned(),
+            "CanonicalEnvelopeFeeEvidence".to_owned(),
+            "CanonicalEnvelopeOwner".to_owned(),
+            "CanonicalL1EnvelopeEvidence".to_owned(),
+            "CheckedBerylEnvInputs".to_owned(),
+            "CheckedBindings".to_owned(),
+            "CheckedBindingsView".to_owned(),
             "DeployedContractIdentity".to_owned(),
+            "DeploymentWitness".to_owned(),
+            "EconomicsReadyCandidate".to_owned(),
+            "ExecuteOnceError".to_owned(),
+            "FreshnessWitness".to_owned(),
             "InstalledExecutionIdentity".to_owned(),
+            "MAX_CANONICAL_ENVELOPE_LEN".to_owned(),
             "ProtocolAdapterMapping".to_owned(),
+            "NonceWitness".to_owned(),
+            "PreEconomicsCandidate".to_owned(),
             "PriorityEconomicsAuthority".to_owned(),
             "PriorityEconomicsReceipt".to_owned(),
             "SnapshotFreshnessToken".to_owned(),
@@ -1375,10 +1579,41 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
             "TxAuthorityNodeError".to_owned(),
             "TxAuthorityNodeView".to_owned(),
             "TxAuthorityStateRead".to_owned(),
+            "TxAuthorityExecutionParts".to_owned(),
+            "TxAuthorityExecutionRequest".to_owned(),
             "UnsignedTxShapeObservation".to_owned(),
             "ValidatedUnsignedAtomicTx".to_owned(),
         ])
     );
+    for escaped in [
+        "pub use canonical_envelope::CanonicalEnvelopeFactory;",
+        "#[cfg(any(feature = \"tx-authority\", feature = \"arm\"))] pub use canonical_envelope::CanonicalEnvelopeFactory;",
+        "#[cfg(feature = \"tx-authority\")] pub use canonical_envelope::CanonicalEnvelopeFactory as Escaped;",
+        "#[cfg(feature = \"tx-authority\")] pub use crate::canonical_envelope::CanonicalEnvelopeFactory;",
+        "#[cfg(feature = \"tx-authority\")] pub use canonical_envelope;",
+        "#[cfg(feature = \"tx-authority\")] pub use canonical_envelope::{self};",
+        "#[cfg(feature = \"tx-authority\")] pub mod canonical_envelope;",
+        "#[cfg(feature = \"tx-authority\")] pub type Escaped = canonical_envelope::CanonicalEnvelopeFactory;",
+        "#[cfg(feature = \"tx-authority\")] pub fn escaped() -> canonical_envelope::CanonicalEnvelopeFactory { loop {} }",
+        "#[cfg(feature = \"tx-authority\")] pub fn escaped() -> usize { let _ = core::mem::size_of::<canonical_envelope::CanonicalEnvelopeFactory>(); 0 }",
+    ] {
+        let escaped_root = syn::parse_file(escaped).expect("canonical escape fixture parses");
+        let escaped_inventory = AuthoritySurfaceInventory::new(&escaped_root, &authority);
+        let (_, violations) = escaped_inventory.root_exports("tx-authority");
+        assert!(!violations.is_empty(), "canonical-envelope root escape was accepted: {escaped}");
+    }
+    let tx_authority_alias = submit_lib_source.replacen(
+        "CandidateEconomicsEvidence, CandidateExecutionAdapter",
+        "CandidateExecutionAdapter as CandidateEconomicsEvidence, CandidateExecutionAdapter",
+        1,
+    );
+    assert_ne!(tx_authority_alias, submit_lib_source, "tx-authority alias mutant applied");
+    let tx_authority_alias =
+        syn::parse_file(&tx_authority_alias).expect("tx-authority approved-name alias parses");
+    let tx_authority_alias_inventory =
+        AuthoritySurfaceInventory::new(&tx_authority_alias, &authority);
+    let (_, violations) = tx_authority_alias_inventory.root_exports("tx-authority");
+    assert!(!violations.is_empty(), "approved-name tx-authority alias escaped root seal");
     let (bridge_exports, bridge_export_violations) = inventory.root_exports("t4d-bridge");
     assert!(
         bridge_export_violations.is_empty(),
@@ -1393,6 +1628,16 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
             "SealedUnsignedCandidate".to_owned(),
         ])
     );
+    let t4d_alias = submit_lib_source.replacen(
+        "AdapterAwareProofBindings, BridgeError",
+        "BridgeError as AdapterAwareProofBindings, BridgeError",
+        1,
+    );
+    assert_ne!(t4d_alias, submit_lib_source, "T4d alias mutant applied");
+    let t4d_alias = syn::parse_file(&t4d_alias).expect("T4d approved-name alias parses");
+    let t4d_alias_inventory = AuthoritySurfaceInventory::new(&t4d_alias, &authority);
+    let (_, violations) = t4d_alias_inventory.root_exports("t4d-bridge");
+    assert!(!violations.is_empty(), "approved-name T4d alias escaped root seal");
     let bridge = parse_production(&read(crate_dir.join("src/tx_authority/bridge.rs")));
     let bridge_inventory = AuthoritySurfaceInventory::new(&submit_lib, &bridge);
     let bridge_types = [
@@ -1422,7 +1667,7 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
         (
             "InstalledSubmissionBridge",
             method_set(&[
-                "assemble_sealed",
+                "seal_finalized",
                 "base_mainnet",
                 "into_checked_candidate",
                 "revalidate_for_handoff",
@@ -1511,7 +1756,10 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
             "InstalledExecutionIdentity",
             method_set(&["executor", "adapters", "sender", "validated_parent"]),
         ),
-        ("TxAuthorityAssembler", method_set(&["base_mainnet", "assemble_validated"])),
+        (
+            "TxAuthorityAssembler",
+            method_set(&["base_mainnet", "finalize", "prepare_pre_economics"]),
+        ),
         (
             "UnsignedTxShapeObservation",
             method_set(&[
@@ -1535,7 +1783,7 @@ fn t4c_tx_authority_public_surface_is_exact_and_nonforgeable() {
         ),
         (
             "ValidatedUnsignedAtomicTx",
-            method_set(&["observation", "execution", "validate_at_drain"]),
+            method_set(&["observation", "execution", "priority_economics", "validate_at_drain"]),
         ),
     ]);
     for (type_name, expected) in expected_methods {
@@ -1642,7 +1890,7 @@ fn t4c_adapter_witness_surface_is_route_exact_and_unforgeable() {
     assert_array_field(observation, "hop_adapters", "Address", 2);
     assert_array_field(observation, "hop_runtime_hashes", "B256", 2);
 
-    let assemble = inventory.inherent_method("TxAuthorityAssembler", "assemble_view");
+    let assemble = inventory.inherent_method("TxAuthorityAssembler", "prepare_pre_economics");
     let protocols = local_initializer(assemble, "hop_protocols");
     let Expr::Array(protocols) = protocols else {
         panic!("hop_protocols is not an array");
@@ -1734,7 +1982,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     let (package, path, imports, uses, slot_uses) = &consumers[0];
     assert_eq!(package, "base-execution-cli");
     assert!(path.ends_with("crates/execution/cli/src/mev_trader.rs"));
-    assert_eq!((*imports, *uses, *slot_uses), (3, 5, 2));
+    assert_eq!((*imports, *uses, *slot_uses), (3, 8, 2));
 
     let mut global_topology = [0usize; 11];
     for path in rust_files(&root.join("crates/execution/cli/src")) {
@@ -1747,7 +1995,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
             || seal.observer_factories != 0
             || seal.observer_install_calls != 0
             || seal.base_mainnet_calls != 0
-            || seal.assemble_sealed_calls != 0
+            || seal.seal_finalized_calls != 0
             || seal.t4d_observer_calls != 0;
         global_topology[0] += seal.observer_impls;
         global_topology[1] += seal.node_view_impls;
@@ -1755,7 +2003,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
         global_topology[3] += seal.observer_factories;
         global_topology[4] += seal.observer_install_calls;
         global_topology[5] += seal.base_mainnet_calls;
-        global_topology[6] += seal.assemble_sealed_calls;
+        global_topology[6] += seal.seal_finalized_calls;
         global_topology[7] += seal.t4d_observer_calls;
         if topology_relevant {
             global_topology[8] += seal.spawn_calls;
@@ -1804,7 +2052,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     assert_eq!(
         internal_by_file,
         BTreeMap::from([
-            ("bridge.rs".to_owned(), (1, 2, 0)),
+            ("bridge.rs".to_owned(), (1, 3, 0)),
             ("production_handoff.rs".to_owned(), (2, 7, 0)),
             ("witness.rs".to_owned(), (1, 2, 0)),
         ]),
@@ -1843,11 +2091,23 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
         .expect("inline T4b module");
     let mut selected_ast = AstSeal::default();
     selected_ast.visit_item_mod(t4b_module);
+    assert_eq!(selected_ast.dummy_envelope_calls, 1);
+    assert_eq!(selected_ast.capture_channel_send_calls, 1);
     assert!(
         selected_ast.violations.is_empty(),
         "T4b observer connects to forbidden capability: {:?}",
         selected_ast.violations
     );
+    for source in [
+        "struct OtherSink { sender: SyncSender<Option<T4bCaptureBuilderV1>> } impl OtherSink { fn publish(self, builder: Option<T4bCaptureBuilderV1>) { let _ = self.sender.send(builder); } }",
+        "struct T4bCaptureSinkV1 { sender: SyncSender<Option<OtherBuilder>> } impl T4bCaptureSinkV1 { fn publish(self, builder: Option<OtherBuilder>) { let _ = self.sender.send(builder); } }",
+        "struct T4bCaptureSinkV1 { outbound: SyncSender<Option<T4bCaptureBuilderV1>> } impl T4bCaptureSinkV1 { fn publish(self, builder: Option<T4bCaptureBuilderV1>) { let _ = self.outbound.send(builder); } }",
+    ] {
+        let mut bypass = AstSeal::default();
+        bypass.visit_file(&syn::parse_file(source).expect("capture egress bypass parses"));
+        assert!(bypass.violations.contains("send"), "capture egress bypass was accepted: {source}");
+        assert_eq!(bypass.capture_channel_send_calls, 0);
+    }
 
     let t4d_module = cli_ast
         .items
@@ -1880,13 +2140,20 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
             "std::sync::Arc".to_owned(),
             "std::sync::atomic::AtomicU64".to_owned(),
             "std::sync::atomic::Ordering".to_owned(),
+            "base_mev_trader::WriterV1".to_owned(),
+            "super::BlockReaderIdExt".to_owned(),
             "super::BridgeError".to_owned(),
             "super::CandidateAssemblyView".to_owned(),
             "super::CandidateTxShapeObserver".to_owned(),
+            "super::CliTraderSnapshotPort".to_owned(),
+            "super::Debug".to_owned(),
+            "super::Header".to_owned(),
+            "super::HeaderProvider".to_owned(),
             "super::InstalledSubmissionBridge".to_owned(),
             "super::SealedUnsignedCandidate".to_owned(),
             "super::ShadowLatestSlot".to_owned(),
             "super::ShadowSubmit".to_owned(),
+            "super::StateProviderFactory".to_owned(),
             "super::T4bOutcome".to_owned(),
             "super::T4bOutcomeCounters".to_owned(),
             "super::T4eCandidateHandoff".to_owned(),
@@ -1927,7 +2194,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
         t4d_ast.violations
     );
     assert_eq!(t4d_ast.base_mainnet_calls, 0);
-    assert_eq!(t4d_ast.assemble_sealed_calls, 1);
+    assert_eq!(t4d_ast.seal_finalized_calls, 1);
     assert_eq!(t4d_ast.observer_factories, 1);
     assert_eq!(t4d_ast.slot_constructions, 1);
     assert_eq!(t4d_ast.spawn_calls, 0);
@@ -1938,7 +2205,7 @@ fn t4d_workspace_has_exactly_one_facade_install_observer_and_slot() {
     let mut cli_inventory = AstSeal::default();
     cli_inventory.visit_file(&cli_ast);
     assert_eq!(cli_inventory.t4d_observer_calls, 2);
-    assert_eq!(cli_inventory.assemble_sealed_calls, 1);
+    assert_eq!(cli_inventory.seal_finalized_calls, 1);
     assert_eq!(cli_inventory.slot_constructions, 2);
     assert_eq!(cli_inventory.spawn_calls, 9);
     assert_eq!(cli_inventory.thread_calls, 0);
@@ -2132,7 +2399,12 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
     }
     assert_eq!(
         tx_authority_modules(&submit_lib),
-        BTreeSet::from(["calldata".to_owned(), "fee".to_owned(), "tx_authority".to_owned(),])
+        BTreeSet::from([
+            "calldata".to_owned(),
+            "canonical_envelope".to_owned(),
+            "fee".to_owned(),
+            "tx_authority".to_owned(),
+        ])
     );
     let authority_ast = parse_production(&authority_source);
     assert_private_fields(
@@ -2234,7 +2506,6 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
             "alloy_primitives::B256".to_owned(),
             "base_mev_trader::CampaignId".to_owned(),
             "base_mev_trader::CancellationProbe".to_owned(),
-            "base_mev_trader::CandidateAssemblyView".to_owned(),
             "base_mev_trader::ExactProtocol".to_owned(),
             "base_mev_trader::MeasurementContext".to_owned(),
             "base_mev_trader::GlobalState".to_owned(),
@@ -2356,19 +2627,26 @@ fn t4d_default_and_selected_closures_have_zero_signer_and_egress_edges() {
         feature_set(&submit_closure).difference(&feature_set(&trader_closure)).cloned().collect();
     assert_eq!(
         feature_delta,
-        BTreeSet::from(["base-mev-trader feature \"default\"".to_owned()]),
+        BTreeSet::from([
+            "base-common-flz feature \"std\" (*)".to_owned(),
+            "base-mev-trader feature \"default\"".to_owned(),
+        ]),
         "T4b submit closure added an unreviewed dependency feature"
     );
 
     let cli_ast = parse_production(&cli_source);
     let mut cli_seal = AstSeal::unsigned_handoff();
     cli_seal.visit_file(&cli_ast);
+    let production_cli_source =
+        cli_source.split_once("#[cfg(test)]\nmod tests {").expect("CLI test boundary").0;
+    assert_eq!(production_cli_source.matches(".send(").count(), 1);
+    assert!(cli_seal.violations.remove("send"));
     assert_eq!(cli_seal.violations, BTreeSet::from(["OpenOptions".to_owned()]));
     assert_eq!(cli_seal.node_view_impls, 1);
     assert_eq!(cli_seal.observer_impls, 2);
     assert_eq!(cli_seal.pending_view_impls, 1);
     assert_eq!(cli_seal.base_mainnet_calls, 3);
-    assert_eq!(cli_seal.assemble_sealed_calls, 1);
+    assert_eq!(cli_seal.seal_finalized_calls, 1);
     assert_eq!(cli_seal.observe_candidate_calls, 0);
     assert_eq!(cli_seal.subscription_calls, 1);
     assert_eq!(cli_seal.spawn_calls, 9);

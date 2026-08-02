@@ -35,12 +35,13 @@ use mev_trader_submit::assembler::{
 };
 use support::{EXECUTOR, backrun_plan, victim_with_priority};
 
-const PRODUCTION_FILES: [&str; 8] = [
+const PRODUCTION_FILES: [&str; 9] = [
     "lib.rs",
     "fee.rs",
     "assembler.rs",
     "signer.rs",
     "calldata.rs",
+    "canonical_envelope.rs",
     "dormant.rs",
     "economics.rs",
     "tx_authority.rs",

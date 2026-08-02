@@ -1740,6 +1740,7 @@ impl EdgeMeasurementOwnerV1 {
     }
 
     /// Stages one complete generation-keyed same-frame draft without publishing a candidate.
+    #[cfg(feature = "edge-measurement")]
     pub fn stage_selected_candidate(
         &self,
         input: EdgeCandidateStageInputV3<'_>,
@@ -1782,6 +1783,7 @@ impl EdgeMeasurementOwnerV1 {
         result
     }
 
+    #[cfg(feature = "edge-measurement")]
     fn try_stage_selected_candidate(
         &self,
         input: EdgeCandidateStageInputV3<'_>,
@@ -1961,6 +1963,7 @@ impl EdgeMeasurementOwnerV1 {
         })
     }
 
+    #[cfg(feature = "edge-measurement")]
     fn build_selected_draft(
         &self,
         input: EdgeCandidateStageInputV3<'_>,
@@ -3927,6 +3930,7 @@ impl EdgeMeasurementOwnerV1 {
         candidate_fixture::stage(self, evidence, true, false)
     }
 }
+
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "test-utils")]

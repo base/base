@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "base-mev/synthetic-reachability-golden/v1",
+  "identity": "synthetic_reachability_golden",
+  "claim": "pool and fee environment are synthetic/reachability-only; this evidence does not represent live economics",
+  "fingerprint": "6bfd6ac93d75158834332f53ef1e98ab8ebf053c793fc98e5b8ab78823413b24",
+  "victim": {
+    "amountInWei": "1000000000000000",
+    "amountOutRaw": "2193378",
+    "poolReserve0AfterWei": "100001000000000000000",
+    "poolReserve1AfterRaw": "219997806622",
+    "mutatedPoolCount": 1
+  },
+  "candidateWithVictim": {
+    "firstHopAmountOutRaw": "2171704520",
+    "amountOutWei": "1191530601155271682",
+    "grossWei": "191530601155271682",
+    "kickbackWei": "143647950866453762",
+    "retainedWei": "47882650288817920",
+    "actualGasUsed": 50000,
+    "l2FeeWei": "50000",
+    "l1FeeWei": "1000000",
+    "totalCostWei": "1050000",
+    "evWei": "47882650287767920",
+    "shortfallWei": "0",
+    "terminal": "SelectedRouteEvPositive",
+    "grossOptimismUnverified": true,
+    "syntheticReachabilityOnly": true,
+    "netRanked": false
+  },
+  "candidateWithoutVictim": {
+    "firstHopAmountOutRaw": "2171747675",
+    "amountOutWei": "1191553996511115592",
+    "grossWei": "191553996511115592"
+  },
+  "realisticVariant": {
+    "amountInWei": "1000000000000",
+    "firstHopAmountOutRaw": "2193",
+    "amountOutWei": "1217724151838",
+    "grossWei": "217724151838",
+    "kickbackWei": "163293113879",
+    "retainedWei": "54431037959",
+    "actualGasUsed": 50000,
+    "l2FeeWei": "250000000000",
+    "l1FeeWei": "1000000",
+    "totalCostWei": "250001000000",
+    "evWei": "-195569962041",
+    "shortfallWei": "195569962042",
+    "terminal": "SelectedRouteNoEdge",
+    "grossOptimismUnverified": null,
+    "syntheticReachabilityOnly": null,
+    "netRanked": false
+  },
+  "intendedLive": {
+    "terminal": "AuthorityUnavailable",
+    "reason": "RequiredFeeUnavailable",
+    "attempted": 1,
+    "succeeded": 0,
+    "failed": 1
+  },
+  "rawTransactionBytesPersisted": false,
+  "signaturePersisted": false,
+  "privateKeyPersisted": false
+}

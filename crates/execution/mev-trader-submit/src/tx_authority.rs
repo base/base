@@ -9,18 +9,19 @@ use std::{
     time::Instant,
 };
 
-use alloy_consensus::{SignableTransaction, TxEip1559, TxEnvelope};
+use alloy_consensus::{Header, Sealed, SignableTransaction, TxEip1559, TxEnvelope};
 use alloy_eips::{eip2718::Decodable2718, eip2930::AccessList};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, keccak256};
 use base_mev_trader::{
-    BackrunHop, CandidateAssemblyView, ExactProtocol, MeasurementContext, MeasurementEncoder,
-    PreparedPoolState, SnapshotHandle, WETH,
+    BackrunHop, CandidateAssemblyView, CanonicalL1FeeEvidenceV2, ExactProtocol, MeasurementContext,
+    MeasurementEncoder, PreparedPoolState, PriorityEconomicsCountersV2, PriorityEconomicsLedgerV2,
+    PriorityEconomicsV2, SelectedRouteEvidenceV2, SnapshotHandle, WETH,
 };
 
 #[cfg(feature = "t4e-handoff")]
 use crate::PriorityEconomicsReceipt;
 use crate::{
-    PriorityEconomicsAuthority,
+    CanonicalL1EnvelopeEvidence, PriorityEconomicsAuthority,
     calldata::AtomicCalldataEncoder,
     economics::{PriorityFilterInput, evaluate},
     fee::fee_bps_for_executor,
@@ -270,12 +271,6 @@ pub trait TxAuthorityNodeView: Debug + Send + Sync {
         &self,
         snapshot: &SnapshotHandle,
     ) -> Result<Box<dyn SnapshotFreshnessToken>, TxAuthorityNodeError>;
-    /// Returns candidate-specific simulated gas and OP-stack L1 data fee from the same block.
-    fn priority_economics(
-        &self,
-        snapshot: &SnapshotHandle,
-        plan: &base_mev_trader::BackrunPlan,
-    ) -> Result<PriorityEconomicsAuthority, TxAuthorityNodeError>;
 }
 
 /// Typed fail-closed reason for producing no unsigned T4b shape.
@@ -285,8 +280,10 @@ pub enum TxAuthorityError {
     PlanOrFrameRejected,
     /// Raw victim type, hash, chain, or fee fields were rejected.
     FeeAuthorityRejected,
-    /// Candidate economics were missing, invalid, stale, overflowed, or not strictly positive.
+    /// Candidate economics were missing, invalid, stale, overflowed, or failed conservation.
     PriorityEconomicsRejected,
+    /// Finalized economics could not be retained in the bounded production ledger.
+    PriorityEconomicsLedgerUnavailable,
     /// Same-frame route re-quote was missing, ambiguous, or unequal to the plan.
     RequoteRejected,
     /// Executor or adapter deployment identity was unavailable or mismatched.
@@ -315,6 +312,491 @@ impl core::fmt::Display for TxAuthorityError {
 
 impl core::error::Error for TxAuthorityError {}
 
+/// Header-derived Beryl EVM inputs checked during preparation.
+#[derive(Debug)]
+pub struct CheckedBerylEnvInputs {
+    chain_id: u64,
+    block_number: u64,
+    timestamp: u64,
+    gas_limit: u64,
+    base_fee_per_gas: u64,
+    prev_randao: B256,
+    excess_blob_gas: Option<u64>,
+}
+
+impl CheckedBerylEnvInputs {
+    /// Returns the chain id.
+    pub const fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+    /// Returns the block number.
+    pub const fn block_number(&self) -> u64 {
+        self.block_number
+    }
+    /// Returns the timestamp.
+    pub const fn timestamp(&self) -> u64 {
+        self.timestamp
+    }
+    /// Returns the block gas limit.
+    pub const fn gas_limit(&self) -> u64 {
+        self.gas_limit
+    }
+    /// Returns the base fee.
+    pub const fn base_fee_per_gas(&self) -> u64 {
+        self.base_fee_per_gas
+    }
+    /// Returns the checked prevrandao.
+    pub const fn prev_randao(&self) -> B256 {
+        self.prev_randao
+    }
+    /// Returns excess blob gas when present.
+    pub const fn excess_blob_gas(&self) -> Option<u64> {
+        self.excess_blob_gas
+    }
+}
+
+/// Checked executor and route-adapter deployments at one parent.
+#[derive(Debug)]
+pub struct DeploymentWitness {
+    validated_parent: B256,
+    executor: DeployedContractIdentity,
+    route_adapters: [DeployedContractIdentity; 2],
+}
+
+impl DeploymentWitness {
+    /// Returns the validated parent.
+    pub const fn validated_parent(&self) -> B256 {
+        self.validated_parent
+    }
+    /// Returns the executor identity.
+    pub const fn executor(&self) -> &DeployedContractIdentity {
+        &self.executor
+    }
+    /// Returns ordered route adapter identities.
+    pub const fn route_adapters(&self) -> [&DeployedContractIdentity; 2] {
+        [&self.route_adapters[0], &self.route_adapters[1]]
+    }
+}
+
+/// Checked committed, overlay, and transaction nonce values.
+#[derive(Debug)]
+pub struct NonceWitness {
+    sender: Address,
+    parent_hash: B256,
+    committed_nonce: u64,
+    pending_overlay_nonce: Option<u64>,
+    shape_nonce: u64,
+}
+
+impl NonceWitness {
+    /// Returns the sender.
+    pub const fn sender(&self) -> Address {
+        self.sender
+    }
+    /// Returns the parent hash.
+    pub const fn parent_hash(&self) -> B256 {
+        self.parent_hash
+    }
+    /// Returns the committed nonce.
+    pub const fn committed_nonce(&self) -> u64 {
+        self.committed_nonce
+    }
+    /// Returns the pending overlay nonce.
+    pub const fn pending_overlay_nonce(&self) -> Option<u64> {
+        self.pending_overlay_nonce
+    }
+    /// Returns the selected shape nonce.
+    pub const fn shape_nonce(&self) -> u64 {
+        self.shape_nonce
+    }
+}
+
+/// Immutable checked snapshot-freshness summary.
+#[derive(Debug)]
+pub struct FreshnessWitness {
+    parent_hash: B256,
+    snapshot_parent_hash: B256,
+    valid_until_block: u64,
+    snapshot_identity_digest: B256,
+}
+
+impl FreshnessWitness {
+    /// Returns the parent hash.
+    pub const fn parent_hash(&self) -> B256 {
+        self.parent_hash
+    }
+    /// Returns the captured snapshot parent hash.
+    pub const fn snapshot_parent_hash(&self) -> B256 {
+        self.snapshot_parent_hash
+    }
+    /// Returns the last authorized block.
+    pub const fn valid_until_block(&self) -> u64 {
+        self.valid_until_block
+    }
+    /// Returns the snapshot identity digest.
+    pub const fn snapshot_identity_digest(&self) -> B256 {
+        self.snapshot_identity_digest
+    }
+}
+
+/// Owned checked bindings retained by the linear candidate.
+#[derive(Debug)]
+pub struct CheckedBindings {
+    frame: MeasurementContext,
+    parent_header: Sealed<Header>,
+    header_identity_digest: B256,
+    beryl_env: CheckedBerylEnvInputs,
+    sender: Address,
+    kickback_recipient: Address,
+    route_hops: [BackrunHop; 2],
+    route_pools: [Address; 2],
+    route_tokens: [Address; 3],
+    header_coinbase: Address,
+    deployment: DeploymentWitness,
+    nonce: NonceWitness,
+    freshness: FreshnessWitness,
+    frame_digest: B256,
+    plan_digest: B256,
+    route_digest: B256,
+    shape_digest: B256,
+    overlay_digest: B256,
+    order_digest: B256,
+    state_digest: B256,
+    access_digest: B256,
+    unsigned_signing_hash: B256,
+}
+
+/// Borrowed read-only projection available only inside one adapter entry.
+#[derive(Debug)]
+pub struct CheckedBindingsView<'a> {
+    frame: &'a MeasurementContext,
+    parent_header: &'a Sealed<Header>,
+    header_identity_digest: B256,
+    beryl_env: &'a CheckedBerylEnvInputs,
+    sender: Address,
+    kickback_recipient: Address,
+    route_hops: &'a [BackrunHop; 2],
+    route_pools: [Address; 2],
+    route_tokens: [Address; 3],
+    header_coinbase: Address,
+    deployment: &'a DeploymentWitness,
+    nonce: &'a NonceWitness,
+    freshness: &'a FreshnessWitness,
+    frame_digest: B256,
+    plan_digest: B256,
+    route_digest: B256,
+    shape_digest: B256,
+    overlay_digest: B256,
+    order_digest: B256,
+    state_digest: B256,
+    access_digest: B256,
+    unsigned_signing_hash: B256,
+}
+
+impl<'a> CheckedBindingsView<'a> {
+    /// Returns the frame.
+    pub const fn frame(&self) -> &MeasurementContext {
+        self.frame
+    }
+    /// Returns the parent hash.
+    pub const fn parent_hash(&self) -> B256 {
+        self.frame.parent_hash
+    }
+    /// Returns the sealed pending header.
+    pub const fn parent_header(&self) -> &Sealed<Header> {
+        self.parent_header
+    }
+    /// Returns the sealed-header identity digest.
+    pub const fn header_identity_digest(&self) -> B256 {
+        self.header_identity_digest
+    }
+    /// Returns checked Beryl environment inputs.
+    pub const fn beryl_env(&self) -> &CheckedBerylEnvInputs {
+        self.beryl_env
+    }
+    /// Returns the sender.
+    pub const fn sender(&self) -> Address {
+        self.sender
+    }
+    /// Returns the kickback recipient.
+    pub const fn kickback_recipient(&self) -> Address {
+        self.kickback_recipient
+    }
+    /// Returns ordered route hops.
+    pub const fn route_hops(&self) -> &[BackrunHop; 2] {
+        self.route_hops
+    }
+    /// Returns ordered route pools.
+    pub const fn route_pools(&self) -> [Address; 2] {
+        self.route_pools
+    }
+    /// Returns ordered route tokens.
+    pub const fn route_tokens(&self) -> [Address; 3] {
+        self.route_tokens
+    }
+    /// Returns ordered route protocols.
+    pub const fn route_protocols(&self) -> [ExactProtocol; 2] {
+        [self.route_hops[0].protocol, self.route_hops[1].protocol]
+    }
+    /// Returns ordered resolved adapters.
+    pub const fn resolved_adapters(&self) -> [&DeployedContractIdentity; 2] {
+        self.deployment.route_adapters()
+    }
+    /// Returns the executor.
+    pub const fn executor(&self) -> &DeployedContractIdentity {
+        self.deployment.executor()
+    }
+    /// Returns the header coinbase.
+    pub const fn header_coinbase(&self) -> Address {
+        self.header_coinbase
+    }
+    /// Returns the deployment witness.
+    pub const fn deployment_witness(&self) -> &DeploymentWitness {
+        self.deployment
+    }
+    /// Returns the nonce witness.
+    pub const fn nonce_witness(&self) -> &NonceWitness {
+        self.nonce
+    }
+    /// Returns the freshness witness.
+    pub const fn freshness_witness(&self) -> &FreshnessWitness {
+        self.freshness
+    }
+    /// Returns the frame digest.
+    pub const fn frame_digest(&self) -> B256 {
+        self.frame_digest
+    }
+    /// Returns the plan digest.
+    pub const fn plan_digest(&self) -> B256 {
+        self.plan_digest
+    }
+    /// Returns the route digest.
+    pub const fn route_digest(&self) -> B256 {
+        self.route_digest
+    }
+    /// Returns the shape digest.
+    pub const fn shape_digest(&self) -> B256 {
+        self.shape_digest
+    }
+    /// Returns the overlay digest.
+    pub const fn overlay_digest(&self) -> B256 {
+        self.overlay_digest
+    }
+    /// Returns the order digest.
+    pub const fn order_digest(&self) -> B256 {
+        self.order_digest
+    }
+    /// Returns the state digest.
+    pub const fn state_digest(&self) -> B256 {
+        self.state_digest
+    }
+    /// Returns the access digest.
+    pub const fn access_digest(&self) -> B256 {
+        self.access_digest
+    }
+    /// Returns the unsigned signing hash.
+    pub const fn unsigned_signing_hash(&self) -> B256 {
+        self.unsigned_signing_hash
+    }
+}
+
+/// Owned candidate execution evidence; no transaction or bindings borrow is retained.
+#[derive(Debug)]
+pub struct CandidateEconomicsEvidence {
+    authority: PriorityEconomicsAuthority,
+    weth_delta: U256,
+    canonical_l1: CanonicalL1EnvelopeEvidence,
+    frame_digest: B256,
+    plan_digest: B256,
+    route_digest: B256,
+    shape_digest: B256,
+    overlay_digest: B256,
+    order_digest: B256,
+    state_digest: B256,
+    access_digest: B256,
+    unsigned_signing_hash: B256,
+    deployment_parent: B256,
+    nonce_parent: B256,
+    freshness_parent: B256,
+    snapshot_identity_digest: B256,
+}
+
+impl CandidateEconomicsEvidence {
+    /// Derives the nonzero executed recipient WETH increase from audited balances.
+    pub fn checked_weth_delta(pre_weth: U256, post_weth: U256) -> Result<U256, TxAuthorityError> {
+        post_weth
+            .checked_sub(pre_weth)
+            .filter(|delta| !delta.is_zero())
+            .ok_or(TxAuthorityError::PriorityEconomicsRejected)
+    }
+    /// Checks and copies adapter results into borrow-free evidence.
+    pub fn try_new(
+        authority: PriorityEconomicsAuthority,
+        weth_delta: U256,
+        canonical_l1: CanonicalL1EnvelopeEvidence,
+        bindings: CheckedBindingsView<'_>,
+    ) -> Result<Self, TxAuthorityError> {
+        if authority.execution_gas_estimate().is_zero()
+            || weth_delta.is_zero()
+            || authority.l1_data_fee_wei() != canonical_l1.fee()
+            || authority.base_fee_per_gas_wei()
+                != U256::from(bindings.beryl_env().base_fee_per_gas())
+            || authority.block() != bindings.beryl_env().block_number()
+        {
+            return Err(TxAuthorityError::PriorityEconomicsRejected);
+        }
+        Ok(Self {
+            authority,
+            weth_delta,
+            canonical_l1,
+            frame_digest: bindings.frame_digest(),
+            plan_digest: bindings.plan_digest(),
+            route_digest: bindings.route_digest(),
+            shape_digest: bindings.shape_digest(),
+            overlay_digest: bindings.overlay_digest(),
+            order_digest: bindings.order_digest(),
+            state_digest: bindings.state_digest(),
+            access_digest: bindings.access_digest(),
+            unsigned_signing_hash: bindings.unsigned_signing_hash(),
+            deployment_parent: bindings.deployment_witness().validated_parent(),
+            nonce_parent: bindings.nonce_witness().parent_hash(),
+            freshness_parent: bindings.freshness_witness().parent_hash(),
+            snapshot_identity_digest: bindings.freshness_witness().snapshot_identity_digest(),
+        })
+    }
+
+    /// Returns the checked economics authority.
+    pub const fn authority(&self) -> PriorityEconomicsAuthority {
+        self.authority
+    }
+    /// Returns the observed recipient WETH increase.
+    pub const fn weth_delta(&self) -> U256 {
+        self.weth_delta
+    }
+    /// Returns raw-free canonical L1 evidence.
+    pub const fn canonical_l1(&self) -> CanonicalL1EnvelopeEvidence {
+        self.canonical_l1
+    }
+}
+
+/// By-value adapter entry for exactly one candidate execution.
+pub trait CandidateExecutionAdapter: Sized {
+    /// Adapter-specific failure.
+    type Error;
+
+    /// Executes a candidate once and returns owned evidence.
+    fn execute_candidate(
+        self,
+        request: TxAuthorityExecutionRequest<'_>,
+    ) -> Result<CandidateEconomicsEvidence, Self::Error>;
+}
+
+/// Linear private request passed to one consumed adapter.
+#[derive(Debug)]
+pub struct TxAuthorityExecutionRequest<'a> {
+    tx: &'a TxEip1559,
+    bindings: &'a CheckedBindings,
+}
+
+impl<'a> TxAuthorityExecutionRequest<'a> {
+    fn new_private(candidate: &'a PreEconomicsCandidate) -> Self {
+        Self { tx: &candidate.unsigned_tx, bindings: &candidate.bindings }
+    }
+
+    /// Consumes the request into its only public decomposition.
+    pub fn into_parts(self) -> TxAuthorityExecutionParts<'a> {
+        TxAuthorityExecutionParts { tx: self.tx, bindings: self.bindings }
+    }
+}
+
+/// Linear request parts with one further consuming decomposition.
+#[derive(Debug)]
+pub struct TxAuthorityExecutionParts<'a> {
+    tx: &'a TxEip1559,
+    bindings: &'a CheckedBindings,
+}
+
+impl<'a> TxAuthorityExecutionParts<'a> {
+    /// Consumes parts into the checked transaction and bindings projection.
+    pub fn into_tx_and_bindings(self) -> (&'a TxEip1559, CheckedBindingsView<'a>) {
+        let bindings = self.bindings;
+        (
+            self.tx,
+            CheckedBindingsView {
+                frame: &bindings.frame,
+                parent_header: &bindings.parent_header,
+                header_identity_digest: bindings.header_identity_digest,
+                beryl_env: &bindings.beryl_env,
+                sender: bindings.sender,
+                kickback_recipient: bindings.kickback_recipient,
+                route_hops: &bindings.route_hops,
+                route_pools: bindings.route_pools,
+                route_tokens: bindings.route_tokens,
+                header_coinbase: bindings.header_coinbase,
+                deployment: &bindings.deployment,
+                nonce: &bindings.nonce,
+                freshness: &bindings.freshness,
+                frame_digest: bindings.frame_digest,
+                plan_digest: bindings.plan_digest,
+                route_digest: bindings.route_digest,
+                shape_digest: bindings.shape_digest,
+                overlay_digest: bindings.overlay_digest,
+                order_digest: bindings.order_digest,
+                state_digest: bindings.state_digest,
+                access_digest: bindings.access_digest,
+                unsigned_signing_hash: bindings.unsigned_signing_hash,
+            },
+        )
+    }
+}
+
+/// Candidate after shape preparation but before candidate execution economics.
+#[derive(Debug)]
+pub struct PreEconomicsCandidate {
+    unsigned_tx: TxEip1559,
+    amount: U256,
+    gross_profit: U256,
+    victim_priority: u128,
+    victim_max_fee: u128,
+    bindings: CheckedBindings,
+    observation: UnsignedTxShapeObservation,
+    execution: InstalledExecutionIdentity,
+    observation_guard: MeasurementNonceGuard,
+    snapshot_freshness: Box<dyn SnapshotFreshnessToken>,
+    node: Arc<dyn TxAuthorityNodeView>,
+}
+
+impl PreEconomicsCandidate {
+    /// Consumes this candidate and one adapter, permitting one execution entry.
+    pub fn execute_once<A>(
+        self,
+        adapter: A,
+    ) -> Result<EconomicsReadyCandidate, ExecuteOnceError<A::Error>>
+    where
+        A: CandidateExecutionAdapter,
+    {
+        let evidence = {
+            let request = TxAuthorityExecutionRequest::new_private(&self);
+            adapter.execute_candidate(request).map_err(ExecuteOnceError::Execution)?
+        };
+        Ok(EconomicsReadyCandidate { pre: self, evidence })
+    }
+}
+
+/// Candidate carrying owned execution economics and awaiting freshness finalization.
+#[derive(Debug)]
+pub struct EconomicsReadyCandidate {
+    pre: PreEconomicsCandidate,
+    evidence: CandidateEconomicsEvidence,
+}
+
+/// Error from the single adapter entry.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ExecuteOnceError<E> {
+    /// The consumed adapter rejected execution.
+    Execution(E),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SnapshotNonceWitness {
     sender: Address,
@@ -335,7 +817,7 @@ struct AuthorityAssemblyView<'a> {
 }
 
 impl<'a> AuthorityAssemblyView<'a> {
-    const fn from_candidate(view: CandidateAssemblyView<'a>) -> Self {
+    const fn from_candidate(view: &'a CandidateAssemblyView<'a>) -> Self {
         Self {
             snapshot: view.snapshot(),
             frame: *view.processed().measurement_context(),
@@ -473,6 +955,7 @@ pub struct ValidatedUnsignedAtomicTx {
     amount: U256,
     #[cfg(feature = "t4e-handoff")]
     economics: PriorityEconomicsReceipt,
+    priority_economics: PriorityEconomicsV2,
     observation: UnsignedTxShapeObservation,
     execution: InstalledExecutionIdentity,
     observation_guard: MeasurementNonceGuard,
@@ -500,6 +983,11 @@ impl ValidatedUnsignedAtomicTx {
     /// Returns the installed identity bound to the observation.
     pub const fn execution(&self) -> &InstalledExecutionIdentity {
         &self.execution
+    }
+
+    /// Returns the actual evaluated V2 economics terminal retained by production finalization.
+    pub const fn priority_economics(&self) -> &PriorityEconomicsV2 {
+        &self.priority_economics
     }
 
     /// Revalidates the exact captured snapshot immediately before observation drain.
@@ -580,49 +1068,27 @@ impl TxAuthorityAssembler {
         Ok(Self { node, executor, sender, adapters, held: Arc::new(AtomicBool::new(false)) })
     }
 
-    /// Derives and validates one linear unsigned shape from same-frame borrowed artifacts.
-    pub fn assemble_validated(
+    /// Prepares a linear unsigned candidate without consulting economics authority.
+    pub fn prepare_pre_economics(
         &self,
-        view: CandidateAssemblyView<'_>,
-    ) -> Result<ValidatedUnsignedAtomicTx, TxAuthorityError> {
-        self.assemble_view(AuthorityAssemblyView::from_candidate(view))
-    }
-
-    fn assemble_view(
-        &self,
-        view: AuthorityAssemblyView<'_>,
-    ) -> Result<ValidatedUnsignedAtomicTx, TxAuthorityError> {
+        candidate: &CandidateAssemblyView<'_>,
+    ) -> Result<PreEconomicsCandidate, TxAuthorityError> {
+        let view = AuthorityAssemblyView::from_candidate(candidate);
         Self::checkpoint(view.probe())?;
         let snapshot = view.snapshot();
         let plan = view.plan();
         let frame = view.frame;
         Self::validate_frame(snapshot, plan, frame)?;
         let (victim_priority, base_fee, max_fee) = Self::derive_fees(&view, frame)?;
-        if plan.route[0].token_in != WETH || plan.route[1].token_out != WETH {
-            return Err(TxAuthorityError::PriorityEconomicsRejected);
-        }
-        let authority = self
-            .node
-            .priority_economics(snapshot, plan)
-            .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?;
-        if authority.base_fee_per_gas_wei() != U256::from(base_fee) {
-            return Err(TxAuthorityError::PriorityEconomicsRejected);
-        }
-        let decision = evaluate(PriorityFilterInput {
-            gross_profit_wei: Some(plan.gross_profit),
-            authority: Some(authority),
-            victim_max_priority_fee_per_gas_wei: Some(U256::from(victim_priority)),
-            victim_max_fee_per_gas_wei: Some(U256::from(max_fee)),
-            candidate_block: plan.block_number,
-        })
-        .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?;
-        if !decision.admitted() {
+        if plan.route[0].token_in != WETH
+            || plan.route[0].token_out != plan.route[1].token_in
+            || plan.route[1].token_out != WETH
+        {
             return Err(TxAuthorityError::PriorityEconomicsRejected);
         }
         let floors = Self::requote(&view)?;
         Self::checkpoint(view.probe())?;
         let (execution, committed_nonce) = self.validate_execution(snapshot, frame.parent_hash)?;
-        Self::checkpoint(view.probe())?;
         let valid_until_block = frame
             .block_number
             .checked_add(T4B_VALID_WINDOW_BLOCKS)
@@ -633,7 +1099,6 @@ impl TxAuthorityAssembler {
             .capture_snapshot_freshness(snapshot)
             .map_err(|_| TxAuthorityError::NonceWitnessUnavailable)?;
         let observation_guard = self.acquire_guard()?;
-
         let calldata = self.encode_calldata(plan, floors, &execution, valid_until_block)?;
         let unsigned_tx = TxEip1559 {
             chain_id: CHAIN_ID_BASE,
@@ -647,32 +1112,7 @@ impl TxAuthorityAssembler {
             input: Bytes::from(calldata),
         };
         Self::checkpoint(view.probe())?;
-        if unsigned_tx.chain_id != CHAIN_ID_BASE
-            || unsigned_tx.nonce != witness.shape_nonce
-            || unsigned_tx.gas_limit != T4B_EXECUTOR_GAS_LIMIT
-            || unsigned_tx.max_fee_per_gas != max_fee
-            || unsigned_tx.max_priority_fee_per_gas != victim_priority
-            || unsigned_tx.to != TxKind::Call(execution.executor.address)
-            || !unsigned_tx.value.is_zero()
-            || !unsigned_tx.access_list.is_empty()
-        {
-            return Err(TxAuthorityError::AssemblyRejected);
-        }
-        Self::checkpoint(view.probe())?;
-        let (fresh_execution, fresh_committed_nonce) = self
-            .validate_execution(snapshot, frame.parent_hash)
-            .map_err(|_| TxAuthorityError::NonceWitnessStaleBeforePublish)?;
-        let fresh = self
-            .capture_nonce(snapshot, &fresh_execution, frame, fresh_committed_nonce)
-            .map_err(|_| TxAuthorityError::NonceWitnessStaleBeforePublish)?;
-        if fresh_execution != execution
-            || fresh != witness
-            || !snapshot_freshness.is_current().unwrap_or(false)
-        {
-            return Err(TxAuthorityError::NonceWitnessStaleBeforePublish);
-        }
-        Self::checkpoint(view.probe())?;
-
+        let unsigned_signing_hash = unsigned_tx.signature_hash();
         let hop_protocols = [plan.route[0].protocol, plan.route[1].protocol];
         let hop_adapters =
             hop_protocols.map(|protocol| execution.adapters.resolve(protocol).address);
@@ -694,20 +1134,244 @@ impl TxAuthorityAssembler {
             max_priority_fee_per_gas: victim_priority,
             base_fee,
             valid_until_block,
-            unsigned_signing_hash: unsigned_tx.signature_hash(),
+            unsigned_signing_hash,
         };
-        Self::checkpoint(view.probe())?;
-        Ok(ValidatedUnsignedAtomicTx {
+        let parent_header = snapshot.latest_header();
+        let observed_base_fee =
+            u64::try_from(base_fee).map_err(|_| TxAuthorityError::FeeAuthorityRejected)?;
+        if parent_header.parent_hash != frame.parent_hash
+            || parent_header.number != frame.block_number
+            || parent_header.base_fee_per_gas != Some(observed_base_fee)
+        {
+            return Err(TxAuthorityError::PlanOrFrameRejected);
+        }
+        let domain_digest = |domain: u8| {
+            let mut bytes = Vec::with_capacity(65);
+            bytes.push(domain);
+            bytes.extend_from_slice(frame.parent_hash.as_slice());
+            bytes.extend_from_slice(plan.digest.0.as_slice());
+            keccak256(bytes)
+        };
+        let header_identity_digest = {
+            let mut bytes = Vec::with_capacity(145);
+            bytes.extend_from_slice(parent_header.hash().as_slice());
+            bytes.extend_from_slice(parent_header.parent_hash.as_slice());
+            bytes.extend_from_slice(&parent_header.number.to_be_bytes());
+            bytes.extend_from_slice(&parent_header.timestamp.to_be_bytes());
+            bytes.extend_from_slice(&parent_header.gas_limit.to_be_bytes());
+            bytes.extend_from_slice(&observed_base_fee.to_be_bytes());
+            bytes.extend_from_slice(parent_header.mix_hash.as_slice());
+            keccak256(bytes)
+        };
+        let route_adapters = [
+            execution.adapters.resolve(hop_protocols[0]).clone(),
+            execution.adapters.resolve(hop_protocols[1]).clone(),
+        ];
+        let bindings = CheckedBindings {
+            frame,
+            header_identity_digest,
+            beryl_env: CheckedBerylEnvInputs {
+                chain_id: CHAIN_ID_BASE,
+                block_number: parent_header.number,
+                timestamp: parent_header.timestamp,
+                gas_limit: parent_header.gas_limit,
+                base_fee_per_gas: parent_header
+                    .base_fee_per_gas
+                    .ok_or(TxAuthorityError::FeeAuthorityRejected)?,
+                prev_randao: parent_header.mix_hash,
+                excess_blob_gas: parent_header.excess_blob_gas,
+            },
+            sender: execution.sender,
+            kickback_recipient: address!("743be0db30148336a3db479f19d4e1828b293869"),
+            route_hops: plan.route.clone(),
+            route_pools: [plan.route[0].pool, plan.route[1].pool],
+            route_tokens: [
+                plan.route[0].token_in,
+                plan.route[0].token_out,
+                plan.route[1].token_out,
+            ],
+            header_coinbase: parent_header.beneficiary,
+            deployment: DeploymentWitness {
+                validated_parent: execution.validated_parent,
+                executor: execution.executor.clone(),
+                route_adapters,
+            },
+            nonce: NonceWitness {
+                sender: witness.sender,
+                parent_hash: witness.parent_hash,
+                committed_nonce: witness.committed_nonce,
+                pending_overlay_nonce: witness.pending_overlay_nonce,
+                shape_nonce: witness.shape_nonce,
+            },
+            freshness: FreshnessWitness {
+                parent_hash: frame.parent_hash,
+                snapshot_parent_hash: snapshot.parent_hash(),
+                valid_until_block,
+                snapshot_identity_digest: domain_digest(2),
+            },
+            frame_digest: domain_digest(3),
+            plan_digest: plan.digest.0,
+            route_digest: domain_digest(4),
+            shape_digest: domain_digest(5),
+            overlay_digest: domain_digest(6),
+            order_digest: domain_digest(7),
+            state_digest: domain_digest(8),
+            access_digest: domain_digest(9),
+            unsigned_signing_hash,
+            parent_header,
+        };
+        Ok(PreEconomicsCandidate {
             unsigned_tx,
-            #[cfg(feature = "t4e-handoff")]
             amount: plan.amount_in,
-            #[cfg(feature = "t4e-handoff")]
-            economics: decision,
+            gross_profit: plan.gross_profit,
+            victim_priority,
+            victim_max_fee: max_fee,
+            bindings,
             observation,
             execution,
             observation_guard,
             snapshot_freshness,
+            node: Arc::clone(&self.node),
         })
+    }
+
+    /// Consumes execution evidence, rechecks freshness and bindings, and seals the candidate.
+    pub fn finalize(
+        &self,
+        ready: EconomicsReadyCandidate,
+        ledger: &PriorityEconomicsLedgerV2,
+    ) -> Result<ValidatedUnsignedAtomicTx, TxAuthorityError> {
+        let EconomicsReadyCandidate { pre, evidence } = ready;
+        let bindings = &pre.bindings;
+        if !Arc::ptr_eq(&self.node, &pre.node)
+            || pre.node.current_parent_hash().ok() != Some(bindings.frame.parent_hash)
+            || !pre.snapshot_freshness.is_current().unwrap_or(false)
+            || evidence.frame_digest != bindings.frame_digest
+            || evidence.plan_digest != bindings.plan_digest
+            || evidence.route_digest != bindings.route_digest
+            || evidence.shape_digest != bindings.shape_digest
+            || evidence.overlay_digest != bindings.overlay_digest
+            || evidence.order_digest != bindings.order_digest
+            || evidence.state_digest != bindings.state_digest
+            || evidence.access_digest != bindings.access_digest
+            || evidence.unsigned_signing_hash != bindings.unsigned_signing_hash
+            || evidence.deployment_parent != bindings.deployment.validated_parent
+            || evidence.nonce_parent != bindings.nonce.parent_hash
+            || evidence.freshness_parent != bindings.freshness.parent_hash
+            || evidence.snapshot_identity_digest != bindings.freshness.snapshot_identity_digest
+            || pre.unsigned_tx.signature_hash() != bindings.unsigned_signing_hash
+        {
+            return Err(TxAuthorityError::NonceWitnessStaleBeforePublish);
+        }
+        let state = pre
+            .node
+            .read_state_at_parent(
+                bindings.frame.parent_hash,
+                bindings.sender,
+                Self::contract_addresses(&self.executor, &self.adapters),
+            )
+            .map_err(|_| TxAuthorityError::NonceWitnessStaleBeforePublish)?;
+        Self::validate_state_codes(
+            &state,
+            bindings.frame.parent_hash,
+            &self.executor,
+            &self.adapters,
+        )
+        .map_err(|_| TxAuthorityError::NonceWitnessStaleBeforePublish)?;
+        if state.committed_sender_nonce.unwrap_or(0) != bindings.nonce.committed_nonce {
+            return Err(TxAuthorityError::NonceWitnessStaleBeforePublish);
+        }
+        let decision = evaluate(PriorityFilterInput {
+            gross_profit_wei: Some(pre.gross_profit),
+            authority: Some(evidence.authority),
+            victim_max_priority_fee_per_gas_wei: Some(U256::from(pre.victim_priority)),
+            victim_max_fee_per_gas_wei: Some(U256::from(pre.victim_max_fee)),
+            candidate_block: bindings.frame.block_number,
+        })
+        .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?;
+        if evidence.weth_delta != decision.kickback_wei() {
+            return Err(TxAuthorityError::PriorityEconomicsRejected);
+        }
+        let priority_economics = Self::evaluated_terminal(&pre, &evidence, &decision)?;
+        ledger
+            .append(priority_economics.clone())
+            .map_err(|_| TxAuthorityError::PriorityEconomicsLedgerUnavailable)?;
+        Ok(ValidatedUnsignedAtomicTx {
+            unsigned_tx: pre.unsigned_tx,
+            #[cfg(feature = "t4e-handoff")]
+            amount: pre.amount,
+            #[cfg(feature = "t4e-handoff")]
+            economics: decision,
+            priority_economics,
+            observation: pre.observation,
+            execution: pre.execution,
+            observation_guard: pre.observation_guard,
+            snapshot_freshness: pre.snapshot_freshness,
+        })
+    }
+
+    fn evaluated_terminal(
+        pre: &PreEconomicsCandidate,
+        evidence: &CandidateEconomicsEvidence,
+        decision: &crate::PriorityEconomicsReceipt,
+    ) -> Result<PriorityEconomicsV2, TxAuthorityError> {
+        let bindings = &pre.bindings;
+        let adapters = bindings.deployment.route_adapters();
+        let hops = &bindings.route_hops;
+        let canonical = evidence.canonical_l1.selected();
+        let route = SelectedRouteEvidenceV2::new(
+            bindings.frame.victim,
+            bindings.route_digest,
+            bindings.route_pools,
+            bindings.route_tokens,
+            [adapters[0].runtime_hash(), adapters[1].runtime_hash()],
+            [hops[0].fee_pips, hops[1].fee_pips],
+            [
+                hops[0].token_in.as_slice() < hops[0].token_out.as_slice(),
+                hops[1].token_in.as_slice() < hops[1].token_out.as_slice(),
+            ],
+            pre.amount,
+            bindings.frame_digest,
+            bindings.header_identity_digest,
+            bindings.state_digest,
+            bindings.plan_digest,
+            bindings.shape_digest,
+            canonical.digest(),
+        )
+        .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?;
+        let l1_fee = CanonicalL1FeeEvidenceV2::new(
+            u64::try_from(canonical.encoded_length())
+                .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?,
+            u64::try_from(canonical.zero_bytes())
+                .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?,
+            u64::try_from(canonical.non_zero_bytes())
+                .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?,
+            u64::try_from(canonical.fast_lz_size())
+                .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?,
+            canonical.digest(),
+            evidence.canonical_l1.fee(),
+        )
+        .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?;
+        let amount_out = pre
+            .amount
+            .checked_add(pre.gross_profit)
+            .ok_or(TxAuthorityError::PriorityEconomicsRejected)?;
+        let actual_gas_used = u64::try_from(decision.execution_gas_estimate())
+            .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?;
+        let counters = PriorityEconomicsCountersV2::new(1, 1, 1, 1, 1, 1, 1, 0)
+            .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)?;
+        PriorityEconomicsV2::evaluated_from_execution(
+            route,
+            amount_out,
+            evidence.weth_delta,
+            decision.retained_value_wei(),
+            actual_gas_used,
+            decision.l2_execution_fee_wei(),
+            l1_fee,
+            decision.admitted().then_some(true),
+            counters,
+        )
+        .map_err(|_| TxAuthorityError::PriorityEconomicsRejected)
     }
 
     fn checkpoint(probe: &base_mev_trader::CancellationProbe) -> Result<(), TxAuthorityError> {
@@ -987,1757 +1651,5 @@ impl TxAuthorityAssembler {
             valid_until_block,
         };
         Ok(AtomicCalldataEncoder::encode_validated(&call))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[cfg(feature = "t4d-bridge")]
-    use std::collections::BTreeSet;
-    use std::{
-        sync::{
-            Arc,
-            atomic::{AtomicBool, AtomicU64, Ordering},
-        },
-        time::{Duration, Instant},
-    };
-
-    use alloy_consensus::{Header, Sealed, SignableTransaction};
-    use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, Bytes, Signature, U256, address, b256, keccak256};
-    use base_mev_trader::{
-        BackrunHop, BundleVisitor, CancellationProbe, CancellationToken, ExactProtocol,
-        GlobalLifecycle, MeasurementEncoder, PayloadVisitor, PendingAccountNonce,
-        PendingSnapshotView, PortError, PreparedPoolQuote, PreparedPoolState,
-        SnapshotCaptureCoordinator, SnapshotHandleFactory, TraderSnapshotPort, TransactionVisitor,
-        VisitSummary,
-    };
-    use reth_provider::StateProviderBox;
-
-    use super::*;
-    #[cfg(feature = "t4e-handoff")]
-    use crate::arm::{
-        CodeHashProvider, ProductionHandoffClosed, ProductionHandoffInstaller,
-        ProductionSimulationHandoff, ProductionSimulationInstallError, ProviderError,
-        SimulationEntrypoint,
-    };
-
-    #[derive(Debug)]
-    struct TestFreshness(Arc<AtomicBool>);
-
-    impl SnapshotFreshnessToken for TestFreshness {
-        fn is_current(&self) -> Result<bool, TxAuthorityNodeError> {
-            Ok(self.0.load(Ordering::Acquire))
-        }
-    }
-    #[cfg(feature = "t4e-handoff")]
-    #[derive(Debug)]
-    struct TestBlockProvider {
-        current_block: Arc<AtomicU64>,
-        unavailable: Arc<AtomicBool>,
-    }
-
-    #[cfg(feature = "t4e-handoff")]
-    impl CodeHashProvider for TestBlockProvider {
-        fn code_hash_at_latest_committed(&self, _addr: Address) -> Result<B256, ProviderError> {
-            panic!("deadline revalidation must not read code hash")
-        }
-
-        fn current_block(&self) -> Result<u64, ProviderError> {
-            if self.unavailable.load(Ordering::Acquire) {
-                Err(ProviderError::Unavailable("committed head unavailable".to_string()))
-            } else {
-                Ok(self.current_block.load(Ordering::Acquire))
-            }
-        }
-
-        fn native_balance_at_latest_committed(
-            &self,
-            _address: Address,
-        ) -> Result<Option<U256>, ProviderError> {
-            panic!("deadline revalidation must not read balance")
-        }
-    }
-
-    #[derive(Debug)]
-    struct TestSnapshotView {
-        parent_hash: B256,
-        block_number: u64,
-        base_fee: Option<u64>,
-        pending_nonce: Option<PendingAccountNonce>,
-    }
-
-    impl PendingSnapshotView for TestSnapshotView {
-        fn parent_hash(&self) -> B256 {
-            self.parent_hash
-        }
-
-        fn latest_block_number(&self) -> u64 {
-            self.block_number
-        }
-
-        fn canonical_block_number(&self) -> u64 {
-            self.block_number.saturating_sub(1)
-        }
-
-        fn latest_flashblock_index(&self) -> u64 {
-            1
-        }
-
-        fn latest_header(&self) -> Sealed<Header> {
-            Sealed::new_unchecked(
-                Header {
-                    number: self.block_number,
-                    base_fee_per_gas: self.base_fee,
-                    ..Header::default()
-                },
-                B256::with_last_byte(99),
-            )
-        }
-
-        fn pending_account_nonce(
-            &self,
-            _address: Address,
-        ) -> Result<Option<PendingAccountNonce>, PortError> {
-            Ok(self.pending_nonce)
-        }
-
-        fn latest_block_transaction_count(&self) -> usize {
-            1
-        }
-
-        fn has_transaction_hash(&self, _transaction_hash: B256) -> bool {
-            true
-        }
-
-        fn transaction_position(
-            &self,
-            _block_number: u64,
-            _transaction_hash: B256,
-        ) -> Option<usize> {
-            Some(0)
-        }
-
-        fn visit_latest_block_payloads(
-            &self,
-            _visitor: &mut dyn PayloadVisitor,
-        ) -> Result<VisitSummary, PortError> {
-            Ok(VisitSummary { visited: 0, complete: true })
-        }
-
-        fn visit_transactions_for_block(
-            &self,
-            _block_number: u64,
-            _start: usize,
-            _limit: usize,
-            _visitor: &mut dyn TransactionVisitor,
-        ) -> Result<VisitSummary, PortError> {
-            Ok(VisitSummary { visited: 0, complete: true })
-        }
-
-        fn visit_bundle(
-            &self,
-            _visitor: &mut dyn BundleVisitor,
-        ) -> Result<VisitSummary, PortError> {
-            Ok(VisitSummary { visited: 0, complete: true })
-        }
-    }
-
-    #[derive(Debug)]
-    struct TestSnapshotPort {
-        view: Arc<dyn PendingSnapshotView + Send + Sync>,
-        received_at: Instant,
-        current: Arc<AtomicBool>,
-    }
-
-    impl TraderSnapshotPort for TestSnapshotPort {
-        fn capture_latest(
-            &self,
-            factory: &SnapshotHandleFactory,
-        ) -> Result<Option<SnapshotHandle>, PortError> {
-            factory.issue(Arc::clone(&self.view), self.received_at).map(Some)
-        }
-
-        fn is_current_authoritative(&self, handle: &SnapshotHandle) -> bool {
-            self.current.load(Ordering::Acquire)
-                && handle.matches_capture(&self.view, self.received_at)
-        }
-
-        fn state_at_hash(&self, _block_hash: B256) -> Result<StateProviderBox, PortError> {
-            Err(PortError::ProviderUnavailable)
-        }
-
-        fn sealed_header_at_hash(&self, _block_hash: B256) -> Result<Sealed<Header>, PortError> {
-            Err(PortError::HeaderUnavailable)
-        }
-    }
-
-    #[derive(Debug)]
-    struct NoopNode;
-
-    impl TxAuthorityNodeView for NoopNode {
-        fn chain_id(&self) -> Result<u64, TxAuthorityNodeError> {
-            Ok(CHAIN_ID_BASE)
-        }
-
-        fn current_parent_hash(&self) -> Result<B256, TxAuthorityNodeError> {
-            Ok(B256::ZERO)
-        }
-
-        fn read_state_at_parent(
-            &self,
-            parent_hash: B256,
-            _sender: Address,
-            _contracts: [Address; 4],
-        ) -> Result<TxAuthorityStateRead, TxAuthorityNodeError> {
-            Ok(TxAuthorityStateRead::new(
-                parent_hash,
-                Some(0),
-                std::array::from_fn(|_| Some(Bytes::from_static(b"code"))),
-            ))
-        }
-
-        fn is_current_authoritative(
-            &self,
-            _snapshot: &SnapshotHandle,
-        ) -> Result<bool, TxAuthorityNodeError> {
-            Ok(true)
-        }
-
-        fn capture_snapshot_freshness(
-            &self,
-            _snapshot: &SnapshotHandle,
-        ) -> Result<Box<dyn SnapshotFreshnessToken>, TxAuthorityNodeError> {
-            Ok(Box::new(TestFreshness(Arc::new(AtomicBool::new(true)))))
-        }
-
-        fn priority_economics(
-            &self,
-            _snapshot: &SnapshotHandle,
-            plan: &base_mev_trader::BackrunPlan,
-        ) -> Result<PriorityEconomicsAuthority, TxAuthorityNodeError> {
-            Ok(PriorityEconomicsAuthority::new(
-                U256::from(1),
-                U256::from(1),
-                U256::from(1),
-                plan.block_number,
-            ))
-        }
-    }
-
-    #[derive(Debug)]
-    struct TestNode {
-        parent_hash: B256,
-        sender: Address,
-        contracts: [Address; 4],
-        state: TxAuthorityStateRead,
-        current: Arc<AtomicBool>,
-        reads: AtomicU64,
-        stale_on_read: Option<u64>,
-        delay_on_read: Option<(u64, Duration)>,
-        state_error: Arc<AtomicBool>,
-        head_flip_after_read: Arc<AtomicBool>,
-        stale_code_index: Arc<AtomicU64>,
-    }
-
-    impl TxAuthorityNodeView for TestNode {
-        fn chain_id(&self) -> Result<u64, TxAuthorityNodeError> {
-            Ok(CHAIN_ID_BASE)
-        }
-
-        fn current_parent_hash(&self) -> Result<B256, TxAuthorityNodeError> {
-            if self.head_flip_after_read.load(Ordering::Acquire)
-                && self.reads.load(Ordering::SeqCst) > 0
-            {
-                return Ok(B256::with_last_byte(self.parent_hash.as_slice()[31].wrapping_add(1)));
-            }
-            Ok(self.parent_hash)
-        }
-
-        fn read_state_at_parent(
-            &self,
-            parent_hash: B256,
-            sender: Address,
-            contracts: [Address; 4],
-        ) -> Result<TxAuthorityStateRead, TxAuthorityNodeError> {
-            if self.state_error.load(Ordering::Acquire) {
-                return Err(TxAuthorityNodeError::Unavailable);
-            }
-            if parent_hash != self.parent_hash
-                || sender != self.sender
-                || contracts != self.contracts
-            {
-                return Err(TxAuthorityNodeError::Incoherent);
-            }
-            let read = self.reads.fetch_add(1, Ordering::SeqCst);
-            if self.delay_on_read.is_some_and(|(threshold, _)| read >= threshold) {
-                std::thread::sleep(self.delay_on_read.expect("checked delay").1);
-            }
-            let mut state = self.state.clone();
-            if self.stale_on_read.is_some_and(|threshold| read >= threshold) {
-                state.committed_sender_nonce =
-                    state.committed_sender_nonce.and_then(|nonce| nonce.checked_add(1));
-            }
-            let stale_code_index = self.stale_code_index.load(Ordering::Acquire) as usize;
-            if let Some(code) = state.runtime_codes.get_mut(stale_code_index) {
-                *code = Some(Bytes::from_static(b"wrong-runtime"));
-            }
-            Ok(state)
-        }
-
-        fn is_current_authoritative(
-            &self,
-            _snapshot: &SnapshotHandle,
-        ) -> Result<bool, TxAuthorityNodeError> {
-            Ok(self.current.load(Ordering::Acquire))
-        }
-
-        fn capture_snapshot_freshness(
-            &self,
-            _snapshot: &SnapshotHandle,
-        ) -> Result<Box<dyn SnapshotFreshnessToken>, TxAuthorityNodeError> {
-            Ok(Box::new(TestFreshness(Arc::clone(&self.current))))
-        }
-
-        fn priority_economics(
-            &self,
-            _snapshot: &SnapshotHandle,
-            plan: &base_mev_trader::BackrunPlan,
-        ) -> Result<PriorityEconomicsAuthority, TxAuthorityNodeError> {
-            Ok(PriorityEconomicsAuthority::new(
-                U256::from(7),
-                U256::from(13),
-                U256::from(100),
-                plan.block_number,
-            ))
-        }
-    }
-
-    #[derive(Debug)]
-    struct AssemblyFixture {
-        assembler: TxAuthorityAssembler,
-        #[cfg(feature = "t4d-bridge")]
-        node: Arc<dyn TxAuthorityNodeView>,
-        snapshot: SnapshotHandle,
-        frame: MeasurementContext,
-        prepared: Vec<PreparedPoolState>,
-        plan: base_mev_trader::BackrunPlan,
-        victim_raw: Bytes,
-        probe: CancellationProbe,
-        current: Arc<AtomicBool>,
-        #[cfg(feature = "t4d-bridge")]
-        state_error: Arc<AtomicBool>,
-        #[cfg(feature = "t4d-bridge")]
-        head_flip_after_read: Arc<AtomicBool>,
-        #[cfg(feature = "t4e-handoff")]
-        current_block: Arc<AtomicU64>,
-        #[cfg(feature = "t4e-handoff")]
-        block_unavailable: Arc<AtomicBool>,
-        #[cfg(feature = "t4d-bridge")]
-        stale_code_index: Arc<AtomicU64>,
-    }
-
-    impl AssemblyFixture {
-        fn view(&self) -> AuthorityAssemblyView<'_> {
-            AuthorityAssemblyView {
-                snapshot: &self.snapshot,
-                frame: self.frame,
-                prepared: &self.prepared,
-                plan: &self.plan,
-                victim_raw: &self.victim_raw,
-                probe: &self.probe,
-            }
-        }
-
-        #[cfg(feature = "t4d-bridge")]
-        fn bridge(&self) -> bridge::InstalledSubmissionBridge {
-            bridge::InstalledSubmissionBridge::install_for_test(
-                Arc::clone(&self.node),
-                self.assembler.executor.clone(),
-                self.assembler.sender,
-                self.assembler.adapters.clone(),
-            )
-            .expect("same-provider bridge install")
-        }
-
-        #[cfg(feature = "t4e-handoff")]
-        fn block_provider(&self) -> TestBlockProvider {
-            TestBlockProvider {
-                current_block: Arc::clone(&self.current_block),
-                unavailable: Arc::clone(&self.block_unavailable),
-            }
-        }
-    }
-    #[cfg(feature = "t4d-bridge")]
-    fn revalidate_for_test<'a>(
-        fixture: &AssemblyFixture,
-        bridge: &bridge::InstalledSubmissionBridge,
-        candidate: &'a bridge::SealedUnsignedCandidate,
-    ) -> Result<&'a bridge::AdapterAwareProofBindings, bridge::BridgeError> {
-        bridge.revalidate_for_handoff(
-            candidate,
-            #[cfg(feature = "t4e-handoff")]
-            &fixture.block_provider(),
-        )
-    }
-
-    fn assembly_fixture_with_read_delay(
-        pending_nonce: Option<PendingAccountNonce>,
-        stale_on_read: Option<u64>,
-        delay_on_read: Option<(u64, Duration)>,
-    ) -> AssemblyFixture {
-        let parent_hash = B256::with_last_byte(21);
-        let block_number = 22;
-        let sender = Address::with_last_byte(23);
-        let token_a = WETH;
-        let token_b = Address::with_last_byte(25);
-        let probe = probe();
-        let prepared = vec![
-            PreparedPoolState {
-                pool: Address::with_last_byte(26),
-                protocol: ExactProtocol::UniswapV2,
-                token0: token_a,
-                token1: token_b,
-                decimals0: 18,
-                decimals1: 18,
-                fee_pips: 3_000,
-                quote: PreparedPoolQuote::constant_product(
-                    U256::from(1_000_000_000_000_000_000u128),
-                    U256::from(2_000_000_000_000_000_000u128),
-                ),
-            },
-            PreparedPoolState {
-                pool: Address::with_last_byte(27),
-                protocol: ExactProtocol::UniswapV2,
-                token0: token_a,
-                token1: token_b,
-                decimals0: 18,
-                decimals1: 18,
-                fee_pips: 3_000,
-                quote: PreparedPoolQuote::constant_product(
-                    U256::from(3_000_000_000_000_000_000u128),
-                    U256::from(1_000_000_000_000_000_000u128),
-                ),
-            },
-        ];
-        let amount_in = U256::from(1_000_000_000_000_000u64);
-        let first_out =
-            prepared[0].quote_exact_in(token_a, amount_in, &probe).expect("first quote");
-        let amount_out =
-            prepared[1].quote_exact_in(token_b, first_out, &probe).expect("second quote");
-        assert!(amount_out > amount_in);
-
-        let victim = TxEip1559 {
-            chain_id: CHAIN_ID_BASE,
-            nonce: 1,
-            gas_limit: 100_000,
-            max_fee_per_gas: 110,
-            max_priority_fee_per_gas: 10,
-            to: TxKind::Call(Address::with_last_byte(28)),
-            value: U256::ZERO,
-            access_list: AccessList::default(),
-            input: Bytes::new(),
-        }
-        .into_signed(Signature::new(U256::from(1), U256::from(2), false));
-        let victim_raw = Bytes::from(victim.encoded_2718());
-        let victim_hash = keccak256(&victim_raw);
-
-        let frame = MeasurementContext {
-            parent_hash,
-            block_number,
-            predecessor_index: 1,
-            payload_id: alloy_rpc_types_engine::PayloadId::new([4; 8]),
-            victim: victim_hash,
-        };
-        let mut plan = base_mev_trader::BackrunPlan {
-            parent_hash,
-            block_number,
-            predecessor_index: frame.predecessor_index,
-            payload_id: frame.payload_id,
-            victim: victim_hash,
-            route: [
-                BackrunHop {
-                    pool: prepared[0].pool,
-                    protocol: prepared[0].protocol,
-                    token_in: token_a,
-                    token_out: token_b,
-                    fee_pips: prepared[0].fee_pips,
-                },
-                BackrunHop {
-                    pool: prepared[1].pool,
-                    protocol: prepared[1].protocol,
-                    token_in: token_b,
-                    token_out: token_a,
-                    fee_pips: prepared[1].fee_pips,
-                },
-            ],
-            amount_in,
-            amount_out,
-            gross_profit: amount_out - amount_in,
-            digest: base_mev_trader::BackrunPlanDigest(B256::ZERO),
-        };
-        plan.digest = MeasurementEncoder::digest(&plan).expect("plan digest");
-
-        let current = Arc::new(AtomicBool::new(true));
-        let snapshot_view: Arc<dyn PendingSnapshotView + Send + Sync> =
-            Arc::new(TestSnapshotView {
-                parent_hash,
-                block_number,
-                base_fee: Some(100),
-                pending_nonce,
-            });
-        let snapshot_port = TestSnapshotPort {
-            view: snapshot_view,
-            received_at: Instant::now(),
-            current: Arc::clone(&current),
-        };
-        let snapshot = SnapshotCaptureCoordinator
-            .capture(&snapshot_port)
-            .expect("snapshot capture")
-            .expect("current snapshot");
-
-        let codes = [
-            Bytes::from_static(b"executor"),
-            Bytes::from_static(b"uniswap-v2"),
-            Bytes::from_static(b"uniswap-v3"),
-            Bytes::from_static(b"aerodrome"),
-        ];
-        let executor = DeployedContractIdentity {
-            address: Address::with_last_byte(29),
-            runtime_hash: keccak256(&codes[0]),
-        };
-        let adapters = ProtocolAdapterMapping {
-            uniswap_v2: DeployedContractIdentity {
-                address: Address::with_last_byte(30),
-                runtime_hash: keccak256(&codes[1]),
-            },
-            uniswap_v3: DeployedContractIdentity {
-                address: Address::with_last_byte(31),
-                runtime_hash: keccak256(&codes[2]),
-            },
-            aerodrome: DeployedContractIdentity {
-                address: Address::with_last_byte(32),
-                runtime_hash: keccak256(&codes[3]),
-            },
-        };
-        let contracts = TxAuthorityAssembler::contract_addresses(&executor, &adapters);
-        #[cfg(feature = "t4e-handoff")]
-        let current_block = Arc::new(AtomicU64::new(block_number - 1));
-        #[cfg(feature = "t4e-handoff")]
-        let block_unavailable = Arc::new(AtomicBool::new(false));
-        let state = TxAuthorityStateRead::new(parent_hash, Some(4), codes.map(Some));
-        let state_error = Arc::new(AtomicBool::new(false));
-        let head_flip_after_read = Arc::new(AtomicBool::new(false));
-        let stale_code_index = Arc::new(AtomicU64::new(u64::MAX));
-        let node: Arc<dyn TxAuthorityNodeView> = Arc::new(TestNode {
-            parent_hash,
-            sender,
-            contracts,
-            state,
-            current: Arc::clone(&current),
-            reads: AtomicU64::new(0),
-            stale_on_read,
-            delay_on_read,
-            state_error: Arc::clone(&state_error),
-            head_flip_after_read: Arc::clone(&head_flip_after_read),
-            stale_code_index: Arc::clone(&stale_code_index),
-        });
-        let assembler =
-            TxAuthorityAssembler::install(Arc::clone(&node), executor, sender, adapters)
-                .expect("same-parent authority install");
-
-        AssemblyFixture {
-            assembler,
-            #[cfg(feature = "t4d-bridge")]
-            node,
-            snapshot,
-            frame,
-            prepared,
-            plan,
-            victim_raw,
-            probe,
-            current,
-            #[cfg(feature = "t4d-bridge")]
-            state_error,
-            #[cfg(feature = "t4e-handoff")]
-            current_block,
-            #[cfg(feature = "t4e-handoff")]
-            block_unavailable,
-            #[cfg(feature = "t4d-bridge")]
-            head_flip_after_read,
-            #[cfg(feature = "t4d-bridge")]
-            stale_code_index,
-        }
-    }
-
-    fn assembly_fixture(
-        pending_nonce: Option<PendingAccountNonce>,
-        stale_on_read: Option<u64>,
-    ) -> AssemblyFixture {
-        assembly_fixture_with_read_delay(pending_nonce, stale_on_read, None)
-    }
-
-    fn production_source() -> &'static str {
-        include_str!("tx_authority.rs").split("#[cfg(test)]").next().expect("production source")
-    }
-
-    fn probe() -> CancellationProbe {
-        CancellationProbe::new(
-            Arc::new(CancellationToken::new(Instant::now() + Duration::from_secs(1))),
-            Arc::new(GlobalLifecycle::default()),
-        )
-    }
-
-    fn encoded_victim(chain_id: u64, max_fee: u128, priority: u128) -> Bytes {
-        let victim = TxEip1559 {
-            chain_id,
-            nonce: 1,
-            gas_limit: 100_000,
-            max_fee_per_gas: max_fee,
-            max_priority_fee_per_gas: priority,
-            to: TxKind::Call(Address::with_last_byte(28)),
-            value: U256::ZERO,
-            access_list: AccessList::default(),
-            input: Bytes::new(),
-        }
-        .into_signed(Signature::new(U256::from(1), U256::from(2), false));
-        Bytes::from(victim.encoded_2718())
-    }
-
-    fn captured_snapshot(
-        parent_hash: B256,
-        block_number: u64,
-        base_fee: Option<u64>,
-        pending_nonce: Option<PendingAccountNonce>,
-        current: Arc<AtomicBool>,
-    ) -> SnapshotHandle {
-        let view: Arc<dyn PendingSnapshotView + Send + Sync> =
-            Arc::new(TestSnapshotView { parent_hash, block_number, base_fee, pending_nonce });
-        let port = TestSnapshotPort { view, received_at: Instant::now(), current };
-        SnapshotCaptureCoordinator
-            .capture(&port)
-            .expect("snapshot capture")
-            .expect("current snapshot")
-    }
-
-    fn derive_fixture_fees(
-        fixture: &AssemblyFixture,
-        snapshot: &SnapshotHandle,
-        victim_raw: &Bytes,
-        frame: MeasurementContext,
-    ) -> Result<(u128, u128, u128), TxAuthorityError> {
-        TxAuthorityAssembler::derive_fees(
-            &AuthorityAssemblyView {
-                snapshot,
-                frame,
-                prepared: &fixture.prepared,
-                plan: &fixture.plan,
-                victim_raw,
-                probe: &fixture.probe,
-            },
-            frame,
-        )
-    }
-
-    fn production_executor() -> DeployedContractIdentity {
-        DeployedContractIdentity { address: EXECUTOR_ADDRESS, runtime_hash: EXECUTOR_RUNTIME_HASH }
-    }
-
-    fn prepared_pool() -> PreparedPoolState {
-        PreparedPoolState {
-            pool: Address::with_last_byte(1),
-            protocol: ExactProtocol::UniswapV2,
-            token0: Address::with_last_byte(2),
-            token1: Address::with_last_byte(3),
-            decimals0: 18,
-            decimals1: 18,
-            fee_pips: 3_000,
-            quote: PreparedPoolQuote::constant_product(
-                U256::from(1_000_000u64),
-                U256::from(2_000_000u64),
-            ),
-        }
-    }
-
-    fn prepared_protocol_pool(protocol: ExactProtocol, identity: u8) -> PreparedPoolState {
-        let quote = match protocol {
-            ExactProtocol::UniswapV2 | ExactProtocol::AerodromeVolatile => {
-                PreparedPoolQuote::constant_product(
-                    U256::from(2_000_000u64),
-                    U256::from(3_000_000u64),
-                )
-            }
-            ExactProtocol::AerodromeStable => {
-                PreparedPoolQuote::stable(U256::from(2_000_000u64), U256::from(3_000_000u64))
-            }
-            ExactProtocol::UniswapV3 => PreparedPoolQuote::v3(
-                U256::from(1) << 96,
-                U256::from(1_000_000_000u64),
-                0,
-                60,
-                Vec::new(),
-            ),
-        };
-        PreparedPoolState {
-            pool: Address::with_last_byte(identity),
-            protocol,
-            token0: Address::with_last_byte(2),
-            token1: Address::with_last_byte(3),
-            decimals0: 18,
-            decimals1: 18,
-            fee_pips: 3_000,
-            quote,
-        }
-    }
-
-    #[test]
-    fn t4b_mapping_is_total_and_aero_variants_share_exact_deployed_identity() {
-        let mapping = ProtocolAdapterMapping::base_mainnet_pins();
-        assert_eq!(
-            mapping.resolve(ExactProtocol::UniswapV2).address(),
-            address!("17314D6F1B7A7A67b91A6131E3AE635AF90bAe1b")
-        );
-        assert_eq!(
-            mapping.resolve(ExactProtocol::UniswapV3).runtime_hash(),
-            b256!("dd184f8bc9680971b835c0f05c4f5986845ba888db0857f04eb3c8cd4e44d93c")
-        );
-        assert_eq!(
-            mapping.resolve(ExactProtocol::AerodromeVolatile),
-            mapping.resolve(ExactProtocol::AerodromeStable)
-        );
-        assert!(!mapping.resolve(ExactProtocol::AerodromeStable).address().is_zero());
-        assert_eq!(EXECUTOR_ADDRESS, address!("1810cbFA042e8199121021F056Afe8B31028CF55"));
-        assert_eq!(
-            EXECUTOR_RUNTIME_HASH,
-            b256!("cc7e119d458f147a9baab30f51d4ef7fbfe6eef48377988d480f6e7b693e671d")
-        );
-        assert_eq!(EXECUTOR_SENDER, address!("98e1e2A84557D49496D1BFE31EA7b5a6C59FD0f9"));
-        assert_eq!(
-            mapping.resolve(ExactProtocol::UniswapV2).runtime_hash(),
-            b256!("75f81d350eea433778932277055e2fb493f9954c307df0c0a7613418aa0ca2ae")
-        );
-        assert_eq!(
-            mapping.resolve(ExactProtocol::UniswapV3).address(),
-            address!("D73a2ACbd855AdA5bdF950E3D3796E0557504DfF")
-        );
-        assert_eq!(
-            mapping.resolve(ExactProtocol::AerodromeVolatile).address(),
-            address!("6a2242f52Db5aC8d6631AC7244Bb7fa370454F24")
-        );
-        assert_eq!(
-            mapping.resolve(ExactProtocol::AerodromeVolatile).runtime_hash(),
-            b256!("426950cd6948988dc7de442de3a3efcbc588670e29856b4bbd3cac70c374b8f5")
-        );
-    }
-
-    #[test]
-    fn t4b_identity_install_requires_executor_and_all_adapters_at_one_parent() {
-        let installed = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        assert_eq!(installed.assembler.sender, Address::with_last_byte(23));
-        assert_eq!(installed.assembler.executor.address(), Address::with_last_byte(29));
-        let install_parent = installed.frame.parent_hash;
-        let install_sender = installed.assembler.sender;
-        let install_executor = installed.assembler.executor.clone();
-        let install_adapters = installed.assembler.adapters;
-        let install_contracts =
-            TxAuthorityAssembler::contract_addresses(&install_executor, &install_adapters);
-        let install_state = TxAuthorityStateRead::new(
-            install_parent,
-            Some(4),
-            [
-                Some(Bytes::from_static(b"executor")),
-                Some(Bytes::from_static(b"uniswap-v2")),
-                Some(Bytes::from_static(b"uniswap-v3")),
-                Some(Bytes::from_static(b"aerodrome")),
-            ],
-        );
-        for (state_error, head_flip_after_read) in [(true, false), (false, true)] {
-            let node = Arc::new(TestNode {
-                parent_hash: install_parent,
-                sender: install_sender,
-                contracts: install_contracts,
-                state: install_state.clone(),
-                current: Arc::new(AtomicBool::new(true)),
-                reads: AtomicU64::new(0),
-                stale_on_read: None,
-                delay_on_read: None,
-                state_error: Arc::new(AtomicBool::new(state_error)),
-                head_flip_after_read: Arc::new(AtomicBool::new(head_flip_after_read)),
-                stale_code_index: Arc::new(AtomicU64::new(u64::MAX)),
-            });
-            assert!(matches!(
-                TxAuthorityAssembler::install(
-                    node,
-                    install_executor.clone(),
-                    install_sender,
-                    install_adapters.clone(),
-                ),
-                Err(TxAuthorityError::DeploymentIdentityRejected)
-            ));
-        }
-        let mapping = ProtocolAdapterMapping::base_mainnet_pins();
-        let parent = B256::with_last_byte(1);
-        let missing = TxAuthorityStateRead::new(parent, Some(0), std::array::from_fn(|_| None));
-        assert_eq!(
-            TxAuthorityAssembler::validate_state_codes(
-                &missing,
-                parent,
-                &production_executor(),
-                &mapping,
-            ),
-            Err(TxAuthorityError::DeploymentIdentityRejected)
-        );
-        let empty =
-            TxAuthorityStateRead::new(parent, Some(0), std::array::from_fn(|_| Some(Bytes::new())));
-        assert_eq!(
-            TxAuthorityAssembler::validate_state_codes(
-                &empty,
-                parent,
-                &production_executor(),
-                &mapping,
-            ),
-            Err(TxAuthorityError::DeploymentIdentityRejected)
-        );
-        let wrong_hash = TxAuthorityStateRead::new(
-            parent,
-            Some(0),
-            std::array::from_fn(|_| Some(Bytes::from_static(b"wrong-runtime"))),
-        );
-        assert_eq!(
-            TxAuthorityAssembler::validate_state_codes(
-                &wrong_hash,
-                parent,
-                &production_executor(),
-                &mapping,
-            ),
-            Err(TxAuthorityError::DeploymentIdentityRejected)
-        );
-        let partial = TxAuthorityStateRead::new(
-            parent,
-            Some(0),
-            [
-                Some(Bytes::from_static(b"executor")),
-                Some(Bytes::from_static(b"uniswap-v2")),
-                None,
-                Some(Bytes::from_static(b"aerodrome")),
-            ],
-        );
-        assert_eq!(
-            TxAuthorityAssembler::validate_state_codes(
-                &partial,
-                parent,
-                &production_executor(),
-                &mapping,
-            ),
-            Err(TxAuthorityError::DeploymentIdentityRejected)
-        );
-        let wrong_parent = TxAuthorityStateRead::new(
-            B256::with_last_byte(2),
-            Some(0),
-            std::array::from_fn(|_| Some(Bytes::from_static(b"code"))),
-        );
-        assert_eq!(
-            TxAuthorityAssembler::validate_state_codes(
-                &wrong_parent,
-                parent,
-                &production_executor(),
-                &mapping,
-            ),
-            Err(TxAuthorityError::DeploymentIdentityRejected)
-        );
-    }
-
-    #[test]
-    fn t4b_hop_params_have_one_mapping_derived_constructor_and_no_adapter_injection() {
-        let source = production_source();
-        assert_eq!(source.matches("ProtocolAdapterMapping::base_mainnet_pins()").count(), 1);
-        assert!(source.contains("struct ValidatedAbiHop {\n    adapter: Address,"));
-        assert_eq!(source.matches("execution.adapters.resolve(hop.protocol)").count(), 1);
-        assert!(!source.contains("pub adapter:"));
-        assert!(!source.contains("pub(crate) adapter:"));
-        assert!(!source.contains("set_adapter"));
-    }
-
-    #[test]
-    fn t4b_requote_binds_both_hop_floors_to_same_prepared_frame() {
-        let pool = prepared_pool();
-        let hop = BackrunHop {
-            pool: pool.pool,
-            protocol: pool.protocol,
-            token_in: pool.token0,
-            token_out: pool.token1,
-            fee_pips: pool.fee_pips,
-        };
-        let pools = vec![pool.clone()];
-        let selected = TxAuthorityAssembler::unique_pool(&pools, &hop).expect("one exact pool");
-        let output = selected
-            .quote_exact_in(hop.token_in, U256::from(10_000u64), &probe())
-            .expect("same-frame quote");
-        assert!(!output.is_zero());
-        for (identity, protocol) in [
-            ExactProtocol::UniswapV2,
-            ExactProtocol::UniswapV3,
-            ExactProtocol::AerodromeVolatile,
-            ExactProtocol::AerodromeStable,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let protocol_pool = prepared_protocol_pool(protocol, 40 + identity as u8);
-            protocol_pool.validate().expect("protocol fixture validates");
-            let protocol_hop = BackrunHop {
-                pool: protocol_pool.pool,
-                protocol,
-                token_in: protocol_pool.token0,
-                token_out: protocol_pool.token1,
-                fee_pips: protocol_pool.fee_pips,
-            };
-            let exact = protocol_pool
-                .quote_exact_in(protocol_hop.token_in, U256::from(1_000u64), &probe())
-                .expect("exact protocol quote");
-            assert!(!exact.is_zero(), "{protocol:?} quote");
-            assert_eq!(
-                TxAuthorityAssembler::unique_pool(
-                    std::slice::from_ref(&protocol_pool),
-                    &protocol_hop,
-                ),
-                Ok(&protocol_pool)
-            );
-        }
-        let fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let detail =
-            fixture.assembler.assemble_view(fixture.view()).expect("two-hop same-frame assembly");
-        assert_eq!(
-            detail.observation().hop_protocols(),
-            [ExactProtocol::UniswapV2, ExactProtocol::UniswapV2]
-        );
-        drop(detail);
-        let duplicates = vec![pool.clone(), pool];
-        assert_eq!(
-            TxAuthorityAssembler::unique_pool(&duplicates, &hop),
-            Err(TxAuthorityError::RequoteRejected)
-        );
-        let mut wrong_fee = hop;
-        wrong_fee.fee_pips = wrong_fee.fee_pips.saturating_add(1);
-        assert_eq!(
-            TxAuthorityAssembler::unique_pool(&pools, &wrong_fee),
-            Err(TxAuthorityError::RequoteRejected)
-        );
-        let mut wrong_token = hop;
-        wrong_token.token_in = Address::with_last_byte(99);
-        assert_eq!(
-            TxAuthorityAssembler::unique_pool(&pools, &wrong_token),
-            Err(TxAuthorityError::RequoteRejected)
-        );
-        let mut missing_pool = hop;
-        missing_pool.pool = Address::with_last_byte(98);
-        assert_eq!(
-            TxAuthorityAssembler::unique_pool(&pools, &missing_pool),
-            Err(TxAuthorityError::RequoteRejected)
-        );
-        let mut wrong_protocol = hop;
-        wrong_protocol.protocol = ExactProtocol::AerodromeStable;
-        assert_eq!(
-            TxAuthorityAssembler::unique_pool(&pools, &wrong_protocol),
-            Err(TxAuthorityError::RequoteRejected)
-        );
-
-        let mut stale = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        stale.prepared[0].quote =
-            PreparedPoolQuote::constant_product(U256::from(1_000u64), U256::from(1_000u64));
-        assert_eq!(
-            TxAuthorityAssembler::requote(&stale.view()),
-            Err(TxAuthorityError::RequoteRejected)
-        );
-
-        let expired_probe = CancellationProbe::new(
-            Arc::new(CancellationToken::new(Instant::now())),
-            Arc::new(GlobalLifecycle::default()),
-        );
-        let expired_view = AuthorityAssemblyView {
-            snapshot: &fixture.snapshot,
-            frame: fixture.frame,
-            prepared: &fixture.prepared,
-            plan: &fixture.plan,
-            victim_raw: &fixture.victim_raw,
-            probe: &expired_probe,
-        };
-        assert_eq!(
-            TxAuthorityAssembler::requote(&expired_view),
-            Err(TxAuthorityError::DeadlineNoShape)
-        );
-    }
-
-    #[test]
-    fn t4b_snapshot_nonce_uses_pending_overlay_or_committed_fallback_without_txpool() {
-        let overlay = PendingAccountNonce::checked(4, 6).expect("coherent overlay");
-        let overlay_fixture = assembly_fixture(Some(overlay), None);
-        let overlay_detail = overlay_fixture
-            .assembler
-            .assemble_view(overlay_fixture.view())
-            .expect("pending-overlay nonce");
-        assert_eq!(overlay_detail.observation().nonce(), 6);
-        drop(overlay_detail);
-
-        let committed_fixture = assembly_fixture(None, None);
-        let committed_detail = committed_fixture
-            .assembler
-            .assemble_view(committed_fixture.view())
-            .expect("committed fallback nonce");
-        assert_eq!(committed_detail.observation().nonce(), 4);
-        drop(committed_detail);
-
-        let mismatch_fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(3, 6).expect("locally coherent")),
-            None,
-        );
-        assert!(matches!(
-            mismatch_fixture.assembler.assemble_view(mismatch_fixture.view()),
-            Err(TxAuthorityError::NonceWitnessUnavailable)
-        ));
-        assert!(PendingAccountNonce::checked(7, 6).is_err());
-        assert!(!production_source().to_ascii_lowercase().contains("txpool"));
-    }
-
-    #[test]
-    fn t4b_observation_guard_allows_exactly_one_live_unsigned_detail() {
-        let held = Arc::new(AtomicBool::new(false));
-        let assembler = TxAuthorityAssembler {
-            node: Arc::new(NoopNode),
-            executor: production_executor(),
-            sender: EXECUTOR_SENDER,
-            adapters: ProtocolAdapterMapping::base_mainnet_pins(),
-            held: Arc::clone(&held),
-        };
-        let first = assembler.acquire_guard().expect("first guard");
-        assert!(matches!(assembler.acquire_guard(), Err(TxAuthorityError::ObservationBusy)));
-        drop(first);
-        assert!(!held.load(Ordering::Acquire));
-        assert!(assembler.acquire_guard().is_ok());
-    }
-
-    #[test]
-    fn t4b_nonce_witness_revalidation_rejects_stale_snapshot_without_replacement_claims() {
-        let stale_fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            Some(2),
-        );
-        assert!(matches!(
-            stale_fixture.assembler.assemble_view(stale_fixture.view()),
-            Err(TxAuthorityError::NonceWitnessStaleBeforePublish)
-        ));
-
-        let current_fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let output =
-            current_fixture.assembler.assemble_view(current_fixture.view()).expect("fresh output");
-        assert_eq!(output.validate_at_drain(), Ok(()));
-        current_fixture.current.store(false, Ordering::Release);
-        assert_eq!(output.validate_at_drain(), Err(TxAuthorityError::SnapshotStaleAtDrain));
-        assert!(!production_source().to_ascii_lowercase().contains("replacement"));
-    }
-
-    #[test]
-    fn t4b_fee_gas_and_deadline_are_node_local_and_checked() {
-        let fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let output = fixture.assembler.assemble_view(fixture.view()).expect("node-local fee shape");
-        let observed = output.observation();
-        assert_eq!(observed.chain_id(), CHAIN_ID_BASE);
-        assert_eq!(observed.gas_limit(), T4B_EXECUTOR_GAS_LIMIT);
-        assert_eq!(observed.base_fee(), 100);
-        assert_eq!(observed.max_priority_fee_per_gas(), 10);
-        assert_eq!(observed.max_fee_per_gas(), 110);
-        assert_eq!(observed.valid_until_block(), fixture.frame.block_number);
-        drop(output);
-
-        let missing_base_fee = captured_snapshot(
-            fixture.frame.parent_hash,
-            fixture.frame.block_number,
-            None,
-            None,
-            Arc::new(AtomicBool::new(true)),
-        );
-        assert_eq!(
-            derive_fixture_fees(&fixture, &missing_base_fee, &fixture.victim_raw, fixture.frame,),
-            Err(TxAuthorityError::FeeAuthorityRejected)
-        );
-
-        let wrong_header = captured_snapshot(
-            fixture.frame.parent_hash,
-            fixture.frame.block_number + 1,
-            Some(100),
-            None,
-            Arc::new(AtomicBool::new(true)),
-        );
-        assert_eq!(
-            derive_fixture_fees(&fixture, &wrong_header, &fixture.victim_raw, fixture.frame),
-            Err(TxAuthorityError::FeeAuthorityRejected)
-        );
-
-        let cap_limited = encoded_victim(CHAIN_ID_BASE, 109, 10);
-        let mut cap_frame = fixture.frame;
-        cap_frame.victim = keccak256(&cap_limited);
-        assert_eq!(
-            derive_fixture_fees(&fixture, &fixture.snapshot, &cap_limited, cap_frame),
-            Err(TxAuthorityError::FeeAuthorityRejected)
-        );
-        let zero_priority = encoded_victim(CHAIN_ID_BASE, 100, 0);
-        let mut zero_priority_frame = fixture.frame;
-        zero_priority_frame.victim = keccak256(&zero_priority);
-        assert_eq!(
-            derive_fixture_fees(&fixture, &fixture.snapshot, &zero_priority, zero_priority_frame,),
-            Err(TxAuthorityError::FeeAuthorityRejected)
-        );
-
-        let wrong_chain = encoded_victim(1, 110, 10);
-        let mut wrong_chain_frame = fixture.frame;
-        wrong_chain_frame.victim = keccak256(&wrong_chain);
-        assert_eq!(
-            derive_fixture_fees(&fixture, &fixture.snapshot, &wrong_chain, wrong_chain_frame,),
-            Err(TxAuthorityError::FeeAuthorityRejected)
-        );
-
-        let overflow_snapshot = captured_snapshot(
-            fixture.frame.parent_hash,
-            fixture.frame.block_number,
-            Some(u64::MAX),
-            None,
-            Arc::new(AtomicBool::new(true)),
-        );
-        let overflow_victim = encoded_victim(CHAIN_ID_BASE, u128::MAX, u128::MAX);
-        let mut overflow_frame = fixture.frame;
-        overflow_frame.victim = keccak256(&overflow_victim);
-        assert_eq!(
-            derive_fixture_fees(&fixture, &overflow_snapshot, &overflow_victim, overflow_frame,),
-            Err(TxAuthorityError::FeeAuthorityRejected)
-        );
-
-        let expired_probe = CancellationProbe::new(
-            Arc::new(CancellationToken::new(Instant::now())),
-            Arc::new(GlobalLifecycle::default()),
-        );
-        let expired_view = AuthorityAssemblyView {
-            snapshot: &fixture.snapshot,
-            frame: fixture.frame,
-            prepared: &fixture.prepared,
-            plan: &fixture.plan,
-            victim_raw: &fixture.victim_raw,
-            probe: &expired_probe,
-        };
-        assert!(matches!(
-            fixture.assembler.assemble_view(expired_view),
-            Err(TxAuthorityError::DeadlineNoShape)
-        ));
-        let delayed = assembly_fixture_with_read_delay(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-            Some((2, Duration::from_millis(20))),
-        );
-        let final_checkpoint_probe = CancellationProbe::new(
-            Arc::new(CancellationToken::new(Instant::now() + Duration::from_millis(5))),
-            Arc::new(GlobalLifecycle::default()),
-        );
-        let delayed_view = AuthorityAssemblyView {
-            snapshot: &delayed.snapshot,
-            frame: delayed.frame,
-            prepared: &delayed.prepared,
-            plan: &delayed.plan,
-            victim_raw: &delayed.victim_raw,
-            probe: &final_checkpoint_probe,
-        };
-        assert!(matches!(
-            delayed.assembler.assemble_view(delayed_view),
-            Err(TxAuthorityError::DeadlineNoShape)
-        ));
-        assert!(!delayed.assembler.held.load(Ordering::Acquire));
-        assert!(!production_source().contains("std::env"));
-    }
-    #[cfg(feature = "t4e-handoff")]
-    #[test]
-    fn validated_unsigned_tx_preserves_the_complete_checked_economics_receipt() {
-        let fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let gross = fixture.plan.gross_profit;
-        let authority_block = fixture.plan.block_number;
-        let output =
-            fixture.assembler.assemble_view(fixture.view()).expect("positive-EV checked candidate");
-        let economics = output.economics();
-
-        let retained = gross / U256::from(4);
-        let kickback = gross.checked_sub(retained).expect("kickback within gross");
-        let l2_execution_fee = U256::from(7 * (100 + 10));
-        let total_cost =
-            l2_execution_fee.checked_add(U256::from(13)).expect("bounded test economics");
-        let expected_ev = retained.checked_sub(total_cost).filter(|value| !value.is_zero());
-
-        assert_eq!(economics.gross_profit_wei(), gross);
-        assert_eq!(economics.kickback_wei(), kickback);
-        assert_eq!(economics.retained_value_wei(), retained);
-        assert_eq!(economics.execution_gas_estimate(), U256::from(7));
-        assert_eq!(economics.l2_execution_fee_wei(), l2_execution_fee);
-        assert_eq!(economics.l1_data_fee_wei(), U256::from(13));
-        assert_eq!(economics.total_cost_wei(), total_cost);
-        assert_eq!(economics.expected_ev_wei(), expected_ev);
-        assert_eq!(economics.authority_block(), authority_block);
-        assert_eq!(economics.base_fee_per_gas_wei(), U256::from(100));
-        assert_eq!(economics.victim_priority_fee_per_gas_wei(), U256::from(10));
-        assert_eq!(economics.victim_max_fee_per_gas_wei(), U256::from(110));
-        assert!(economics.admitted());
-    }
-
-    #[test]
-    fn t4b_positive_ev_gate_precedes_execution_and_unsigned_submission_choice() {
-        let mut fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let pinned_priority = u128::MAX - 100;
-        fixture.victim_raw = encoded_victim(CHAIN_ID_BASE, pinned_priority + 100, pinned_priority);
-        let victim_hash = keccak256(&fixture.victim_raw);
-        fixture.frame.victim = victim_hash;
-        fixture.plan.victim = victim_hash;
-        fixture.plan.digest =
-            MeasurementEncoder::digest(&fixture.plan).expect("updated plan digest");
-        fixture.current.store(false, Ordering::Release);
-
-        assert!(
-            matches!(
-                fixture.assembler.assemble_view(fixture.view()),
-                Err(TxAuthorityError::PriorityEconomicsRejected)
-            ),
-            "economics must reject before stale execution authority is consulted"
-        );
-
-        let source = production_source();
-        assert!(
-            source.find("let decision = evaluate").unwrap()
-                < source.find("self.validate_execution").unwrap(),
-            "positive-EV gate must remain before execution/submission choice"
-        );
-        assert!(!source.contains("send_gated"));
-    }
-    #[test]
-    fn t4b_assemble_validated_binds_every_unsigned_field_and_rejects_tamper() {
-        let mut fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let expected_floors = TxAuthorityAssembler::requote(&fixture.view()).expect("exact floors");
-        let output =
-            fixture.assembler.assemble_view(fixture.view()).expect("validated unsigned shape");
-        let observed = output.observation();
-        assert_eq!(observed.frame(), fixture.frame);
-        assert_eq!(observed.victim(), fixture.plan.victim);
-        assert_eq!(observed.plan_digest(), fixture.plan.digest.0);
-        assert_eq!(observed.nonce(), 5);
-        assert_eq!(observed.chain_id(), CHAIN_ID_BASE);
-        assert_eq!(observed.gas_limit(), T4B_EXECUTOR_GAS_LIMIT);
-        assert_eq!(observed.max_fee_per_gas(), 110);
-        assert_eq!(observed.max_priority_fee_per_gas(), 10);
-        assert_eq!(observed.valid_until_block(), fixture.frame.block_number);
-        assert_eq!(
-            observed.hop_protocols(),
-            [fixture.plan.route[0].protocol, fixture.plan.route[1].protocol]
-        );
-        assert_eq!(
-            observed.hop_adapters(),
-            [
-                output.execution.adapters.resolve(fixture.plan.route[0].protocol).address,
-                output.execution.adapters.resolve(fixture.plan.route[1].protocol).address,
-            ]
-        );
-        assert_eq!(
-            observed.hop_runtime_hashes(),
-            [
-                output.execution.adapters.resolve(fixture.plan.route[0].protocol).runtime_hash,
-                output.execution.adapters.resolve(fixture.plan.route[1].protocol).runtime_hash,
-            ]
-        );
-        assert_eq!(output.unsigned_tx.chain_id, CHAIN_ID_BASE);
-        assert_eq!(output.unsigned_tx.nonce, 5);
-        assert_eq!(output.unsigned_tx.to, TxKind::Call(output.execution.executor.address));
-        assert_eq!(output.unsigned_tx.gas_limit, T4B_EXECUTOR_GAS_LIMIT);
-        assert_eq!(output.unsigned_tx.max_fee_per_gas, 110);
-        assert_eq!(output.unsigned_tx.max_priority_fee_per_gas, 10);
-        assert!(output.unsigned_tx.value.is_zero());
-        assert!(output.unsigned_tx.access_list.is_empty());
-        assert_eq!(output.unsigned_tx.signature_hash(), observed.unsigned_signing_hash());
-        assert!(!output.unsigned_tx.input.is_empty());
-        for floor in expected_floors {
-            let encoded = floor.to_be_bytes::<32>();
-            assert!(
-                output
-                    .unsigned_tx
-                    .input
-                    .as_ref()
-                    .windows(encoded.len())
-                    .any(|window| window == encoded)
-            );
-        }
-        let redacted = format!("{output:?}");
-        assert!(!redacted.contains("unsigned_tx"));
-        assert!(!redacted.contains("input:"));
-        drop(output);
-        fixture.frame.predecessor_index += 1;
-        assert!(matches!(
-            fixture.assembler.assemble_view(fixture.view()),
-            Err(TxAuthorityError::PlanOrFrameRejected)
-        ));
-        fixture.frame.predecessor_index -= 1;
-
-        fixture.plan.amount_out += U256::from(1);
-        assert!(matches!(
-            fixture.assembler.assemble_view(fixture.view()),
-            Err(TxAuthorityError::PlanOrFrameRejected)
-        ));
-    }
-
-    #[test]
-    fn t4b_selected_output_contains_no_signature_valid_envelope_or_raw_secret() {
-        let source = production_source();
-        assert!(!source.contains("Signature"));
-        assert!(!source.contains(".into_signed"));
-        assert!(!source.contains("private_key"));
-        assert!(!source.contains("raw_signed"));
-        assert!(!source.contains("serde"));
-        assert!(source.contains("TxEip1559"));
-        assert!(source.contains("MeasurementNonceGuard"));
-        assert_ne!(keccak256(b"unsigned"), B256::ZERO);
-    }
-    #[cfg(feature = "t4d-bridge")]
-    #[test]
-    fn t4d_bridge_consumes_t4b_unsigned_detail_by_value_without_tx_extraction() {
-        let fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let bridge = fixture.bridge();
-        let candidate =
-            bridge.assemble_sealed_for_test(fixture.view()).expect("opaque sealed candidate");
-        assert_eq!(candidate.bindings().nonce(), 5);
-        let redacted = format!("{candidate:?}");
-        assert!(!redacted.contains("unsigned_tx"));
-        assert!(!redacted.contains("input:"));
-        drop(candidate);
-        assert!(
-            bridge.assemble_sealed_for_test(fixture.view()).is_ok(),
-            "dropping the linear candidate must release the capacity-one guard"
-        );
-    }
-
-    #[cfg(feature = "t4e-handoff")]
-    #[test]
-    fn production_handoff_reaches_rejected_ready_busy_and_closed_on_real_candidates() {
-        let unavailable = ProductionSimulationHandoff::unavailable(
-            ProductionSimulationInstallError::ActivationInvariant,
-        );
-        let rejected_fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let rejected_bridge = rejected_fixture.bridge();
-        let rejected = rejected_bridge
-            .assemble_sealed_for_test(rejected_fixture.view())
-            .expect("rejected candidate");
-        assert_eq!(unavailable.try_handoff(rejected), Err(T4eHandoffError::Rejected));
-
-        let installer = ProductionHandoffInstaller::new();
-        let handoff = installer.handoff();
-        let installing_fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let installing_bridge = installing_fixture.bridge();
-        let installing = installing_bridge
-            .assemble_sealed_for_test(installing_fixture.view())
-            .expect("installing candidate");
-        assert_eq!(handoff.try_handoff(installing), Err(T4eHandoffError::Rejected));
-
-        let receiver = installer
-            .publish_ready_for_test(Arc::new(SimulationEntrypoint::ready()))
-            .expect("publish ready");
-        let admitted_fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let admitted_bridge = admitted_fixture.bridge();
-        let admitted = admitted_bridge
-            .assemble_sealed_for_test(admitted_fixture.view())
-            .expect("admitted candidate");
-        assert_eq!(handoff.try_handoff(admitted), Ok(()));
-
-        let busy_fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let busy_bridge = busy_fixture.bridge();
-        let busy =
-            busy_bridge.assemble_sealed_for_test(busy_fixture.view()).expect("busy candidate");
-        assert_eq!(handoff.try_handoff(busy), Err(T4eHandoffError::Busy));
-
-        drop(receiver.receive().expect("ordered admitted candidate"));
-        handoff.close(ProductionHandoffClosed::Disconnected);
-        let closed_fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let closed_bridge = closed_fixture.bridge();
-        let closed = closed_bridge
-            .assemble_sealed_for_test(closed_fixture.view())
-            .expect("closed candidate");
-        assert_eq!(handoff.try_handoff(closed), Err(T4eHandoffError::Closed));
-    }
-
-    #[cfg(feature = "t4d-bridge")]
-    #[test]
-    fn t4d_bindings_preserve_frame_executor_and_route_adapter_identities() {
-        let fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let bridge = fixture.bridge();
-        let candidate =
-            bridge.assemble_sealed_for_test(fixture.view()).expect("opaque sealed candidate");
-        let bindings = candidate.bindings();
-
-        assert_eq!(bindings.frame(), fixture.frame);
-        assert_eq!(bindings.victim(), fixture.plan.victim);
-        assert_eq!(bindings.plan_digest(), fixture.plan.digest.0);
-        assert_eq!(bindings.sender(), fixture.assembler.sender);
-        assert_eq!(bindings.nonce(), 5);
-        assert_eq!(bindings.valid_until_block(), fixture.frame.block_number);
-        assert_eq!(bindings.validated_parent(), fixture.frame.parent_hash);
-        assert_eq!(bindings.executor(), &fixture.assembler.executor);
-        assert_eq!(
-            bindings.route_protocols(),
-            [fixture.plan.route[0].protocol, fixture.plan.route[1].protocol]
-        );
-        let route_adapters = bindings.route_adapters();
-        assert_eq!(
-            route_adapters[0],
-            fixture.assembler.adapters.resolve(fixture.plan.route[0].protocol)
-        );
-        assert_eq!(
-            route_adapters[1],
-            fixture.assembler.adapters.resolve(fixture.plan.route[1].protocol)
-        );
-        assert_ne!(bindings.unsigned_signing_hash(), B256::ZERO);
-    }
-
-    #[cfg(feature = "t4d-bridge")]
-    #[test]
-    fn t4d_aero_variants_preserve_route_order_while_sharing_deployed_identity() {
-        let mut fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        fixture.prepared[0].protocol = ExactProtocol::AerodromeVolatile;
-        fixture.prepared[0].quote = PreparedPoolQuote::constant_product(
-            U256::from(1_000_000_000_000_000_000u128),
-            U256::from(4_000_000_000_000_000_000u128),
-        );
-        fixture.prepared[1].protocol = ExactProtocol::AerodromeStable;
-        fixture.prepared[1].quote = PreparedPoolQuote::stable(
-            U256::from(4_000_000_000_000_000_000u128),
-            U256::from(1_000_000_000_000_000_000u128),
-        );
-        fixture.plan.route[0].protocol = ExactProtocol::AerodromeVolatile;
-        fixture.plan.route[1].protocol = ExactProtocol::AerodromeStable;
-        let first_out = fixture.prepared[0]
-            .quote_exact_in(fixture.plan.route[0].token_in, fixture.plan.amount_in, &fixture.probe)
-            .expect("volatile route quote");
-        fixture.plan.amount_out = fixture.prepared[1]
-            .quote_exact_in(fixture.plan.route[1].token_in, first_out, &fixture.probe)
-            .expect("stable route quote");
-        assert!(fixture.plan.amount_out > fixture.plan.amount_in);
-        fixture.plan.gross_profit = fixture.plan.amount_out - fixture.plan.amount_in;
-        fixture.plan.digest = MeasurementEncoder::digest(&fixture.plan).expect("plan digest");
-
-        let bridge = fixture.bridge();
-        let candidate =
-            bridge.assemble_sealed_for_test(fixture.view()).expect("Aero route candidate");
-        let bindings = candidate.bindings();
-        assert_eq!(
-            bindings.route_protocols(),
-            [ExactProtocol::AerodromeVolatile, ExactProtocol::AerodromeStable]
-        );
-        let route_adapters = bindings.route_adapters();
-        assert_eq!(route_adapters[0], route_adapters[1]);
-        assert_eq!(
-            route_adapters[0],
-            fixture.assembler.adapters.resolve(ExactProtocol::AerodromeVolatile)
-        );
-    }
-
-    #[cfg(feature = "t4d-bridge")]
-    #[test]
-    fn t4d_freshness_revalidates_executor_and_all_adapters_with_owned_provider() {
-        let fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let bridge = fixture.bridge();
-        let candidate =
-            bridge.assemble_sealed_for_test(fixture.view()).expect("opaque sealed candidate");
-        assert!(revalidate_for_test(&fixture, &bridge, &candidate).is_ok());
-        assert!(
-            fixture.probe.token().complete(Instant::now(), true, fixture.probe.global()),
-            "runtime completion should win before the control-task drain"
-        );
-        assert!(
-            revalidate_for_test(&fixture, &bridge, &candidate).is_ok(),
-            "a successfully completed producer lifecycle remains valid for shadow drain"
-        );
-
-        for identity in 0..4 {
-            fixture.stale_code_index.store(identity, Ordering::Release);
-            assert_eq!(
-                revalidate_for_test(&fixture, &bridge, &candidate),
-                Err(bridge::BridgeError::ExecutionIdentityChanged)
-            );
-            fixture.stale_code_index.store(u64::MAX, Ordering::Release);
-        }
-
-        fixture.state_error.store(true, Ordering::Release);
-        assert_eq!(
-            revalidate_for_test(&fixture, &bridge, &candidate),
-            Err(bridge::BridgeError::ExecutionFreshnessUnavailable)
-        );
-        fixture.state_error.store(false, Ordering::Release);
-        fixture.head_flip_after_read.store(true, Ordering::Release);
-        assert_eq!(
-            revalidate_for_test(&fixture, &bridge, &candidate),
-            Err(bridge::BridgeError::ExecutionIdentityChanged)
-        );
-    }
-
-    #[cfg(feature = "t4e-handoff")]
-    #[test]
-    fn t4e_bridge_join_preserves_identity_and_enforces_block_deadline() {
-        let fresh = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let bridge = fresh.bridge();
-        let candidate =
-            bridge.assemble_sealed_for_test(fresh.view()).expect("fresh sealed candidate");
-        let expected = candidate.bindings();
-        let victim = expected.victim();
-        let plan_digest = expected.plan_digest();
-        let executor = expected.executor().address();
-        let deadline = expected.valid_until_block();
-        let signing_hash = expected.unsigned_signing_hash();
-        let campaign_id = base_mev_trader::CampaignId::new([7; 32]);
-        fresh.current_block.store(deadline - 1, Ordering::Release);
-        let provider = fresh.block_provider();
-        let checked = bridge
-            .into_checked_candidate(candidate, campaign_id, &provider)
-            .expect("committed head immediately before deadline");
-        let identity = checked.identity();
-        assert_eq!(identity.campaign_id(), campaign_id);
-        assert_eq!(identity.victim(), victim);
-        assert_eq!(identity.plan_digest(), plan_digest);
-        assert_eq!(identity.amount(), fresh.plan.amount_in);
-        assert_eq!(identity.executor(), executor);
-        assert_eq!(checked.valid_until_block(), deadline);
-        assert_eq!(checked.unsigned_signing_hash(), signing_hash);
-
-        for current_block in [deadline, deadline + 1] {
-            let expired = assembly_fixture(
-                Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-                None,
-            );
-            let expired_bridge = expired.bridge();
-            let expired_candidate = expired_bridge
-                .assemble_sealed_for_test(expired.view())
-                .expect("deadline candidate");
-            expired.current_block.store(current_block, Ordering::Release);
-            assert!(matches!(
-                expired_bridge.into_checked_candidate(
-                    expired_candidate,
-                    campaign_id,
-                    &expired.block_provider(),
-                ),
-                Err(bridge::BridgeError::DeadlineNoHandoff)
-            ));
-        }
-    }
-
-    #[cfg(feature = "t4e-handoff")]
-    #[test]
-    fn t4e_revalidation_fails_closed_when_committed_head_is_unavailable() {
-        let fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let bridge = fixture.bridge();
-        let candidate = bridge.assemble_sealed_for_test(fixture.view()).expect("sealed candidate");
-        fixture.block_unavailable.store(true, Ordering::Release);
-
-        assert_eq!(
-            bridge.revalidate_for_handoff(&candidate, &fixture.block_provider()),
-            Err(bridge::BridgeError::ExecutionFreshnessUnavailable)
-        );
-    }
-
-    #[cfg(feature = "t4d-bridge")]
-    #[test]
-    fn t4d_facade_rejects_cross_installation_candidate_and_provider_reinjection() {
-        let fixture = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let issuing_bridge = fixture.bridge();
-        let other_bridge = fixture.bridge();
-        let candidate = issuing_bridge
-            .assemble_sealed_for_test(fixture.view())
-            .expect("opaque sealed candidate");
-        assert_eq!(
-            revalidate_for_test(&fixture, &other_bridge, &candidate),
-            Err(bridge::BridgeError::CrossInstallation)
-        );
-        drop(candidate);
-
-        #[cfg(feature = "t4e-handoff")]
-        {
-            let candidate = issuing_bridge
-                .assemble_sealed_for_test(fixture.view())
-                .expect("second opaque sealed candidate");
-            assert!(matches!(
-                other_bridge.into_checked_candidate(
-                    candidate,
-                    base_mev_trader::CampaignId::new([9; 32]),
-                    &fixture.block_provider(),
-                ),
-                Err(bridge::BridgeError::CrossInstallation)
-            ));
-        }
-
-        let bridge_ast =
-            syn::parse_file(include_str!("tx_authority/bridge.rs")).expect("bridge source parses");
-        let public_methods = |type_name: &str| {
-            bridge_ast
-                .items
-                .iter()
-                .filter_map(|item| match item {
-                    syn::Item::Impl(item)
-                        if item.trait_.is_none()
-                            && matches!(
-                                item.self_ty.as_ref(),
-                                syn::Type::Path(path)
-                                    if path.path.segments.last().is_some_and(
-                                        |segment| segment.ident == type_name
-                                    )
-                            ) =>
-                    {
-                        Some(item)
-                    }
-                    _ => None,
-                })
-                .flat_map(|item| &item.items)
-                .filter_map(|item| match item {
-                    syn::ImplItem::Fn(method)
-                        if matches!(method.vis, syn::Visibility::Public(_))
-                            && !method.attrs.iter().any(|attr| attr.path().is_ident("cfg")) =>
-                    {
-                        Some(method.sig.ident.to_string())
-                    }
-                    _ => None,
-                })
-                .collect::<BTreeSet<_>>()
-        };
-        assert_eq!(
-            public_methods("InstalledSubmissionBridge"),
-            BTreeSet::from([
-                "assemble_sealed".to_owned(),
-                "base_mainnet".to_owned(),
-                "revalidate_for_handoff".to_owned(),
-            ])
-        );
-        assert_eq!(
-            public_methods("SealedUnsignedCandidate"),
-            BTreeSet::from(["bindings".to_owned()])
-        );
-        assert_eq!(
-            public_methods("AdapterAwareProofBindings"),
-            BTreeSet::from([
-                "executor".to_owned(),
-                "frame".to_owned(),
-                "nonce".to_owned(),
-                "plan_digest".to_owned(),
-                "route_adapters".to_owned(),
-                "route_protocols".to_owned(),
-                "sender".to_owned(),
-                "unsigned_signing_hash".to_owned(),
-                "valid_until_block".to_owned(),
-                "validated_parent".to_owned(),
-                "victim".to_owned(),
-            ])
-        );
-    }
-
-    #[cfg(feature = "t4d-bridge")]
-    #[test]
-    fn t4d_stale_cancelled_or_expired_candidate_emits_no_handoff() {
-        let stale = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let stale_bridge = stale.bridge();
-        let stale_candidate =
-            stale_bridge.assemble_sealed_for_test(stale.view()).expect("stale candidate setup");
-        stale.current.store(false, Ordering::Release);
-        assert_eq!(
-            revalidate_for_test(&stale, &stale_bridge, &stale_candidate),
-            Err(bridge::BridgeError::SnapshotStale)
-        );
-
-        let cancelled = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        let cancelled_bridge = cancelled.bridge();
-        let cancelled_candidate = cancelled_bridge
-            .assemble_sealed_for_test(cancelled.view())
-            .expect("cancelled candidate setup");
-        cancelled.probe.token().request_cancel();
-        assert_eq!(
-            revalidate_for_test(&cancelled, &cancelled_bridge, &cancelled_candidate),
-            Err(bridge::BridgeError::Cancelled)
-        );
-
-        let mut expired = assembly_fixture(
-            Some(PendingAccountNonce::checked(4, 5).expect("pending nonce")),
-            None,
-        );
-        expired.probe = CancellationProbe::new(
-            Arc::new(CancellationToken::new(Instant::now() + Duration::from_millis(50))),
-            Arc::new(GlobalLifecycle::default()),
-        );
-        let expired_bridge = expired.bridge();
-        let expired_candidate = expired_bridge
-            .assemble_sealed_for_test(expired.view())
-            .expect("expiring candidate setup");
-        std::thread::sleep(Duration::from_millis(60));
-        assert_eq!(
-            revalidate_for_test(&expired, &expired_bridge, &expired_candidate),
-            Err(bridge::BridgeError::DeadlineNoHandoff)
-        );
     }
 }

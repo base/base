@@ -21,9 +21,9 @@ pub use port::{
     SnapshotCaptureCoordinator, SnapshotHandle, SnapshotHandleFactory, TraderSnapshotPort,
     TransactionVisitor, VisitControl, VisitSummary,
 };
-#[cfg(feature = "edge-measurement")]
+#[cfg(any(feature = "edge-measurement", feature = "t4b-shadow"))]
 mod measurement_tx;
-#[cfg(feature = "edge-measurement")]
+#[cfg(any(feature = "edge-measurement", feature = "t4b-shadow"))]
 pub use measurement_tx::{
     BackrunMeasurementBindingV1, MEASUREMENT_CHAIN_ID, MEASUREMENT_EXECUTOR,
     MeasurementBindingDeriverV1, MeasurementBindingError, MeasurementBindingInputV1,
@@ -50,6 +50,25 @@ pub use edge_measurement::{
 pub use edge_measurement::{
     BlinkMeasurementLedgerAuthorityAuditSnapshotV1, EdgeMeasurementOwnerAuthorityAuditSnapshotV1,
     EdgeMeasurementOwnerConfigAuditSnapshotV1,
+};
+#[cfg(any(feature = "edge-measurement", feature = "t4b-shadow"))]
+mod priority_economics;
+#[cfg(any(feature = "edge-measurement", feature = "t4b-shadow"))]
+pub use priority_economics::{
+    AdmissionStageV2, AdmissionTerminalV2, AttemptedAuthorityUnavailableReasonV2,
+    AttemptedAuthorityUnavailableV2, AuthorityUnavailableV2, CanonicalL1FeeEvidenceV2,
+    DiscoveryAuthorityUnavailableV2, DiscoveryUnavailableReasonV2, PRIORITY_ECONOMICS_SCHEMA_V2,
+    PreShapeAuthorityUnavailableV2, PreShapeUnavailableReasonV2, PriorityEconomicsCountersV2,
+    PriorityEconomicsLedgerErrorV2, PriorityEconomicsLedgerV2, PriorityEconomicsV1,
+    PriorityEconomicsV2, PriorityEconomicsValidationErrorV2, SelectedRouteEvidenceV2,
+};
+#[cfg(feature = "priority-economics-capture")]
+mod state_fixture_capture;
+#[cfg(feature = "priority-economics-capture")]
+pub use state_fixture_capture::{
+    AccountV1, AuditAccessKindV1, AuditObservedValueV1, AuditPhaseV1, AuditReadV1, CountersV1,
+    ErrorV1, InputV1, OutcomeV1, PublicationGateV1, PublicationOutcomeV1, ReceiptV1,
+    SelectedPartsV1, StateFixtureCaptureConfigV1, StorageV1, WriterV1,
 };
 
 mod frame;

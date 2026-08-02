@@ -1,0 +1,16 @@
+diff --git a/crates/execution/cli/Cargo.toml b/crates/execution/cli/Cargo.toml
+--- a/crates/execution/cli/Cargo.toml
++++ b/crates/execution/cli/Cargo.toml
+@@ -100,11 +100,12 @@
+ priority-economics-capture = [
+ 	"t4b-shadow",
+ 	"base-mev-trader/priority-economics-capture",
+ ]
+ t4b-shadow = [
+ 	"t4a-shadow",
+ 	"base-mev-trader/t4b-shadow",
+ 	"dep:mev-trader-submit",
+ 	"mev-trader-submit/tx-authority",
+ ]
++t4b-mutant-egress = ["t4b-shadow", "dep:reqwest"]
+ t4d-shadow = [

@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "base-mev/synthetic-reachability-setup/v1",
+  "poolUniverse": [
+    "0x1000000000000000000000000000000000000001",
+    "0x1000000000000000000000000000000000000002"
+  ],
+  "pools": [
+    {
+      "address": "0x1000000000000000000000000000000000000001",
+      "fixtureContract": "MockUniV2Pool",
+      "token0": "0x4200000000000000000000000000000000000006",
+      "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "reserve0": "100000000000000000000",
+      "reserve1": "220000000000",
+      "feeBps": 30,
+      "sourceSha256": "f3c83c0a897a06eaacd08dc8417bcc233b09c764ba542e47f18839af0c9ea2ac"
+    },
+    {
+      "address": "0x1000000000000000000000000000000000000002",
+      "fixtureContract": "MockAerodromePool",
+      "token0": "0x4200000000000000000000000000000000000006",
+      "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "reserve0": "100000000000000000000",
+      "reserve1": "180000000000",
+      "feeBps": 5,
+      "sourceSha256": "1dbc8c9728a36d4f73cff37d9fac86e342b52c4c5bb4f28a7f92248e82d13f10"
+    }
+  ],
+  "deployment": {
+    "executor": {
+      "name": "BlinkAtomicExecutor",
+      "address": "0x2000000000000000000000000000000000000002",
+      "runtimeHash": "0x3b93ab9d825e20ad72e5fe4d4999af27533a2ad49faa5213916f0dbeb2636803"
+    },
+    "adapters": [
+      {
+        "name": "UniV2Adapter",
+        "address": "0x00000000000000000000000000000000000000a1",
+        "runtimeHash": "0x75f81d350eea433778932277055e2fb493f9954c307df0c0a7613418aa0ca2ae",
+        "addressClass": "constructor_owned_fixed"
+      },
+      {
+        "name": "AerodromeAdapter",
+        "address": "0x00000000000000000000000000000000000000a2",
+        "runtimeHash": "0x426950cd6948988dc7de442de3a3efcbc588670e29856b4bbd3cac70c374b8f5",
+        "addressClass": "constructor_owned_fixed"
+      }
+    ],
+    "tokens": [
+      {
+        "name": "MockWETH",
+        "address": "0x4200000000000000000000000000000000000006",
+        "constructorResolvedRuntime": true,
+        "sourceSha256": "4859149c223ff1d8613687ef5eb328352e0ae85bdb1675155c4c0291b7240f58"
+      },
+      {
+        "name": "MockERC20",
+        "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "constructorResolvedRuntime": true,
+        "sourceSha256": "66fb0532e3846422ed5c74b9c6100ca128604f8f36de715d170121b54048e09b"
+      }
+    ]
+  },
+  "rawTransactionBytesPersisted": false,
+  "signaturePersisted": false,
+  "privateKeyPersisted": false
+}
