@@ -20,7 +20,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
 use super::{config::ForwarderConfig, metrics::ForwarderMetrics};
-use crate::{ValidatedTransaction, transaction::BundleTransaction};
+use crate::{
+    NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions,
+    transaction::BundleTransaction,
+};
 
 /// Sliding window rate limiter that tracks request timestamps.
 ///
@@ -34,18 +37,13 @@ struct RateLimiter {
 
 impl RateLimiter {
     fn new(max_rps: u32) -> Self {
-        let capacity = if max_rps == 0 { 0 } else { max_rps as usize };
-        Self { timestamps: VecDeque::with_capacity(capacity), max_rps }
+        Self { timestamps: VecDeque::with_capacity(max_rps as usize), max_rps }
     }
 
     fn prune(&mut self, now: Instant) {
         let window = std::time::Duration::from_secs(1);
-        while let Some(&front) = self.timestamps.front() {
-            if now.duration_since(front) >= window {
-                self.timestamps.pop_front();
-            } else {
-                break;
-            }
+        while self.timestamps.front().is_some_and(|front| now.duration_since(*front) >= window) {
+            self.timestamps.pop_front();
         }
     }
 
@@ -64,10 +62,9 @@ impl RateLimiter {
             return None;
         }
 
-        let oldest = self.timestamps.front().expect("non-empty after prune");
-        let window = std::time::Duration::from_secs(1);
-        let elapsed = now.duration_since(*oldest);
-        Some(window.saturating_sub(elapsed))
+        Some(std::time::Duration::from_secs(1).saturating_sub(
+            now.duration_since(*self.timestamps.front().expect("non-empty after prune")),
+        ))
     }
 
     fn record_send(&mut self) {
@@ -84,7 +81,7 @@ impl RateLimiter {
 /// When the sliding window rate limit (`max_rps`) is hit, incoming
 /// transactions buffer and flush as a single batch (capped at
 /// `max_batch_size`) once the window opens.
-pub struct Forwarder<T: PoolTransaction> {
+pub struct Forwarder<T: PoolTransaction, E = NoExtensions> {
     builder_url: url::Url,
     /// Pre-computed URL label shared cheaply across metric emissions.
     url_label: Arc<str>,
@@ -93,18 +90,19 @@ pub struct Forwarder<T: PoolTransaction> {
     config: Arc<ForwarderConfig>,
     cancel: CancellationToken,
     limiter: RateLimiter,
-    buffer: Vec<BufferedTransaction>,
+    buffer: Vec<BufferedTransaction<E>>,
 }
 
-struct BufferedTransaction {
-    transaction: ValidatedTransaction,
+struct BufferedTransaction<E> {
+    transaction: ValidatedTransaction<E>,
     tx_hash: TxHash,
 }
 
-impl<T> Forwarder<T>
+impl<T, E> Forwarder<T, E>
 where
     T: PoolTransaction + BundleTransaction,
     <T as PoolTransaction>::Consensus: Encodable2718,
+    E: ValidatedTransactionExtensions<T>,
 {
     /// Creates a new forwarder for a single builder endpoint.
     pub fn new(
@@ -196,6 +194,7 @@ where
                         max_block_number,
                         min_timestamp,
                         max_timestamp,
+                        extensions: E::extract(&tx),
                     },
                     tx_hash,
                 });
@@ -236,15 +235,14 @@ where
         } else {
             self.buffer.len().min(self.config.max_batch_size)
         };
-        let buffered: Vec<BufferedTransaction> = self.buffer.drain(..batch_size).collect();
+        let buffered: Vec<BufferedTransaction<E>> = self.buffer.drain(..batch_size).collect();
         ForwarderMetrics::buffer_size(Arc::clone(&self.url_label)).set(self.buffer.len() as f64);
 
         if buffered.is_empty() {
             return;
         }
-        let tx_hashes: Vec<TxHash> = buffered.iter().map(|tx| tx.tx_hash).collect();
-        let batch: Vec<ValidatedTransaction> =
-            buffered.into_iter().map(|tx| tx.transaction).collect();
+        let (tx_hashes, batch): (Vec<TxHash>, Vec<ValidatedTransaction<E>>) =
+            buffered.into_iter().map(|tx| (tx.tx_hash, tx.transaction)).unzip();
 
         trace!(
             builder_url = %self.builder_url,
@@ -257,7 +255,7 @@ where
         self.limiter.record_send();
     }
 
-    async fn send_with_retries(&self, batch: Vec<ValidatedTransaction>, tx_hashes: Vec<TxHash>) {
+    async fn send_with_retries(&self, batch: Vec<ValidatedTransaction<E>>, tx_hashes: Vec<TxHash>) {
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
@@ -378,7 +376,7 @@ where
 
     async fn send_batch(
         &self,
-        batch: &[ValidatedTransaction],
+        batch: &[ValidatedTransaction<E>],
     ) -> Result<BatchResponse<'_, ()>, ClientError> {
         let mut request = BatchRequestBuilder::new();
         for tx in batch {
@@ -420,7 +418,7 @@ where
     }
 }
 
-impl<T: PoolTransaction> std::fmt::Debug for Forwarder<T> {
+impl<T: PoolTransaction, E> std::fmt::Debug for Forwarder<T, E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Forwarder")
             .field("builder_url", &self.builder_url)

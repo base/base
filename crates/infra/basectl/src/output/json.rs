@@ -18,6 +18,16 @@ impl JsonOutput {
         Ok(())
     }
 
+    /// Prints `value` as JSON when `json` is set, or a single `OK {message}` line otherwise.
+    pub fn print_or_ok<T: Serialize>(value: &T, message: &str, json: bool) -> Result<()> {
+        if json {
+            return Self::print(value);
+        }
+        let mut stdout = io::stdout().lock();
+        writeln!(stdout, "OK {message}")?;
+        Ok(())
+    }
+
     /// Pretty-prints `value` as JSON to `writer`, terminating with a newline.
     pub fn write<W: Write, T: Serialize>(writer: &mut W, value: &T) -> Result<()> {
         serde_json::to_writer_pretty(&mut *writer, value)?;

@@ -12,8 +12,8 @@ use serde::Serialize;
 use url::Url;
 
 use crate::{
-    JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusCommandError, SyncStatusReport,
-    TimestampJson, fetch_block, fetch_sync_status, format_duration, format_unix_timestamp,
+    JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusReport, TimestampJson, fetch_block,
+    fetch_sync_status, format_duration, format_unix_timestamp,
 };
 
 /// Arguments for reporting combined consensus- and execution-layer sync status.
@@ -58,7 +58,7 @@ impl SyncStatusCommand {
     /// Fetches sync status and renders the selected output format.
     pub async fn run(self, config: MonitoringConfig) -> Result<()> {
         let el_rpc = self.el_rpc.unwrap_or_else(|| config.rpc.clone());
-        let cl_rpc = Self::resolve_cl_rpc(&config, self.cl_rpc.as_ref())?;
+        let cl_rpc = config.resolve_cl_rpc(self.cl_rpc.as_ref(), "sync-status")?;
         // Public tip reference is best-effort — failure marks the row unavailable
         // rather than failing the whole command. Run in parallel with the local
         // sync fetch.
@@ -87,19 +87,6 @@ impl SyncStatusCommand {
             }
         }
         Ok(())
-    }
-
-    /// Resolves the consensus-node RPC URL from the flag or chain config.
-    pub fn resolve_cl_rpc(
-        config: &MonitoringConfig,
-        override_url: Option<&Url>,
-    ) -> Result<Url, SyncStatusCommandError> {
-        if let Some(u) = override_url {
-            return Ok(u.clone());
-        }
-        config.consensus_node_rpc.clone().ok_or_else(|| {
-            SyncStatusCommandError::MissingConsensusRpc { config_name: config.name.clone() }
-        })
     }
 }
 
@@ -405,32 +392,11 @@ impl TipReferenceJson {
 #[cfg(test)]
 mod tests {
     use alloy_eips::BlockNumHash;
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::{B256, U256};
     use base_protocol::{BlockInfo, L2BlockInfo, SyncStatus};
-    use url::Url;
 
-    use super::{SyncStatusCommand, SyncStatusJson};
-    use crate::{MonitoringConfig, SyncStatusCommandError, SyncStatusReport};
-
-    fn test_config(consensus_node_rpc: Option<Url>) -> MonitoringConfig {
-        MonitoringConfig {
-            name: "mainnet".to_string(),
-            rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
-            flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
-            l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
-            consensus_node_rpc,
-            prover_rpc: None,
-            upgrades: None,
-            system_config: Address::ZERO,
-            batcher_address: None,
-            l1_blob_target: 14,
-            conductors: None,
-            discovery: None,
-            validators: None,
-            proofs: None,
-            pods: None,
-        }
-    }
+    use super::SyncStatusJson;
+    use crate::SyncStatusReport;
 
     fn sample_l2(block: u64, ts: u64) -> L2BlockInfo {
         L2BlockInfo::new(
@@ -456,19 +422,6 @@ mod tests {
             finalized_l2: sample_l2(18_425_000, 1_780_260_000),
             local_safe_l2: L2BlockInfo::default(),
         }
-    }
-
-    #[test]
-    fn resolve_cl_rpc_errors_without_config() {
-        let config = test_config(None);
-
-        assert!(matches!(
-            SyncStatusCommand::resolve_cl_rpc(&config, None).unwrap_err(),
-            SyncStatusCommandError::MissingConsensusRpc {
-                config_name,
-                ..
-            } if config_name == "mainnet"
-        ));
     }
 
     #[test]

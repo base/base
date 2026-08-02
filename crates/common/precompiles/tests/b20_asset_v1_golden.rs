@@ -248,6 +248,10 @@ fn resolver_maps_forks_to_versions() {
     assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(AssetVersion::V2));
 }
 
+/// The 8 ERC-8056 scheduled-multiplier selectors were introduced at Cobalt (`AssetV2`). At V1
+/// (Beryl) they are absent from the frozen asset wire surface, so `route` falls through to the
+/// disjoint inherited `IB20` decode and rejects them as `UnknownFunctionSelector`, byte-identically
+/// to the deleted hand-written fork gate.
 #[test]
 fn golden_v2_selectors_unknown_at_v1() {
     let mut s = fresh();
@@ -263,6 +267,24 @@ fn golden_v2_selectors_unknown_at_v1() {
             interfaceId: alloy_primitives::FixedBytes::new([0x01, 0xff, 0xc9, 0xa7]),
         }
         .abi_encode(),
+    ];
+    for calldata in calls {
+        let selector: [u8; 4] = calldata[..4].try_into().unwrap();
+        let err = op(&mut s, ALICE, FakePolicyAccounting::new(), calldata).unwrap_err();
+        assert_eq!(err, BasePrecompileError::UnknownFunctionSelector(selector));
+    }
+}
+
+/// The seize common selectors (`seizeWithMemo` and the `SEIZE_ROLE` / `SEIZE_HOLDER_POLICY`
+/// getters) were introduced at Cobalt (`AssetV2`). At V1 (Beryl) they are absent from the frozen
+/// common `IB20` surface, so `route` rejects them as `UnknownFunctionSelector`.
+#[test]
+fn golden_seize_selectors_unknown_at_v1() {
+    let mut s = fresh();
+    let calls: Vec<Vec<u8>> = vec![
+        IB20::seizeWithMemoCall { from: ALICE, to: BOB, amount: u(1), memo: MEMO }.abi_encode(),
+        IB20::SEIZE_ROLECall {}.abi_encode(),
+        IB20::SEIZE_HOLDER_POLICYCall {}.abi_encode(),
     ];
     for calldata in calls {
         let selector: [u8; 4] = calldata[..4].try_into().unwrap();
@@ -2660,6 +2682,9 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_burn_blocked_reverts_when_not_blocked,
             golden_burn_blocked_unprivileged_requires_role,
         ]),
+        C::seizeWithMemo(_) | C::SEIZE_ROLE(_) | C::SEIZE_HOLDER_POLICY(_) => {
+            covered(&[golden_seize_selectors_unknown_at_v1])
+        }
 
         // pause / config / roles / policy / permit
         C::pause(_) => covered(&[
@@ -2798,9 +2823,9 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_announce_unprivileged_requires_role,
         ]),
 
-        // ERC-8056 scheduled-multiplier surface: introduced at V2 (Cobalt). On the frozen V1
-        // (Beryl) these selectors are version-gated and stay unknown; V2 behavior is cross-
-        // validated by the base-std suite in live-precompile mode.
+        // ERC-8056 scheduled-multiplier surface: introduced at V2 (Cobalt). The frozen V1 (Beryl)
+        // wire surface does not declare these selectors, so they stay unknown at V1; V2 behavior is
+        // cross-validated by the base-std suite in live-precompile mode.
         SC::uiMultiplier(_)
         | SC::newUIMultiplier(_)
         | SC::effectiveAt(_)

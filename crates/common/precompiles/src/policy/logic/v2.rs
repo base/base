@@ -191,11 +191,11 @@ impl PolicyRegistryV2 {
     /// rather than shared with [`super::PolicyRegistryV1`] so that widening the rule for a later
     /// fork cannot reach back and change what that frozen version accepts.
     fn validate_create_policy_inputs(admin: Address, policy_type: PolicyType) -> Result<u8> {
-        if !matches!(policy_type, PolicyType::BLOCKLIST | PolicyType::ALLOWLIST) {
-            return Err(BasePrecompileError::enum_conversion_error());
-        }
         if admin == Address::ZERO {
             return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
+        }
+        if !matches!(policy_type, PolicyType::BLOCKLIST | PolicyType::ALLOWLIST) {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
         }
         Ok(policy_type.as_discriminant())
     }
@@ -568,6 +568,13 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV2 {
             return Ok(Address::ZERO);
         }
         storage.read_pending_admin(policy_id)
+    }
+
+    fn composite_policy_child_ids(&self, storage: &S, policy_id: u64) -> Result<Vec<u64>> {
+        if !Self::is_composite(policy_id) {
+            return Ok(Vec::new());
+        }
+        storage.read_children(policy_id)
     }
 }
 
@@ -1053,14 +1060,24 @@ mod tests {
         assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
     }
 
+    /// Precedence pin for the shared validator on the `createPolicyWithAccounts` path: a composite
+    /// type is rejected with `IncompatiblePolicyType` before the batch-size guard runs, matching
+    /// base-std's `ZeroAddress` -> `IncompatiblePolicyType` -> `BatchSizeTooLarge` order. Composite
+    /// discriminants (2/3) are the only invalid-type values that decode at V2 and reach the logic;
+    /// out-of-range bytes are rejected earlier at ABI decode (see `dispatch` tests).
     #[test]
-    fn create_policy_with_accounts_invalid_policy_type_precedes_batch_size_revert() {
+    fn create_policy_with_accounts_composite_type_precedes_batch_size_revert() {
         let mut rt = initialized();
         let accounts = many_accounts(PolicyRegistryV2::MAX_ACCOUNTS_PER_BATCH + 1);
-        let err = LOGIC
-            .create_policy_with_accounts(&mut rt, ADMIN, PolicyType::__Invalid, accounts)
-            .unwrap_err();
-        assert_eq!(err, BasePrecompileError::enum_conversion_error());
+        for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
+            let err = LOGIC
+                .create_policy_with_accounts(&mut rt, ADMIN, policy_type, accounts.clone())
+                .unwrap_err();
+            assert_eq!(
+                err,
+                BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
+            );
+        }
     }
 
     /// `createPolicy` admits only simple leaf types. `create_composite_policy` is the sole path
@@ -1071,7 +1088,21 @@ mod tests {
         let mut rt = initialized();
         for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
             let err = LOGIC.create_policy(&mut rt, ADMIN, policy_type).unwrap_err();
-            assert_eq!(err, BasePrecompileError::enum_conversion_error());
+            assert_eq!(
+                err,
+                BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {})
+            );
+        }
+    }
+
+    /// Precedence pin: a zero admin is rejected before the composite-type check, matching the
+    /// base-std natspec order (`ZeroAddress` before `IncompatiblePolicyType`).
+    #[test]
+    fn create_policy_zero_admin_precedes_incompatible_type() {
+        let mut rt = initialized();
+        for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
+            let err = LOGIC.create_policy(&mut rt, Address::ZERO, policy_type).unwrap_err();
+            assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
         }
     }
 
@@ -1347,6 +1378,66 @@ mod tests {
         LOGIC.update_composite(&mut rt, id, vec![b, c]).unwrap();
         assert!(!LOGIC.is_authorized(&rt, id, ALICE).unwrap());
         assert!(LOGIC.is_authorized(&rt, id, BOB).unwrap());
+    }
+
+    #[test]
+    fn composite_policy_child_ids_returns_the_set_in_creation_order() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let c = create_allowlist(&mut rt);
+        let id = create_union(&mut rt, vec![c, a, b]);
+        // Order is preserved verbatim; the registry never sorts or dedupes the child set.
+        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), vec![c, a, b]);
+    }
+
+    #[test]
+    fn composite_policy_child_ids_tracks_update_composite() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let c = create_allowlist(&mut rt);
+        let id = create_intersect(&mut rt, vec![a, b]);
+        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), vec![a, b]);
+        set_caller(&mut rt, ADMIN);
+        LOGIC.update_composite(&mut rt, id, vec![b, c]).unwrap();
+        // Full replacement, not a merge — `a` is gone rather than retained as a stale tail.
+        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), vec![b, c]);
+    }
+
+    #[test]
+    fn composite_policy_child_ids_matches_the_emitted_event() {
+        let mut rt = initialized();
+        let a = create_allowlist(&mut rt);
+        let b = create_allowlist(&mut rt);
+        let before = rt.events.len();
+        let id = create_union(&mut rt, vec![a, b]);
+        let emitted =
+            IPolicyRegistry::CompositePolicyUpdated::decode_log_data(&rt.events[before + 2])
+                .unwrap()
+                .childPolicyIds;
+        assert_eq!(LOGIC.composite_policy_child_ids(&rt, id).unwrap(), emitted);
+    }
+
+    #[test]
+    fn composite_policy_child_ids_returns_empty_for_non_composites() {
+        let mut rt = initialized();
+        let simple = create_allowlist(&mut rt);
+        let malformed = PolicyRegistryV2::make_id(9, 1);
+        let uncreated_union = PolicyRegistryV2::make_id(PolicyType::UNION as u8, 999);
+
+        for policy_id in [
+            simple,
+            PolicyRegistryV2::ALWAYS_ALLOW_ID,
+            PolicyRegistryV2::ALWAYS_BLOCK_ID,
+            malformed,
+            uncreated_union,
+        ] {
+            assert!(
+                LOGIC.composite_policy_child_ids(&rt, policy_id).unwrap().is_empty(),
+                "expected an empty child set for policy {policy_id}"
+            );
+        }
     }
 
     #[test]

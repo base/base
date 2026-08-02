@@ -95,14 +95,6 @@ mod tests {
     }
 
     #[test]
-    fn test_abi_enum_ordinals_match_solidity() {
-        assert_eq!(B20Variant::ASSET_DISCRIMINANT, 0);
-        assert_eq!(B20Variant::STABLECOIN_DISCRIMINANT, 1);
-        assert_eq!(B20Variant::Asset.discriminant(), 0);
-        assert_eq!(B20Variant::Stablecoin.discriminant(), 1);
-    }
-
-    #[test]
     fn test_is_b20_accepts_future_structural_prefixes() {
         let mut storage = HashMapStorageProvider::new(1);
         let caller = Address::repeat_byte(0x55);

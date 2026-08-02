@@ -270,10 +270,9 @@ mod tests {
         )
     }
 
-    #[test]
-    fn rejects_empty_txs() {
-        let req = SendBundleRequest {
-            txs: vec![],
+    fn request(txs: Vec<Bytes>) -> SendBundleRequest {
+        SendBundleRequest {
+            txs,
             min_block_number: None,
             max_block_number: None,
             min_timestamp: None,
@@ -281,166 +280,92 @@ mod tests {
             reverting_tx_hashes: None,
             replacement_uuid: None,
             builders: None,
-        };
+        }
+    }
+
+    #[test]
+    fn rejects_empty_txs() {
+        let req = request(vec![]);
         let err = validate_bundle_request(&req, 100).unwrap_err();
         assert!(err.message().contains("exactly 1 transaction"));
     }
 
     #[test]
     fn rejects_multiple_txs() {
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")],
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: None,
-            replacement_uuid: None,
-            builders: None,
-        };
+        let req = request(vec![Bytes::from_static(b"a"), Bytes::from_static(b"b")]);
         let err = validate_bundle_request(&req, 100).unwrap_err();
         assert!(err.message().contains("exactly 1 transaction"));
     }
 
     #[test]
     fn rejects_min_block_number_too_far_ahead() {
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"tx")],
-            min_block_number: Some(200),
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: None,
-            replacement_uuid: None,
-            builders: None,
-        };
+        let mut req = request(vec![Bytes::from_static(b"tx")]);
+        req.min_block_number = Some(200);
         let err = validate_bundle_request(&req, 100).unwrap_err();
         assert!(err.message().contains("too far ahead"));
     }
 
     #[test]
     fn accepts_block_window_within_range() {
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"tx")],
-            min_block_number: Some(120),
-            max_block_number: Some(130),
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: None,
-            replacement_uuid: None,
-            builders: None,
-        };
+        let mut req = request(vec![Bytes::from_static(b"tx")]);
+        req.min_block_number = Some(120);
+        req.max_block_number = Some(130);
         assert!(validate_bundle_request(&req, 100).is_ok());
     }
 
     #[test]
     fn rejects_max_block_number_in_the_past() {
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"tx")],
-            min_block_number: None,
-            max_block_number: Some(50),
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: None,
-            replacement_uuid: None,
-            builders: None,
-        };
+        let mut req = request(vec![Bytes::from_static(b"tx")]);
+        req.max_block_number = Some(50);
         let err = validate_bundle_request(&req, 100).unwrap_err();
         assert!(err.message().contains("in the past"));
     }
 
     #[test]
     fn rejects_min_block_number_after_max_block_number() {
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"tx")],
-            min_block_number: Some(120),
-            max_block_number: Some(110),
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: None,
-            replacement_uuid: None,
-            builders: None,
-        };
+        let mut req = request(vec![Bytes::from_static(b"tx")]);
+        req.min_block_number = Some(120);
+        req.max_block_number = Some(110);
         let err = validate_bundle_request(&req, 100).unwrap_err();
         assert!(err.message().contains("after maxBlockNumber"));
     }
 
     #[test]
     fn rejects_reverting_tx_hashes() {
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"tx")],
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: Some(vec![TxHash::ZERO]),
-            replacement_uuid: None,
-            builders: None,
-        };
+        let mut req = request(vec![Bytes::from_static(b"tx")]);
+        req.reverting_tx_hashes = Some(vec![TxHash::ZERO]);
         let err = validate_bundle_request(&req, 100).unwrap_err();
         assert!(err.message().contains("revertingTxHashes"));
     }
 
     #[test]
     fn rejects_replacement_uuid() {
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"tx")],
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: None,
-            replacement_uuid: Some("abc".to_string()),
-            builders: None,
-        };
+        let mut req = request(vec![Bytes::from_static(b"tx")]);
+        req.replacement_uuid = Some("abc".to_string());
         let err = validate_bundle_request(&req, 100).unwrap_err();
         assert!(err.message().contains("replacementUuid"));
     }
 
     #[test]
     fn rejects_builders() {
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"tx")],
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: None,
-            replacement_uuid: None,
-            builders: Some(vec!["builder1".to_string()]),
-        };
+        let mut req = request(vec![Bytes::from_static(b"tx")]);
+        req.builders = Some(vec!["builder1".to_string()]);
         let err = validate_bundle_request(&req, 100).unwrap_err();
         assert!(err.message().contains("builders"));
     }
 
     #[test]
     fn rejects_min_block_number_in_the_past() {
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"tx")],
-            min_block_number: Some(50),
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: None,
-            replacement_uuid: None,
-            builders: None,
-        };
+        let mut req = request(vec![Bytes::from_static(b"tx")]);
+        req.min_block_number = Some(50);
         let err = validate_bundle_request(&req, 100).unwrap_err();
         assert!(err.message().contains("in the past"));
     }
 
     #[test]
     fn rejects_max_timestamp_in_the_past() {
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"tx")],
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: Some(1),
-            reverting_tx_hashes: None,
-            replacement_uuid: None,
-            builders: None,
-        };
+        let mut req = request(vec![Bytes::from_static(b"tx")]);
+        req.max_timestamp = Some(1);
         let err = validate_bundle_request(&req, 100).unwrap_err();
         assert!(err.message().contains("in the past"));
     }
@@ -448,48 +373,23 @@ mod tests {
     #[test]
     fn rejects_min_after_max_timestamp() {
         let now = crate::transaction::unix_time_millis() as u64;
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"tx")],
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: Some(now + 30_000),
-            max_timestamp: Some(now + 10_000),
-            reverting_tx_hashes: None,
-            replacement_uuid: None,
-            builders: None,
-        };
+        let mut req = request(vec![Bytes::from_static(b"tx")]);
+        req.min_timestamp = Some(now + 30_000);
+        req.max_timestamp = Some(now + 10_000);
         let err = validate_bundle_request(&req, 100).unwrap_err();
         assert!(err.message().contains("after maxTimestamp"));
     }
 
     #[test]
     fn accepts_minimal_valid_request() {
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"tx")],
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: None,
-            replacement_uuid: None,
-            builders: None,
-        };
+        let req = request(vec![Bytes::from_static(b"tx")]);
         assert!(validate_bundle_request(&req, 100).is_ok());
     }
 
     #[tokio::test]
     async fn send_bundle_rejects_empty_bundle() {
         let handler = handler(100);
-        let req = SendBundleRequest {
-            txs: vec![],
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: None,
-            replacement_uuid: None,
-            builders: None,
-        };
+        let req = request(vec![]);
 
         let err = handler.send_bundle(req).await.unwrap_err();
         assert_eq!(err.code(), ErrorCode::InvalidParams.code());
@@ -499,16 +399,8 @@ mod tests {
     #[tokio::test]
     async fn send_bundle_rejects_min_block_number_too_far_ahead() {
         let handler = handler(100);
-        let req = SendBundleRequest {
-            txs: vec![Bytes::from_static(b"tx")],
-            min_block_number: Some(200),
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: None,
-            replacement_uuid: None,
-            builders: None,
-        };
+        let mut req = request(vec![Bytes::from_static(b"tx")]);
+        req.min_block_number = Some(200);
 
         let err = handler.send_bundle(req).await.unwrap_err();
         assert_eq!(err.code(), ErrorCode::InvalidParams.code());

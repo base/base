@@ -1,12 +1,14 @@
 //! CLI arguments and subcommands for basectl.
 
-use clap::{Args, Parser, Subcommand};
+use anyhow::{Result, bail};
+use clap::{CommandFactory, Parser, Subcommand};
 use url::Url;
 
 use super::{
-    BlockCommand, DoctorCommand, P2pCommand, ProofsCommand, SyncStatusCommand, TxpoolCommand,
+    BlockCommand, CommandOutcome, ConductorCommand, DoctorCommand, P2pCommand, ProofsCommand,
+    SequencerCommand, SyncStatusCommand, TxpoolCommand,
 };
-use crate::ViewId;
+use crate::{MonitoringConfig, ViewId, run_app, run_flashblocks_json};
 
 /// Base infrastructure control CLI.
 #[derive(Debug, Parser)]
@@ -51,17 +53,9 @@ pub enum Commands {
     /// Inspect and clear execution-layer txpool contents.
     Txpool(TxpoolCommand),
     /// Inspect and control an HA conductor cluster.
-    Conductor {
-        /// Conductor operation to run.
-        #[command(subcommand)]
-        command: ConductorCommands,
-    },
+    Conductor(ConductorCommand),
     /// Inspect and control sequencer activity on HA conductor nodes.
-    Sequencer {
-        /// Sequencer operation to run.
-        #[command(subcommand)]
-        command: SequencerCommands,
-    },
+    Sequencer(SequencerCommand),
     /// Run read-only diagnostics for a single node.
     Doctor(DoctorCommand),
     /// Request and inspect ZK proofs on the internal prover service.
@@ -69,127 +63,6 @@ pub enum Commands {
     /// Stream flashblocks as JSON lines.
     #[command(after_help = "Use `basectl monitor flashblocks` for the TUI.")]
     Flashblocks,
-}
-
-/// HA conductor inspection and control commands.
-#[derive(Debug, Subcommand)]
-pub enum ConductorCommands {
-    /// Show current cluster status.
-    Status(ConductorStatusArgs),
-    /// Transfer raft leadership away from the current leader or to a target node.
-    TransferLeader(ConductorLeaderArgs),
-    /// Pause op-conductor's control loop on one node.
-    Pause(ConductorNodeActionArgs),
-    /// Resume op-conductor's control loop on one node.
-    Unpause(ConductorNodeActionArgs),
-    /// Pause op-conductor's control loop on every current raft member, falling
-    /// back to the configured conductor list if static membership lookup is unavailable.
-    PauseAll(ConductorClusterActionArgs),
-    /// Resume op-conductor's control loop on every current raft member, falling
-    /// back to the configured conductor list if static membership lookup is unavailable.
-    UnpauseAll(ConductorClusterActionArgs),
-}
-
-/// Flags for `basectl conductor status`.
-#[derive(Debug, Args)]
-pub struct ConductorStatusArgs {
-    /// Emit a structured JSON status summary instead of pretty text.
-    #[arg(long)]
-    pub json: bool,
-}
-
-/// Flags for `basectl conductor transfer-leader`.
-#[derive(Debug, Args)]
-pub struct ConductorLeaderArgs {
-    /// Optional target node name. If omitted, the leader transfers to any available peer.
-    #[arg(value_name = "TARGET")]
-    pub target: Option<String>,
-    /// Skip the interactive confirmation prompt.
-    #[arg(long)]
-    pub yes: bool,
-    /// Emit a structured JSON action outcome instead of pretty text.
-    #[arg(long, requires = "yes")]
-    pub json: bool,
-}
-
-/// Shared flags for single-node destructive `basectl conductor` commands.
-#[derive(Debug, Args)]
-pub struct ConductorNodeActionArgs {
-    /// Conductor node name from the selected config or discovered raft server ID.
-    #[arg(value_name = "NODE")]
-    pub node: String,
-    /// Skip the interactive confirmation prompt.
-    #[arg(long)]
-    pub yes: bool,
-    /// Emit a structured JSON action outcome instead of pretty text.
-    #[arg(long, requires = "yes")]
-    pub json: bool,
-}
-
-/// Shared flags for cluster-wide destructive `basectl conductor` commands.
-#[derive(Debug, Args)]
-pub struct ConductorClusterActionArgs {
-    /// Skip the typed network-name confirmation prompt.
-    #[arg(long)]
-    pub yes: bool,
-    /// Emit a structured JSON action outcome instead of pretty text. Requires `--yes`.
-    #[arg(long, requires = "yes")]
-    pub json: bool,
-}
-
-/// Sequencer inspection and control commands.
-#[derive(Debug, Subcommand)]
-pub enum SequencerCommands {
-    /// Show sequencer state for every node or one selected node.
-    Status(SequencerStatusArgs),
-    /// Start sequencing on one node.
-    Start(SequencerStartArgs),
-    /// Stop sequencing on one node.
-    Stop(SequencerNodeActionArgs),
-}
-
-/// Flags for `basectl sequencer status`.
-#[derive(Debug, Args)]
-pub struct SequencerStatusArgs {
-    /// Optional node name from the selected config or discovered raft server ID.
-    #[arg(value_name = "NODE")]
-    pub node: Option<String>,
-    /// Emit a structured JSON status summary instead of pretty text.
-    #[arg(long)]
-    pub json: bool,
-}
-
-/// Flags for `basectl sequencer start`.
-#[derive(Debug, Args)]
-pub struct SequencerStartArgs {
-    /// Sequencer node name from the selected config or discovered raft server ID.
-    #[arg(value_name = "NODE")]
-    pub node: String,
-    /// Unsafe head hash to pass to `admin_startSequencer`.
-    ///
-    /// If omitted, basectl uses the node's currently observed unsafe L2 hash.
-    #[arg(value_name = "UNSAFE_HEAD")]
-    pub unsafe_head: Option<String>,
-    /// Skip the interactive confirmation prompt.
-    #[arg(long)]
-    pub yes: bool,
-    /// Emit a structured JSON action outcome instead of pretty text.
-    #[arg(long, requires = "yes")]
-    pub json: bool,
-}
-
-/// Flags for `basectl sequencer stop`.
-#[derive(Debug, Args)]
-pub struct SequencerNodeActionArgs {
-    /// Sequencer node name from the selected config or discovered raft server ID.
-    #[arg(value_name = "NODE")]
-    pub node: String,
-    /// Skip the interactive confirmation prompt.
-    #[arg(long)]
-    pub yes: bool,
-    /// Emit a structured JSON action outcome instead of pretty text.
-    #[arg(long, requires = "yes")]
-    pub json: bool,
 }
 
 /// TUI monitor views.
@@ -216,6 +89,54 @@ pub enum MonitorCommands {
     /// Network upgrade activation countdown and history
     #[command(visible_alias = "u")]
     Upgrades,
+}
+
+impl Cli {
+    /// Returns whether this invocation renders to the terminal directly (the
+    /// TUI monitor, or bare `basectl` help), where a stderr tracing
+    /// subscriber would corrupt or pollute the display.
+    pub const fn is_tui(&self) -> bool {
+        matches!(self.command, Some(Commands::Monitor { .. }) | None)
+    }
+
+    /// Runs the parsed command and returns its process outcome.
+    pub async fn run(self) -> Result<CommandOutcome> {
+        let conductor_rpc = self.conductor_rpc;
+        let command = match self.command {
+            Some(Commands::Monitor { command }) => {
+                let view = command.map(|command| command.view_id()).unwrap_or(ViewId::Home);
+                run_app(view, &self.config, conductor_rpc).await?;
+                return Ok(CommandOutcome::Success);
+            }
+            None => {
+                Self::command().print_help()?;
+                return Ok(CommandOutcome::Success);
+            }
+            Some(command) => command,
+        };
+        let config = MonitoringConfig::load(&self.config).await?;
+        match command {
+            Commands::Block(command) => command.run(config).await.map(|()| CommandOutcome::Success),
+            Commands::SyncStatus(command) => {
+                command.run(config).await.map(|()| CommandOutcome::Success)
+            }
+            Commands::P2p(command) => command.run(config).await,
+            Commands::Txpool(command) => {
+                command.run(config).await.map(|()| CommandOutcome::Success)
+            }
+            Commands::Conductor(command) => command.run(config, conductor_rpc).await,
+            Commands::Sequencer(command) => {
+                command.run(config, conductor_rpc).await.map(|()| CommandOutcome::Success)
+            }
+            Commands::Proofs(command) => command.run(config).await,
+            Commands::Doctor(command) => command.run(config).await,
+            Commands::Flashblocks => {
+                run_flashblocks_json(config).await.map(|()| CommandOutcome::Success)
+            }
+            // Handled by the pre-load match above; the compiler cannot narrow the type.
+            Commands::Monitor { .. } => bail!("monitor reached post-load dispatch"),
+        }
+    }
 }
 
 impl MonitorCommands {

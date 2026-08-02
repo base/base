@@ -64,7 +64,8 @@ impl PolicyRegistryStorage<'_> {
                     && (sel == IPolicyRegistry::isAuthorizedCall::SELECTOR
                         || sel == IPolicyRegistry::policyExistsCall::SELECTOR
                         || sel == IPolicyRegistry::policyAdminCall::SELECTOR
-                        || sel == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR) =>
+                        || sel == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR
+                        || sel == IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR) =>
             {
                 self.route(calldata, version, &observer)
             }
@@ -172,6 +173,12 @@ impl PolicyRegistryStorage<'_> {
             C::updateComposite(call) => {
                 logic.update_composite(self, call.policyId, call.childPolicyIds)?;
                 Ok(Bytes::new())
+            }
+            // Introduced in V2 (Cobalt).
+            C::compositePolicyChildIds(call) => {
+                let children = logic.composite_policy_child_ids(self, call.policyId)?;
+                Ok(IPolicyRegistry::compositePolicyChildIdsCall::abi_encode_returns(&children)
+                    .into())
             }
         }
     }

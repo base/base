@@ -66,6 +66,8 @@ sol! {
         function policyExists(uint64 policyId) external view returns (bool);
         function policyAdmin(uint64 policyId) external view returns (address);
         function pendingPolicyAdmin(uint64 policyId) external view returns (address);
+        /// Introduced in V2 (Cobalt). Read function for composite policy child IDs.
+        function compositePolicyChildIds(uint64 policyId) external view returns (uint64[] memory);
     }
 }
 
@@ -117,10 +119,11 @@ mod tests {
             IPolicyRegistry::policyExistsCall::SELECTOR,
             IPolicyRegistry::policyAdminCall::SELECTOR,
             IPolicyRegistry::pendingPolicyAdminCall::SELECTOR,
+            IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR,
         ];
         expected.sort_unstable();
 
-        assert_eq!(selectors.len(), 13);
+        assert_eq!(selectors.len(), 14);
         assert_eq!(selectors, expected);
     }
 }

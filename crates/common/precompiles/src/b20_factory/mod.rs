@@ -1,7 +1,7 @@
 //! `B20Factory` native precompile — creates B-20 tokens at deterministic prefix-encoded addresses.
 
 mod abi;
-pub use abi::IB20Factory;
+pub use abi::{IB20Factory, IB20FactoryV1};
 
 mod dispatch;
 
@@ -18,4 +18,4 @@ mod variant;
 pub use variant::B20Variant;
 
 mod versions;
-pub use versions::{FactoryVersion, FactoryVersions};
+pub use versions::{FactoryAbi, FactoryVersion, FactoryVersions};

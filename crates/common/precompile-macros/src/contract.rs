@@ -40,6 +40,7 @@ impl syn::parse::Parse for ContractConfig {
 }
 
 pub(crate) const RESERVED: &[&str] = &["address", "storage", "msg_sender"];
+const NAMESPACE_METADATA_CONSTANTS: &[&str] = &["NAMESPACE_ID", "NAMESPACE_ROOT"];
 
 #[derive(Debug)]
 pub(crate) struct FieldInfo {
@@ -136,6 +137,21 @@ fn gen_storage(
     address: Option<&Expr>,
     namespace: Option<&NamespaceInfo>,
 ) -> syn::Result<TokenStream> {
+    if namespace.is_some() {
+        for field in fields {
+            let generated_name = packing::const_name(&field.name);
+            if NAMESPACE_METADATA_CONSTANTS.contains(&generated_name.as_str()) {
+                return Err(syn::Error::new_spanned(
+                    &field.name,
+                    format!(
+                        "field `{}` generates storage constant `{generated_name}`, which conflicts with contract namespace metadata",
+                        field.name
+                    ),
+                ));
+            }
+        }
+    }
+
     let allocated_fields = packing::allocate_slots_from(
         fields,
         namespace.map_or(U256::ZERO, |namespace| namespace.root),
@@ -152,4 +168,57 @@ fn gen_storage(
         #constructor
         #storage_trait
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use syn::{DeriveInput, parse_quote};
+
+    use super::gen_output;
+
+    #[test]
+    fn rejects_namespace_id_field_with_contract_namespace() {
+        let input: DeriveInput = parse_quote! {
+            #[namespace("example")]
+            struct Example {
+                namespace_id: u64,
+            }
+        };
+
+        let error = gen_output(input, None).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "field `namespace_id` generates storage constant `NAMESPACE_ID`, which conflicts with contract namespace metadata"
+        );
+    }
+
+    #[test]
+    fn rejects_namespace_root_field_with_contract_namespace() {
+        let input: DeriveInput = parse_quote! {
+            #[namespace("example")]
+            struct Example {
+                namespace_root: u64,
+            }
+        };
+
+        let error = gen_output(input, None).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "field `namespace_root` generates storage constant `NAMESPACE_ROOT`, which conflicts with contract namespace metadata"
+        );
+    }
+
+    #[test]
+    fn accepts_namespace_metadata_field_names_without_contract_namespace() {
+        let input: DeriveInput = parse_quote! {
+            struct Example {
+                namespace_id: u64,
+                namespace_root: u64,
+            }
+        };
+
+        gen_output(input, None).unwrap();
+    }
 }
