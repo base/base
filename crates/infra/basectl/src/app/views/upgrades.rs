@@ -31,7 +31,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use url::Url;
 
 use crate::{
-    ZenithCheck, ZenithCheckStatus, ZenithCheckTarget, ZenithChecker,
+    ZenithCheck, ZenithCheckCursor, ZenithCheckStatus, ZenithCheckTarget, ZenithChecker,
     app::{Action, Resources, View},
     output::COLOR_BASE_BLUE,
     tui::Keybinding,
@@ -288,10 +288,26 @@ const ZENITH_CHECK_NAMES: &[&str] = &[
     "implementation",
     "metadata",
     "metadata_receipt",
-    "header_timestamp_ms",
     "storage_millis_part",
     "getter_millis_part",
     "getter_timestamp_ms",
+    "cadence_200ms",
+    "rpc_eth_getBlockByHash_timestampMs",
+    "rpc_eth_getBlockByNumber_timestampMs",
+    "rpc_eth_getTransactionByHash_blockTimestampMs",
+    "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs",
+    "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs",
+    "rpc_eth_getLogs_blockTimestampMs",
+    "rpc_eth_getFilterChanges_blockTimestampMs",
+    "rpc_eth_getFilterLogs_blockTimestampMs",
+    "rpc_eth_subscribe_logs_blockTimestampMs",
+    "rpc_eth_getTransactionReceipt_logs_blockTimestampMs",
+    "rpc_eth_getBlockReceipts_logs_blockTimestampMs",
+    "rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs",
+    "header_timestamp_ms",
+    "rpc_eth_getHeaderByHash_timestampMs",
+    "rpc_eth_getHeaderByNumber_timestampMs",
+    "rpc_eth_subscribe_newHeads_timestampMs",
 ];
 
 const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
@@ -324,6 +340,28 @@ fn check_display_name(upgrade: &str, name: &'static str) -> &'static str {
         "storage_millis_part" => "BaseTime millis storage",
         "getter_millis_part" => "BaseTime millis getter",
         "getter_timestamp_ms" => "BaseTime timestamp getter",
+        "cadence_200ms" => "BaseTime 200ms cadence",
+        "rpc_eth_getBlockByHash_timestampMs" => "eth_getBlockByHash timestampMs",
+        "rpc_eth_getBlockByNumber_timestampMs" => "eth_getBlockByNumber timestampMs",
+        "rpc_eth_getHeaderByHash_timestampMs" => "eth_getHeaderByHash timestampMs",
+        "rpc_eth_getHeaderByNumber_timestampMs" => "eth_getHeaderByNumber timestampMs",
+        "rpc_eth_subscribe_newHeads_timestampMs" => "eth_subscribe(newHeads)",
+        "rpc_eth_getTransactionByHash_blockTimestampMs" => "eth_getTransactionByHash",
+        "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs" => {
+            "eth_getTransactionByBlockHashAndIndex"
+        }
+        "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs" => {
+            "eth_getTransactionByBlockNumberAndIndex"
+        }
+        "rpc_eth_getLogs_blockTimestampMs" => "eth_getLogs",
+        "rpc_eth_getFilterChanges_blockTimestampMs" => "eth_getFilterChanges",
+        "rpc_eth_getFilterLogs_blockTimestampMs" => "eth_getFilterLogs",
+        "rpc_eth_subscribe_logs_blockTimestampMs" => "eth_subscribe(logs)",
+        "rpc_eth_getTransactionReceipt_logs_blockTimestampMs" => "eth_getTransactionReceipt logs",
+        "rpc_eth_getBlockReceipts_logs_blockTimestampMs" => "eth_getBlockReceipts logs",
+        "rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs" => {
+            "eth_subscribe(transactionReceipts) logs"
+        }
         _ => name,
     }
 }
@@ -378,7 +416,11 @@ enum CheckUpdate {
     /// A check is about to run.
     Starting(String),
     /// A check completed.
-    Completed { name: String, result: CheckResult },
+    Completed {
+        name: String,
+        result: CheckResult,
+    },
+    Cursor(ZenithCheckCursor),
 }
 
 /// State for the checks panel. Tracks streaming results per chain.
@@ -401,18 +443,20 @@ struct ChecksPanel {
     /// auto-refresh so we don't re-issue checks faster than the configured
     /// cadence even if the previous run finished quickly.
     last_run_at: Option<Instant>,
+    cursor: Option<ZenithCheckCursor>,
+    scroll: usize,
 }
 
 impl ChecksPanel {
     fn start(
         &mut self,
         chain_idx: usize,
-        rpc_url: String,
-        consensus_rpc: Option<Url>,
+        endpoints: (String, Option<Url>, Option<Url>),
         expected_chain_id: Option<u64>,
         upgrade: &'static str,
         mode: CheckMode,
     ) {
+        let (rpc_url, consensus_rpc, el_ws_rpc) = endpoints;
         if let Some(h) = self.handle.take() {
             h.abort();
         }
@@ -430,17 +474,21 @@ impl ChecksPanel {
         // target context actually changed.
         if chain_changed || upgrade_changed || mode_changed {
             self.results.clear();
+            self.scroll = 0;
+        }
+        if chain_changed || upgrade_changed {
+            self.cursor = None;
         }
         self.running = true;
         self.rx = Some(rx);
         self.last_run_at = Some(Instant::now());
         self.handle = Some(tokio::spawn(run_checks_streaming(
             upgrade,
-            rpc_url,
-            consensus_rpc,
+            (rpc_url, consensus_rpc, el_ws_rpc),
             expected_chain_id,
             mode,
             tx,
+            self.cursor,
         )));
     }
 
@@ -457,6 +505,8 @@ impl ChecksPanel {
         self.running = false;
         self.rx = None;
         self.last_run_at = None;
+        self.cursor = None;
+        self.scroll = 0;
     }
 
     fn poll(&mut self) {
@@ -472,9 +522,20 @@ impl ChecksPanel {
                     self.current = Some(name);
                 }
                 Ok(CheckUpdate::Completed { name, result }) => {
+                    if result.passed != Some(true)
+                        && self.results.values().all(|result| result.passed == Some(true))
+                    {
+                        self.scroll = self
+                            .upgrade
+                            .and_then(|upgrade| {
+                                check_names_for(upgrade).iter().position(|check| *check == name)
+                            })
+                            .unwrap_or(0);
+                    }
                     self.results.insert(name, result);
                     self.current = None;
                 }
+                Ok(CheckUpdate::Cursor(cursor)) => self.cursor = Some(cursor),
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     self.running = false;
@@ -720,6 +781,7 @@ fn fmt_progress_percent(tenths: u16) -> String {
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "←/→", description: "Switch chain" },
     Keybinding { key: "↑/↓", description: "Select checks upgrade" },
+    Keybinding { key: "PgUp/PgDn", description: "Scroll checks" },
     Keybinding { key: "1-4", description: "Jump to chain" },
     Keybinding { key: "r", description: "Run checks now" },
     Keybinding { key: "a", description: "Toggle auto-refresh" },
@@ -770,6 +832,8 @@ impl UpgradesView {
                 rx: None,
                 handle: None,
                 last_run_at: None,
+                cursor: None,
+                scroll: 0,
             },
             admin_activity: std::array::from_fn(|_| AdminActivityChainState::default()),
             admin_activity_watcher: AdminActivityWatcher::default(),
@@ -795,6 +859,7 @@ impl UpgradesView {
         let chain = &self.chains[self.selected_chain];
         let loaded = chain_name_matches_loaded(chain.display_name, &resources.config.name);
         let consensus_rpc = loaded.then(|| resources.config.consensus_node_rpc.clone()).flatten();
+        let el_ws_rpc = loaded.then(|| resources.config.el_ws_rpc.clone()).flatten();
         let expected_chain_id = if loaded {
             resources.config.chain_id.or(Some(chain.chain_id))
         } else {
@@ -802,8 +867,7 @@ impl UpgradesView {
         };
         self.checks.start(
             self.selected_chain,
-            rpc,
-            consensus_rpc,
+            (rpc, consensus_rpc, el_ws_rpc),
             expected_chain_id,
             upgrade,
             mode,
@@ -911,6 +975,14 @@ impl View for UpgradesView {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.move_selected_check_upgrade(1);
+            }
+            KeyCode::PageUp => self.checks.scroll = self.checks.scroll.saturating_sub(5),
+            KeyCode::PageDown => {
+                let row_count = self
+                    .selected_check_upgrade(now_unix())
+                    .map_or(0, |upgrade| check_names_for(upgrade).len());
+                self.checks.scroll =
+                    self.checks.scroll.saturating_add(5).min(row_count.saturating_sub(1));
             }
             KeyCode::Char(c @ '1'..='4')
                 if (c as usize) - ('1' as usize) < self.chains.len()
@@ -1354,20 +1426,33 @@ fn render_checks_panel(
 
     let passed = panel.results.values().filter(|r| r.passed == Some(true)).count();
     let failed = panel.results.values().filter(|r| r.passed == Some(false)).count();
+    let indeterminate = panel.results.values().filter(|r| r.passed.is_none()).count();
 
     let auto_tag = if auto_refresh { "  · auto" } else { "" };
-    let (title, border_color) = if panel.running {
+    let (title, border_color) = if failed > 0 {
+        (
+            format!(
+                " {hf} Checks ({mode_str})  FAIL {failed}  INDET {indeterminate}  PASS {passed}{auto_tag} "
+            ),
+            Color::Red,
+        )
+    } else if indeterminate > 0 {
+        (
+            format!(" {hf} Checks ({mode_str})  INDET {indeterminate}  PASS {passed}{auto_tag} "),
+            Color::Yellow,
+        )
+    } else if panel.running {
         let spin = spinner[(tick / 2) as usize % spinner.len()];
         (format!(" {hf} Checks ({mode_str})  {spin} running…{auto_tag} "), Color::Yellow)
-    } else if failed > 0 {
-        (format!(" {hf} Checks ({mode_str})  ✓ {passed}  ✗ {failed}{auto_tag} "), Color::Red)
     } else {
         (format!(" {hf} Checks ({mode_str})  ✓ {passed} passed{auto_tag} "), Color::LightGreen)
     };
 
     let rows: Vec<Row<'static>> = check_names
         .iter()
-        .map(|&name| {
+        .copied()
+        .skip(panel.scroll)
+        .map(|name| {
             let display_name = check_display_name(hf, name);
             panel.results.get(name).map_or_else(
                 || {
@@ -1389,7 +1474,7 @@ fn render_checks_panel(
                 },
                 |result| {
                     let (status_str, status_color) = match result.passed {
-                        None => ("SKIP".to_string(), Color::DarkGray),
+                        None => ("INDET".to_string(), Color::Yellow),
                         Some(true) => ("PASS".to_string(), Color::LightGreen),
                         Some(false) => ("FAIL".to_string(), Color::Red),
                     };
@@ -1408,7 +1493,7 @@ fn render_checks_panel(
     let header = Row::new(["CHECK", "", "DETAIL"])
         .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
 
-    let widths = [Constraint::Length(26), Constraint::Length(5), Constraint::Min(8)];
+    let widths = [Constraint::Length(49), Constraint::Length(5), Constraint::Min(8)];
 
     let block = Block::default()
         .title(title)
@@ -2006,15 +2091,24 @@ async fn run_admin_activity_streaming(
 /// Route to the correct upgrade's streaming check function.
 async fn run_checks_streaming(
     upgrade: &'static str,
-    rpc_url: String,
-    consensus_rpc: Option<Url>,
+    endpoints: (String, Option<Url>, Option<Url>),
     expected_chain_id: Option<u64>,
     mode: CheckMode,
     tx: mpsc::Sender<CheckUpdate>,
+    cursor: Option<ZenithCheckCursor>,
 ) {
+    let (rpc_url, consensus_rpc, el_ws_rpc) = endpoints;
     match upgrade {
         "Zenith" => {
-            run_zenith_checks_streaming(rpc_url, consensus_rpc, expected_chain_id, tx).await
+            run_zenith_checks_streaming(
+                rpc_url,
+                consensus_rpc,
+                el_ws_rpc,
+                expected_chain_id,
+                cursor,
+                tx,
+            )
+            .await
         }
         "Beryl" => run_beryl_checks_streaming(rpc_url, mode, tx).await,
         "Azul" => run_azul_checks_streaming(rpc_url, tx).await,
@@ -2044,9 +2138,8 @@ fn zenith_check_result(check: ZenithCheck) -> CheckResult {
     CheckResult {
         passed,
         detail: match check.status {
-            ZenithCheckStatus::Pass => observed,
+            ZenithCheckStatus::Pass | ZenithCheckStatus::Indeterminate => observed,
             ZenithCheckStatus::Fail => format!("expected {expected}; got {observed}"),
-            ZenithCheckStatus::Indeterminate => "not required before Zenith".to_string(),
         },
     }
 }
@@ -2054,7 +2147,9 @@ fn zenith_check_result(check: ZenithCheck) -> CheckResult {
 async fn run_zenith_checks_streaming(
     rpc_url: String,
     consensus_rpc: Option<Url>,
+    el_ws_rpc: Option<Url>,
     expected_chain_id: Option<u64>,
+    cursor: Option<ZenithCheckCursor>,
     tx: mpsc::Sender<CheckUpdate>,
 ) {
     if tx.send(CheckUpdate::Starting("proxy_code_hash".to_string())).await.is_err() {
@@ -2064,7 +2159,13 @@ async fn run_zenith_checks_streaming(
     let report = match (Url::parse(&rpc_url), consensus_rpc) {
         (Ok(el_rpc), Some(cl_rpc)) => {
             ZenithChecker::new(expected_chain_id)
-                .check(&el_rpc, &cl_rpc, ZenithCheckTarget::Latest)
+                .check_since(
+                    &el_rpc,
+                    &cl_rpc,
+                    el_ws_rpc.as_ref(),
+                    ZenithCheckTarget::Latest,
+                    cursor,
+                )
                 .await
         }
         (Err(error), _) => Err(anyhow::anyhow!("invalid execution RPC URL: {error}")),
@@ -2073,6 +2174,7 @@ async fn run_zenith_checks_streaming(
 
     match report {
         Ok(report) => {
+            let cursor = report.cursor;
             let mut checks: HashMap<_, _> =
                 report.checks.into_iter().map(|check| (check.name.clone(), check)).collect();
             for name in ZENITH_CHECK_NAMES {
@@ -2094,22 +2196,22 @@ async fn run_zenith_checks_streaming(
                     return;
                 }
             }
+            if let Some(cursor) = cursor {
+                let _ = tx.send(CheckUpdate::Cursor(cursor)).await;
+            }
         }
         Err(_) => {
             for (index, name) in ZENITH_CHECK_NAMES.iter().enumerate() {
                 if tx.send(CheckUpdate::Starting((*name).to_string())).await.is_err() {
                     return;
                 }
-                let result = if index == 0 {
-                    CheckResult {
-                        passed: Some(false),
-                        detail: "checker unavailable; verify EL and CL connectivity".to_string(),
-                    }
-                } else {
-                    CheckResult {
-                        passed: None,
-                        detail: "skipped because the Zenith checker is unavailable".to_string(),
-                    }
+                let result = CheckResult {
+                    passed: None,
+                    detail: if index == 0 {
+                        "checker unavailable; verify EL and CL connectivity".to_string()
+                    } else {
+                        "checker unavailable".to_string()
+                    },
                 };
                 if tx
                     .send(CheckUpdate::Completed { name: (*name).to_string(), result })
@@ -2943,6 +3045,33 @@ mod tests {
         assert!(!after.contains("snapshot_consistency"));
     }
 
+    #[test]
+    fn zenith_rows_keep_basetime_together_and_headers_last() {
+        assert_eq!(
+            &ZENITH_CHECK_NAMES[..9],
+            &[
+                "proxy_code_hash",
+                "proxy_admin",
+                "implementation",
+                "metadata",
+                "metadata_receipt",
+                "storage_millis_part",
+                "getter_millis_part",
+                "getter_timestamp_ms",
+                "cadence_200ms",
+            ]
+        );
+        assert_eq!(
+            &ZENITH_CHECK_NAMES[ZENITH_CHECK_NAMES.len() - 4..],
+            &[
+                "header_timestamp_ms",
+                "rpc_eth_getHeaderByHash_timestampMs",
+                "rpc_eth_getHeaderByNumber_timestampMs",
+                "rpc_eth_subscribe_newHeads_timestampMs",
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn starting_checks_cancels_the_previous_task() {
         let previous = tokio::spawn(std::future::pending::<()>());
@@ -2951,8 +3080,7 @@ mod tests {
 
         panel.start(
             0,
-            "http://localhost:7545".to_string(),
-            None,
+            ("http://localhost:7545".to_string(), None, None),
             Some(1337),
             "unknown",
             CheckMode::Before,
@@ -2963,11 +3091,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unavailable_zenith_checker_fails_once_and_skips_unevaluated_rows() {
+    async fn unavailable_zenith_checker_marks_all_rows_indeterminate() {
         let (tx, mut rx) = mpsc::channel(64);
 
-        run_zenith_checks_streaming("http://localhost:7545".to_string(), None, Some(1337), tx)
-            .await;
+        run_zenith_checks_streaming(
+            "http://localhost:7545".to_string(),
+            None,
+            None,
+            Some(1337),
+            None,
+            tx,
+        )
+        .await;
 
         let mut started = Vec::new();
         let mut completed = Vec::new();
@@ -2975,14 +3110,15 @@ mod tests {
             match update {
                 CheckUpdate::Starting(name) => started.push(name),
                 CheckUpdate::Completed { name, result } => completed.push((name, result)),
+                CheckUpdate::Cursor(_) => {}
             }
         }
 
         assert!(ZENITH_CHECK_NAMES.iter().all(|name| started.iter().any(|seen| seen == name)));
         assert_eq!(completed.len(), ZENITH_CHECK_NAMES.len());
-        assert_eq!(completed[0].1.passed, Some(false));
+        assert_eq!(completed[0].1.passed, None);
         assert_eq!(completed[0].1.detail, "checker unavailable; verify EL and CL connectivity");
-        assert!(completed[1..].iter().all(|(_, result)| result.passed.is_none()));
+        assert!(completed.iter().all(|(_, result)| result.passed.is_none()));
     }
 
     #[test]

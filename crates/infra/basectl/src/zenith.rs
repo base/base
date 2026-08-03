@@ -1,6 +1,9 @@
 //! Reusable Zenith activation checks over one hash-pinned L2 snapshot.
 
-use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256, keccak256};
@@ -18,8 +21,11 @@ use base_common_evm::BaseTime;
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BaseTimeUpdateTx;
+use futures::{SinkExt, StreamExt};
 use jsonrpsee::http_client::HttpClientBuilder;
 use serde::Serialize;
+use serde_json::{Value, json};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 use url::Url;
 
 alloy_sol_types::sol! {
@@ -34,6 +40,15 @@ pub enum ZenithCheckTarget {
     Latest,
     /// Check the snapshot identified by this block hash.
     BlockHash(B256),
+}
+
+/// Last hash-pinned snapshot checked by a caller that polls `Latest`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ZenithCheckCursor {
+    /// Checked block number.
+    pub block_number: u64,
+    /// Checked block hash.
+    pub block_hash: B256,
 }
 
 /// Overall Zenith health.
@@ -154,6 +169,9 @@ pub struct ZenithReport {
     pub activation: Option<u64>,
     /// Detailed checks.
     pub checks: Vec<ZenithCheck>,
+    /// Safe polling cursor, absent when cadence ancestry was incomplete.
+    #[serde(skip)]
+    pub cursor: Option<ZenithCheckCursor>,
 }
 
 /// Pure observations used to evaluate a Zenith report.
@@ -229,6 +247,28 @@ impl ZenithChecker {
         el_rpc: &Url,
         cl_rpc: &Url,
         target: ZenithCheckTarget,
+    ) -> Result<ZenithReport> {
+        let mut report = self.check_since(el_rpc, cl_rpc, None, target, None).await?;
+        report
+            .checks
+            .retain(|check| !check.name.starts_with("rpc_") && check.name != "cadence_200ms");
+        report.overall =
+            if report.checks.iter().any(|check| check.status == ZenithCheckStatus::Fail) {
+                ZenithStatus::Broken
+            } else {
+                ZenithStatus::Healthy
+            };
+        Ok(report)
+    }
+
+    /// Checks a snapshot, including every cadence edge after `previous` for `Latest`.
+    pub async fn check_since(
+        &self,
+        el_rpc: &Url,
+        cl_rpc: &Url,
+        el_ws_rpc: Option<&Url>,
+        target: ZenithCheckTarget,
+        previous: Option<ZenithCheckCursor>,
     ) -> Result<ZenithReport> {
         let http = alloy_transport_http::reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
@@ -390,7 +430,7 @@ impl ZenithChecker {
             (None, None)
         };
 
-        Ok(ZenithReport::evaluate(ZenithObservations {
+        let mut report = ZenithReport::evaluate(ZenithObservations {
             el_endpoint: el_rpc.to_string(),
             cl_endpoint: cl_rpc.to_string(),
             el_chain_id,
@@ -416,8 +456,827 @@ impl ZenithChecker {
             getter_millis_part_error,
             getter_timestamp_ms,
             getter_timestamp_ms_error,
-        }))
+        });
+        let raw = RawRpc::new(el_rpc)?;
+        let cadence_complete = append_cadence_check(&provider, &mut report, target, previous).await;
+        let cadence_passed = report
+            .checks
+            .iter()
+            .find(|check| check.name == "cadence_200ms")
+            .is_some_and(|check| check.status == ZenithCheckStatus::Pass);
+        report.cursor = (cadence_complete && cadence_passed).then_some(ZenithCheckCursor {
+            block_number: report.block_number,
+            block_hash: report.block_hash,
+        });
+        append_wire_checks(&provider, &raw, &mut report, &full_hash, el_ws_rpc, target).await;
+        let http_checks = report.checks.iter().filter(|check| {
+            check.name.starts_with("rpc_eth_") && !check.name.contains("subscribe")
+        });
+        report.rpc_http = if report.rpc_http == ZenithRpcStatus::Fail
+            || http_checks.clone().any(|check| check.status == ZenithCheckStatus::Fail)
+        {
+            ZenithRpcStatus::Fail
+        } else if http_checks.clone().any(|check| check.status == ZenithCheckStatus::Indeterminate)
+        {
+            ZenithRpcStatus::Degraded
+        } else {
+            ZenithRpcStatus::Pass
+        };
+        report.overall = if report
+            .checks
+            .iter()
+            .any(|check| check.status == ZenithCheckStatus::Fail)
+        {
+            ZenithStatus::Broken
+        } else if report.checks.iter().any(|check| check.status == ZenithCheckStatus::Indeterminate)
+        {
+            ZenithStatus::Indeterminate
+        } else {
+            ZenithStatus::Healthy
+        };
+        Ok(report)
     }
+}
+
+#[derive(Debug)]
+enum RawOutcome {
+    Value(Value),
+    MethodError(String),
+    Unavailable(String),
+}
+
+struct RawRpc {
+    endpoint: Url,
+    client: alloy_transport_http::reqwest::Client,
+}
+
+impl RawRpc {
+    fn new(endpoint: &Url) -> Result<Self> {
+        Ok(Self {
+            endpoint: endpoint.clone(),
+            client: alloy_transport_http::reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()?,
+        })
+    }
+
+    async fn call(&self, method: &str, params: Value) -> RawOutcome {
+        let response = match self
+            .client
+            .post(self.endpoint.clone())
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(_) => {
+                return RawOutcome::Unavailable("transport, authentication, or timeout".into());
+            }
+        };
+        let body: Value = match response.json().await {
+            Ok(body) => body,
+            Err(_) => return RawOutcome::Unavailable("invalid RPC response".into()),
+        };
+        if let Some(error) = body.get("error") {
+            return RawOutcome::MethodError(
+                error.get("message").and_then(Value::as_str).unwrap_or("RPC error").to_string(),
+            );
+        }
+        body.get("result").map_or_else(
+            || RawOutcome::Unavailable("RPC response has no result".into()),
+            |value| RawOutcome::Value(value.clone()),
+        )
+    }
+}
+
+fn add_observation(
+    report: &mut ZenithReport,
+    name: &str,
+    status: ZenithCheckStatus,
+    expected: &str,
+    observed: impl ToString,
+) {
+    report.checks.push(ZenithCheck {
+        name: name.into(),
+        status,
+        endpoint: String::new(),
+        block_number: report.block_number,
+        block_hash: report.block_hash,
+        expected: expected.into(),
+        observed: observed.to_string(),
+        remediation: "upgrade or configure the execution RPC".into(),
+    });
+}
+
+fn check_wire_object(
+    report: &mut ZenithReport,
+    name: &str,
+    outcome: RawOutcome,
+    field: &str,
+    expected_timestamp: u64,
+    identity: &[(&str, String)],
+) {
+    match outcome {
+        RawOutcome::Value(value) if value.is_null() => add_observation(
+            report,
+            name,
+            ZenithCheckStatus::Fail,
+            field,
+            "known snapshot object missing",
+        ),
+        RawOutcome::Value(value) => {
+            let object = value.as_object();
+            let timestamp = object
+                .and_then(|object| object.get(field))
+                .and_then(Value::as_str)
+                .and_then(parse_quantity);
+            let identity_matches = identity.iter().all(|(field, expected)| {
+                let actual = object.and_then(|object| object.get(*field)).and_then(Value::as_str);
+                if field.to_ascii_lowercase().contains("hash") {
+                    expected.parse::<B256>().ok().is_some_and(|expected| {
+                        actual.and_then(|value| value.parse::<B256>().ok()) == Some(expected)
+                    })
+                } else {
+                    parse_quantity(expected)
+                        .is_some_and(|expected| actual.and_then(parse_quantity) == Some(expected))
+                }
+            });
+            let pass = timestamp == Some(expected_timestamp) && identity_matches;
+            add_observation(
+                report,
+                name,
+                if pass { ZenithCheckStatus::Pass } else { ZenithCheckStatus::Fail },
+                &format!("{field}=0x{expected_timestamp:x} with pinned identity"),
+                timestamp.map_or_else(
+                    || format!("missing or invalid {field}"),
+                    |v| {
+                        if identity_matches {
+                            format!("0x{v:x}")
+                        } else {
+                            "identity mismatch".into()
+                        }
+                    },
+                ),
+            );
+        }
+        RawOutcome::MethodError(error) => {
+            add_observation(report, name, ZenithCheckStatus::Fail, field, error)
+        }
+        RawOutcome::Unavailable(error) => {
+            add_observation(report, name, ZenithCheckStatus::Indeterminate, field, error)
+        }
+    }
+}
+
+fn check_wire_logs(
+    report: &mut ZenithReport,
+    name: &str,
+    outcome: RawOutcome,
+    expected_timestamp: u64,
+    block_hash: &str,
+) {
+    match outcome {
+        RawOutcome::Value(value) => {
+            let Some(logs) = value.as_array() else {
+                add_observation(
+                    report,
+                    name,
+                    ZenithCheckStatus::Fail,
+                    "log array",
+                    "invalid result",
+                );
+                return;
+            };
+            if logs.is_empty() {
+                add_observation(
+                    report,
+                    name,
+                    ZenithCheckStatus::Indeterminate,
+                    "at least one pinned log",
+                    "no logs in pinned block",
+                );
+                return;
+            }
+            let valid = logs.iter().all(|log| {
+                block_hash.parse::<B256>().ok().is_some_and(|expected| {
+                    log.get("blockHash")
+                        .and_then(Value::as_str)
+                        .and_then(|value| value.parse::<B256>().ok())
+                        == Some(expected)
+                }) && log.get("blockTimestampMs").and_then(Value::as_str).and_then(parse_quantity)
+                    == Some(expected_timestamp)
+            });
+            add_observation(
+                report,
+                name,
+                if valid { ZenithCheckStatus::Pass } else { ZenithCheckStatus::Fail },
+                "blockTimestampMs with pinned blockHash",
+                if valid { "conformant" } else { "missing, wrong, or mismatched log field" },
+            );
+        }
+        RawOutcome::MethodError(error) => {
+            add_observation(report, name, ZenithCheckStatus::Fail, "blockTimestampMs", error)
+        }
+        RawOutcome::Unavailable(error) => add_observation(
+            report,
+            name,
+            ZenithCheckStatus::Indeterminate,
+            "blockTimestampMs",
+            error,
+        ),
+    }
+}
+
+fn parse_quantity(value: &str) -> Option<u64> {
+    let digits = value.strip_prefix("0x")?;
+    if digits.is_empty() || (digits.len() > 1 && digits.starts_with('0')) {
+        return None;
+    }
+    u64::from_str_radix(digits, 16).ok()
+}
+
+fn cadence_status(parent: Option<u64>, child: Option<u64>, contiguous: bool) -> ZenithCheckStatus {
+    match (parent, child, contiguous) {
+        (Some(parent), Some(child), true) if parent.checked_add(200) == Some(child) => {
+            ZenithCheckStatus::Pass
+        }
+        (Some(_), Some(_), true) => ZenithCheckStatus::Fail,
+        _ => ZenithCheckStatus::Indeterminate,
+    }
+}
+
+async fn append_cadence_check<P: Provider<Base>>(
+    provider: &P,
+    report: &mut ZenithReport,
+    target: ZenithCheckTarget,
+    previous: Option<ZenithCheckCursor>,
+) -> bool {
+    if previous.is_some_and(|cursor| {
+        matches!(target, ZenithCheckTarget::Latest)
+            && cursor.block_number == report.block_number
+            && cursor.block_hash == report.block_hash
+    }) {
+        add_observation(
+            report,
+            "cadence_200ms",
+            ZenithCheckStatus::Pass,
+            "every canonical parent-child edge is exactly +200ms",
+            "no new blocks",
+        );
+        return true;
+    }
+    let stop = match (target, previous) {
+        (ZenithCheckTarget::Latest, Some(cursor)) => Some(cursor),
+        _ => None,
+    };
+    let mut hash = report.block_hash;
+    let mut child_ms = None;
+    let mut status = ZenithCheckStatus::Pass;
+    let mut complete = false;
+    let mut checked_edge = false;
+    let mut child_number = None;
+    let mut replacement_cursor = false;
+    let mut visited = HashSet::new();
+    loop {
+        if !visited.insert(hash) {
+            status = ZenithCheckStatus::Indeterminate;
+            break;
+        }
+        let block = match provider.get_block(BlockId::Hash(hash.into())).full().await {
+            Ok(Some(block)) => block,
+            _ => {
+                status = ZenithCheckStatus::Indeterminate;
+                break;
+            }
+        };
+        if block.header.hash != hash {
+            status = ZenithCheckStatus::Indeterminate;
+            break;
+        }
+        let envelopes: Vec<_> =
+            block.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect();
+        let millis = BaseTimeUpdateTx::extract_from_transactions(&envelopes, block.header.number)
+            .ok()
+            .map(|metadata| {
+                block.header.timestamp * 1_000 + u64::from(metadata.timestamp_millis_part())
+            });
+        let active = report.activation.is_some_and(|at| block.header.timestamp >= at);
+        if active && millis.is_none() {
+            status = ZenithCheckStatus::Fail;
+        }
+        let mut edge_checked = false;
+        if active && child_ms.is_some() {
+            if child_number != block.header.number.checked_add(1) {
+                status = ZenithCheckStatus::Indeterminate;
+                break;
+            }
+            edge_checked = true;
+            checked_edge = true;
+            let edge = cadence_status(millis, child_ms, true);
+            if edge != ZenithCheckStatus::Pass && status != ZenithCheckStatus::Fail {
+                status = edge;
+            }
+        }
+        if stop.is_some_and(|cursor| {
+            cursor.block_number == block.header.number && cursor.block_hash == block.header.hash
+        }) {
+            complete = true;
+            break;
+        }
+        if replacement_cursor && edge_checked {
+            complete = true;
+            break;
+        }
+        if stop.is_some_and(|cursor| block.header.number == cursor.block_number) {
+            replacement_cursor = true;
+        } else if stop.is_some_and(|cursor| block.header.number < cursor.block_number) {
+            status = ZenithCheckStatus::Indeterminate;
+            break;
+        }
+        if stop.is_none() && checked_edge {
+            complete = true;
+            break;
+        }
+        if !active {
+            if stop.is_some() {
+                status = ZenithCheckStatus::Indeterminate;
+            } else {
+                complete = true;
+            }
+            break;
+        }
+        child_ms = millis;
+        child_number = Some(block.header.number);
+        hash = block.header.parent_hash;
+    }
+    if status == ZenithCheckStatus::Pass && !checked_edge {
+        status = ZenithCheckStatus::Indeterminate;
+    }
+    add_observation(
+        report,
+        "cadence_200ms",
+        status,
+        "every canonical parent-child edge is exactly +200ms",
+        match status {
+            ZenithCheckStatus::Pass => "exact +200ms progression",
+            ZenithCheckStatus::Fail => "wrong timestamp gap",
+            ZenithCheckStatus::Indeterminate => "activation boundary, missing range, or reorg",
+        },
+    );
+    complete
+}
+
+async fn append_wire_checks<P: Provider<Base>>(
+    provider: &P,
+    raw: &RawRpc,
+    report: &mut ZenithReport,
+    block: &<Base as Network>::BlockResponse,
+    el_ws_rpc: Option<&Url>,
+    target: ZenithCheckTarget,
+) {
+    let transactions =
+        block.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect::<Vec<_>>();
+    let Some(timestamp_ms) =
+        BaseTimeUpdateTx::extract_from_transactions(&transactions, report.block_number)
+            .ok()
+            .map(|metadata| report.timestamp * 1_000 + u64::from(metadata.timestamp_millis_part()))
+    else {
+        for name in [
+            "rpc_eth_getBlockByHash_timestampMs",
+            "rpc_eth_getBlockByNumber_timestampMs",
+            "rpc_eth_getHeaderByHash_timestampMs",
+            "rpc_eth_getHeaderByNumber_timestampMs",
+            "rpc_eth_getTransactionByHash_blockTimestampMs",
+            "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs",
+            "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs",
+            "rpc_eth_getLogs_blockTimestampMs",
+            "rpc_eth_getFilterChanges_blockTimestampMs",
+            "rpc_eth_getFilterLogs_blockTimestampMs",
+            "rpc_eth_getTransactionReceipt_logs_blockTimestampMs",
+            "rpc_eth_getBlockReceipts_logs_blockTimestampMs",
+        ] {
+            add_observation(
+                report,
+                name,
+                ZenithCheckStatus::Indeterminate,
+                "canonical metadata timestamp",
+                "canonical BaseTime metadata unavailable",
+            );
+        }
+        for name in [
+            "rpc_eth_subscribe_newHeads_timestampMs",
+            "rpc_eth_subscribe_logs_blockTimestampMs",
+            "rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs",
+        ] {
+            add_observation(
+                report,
+                name,
+                ZenithCheckStatus::Indeterminate,
+                "live event",
+                "canonical BaseTime metadata unavailable",
+            );
+        }
+        return;
+    };
+    let hash = report.block_hash.to_string();
+    let number = format!("0x{:x}", report.block_number);
+    for (name, method, params) in [
+        ("rpc_eth_getBlockByHash_timestampMs", "eth_getBlockByHash", json!([hash, false])),
+        ("rpc_eth_getBlockByNumber_timestampMs", "eth_getBlockByNumber", json!([number, false])),
+        ("rpc_eth_getHeaderByHash_timestampMs", "eth_getHeaderByHash", json!([hash])),
+        ("rpc_eth_getHeaderByNumber_timestampMs", "eth_getHeaderByNumber", json!([number])),
+    ] {
+        let identity = [("hash", hash.clone()), ("number", number.clone())];
+        check_wire_object(
+            report,
+            name,
+            raw.call(method, params).await,
+            "timestampMs",
+            timestamp_ms,
+            &identity,
+        );
+    }
+    let Some(tx) = block.transactions.txns().nth(1) else { return };
+    let tx_hash = tx.tx_hash().to_string();
+    let tx_index = "0x1".to_string();
+    for (name, method, params) in [
+        (
+            "rpc_eth_getTransactionByHash_blockTimestampMs",
+            "eth_getTransactionByHash",
+            json!([tx_hash]),
+        ),
+        (
+            "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs",
+            "eth_getTransactionByBlockHashAndIndex",
+            json!([hash, tx_index]),
+        ),
+        (
+            "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs",
+            "eth_getTransactionByBlockNumberAndIndex",
+            json!([number, tx_index]),
+        ),
+    ] {
+        let identity = [
+            ("hash", tx_hash.clone()),
+            ("blockHash", hash.clone()),
+            ("blockNumber", number.clone()),
+            ("transactionIndex", tx_index.clone()),
+        ];
+        check_wire_object(
+            report,
+            name,
+            raw.call(method, params).await,
+            "blockTimestampMs",
+            timestamp_ms,
+            &identity,
+        );
+    }
+    let filter = json!({"blockHash": hash});
+    check_wire_logs(
+        report,
+        "rpc_eth_getLogs_blockTimestampMs",
+        raw.call("eth_getLogs", json!([filter])).await,
+        timestamp_ms,
+        &hash,
+    );
+    let filter_id = raw.call("eth_newFilter", json!([filter])).await;
+    match filter_id {
+        RawOutcome::Value(id) if id.as_str().and_then(parse_quantity).is_some() => {
+            check_wire_logs(
+                report,
+                "rpc_eth_getFilterChanges_blockTimestampMs",
+                raw.call("eth_getFilterChanges", json!([id])).await,
+                timestamp_ms,
+                &hash,
+            );
+            check_wire_logs(
+                report,
+                "rpc_eth_getFilterLogs_blockTimestampMs",
+                raw.call("eth_getFilterLogs", json!([id])).await,
+                timestamp_ms,
+                &hash,
+            );
+            let cleanup = raw.call("eth_uninstallFilter", json!([id])).await;
+            if !matches!(cleanup, RawOutcome::Value(Value::Bool(true))) {
+                for name in [
+                    "rpc_eth_getFilterChanges_blockTimestampMs",
+                    "rpc_eth_getFilterLogs_blockTimestampMs",
+                ] {
+                    if let Some(check) =
+                        report.checks.iter_mut().rev().find(|check| check.name == name)
+                    {
+                        check.status = ZenithCheckStatus::Fail;
+                        check.observed = "filter cleanup failed".into();
+                    }
+                }
+            }
+        }
+        outcome => {
+            for name in [
+                "rpc_eth_getFilterChanges_blockTimestampMs",
+                "rpc_eth_getFilterLogs_blockTimestampMs",
+            ] {
+                let (status, reason) = match &outcome {
+                    RawOutcome::MethodError(error) => (ZenithCheckStatus::Fail, error.as_str()),
+                    RawOutcome::Unavailable(error) => {
+                        (ZenithCheckStatus::Indeterminate, error.as_str())
+                    }
+                    RawOutcome::Value(_) => (ZenithCheckStatus::Fail, "invalid filter identifier"),
+                };
+                add_observation(report, name, status, "blockHash filter", reason);
+            }
+        }
+    }
+    let receipt = raw.call("eth_getTransactionReceipt", json!([tx_hash])).await;
+    let receipt_logs = match receipt {
+        RawOutcome::Value(value)
+            if value.get("transactionHash").and_then(Value::as_str) == Some(tx_hash.as_str())
+                && value.get("blockHash").and_then(Value::as_str) == Some(hash.as_str())
+                && value.get("blockNumber").and_then(Value::as_str).and_then(parse_quantity)
+                    == Some(report.block_number) =>
+        {
+            RawOutcome::Value(value.get("logs").cloned().unwrap_or(Value::Null))
+        }
+        RawOutcome::Value(_) => RawOutcome::Value(Value::Null),
+        other => other,
+    };
+    check_wire_logs(
+        report,
+        "rpc_eth_getTransactionReceipt_logs_blockTimestampMs",
+        receipt_logs,
+        timestamp_ms,
+        &hash,
+    );
+    let receipts = raw.call("eth_getBlockReceipts", json!([hash])).await;
+    let nested = match receipts {
+        RawOutcome::Value(value) => match value.as_array() {
+            Some(receipts)
+                if receipts.iter().all(|receipt| {
+                    receipt.get("blockHash").and_then(Value::as_str) == Some(hash.as_str())
+                        && receipt.get("logs").is_some_and(Value::is_array)
+                }) =>
+            {
+                RawOutcome::Value(Value::Array(
+                    receipts
+                        .iter()
+                        .flat_map(|receipt| {
+                            receipt.get("logs").and_then(Value::as_array).unwrap().iter().cloned()
+                        })
+                        .collect(),
+                ))
+            }
+            _ => RawOutcome::Value(Value::Null),
+        },
+        other => other,
+    };
+    check_wire_logs(
+        report,
+        "rpc_eth_getBlockReceipts_logs_blockTimestampMs",
+        nested,
+        timestamp_ms,
+        &hash,
+    );
+    append_subscription_checks(provider, report, el_ws_rpc, target).await;
+}
+
+async fn subscription_event_result<P: Provider<Base>>(
+    provider: &P,
+    kind: &str,
+    notification: &Value,
+) -> (ZenithCheckStatus, String) {
+    let Some(result) = notification.pointer("/params/result") else {
+        return (ZenithCheckStatus::Fail, "notification has no result".into());
+    };
+    let block_hash = match kind {
+        "newHeads" => result.get("hash").and_then(Value::as_str),
+        "logs" => result.get("blockHash").and_then(Value::as_str),
+        "transactionReceipts" => result
+            .as_array()
+            .and_then(|receipts| receipts.first())
+            .or(Some(result))
+            .and_then(|receipt| receipt.get("blockHash"))
+            .and_then(Value::as_str),
+        _ => None,
+    };
+    let Some(hash) = block_hash.and_then(|hash| hash.parse::<B256>().ok()) else {
+        return (ZenithCheckStatus::Fail, "event has no valid block hash".into());
+    };
+    let block = match provider.get_block(BlockId::Hash(hash.into())).full().await {
+        Ok(Some(block)) if block.header.hash == hash => block,
+        _ => return (ZenithCheckStatus::Indeterminate, "event block unavailable".into()),
+    };
+    let transactions =
+        block.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect::<Vec<_>>();
+    let Some(expected) =
+        BaseTimeUpdateTx::extract_from_transactions(&transactions, block.header.number).ok().map(
+            |metadata| block.header.timestamp * 1_000 + u64::from(metadata.timestamp_millis_part()),
+        )
+    else {
+        return (ZenithCheckStatus::Indeterminate, "event block metadata unavailable".into());
+    };
+    if kind == "transactionReceipts" {
+        let Some(receipts) = result.as_array().filter(|receipts| !receipts.is_empty()) else {
+            return (ZenithCheckStatus::Fail, "malformed receipt event".into());
+        };
+        if !receipts.iter().all(|receipt| {
+            receipt
+                .get("blockHash")
+                .and_then(Value::as_str)
+                .and_then(|value| value.parse::<B256>().ok())
+                == Some(hash)
+                && receipt.get("blockNumber").and_then(Value::as_str).and_then(parse_quantity)
+                    == Some(block.header.number)
+                && receipt.get("logs").is_some_and(Value::is_array)
+        }) {
+            return (ZenithCheckStatus::Fail, "malformed or mismatched receipt event".into());
+        }
+        let logs: Vec<_> = receipts
+            .iter()
+            .filter_map(|receipt| receipt.get("logs").and_then(Value::as_array))
+            .flatten()
+            .collect();
+        if logs.is_empty() {
+            return (ZenithCheckStatus::Indeterminate, "receipt event has no logs".into());
+        }
+        let valid = logs.iter().all(|log| {
+            log.get("blockHash")
+                .and_then(Value::as_str)
+                .and_then(|value| value.parse::<B256>().ok())
+                == Some(hash)
+                && log.get("blockTimestampMs").and_then(Value::as_str).and_then(parse_quantity)
+                    == Some(expected)
+        });
+        return (
+            if valid { ZenithCheckStatus::Pass } else { ZenithCheckStatus::Fail },
+            if valid {
+                format!("matching event timestamp 0x{expected:x}")
+            } else {
+                "missing or incorrect event timestamp".into()
+            },
+        );
+    }
+    let valid = match kind {
+        "newHeads" => {
+            result.get("timestampMs").and_then(Value::as_str).and_then(parse_quantity)
+                == Some(expected)
+        }
+        "logs" => {
+            result.get("blockTimestampMs").and_then(Value::as_str).and_then(parse_quantity)
+                == Some(expected)
+        }
+        _ => false,
+    };
+    (
+        if valid { ZenithCheckStatus::Pass } else { ZenithCheckStatus::Fail },
+        if valid {
+            format!("matching event timestamp 0x{expected:x}")
+        } else {
+            "missing or incorrect event timestamp".into()
+        },
+    )
+}
+
+async fn append_subscription_checks<P: Provider<Base>>(
+    provider: &P,
+    report: &mut ZenithReport,
+    el_ws_rpc: Option<&Url>,
+    target: ZenithCheckTarget,
+) {
+    const SUBSCRIPTIONS: [(&str, &str); 3] = [
+        ("rpc_eth_subscribe_newHeads_timestampMs", "newHeads"),
+        ("rpc_eth_subscribe_logs_blockTimestampMs", "logs"),
+        ("rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs", "transactionReceipts"),
+    ];
+    let Some(el_ws_rpc) = el_ws_rpc else {
+        for (name, _) in SUBSCRIPTIONS {
+            add_observation(
+                report,
+                name,
+                ZenithCheckStatus::Indeterminate,
+                "matching WebSocket event",
+                "standard execution WebSocket RPC is not configured",
+            );
+        }
+        return;
+    };
+    if matches!(target, ZenithCheckTarget::BlockHash(_)) {
+        for (name, _) in SUBSCRIPTIONS {
+            add_observation(
+                report,
+                name,
+                ZenithCheckStatus::Indeterminate,
+                "matching WebSocket event",
+                "historical block subscriptions cannot be replayed",
+            );
+        }
+        return;
+    }
+
+    let connection =
+        tokio::time::timeout(Duration::from_secs(2), connect_async(el_ws_rpc.as_str())).await;
+    let Ok(Ok((mut socket, _))) = connection else {
+        for (name, _) in SUBSCRIPTIONS {
+            add_observation(
+                report,
+                name,
+                ZenithCheckStatus::Indeterminate,
+                "accepted WebSocket subscription",
+                "WebSocket connection unavailable",
+            );
+        }
+        return;
+    };
+
+    let mut pending = HashMap::new();
+    for (index, (name, kind)) in SUBSCRIPTIONS.into_iter().enumerate() {
+        let id = index + 1;
+        pending.insert(id as u64, (name, kind));
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "eth_subscribe",
+            "params": [kind],
+        });
+        if socket.send(Message::Text(request.to_string().into())).await.is_err() {
+            break;
+        }
+    }
+    let mut subscriptions: HashMap<String, (&str, &str)> = HashMap::new();
+    let mut completed = HashSet::new();
+    let mut queued = HashSet::new();
+    let mut notifications = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
+    while completed.len() + queued.len() < SUBSCRIPTIONS.len() {
+        let message = match tokio::time::timeout_at(deadline, socket.next()).await {
+            Ok(Some(Ok(message))) => message,
+            _ => break,
+        };
+        if !message.is_text() {
+            if message.is_close() {
+                break;
+            }
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(message.to_text().unwrap_or_default()) else {
+            continue;
+        };
+        if let Some(id) = value.get("id").and_then(Value::as_u64) {
+            let Some((name, kind)) = pending.remove(&id) else { continue };
+            if let Some(error) = value.get("error") {
+                add_observation(
+                    report,
+                    name,
+                    ZenithCheckStatus::Fail,
+                    "accepted WebSocket subscription",
+                    error.get("message").and_then(Value::as_str).unwrap_or("subscription rejected"),
+                );
+                completed.insert(name);
+            } else if let Some(subscription) = value.get("result").and_then(Value::as_str) {
+                subscriptions.insert(subscription.to_string(), (name, kind));
+            } else {
+                add_observation(
+                    report,
+                    name,
+                    ZenithCheckStatus::Fail,
+                    "subscription identifier",
+                    "malformed subscription response",
+                );
+                completed.insert(name);
+            }
+            continue;
+        }
+        let Some(subscription) = value.pointer("/params/subscription").and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let Some(&(name, kind)) = subscriptions.get(subscription) else { continue };
+        if completed.contains(name) || queued.contains(name) {
+            continue;
+        }
+        queued.insert(name);
+        notifications.push((name, kind, value));
+    }
+    for (name, kind, value) in notifications {
+        let (status, observed) = subscription_event_result(provider, kind, &value).await;
+        add_observation(report, name, status, "matching timestamped WebSocket event", observed);
+        completed.insert(name);
+    }
+    for (name, _) in SUBSCRIPTIONS {
+        if !completed.contains(name) {
+            add_observation(
+                report,
+                name,
+                ZenithCheckStatus::Indeterminate,
+                "matching timestamped WebSocket event",
+                if pending.values().any(|(pending_name, _)| *pending_name == name) {
+                    "subscription response unavailable"
+                } else {
+                    "subscription accepted; no correlated event observed"
+                },
+            );
+        }
+    }
+    let _ = socket.close(None).await;
 }
 
 impl ZenithReport {
@@ -661,6 +1520,7 @@ impl ZenithReport {
             timestamp_ms: input.timestamp_ms,
             activation: input.activation,
             checks,
+            cursor: None,
         }
     }
 }
@@ -835,8 +1695,11 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(hash_reads.len(), 2);
-        assert!(hash_reads.iter().all(|request| request["params"][0] == json!(hash)));
+        assert_eq!(hash_reads.len(), 3);
+        assert_eq!(
+            hash_reads.iter().filter(|request| request["params"][0] == json!(hash)).count(),
+            3
+        );
         let number_reads: Vec<_> = requests
             .iter()
             .filter(|request| {
@@ -846,8 +1709,7 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(number_reads.len(), 2);
-        assert!(number_reads.iter().all(|request| request["params"][0] == "0xa"));
+        assert!(number_reads.iter().filter(|request| request["params"][0] == "0xa").count() >= 2);
         for request in requests.iter().filter(|request| {
             matches!(request["method"].as_str(), Some("eth_getCode" | "eth_getStorageAt"))
         }) {
@@ -978,5 +1840,58 @@ mod tests {
         assert_eq!(value["metadata"], "fail");
         assert!(value["checks"][0]["endpoint"].is_string());
         assert!(value["checks"][0]["blockHash"].is_string());
+    }
+
+    #[test]
+    fn cadence_classifies_boundary_exact_gap_and_wrong_gap() {
+        assert_eq!(cadence_status(None, Some(1_000), true), ZenithCheckStatus::Indeterminate);
+        assert_eq!(cadence_status(Some(1_000), Some(1_200), true), ZenithCheckStatus::Pass);
+        assert_eq!(cadence_status(Some(1_000), Some(1_400), true), ZenithCheckStatus::Fail);
+        assert_eq!(
+            cadence_status(Some(1_000), Some(1_200), false),
+            ZenithCheckStatus::Indeterminate
+        );
+    }
+
+    #[test]
+    fn raw_object_classifies_field_and_method_evidence() {
+        let mut report = ZenithReport::evaluate(observations(Some(10), 10));
+        let identity = [("hash", B256::repeat_byte(0x42).to_string())];
+        check_wire_object(
+            &mut report,
+            "pass",
+            RawOutcome::Value(json!({"hash":B256::repeat_byte(0x42),"timestampMs":"0x2710"})),
+            "timestampMs",
+            10_000,
+            &identity,
+        );
+        check_wire_object(
+            &mut report,
+            "missing",
+            RawOutcome::Value(json!({"hash":B256::repeat_byte(0x42)})),
+            "timestampMs",
+            10_000,
+            &identity,
+        );
+        check_wire_object(
+            &mut report,
+            "method",
+            RawOutcome::MethodError("method not found".into()),
+            "timestampMs",
+            10_000,
+            &identity,
+        );
+        check_wire_logs(&mut report, "empty", RawOutcome::Value(json!([])), 10_000, "0x42");
+
+        let statuses: Vec<_> = report.checks.iter().rev().take(4).map(|c| c.status).collect();
+        assert_eq!(
+            statuses,
+            vec![
+                ZenithCheckStatus::Indeterminate,
+                ZenithCheckStatus::Fail,
+                ZenithCheckStatus::Fail,
+                ZenithCheckStatus::Pass,
+            ]
+        );
     }
 }
