@@ -62,6 +62,7 @@ impl ProposerService {
         info!(
             dry_run = config.dry_run,
             direct_prover_rpc = config.direct_prover_rpc,
+            allow_non_finalized = config.allow_non_finalized,
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
             game_type = config.game_type,
@@ -237,6 +238,7 @@ impl ProposerService {
             block_interval,
             intermediate_block_interval,
             game_type: config.game_type,
+            allow_non_finalized: config.allow_non_finalized,
             proposer_address: proposer_address.unwrap_or_default(),
             anchor_state_registry_address: config.anchor_state_registry_addr,
         };
@@ -259,6 +261,7 @@ impl ProposerService {
                 block_interval: driver_config.block_interval,
                 intermediate_block_interval: driver_config.intermediate_block_interval,
                 game_type: driver_config.game_type,
+                allow_non_finalized: driver_config.allow_non_finalized,
                 anchor_state_registry_address: driver_config.anchor_state_registry_address,
                 scan_concurrency: driver_config.recovery_scan_concurrency,
             },

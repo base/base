@@ -51,6 +51,10 @@ pub struct ProposerArgs {
     #[arg(long = "dry-run", env = cli_env!("DRY_RUN"))]
     pub dry_run: bool,
 
+    /// Allow proposals based on non-finalized L1 data.
+    #[arg(long = "allow-non-finalized", env = cli_env!("ALLOW_NON_FINALIZED"))]
+    pub allow_non_finalized: bool,
+
     /// URL of the prover RPC endpoint.
     #[arg(long = "prover-rpc", env = cli_env!("PROVER_RPC"))]
     pub prover_rpc: Url,
@@ -213,6 +217,7 @@ mod tests {
         assert_eq!(cli.proposer.prover_timeout, Duration::from_secs(70 * 60));
         assert_eq!(cli.proposer.poll_interval, Duration::from_secs(12));
         assert_eq!(cli.proposer.rpc_timeout, Duration::from_secs(30));
+        assert!(!cli.proposer.allow_non_finalized);
 
         assert!(!cli.admin.admin_enabled);
         assert_eq!(cli.admin.admin_addr, std::net::Ipv4Addr::LOCALHOST);

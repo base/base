@@ -22,6 +22,8 @@ pub struct ProofRecoveryConfig {
     pub intermediate_block_interval: u64,
     /// Dispute game type used for proposals.
     pub game_type: u32,
+    /// Whether recovery may use the safe head rather than finalized head.
+    pub allow_non_finalized: bool,
     /// Address used as the parent sentinel when the anchor has no game.
     pub anchor_state_registry_address: Address,
     /// Maximum number of concurrent rollup RPC calls during root fetching.
@@ -35,6 +37,20 @@ pub struct ProofRecoveryCache {
     pub game_count: u64,
     /// Recovered onchain state from the walk.
     pub state: RecoveredState,
+}
+
+/// Recovered proposer state and the L2 heads observed while planning a tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofRecoveryPlan {
+    /// Recovered onchain state to use as the proposal parent cursor.
+    pub recovered: RecoveredState,
+    /// Highest L2 block the proposer may target for this tick.
+    ///
+    /// This is the finalized head by default, or the safe head when
+    /// `allow_non_finalized` is enabled.
+    pub proposal_head: u64,
+    /// Latest finalized L2 block observed in rollup sync status.
+    pub finalized_head: u64,
 }
 
 /// Recovers the latest submitted proposer state from L1 and rollup RPCs.
@@ -62,14 +78,14 @@ impl ProofRecovery {
         Self { config, rollup_client, anchor_registry, factory_client }
     }
 
-    /// Attempts to recover onchain state and fetch the finalized head.
+    /// Attempts to recover onchain state and fetch the proposal head.
     ///
     /// Returns `None` if either step fails (logged as warnings), allowing the
     /// caller to fall through to the poll-tick sleep.
     pub async fn try_recover_and_plan(
         &self,
         cache: &mut Option<ProofRecoveryCache>,
-    ) -> Option<(RecoveredState, u64)> {
+    ) -> Option<ProofRecoveryPlan> {
         let sync_status = match self.rollup_client.sync_status().await {
             Ok(status) => status,
             Err(e) => {
@@ -77,7 +93,24 @@ impl ProofRecovery {
                 return None;
             }
         };
+        let (proposal_head_source, proposal_head) = if self.config.allow_non_finalized {
+            ("safe", sync_status.safe_l2.number)
+        } else {
+            ("finalized", sync_status.finalized_l2.number)
+        };
         let finalized_head = sync_status.finalized_l2.number;
+
+        if let Some(cached) = cache.as_ref()
+            && cached.state.l2_block_number > proposal_head
+        {
+            debug!(
+                proposal_head,
+                proposal_head_source,
+                cached_block = cached.state.l2_block_number,
+                "Cached recovery state is above proposal head, invalidating cache"
+            );
+            *cache = None;
+        }
 
         if let Some(cached) = cache.as_ref() {
             let Some(next_proposal_block) =
@@ -91,18 +124,23 @@ impl ProofRecovery {
                 return None;
             };
 
-            if finalized_head < next_proposal_block {
+            if proposal_head < next_proposal_block {
                 debug!(
-                    finalized_head,
+                    proposal_head,
+                    proposal_head_source,
                     cached_block = cached.state.l2_block_number,
                     next_proposal_block,
-                    "Finalized head below next proposal target, skipping recovery"
+                    "Proposal head below next proposal target, skipping recovery"
                 );
-                return Some((cached.state, finalized_head));
+                return Some(ProofRecoveryPlan {
+                    recovered: cached.state,
+                    proposal_head,
+                    finalized_head,
+                });
             }
         }
 
-        let state = match self.recover_latest_state(cache, finalized_head).await {
+        let state = match self.recover_latest_state(cache, proposal_head).await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to recover onchain state, retrying next tick");
@@ -110,15 +148,15 @@ impl ProofRecovery {
             }
         };
 
-        Some((state, finalized_head))
+        Some(ProofRecoveryPlan { recovered: state, proposal_head, finalized_head })
     }
 
     /// Recovers the latest onchain state using a deterministic forward walk
-    /// from the anchor root, bounded by `finalized_head`.
+    /// from the anchor root, bounded by `proposal_head`.
     pub async fn recover_latest_state(
         &self,
         cache: &mut Option<ProofRecoveryCache>,
-        finalized_head: u64,
+        proposal_head: u64,
     ) -> Result<RecoveredState, ProposerError> {
         let count = self
             .factory_client
@@ -134,17 +172,19 @@ impl ProofRecovery {
             .await
             .map_err(|e| ProposerError::Contract(format!("anchor_snapshot failed: {e}")))?;
         let anchor = anchor_snapshot.anchor_root;
-        let usable_cache =
-            cache.as_ref().filter(|cached| anchor.l2_block_number <= cached.state.l2_block_number);
+        let usable_cache = cache.as_ref().filter(|cached| {
+            anchor.l2_block_number <= cached.state.l2_block_number
+                && cached.state.l2_block_number <= proposal_head
+        });
 
-        // Trust the cache only when no new games appeared AND finalized has not
+        // Trust the cache only when no new games appeared AND the proposal head has not
         // advanced far enough to admit the next already-existing game. The walk
-        // is bounded by finalized_head, so a rising finalized head can extend the
+        // is bounded by proposal_head, so a rising proposal head can extend the
         // cursor over games that already existed (game_count unchanged).
         if let Some(cached) = usable_cache
             && cached.game_count == count
             && ProofTarget::next_block(cached.state.l2_block_number, self.config.block_interval)
-                .is_none_or(|next_block| next_block > finalized_head)
+                .is_none_or(|next_block| next_block > proposal_head)
         {
             debug!(game_count = count, "No changes since last recovery, returning cached state");
             return Ok(cached.state);
@@ -175,27 +215,27 @@ impl ProofRecovery {
             }
         };
 
-        let state = self.forward_walk(&start, finalized_head).await?;
+        let state = self.forward_walk(&start, proposal_head).await?;
 
         *cache = Some(ProofRecoveryCache { game_count: count, state });
         Ok(state)
     }
 
     /// Performs a deterministic forward walk to find the latest verified game
-    /// using UUID-based `games()` lookups, stopping at `finalized_head` so the
-    /// recovered cursor never anchors on a non-finalized game.
+    /// using UUID-based `games()` lookups, stopping at `proposal_head` so the
+    /// recovered cursor never anchors beyond the configured proposal head.
     async fn forward_walk(
         &self,
         start: &RecoveredState,
-        finalized_head: u64,
+        proposal_head: u64,
     ) -> Result<RecoveredState, ProposerError> {
         let mut state = *start;
 
         while let Some(expected_block) =
             ProofTarget::next_block(state.l2_block_number, self.config.block_interval)
         {
-            if expected_block > finalized_head {
-                debug!(expected_block, finalized_head, "Reached finalized head, ending walk");
+            if expected_block > proposal_head {
+                debug!(expected_block, proposal_head, "Reached proposal head, ending walk");
                 break;
             }
 
@@ -388,6 +428,7 @@ mod tests {
                 block_interval,
                 intermediate_block_interval,
                 game_type: TEST_GAME_TYPE,
+                allow_non_finalized: false,
                 anchor_state_registry_address: Address::ZERO,
                 scan_concurrency: 8,
             },
@@ -531,6 +572,66 @@ mod tests {
             "cursor advances when finalized rises, without any new game"
         );
         assert_eq!(state.parent_address, proxy_addr(3));
+    }
+
+    #[tokio::test]
+    async fn test_try_recover_and_plan_uses_finalized_head_by_default() {
+        let (factory, output_roots) = game_chain(4);
+        let mut sync_status = test_sync_status(TEST_BLOCK_INTERVAL * 4, B256::ZERO);
+        sync_status.finalized_l2.number = TEST_BLOCK_INTERVAL * 2;
+        let recovery = ProofRecovery::new(
+            ProofRecoveryConfig {
+                block_interval: TEST_BLOCK_INTERVAL,
+                intermediate_block_interval: TEST_BLOCK_INTERVAL,
+                game_type: TEST_GAME_TYPE,
+                allow_non_finalized: false,
+                anchor_state_registry_address: Address::ZERO,
+                scan_concurrency: 8,
+            },
+            Arc::new(MockRollupClient { sync_status, output_roots, max_safe_block: None }),
+            Arc::new(MockAnchorStateRegistry {
+                anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+                anchor_game: Address::ZERO,
+            }),
+            Arc::new(factory),
+        );
+
+        let mut cache = None;
+        let plan = recovery.try_recover_and_plan(&mut cache).await.unwrap();
+
+        assert_eq!(plan.recovered.l2_block_number, TEST_BLOCK_INTERVAL * 2);
+        assert_eq!(plan.proposal_head, TEST_BLOCK_INTERVAL * 2);
+        assert_eq!(plan.finalized_head, TEST_BLOCK_INTERVAL * 2);
+    }
+
+    #[tokio::test]
+    async fn test_try_recover_and_plan_uses_safe_head_when_non_finalized_allowed() {
+        let (factory, output_roots) = game_chain(4);
+        let mut sync_status = test_sync_status(TEST_BLOCK_INTERVAL * 4, B256::ZERO);
+        sync_status.finalized_l2.number = TEST_BLOCK_INTERVAL * 2;
+        let recovery = ProofRecovery::new(
+            ProofRecoveryConfig {
+                block_interval: TEST_BLOCK_INTERVAL,
+                intermediate_block_interval: TEST_BLOCK_INTERVAL,
+                game_type: TEST_GAME_TYPE,
+                allow_non_finalized: true,
+                anchor_state_registry_address: Address::ZERO,
+                scan_concurrency: 8,
+            },
+            Arc::new(MockRollupClient { sync_status, output_roots, max_safe_block: None }),
+            Arc::new(MockAnchorStateRegistry {
+                anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+                anchor_game: Address::ZERO,
+            }),
+            Arc::new(factory),
+        );
+
+        let mut cache = None;
+        let plan = recovery.try_recover_and_plan(&mut cache).await.unwrap();
+
+        assert_eq!(plan.recovered.l2_block_number, TEST_BLOCK_INTERVAL * 4);
+        assert_eq!(plan.proposal_head, TEST_BLOCK_INTERVAL * 4);
+        assert_eq!(plan.finalized_head, TEST_BLOCK_INTERVAL * 2);
     }
 
     #[tokio::test]

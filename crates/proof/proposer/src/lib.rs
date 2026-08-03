@@ -27,7 +27,9 @@ mod proof_target;
 pub use proof_target::ProofTarget;
 
 mod proof_recovery;
-pub use proof_recovery::{ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig};
+pub use proof_recovery::{
+    ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig, ProofRecoveryPlan,
+};
 
 mod proof_collector;
 pub use proof_collector::ProofCollector;
