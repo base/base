@@ -16,8 +16,8 @@ use base_consensus_node::{EngineConfig, FollowNode, FollowNodeConfig, NodeMode, 
 use base_consensus_providers::L1RpcProvider;
 use base_consensus_rpc::RpcBuilder;
 use base_upgrade_signal::{
-    UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer, UpgradeSignalMonitor,
-    UpgradeSignalRefresher, UpgradeSignalRuntimeApplier,
+    UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
+    UpgradeSignalRuntimeApplier,
 };
 use eyre::{Result, WrapErr};
 use tokio::{
@@ -190,7 +190,7 @@ impl InProcessFollowConsensus {
                 )
             });
             let mut monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus);
-            let mut poll_interval = interval(UpgradeSignalDefaults::POLL_INTERVAL);
+            let mut poll_interval = interval(signal_config.l1_block_tag.poll_interval());
             poll_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
             loop {

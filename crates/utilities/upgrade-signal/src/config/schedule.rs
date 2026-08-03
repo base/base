@@ -1,11 +1,10 @@
 use alloy_primitives::{Address, U256};
 use alloy_provider::RootProvider;
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_common_genesis::UpgradeActivationSink;
 use tracing::info;
 use url::Url;
 
-use super::{UpgradeSignalDefaults, UpgradeSignalMode};
+use super::{UpgradeSignalBlockTag, UpgradeSignalDefaults, UpgradeSignalMode};
 use crate::{
     contract::AlloyUpgradeSignalReader,
     error::UpgradeSignalError,
@@ -21,8 +20,8 @@ pub struct UpgradeSignalConfig {
     pub contract_address: Address,
     /// Local schedule mutation mode.
     pub mode: UpgradeSignalMode,
-    /// L1 block tag used to read the contract.
-    pub l1_block_tag: BlockNumberOrTag,
+    /// L1 block tag used to read the contract. Also selects the live read poll interval.
+    pub l1_block_tag: UpgradeSignalBlockTag,
     /// Node protocol version supported by this binary.
     pub node_protocol_version: U256,
 }
@@ -33,7 +32,7 @@ impl UpgradeSignalConfig {
         Self {
             contract_address,
             mode: UpgradeSignalMode::MetricsOnly,
-            l1_block_tag: BlockNumberOrTag::Finalized,
+            l1_block_tag: UpgradeSignalBlockTag::Finalized,
             node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
         }
     }
@@ -41,7 +40,7 @@ impl UpgradeSignalConfig {
     /// Creates a contract reader using this configuration's contract address and block tag.
     pub const fn reader(&self, l1_provider: RootProvider) -> AlloyUpgradeSignalReader {
         AlloyUpgradeSignalReader::new(l1_provider, self.contract_address)
-            .with_block_tag(self.l1_block_tag)
+            .with_block_tag(self.l1_block_tag.block_number_or_tag())
     }
 
     /// Returns true if this node supports the minimum protocol version attached to `signal`.
@@ -197,7 +196,6 @@ impl UpgradeSignalConfig {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, address};
-    use alloy_rpc_types_eth::BlockNumberOrTag;
     use base_common_genesis::BaseUpgrade;
     use rstest::rstest;
 
@@ -219,7 +217,7 @@ mod tests {
     fn defaults_to_finalized_block_tag() {
         let config = UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
 
-        assert_eq!(config.l1_block_tag, BlockNumberOrTag::Finalized);
+        assert_eq!(config.l1_block_tag, UpgradeSignalBlockTag::Finalized);
     }
 
     fn signal(protocol_version: U256) -> UpgradeSignal {
