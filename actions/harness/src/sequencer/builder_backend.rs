@@ -14,7 +14,6 @@
 //! block hashes and state roots aligned with `rollup_config.genesis.l2.hash`.
 
 use std::{
-    collections::HashMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -60,8 +59,6 @@ pub struct BuilderBackedEngineClient {
     rollup_config: Arc<RollupConfig>,
     /// The current unsafe head, advanced as payloads are inserted. Initialized to genesis.
     head: Mutex<L2BlockInfo>,
-    /// Execution requests returned with sealed payloads, keyed by block hash until import.
-    pending_execution_requests: Mutex<HashMap<alloy_primitives::B256, Requests>>,
     /// Registry of produced block hashes / state roots, shared with the harness for
     /// sequencer↔verifier state-root cross-checks.
     block_registry: SharedBlockHashRegistry,
@@ -97,7 +94,6 @@ impl BuilderBackedEngineClient {
             block_time,
             rollup_config,
             head: Mutex::new(genesis_head),
-            pending_execution_requests: Mutex::new(HashMap::new()),
             block_registry: SharedBlockHashRegistry::new(),
         })
     }
@@ -212,21 +208,22 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
             .get_payload(payload_id)
             .await
             .map_err(|e| EngineClientError::ResponseError(e.to_string()))?;
-        let execution_requests = Requests::new(envelope.execution_requests);
-        let payload = BaseExecutionPayloadEnvelope {
+        // The production builder never populates EIP-7685 requests for Base blocks (L2 has no
+        // EL-triggered requests), and post-Isthmus header validation independently rejects any
+        // non-empty `requests_hash`, so a non-empty response here would indicate the builder or
+        // chain config changed in a way this backend doesn't yet support.
+        if !envelope.execution_requests.is_empty() {
+            return Err(EngineClientError::ResponseError(
+                "builder backend does not support non-empty EIP-7685 execution requests".into(),
+            ));
+        }
+        Ok(BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: attributes
                 .attributes
                 .payload_attributes
                 .parent_beacon_block_root,
             execution_payload: BaseExecutionPayload::V4(envelope.execution_payload),
-        };
-        let block = ExecutionPayloadConverter::block_from_envelope(&payload)
-            .map_err(|e| EngineClientError::ResponseError(e.to_string()))?;
-        self.pending_execution_requests
-            .lock()
-            .expect("pending execution requests lock")
-            .insert(block.header.hash_slow(), execution_requests);
-        Ok(payload)
+        })
     }
 
     async fn insert_unsafe_payload(
@@ -242,20 +239,10 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
                 "builder backend expects a V4 execution payload".into(),
             ));
         };
-        let execution_requests = self
-            .pending_execution_requests
-            .lock()
-            .expect("pending execution requests lock")
-            .remove(&new_hash)
-            .ok_or_else(|| {
-                EngineClientError::RequestError(format!(
-                    "missing execution requests for payload {new_hash}"
-                ))
-            })?;
 
         let engine = self.engine();
         let status = engine
-            .new_payload(v4, vec![], parent_beacon_block_root, execution_requests)
+            .new_payload(v4, vec![], parent_beacon_block_root, Requests::default())
             .await
             .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
         if !status.is_valid() {
@@ -264,6 +251,11 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
             )));
         }
 
+        // Known limitation: this immediately promotes the prior head to both `safe` and
+        // `finalized` on the builder's internal engine, rather than tracking the harness's
+        // actual (lagging) safe/finalized state. The builder node has no other consumer of those
+        // fields today, so this backend cannot yet model unsafe L2 reorgs; revisit once the
+        // backend needs to drive the builder through a real safe/finalized forkchoice sequence.
         let current_head = self.head.lock().expect("head lock").block_info.hash;
         let fcu = engine
             .update_forkchoice(current_head, new_hash, None)
