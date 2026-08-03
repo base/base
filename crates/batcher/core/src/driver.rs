@@ -396,7 +396,17 @@ where
                 }
 
                 event = self.source.next() => match event {
-                    Ok(L2BlockEvent::Block(_) | L2BlockEvent::Flush { .. }) if self.stopped => {
+                    Ok(L2BlockEvent::Block(_)) if self.stopped => {
+                        continue;
+                    }
+                    Ok(L2BlockEvent::Flush { ack }) if self.stopped => {
+                        // Drop (rather than fire) any ack: the batcher is paused, so this
+                        // flush produces no frames and firing would falsely report
+                        // settlement. The waiter observes a closed-channel error instead of
+                        // a silent, indefinite-looking drop.
+                        if ack.is_some() {
+                            debug!("flush ack dropped: batcher is stopped, flush produces no frames");
+                        }
                         continue;
                     }
                     Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
