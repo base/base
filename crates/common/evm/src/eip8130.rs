@@ -865,46 +865,51 @@ impl Eip8130Executor {
                 delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
             }
 
-            // 3. Resolve the nonce channel's first-use flag and validate the nonce.
+            // 3. Validate and advance the nonce.
             let mut nonce_mgr = NonceManagerStorage::new(sctx);
             let protocol_nonce = sctx
                 .with_account_info(sender, |info| Ok(info.nonce))
                 .map_err(BaseTransactionError::eip8130)?;
-            let nonce_key_first_use = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-                false
-            } else if nonce_key == U256::ZERO {
-                protocol_nonce == 0
-            } else {
-                nonce_mgr.get_nonce(sender, nonce_key).map_err(BaseTransactionError::eip8130)? == 0
-            };
-            NonceValidator::validate(
-                tx,
-                sender,
-                protocol_nonce,
-                &nonce_mgr,
-                NonceMode::Inclusion,
-                now,
-            )
-            .map_err(BaseTransactionError::eip8130)?;
-
-            // 4. Advance the nonce. The protocol (basic-account) nonce is bumped
-            //    in `prepay`; channel and expiring nonces are journal storage.
-            let bump_protocol_nonce = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-                let replay = NonceValidator::replay_hash(tx, sender);
-                nonce_mgr
-                    .check_and_mark_expiring_nonce(replay, expiry)
+            let (nonce_key_first_use, bump_protocol_nonce) =
+                if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+                    NonceValidator::validate(
+                        tx,
+                        sender,
+                        protocol_nonce,
+                        &nonce_mgr,
+                        NonceMode::Inclusion,
+                        now,
+                    )
                     .map_err(BaseTransactionError::eip8130)?;
-                false
-            } else if nonce_key == U256::ZERO {
-                true
-            } else {
-                nonce_mgr
-                    .increment_nonce(sender, nonce_key)
+                    let replay = NonceValidator::replay_hash(tx, sender);
+                    nonce_mgr
+                        .check_and_mark_expiring_nonce(replay, expiry)
+                        .map_err(BaseTransactionError::eip8130)?;
+                    (false, false)
+                } else if nonce_key == U256::ZERO {
+                    NonceValidator::validate(
+                        tx,
+                        sender,
+                        protocol_nonce,
+                        &nonce_mgr,
+                        NonceMode::Inclusion,
+                        now,
+                    )
                     .map_err(BaseTransactionError::eip8130)?;
-                false
-            };
+                    (protocol_nonce == 0, true)
+                } else {
+                    let current_nonce = nonce_mgr
+                        .get_nonce(sender, nonce_key)
+                        .map_err(BaseTransactionError::eip8130)?;
+                    NonceValidator::validate_sequence(tx, current_nonce, NonceMode::Inclusion)
+                        .map_err(BaseTransactionError::eip8130)?;
+                    nonce_mgr
+                        .increment_nonce_from_current(sender, nonce_key, current_nonce)
+                        .map_err(BaseTransactionError::eip8130)?;
+                    (current_nonce == 0, false)
+                };
 
-            // 5. Auto-delegate a code-less sender only when no explicit
+            // 4. Auto-delegate a code-less sender only when no explicit
             //    delegation owner change was supplied. A zero target deliberately
             //    clears the sender's delegation and must not be overwritten with
             //    `DEFAULT_ACCOUNT`.
@@ -914,7 +919,7 @@ impl Eip8130Executor {
                 Self::auto_delegate_codeless_sender(sctx, sender)?
             };
 
-            // 6. Intrinsic gas under the EIP-8130 schedule.
+            // 5. Intrinsic gas under the EIP-8130 schedule.
             let (sender_intrinsic, payer_auth, execution_gas_available) =
                 Self::resolve_execution_gas(
                     signed,
@@ -925,7 +930,7 @@ impl Eip8130Executor {
                     gas_limit,
                 )?;
 
-            // 7. Fee caps and payer balance.
+            // 6. Fee caps and payer balance.
             FeeCheck::validate_fees(max_fee, max_priority, base_fee)
                 .map_err(BaseTransactionError::eip8130)?;
             let payer_balance = sctx
@@ -1519,6 +1524,7 @@ mod tests {
         AccountChange, ActorChange, ActorChangeType, BaseTxEnvelope, Call, ConfigChange,
         CreateEntry, Eip8130Signed, InitialActor, Predeploys, TxEip8130,
     };
+    use base_common_precompiles::INonceManager;
     use base_execution_eip8130::{AccountChangeApplier, DelegationApplied};
     use k256::ecdsa::SigningKey;
     use revm::{
@@ -1680,6 +1686,47 @@ mod tests {
         // Fees were routed: base fee to the vault, priority tip to the beneficiary.
         assert!(outcome.state.contains_key(&Predeploys::BASE_FEE_VAULT));
         assert!(outcome.state.contains_key(&BENEFICIARY));
+    }
+
+    #[test]
+    fn two_dimensional_nonce_is_incremented() {
+        let key = signing_key(0x2a);
+        let sender = eoa_address(&key);
+        let nonce_key = U256::from(7);
+        let current_nonce = 3;
+        let nonce_slot = NonceManagerStorage::nonce_slot(sender, nonce_key).unwrap();
+
+        let mut tx = base_tx();
+        tx.nonce_key = nonce_key;
+        tx.nonce_sequence = current_nonce;
+        let signed = eoa_signed(tx, &key);
+        let storage = [(NonceManagerStorage::ADDRESS, nonce_slot, U256::from(current_nonce))];
+        let mut evm = evm_with_accounts_and_storage(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[],
+            &storage,
+        );
+
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("8130 tx should execute");
+        assert!(outcome.result.is_success());
+
+        let nonce_account =
+            outcome.state.get(&NonceManagerStorage::ADDRESS).expect("nonce manager in state");
+        let stored_nonce =
+            nonce_account.storage.get(&nonce_slot).expect("nonce slot updated").present_value;
+        assert_eq!(stored_nonce, U256::from(current_nonce + 1));
+
+        let log = outcome
+            .result
+            .logs()
+            .iter()
+            .find(|log| log.address == NonceManagerStorage::ADDRESS)
+            .expect("nonce increment event");
+        let event = INonceManager::NonceIncremented::decode_log_data(&log.data).unwrap();
+        assert_eq!(event.account, sender);
+        assert_eq!(event.nonceKey, nonce_key);
+        assert_eq!(event.newNonce, current_nonce + 1);
     }
 
     #[test]
