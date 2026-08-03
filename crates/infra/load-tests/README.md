@@ -71,11 +71,22 @@ mempool_target_blocks: 3
 duration: "30s"
 ```
 
-Ordinary invocations calibrate, prefill, and run in one go. Benchmark harnesses that need to keep
-prefill outside their measured window can pass `--separate-setup <control-dir>` and
+Ordinary invocations calibrate and run in one go. Benchmark harnesses that need an explicit
+ready/start handshake before measured submission can pass `--separate-setup <control-dir>` and
 `--block-gas-limit <gas>` on the command line; these orchestration controls are intentionally not
 part of the portable YAML configuration.
 
+`in_flight_per_sender` bounds unconfirmed transactions per sender; the aggregate cap defaults to
+`in_flight_per_sender * sender_count`. Set `max_total_in_flight` to cap the aggregate independently
+of sender count, e.g. to protect a shared target node's mempool regardless of how many senders are
+configured.
+`in_flight_per_sender` and `max_total_in_flight` bound unconfirmed *transactions*, not outbound
+*requests*. If the submission RPC is rate-limiting you (e.g. `over rate limit` failures) rather than
+its mempool overflowing, set `max_concurrent_submit_requests` instead: it caps how many
+`eth_sendRawTransaction` batch requests may be outstanding to the submission RPC(s) at once, without
+shrinking the in-flight inventory target. Concurrency is otherwise bounded only by the sender worker
+count (derived from the number of `transaction_submission_rpcs`), so `max_concurrent_submit_requests`
+is useful mainly to throttle *below* that.
 `flashblocks_ws` is required for builder flashblocks broadcast latency data.
 `transaction_submission_rpcs` accepts either a single URL string or a list; submit batches are
 distributed across the configured HTTP endpoints.

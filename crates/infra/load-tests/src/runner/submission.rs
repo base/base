@@ -5,7 +5,7 @@ use std::{
     fmt,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -20,14 +20,17 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::NonceManager;
 use tokio::{
-    sync::{Mutex, mpsc},
+    sync::{Mutex, Semaphore, mpsc},
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use super::{ResultsTracker, SentTransaction};
-use crate::rpc::{BatchRpcClient, BatchSendResult};
+use crate::{
+    BaselineError, Result,
+    rpc::{BatchRpcClient, BatchSendResult},
+};
 
 /// Number of signer tasks per submission RPC.
 pub const SIGNER_WORKERS_PER_RPC: usize = 10;
@@ -47,6 +50,59 @@ pub const SUBMIT_MAX_ATTEMPTS: u32 = 5;
 /// ~11 full blocks (~24s on a 2s chain) of growth before a tx goes underwater.
 /// The `max_gas_price` cap bounds worst-case cost, so the headroom is cheap.
 pub const MAX_FEE_BASE_FEE_MULTIPLIER: u128 = 4;
+
+/// Ensures the rate-limit warning is only logged once per process, since a
+/// saturated RPC can otherwise report it on every batch under sustained load.
+static RATE_LIMIT_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// EIP-1559 fee fields for a transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fees {
+    /// `maxFeePerGas`.
+    pub max_fee: u128,
+    /// `maxPriorityFeePerGas`.
+    pub priority_fee: u128,
+}
+
+/// Computes EIP-1559 fee fields from a base fee, capped at a `max_gas_price` ceiling.
+///
+/// Centralizes the priority-fee and `maxFeePerGas` formulas so callers (the submission
+/// pipeline, funding, draining, and B-20/real-token setup) never need to read
+/// `max_gas_price` or reimplement the pricing math themselves.
+#[derive(Debug, Clone, Copy)]
+pub struct GasPricer {
+    max_gas_price: u128,
+}
+
+impl GasPricer {
+    /// Creates a pricer that never quotes fees above `max_gas_price`.
+    pub const fn new(max_gas_price: u128) -> Self {
+        Self { max_gas_price }
+    }
+
+    /// Returns the configured fee ceiling.
+    pub const fn max_gas_price(&self) -> u128 {
+        self.max_gas_price
+    }
+
+    /// Fees for a fresh send at the given base fee.
+    pub fn fees_for(&self, base_fee: u128) -> Fees {
+        let priority_fee = (base_fee / 10).max(1).min(self.max_gas_price);
+        let max_fee =
+            SubmissionPipeline::submission_max_fee(base_fee, priority_fee, self.max_gas_price);
+        Fees { max_fee, priority_fee }
+    }
+
+    /// Fees for a replacement attempt, scaling both fields by `multiplier` and
+    /// re-capping at `max_gas_price`. Used to bump a stuck pending transaction
+    /// (e.g. a leftover from a prior run at the same nonce) above the incumbent.
+    pub fn bumped(&self, fees: Fees, multiplier: u128) -> Fees {
+        Fees {
+            max_fee: fees.max_fee.saturating_mul(multiplier).min(self.max_gas_price),
+            priority_fee: fees.priority_fee.saturating_mul(multiplier).min(self.max_gas_price),
+        }
+    }
+}
 
 /// A transaction request ready for nonce assignment and signing.
 #[derive(Debug, Clone)]
@@ -168,6 +224,10 @@ pub enum BatchTxError {
     RetryableRejected(String),
     /// The transaction's acceptance status is unknown.
     RetryableUnknown(String),
+    /// The RPC is rate-limiting submissions (HTTP 429 or a JSON-RPC-level
+    /// rate-limit rejection). Retried with a longer backoff than other
+    /// retryable errors since rate limits typically take longer to clear.
+    RateLimited(String),
     /// The sender nonce was already used.
     NonceTooLow,
     /// The transaction was rejected permanently.
@@ -245,6 +305,12 @@ pub struct SenderContext {
     pub submit_event_tx: mpsc::Sender<SubmitEvent>,
     /// Whether nonce return is enabled for rejected signed transactions.
     pub return_reserved_nonces: bool,
+    /// Optional cap on concurrent outbound submission RPC requests, shared across
+    /// all sender workers. Bounds request *rate* to the endpoint independently of
+    /// how many transactions are in flight (unconfirmed) or how many sender
+    /// workers exist. `None` leaves concurrency bounded only by the sender worker
+    /// count, as before.
+    pub submit_request_limiter: Option<Arc<Semaphore>>,
 }
 
 impl fmt::Debug for SenderContext {
@@ -275,6 +341,10 @@ pub struct PipelineStartConfig {
     pub chain_id: u64,
     /// Maximum allowed gas price.
     pub max_gas_price: u128,
+    /// Optional cap on concurrent outbound submission RPC requests across all
+    /// sender workers. `None` leaves concurrency bounded only by the sender
+    /// worker count (see [`SubmissionPipeline::sender_worker_count`]).
+    pub max_concurrent_submit_requests: Option<usize>,
 }
 
 impl fmt::Debug for SubmissionPipeline {
@@ -307,11 +377,14 @@ impl SubmissionPipeline {
         let shutdown = CancellationToken::new();
         let signer_worker_count = Self::signer_worker_count(submission_batch_rpcs.len());
         let sender_worker_count = Self::sender_worker_count(submission_batch_rpcs.len());
+        let submit_request_limiter =
+            config.max_concurrent_submit_requests.map(|max| Arc::new(Semaphore::new(max.max(1))));
 
         info!(
             signer_worker_count,
             sender_worker_count,
             submit_rpc_count = submission_batch_rpcs.len(),
+            max_concurrent_submit_requests = ?config.max_concurrent_submit_requests,
             "starting submission pipeline"
         );
 
@@ -341,6 +414,7 @@ impl SubmissionPipeline {
                 results_tracker: results_tracker.clone(),
                 submit_event_tx: submit_event_tx.clone(),
                 return_reserved_nonces: false,
+                submit_request_limiter: submit_request_limiter.clone(),
             };
             let queue = Arc::clone(&signed_queue);
             let shutdown = shutdown.clone();
@@ -405,9 +479,13 @@ impl SubmissionPipeline {
         }
     }
 
-    /// Closes the prepared input queue after generation is complete.
+    /// Closes direct input to both stages after generation is complete.
+    ///
+    /// Signer workers retain their signed-stage senders until the prepared queue drains, then
+    /// sender workers terminate naturally after the signed queue drains.
     pub fn close_input(&mut self) {
         self.prepared_batch_tx = None;
+        self.signed_batch_tx = None;
     }
 
     /// Returns queued plus in-progress prepared and signed batch count.
@@ -492,6 +570,8 @@ impl SubmissionPipeline {
             BatchTxError::RetryableUnknown(msg)
         } else if lower.contains("replacement transaction underpriced") {
             BatchTxError::NonceTooLow
+        } else if Self::is_rate_limited_message(&msg) {
+            BatchTxError::RateLimited(msg)
         } else if lower.contains("txpool is full")
             || lower.contains("transaction pool is full")
             || lower.contains("pool is full")
@@ -500,6 +580,31 @@ impl SubmissionPipeline {
             BatchTxError::RetryableRejected(msg)
         } else {
             BatchTxError::Rejected(msg)
+        }
+    }
+
+    /// True when an error message indicates the RPC is rate-limiting requests,
+    /// e.g. an HTTP 429 status or a JSON-RPC-level "rate limit" rejection.
+    fn is_rate_limited_message(msg: &str) -> bool {
+        let lower = msg.to_ascii_lowercase();
+        lower.contains("429") || lower.contains("rate limit") || lower.contains("too many requests")
+    }
+
+    /// Logs a warning the first time a rate-limited response is observed, so the
+    /// user knows the RPC is throttling submissions without flooding the logs on
+    /// every occurrence (rate limiting can recur on every batch under load).
+    fn warn_rate_limited_once(message: &str) {
+        if RATE_LIMIT_WARNED
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            warn!(
+                error = %message,
+                "submission RPC is rate-limiting requests; backing off exponentially and \
+                 retrying (this warning is logged once per process; check `top failures` for \
+                 ongoing rate-limit counts, consider lowering max_concurrent_submit_requests or \
+                 adding more transaction_submission_rpcs endpoints)"
+            );
         }
     }
 
@@ -513,6 +618,44 @@ impl SubmissionPipeline {
             .saturating_mul(MAX_FEE_BASE_FEE_MULTIPLIER)
             .max(base_fee.saturating_add(priority_fee));
         target.min(max_gas_price)
+    }
+
+    /// Signs `prepared` at the given nonce and EIP-1559 [`Fees`], without allocating a
+    /// nonce or touching a [`SignerContext`]. Shared by the batch signer stage
+    /// ([`Self::sign_prepared`]) and any caller building a transaction outside the
+    /// pipeline (e.g. setup/funding/draining flows) so there is exactly one
+    /// request-building and signing implementation.
+    pub fn sign_at_nonce(
+        signer: &PrivateKeySigner,
+        prepared: &PreparedTransaction,
+        chain_id: u64,
+        nonce: u64,
+        fees: Fees,
+    ) -> Result<SignedTransaction> {
+        let mut tx = TransactionRequest::default()
+            .with_from(prepared.from)
+            .with_value(prepared.value)
+            .with_input(prepared.data.clone())
+            .with_nonce(nonce)
+            .with_chain_id(chain_id)
+            .with_max_fee_per_gas(fees.max_fee)
+            .with_max_priority_fee_per_gas(fees.priority_fee)
+            .with_gas_limit(prepared.gas_limit);
+        if let Some(to) = prepared.to {
+            tx = tx.with_to(to);
+        }
+
+        let typed_tx = tx
+            .build_typed_tx()
+            .map_err(|e| BaselineError::Transaction(format!("failed to build typed tx: {e:?}")))?;
+        let sig_hash = typed_tx.signature_hash();
+        let signature = signer
+            .sign_hash_sync(&sig_hash)
+            .map_err(|e| BaselineError::Transaction(format!("failed to sign tx: {e}")))?;
+        let signed = typed_tx.into_signed(signature);
+        let tx_hash = *signed.hash();
+        let raw = Bytes::from(signed.encoded_2718());
+        Ok(SignedTransaction { raw, tx_hash, from: prepared.from, nonce })
     }
 
     async fn signer_worker(
@@ -618,51 +761,64 @@ impl SubmissionPipeline {
             let attempt = batch.attempt;
             let raw_list: Vec<Bytes> = batch.txs.iter().map(|s| s.raw.clone()).collect();
             let rpc_index = batch_id as usize % ctx.submission_batch_rpcs.len();
-            let batch_results =
-                match ctx.submission_batch_rpcs[rpc_index].send_raw_transactions(&raw_list).await {
-                    Ok(results) => results,
-                    Err(e) => {
-                        if attempt + 1 >= SUBMIT_MAX_ATTEMPTS {
-                            warn!(
-                                batch_id,
-                                attempt,
-                                error = %e,
-                                count = batch.txs.len(),
-                                "batch RPC failed after max attempts"
-                            );
-                            Self::fail_signed_batch(
-                                &ctx.submit_event_tx,
-                                batch.txs,
-                                "batch transport failed after retries",
-                            )
-                            .await;
-                            return submitted;
-                        }
+            let batch_results = match ctx.submission_batch_rpcs[rpc_index]
+                .send_raw_transactions(&raw_list, ctx.submit_request_limiter.as_deref())
+                .await
+            {
+                Ok(results) => results,
+                Err(e) => {
+                    let rate_limited = Self::is_rate_limited_message(&e.to_string());
+                    if rate_limited {
+                        Self::warn_rate_limited_once(&e.to_string());
+                    }
 
+                    if attempt + 1 >= SUBMIT_MAX_ATTEMPTS {
                         warn!(
                             batch_id,
                             attempt,
-                            next_attempt = attempt + 1,
                             error = %e,
                             count = batch.txs.len(),
-                            "batch RPC failed, retrying signed batch"
+                            "batch RPC failed after max attempts"
                         );
-                        batch.attempt += 1;
-                        if !Self::wait_submit_retry(shutdown, batch.attempt).await {
-                            Self::fail_signed_batch(
-                                &ctx.submit_event_tx,
-                                batch.txs,
-                                "submit worker shutdown",
-                            )
-                            .await;
-                            return submitted;
-                        }
-                        continue;
+                        Self::fail_signed_batch(
+                            &ctx.submit_event_tx,
+                            batch.txs,
+                            "batch transport failed after retries",
+                        )
+                        .await;
+                        return submitted;
                     }
-                };
+
+                    warn!(
+                        batch_id,
+                        attempt,
+                        next_attempt = attempt + 1,
+                        error = %e,
+                        count = batch.txs.len(),
+                        "batch RPC failed, retrying signed batch"
+                    );
+                    batch.attempt += 1;
+                    let delay = if rate_limited {
+                        Self::rate_limit_retry_delay(batch.attempt)
+                    } else {
+                        Self::submit_retry_delay(batch.attempt)
+                    };
+                    if !Self::wait_submit_retry(shutdown, delay).await {
+                        Self::fail_signed_batch(
+                            &ctx.submit_event_tx,
+                            batch.txs,
+                            "submit worker shutdown",
+                        )
+                        .await;
+                        return submitted;
+                    }
+                    continue;
+                }
+            };
 
             let mut retry_unknown_txs = Vec::new();
             let mut retry_rejected_txs = Vec::new();
+            let mut retry_rate_limited_txs = Vec::new();
 
             for (signed, result) in batch.txs.into_iter().zip(batch_results) {
                 match result {
@@ -708,6 +864,17 @@ impl SubmissionPipeline {
                             );
                             retry_unknown_txs.push(signed);
                         }
+                        BatchTxError::RateLimited(msg) => {
+                            Self::warn_rate_limited_once(&msg);
+                            debug!(
+                                from = %signed.from,
+                                nonce = signed.nonce,
+                                attempt,
+                                error = %msg,
+                                "tx rejected due to rate limiting, retrying with backoff"
+                            );
+                            retry_rate_limited_txs.push(signed);
+                        }
                         BatchTxError::NonceTooLow => {
                             debug!(
                                 from = %signed.from,
@@ -744,9 +911,15 @@ impl SubmissionPipeline {
                 }
             }
 
-            if retry_unknown_txs.is_empty() && retry_rejected_txs.is_empty() {
+            if retry_unknown_txs.is_empty()
+                && retry_rejected_txs.is_empty()
+                && retry_rate_limited_txs.is_empty()
+            {
                 return submitted;
             }
+
+            let rate_limited = !retry_rate_limited_txs.is_empty();
+            retry_rejected_txs.extend(retry_rate_limited_txs);
 
             if attempt + 1 >= SUBMIT_MAX_ATTEMPTS {
                 let failed = retry_unknown_txs.len() + retry_rejected_txs.len();
@@ -774,7 +947,15 @@ impl SubmissionPipeline {
                 measured,
                 txs: retry_unknown_txs,
             };
-            if !Self::wait_submit_retry(shutdown, batch.attempt).await {
+            // A batch can mix rate-limited and other retryable errors; use the
+            // longer rate-limit backoff for the whole retry when any tx hit one,
+            // since resending immediately would likely just be rate-limited again.
+            let delay = if rate_limited {
+                Self::rate_limit_retry_delay(batch.attempt)
+            } else {
+                Self::submit_retry_delay(batch.attempt)
+            };
+            if !Self::wait_submit_retry(shutdown, delay).await {
                 Self::fail_signed_batch(&ctx.submit_event_tx, batch.txs, "submit worker shutdown")
                     .await;
                 return submitted;
@@ -871,8 +1052,7 @@ impl SubmissionPipeline {
         prepared: &PreparedTransaction,
         base_fee: u128,
     ) -> Option<SignedTransaction> {
-        let priority_fee = (base_fee / 10).max(1).min(ctx.max_gas_price);
-        let max_fee = Self::submission_max_fee(base_fee, priority_fee, ctx.max_gas_price);
+        let fees = GasPricer::new(ctx.max_gas_price).fees_for(base_fee);
 
         let Some(signer) = ctx.signers.get(&prepared.from) else {
             warn!(from = %prepared.from, "no signer for sender");
@@ -899,52 +1079,25 @@ impl SubmissionPipeline {
         };
         let nonce = nonce_guard.nonce();
 
-        let mut tx = TransactionRequest::default()
-            .with_from(prepared.from)
-            .with_value(prepared.value)
-            .with_input(prepared.data.clone())
-            .with_nonce(nonce)
-            .with_chain_id(ctx.chain_id)
-            .with_max_fee_per_gas(max_fee)
-            .with_max_priority_fee_per_gas(priority_fee)
-            .with_gas_limit(prepared.gas_limit);
-        if let Some(to) = prepared.to {
-            tx = tx.with_to(to);
-        }
-
-        let typed_tx = match tx.build_typed_tx() {
-            Ok(t) => t,
+        let signed = match Self::sign_at_nonce(signer, prepared, ctx.chain_id, nonce, fees) {
+            Ok(signed) => signed,
             Err(e) => {
-                warn!(from = %prepared.from, nonce, error = ?e, "failed to build typed tx");
+                warn!(from = %prepared.from, nonce, error = %e, "failed to build or sign tx");
                 nonce_guard.rollback();
-                let _ =
-                    ctx.submit_event_tx.send(SubmitEvent::Failed("tx build failed".into())).await;
+                let _ = ctx
+                    .submit_event_tx
+                    .send(SubmitEvent::Failed("tx build or sign failed".into()))
+                    .await;
                 return None;
             }
         };
-
-        let sig_hash = typed_tx.signature_hash();
-        let signature = match signer.sign_hash_sync(&sig_hash) {
-            Ok(sig) => sig,
-            Err(e) => {
-                warn!(from = %prepared.from, nonce, error = %e, "failed to sign tx");
-                nonce_guard.rollback();
-                let _ =
-                    ctx.submit_event_tx.send(SubmitEvent::Failed("signing failed".into())).await;
-                return None;
-            }
-        };
-
-        let signed = typed_tx.into_signed(signature);
-        let tx_hash = *signed.hash();
-        let raw = Bytes::from(signed.encoded_2718());
 
         // Drop the nonce guard immediately after signing. The guard holds
         // the NonceManager mutex; keeping it alive until after RPC send
         // would serialize unrelated network latency through nonce allocation.
         drop(nonce_guard);
 
-        Some(SignedTransaction { raw, tx_hash, from: prepared.from, nonce })
+        Some(signed)
     }
 
     fn submit_retry_delay(attempt: u32) -> Duration {
@@ -952,11 +1105,19 @@ impl SubmissionPipeline {
         Duration::from_millis(millis.min(2_000))
     }
 
-    async fn wait_submit_retry(shutdown: &CancellationToken, attempt: u32) -> bool {
+    /// Backoff for rate-limited (HTTP 429) retries. Starts higher and caps far
+    /// higher than [`Self::submit_retry_delay`] since rate limits typically take
+    /// longer to clear than transient transport blips.
+    fn rate_limit_retry_delay(attempt: u32) -> Duration {
+        let millis = 500u64.saturating_mul(1u64 << attempt.min(6));
+        Duration::from_millis(millis.min(30_000))
+    }
+
+    async fn wait_submit_retry(shutdown: &CancellationToken, delay: Duration) -> bool {
         tokio::select! {
             biased;
             () = shutdown.cancelled() => false,
-            () = tokio::time::sleep(Self::submit_retry_delay(attempt)) => true,
+            () = tokio::time::sleep(delay) => true,
         }
     }
 }
@@ -969,11 +1130,12 @@ mod tests {
     };
 
     use alloy_primitives::{Address, Bytes, TxHash, U256};
+    use alloy_signer_local::PrivateKeySigner;
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        BatchTxError, MAX_FEE_BASE_FEE_MULTIPLIER, PipelineQueue, PreparedBatch,
+        BatchTxError, Fees, GasPricer, MAX_FEE_BASE_FEE_MULTIPLIER, PipelineQueue, PreparedBatch,
         PreparedTransaction, SignedBatch, SignedTransaction, SubmissionPipeline, SubmitEvent,
     };
 
@@ -987,6 +1149,31 @@ mod tests {
             SubmissionPipeline::classify_batch_error("invalid tx hash: bad length".to_string()),
             BatchTxError::RetryableUnknown("invalid tx hash: bad length".to_string()),
         );
+    }
+
+    #[test]
+    fn batch_error_classification_identifies_rate_limiting() {
+        assert_eq!(
+            SubmissionPipeline::classify_batch_error("over rate limit".to_string()),
+            BatchTxError::RateLimited("over rate limit".to_string()),
+        );
+        assert_eq!(
+            SubmissionPipeline::classify_batch_error(
+                "batch send request returned HTTP 429 Too Many Requests: ...".to_string()
+            ),
+            BatchTxError::RateLimited(
+                "batch send request returned HTTP 429 Too Many Requests: ...".to_string()
+            ),
+        );
+    }
+
+    #[test]
+    fn rate_limit_retry_delay_starts_higher_and_caps_higher_than_default_backoff() {
+        assert!(
+            SubmissionPipeline::rate_limit_retry_delay(0)
+                > SubmissionPipeline::submit_retry_delay(0)
+        );
+        assert_eq!(SubmissionPipeline::rate_limit_retry_delay(10), Duration::from_secs(30));
     }
 
     #[test]
@@ -1034,6 +1221,62 @@ mod tests {
         let max_fee = SubmissionPipeline::submission_max_fee(base_fee, priority_fee, cap);
         assert!(max_fee >= base_fee + priority_fee, "max_fee must cover base fee + tip");
         assert_eq!(max_fee, base_fee * MAX_FEE_BASE_FEE_MULTIPLIER);
+    }
+
+    #[test]
+    fn gas_pricer_fees_for_matches_submission_max_fee() {
+        let pricer = GasPricer::new(1_000_000_000);
+        let fees = pricer.fees_for(100);
+        assert_eq!(fees.priority_fee, 10);
+        assert_eq!(fees.max_fee, SubmissionPipeline::submission_max_fee(100, 10, 1_000_000_000));
+    }
+
+    #[test]
+    fn gas_pricer_fees_for_honors_max_gas_price_floor_and_cap() {
+        // Priority fee is never zero, even at a base fee of 0.
+        let pricer = GasPricer::new(1_000_000_000);
+        assert_eq!(pricer.fees_for(0).priority_fee, 1);
+
+        // Both fee fields are capped at max_gas_price.
+        let capped_pricer = GasPricer::new(500);
+        let fees = capped_pricer.fees_for(1_000_000);
+        assert_eq!(fees.max_fee, 500);
+        assert_eq!(fees.priority_fee, 500);
+    }
+
+    #[test]
+    fn gas_pricer_bumped_scales_and_caps_at_max_gas_price() {
+        let pricer = GasPricer::new(1_000);
+        let fees = Fees { max_fee: 100, priority_fee: 10 };
+
+        let bumped = pricer.bumped(fees, 3);
+        assert_eq!(bumped, Fees { max_fee: 300, priority_fee: 30 });
+
+        // A bump that would exceed max_gas_price is capped, not rejected.
+        let over_cap = pricer.bumped(Fees { max_fee: 500, priority_fee: 500 }, 3);
+        assert_eq!(over_cap, Fees { max_fee: 1_000, priority_fee: 1_000 });
+    }
+
+    #[test]
+    fn sign_at_nonce_produces_deterministic_hash_for_same_inputs() {
+        let signer = PrivateKeySigner::random();
+        let prepared = PreparedTransaction {
+            from: signer.address(),
+            to: Some(Address::repeat_byte(0xAB)),
+            value: U256::from(1),
+            data: Bytes::new(),
+            gas_limit: 21_000,
+        };
+        let fees = Fees { max_fee: 100, priority_fee: 10 };
+
+        let signed_a = SubmissionPipeline::sign_at_nonce(&signer, &prepared, 8453, 5, fees)
+            .expect("signing should succeed");
+        let signed_b = SubmissionPipeline::sign_at_nonce(&signer, &prepared, 8453, 5, fees)
+            .expect("signing should succeed");
+
+        assert_eq!(signed_a.tx_hash, signed_b.tx_hash);
+        assert_eq!(signed_a.nonce, 5);
+        assert_eq!(signed_a.from, signer.address());
     }
 
     #[tokio::test]

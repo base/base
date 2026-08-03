@@ -166,16 +166,20 @@ impl ResultsTracker {
                     false
                 };
 
+            let measurement_started = inner.measurement_started;
             if first_observation && let Some(pending) = inner.pending.get_mut(&inclusion.tx_hash) {
                 let submit_time = pending.submit_time;
                 let should_release = !pending.in_flight_released;
                 let from = pending.from;
+                let report_flashblock = pending.measured || !measurement_started;
                 if should_release {
                     pending.in_flight_released = true;
                 }
 
                 // Queue flashblock latency for the rolling window (drained separately).
-                if pending.measured
+                // Pre-measurement observations are included so the TUI can show FB latency
+                // before begin_measurement; they are cleared at begin_measurement.
+                if report_flashblock
                     && let Some(latency) = inclusion.included_at.checked_duration_since(submit_time)
                 {
                     inner
@@ -200,12 +204,17 @@ impl ResultsTracker {
     /// its block number is captured, and a [`TransactionMetrics`] entry is emitted.
     /// Gas, effective gas price, and revert status are left at defaults here and
     /// backfilled later by the end-of-run receipt pass.
-    pub fn on_new_block_hashes(&self, block: BlockObservation, tx_hashes: Vec<TxHash>) {
+    ///
+    /// Returns how many of `tx_hashes` matched a pending submission.
+    pub fn on_new_block_hashes(&self, block: BlockObservation, tx_hashes: Vec<TxHash>) -> u64 {
         let mut inner = self.inner.write();
-
+        let mut matched = 0u64;
         for tx_hash in tx_hashes {
-            inner.land_if_pending(tx_hash, &block);
+            if inner.land_if_pending(tx_hash, &block) {
+                matched = matched.saturating_add(1);
+            }
         }
+        matched
     }
 
     /// Expires submitted transactions that were not observed in a canonical block.
@@ -330,9 +339,10 @@ impl ResultsTrackerInner {
     ///
     /// Flashblock latency (computed from the WS observation time) is joined here so
     /// that the final summary only includes FB latency for canonically confirmed txs.
-    fn land_if_pending(&mut self, tx_hash: TxHash, block: &BlockObservation) {
+    /// Returns `true` when `tx_hash` was pending and has now been settled.
+    fn land_if_pending(&mut self, tx_hash: TxHash, block: &BlockObservation) -> bool {
         let Some(pending) = self.pending.remove(&tx_hash) else {
-            return;
+            return false;
         };
 
         let block_latency = block.observed_at.checked_duration_since(pending.submit_time);
@@ -344,9 +354,13 @@ impl ResultsTrackerInner {
         if !pending.in_flight_released {
             self.decrement_in_flight(&pending.from);
         }
-        if !pending.measured {
-            self.flashblocks.remove(&tx_hash);
-            return;
+
+        // Measured txs always emit metrics. Pre-measurement txs emit only before
+        // begin_measurement so live TUI/headroom can see inclusions; after
+        // begin_measurement they only release in-flight (already handled above).
+        let emit_metrics = pending.measured || !self.measurement_started;
+        if !emit_metrics {
+            return true;
         }
 
         let mut metrics = TransactionMetrics::new(
@@ -358,10 +372,13 @@ impl ResultsTrackerInner {
             Some(block.number),
         );
         metrics.confirmed_at = Some(block.observed_at);
-
-        self.landed_blocks.insert(block.number);
-        self.measured_landed.insert(tx_hash);
         self.unreported_confirmations.push_back(metrics);
+
+        if pending.measured {
+            self.landed_blocks.insert(block.number);
+            self.measured_landed.insert(tx_hash);
+        }
+        true
     }
 
     fn decrement_in_flight(&mut self, from: &Address) {
@@ -553,5 +570,38 @@ mod tests {
         assert_eq!(tracker.expire_pending(Duration::ZERO), 0);
         assert_eq!(tracker.pending_count(), 0);
         assert_eq!(tracker.total_in_flight(), 0);
+    }
+
+    #[test]
+    fn warmup_landing_emits_metrics_before_measurement() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(0xe2);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![SentTransaction { tx_hash, from, measured: false }]);
+        assert_eq!(tracker.total_in_flight(), 1);
+
+        tracker.on_new_block_hashes(block_at(3, Instant::now()), vec![tx_hash]);
+        assert_eq!(tracker.total_in_flight(), 0);
+        let metrics = tracker.drain_confirmed_metrics();
+        assert_eq!(metrics.len(), 1, "warmup landing should emit live confirmation metrics");
+        assert!(tracker.landed_block_numbers().is_empty(), "warmup must not scope receipt pass");
+    }
+
+    #[test]
+    fn warmup_landing_after_measurement_does_not_pollute_metrics() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(0xe3);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![SentTransaction { tx_hash, from, measured: false }]);
+        tracker.begin_measurement();
+        tracker.on_new_block_hashes(block_at(4, Instant::now()), vec![tx_hash]);
+
+        assert_eq!(tracker.total_in_flight(), 0);
+        assert!(
+            tracker.drain_confirmed_metrics().is_empty(),
+            "warmup landing after measurement must not enter the measured summary"
+        );
     }
 }

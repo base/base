@@ -5,18 +5,18 @@
 //! setup), so setup is fully parallel with each sender on its own nonce stream — there is no funder
 //! bottleneck and no admin-gated role grants routed through a single account.
 
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
-use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_provider::{PendingTransactionBuilder, Provider};
+use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
+use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_precompiles::{B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory};
 use futures::{StreamExt, stream};
 use tracing::{debug, info, warn};
 
-use super::{LoadRunner, SubmissionPipeline, TxType, load_runner::FUNDING_CONCURRENCY};
+use super::{BlockWatcher, Fees, GasPricer, LoadRunner, TxType, load_runner::FUNDING_CONCURRENCY};
 use crate::{
     BaselineError, Result,
     rpc::{BaseFeeExt, RpcResultExt, WalletProvider, create_wallet_provider},
@@ -51,15 +51,10 @@ impl LoadRunner {
     /// teardown can recompute the same addresses.
     pub async fn setup_b20_tokens(&mut self, amount_per_sender: U256) -> Result<()> {
         let chain_id = self.config.chain_id;
-        let max_gas_price = self.config.max_gas_price;
+        let pricer = GasPricer::new(self.config.max_gas_price);
         let base_fee = self.client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1).min(max_gas_price);
-        let max_fee =
-            SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
-        let replacement_max_fee =
-            max_fee.saturating_mul(REPLACEMENT_FEE_MULTIPLIER).min(max_gas_price);
-        let replacement_priority_fee =
-            max_priority_fee.saturating_mul(REPLACEMENT_FEE_MULTIPLIER).min(max_gas_price);
+        let fees = pricer.fees_for(base_fee);
+        let replacement_fees = pricer.bumped(fees, REPLACEMENT_FEE_MULTIPLIER);
 
         // A fresh random salt per run keeps each run's token addresses distinct, so re-running the
         // same sender set never collides with the previous run's tokens.
@@ -116,10 +111,8 @@ impl LoadRunner {
                     input,
                     chain_id,
                     B20_CREATE_GAS_LIMIT,
-                    max_fee,
-                    max_priority_fee,
-                    replacement_max_fee,
-                    replacement_priority_fee,
+                    fees,
+                    replacement_fees,
                 )
                 .await;
                 pb_submit.inc(1);
@@ -131,51 +124,56 @@ impl LoadRunner {
             stream::iter(submit_futs).buffer_unordered(FUNDING_CONCURRENCY).collect().await;
         pb_submit.finish_and_clear();
 
-        // Phase 2: collect all create receipts in parallel. Confirmation latency now overlaps
-        // across senders instead of serializing at the submit stream's head.
-        let pb_confirm = self.progress_bar(total as u64, "Confirming per-sender B-20 creates");
+        // Phase 2: confirm every create by watching canonical blocks and batch-fetching
+        // receipts for the touched blocks, instead of polling `eth_getTransactionReceipt`
+        // once per sender.
         let mut failed = 0usize;
         let mut first_error: Option<String> = None;
-        let mut receipt_futs = Vec::with_capacity(submit_results.len());
+        let mut hash_by_sender = Vec::with_capacity(submit_results.len());
         for (sender, result) in submit_results {
             match result {
-                Ok(pending) => receipt_futs.push(async move {
-                    (sender, pending.with_timeout(Some(B20_RECEIPT_TIMEOUT)).get_receipt().await)
-                }),
+                Ok(tx_hash) => hash_by_sender.push((sender, tx_hash)),
                 Err(e) => {
                     warn!(sender = %sender, error = %e, "B-20 create submission failed");
                     failed += 1;
                     if first_error.is_none() {
                         first_error = Some(e.to_string());
                     }
-                    pb_confirm.inc(1);
                 }
             }
         }
 
-        let mut receipt_stream = stream::iter(receipt_futs).buffer_unordered(FUNDING_CONCURRENCY);
-        while let Some((sender, result)) = receipt_stream.next().await {
-            match result {
-                Ok(receipt) if receipt.status() => {
-                    debug!(sender = %sender, tx_hash = %receipt.transaction_hash, "B-20 token created");
+        let pb_confirm =
+            self.progress_bar(hash_by_sender.len() as u64, "Confirming per-sender B-20 creates");
+        let pending_hashes: HashSet<TxHash> =
+            hash_by_sender.iter().map(|(_, tx_hash)| *tx_hash).collect();
+        let receipts = BlockWatcher::confirm_and_fetch_receipts(
+            &self.client,
+            pending_hashes,
+            B20_RECEIPT_TIMEOUT,
+            |_hash| pb_confirm.inc(1),
+        )
+        .await?;
+        for (sender, tx_hash) in hash_by_sender {
+            match receipts.get(&tx_hash) {
+                Some(receipt) if receipt.success => {
+                    debug!(sender = %sender, tx_hash = %tx_hash, "B-20 token created");
                 }
-                Ok(receipt) => {
-                    warn!(sender = %sender, tx_hash = %receipt.transaction_hash, "B-20 create reverted");
+                Some(_) => {
+                    warn!(sender = %sender, tx_hash = %tx_hash, "B-20 create reverted");
                     failed += 1;
                     if first_error.is_none() {
-                        first_error =
-                            Some(format!("createB20 reverted (tx {})", receipt.transaction_hash));
+                        first_error = Some(format!("createB20 reverted (tx {tx_hash})"));
                     }
                 }
-                Err(e) => {
-                    warn!(sender = %sender, error = %e, "B-20 create receipt failed");
+                None => {
+                    warn!(sender = %sender, tx_hash = %tx_hash, "B-20 create receipt unavailable");
                     failed += 1;
                     if first_error.is_none() {
-                        first_error = Some(format!("receipt failed: {e}"));
+                        first_error = Some(format!("receipt unavailable for tx {tx_hash}"));
                     }
                 }
             }
-            pb_confirm.inc(1);
         }
         pb_confirm.finish_and_clear();
 
@@ -199,42 +197,40 @@ impl LoadRunner {
 
     /// Submits one `createB20` tx for a sender, replacing a stuck pending tx if necessary.
     ///
-    /// Returns the pending tx so the caller can await its receipt in a separate phase, keeping
-    /// submission decoupled from confirmation. Mirrors the funding path's replacement handling: a
-    /// `replacement transaction underpriced` or `already known` rejection (a leftover pending tx
-    /// from a prior run at the same nonce) is retried at the same nonce with bumped fees, and a
+    /// Returns the tx hash so the caller can confirm it (alongside every other sender's
+    /// create) in a separate block-watching phase, keeping submission decoupled from
+    /// confirmation. Mirrors the funding path's replacement handling: a `replacement
+    /// transaction underpriced` or `already known` rejection (a leftover pending tx from a
+    /// prior run at the same nonce) is retried at the same nonce with bumped fees, and a
     /// `nonce too low` rejection refetches the pending nonce.
-    #[allow(clippy::too_many_arguments)]
     async fn submit_b20_create(
         provider: WalletProvider,
         sender: Address,
         input: Bytes,
         chain_id: u64,
         gas_limit: u64,
-        max_fee: u128,
-        max_priority_fee: u128,
-        replacement_max_fee: u128,
-        replacement_priority_fee: u128,
-    ) -> Result<PendingTransactionBuilder<Ethereum>> {
+        fees: Fees,
+        replacement_fees: Fees,
+    ) -> Result<TxHash> {
         let nonce = provider
             .get_transaction_count(sender)
             .pending()
             .await
             .rpc("get pending transaction count")?;
 
-        let build = |nonce: u64, max_fee: u128, priority_fee: u128| {
+        let build = |nonce: u64, fees: Fees| {
             TransactionRequest::default()
                 .with_to(B20FactoryStorage::ADDRESS)
                 .with_input(input.clone())
                 .with_nonce(nonce)
                 .with_chain_id(chain_id)
                 .with_gas_limit(gas_limit)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(priority_fee)
+                .with_max_fee_per_gas(fees.max_fee)
+                .with_max_priority_fee_per_gas(fees.priority_fee)
         };
 
-        match provider.send_transaction(build(nonce, max_fee, max_priority_fee)).await {
-            Ok(pending) => Ok(pending),
+        match provider.send_transaction(build(nonce, fees)).await {
+            Ok(pending) => Ok(*pending.tx_hash()),
             Err(e) => {
                 let msg = e.to_string();
                 if msg.contains("replacement transaction underpriced")
@@ -242,12 +238,9 @@ impl LoadRunner {
                 {
                     // A prior run left a pending tx at this nonce; replace it at a higher fee.
                     provider
-                        .send_transaction(build(
-                            nonce,
-                            replacement_max_fee,
-                            replacement_priority_fee,
-                        ))
+                        .send_transaction(build(nonce, replacement_fees))
                         .await
+                        .map(|pending| *pending.tx_hash())
                         .map_err(|e| {
                             BaselineError::Transaction(format!("replacement send failed: {e}"))
                         })
@@ -259,8 +252,9 @@ impl LoadRunner {
                         .await
                         .rpc("refetch pending transaction count")?;
                     provider
-                        .send_transaction(build(fresh, max_fee, max_priority_fee))
+                        .send_transaction(build(fresh, fees))
                         .await
+                        .map(|pending| *pending.tx_hash())
                         .map_err(|e| {
                             BaselineError::Transaction(format!("nonce-refreshed send failed: {e}"))
                         })
@@ -282,11 +276,8 @@ impl LoadRunner {
         };
 
         let chain_id = self.config.chain_id;
-        let max_gas_price = self.config.max_gas_price;
         let base_fee = self.client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1).min(max_gas_price);
-        let max_fee =
-            SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
+        let fees = GasPricer::new(self.config.max_gas_price).fees_for(base_fee);
 
         let sender_addresses: Vec<Address> =
             self.accounts.accounts().iter().map(|a| a.address).collect();
@@ -356,11 +347,11 @@ impl LoadRunner {
                         .with_nonce(sender_nonce)
                         .with_chain_id(chain_id)
                         .with_gas_limit(B20_BURN_GAS_LIMIT)
-                        .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee);
+                        .with_max_fee_per_gas(fees.max_fee)
+                        .with_max_priority_fee_per_gas(fees.priority_fee);
 
                     match provider.send_transaction(tx).await {
-                        Ok(pending) => Ok((sender, balance, pending)),
+                        Ok(pending) => Ok((sender, balance, *pending.tx_hash())),
                         Err(e) => Err((sender, eyre::eyre!("send failed: {e}"))),
                     }
                 })
@@ -370,18 +361,10 @@ impl LoadRunner {
         let submit_results: Vec<_> =
             stream::iter(submit_futs).buffer_unordered(FUNDING_CONCURRENCY).collect().await;
 
-        let mut receipt_futs = Vec::with_capacity(submit_results.len());
+        let mut hash_by_sender = Vec::with_capacity(submit_results.len());
         for result in submit_results {
             match result {
-                Ok((sender, balance, pending)) => {
-                    receipt_futs.push(async move {
-                        (
-                            sender,
-                            balance,
-                            pending.with_timeout(Some(B20_RECEIPT_TIMEOUT)).get_receipt().await,
-                        )
-                    });
-                }
+                Ok((sender, balance, tx_hash)) => hash_by_sender.push((sender, balance, tx_hash)),
                 Err((sender, e)) => {
                     warn!(sender = %sender, error = %e, "B-20 burn failed");
                     burn_failed += 1;
@@ -390,23 +373,32 @@ impl LoadRunner {
             }
         }
 
-        let mut receipt_stream = stream::iter(receipt_futs).buffer_unordered(FUNDING_CONCURRENCY);
-        while let Some((sender, balance, result)) = receipt_stream.next().await {
-            match result {
-                Ok(receipt) if receipt.status() => {
-                    debug!(sender = %sender, amount = %balance, tx_hash = %receipt.transaction_hash, "B-20 burn confirmed");
+        // Confirm every burn by watching canonical blocks and batch-fetching receipts for
+        // the touched blocks, instead of polling `eth_getTransactionReceipt` per sender.
+        let pending_hashes: HashSet<TxHash> =
+            hash_by_sender.iter().map(|(_, _, tx_hash)| *tx_hash).collect();
+        let receipts = BlockWatcher::confirm_and_fetch_receipts(
+            &self.client,
+            pending_hashes,
+            B20_RECEIPT_TIMEOUT,
+            |_hash| pb.inc(1),
+        )
+        .await?;
+        for (sender, balance, tx_hash) in hash_by_sender {
+            match receipts.get(&tx_hash) {
+                Some(receipt) if receipt.success => {
+                    debug!(sender = %sender, amount = %balance, tx_hash = %tx_hash, "B-20 burn confirmed");
                     burn_count += 1;
                 }
-                Ok(receipt) => {
-                    warn!(sender = %sender, tx_hash = %receipt.transaction_hash, "B-20 burn reverted");
+                Some(_) => {
+                    warn!(sender = %sender, tx_hash = %tx_hash, "B-20 burn reverted");
                     burn_failed += 1;
                 }
-                Err(e) => {
-                    warn!(sender = %sender, error = %e, "B-20 burn receipt failed");
+                None => {
+                    warn!(sender = %sender, tx_hash = %tx_hash, "B-20 burn receipt unavailable");
                     burn_failed += 1;
                 }
             }
-            pb.inc(1);
         }
 
         pb.finish_and_clear();
