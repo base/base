@@ -18,9 +18,6 @@ pub use types::{UpgradeSignalBlockTag, UpgradeSignalMode, UpgradeSignalStartupMo
 pub struct UpgradeSignalDefaults;
 
 impl UpgradeSignalDefaults {
-    /// Default wall-clock interval used to check whether another L1 block polling window has elapsed.
-    pub const POLL_INTERVAL: Duration = Duration::from_secs(12);
-
     /// Default number of attempts to read the L1 upgrade signal schedule before failing startup.
     pub const READ_ATTEMPTS: u32 = 3;
 
