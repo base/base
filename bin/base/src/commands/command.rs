@@ -29,13 +29,13 @@ pub(crate) enum BaseCommand {
     /// Update the base binary to the latest release.
     #[command(name = "update")]
     Update(Box<UpdateCommand>),
-    /// Execution-layer maintenance utilities (reth-derived subcommands).
+    /// Execution-layer maintenance utilities (use this group's own --chain flag).
     #[command(name = "reth")]
     Reth(Box<RethCommand>),
-    /// Manage storage of historical proofs in the fault-proof window.
+    /// Manage storage of historical proofs in the fault-proof window (uses its own --chain flag).
     #[command(name = "proofs")]
     Proofs(Box<base_proofs::Command<BaseChainSpecParser>>),
-    /// Snapshot manifest generation and download utilities.
+    /// Snapshot manifest generation and download utilities (uses its own --chain flag).
     #[command(name = "snapshot")]
     Snapshot(Box<SnapshotCommand>),
 }
@@ -53,13 +53,20 @@ impl BaseCommand {
                 (*sequencer).run(chain_resolver.resolve()?, metrics_enabled)
             }
             Self::Update(update) => (*update).run(),
-            Self::Reth(reth) => (*reth).run(),
+            Self::Reth(reth) => {
+                chain_resolver.reject_for_reth_command("base reth")?;
+                (*reth).run()
+            }
             Self::Proofs(command) => {
+                chain_resolver.reject_for_reth_command("base proofs")?;
                 let runner = CliRunner::try_default_runtime()?;
                 let runtime = runner.runtime();
                 runner.run_blocking_until_ctrl_c((*command).execute::<BaseNode>(runtime))
             }
-            Self::Snapshot(snapshot) => (*snapshot).run(),
+            Self::Snapshot(snapshot) => {
+                chain_resolver.reject_for_reth_command("base snapshot")?;
+                (*snapshot).run()
+            }
         }
     }
 }
@@ -68,7 +75,7 @@ impl BaseCommand {
 mod tests {
     use clap::Parser;
 
-    use crate::cli::BaseCli;
+    use crate::{cli::BaseCli, config::ChainResolver};
 
     #[test]
     fn rejects_legacy_node_rpc_path() {
@@ -106,5 +113,15 @@ mod tests {
         let err = BaseCli::try_parse_from(["base", "snapshot", "--help"]).unwrap_err();
 
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+    }
+
+    #[test]
+    fn rejects_top_level_chain_for_reth_subcommands() {
+        let cli =
+            BaseCli::try_parse_from(["base", "--chain", "sepolia", "reth", "db", "stats"]).unwrap();
+        let err = cli.command.run(ChainResolver::new(cli.chain), false).unwrap_err();
+
+        assert!(err.to_string().contains("base reth"));
+        assert!(err.to_string().contains("base --chain"));
     }
 }

@@ -133,6 +133,17 @@ impl ChainResolver {
         Self { chain }
     }
 
+    /// Rejects top-level chain selectors before dispatching to reth-derived subcommands.
+    pub(crate) fn reject_for_reth_command(&self, command: &str) -> eyre::Result<()> {
+        if self.chain == ChainArg::default() {
+            return Ok(());
+        }
+
+        eyre::bail!(
+            "`base --chain` only applies to integrated node commands; pass `--chain` to `{command}` instead"
+        );
+    }
+
     /// Resolves the configured chain input.
     pub(crate) fn resolve(&self) -> eyre::Result<ResolvedChainConfig> {
         match &self.chain {

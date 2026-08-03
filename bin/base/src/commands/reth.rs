@@ -84,13 +84,9 @@ impl RethSubcommand {
             }
             Self::Stage(command) => {
                 let runner = CliRunner::try_default_runtime()?;
-                let components = |spec: Arc<BaseChainSpec>| {
-                    (
-                        BaseExecutorProvider::base(Arc::clone(&spec)),
-                        Arc::new(BaseBeaconConsensus::new(spec)),
-                    )
-                };
-                runner.run_command_until_exit(|ctx| command.execute::<BaseNode, _>(ctx, components))
+                runner.run_command_until_exit(|ctx| {
+                    command.execute::<BaseNode, _>(ctx, Self::base_components)
+                })
             }
             Self::P2P(command) => {
                 let runner = CliRunner::try_default_runtime()?;
@@ -107,14 +103,14 @@ impl RethSubcommand {
             Self::ReExecute(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 let runtime = runner.runtime();
-                let components = |spec: Arc<BaseChainSpec>| {
-                    (
-                        BaseExecutorProvider::base(Arc::clone(&spec)),
-                        Arc::new(BaseBeaconConsensus::new(spec)),
-                    )
-                };
-                runner.run_until_ctrl_c(command.execute::<BaseNode>(components, runtime))
+                runner.run_until_ctrl_c(command.execute::<BaseNode>(Self::base_components, runtime))
             }
         }
+    }
+
+    pub(crate) fn base_components(
+        spec: Arc<BaseChainSpec>,
+    ) -> (BaseExecutorProvider, Arc<BaseBeaconConsensus>) {
+        (BaseExecutorProvider::base(Arc::clone(&spec)), Arc::new(BaseBeaconConsensus::new(spec)))
     }
 }
