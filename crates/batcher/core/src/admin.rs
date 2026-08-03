@@ -45,7 +45,12 @@ pub enum AdminCommand {
     /// Pause block ingestion without stopping the driver task.
     Pause,
     /// Force-close the current encoding channel (equivalent to a flush event).
-    Flush,
+    Flush {
+        /// Fired once every frame resulting from this flush has been encoded and handed to
+        /// the tx manager (not just the first). See [`AdminHandle::flush_and_wait`].
+        #[debug(skip)]
+        ack: Option<oneshot::Sender<()>>,
+    },
     /// Replace the throttle strategy and configuration.
     SetThrottle {
         /// The new throttle strategy to apply.
@@ -100,8 +105,25 @@ impl AdminHandle {
     }
 
     /// Force-close the current encoding channel, submitting any buffered frames.
+    ///
+    /// Returns once the command is queued — use
+    /// [`flush_and_wait`](Self::flush_and_wait) if the caller needs to know when the
+    /// resulting frames have actually been handed to the tx manager.
     pub async fn flush(&self) -> AdminResult<()> {
-        self.send(AdminCommand::Flush).await
+        self.send(AdminCommand::Flush { ack: None }).await
+    }
+
+    /// Force-close the current encoding channel and wait until every resulting frame has
+    /// been encoded and handed to the tx manager.
+    ///
+    /// Unlike [`flush`](Self::flush), which only guarantees the command was queued, this
+    /// waits for the driver to report that encoding and submission are both fully drained
+    /// for the current channel — a deterministic signal that every frame from this flush
+    /// (not just the first) has been submitted.
+    pub async fn flush_and_wait(&self) -> AdminResult<()> {
+        let (tx, rx) = oneshot::channel();
+        self.send(AdminCommand::Flush { ack: Some(tx) }).await?;
+        rx.await.map_err(|_| AdminError::ChannelClosed)
     }
 
     /// Replace the throttle strategy and configuration.

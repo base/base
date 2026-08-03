@@ -89,8 +89,9 @@ pub enum BatcherError {
 ///
 /// Each call to [`advance`] drives one complete batch cycle:
 /// 1. Drain the L2 source and forward each block to the driver via the channel.
-/// 2. Send a [`L2BlockEvent::Flush`] to force-close the current channel.
-/// 3. Wait for the driver to encode blocks and queue the frame submissions.
+/// 2. Send a [`L2BlockEvent::Flush`] (with an ack) to force-close the current channel.
+/// 3. Wait for the ack, confirming the driver has encoded every resulting frame and
+///    handed it to the tx manager (not just the first).
 /// 4. Mine one L1 block via the shared [`L1MinerTxManager`], firing all
 ///    receipt oneshots and delivering an [`L1HeadEvent::NewHead`] to the driver.
 /// 5. Yield to let the driver confirm receipts and advance its L1 head.
@@ -216,11 +217,16 @@ impl<S: L2BlockProvider> Batcher<S> {
 
     /// Drain the L2 source and forward all blocks to the driver, then flush.
     ///
-    /// Performs steps 1–3 of [`advance`] without mining: sends all L2 blocks,
-    /// sends [`L2BlockEvent::Flush`], and waits until the driver encodes the
-    /// blocks and calls [`send_async`] to queue the frame submissions. After
-    /// this returns, [`pending_count`] reflects how many frame transactions are
-    /// waiting.
+    /// Performs steps 1–3 of [`advance`] without mining: sends all L2 blocks, then a
+    /// [`L2BlockEvent::Flush`] carrying an acknowledgement, and waits for that ack. The ack
+    /// fires once the driver has fully drained encoding and submission for this cycle — i.e.
+    /// every frame resulting from the flush (not just the first) has been handed to the tx
+    /// manager — so after this returns, [`pending_count`] reflects the *complete* set of
+    /// frame transactions waiting, even when a cycle produces more than one frame.
+    ///
+    /// The ack is delivered through the same ordered channel as the preceding `Block` events
+    /// (rather than a side channel like the admin API) so it can't be observed before the
+    /// driver has actually ingested them.
     ///
     /// # Panics
     ///
@@ -230,7 +236,6 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`advance`]: Batcher::advance
     /// [`try_advance`]: Batcher::try_advance
     /// [`pending_count`]: Batcher::pending_count
-    /// [`send_async`]: crate::L1MinerTxManager::send_async
     pub async fn encode_only(&mut self) {
         self.try_encode_only().await.unwrap_or_else(|e| panic!("Batcher::encode_only failed: {e}"))
     }
@@ -250,10 +255,12 @@ impl<S: L2BlockProvider> Batcher<S> {
         if block_count == 0 {
             return Err(BatcherError::NoBlocks);
         }
-        self.block_tx.send(L2BlockEvent::Flush).expect("driver task alive");
-        if !self.tx_manager.wait_for_pending(Duration::from_secs(10)).await {
-            return Err(BatcherError::SubmissionTimeout);
-        }
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        self.block_tx.send(L2BlockEvent::Flush { ack: Some(ack_tx) }).expect("driver task alive");
+        tokio::time::timeout(Duration::from_secs(10), ack_rx)
+            .await
+            .map_err(|_| BatcherError::SubmissionTimeout)?
+            .map_err(|_| BatcherError::SubmissionTimeout)?;
         Ok(())
     }
 

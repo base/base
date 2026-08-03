@@ -68,7 +68,7 @@ base-consensus-derive = { workspace = true, features = ["test-utils"] }
 
 # tokio
 tokio-util.workspace = true
-tokio = { workspace = true, features = ["rt", "time"] }
+tokio = { workspace = true, features = ["rt", "time", "sync"] }
 
 # async
 async-trait.workspace = true

@@ -85,18 +85,22 @@ impl<TM: TxManager> SubmissionQueue<TM> {
     /// submissions map each frame to one blob, matching op-batcher's blob-tx shape.
     /// Loops until the semaphore is exhausted, the pipeline has no ready submissions,
     /// or the txpool is blocked.
-    pub async fn submit_pending<P: BatchPipeline>(&mut self, pipeline: &mut P) {
+    ///
+    /// Returns `true` if the pipeline reported no further ready submissions (fully
+    /// drained), or `false` if it stopped early because the semaphore is exhausted, the
+    /// txpool is blocked, or a blob-encoding failure required a requeue.
+    pub async fn submit_pending<P: BatchPipeline>(&mut self, pipeline: &mut P) -> bool {
         loop {
             if self.txpool_blocked {
-                break;
+                return false;
             }
             let Ok(permit) = Arc::clone(&self.semaphore).try_acquire_owned() else {
-                break;
+                return false;
             };
 
             let Some(sub) = pipeline.next_submission() else {
                 drop(permit);
-                break;
+                return true;
             };
             debug_assert!(!sub.frames.is_empty(), "batch submissions must contain frames");
             if sub.frames.is_empty() {
@@ -122,7 +126,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                             warn!(error = %e, "failed to encode frames to blob, requeueing");
                             pipeline.requeue(sub.id);
                             drop(permit);
-                            break;
+                            return false;
                         }
                     }
                 }
