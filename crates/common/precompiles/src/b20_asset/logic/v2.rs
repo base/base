@@ -14,7 +14,7 @@ use alloc::{
     vec::Vec,
 };
 
-use alloy_primitives::{Address, B256, FixedBytes, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, FixedBytes, U256, b256, keccak256};
 use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
@@ -770,6 +770,22 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
 
     fn end_announce(&self, token: &mut B20AssetToken<S, A>, id: String) -> Result<()> {
         token.accounting_mut().emit_event(IB20Asset::EndAnnouncement { id }.encode_log_data())
+    }
+
+    fn map_announce_internal_error(
+        &self,
+        call: &Bytes,
+        err: BasePrecompileError,
+    ) -> BasePrecompileError {
+        // Cobalt remaps an inner-call Panic (Solidity 0x11/0x21/0x32) to the dedicated typed revert
+        // so the reference and binary agree, but still propagates OutOfGas / Fatal / SlotOverflow
+        // raw: converting OutOfGas to a catchable revert would break EVM gas semantics, and masking
+        // the hard faults would hide unrecoverable failures.
+        if matches!(err, BasePrecompileError::Panic(_)) || !err.is_system_error() {
+            BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: call.clone() })
+        } else {
+            err
+        }
     }
 
     // --- Computed reads ---
@@ -1982,6 +1998,36 @@ mod tests {
         let mut tok = token();
         LOGIC.end_announce(&mut tok, "id".to_string()).unwrap();
         assert_eq!(last_event_sig(&tok), IB20Asset::EndAnnouncement::SIGNATURE_HASH);
+    }
+
+    /// Cobalt (BOP-485): an inner-call `Panic` and ordinary reverts both become
+    /// `InternalCallFailed`, but `OutOfGas` / `Fatal` / `SlotOverflow` still propagate raw. The
+    /// hard-fault arm is the security-relevant scope — converting `OutOfGas` into a catchable
+    /// revert would break EVM gas semantics, and masking `Fatal` / `SlotOverflow` would hide
+    /// unrecoverable faults.
+    #[test]
+    fn map_announce_internal_error_wraps_panic_keeps_hard_faults_raw() {
+        let call = alloy_primitives::Bytes::from(vec![1u8, 2, 3, 4]);
+        let map = |err| {
+            <AssetV2 as Asset<FakeAccounting, FakePolicyAccounting>>::map_announce_internal_error(
+                &LOGIC, &call, err,
+            )
+        };
+        let wrapped =
+            BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: call.clone() });
+        // Every Panic kind is remapped to the typed revert (the V2 divergence from V1).
+        assert_eq!(map(BasePrecompileError::under_overflow()), wrapped);
+        assert_eq!(map(BasePrecompileError::enum_conversion_error()), wrapped);
+        assert_eq!(map(BasePrecompileError::array_oob()), wrapped);
+        // An ordinary revert is wrapped, unchanged from V1.
+        assert_eq!(map(BasePrecompileError::revert(IB20::EmptyFeatureSet {})), wrapped);
+        // The hard faults must still propagate raw.
+        assert_eq!(map(BasePrecompileError::OutOfGas), BasePrecompileError::OutOfGas);
+        assert_eq!(
+            map(BasePrecompileError::Fatal("db".to_string())),
+            BasePrecompileError::Fatal("db".to_string())
+        );
+        assert_eq!(map(BasePrecompileError::SlotOverflow), BasePrecompileError::SlotOverflow);
     }
 
     // --- reads ---

@@ -2,8 +2,8 @@
 
 use alloc::{string::String, vec::Vec};
 
-use alloy_primitives::{Address, B256, FixedBytes, U256};
-use base_precompile_storage::Result;
+use alloy_primitives::{Address, B256, Bytes, FixedBytes, U256};
+use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
     AssetAccounting, B20AssetToken, Eip712Domain, IB20, PermitArgs, PolicyAccounting, Token,
@@ -252,6 +252,21 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
 
     /// Closes an announcement after its internal calls have executed: emits `EndAnnouncement`.
     fn end_announce(&self, token: &mut B20AssetToken<S, A>, id: String) -> Result<()>;
+
+    /// Maps a failure from an `announce` internal call to the error this version surfaces.
+    ///
+    /// The dispatcher runs each `internalCalls` entry through `route` and hands any failure here.
+    /// The classification is consensus-frozen per fork, so it lives on the version: `AssetV1`
+    /// (Beryl) propagates system errors (`Panic` / `OutOfGas` / `Fatal` / `SlotOverflow`) raw and
+    /// wraps only ordinary reverts as `InternalCallFailed`; `AssetV2` (Cobalt) additionally remaps
+    /// `Panic` to `InternalCallFailed`, while still propagating `OutOfGas` / `Fatal` /
+    /// `SlotOverflow` raw (converting those would break EVM gas semantics or mask unrecoverable
+    /// faults).
+    fn map_announce_internal_error(
+        &self,
+        call: &Bytes,
+        err: BasePrecompileError,
+    ) -> BasePrecompileError;
 
     // --- Direct reads: version-invariant pass-throughs to the storage port, so the
     //     dispatcher never touches token storage directly. Defaulted here and shared by

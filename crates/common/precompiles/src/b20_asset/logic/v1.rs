@@ -6,7 +6,7 @@ use alloc::{
     vec::Vec,
 };
 
-use alloy_primitives::{Address, B256, FixedBytes, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, FixedBytes, U256, b256, keccak256};
 use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
@@ -694,6 +694,20 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
 
     fn end_announce(&self, token: &mut B20AssetToken<S, A>, id: String) -> Result<()> {
         token.accounting_mut().emit_event(IB20Asset::EndAnnouncement { id }.encode_log_data())
+    }
+
+    fn map_announce_internal_error(
+        &self,
+        call: &Bytes,
+        err: BasePrecompileError,
+    ) -> BasePrecompileError {
+        // Frozen at Beryl: every system error (Panic / OutOfGas / Fatal / SlotOverflow) propagates
+        // raw; only ordinary reverts are wrapped. Byte-identical to the pre-BOP-485 inline mapping.
+        if err.is_system_error() {
+            err
+        } else {
+            BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: call.clone() })
+        }
     }
 
     // --- Computed reads ---
@@ -1616,6 +1630,36 @@ mod tests {
         let mut tok = token();
         LOGIC.end_announce(&mut tok, "id".to_string()).unwrap();
         assert_eq!(last_event_sig(&tok), IB20Asset::EndAnnouncement::SIGNATURE_HASH);
+    }
+
+    /// Frozen at Beryl: every system error — including `Panic` — propagates raw from an inner
+    /// `announce` call; only ordinary reverts are wrapped. Pins the classification against
+    /// `AssetV2`'s Panic-wrapping divergence (BOP-485).
+    #[test]
+    fn map_announce_internal_error_keeps_system_errors_raw() {
+        let call = alloy_primitives::Bytes::from(vec![1u8, 2, 3, 4]);
+        let map = |err| {
+            <AssetV1 as Asset<FakeAccounting, FakePolicyAccounting>>::map_announce_internal_error(
+                &LOGIC, &call, err,
+            )
+        };
+        // Panic stays raw at V1 (the pre-Cobalt behavior).
+        assert_eq!(
+            map(BasePrecompileError::under_overflow()),
+            BasePrecompileError::under_overflow()
+        );
+        // The other system errors also stay raw.
+        assert_eq!(map(BasePrecompileError::OutOfGas), BasePrecompileError::OutOfGas);
+        assert_eq!(
+            map(BasePrecompileError::Fatal("db".to_string())),
+            BasePrecompileError::Fatal("db".to_string())
+        );
+        assert_eq!(map(BasePrecompileError::SlotOverflow), BasePrecompileError::SlotOverflow);
+        // An ordinary revert is wrapped as InternalCallFailed.
+        assert_eq!(
+            map(BasePrecompileError::revert(IB20::EmptyFeatureSet {})),
+            BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: call.clone() })
+        );
     }
 
     // --- reads ---

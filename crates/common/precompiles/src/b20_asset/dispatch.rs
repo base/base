@@ -461,17 +461,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             if call_bytes[..4] == IB20Asset::announceCall::SELECTOR {
                 return Err(BasePrecompileError::revert(IB20Asset::AnnouncementInProgress {}));
             }
-            self.route(ctx, call_bytes, version, privileged, NoopPrecompileCallObserver).map_err(
-                |err| {
-                    if err.is_system_error() {
-                        err
-                    } else {
-                        BasePrecompileError::revert(IB20Asset::InternalCallFailed {
-                            call: call.clone(),
-                        })
-                    }
-                },
-            )?;
+            self.route(ctx, call_bytes, version, privileged, NoopPrecompileCallObserver)
+                .map_err(|err| logic.map_announce_internal_error(call, err))?;
         }
 
         logic.end_announce(self, id)
@@ -709,6 +700,35 @@ mod tests {
         .abi_encode();
 
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
+
+        assert_eq!(
+            err,
+            base_precompile_storage::BasePrecompileError::revert(IB20Asset::InternalCallFailed {
+                call: inner_call
+            })
+        );
+    }
+
+    /// At V2 (Cobalt) an inner-call `Panic` is remapped to `InternalCallFailed`
+    #[test]
+    fn announce_inner_panic_wraps_as_internal_call_failed_at_v2() {
+        let mut token = make_token();
+        // Any balance > 1 overflows when multiplied by this multiplier.
+        token.accounting_mut().multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+
+        let inner_call = Bytes::from(
+            IB20Asset::toScaledBalanceCall { rawBalance: U256::from(2u64) }.abi_encode(),
+        );
+        let calldata = IB20Asset::announceCall {
+            internalCalls: alloc::vec![inner_call.clone()],
+            id: String::from("test-v2-panic"),
+            description: String::from("test"),
+            uri: String::new(),
+        }
+        .abi_encode();
+
+        let err = call_asset_v2_at(&mut token, ALICE, U256::from(1u64), calldata).unwrap_err();
 
         assert_eq!(
             err,
