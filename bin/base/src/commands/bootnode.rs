@@ -130,13 +130,13 @@ impl BootnodeCommand {
 mod tests {
     use clap::Parser;
 
-    use crate::{cli::BaseCli, commands::BaseCommand, config::ChainArg};
+    use crate::{cli::BaseCli, commands::BaseCommand};
 
     #[test]
     fn parses_bootnode_command() {
         let cli = BaseCli::parse_from(["base", "bootnode"]);
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(_)));
+        assert_eq!(cli.chain, None);
         let BaseCommand::Bootnode(bootnode) = cli.command else {
             panic!("expected bootnode command");
         };

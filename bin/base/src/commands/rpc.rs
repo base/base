@@ -348,7 +348,7 @@ mod tests {
             "-vvv",
         ]);
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(ref name) if name == "dev"));
+        assert!(matches!(cli.chain, Some(ChainArg::BuiltIn(ref name)) if name == "dev"));
         let BaseCommand::Rpc(rpc) = cli.command else {
             panic!("expected rpc command");
         };

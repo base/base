@@ -25,14 +25,8 @@ pub(crate) struct BaseCli {
     /// Uses a distinct clap `id` so nested reth-derived subcommands (e.g. `base reth db`) can
     /// register their own globally-propagated `--chain` arg without colliding at value-access
     /// time in [`FromArgMatches`].
-    #[arg(
-        id = "base_chain",
-        long = "chain",
-        short = 'c',
-        default_value = "mainnet",
-        env = "BASE_CHAIN"
-    )]
-    pub(crate) chain: ChainArg,
+    #[arg(id = "base_chain", long = "chain", short = 'c', env = "BASE_CHAIN")]
+    pub(crate) chain: Option<ChainArg>,
 
     /// Logging configuration.
     #[command(flatten)]
@@ -84,7 +78,7 @@ mod tests {
             "http://localhost:5052",
         ]);
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(ref name) if name == "mainnet"));
+        assert_eq!(cli.chain, None);
         assert!(matches!(cli.command, BaseCommand::Rpc(_)));
     }
 
@@ -92,7 +86,7 @@ mod tests {
     fn parses_named_chain_selector() {
         let cli = BaseCli::parse_from(["base", "-c", "sepolia", "bootnode"]);
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(ref name) if name == "sepolia"));
+        assert!(matches!(cli.chain, Some(ChainArg::BuiltIn(ref name)) if name == "sepolia"));
     }
 
     #[test]
@@ -109,7 +103,7 @@ mod tests {
     fn parses_path_chain_selector() {
         let cli = BaseCli::parse_from(["base", "--chain", "./chain.toml", "bootnode"]);
 
-        assert!(matches!(cli.chain, ChainArg::File(_)));
+        assert!(matches!(cli.chain, Some(ChainArg::File(_))));
     }
 
     #[test]
@@ -136,7 +130,7 @@ mod tests {
         let cli =
             BaseCli::try_parse_from(["base", "--chain", "sepolia", "reth", "db", "stats"]).unwrap();
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(ref name) if name == "sepolia"));
+        assert!(matches!(cli.chain, Some(ChainArg::BuiltIn(ref name)) if name == "sepolia"));
         assert!(matches!(cli.command, BaseCommand::Reth(_)));
     }
 }
