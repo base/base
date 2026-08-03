@@ -348,6 +348,9 @@ pub struct MonitoringConfig {
     pub name: String,
     /// L2 JSON-RPC endpoint URL.
     pub rpc: Url,
+    /// Optional standard execution-layer WebSocket JSON-RPC endpoint URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub el_ws_rpc: Option<Url>,
     /// Flashblocks WebSocket endpoint URL.
     pub flashblocks_ws: Url,
     /// L1 Ethereum JSON-RPC endpoint URL.
@@ -516,6 +519,7 @@ const fn default_blob_target() -> u64 {
 struct MonitoringConfigOverride {
     name: Option<String>,
     rpc: Option<Url>,
+    el_ws_rpc: Option<Url>,
     flashblocks_ws: Option<Url>,
     l1_rpc: Option<Url>,
     consensus_node_rpc: Option<Url>,
@@ -566,6 +570,7 @@ impl MonitoringConfig {
         Self {
             name: "mainnet".to_string(),
             rpc: Url::parse("https://mainnet.base.org").unwrap(),
+            el_ws_rpc: None,
             flashblocks_ws: Url::parse("wss://mainnet.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-rpc.publicnode.com").unwrap(),
             consensus_node_rpc: None,
@@ -592,6 +597,7 @@ impl MonitoringConfig {
         Self {
             name: "sepolia".to_string(),
             rpc: Url::parse("https://sepolia.base.org").unwrap(),
+            el_ws_rpc: None,
             flashblocks_ws: Url::parse("wss://sepolia.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-sepolia-rpc.publicnode.com").unwrap(),
             consensus_node_rpc: None,
@@ -624,6 +630,7 @@ impl MonitoringConfig {
         Self {
             name: "devnet".to_string(),
             rpc: Url::parse("http://localhost:7545").unwrap(),
+            el_ws_rpc: Some(Url::parse("ws://localhost:7546").unwrap()),
             flashblocks_ws: Url::parse("ws://localhost:7111").unwrap(),
             l1_rpc: Url::parse("http://localhost:4545").unwrap(),
             consensus_node_rpc: Some(Url::parse("http://localhost:7549").unwrap()),
@@ -802,6 +809,7 @@ impl MonitoringConfig {
         Ok(Self {
             name: overrides.name.unwrap_or(base.name),
             rpc: overrides.rpc.unwrap_or(base.rpc),
+            el_ws_rpc: overrides.el_ws_rpc.or(base.el_ws_rpc),
             flashblocks_ws: overrides.flashblocks_ws.unwrap_or(base.flashblocks_ws),
             l1_rpc: overrides.l1_rpc.unwrap_or(base.l1_rpc),
             consensus_node_rpc: overrides.consensus_node_rpc.or(base.consensus_node_rpc),
@@ -875,10 +883,23 @@ mod tests {
         let mainnet = MonitoringConfig::load("mainnet").await.unwrap();
         assert_eq!(mainnet.name, "mainnet");
         assert!(mainnet.rpc.as_str().contains("mainnet"));
+        assert!(mainnet.el_ws_rpc.is_none());
 
         let sepolia = MonitoringConfig::load("sepolia").await.unwrap();
         assert_eq!(sepolia.name, "sepolia");
         assert!(sepolia.rpc.as_str().contains("sepolia"));
+        assert!(sepolia.el_ws_rpc.is_none());
+    }
+
+    #[test]
+    fn el_ws_rpc_deserializes_and_skips_none_when_serializing() {
+        let mainnet = MonitoringConfig::mainnet();
+        let yaml = serde_yaml::to_string(&mainnet).unwrap();
+        assert!(!yaml.contains("el_ws_rpc"));
+
+        let custom: MonitoringConfig =
+            serde_yaml::from_str(&format!("{yaml}el_ws_rpc: ws://localhost:9546\n")).unwrap();
+        assert_eq!(custom.el_ws_rpc.unwrap().as_str(), "ws://localhost:9546/");
     }
 
     #[test]
@@ -888,6 +909,7 @@ mod tests {
         assert_eq!(devnet.name, "devnet");
         assert!(devnet.rpc.as_str().contains("localhost"));
         assert_eq!(devnet.rpc.as_str(), "http://localhost:7545/");
+        assert_eq!(devnet.el_ws_rpc.unwrap().as_str(), "ws://localhost:7546/");
         assert_eq!(devnet.flashblocks_ws.as_str(), "ws://localhost:7111/");
         assert_eq!(devnet.l1_rpc.as_str(), "http://localhost:4545/");
         assert!(devnet.consensus_node_rpc.is_some());
