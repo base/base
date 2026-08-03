@@ -11,7 +11,8 @@ use base_consensus_cli::{
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
-    ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
+    ExecutionNodeConfigArgs, PayloadBuilderArgs, StandardBaseRethNode,
+    chainspec::chain_value_parser,
 };
 use base_node_runner::BaseNodeRunner;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
@@ -37,19 +38,33 @@ pub(crate) struct SequencerCommand {
     #[command(flatten)]
     pub(crate) builder: BuilderArgs,
 
+    /// Reth payload-builder arguments, which own `--builder.max-tasks`.
+    #[command(flatten)]
+    pub(crate) payload_builder: PayloadBuilderArgs,
+
     /// Embedded consensus sequencer arguments.
     #[command(flatten)]
     pub(crate) consensus: EmbeddedSequencerConsensusNodeConfigArgs,
 }
 
 impl SequencerCommand {
+    /// Copies reth's parsed payload-builder arguments into the embedded builder arguments.
+    ///
+    /// The builder sources `max_payload_tasks` from reth's `--builder.max-tasks` instead of
+    /// defining a Base-specific flag, so the parsed value has to be pushed into the builder args
+    /// before they are converted into a builder config.
+    pub(crate) const fn apply_payload_builder_args(&mut self) {
+        self.builder.max_payload_tasks = self.payload_builder.max_payload_tasks;
+    }
+
     /// Runs the `sequencer` flavor with execution, builder, and consensus in one process.
     pub(crate) fn run(
-        self,
+        mut self,
         resolved_chain: ResolvedChainConfig,
         metrics_enabled: bool,
     ) -> eyre::Result<()> {
-        let Self { execution_chain, execution, mut builder, consensus } = self;
+        self.apply_payload_builder_args();
+        let Self { execution_chain, execution, mut builder, payload_builder, consensus } = self;
         let mut execution_chain = match execution_chain {
             Some(chain) => chain,
             None => resolved_chain.execution_chain_spec()?,
@@ -93,8 +108,10 @@ impl SequencerCommand {
 
             let upgrade_signal_l1_rpc =
                 rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
-            let execution =
-                execution.into_runtime_config(execution_chain).with_unified_auth_endpoint();
+            let execution = execution
+                .into_runtime_config(execution_chain)
+                .with_payload_builder_args(payload_builder)
+                .with_unified_auth_endpoint();
             let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
 
             let task_executor = ctx.task_executor.clone();
@@ -294,6 +311,59 @@ mod tests {
                 .map(|url| url.as_str()),
             Some("http://finalized-l1:8545/")
         );
+    }
+
+    #[test]
+    fn max_tasks_flag_populates_builder_max_payload_tasks() {
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--builder.max-tasks",
+            "1",
+        ]));
+
+        let BaseCommand::Sequencer(mut sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        assert_eq!(sequencer.payload_builder.max_payload_tasks, 1);
+        sequencer.apply_payload_builder_args();
+        assert_eq!(sequencer.builder.max_payload_tasks, 1);
+    }
+
+    #[test]
+    fn omitted_max_tasks_flag_keeps_default_max_payload_tasks() {
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+        ]));
+
+        let BaseCommand::Sequencer(mut sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        sequencer.apply_payload_builder_args();
+        assert_eq!(sequencer.builder.max_payload_tasks, 3);
+    }
+
+    #[test]
+    fn rejects_zero_max_tasks() {
+        let err = BaseCli::try_parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--builder.max-tasks",
+            "0",
+        ]))
+        .unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--builder.max-tasks"));
     }
 
     #[test]

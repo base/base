@@ -33,8 +33,9 @@ use reth_cli_commands::launcher::FnLauncher;
 use reth_cli_runner::CliRunner;
 use reth_db::DatabaseEnv;
 use reth_node_builder::{NodeBuilder, WithLaunchContext};
+pub use reth_node_core::args::PayloadBuilderArgs;
 use reth_node_core::{
-    args::{LogArgs, PayloadBuilderArgs, TraceArgs},
+    args::{LogArgs, TraceArgs},
     version::version_metadata,
 };
 // This allows us to manually enable node metrics features, required for proper jemalloc metric

@@ -12,7 +12,8 @@ use reth_node_builder::NodeBuilder;
 use reth_node_core::{
     args::{
         DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, EraArgs, MetricArgs,
-        NetworkArgs, PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs, TxPoolArgs,
+        NetworkArgs, PayloadBuilderArgs, PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs,
+        TxPoolArgs,
     },
     node_config::NodeConfig,
     version,
@@ -243,6 +244,15 @@ impl ExecutionNodeRuntimeConfig {
     /// Configures authenticated Engine API access for unified Base binaries.
     pub fn with_unified_auth_endpoint(mut self) -> Self {
         Self::configure_unified_auth_endpoint(&mut self.node_config);
+        self
+    }
+
+    /// Applies reth's parsed payload-builder arguments to the node configuration.
+    ///
+    /// Commands that build blocks parse [`PayloadBuilderArgs`] themselves, because
+    /// [`ExecutionNodeConfigArgs`] is also used by commands that must reject `--builder.*` flags.
+    pub fn with_payload_builder_args(mut self, payload_builder: PayloadBuilderArgs) -> Self {
+        self.node_config.builder = payload_builder;
         self
     }
 
@@ -512,6 +522,29 @@ mod tests {
 
         assert_eq!(runtime.node_config.network.max_inbound_peers, Some(12));
         assert_eq!(runtime.node_config.network.max_outbound_peers, Some(34));
+    }
+
+    #[test]
+    fn runtime_config_defaults_payload_builder_args() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from(["reth"]).args;
+
+        let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
+
+        assert_eq!(runtime.node_config.builder, PayloadBuilderArgs::default());
+    }
+
+    #[test]
+    fn runtime_config_applies_payload_builder_args() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from(["reth"]).args;
+        let payload_builder =
+            CommandParser::<PayloadBuilderArgs>::parse_from(["reth", "--builder.max-tasks", "1"])
+                .args;
+
+        let runtime = args
+            .into_runtime_config(Arc::new(BaseChainSpec::devnet()))
+            .with_payload_builder_args(payload_builder);
+
+        assert_eq!(runtime.node_config.builder.max_payload_tasks, 1);
     }
 
     #[test]
