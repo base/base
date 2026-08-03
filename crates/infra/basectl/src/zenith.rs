@@ -12,7 +12,7 @@ use alloy_provider::{
     network::{ReceiptResponse, TransactionResponse},
 };
 use alloy_rpc_client::RpcClient;
-use alloy_rpc_types_eth::{BlockNumberOrTag, SyncStatus as EthSyncStatus, TransactionRequest};
+use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionRequest};
 use alloy_sol_types::SolCall;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
@@ -51,18 +51,6 @@ pub struct ZenithCheckCursor {
     pub block_hash: B256,
 }
 
-/// Overall Zenith health.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ZenithStatus {
-    /// Every required invariant holds.
-    Healthy,
-    /// One or more required invariants failed.
-    Broken,
-    /// The available observations cannot establish health.
-    Indeterminate,
-}
-
 /// Zenith schedule state at the snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -73,24 +61,6 @@ pub enum ZenithSchedule {
     Scheduled,
     /// Zenith is active at the snapshot timestamp.
     Active,
-    /// The observed schedule is internally inconsistent.
-    Inconsistent,
-}
-
-/// `BaseTime` installation state at the snapshot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ZenithInstallation {
-    /// No code exists at the reserved proxy address.
-    Missing,
-    /// The canonical proxy exists but has no implementation linkage.
-    Dormant,
-    /// The canonical initial implementation is linked.
-    LinkedInitial,
-    /// A nonzero governance-selected implementation is linked.
-    LinkedOther,
-    /// Proxy, admin, implementation, or bytecode observations conflict.
-    Inconsistent,
 }
 
 /// Status of a report dimension or individual check.
@@ -105,18 +75,6 @@ pub enum ZenithCheckStatus {
     Indeterminate,
 }
 
-/// HTTP RPC health for the completed check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ZenithRpcStatus {
-    /// Every required HTTP RPC read succeeded.
-    Pass,
-    /// Required reads succeeded with reduced coverage.
-    Degraded,
-    /// A required HTTP RPC read failed.
-    Fail,
-}
-
 /// One evaluated Zenith invariant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -125,38 +83,18 @@ pub struct ZenithCheck {
     pub name: String,
     /// Check result.
     pub status: ZenithCheckStatus,
-    /// RPC endpoint responsible for the observation.
-    pub endpoint: String,
-    /// Snapshot block number.
-    pub block_number: u64,
-    /// Snapshot block hash.
-    pub block_hash: B256,
     /// Expected value.
     pub expected: String,
     /// Observed value.
     pub observed: String,
-    /// Operator action when the check fails.
-    pub remediation: String,
 }
 
 /// Serializable report for one hash-pinned Zenith snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ZenithReport {
-    /// Overall health.
-    pub overall: ZenithStatus,
-    /// EL, CL, and configured network identity status.
-    pub identity: ZenithCheckStatus,
     /// Activation state.
     pub schedule: ZenithSchedule,
-    /// Predeploy installation state.
-    pub installation: ZenithInstallation,
-    /// Active-block metadata and state agreement.
-    pub metadata: ZenithCheckStatus,
-    /// HTTP RPC health.
-    pub rpc_http: ZenithRpcStatus,
-    /// EL chain ID.
-    pub chain_id: u64,
     /// Explicit snapshot block number.
     pub block_number: u64,
     /// Explicit snapshot block hash.
@@ -177,20 +115,8 @@ pub struct ZenithReport {
 /// Pure observations used to evaluate a Zenith report.
 #[derive(Debug, Clone)]
 pub struct ZenithObservations {
-    /// EL RPC endpoint.
-    pub el_endpoint: String,
-    /// CL RPC endpoint.
-    pub cl_endpoint: String,
-    /// EL chain ID.
-    pub el_chain_id: u64,
-    /// CL chain ID.
-    pub cl_chain_id: u64,
-    /// Chain ID expected by basectl configuration.
-    pub expected_chain_id: Option<u64>,
     /// CL Zenith activation timestamp.
     pub activation: Option<u64>,
-    /// EL sync state.
-    pub el_syncing: bool,
     /// Snapshot block number.
     pub block_number: u64,
     /// Snapshot block hash.
@@ -199,8 +125,6 @@ pub struct ZenithObservations {
     pub timestamp: u64,
     /// Header timestamp in milliseconds.
     pub timestamp_ms: Option<u64>,
-    /// Whether all number/hash block and header views agreed.
-    pub snapshot_consistent: bool,
     /// Proxy code hash.
     pub proxy_code_hash: B256,
     /// Proxy admin slot.
@@ -229,40 +153,13 @@ pub struct ZenithObservations {
     pub getter_timestamp_ms_error: Option<String>,
 }
 
-/// Zenith checker configuration and RPC entry point.
+/// Zenith RPC entry point.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct ZenithChecker {
-    expected_chain_id: Option<u64>,
-}
+pub struct ZenithChecker;
 
 impl ZenithChecker {
-    /// Creates a checker with the chain ID expected by basectl configuration.
-    pub const fn new(expected_chain_id: Option<u64>) -> Self {
-        Self { expected_chain_id }
-    }
-
-    /// Checks one snapshot using the supplied execution and consensus RPCs.
-    pub async fn check(
-        &self,
-        el_rpc: &Url,
-        cl_rpc: &Url,
-        target: ZenithCheckTarget,
-    ) -> Result<ZenithReport> {
-        let mut report = self.check_since(el_rpc, cl_rpc, None, target, None).await?;
-        report
-            .checks
-            .retain(|check| !check.name.starts_with("rpc_") && check.name != "cadence_200ms");
-        report.overall =
-            if report.checks.iter().any(|check| check.status == ZenithCheckStatus::Fail) {
-                ZenithStatus::Broken
-            } else {
-                ZenithStatus::Healthy
-            };
-        Ok(report)
-    }
-
     /// Checks a snapshot, including every cadence edge after `previous` for `Latest`.
-    pub async fn check_since(
+    pub async fn check(
         &self,
         el_rpc: &Url,
         cl_rpc: &Url,
@@ -284,8 +181,6 @@ impl ZenithChecker {
         let rollup = RollupNodeApiClient::rollup_config(&cl)
             .await
             .with_context(|| format!("fetching optimism_rollupConfig from {cl_rpc}"))?;
-        let (el_chain_id, syncing) = tokio::try_join!(provider.get_chain_id(), provider.syncing())?;
-
         let hash = match target {
             ZenithCheckTarget::Latest => {
                 provider
@@ -304,41 +199,10 @@ impl ZenithChecker {
             .full()
             .await?
             .ok_or_else(|| anyhow!("snapshot block by hash not found"))?;
+        if full_hash.header.hash != hash {
+            return Err(anyhow!("snapshot block response did not match the requested hash"));
+        }
         let number = full_hash.header.number;
-        let id_number = BlockId::Number(BlockNumberOrTag::Number(number));
-        let (full_number, header_number, header_hash) = tokio::try_join!(
-            provider.get_block(id_number).full(),
-            provider.get_header(id_number),
-            provider.get_header(block_id),
-        )?;
-        let full_number =
-            full_number.ok_or_else(|| anyhow!("snapshot block by number not found"))?;
-        let header_number =
-            header_number.ok_or_else(|| anyhow!("snapshot header by number not found"))?;
-        let header_hash =
-            header_hash.ok_or_else(|| anyhow!("snapshot header by hash not found"))?;
-        let same_block = |block: &<Base as Network>::BlockResponse| {
-            block.header.hash == hash
-                && block.header.number == number
-                && block.header.timestamp == full_hash.header.timestamp
-                && block.header.timestamp_ms == full_hash.header.timestamp_ms
-        };
-        let same_header = |header: &<Base as Network>::HeaderResponse| {
-            header.hash == hash
-                && header.number == number
-                && header.timestamp == full_hash.header.timestamp
-                && header.timestamp_ms == full_hash.header.timestamp_ms
-        };
-        let transactions_match = full_number
-            .transactions
-            .txns()
-            .map(TransactionResponse::tx_hash)
-            .eq(full_hash.transactions.txns().map(TransactionResponse::tx_hash));
-        let snapshot_consistent = same_block(&full_number)
-            && same_block(&full_hash)
-            && same_header(&header_number)
-            && same_header(&header_hash)
-            && transactions_match;
 
         let (proxy_code, admin, implementation, storage) = tokio::try_join!(
             provider.get_code_at(Predeploys::BASE_TIME).block_id(block_id),
@@ -431,18 +295,11 @@ impl ZenithChecker {
         };
 
         let mut report = ZenithReport::evaluate(ZenithObservations {
-            el_endpoint: el_rpc.to_string(),
-            cl_endpoint: cl_rpc.to_string(),
-            el_chain_id,
-            cl_chain_id: rollup.l2_chain_id.id(),
-            expected_chain_id: self.expected_chain_id,
             activation: rollup.upgrades.base.zenith,
-            el_syncing: !matches!(syncing, EthSyncStatus::None),
             block_number: number,
             block_hash: hash,
             timestamp: full_hash.header.timestamp,
             timestamp_ms: full_hash.header.timestamp_ms,
-            snapshot_consistent,
             proxy_code_hash: keccak256(proxy_code),
             admin,
             implementation,
@@ -457,7 +314,6 @@ impl ZenithChecker {
             getter_timestamp_ms,
             getter_timestamp_ms_error,
         });
-        let raw = RawRpc::new(el_rpc)?;
         let cadence_complete = append_cadence_check(&provider, &mut report, target, previous).await;
         let cadence_passed = report
             .checks
@@ -468,32 +324,7 @@ impl ZenithChecker {
             block_number: report.block_number,
             block_hash: report.block_hash,
         });
-        append_wire_checks(&provider, &raw, &mut report, &full_hash, el_ws_rpc, target).await;
-        let http_checks = report.checks.iter().filter(|check| {
-            check.name.starts_with("rpc_eth_") && !check.name.contains("subscribe")
-        });
-        report.rpc_http = if report.rpc_http == ZenithRpcStatus::Fail
-            || http_checks.clone().any(|check| check.status == ZenithCheckStatus::Fail)
-        {
-            ZenithRpcStatus::Fail
-        } else if http_checks.clone().any(|check| check.status == ZenithCheckStatus::Indeterminate)
-        {
-            ZenithRpcStatus::Degraded
-        } else {
-            ZenithRpcStatus::Pass
-        };
-        report.overall = if report
-            .checks
-            .iter()
-            .any(|check| check.status == ZenithCheckStatus::Fail)
-        {
-            ZenithStatus::Broken
-        } else if report.checks.iter().any(|check| check.status == ZenithCheckStatus::Indeterminate)
-        {
-            ZenithStatus::Indeterminate
-        } else {
-            ZenithStatus::Healthy
-        };
+        append_wire_checks(&provider, &mut report, &full_hash, el_ws_rpc, target).await;
         Ok(report)
     }
 }
@@ -505,67 +336,32 @@ enum RawOutcome {
     Unavailable(String),
 }
 
-struct RawRpc {
-    endpoint: Url,
-    client: alloy_transport_http::reqwest::Client,
-}
-
-impl RawRpc {
-    fn new(endpoint: &Url) -> Result<Self> {
-        Ok(Self {
-            endpoint: endpoint.clone(),
-            client: alloy_transport_http::reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
-                .build()?,
-        })
-    }
-
-    async fn call(&self, method: &str, params: Value) -> RawOutcome {
-        let response = match self
-            .client
-            .post(self.endpoint.clone())
-            .json(&json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(_) => {
-                return RawOutcome::Unavailable("transport, authentication, or timeout".into());
+async fn raw_call<P: Provider<Base>>(
+    provider: &P,
+    method: &'static str,
+    params: Value,
+) -> RawOutcome {
+    match provider.raw_request::<Value, Value>(method.into(), params).await {
+        Ok(value) => RawOutcome::Value(value),
+        Err(error) => {
+            if let Some(response) = error.as_error_resp() {
+                return RawOutcome::MethodError(response.message.to_string());
             }
-        };
-        let body: Value = match response.json().await {
-            Ok(body) => body,
-            Err(_) => return RawOutcome::Unavailable("invalid RPC response".into()),
-        };
-        if let Some(error) = body.get("error") {
-            return RawOutcome::MethodError(
-                error.get("message").and_then(Value::as_str).unwrap_or("RPC error").to_string(),
-            );
+            if let Some(body) = error
+                .as_transport_err()
+                .and_then(|error| error.as_http_error())
+                .and_then(|error| serde_json::from_str::<Value>(&error.body).ok())
+            {
+                if let Some(message) = body.pointer("/error/message").and_then(Value::as_str) {
+                    return RawOutcome::MethodError(message.into());
+                }
+                if let Some(result) = body.get("result") {
+                    return RawOutcome::Value(result.clone());
+                }
+            }
+            RawOutcome::Unavailable(error.to_string())
         }
-        body.get("result").map_or_else(
-            || RawOutcome::Unavailable("RPC response has no result".into()),
-            |value| RawOutcome::Value(value.clone()),
-        )
     }
-}
-
-fn add_observation(
-    report: &mut ZenithReport,
-    name: &str,
-    status: ZenithCheckStatus,
-    expected: &str,
-    observed: impl ToString,
-) {
-    report.checks.push(ZenithCheck {
-        name: name.into(),
-        status,
-        endpoint: String::new(),
-        block_number: report.block_number,
-        block_hash: report.block_hash,
-        expected: expected.into(),
-        observed: observed.to_string(),
-        remediation: "upgrade or configure the execution RPC".into(),
-    });
 }
 
 fn check_wire_object(
@@ -577,13 +373,9 @@ fn check_wire_object(
     identity: &[(&str, String)],
 ) {
     match outcome {
-        RawOutcome::Value(value) if value.is_null() => add_observation(
-            report,
-            name,
-            ZenithCheckStatus::Fail,
-            field,
-            "known snapshot object missing",
-        ),
+        RawOutcome::Value(value) if value.is_null() => {
+            report.add_check(name, ZenithCheckStatus::Fail, field, "known snapshot object missing")
+        }
         RawOutcome::Value(value) => {
             let object = value.as_object();
             let timestamp = object
@@ -602,11 +394,10 @@ fn check_wire_object(
                 }
             });
             let pass = timestamp == Some(expected_timestamp) && identity_matches;
-            add_observation(
-                report,
+            report.add_check(
                 name,
                 if pass { ZenithCheckStatus::Pass } else { ZenithCheckStatus::Fail },
-                &format!("{field}=0x{expected_timestamp:x} with pinned identity"),
+                format!("{field}=0x{expected_timestamp:x} with pinned identity"),
                 timestamp.map_or_else(
                     || format!("missing or invalid {field}"),
                     |v| {
@@ -620,10 +411,10 @@ fn check_wire_object(
             );
         }
         RawOutcome::MethodError(error) => {
-            add_observation(report, name, ZenithCheckStatus::Fail, field, error)
+            report.add_check(name, ZenithCheckStatus::Fail, field, error)
         }
         RawOutcome::Unavailable(error) => {
-            add_observation(report, name, ZenithCheckStatus::Indeterminate, field, error)
+            report.add_check(name, ZenithCheckStatus::Indeterminate, field, error)
         }
     }
 }
@@ -638,18 +429,11 @@ fn check_wire_logs(
     match outcome {
         RawOutcome::Value(value) => {
             let Some(logs) = value.as_array() else {
-                add_observation(
-                    report,
-                    name,
-                    ZenithCheckStatus::Fail,
-                    "log array",
-                    "invalid result",
-                );
+                report.add_check(name, ZenithCheckStatus::Fail, "log array", "invalid result");
                 return;
             };
             if logs.is_empty() {
-                add_observation(
-                    report,
+                report.add_check(
                     name,
                     ZenithCheckStatus::Indeterminate,
                     "at least one pinned log",
@@ -666,8 +450,7 @@ fn check_wire_logs(
                 }) && log.get("blockTimestampMs").and_then(Value::as_str).and_then(parse_quantity)
                     == Some(expected_timestamp)
             });
-            add_observation(
-                report,
+            report.add_check(
                 name,
                 if valid { ZenithCheckStatus::Pass } else { ZenithCheckStatus::Fail },
                 "blockTimestampMs with pinned blockHash",
@@ -675,15 +458,11 @@ fn check_wire_logs(
             );
         }
         RawOutcome::MethodError(error) => {
-            add_observation(report, name, ZenithCheckStatus::Fail, "blockTimestampMs", error)
+            report.add_check(name, ZenithCheckStatus::Fail, "blockTimestampMs", error)
         }
-        RawOutcome::Unavailable(error) => add_observation(
-            report,
-            name,
-            ZenithCheckStatus::Indeterminate,
-            "blockTimestampMs",
-            error,
-        ),
+        RawOutcome::Unavailable(error) => {
+            report.add_check(name, ZenithCheckStatus::Indeterminate, "blockTimestampMs", error)
+        }
     }
 }
 
@@ -716,8 +495,7 @@ async fn append_cadence_check<P: Provider<Base>>(
             && cursor.block_number == report.block_number
             && cursor.block_hash == report.block_hash
     }) {
-        add_observation(
-            report,
+        report.add_check(
             "cadence_200ms",
             ZenithCheckStatus::Pass,
             "every canonical parent-child edge is exactly +200ms",
@@ -812,8 +590,7 @@ async fn append_cadence_check<P: Provider<Base>>(
     if status == ZenithCheckStatus::Pass && !checked_edge {
         status = ZenithCheckStatus::Indeterminate;
     }
-    add_observation(
-        report,
+    report.add_check(
         "cadence_200ms",
         status,
         "every canonical parent-child edge is exactly +200ms",
@@ -828,7 +605,6 @@ async fn append_cadence_check<P: Provider<Base>>(
 
 async fn append_wire_checks<P: Provider<Base>>(
     provider: &P,
-    raw: &RawRpc,
     report: &mut ZenithReport,
     block: &<Base as Network>::BlockResponse,
     el_ws_rpc: Option<&Url>,
@@ -855,8 +631,7 @@ async fn append_wire_checks<P: Provider<Base>>(
             "rpc_eth_getTransactionReceipt_logs_blockTimestampMs",
             "rpc_eth_getBlockReceipts_logs_blockTimestampMs",
         ] {
-            add_observation(
-                report,
+            report.add_check(
                 name,
                 ZenithCheckStatus::Indeterminate,
                 "canonical metadata timestamp",
@@ -868,8 +643,7 @@ async fn append_wire_checks<P: Provider<Base>>(
             "rpc_eth_subscribe_logs_blockTimestampMs",
             "rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs",
         ] {
-            add_observation(
-                report,
+            report.add_check(
                 name,
                 ZenithCheckStatus::Indeterminate,
                 "live event",
@@ -890,7 +664,7 @@ async fn append_wire_checks<P: Provider<Base>>(
         check_wire_object(
             report,
             name,
-            raw.call(method, params).await,
+            raw_call(provider, method, params).await,
             "timestampMs",
             timestamp_ms,
             &identity,
@@ -925,7 +699,7 @@ async fn append_wire_checks<P: Provider<Base>>(
         check_wire_object(
             report,
             name,
-            raw.call(method, params).await,
+            raw_call(provider, method, params).await,
             "blockTimestampMs",
             timestamp_ms,
             &identity,
@@ -935,28 +709,28 @@ async fn append_wire_checks<P: Provider<Base>>(
     check_wire_logs(
         report,
         "rpc_eth_getLogs_blockTimestampMs",
-        raw.call("eth_getLogs", json!([filter])).await,
+        raw_call(provider, "eth_getLogs", json!([filter])).await,
         timestamp_ms,
         &hash,
     );
-    let filter_id = raw.call("eth_newFilter", json!([filter])).await;
+    let filter_id = raw_call(provider, "eth_newFilter", json!([filter])).await;
     match filter_id {
         RawOutcome::Value(id) if id.as_str().and_then(parse_quantity).is_some() => {
             check_wire_logs(
                 report,
                 "rpc_eth_getFilterChanges_blockTimestampMs",
-                raw.call("eth_getFilterChanges", json!([id])).await,
+                raw_call(provider, "eth_getFilterChanges", json!([id])).await,
                 timestamp_ms,
                 &hash,
             );
             check_wire_logs(
                 report,
                 "rpc_eth_getFilterLogs_blockTimestampMs",
-                raw.call("eth_getFilterLogs", json!([id])).await,
+                raw_call(provider, "eth_getFilterLogs", json!([id])).await,
                 timestamp_ms,
                 &hash,
             );
-            let cleanup = raw.call("eth_uninstallFilter", json!([id])).await;
+            let cleanup = raw_call(provider, "eth_uninstallFilter", json!([id])).await;
             if !matches!(cleanup, RawOutcome::Value(Value::Bool(true))) {
                 for name in [
                     "rpc_eth_getFilterChanges_blockTimestampMs",
@@ -983,11 +757,11 @@ async fn append_wire_checks<P: Provider<Base>>(
                     }
                     RawOutcome::Value(_) => (ZenithCheckStatus::Fail, "invalid filter identifier"),
                 };
-                add_observation(report, name, status, "blockHash filter", reason);
+                report.add_check(name, status, "blockHash filter", reason);
             }
         }
     }
-    let receipt = raw.call("eth_getTransactionReceipt", json!([tx_hash])).await;
+    let receipt = raw_call(provider, "eth_getTransactionReceipt", json!([tx_hash])).await;
     let receipt_logs = match receipt {
         RawOutcome::Value(value)
             if value.get("transactionHash").and_then(Value::as_str) == Some(tx_hash.as_str())
@@ -1007,7 +781,7 @@ async fn append_wire_checks<P: Provider<Base>>(
         timestamp_ms,
         &hash,
     );
-    let receipts = raw.call("eth_getBlockReceipts", json!([hash])).await;
+    let receipts = raw_call(provider, "eth_getBlockReceipts", json!([hash])).await;
     let nested = match receipts {
         RawOutcome::Value(value) => match value.as_array() {
             Some(receipts)
@@ -1149,8 +923,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
     ];
     let Some(el_ws_rpc) = el_ws_rpc else {
         for (name, _) in SUBSCRIPTIONS {
-            add_observation(
-                report,
+            report.add_check(
                 name,
                 ZenithCheckStatus::Indeterminate,
                 "matching WebSocket event",
@@ -1161,8 +934,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
     };
     if matches!(target, ZenithCheckTarget::BlockHash(_)) {
         for (name, _) in SUBSCRIPTIONS {
-            add_observation(
-                report,
+            report.add_check(
                 name,
                 ZenithCheckStatus::Indeterminate,
                 "matching WebSocket event",
@@ -1176,8 +948,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
         tokio::time::timeout(Duration::from_secs(2), connect_async(el_ws_rpc.as_str())).await;
     let Ok(Ok((mut socket, _))) = connection else {
         for (name, _) in SUBSCRIPTIONS {
-            add_observation(
-                report,
+            report.add_check(
                 name,
                 ZenithCheckStatus::Indeterminate,
                 "accepted WebSocket subscription",
@@ -1223,8 +994,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
         if let Some(id) = value.get("id").and_then(Value::as_u64) {
             let Some((name, kind)) = pending.remove(&id) else { continue };
             if let Some(error) = value.get("error") {
-                add_observation(
-                    report,
+                report.add_check(
                     name,
                     ZenithCheckStatus::Fail,
                     "accepted WebSocket subscription",
@@ -1234,8 +1004,7 @@ async fn append_subscription_checks<P: Provider<Base>>(
             } else if let Some(subscription) = value.get("result").and_then(Value::as_str) {
                 subscriptions.insert(subscription.to_string(), (name, kind));
             } else {
-                add_observation(
-                    report,
+                report.add_check(
                     name,
                     ZenithCheckStatus::Fail,
                     "subscription identifier",
@@ -1258,13 +1027,12 @@ async fn append_subscription_checks<P: Provider<Base>>(
     }
     for (name, kind, value) in notifications {
         let (status, observed) = subscription_event_result(provider, kind, &value).await;
-        add_observation(report, name, status, "matching timestamped WebSocket event", observed);
+        report.add_check(name, status, "matching timestamped WebSocket event", observed);
         completed.insert(name);
     }
     for (name, _) in SUBSCRIPTIONS {
         if !completed.contains(name) {
-            add_observation(
-                report,
+            report.add_check(
                 name,
                 ZenithCheckStatus::Indeterminate,
                 "matching timestamped WebSocket event",
@@ -1280,7 +1048,23 @@ async fn append_subscription_checks<P: Provider<Base>>(
 }
 
 impl ZenithReport {
-    /// Evaluates complete RPC observations into the stable report model.
+    /// Appends a detailed check.
+    pub fn add_check(
+        &mut self,
+        name: &str,
+        status: ZenithCheckStatus,
+        expected: impl ToString,
+        observed: impl ToString,
+    ) {
+        self.checks.push(ZenithCheck {
+            name: name.into(),
+            status,
+            expected: expected.to_string(),
+            observed: observed.to_string(),
+        });
+    }
+
+    /// Evaluates complete RPC observations into detailed snapshot checks.
     pub fn evaluate(input: ZenithObservations) -> Self {
         let schedule = match input.activation {
             None => ZenithSchedule::NotScheduled,
@@ -1293,116 +1077,72 @@ impl ZenithReport {
         let empty_code_hash = keccak256([]);
         let canonical_admin =
             input.admin == U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice());
-        let installation = if input.proxy_code_hash == empty_code_hash {
-            ZenithInstallation::Missing
+        let implementation = if input.proxy_code_hash == empty_code_hash {
+            "Missing"
         } else if input.proxy_code_hash != BaseTime::PROXY_CODE_HASH || !canonical_admin {
-            ZenithInstallation::Inconsistent
+            "Inconsistent"
         } else if input.implementation == U256::ZERO {
-            ZenithInstallation::Dormant
+            "Dormant"
         } else if !input.implementation_is_address {
-            ZenithInstallation::Inconsistent
+            "Inconsistent"
         } else if initial
             && input.implementation_code_hash == Some(BaseTime::IMPLEMENTATION_CODE_HASH)
         {
-            ZenithInstallation::LinkedInitial
+            "LinkedInitial"
         } else if initial
             || input.implementation_code_hash.is_none()
             || input.implementation_code_hash == Some(empty_code_hash)
         {
-            ZenithInstallation::Inconsistent
+            "Inconsistent"
         } else {
-            ZenithInstallation::LinkedOther
+            "LinkedOther"
         };
-        let identity_matches = input.el_chain_id == input.cl_chain_id
-            && input.expected_chain_id.is_none_or(|expected| expected == input.el_chain_id);
         let expected_ms = input
             .metadata_millis_part
             .map(|part| input.timestamp.wrapping_mul(1_000).wrapping_add(u64::from(part)));
-        let metadata_matches = input.metadata_millis_part.is_some()
-            && input.metadata_receipt_valid == Some(true)
-            && input.timestamp_ms == expected_ms
-            && Some(input.storage_millis_part) == input.metadata_millis_part
-            && input.getter_millis_part == input.metadata_millis_part
-            && input.getter_timestamp_ms == expected_ms;
-        let metadata = if active {
-            if metadata_matches { ZenithCheckStatus::Pass } else { ZenithCheckStatus::Fail }
-        } else {
-            ZenithCheckStatus::Indeterminate
-        };
-        let mut checks = Vec::new();
-        let identity_endpoint = format!("{}, {}", input.el_endpoint, input.cl_endpoint);
-        let context = ZenithCheckContext {
-            endpoint: &input.el_endpoint,
+        let mut report = Self {
+            schedule,
             block_number: input.block_number,
             block_hash: input.block_hash,
+            timestamp: input.timestamp,
+            timestamp_ms: input.timestamp_ms,
+            activation: input.activation,
+            checks: Vec::new(),
+            cursor: None,
         };
-        ZenithCheck::push(
-            &mut checks,
-            ZenithCheckContext { endpoint: &identity_endpoint, ..context },
-            "chain_id",
-            (identity_matches, true),
-            (
-                input.expected_chain_id.unwrap_or(input.cl_chain_id),
-                format!("el={}, cl={}", input.el_chain_id, input.cl_chain_id),
-            ),
-            "point basectl, EL, and CL at the same L2 chain",
-        );
-        ZenithCheck::push(
-            &mut checks,
-            context,
-            "el_syncing",
-            (!input.el_syncing, true),
-            (false, input.el_syncing),
-            "wait for the EL to finish syncing before evaluating activation",
-        );
-        ZenithCheck::push(
-            &mut checks,
-            context,
-            "snapshot_consistency",
-            (input.snapshot_consistent, true),
-            (
-                "matching number/hash block, header, and transaction views",
-                input.snapshot_consistent,
-            ),
-            "use a consistent archive-capable EL RPC",
-        );
-        for (name, matches, expected, observed, remediation) in [
+        let status = |matches| {
+            if matches {
+                ZenithCheckStatus::Pass
+            } else if active {
+                ZenithCheckStatus::Fail
+            } else {
+                ZenithCheckStatus::Indeterminate
+            }
+        };
+        for (name, matches, expected, observed) in [
             (
                 "proxy_code_hash",
                 input.proxy_code_hash == BaseTime::PROXY_CODE_HASH,
                 BaseTime::PROXY_CODE_HASH.to_string(),
                 input.proxy_code_hash.to_string(),
-                "install the canonical BaseTime proxy",
             ),
             (
                 "proxy_admin",
                 canonical_admin,
                 Predeploys::PROXY_ADMIN.to_string(),
                 input.admin.to_string(),
-                "restore the canonical EIP-1967 proxy admin",
             ),
             (
                 "implementation",
-                matches!(
-                    installation,
-                    ZenithInstallation::LinkedInitial | ZenithInstallation::LinkedOther
-                ),
+                matches!(implementation, "LinkedInitial" | "LinkedOther"),
                 "a linked implementation with deployed code".into(),
-                format!("{installation:?}"),
-                "link a valid BaseTime implementation",
+                implementation.into(),
             ),
         ] {
-            ZenithCheck::push(
-                &mut checks,
-                context,
-                name,
-                (matches, active),
-                (expected, observed),
-                remediation,
-            );
+            report.add_check(name, status(matches), expected, observed);
         }
         if active {
-            for (name, matches, expected, observed, remediation) in [
+            for (name, matches, expected, observed) in [
                 (
                     "metadata",
                     input.metadata_millis_part.is_some(),
@@ -1410,9 +1150,8 @@ impl ZenithReport {
                     input.metadata_error.clone().unwrap_or_else(|| {
                         input
                             .metadata_millis_part
-                            .map_or_else(|| "missing".into(), |part| part.to_string())
+                            .map_or_else(|| "missing".into(), |v| v.to_string())
                     }),
-                    "include the canonical BaseTime metadata deposit at tx[1]",
                 ),
                 (
                     "metadata_receipt",
@@ -1420,18 +1159,13 @@ impl ZenithReport {
                     "successful receipt at index 1 in the snapshot block".into(),
                     input
                         .metadata_receipt_valid
-                        .map_or_else(|| "missing".into(), |valid| valid.to_string()),
-                    "inspect the BaseTime metadata deposit execution",
+                        .map_or_else(|| "missing".into(), |v| v.to_string()),
                 ),
                 (
                     "header_timestamp_ms",
-                    matches!(
-                        (input.timestamp_ms, expected_ms),
-                        (Some(observed), Some(expected)) if observed == expected
-                    ),
+                    input.timestamp_ms == expected_ms && expected_ms.is_some(),
                     expected_ms.map_or_else(|| "metadata unavailable".into(), |v| v.to_string()),
                     input.timestamp_ms.map_or_else(|| "missing".into(), |v| v.to_string()),
-                    "upgrade the EL RPC and verify header timestampMs",
                 ),
                 (
                     "storage_millis_part",
@@ -1440,14 +1174,11 @@ impl ZenithReport {
                         .metadata_millis_part
                         .map_or_else(|| "metadata unavailable".into(), |v| v.to_string()),
                     input.storage_millis_part.to_string(),
-                    "verify BaseTime state transition execution",
                 ),
                 (
                     "getter_millis_part",
-                    matches!(
-                        (input.getter_millis_part, input.metadata_millis_part),
-                        (Some(observed), Some(expected)) if observed == expected
-                    ),
+                    input.getter_millis_part == input.metadata_millis_part
+                        && input.metadata_millis_part.is_some(),
                     input
                         .metadata_millis_part
                         .map_or_else(|| "metadata unavailable".into(), |v| v.to_string()),
@@ -1460,14 +1191,10 @@ impl ZenithReport {
                         },
                         |v| v.to_string(),
                     ),
-                    "verify BaseTime proxy linkage and getter execution",
                 ),
                 (
                     "getter_timestamp_ms",
-                    matches!(
-                        (input.getter_timestamp_ms, expected_ms),
-                        (Some(observed), Some(expected)) if observed == expected
-                    ),
+                    input.getter_timestamp_ms == expected_ms && expected_ms.is_some(),
                     expected_ms.map_or_else(|| "metadata unavailable".into(), |v| v.to_string()),
                     input.getter_timestamp_ms.map_or_else(
                         || {
@@ -1478,92 +1205,12 @@ impl ZenithReport {
                         },
                         |v| v.to_string(),
                     ),
-                    "verify BaseTime proxy linkage and timestampMs getter",
                 ),
             ] {
-                ZenithCheck::push(
-                    &mut checks,
-                    context,
-                    name,
-                    (matches, true),
-                    (expected, observed),
-                    remediation,
-                );
+                report.add_check(name, status(matches), expected, observed);
             }
         }
-        let overall = if checks.iter().any(|check| check.status == ZenithCheckStatus::Fail) {
-            ZenithStatus::Broken
-        } else {
-            ZenithStatus::Healthy
-        };
-        Self {
-            overall,
-            identity: if identity_matches {
-                ZenithCheckStatus::Pass
-            } else {
-                ZenithCheckStatus::Fail
-            },
-            schedule,
-            installation,
-            metadata,
-            rpc_http: if input.getter_millis_part_error.is_some()
-                || input.getter_timestamp_ms_error.is_some()
-            {
-                ZenithRpcStatus::Fail
-            } else {
-                ZenithRpcStatus::Pass
-            },
-            chain_id: input.el_chain_id,
-            block_number: input.block_number,
-            block_hash: input.block_hash,
-            timestamp: input.timestamp,
-            timestamp_ms: input.timestamp_ms,
-            activation: input.activation,
-            checks,
-            cursor: None,
-        }
-    }
-}
-
-/// Snapshot and endpoint context shared by evaluated checks.
-#[derive(Debug, Clone, Copy)]
-pub struct ZenithCheckContext<'a> {
-    /// RPC endpoint responsible for the observation.
-    pub endpoint: &'a str,
-    /// Snapshot block number.
-    pub block_number: u64,
-    /// Snapshot block hash.
-    pub block_hash: B256,
-}
-
-impl ZenithCheck {
-    /// Appends an evaluated invariant with its snapshot context.
-    pub fn push(
-        checks: &mut Vec<Self>,
-        context: ZenithCheckContext<'_>,
-        name: &str,
-        evaluation: (bool, bool),
-        values: (impl ToString, impl ToString),
-        remediation: &str,
-    ) {
-        let (matches, required) = evaluation;
-        let (expected, observed) = values;
-        checks.push(Self {
-            name: name.into(),
-            status: if matches {
-                ZenithCheckStatus::Pass
-            } else if required {
-                ZenithCheckStatus::Fail
-            } else {
-                ZenithCheckStatus::Indeterminate
-            },
-            endpoint: context.endpoint.into(),
-            block_number: context.block_number,
-            block_hash: context.block_hash,
-            expected: expected.to_string(),
-            observed: observed.to_string(),
-            remediation: remediation.into(),
-        });
+        report
     }
 }
 
@@ -1572,7 +1219,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use alloy_primitives::{B256, U256};
-    use axum::{Json, Router, extract::State, routing::post};
+    use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
     use base_common_consensus::Predeploys;
     use base_common_evm::BaseTime;
     use base_common_genesis::RollupConfig;
@@ -1595,8 +1242,6 @@ mod tests {
                 config["base"]["zenith"] = json!(20);
                 config
             }
-            "eth_chainId" => json!("0x2105"),
-            "eth_syncing" => json!(false),
             "eth_getBlockByHash"
             | "eth_getBlockByNumber"
             | "eth_getHeaderByHash"
@@ -1634,21 +1279,27 @@ mod tests {
         Json(json!({ "jsonrpc": "2.0", "id": request["id"], "result": result }))
     }
 
+    async fn raw_error_fixture(Json(request): Json<Value>) -> (StatusCode, Json<Value>) {
+        assert_eq!(request["method"], "eth_test");
+        assert_eq!(request["params"], json!(["exact", {"shape": true}]));
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "jsonrpc": "2.0",
+                "id": request["id"],
+                "error": {"code": -32601, "message": "method not found"}
+            })),
+        )
+    }
+
     fn observations(activation: Option<u64>, timestamp: u64) -> ZenithObservations {
         let part = 200;
         ZenithObservations {
-            el_endpoint: "http://el".into(),
-            cl_endpoint: "http://cl".into(),
-            el_chain_id: 8453,
-            cl_chain_id: 8453,
-            expected_chain_id: Some(8453),
             activation,
-            el_syncing: false,
             block_number: 10,
             block_hash: B256::ZERO,
             timestamp,
             timestamp_ms: Some(timestamp.wrapping_mul(1_000).wrapping_add(u64::from(part))),
-            snapshot_consistent: true,
             proxy_code_hash: BaseTime::PROXY_CODE_HASH,
             admin: U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
             implementation: U256::from_be_slice(BaseTime::IMPLEMENTATION_ADDRESS.as_slice()),
@@ -1675,12 +1326,11 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let url = Url::parse(&format!("http://{address}")).unwrap();
         let hash = B256::repeat_byte(0x42);
-        let report = ZenithChecker::new(Some(8453))
-            .check(&url, &url, ZenithCheckTarget::BlockHash(hash))
+        let report = ZenithChecker
+            .check(&url, &url, None, ZenithCheckTarget::BlockHash(hash), None)
             .await
             .unwrap();
 
-        assert_eq!(report.overall, ZenithStatus::Healthy);
         assert_eq!(report.schedule, ZenithSchedule::Scheduled);
         assert_eq!(report.block_number, 10);
         assert_eq!(report.block_hash, hash);
@@ -1695,21 +1345,11 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(hash_reads.len(), 3);
+        assert_eq!(hash_reads.len(), 2);
         assert_eq!(
             hash_reads.iter().filter(|request| request["params"][0] == json!(hash)).count(),
-            3
+            2
         );
-        let number_reads: Vec<_> = requests
-            .iter()
-            .filter(|request| {
-                matches!(
-                    request["method"].as_str(),
-                    Some("eth_getBlockByNumber" | "eth_getHeaderByNumber")
-                )
-            })
-            .collect();
-        assert!(number_reads.iter().filter(|request| request["params"][0] == "0xa").count() >= 2);
         for request in requests.iter().filter(|request| {
             matches!(request["method"].as_str(), Some("eth_getCode" | "eth_getStorageAt"))
         }) {
@@ -1727,12 +1367,10 @@ mod tests {
     fn schedule_selection_and_inactive_metadata_are_stable() {
         let unscheduled = ZenithReport::evaluate(observations(None, 10));
         assert_eq!(unscheduled.schedule, ZenithSchedule::NotScheduled);
-        assert_eq!(unscheduled.metadata, ZenithCheckStatus::Indeterminate);
-        assert_eq!(unscheduled.overall, ZenithStatus::Healthy);
+        assert!(unscheduled.checks.iter().all(|check| check.status != ZenithCheckStatus::Fail));
 
         let scheduled = ZenithReport::evaluate(observations(Some(20), 10));
         assert_eq!(scheduled.schedule, ZenithSchedule::Scheduled);
-        assert_eq!(scheduled.overall, ZenithStatus::Healthy);
     }
 
     #[test]
@@ -1741,29 +1379,10 @@ mod tests {
         input.storage_millis_part = 400;
         let report = ZenithReport::evaluate(input);
         assert_eq!(report.schedule, ZenithSchedule::Active);
-        assert_eq!(report.metadata, ZenithCheckStatus::Fail);
-        assert_eq!(report.overall, ZenithStatus::Broken);
-    }
-
-    #[test]
-    fn configured_chain_identity_mismatch_fails() {
-        let mut input = observations(None, 10);
-        input.expected_chain_id = Some(84532);
-        let report = ZenithReport::evaluate(input);
-        assert_eq!(report.identity, ZenithCheckStatus::Fail);
-        assert_eq!(report.overall, ZenithStatus::Broken);
-    }
-
-    #[test]
-    fn snapshot_inconsistency_fails_its_named_check() {
-        let mut input = observations(None, 10);
-        input.snapshot_consistent = false;
-        let report = ZenithReport::evaluate(input);
-        let check =
-            report.checks.iter().find(|check| check.name == "snapshot_consistency").unwrap();
-
-        assert_eq!(check.status, ZenithCheckStatus::Fail);
-        assert_eq!(report.overall, ZenithStatus::Broken);
+        assert_eq!(
+            report.checks.iter().find(|check| check.name == "storage_millis_part").unwrap().status,
+            ZenithCheckStatus::Fail
+        );
     }
 
     #[test]
@@ -1772,31 +1391,32 @@ mod tests {
         input.implementation = U256::from(1);
         input.implementation_code_hash = Some(B256::with_last_byte(1));
         let report = ZenithReport::evaluate(input);
-        assert_eq!(report.installation, ZenithInstallation::LinkedOther);
-        assert_eq!(report.overall, ZenithStatus::Healthy);
+        assert_eq!(
+            report.checks.iter().find(|check| check.name == "implementation").unwrap().status,
+            ZenithCheckStatus::Pass
+        );
     }
 
     #[test]
-    fn malformed_or_empty_implementation_is_inconsistent() {
+    fn malformed_or_empty_implementation_fails() {
         let mut malformed = observations(Some(10), 10);
         malformed.implementation_is_address = false;
-        assert_eq!(
-            ZenithReport::evaluate(malformed).installation,
-            ZenithInstallation::Inconsistent
-        );
-
         let mut empty = observations(Some(10), 10);
         empty.implementation = U256::from(1);
         empty.implementation_code_hash = Some(keccak256([]));
-        assert_eq!(ZenithReport::evaluate(empty).installation, ZenithInstallation::Inconsistent);
-
         let mut unavailable = observations(Some(10), 10);
         unavailable.implementation = U256::from(1);
         unavailable.implementation_code_hash = None;
-        assert_eq!(
-            ZenithReport::evaluate(unavailable).installation,
-            ZenithInstallation::Inconsistent
-        );
+
+        for input in [malformed, empty, unavailable] {
+            let check = ZenithReport::evaluate(input)
+                .checks
+                .into_iter()
+                .find(|check| check.name == "implementation")
+                .unwrap();
+            assert_eq!(check.status, ZenithCheckStatus::Fail);
+            assert_eq!(check.observed, "Inconsistent");
+        }
     }
 
     #[test]
@@ -1810,7 +1430,6 @@ mod tests {
         input.getter_timestamp_ms_error = Some("execution reverted".into());
         let report = ZenithReport::evaluate(input);
 
-        assert_eq!(report.rpc_http, ZenithRpcStatus::Fail);
         let getter_checks: Vec<_> =
             report.checks.iter().filter(|check| check.name.starts_with("getter_")).collect();
         assert_eq!(getter_checks.len(), 2);
@@ -1825,7 +1444,14 @@ mod tests {
         input.timestamp_ms = Some(expected);
         input.getter_timestamp_ms = Some(expected);
 
-        assert_eq!(ZenithReport::evaluate(input).metadata, ZenithCheckStatus::Pass);
+        assert!(
+            ZenithReport::evaluate(input)
+                .checks
+                .iter()
+                .filter(|check| check.name.starts_with("getter_")
+                    || check.name == "header_timestamp_ms")
+                .all(|check| check.status == ZenithCheckStatus::Pass)
+        );
     }
 
     #[test]
@@ -1833,13 +1459,23 @@ mod tests {
         let mut input = observations(Some(10), 10);
         input.metadata_receipt_valid = Some(false);
         let value = serde_json::to_value(ZenithReport::evaluate(input)).unwrap();
-        assert_eq!(value["overall"], "broken");
-        assert_eq!(value["identity"], "pass");
         assert_eq!(value["schedule"], "active");
-        assert_eq!(value["installation"], "linked_initial");
-        assert_eq!(value["metadata"], "fail");
-        assert!(value["checks"][0]["endpoint"].is_string());
-        assert!(value["checks"][0]["blockHash"].is_string());
+        assert_eq!(
+            value["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["name"] == "metadata_receipt")
+                .unwrap()["status"],
+            "fail"
+        );
+        for removed in ["endpoint", "blockNumber", "blockHash", "remediation"] {
+            assert!(value["checks"][0].get(removed).is_none());
+        }
+        for removed in ["overall", "identity", "installation", "metadata", "rpcHttp", "chainId"] {
+            assert!(value.get(removed).is_none());
+        }
+        assert!(value.get("cursor").is_none());
     }
 
     #[test]
@@ -1893,5 +1529,23 @@ mod tests {
                 ZenithCheckStatus::Pass,
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn raw_call_preserves_params_and_non_success_rpc_errors() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/", post(raw_error_fixture))).await.unwrap()
+        });
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect_http(Url::parse(&format!("http://{address}")).unwrap());
+
+        let outcome = raw_call(&provider, "eth_test", json!(["exact", {"shape": true}])).await;
+
+        assert!(matches!(outcome, RawOutcome::MethodError(error) if error == "method not found"));
+        server.abort();
     }
 }

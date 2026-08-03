@@ -257,57 +257,70 @@ fn loaded_name_is_devnet_alias(loaded_name: &str) -> bool {
 
 // ── Check types ───────────────────────────────────────────────────────────────
 
-/// Expected check names for Azul, in execution order.
-const AZUL_CHECK_NAMES: &[&str] = &[
-    "CLZ zero",
-    "CLZ one",
-    "CLZ high-bit",
-    "CLZ four-bits",
-    "MODEXP size limit",
-    "MODEXP min gas",
-    "P256VERIFY gas",
-    "eth_config",
+/// Expected Azul checks, in execution order.
+const AZUL_CHECKS: &[(&str, &str)] = &[
+    ("CLZ zero", "CLZ zero"),
+    ("CLZ one", "CLZ one"),
+    ("CLZ high-bit", "CLZ high-bit"),
+    ("CLZ four-bits", "CLZ four-bits"),
+    ("MODEXP size limit", "MODEXP size limit"),
+    ("MODEXP min gas", "MODEXP min gas"),
+    ("P256VERIFY gas", "P256VERIFY gas"),
+    ("eth_config", "eth_config"),
 ];
 
-/// Expected check names for Jovian, in execution order.
-const JOVIAN_CHECK_NAMES: &[&str] = &["bn256Pairing limit", "extra data v1", "GPO implementation"];
-
-/// Expected check names for Beryl, in execution order.
-const BERYL_CHECK_NAMES: &[&str] = &[
-    "registry precompile",
-    "registry admin",
-    "policy registry feature",
-    "B-20 stablecoin feature",
-    "B-20 asset feature",
+/// Expected Jovian checks, in execution order.
+const JOVIAN_CHECKS: &[(&str, &str)] = &[
+    ("bn256Pairing limit", "bn256Pairing limit"),
+    ("extra data v1", "extra data v1"),
+    ("GPO implementation", "GPO implementation"),
 ];
 
-/// Expected Zenith check names, in report order.
-const ZENITH_CHECK_NAMES: &[&str] = &[
-    "proxy_code_hash",
-    "proxy_admin",
-    "implementation",
-    "metadata",
-    "metadata_receipt",
-    "storage_millis_part",
-    "getter_millis_part",
-    "getter_timestamp_ms",
-    "cadence_200ms",
-    "rpc_eth_getBlockByHash_timestampMs",
-    "rpc_eth_getBlockByNumber_timestampMs",
-    "rpc_eth_getTransactionByHash_blockTimestampMs",
-    "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs",
-    "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs",
-    "rpc_eth_getLogs_blockTimestampMs",
-    "rpc_eth_getFilterChanges_blockTimestampMs",
-    "rpc_eth_getFilterLogs_blockTimestampMs",
-    "rpc_eth_subscribe_logs_blockTimestampMs",
-    "rpc_eth_getTransactionReceipt_logs_blockTimestampMs",
-    "rpc_eth_getBlockReceipts_logs_blockTimestampMs",
-    "rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs",
-    "header_timestamp_ms",
-    "rpc_eth_getHeaderByHash_timestampMs",
-    "rpc_eth_getHeaderByNumber_timestampMs",
-    "rpc_eth_subscribe_newHeads_timestampMs",
+/// Expected Beryl checks, in execution order.
+const BERYL_CHECKS: &[(&str, &str)] = &[
+    ("registry precompile", "registry precompile"),
+    ("registry admin", "registry admin"),
+    ("policy registry feature", "policy registry feature"),
+    ("B-20 stablecoin feature", "B-20 stablecoin feature"),
+    ("B-20 asset feature", "B-20 asset feature"),
+];
+
+/// Expected Zenith checks and visible labels, in report order.
+const ZENITH_CHECKS: &[(&str, &str)] = &[
+    ("proxy_code_hash", "BaseTime proxy code"),
+    ("proxy_admin", "BaseTime proxy admin"),
+    ("implementation", "BaseTime implementation"),
+    ("metadata", "BaseTime update tx"),
+    ("metadata_receipt", "BaseTime update receipt"),
+    ("storage_millis_part", "BaseTime millis storage"),
+    ("getter_millis_part", "BaseTime millis getter"),
+    ("getter_timestamp_ms", "BaseTime timestamp getter"),
+    ("cadence_200ms", "BaseTime 200ms cadence"),
+    ("rpc_eth_getBlockByHash_timestampMs", "eth_getBlockByHash timestampMs"),
+    ("rpc_eth_getBlockByNumber_timestampMs", "eth_getBlockByNumber timestampMs"),
+    ("rpc_eth_getTransactionByHash_blockTimestampMs", "eth_getTransactionByHash"),
+    (
+        "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs",
+        "eth_getTransactionByBlockHashAndIndex",
+    ),
+    (
+        "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs",
+        "eth_getTransactionByBlockNumberAndIndex",
+    ),
+    ("rpc_eth_getLogs_blockTimestampMs", "eth_getLogs"),
+    ("rpc_eth_getFilterChanges_blockTimestampMs", "eth_getFilterChanges"),
+    ("rpc_eth_getFilterLogs_blockTimestampMs", "eth_getFilterLogs"),
+    ("rpc_eth_subscribe_logs_blockTimestampMs", "eth_subscribe(logs)"),
+    ("rpc_eth_getTransactionReceipt_logs_blockTimestampMs", "eth_getTransactionReceipt logs"),
+    ("rpc_eth_getBlockReceipts_logs_blockTimestampMs", "eth_getBlockReceipts logs"),
+    (
+        "rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs",
+        "eth_subscribe(transactionReceipts) logs",
+    ),
+    ("header_timestamp_ms", "header timestampMs"),
+    ("rpc_eth_getHeaderByHash_timestampMs", "eth_getHeaderByHash timestampMs"),
+    ("rpc_eth_getHeaderByNumber_timestampMs", "eth_getHeaderByNumber timestampMs"),
+    ("rpc_eth_subscribe_newHeads_timestampMs", "eth_subscribe(newHeads)"),
 ];
 
 const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
@@ -316,58 +329,18 @@ const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
     ("B-20 asset feature", ActivationFeature::B20Asset),
 ];
 
-fn check_names_for(upgrade: &str) -> &'static [&'static str] {
+fn checks_for(upgrade: &str) -> &'static [(&'static str, &'static str)] {
     match upgrade {
-        "Zenith" => ZENITH_CHECK_NAMES,
-        "Beryl" => BERYL_CHECK_NAMES,
-        "Azul" => AZUL_CHECK_NAMES,
-        "Jovian" => JOVIAN_CHECK_NAMES,
+        "Zenith" => ZENITH_CHECKS,
+        "Beryl" => BERYL_CHECKS,
+        "Azul" => AZUL_CHECKS,
+        "Jovian" => JOVIAN_CHECKS,
         _ => &[],
     }
 }
 
-fn check_display_name(upgrade: &str, name: &'static str) -> &'static str {
-    if upgrade != "Zenith" {
-        return name;
-    }
-    match name {
-        "proxy_code_hash" => "BaseTime proxy code",
-        "proxy_admin" => "BaseTime proxy admin",
-        "implementation" => "BaseTime implementation",
-        "metadata" => "BaseTime update tx",
-        "metadata_receipt" => "BaseTime update receipt",
-        "header_timestamp_ms" => "header timestampMs",
-        "storage_millis_part" => "BaseTime millis storage",
-        "getter_millis_part" => "BaseTime millis getter",
-        "getter_timestamp_ms" => "BaseTime timestamp getter",
-        "cadence_200ms" => "BaseTime 200ms cadence",
-        "rpc_eth_getBlockByHash_timestampMs" => "eth_getBlockByHash timestampMs",
-        "rpc_eth_getBlockByNumber_timestampMs" => "eth_getBlockByNumber timestampMs",
-        "rpc_eth_getHeaderByHash_timestampMs" => "eth_getHeaderByHash timestampMs",
-        "rpc_eth_getHeaderByNumber_timestampMs" => "eth_getHeaderByNumber timestampMs",
-        "rpc_eth_subscribe_newHeads_timestampMs" => "eth_subscribe(newHeads)",
-        "rpc_eth_getTransactionByHash_blockTimestampMs" => "eth_getTransactionByHash",
-        "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs" => {
-            "eth_getTransactionByBlockHashAndIndex"
-        }
-        "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs" => {
-            "eth_getTransactionByBlockNumberAndIndex"
-        }
-        "rpc_eth_getLogs_blockTimestampMs" => "eth_getLogs",
-        "rpc_eth_getFilterChanges_blockTimestampMs" => "eth_getFilterChanges",
-        "rpc_eth_getFilterLogs_blockTimestampMs" => "eth_getFilterLogs",
-        "rpc_eth_subscribe_logs_blockTimestampMs" => "eth_subscribe(logs)",
-        "rpc_eth_getTransactionReceipt_logs_blockTimestampMs" => "eth_getTransactionReceipt logs",
-        "rpc_eth_getBlockReceipts_logs_blockTimestampMs" => "eth_getBlockReceipts logs",
-        "rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs" => {
-            "eth_subscribe(transactionReceipts) logs"
-        }
-        _ => name,
-    }
-}
-
 fn has_checks(upgrade: &str) -> bool {
-    !check_names_for(upgrade).is_empty()
+    !checks_for(upgrade).is_empty()
 }
 
 fn checkable_specs_display(chain: &ChainUpgrades) -> Vec<&UpgradeSpec> {
@@ -452,7 +425,6 @@ impl ChecksPanel {
         &mut self,
         chain_idx: usize,
         endpoints: (String, Option<Url>, Option<Url>),
-        expected_chain_id: Option<u64>,
         upgrade: &'static str,
         mode: CheckMode,
     ) {
@@ -485,7 +457,6 @@ impl ChecksPanel {
         self.handle = Some(tokio::spawn(run_checks_streaming(
             upgrade,
             (rpc_url, consensus_rpc, el_ws_rpc),
-            expected_chain_id,
             mode,
             tx,
             self.cursor,
@@ -528,7 +499,7 @@ impl ChecksPanel {
                         self.scroll = self
                             .upgrade
                             .and_then(|upgrade| {
-                                check_names_for(upgrade).iter().position(|check| *check == name)
+                                checks_for(upgrade).iter().position(|(check, _)| *check == name)
                             })
                             .unwrap_or(0);
                     }
@@ -860,18 +831,7 @@ impl UpgradesView {
         let loaded = chain_name_matches_loaded(chain.display_name, &resources.config.name);
         let consensus_rpc = loaded.then(|| resources.config.consensus_node_rpc.clone()).flatten();
         let el_ws_rpc = loaded.then(|| resources.config.el_ws_rpc.clone()).flatten();
-        let expected_chain_id = if loaded {
-            resources.config.chain_id.or(Some(chain.chain_id))
-        } else {
-            Some(chain.chain_id)
-        };
-        self.checks.start(
-            self.selected_chain,
-            (rpc, consensus_rpc, el_ws_rpc),
-            expected_chain_id,
-            upgrade,
-            mode,
-        );
+        self.checks.start(self.selected_chain, (rpc, consensus_rpc, el_ws_rpc), upgrade, mode);
     }
 
     fn selected_check_spec(&self, now: u64) -> Option<&UpgradeSpec> {
@@ -980,7 +940,7 @@ impl View for UpgradesView {
             KeyCode::PageDown => {
                 let row_count = self
                     .selected_check_upgrade(now_unix())
-                    .map_or(0, |upgrade| check_names_for(upgrade).len());
+                    .map_or(0, |upgrade| checks_for(upgrade).len());
                 self.checks.scroll =
                     self.checks.scroll.saturating_add(5).min(row_count.saturating_sub(1));
             }
@@ -1386,11 +1346,8 @@ fn render_checks_panel(
             );
             return;
         }
-        let check_list = check_names_for(hf_name)
-            .iter()
-            .map(|name| check_display_name(hf_name, name))
-            .collect::<Vec<_>>()
-            .join(" · ");
+        let check_list =
+            checks_for(hf_name).iter().map(|(_, label)| *label).collect::<Vec<_>>().join(" · ");
         let hint = if auto_refresh {
             format!("Auto-refreshing {hf_name} checks every 2s · ↑/↓ to change · [a] to disable")
         } else {
@@ -1416,7 +1373,7 @@ fn render_checks_panel(
     }
 
     let hf = panel.upgrade.unwrap_or("?");
-    let check_names = check_names_for(hf);
+    let checks = checks_for(hf);
 
     let mode_str = match panel.mode {
         Some(CheckMode::Before) => "before",
@@ -1455,12 +1412,10 @@ fn render_checks_panel(
         (format!(" {hf} Checks ({mode_str})  ✓ {passed} passed{auto_tag} "), Color::LightGreen)
     };
 
-    let rows: Vec<Row<'static>> = check_names
+    let rows: Vec<Row<'static>> = checks
         .iter()
-        .copied()
         .skip(panel.scroll)
-        .map(|name| {
-            let display_name = check_display_name(hf, name);
+        .map(|&(name, display_name)| {
             panel.results.get(name).map_or_else(
                 || {
                     if panel.current.as_deref() == Some(name) {
@@ -2099,7 +2054,6 @@ async fn run_admin_activity_streaming(
 async fn run_checks_streaming(
     upgrade: &'static str,
     endpoints: (String, Option<Url>, Option<Url>),
-    expected_chain_id: Option<u64>,
     mode: CheckMode,
     tx: mpsc::Sender<CheckUpdate>,
     cursor: Option<ZenithCheckCursor>,
@@ -2107,15 +2061,7 @@ async fn run_checks_streaming(
     let (rpc_url, consensus_rpc, el_ws_rpc) = endpoints;
     match upgrade {
         "Zenith" => {
-            run_zenith_checks_streaming(
-                rpc_url,
-                consensus_rpc,
-                el_ws_rpc,
-                expected_chain_id,
-                cursor,
-                tx,
-            )
-            .await
+            run_zenith_checks_streaming(rpc_url, consensus_rpc, el_ws_rpc, cursor, tx).await
         }
         "Beryl" => run_beryl_checks_streaming(rpc_url, mode, tx).await,
         "Azul" => run_azul_checks_streaming(rpc_url, tx).await,
@@ -2155,20 +2101,13 @@ async fn run_zenith_checks_streaming(
     rpc_url: String,
     consensus_rpc: Option<Url>,
     el_ws_rpc: Option<Url>,
-    expected_chain_id: Option<u64>,
     cursor: Option<ZenithCheckCursor>,
     tx: mpsc::Sender<CheckUpdate>,
 ) {
     let report = match (Url::parse(&rpc_url), consensus_rpc) {
         (Ok(el_rpc), Some(cl_rpc)) => {
-            ZenithChecker::new(expected_chain_id)
-                .check_since(
-                    &el_rpc,
-                    &cl_rpc,
-                    el_ws_rpc.as_ref(),
-                    ZenithCheckTarget::Latest,
-                    cursor,
-                )
+            ZenithChecker
+                .check(&el_rpc, &cl_rpc, el_ws_rpc.as_ref(), ZenithCheckTarget::Latest, cursor)
                 .await
         }
         (Err(error), _) => Err(anyhow::anyhow!("invalid execution RPC URL: {error}")),
@@ -2180,46 +2119,41 @@ async fn run_zenith_checks_streaming(
             let cursor = report.cursor;
             let mut checks: HashMap<_, _> =
                 report.checks.into_iter().map(|check| (check.name.clone(), check)).collect();
-            for name in ZENITH_CHECK_NAMES {
-                if tx.send(CheckUpdate::Starting((*name).to_string())).await.is_err() {
+            for &(name, _) in ZENITH_CHECKS {
+                if tx.send(CheckUpdate::Starting(name.to_string())).await.is_err() {
                     return;
                 }
-                let result = checks.remove(*name).map_or_else(
+                let result = checks.remove(name).map_or_else(
                     || CheckResult {
                         passed: None,
                         detail: format!("not applicable for {:?} snapshot", report.schedule),
                     },
                     zenith_check_result,
                 );
-                if tx
-                    .send(CheckUpdate::Completed { name: (*name).to_string(), result })
-                    .await
-                    .is_err()
+                if tx.send(CheckUpdate::Completed { name: name.to_string(), result }).await.is_err()
                 {
                     return;
                 }
             }
+            debug_assert!(checks.is_empty(), "unexpected Zenith checks: {checks:?}");
             if let Some(cursor) = cursor {
                 let _ = tx.send(CheckUpdate::Cursor(cursor)).await;
             }
         }
-        Err(_) => {
-            for (index, name) in ZENITH_CHECK_NAMES.iter().enumerate() {
-                if tx.send(CheckUpdate::Starting((*name).to_string())).await.is_err() {
+        Err(error) => {
+            for (index, &(name, _)) in ZENITH_CHECKS.iter().enumerate() {
+                if tx.send(CheckUpdate::Starting(name.to_string())).await.is_err() {
                     return;
                 }
                 let result = CheckResult {
                     passed: None,
                     detail: if index == 0 {
-                        "checker unavailable; verify EL and CL connectivity".to_string()
+                        format!("{error:#}")
                     } else {
                         "checker unavailable".to_string()
                     },
                 };
-                if tx
-                    .send(CheckUpdate::Completed { name: (*name).to_string(), result })
-                    .await
-                    .is_err()
+                if tx.send(CheckUpdate::Completed { name: name.to_string(), result }).await.is_err()
                 {
                     return;
                 }
@@ -2400,7 +2334,7 @@ async fn run_beryl_checks_streaming(
                 detail: format!("cannot build client for {rpc_url}: {e}"),
             };
             send_result!("registry precompile", conn_result);
-            for &name in &BERYL_CHECK_NAMES[1..] {
+            for &(name, _) in &BERYL_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -2416,7 +2350,7 @@ async fn run_beryl_checks_streaming(
             let conn_result =
                 CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
             send_result!("registry precompile", conn_result);
-            for &name in &BERYL_CHECK_NAMES[1..] {
+            for &(name, _) in &BERYL_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -2502,7 +2436,7 @@ async fn run_jovian_checks_streaming(
                 detail: format!("cannot build client for {rpc_url}: {e}"),
             };
             send_result!("bn256Pairing limit", conn_result);
-            for &name in &JOVIAN_CHECK_NAMES[1..] {
+            for &(name, _) in &JOVIAN_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -2518,7 +2452,7 @@ async fn run_jovian_checks_streaming(
             let conn_result =
                 CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
             send_result!("bn256Pairing limit", conn_result);
-            for &name in &JOVIAN_CHECK_NAMES[1..] {
+            for &(name, _) in &JOVIAN_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -2761,7 +2695,7 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
                 detail: format!("cannot build client for {rpc_url}: {e}"),
             };
             send_result!("CLZ zero", conn_result);
-            for &name in &AZUL_CHECK_NAMES[1..] {
+            for &(name, _) in &AZUL_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -2778,7 +2712,7 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
             let conn_result =
                 CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
             send_result!("CLZ zero", conn_result);
-            for &name in &AZUL_CHECK_NAMES[1..] {
+            for &(name, _) in &AZUL_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -2973,12 +2907,8 @@ mod tests {
         let check = ZenithCheck {
             name: "proxy_code_hash".to_string(),
             status: ZenithCheckStatus::Fail,
-            endpoint: "http://el".to_string(),
-            block_number: 42,
-            block_hash: B256::repeat_byte(0x44),
             expected: B256::repeat_byte(0xaa).to_string(),
             observed: B256::repeat_byte(0xbb).to_string(),
-            remediation: "install the canonical BaseTime proxy".to_string(),
         };
         let result = zenith_check_result(check);
         tx.try_send(CheckUpdate::Starting("proxy_code_hash".to_string())).unwrap();
@@ -3002,12 +2932,8 @@ mod tests {
         let result = zenith_check_result(ZenithCheck {
             name: "implementation".to_string(),
             status: ZenithCheckStatus::Pass,
-            endpoint: "http://el".to_string(),
-            block_number: 42,
-            block_hash: B256::repeat_byte(0x44),
             expected: "a linked implementation with deployed code".to_string(),
             observed: "LinkedInitial".to_string(),
-            remediation: "link a valid BaseTime implementation".to_string(),
         });
 
         assert_eq!(result.detail, "canonical initial implementation");
@@ -3051,7 +2977,7 @@ mod tests {
     #[test]
     fn zenith_rows_keep_basetime_together_and_headers_last() {
         assert_eq!(
-            &ZENITH_CHECK_NAMES[..9],
+            &checks_for("Zenith")[..9].iter().map(|(name, _)| *name).collect::<Vec<_>>(),
             &[
                 "proxy_code_hash",
                 "proxy_admin",
@@ -3065,7 +2991,10 @@ mod tests {
             ]
         );
         assert_eq!(
-            &ZENITH_CHECK_NAMES[ZENITH_CHECK_NAMES.len() - 4..],
+            &checks_for("Zenith")[ZENITH_CHECKS.len() - 4..]
+                .iter()
+                .map(|(name, _)| *name)
+                .collect::<Vec<_>>(),
             &[
                 "header_timestamp_ms",
                 "rpc_eth_getHeaderByHash_timestampMs",
@@ -3084,7 +3013,6 @@ mod tests {
         panel.start(
             0,
             ("http://localhost:7545".to_string(), None, None),
-            Some(1337),
             "unknown",
             CheckMode::Before,
         );
@@ -3097,15 +3025,8 @@ mod tests {
     async fn unavailable_zenith_checker_marks_all_rows_indeterminate() {
         let (tx, mut rx) = mpsc::channel(64);
 
-        run_zenith_checks_streaming(
-            "http://localhost:7545".to_string(),
-            None,
-            None,
-            Some(1337),
-            None,
-            tx,
-        )
-        .await;
+        run_zenith_checks_streaming("http://localhost:7545".to_string(), None, None, None, tx)
+            .await;
 
         let mut started = Vec::new();
         let mut completed = Vec::new();
@@ -3117,10 +3038,10 @@ mod tests {
             }
         }
 
-        assert!(ZENITH_CHECK_NAMES.iter().all(|name| started.iter().any(|seen| seen == name)));
-        assert_eq!(completed.len(), ZENITH_CHECK_NAMES.len());
+        assert!(ZENITH_CHECKS.iter().all(|(name, _)| started.iter().any(|seen| seen == name)));
+        assert_eq!(completed.len(), ZENITH_CHECKS.len());
         assert_eq!(completed[0].1.passed, None);
-        assert_eq!(completed[0].1.detail, "checker unavailable; verify EL and CL connectivity");
+        assert_eq!(completed[0].1.detail, "consensus node RPC is not configured");
         assert!(completed.iter().all(|(_, result)| result.passed.is_none()));
     }
 

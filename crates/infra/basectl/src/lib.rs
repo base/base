@@ -21,9 +21,8 @@ pub use commands::{
 
 mod zenith;
 pub use zenith::{
-    ZenithCheck, ZenithCheckContext, ZenithCheckCursor, ZenithCheckStatus, ZenithCheckTarget,
-    ZenithChecker, ZenithInstallation, ZenithObservations, ZenithReport, ZenithRpcStatus,
-    ZenithSchedule, ZenithStatus,
+    ZenithCheck, ZenithCheckCursor, ZenithCheckStatus, ZenithCheckTarget, ZenithChecker,
+    ZenithObservations, ZenithReport, ZenithSchedule,
 };
 
 mod confirm;
