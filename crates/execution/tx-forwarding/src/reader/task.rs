@@ -9,16 +9,15 @@ use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use reth_transaction_pool::{PoolTransaction, TransactionPool, ValidPoolTransaction};
-use serde_json::{Map, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, trace};
 use url::Url;
 
-use super::{config::ConsumerConfig, metrics::Metrics, validator::RecentlySent};
+use super::{config::ReaderConfig, metrics::Metrics, validator::RecentlySent};
 use crate::forwarder::InsertValidatedTransaction;
 
-/// Background consumer that drains the pool for one destination.
+/// Background reader that drains the pool for one destination.
 ///
 /// Each iteration creates a fresh `best_transactions()` snapshot and queues
 /// transactions not recently accepted by this destination's queue.
@@ -27,9 +26,9 @@ use crate::forwarder::InsertValidatedTransaction;
 /// forwarder: this is the component that holds a [`ValidPoolTransaction`], and
 /// it runs on a blocking thread, which keeps the EIP-2718 encoding off the
 /// async runtime.
-pub(crate) struct DestinationConsumer<P: TransactionPool, E = NoExtensions> {
+pub(crate) struct DestinationReader<P: TransactionPool, E = NoExtensions> {
     pool: P,
-    config: ConsumerConfig,
+    config: ReaderConfig,
     recently_sent: RecentlySent,
     sender: mpsc::Sender<InsertValidatedTransaction<E>>,
     cancel: CancellationToken,
@@ -37,17 +36,17 @@ pub(crate) struct DestinationConsumer<P: TransactionPool, E = NoExtensions> {
     url_label: Arc<str>,
 }
 
-impl<P, E> DestinationConsumer<P, E>
+impl<P, E> DestinationReader<P, E>
 where
     P: TransactionPool + 'static,
     P::Transaction: PoolTransaction + BundleTransaction,
     <P::Transaction as PoolTransaction>::Consensus: Encodable2718,
     E: ValidatedTransactionExtensions<P::Transaction>,
 {
-    /// Creates a consumer for one destination.
+    /// Creates a reader for one destination.
     pub(crate) fn new(
         pool: P,
-        config: ConsumerConfig,
+        config: ReaderConfig,
         sender: mpsc::Sender<InsertValidatedTransaction<E>>,
         cancel: CancellationToken,
         builder_url: Url,
@@ -64,7 +63,7 @@ where
             resend_after_ms = self.config.resend_after.as_millis() as u64,
             channel_capacity = self.config.channel_capacity,
             poll_interval_ms = self.config.poll_interval.as_millis() as u64,
-            "starting transaction consumer",
+            "starting transaction reader",
         );
 
         while !self.cancel.is_cancelled() {
@@ -77,7 +76,7 @@ where
             let mut queue_full = false;
             for tx in best_txs {
                 if self.cancel.is_cancelled() {
-                    info!("consumer cancelled during iteration");
+                    info!("reader cancelled during iteration");
                     return;
                 }
 
@@ -119,7 +118,7 @@ where
                     txs_sent = txs_sent,
                     txs_ignored = txs_ignored,
                     dedup_cache = self.recently_sent.len(),
-                    "consumer iteration complete",
+                    "reader iteration complete",
                 );
             }
 
@@ -128,7 +127,7 @@ where
             }
         }
 
-        info!("consumer cancelled, shutting down");
+        info!("reader cancelled, shutting down");
     }
 
     /// Attempts to queue the transaction without waiting on a stale pool snapshot.
@@ -164,30 +163,28 @@ where
     }
 
     fn emit_builder_consumed_event(&self, tx_hash: TxHash, iterator_index: u64) {
-        let event_type = TransactionEventType::TxpoolBuilderConsumed;
-        let data = Map::from_iter([
-            ("source".to_string(), json!("best_transactions")),
-            ("target".to_string(), json!("builder_forwarder")),
-            ("builder_url".to_string(), json!(self.builder_url.as_str())),
-            ("iterator_index".to_string(), json!(iterator_index)),
-            ("resend_after_ms".to_string(), json!(self.config.resend_after.as_millis() as u64)),
-        ]);
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseRethNode,
-            event_type: event_type,
+            event_type: TransactionEventType::TxpoolBuilderConsumed,
             tx_hash: tx_hash,
             id: {
                 "tx_hash" => format!("{tx_hash:#x}"),
                 "iterator_index" => iterator_index,
             },
-            data: data,
+            data: {
+                "source" => "best_transactions",
+                "target" => "builder_forwarder",
+                "builder_url" => self.builder_url.as_str(),
+                "iterator_index" => iterator_index,
+                "resend_after_ms" => self.config.resend_after.as_millis() as u64,
+            },
         );
     }
 }
 
-impl<P: TransactionPool, E> fmt::Debug for DestinationConsumer<P, E> {
+impl<P: TransactionPool, E> fmt::Debug for DestinationReader<P, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DestinationConsumer")
+        f.debug_struct("DestinationReader")
             .field("builder_url", &self.builder_url)
             .field("config", &self.config)
             .field("recently_sent", &self.recently_sent)
@@ -233,20 +230,20 @@ mod tests {
         })
     }
 
-    type TestConsumer = DestinationConsumer<NoopTransactionPool<BasePooledTransaction>>;
+    type TestReader = DestinationReader<NoopTransactionPool<BasePooledTransaction>>;
 
     /// The queued form of `transaction(nonce)`, for seeding a queue directly.
     fn wire(nonce: u64) -> InsertValidatedTransaction {
-        TestConsumer::to_wire(&transaction(nonce))
+        TestReader::to_wire(&transaction(nonce))
     }
 
-    fn consumer(
+    fn reader(
         sender: mpsc::Sender<InsertValidatedTransaction>,
         cancel: CancellationToken,
-    ) -> TestConsumer {
-        DestinationConsumer::new(
+    ) -> TestReader {
+        DestinationReader::new(
             NoopTransactionPool::new(),
-            ConsumerConfig {
+            ReaderConfig {
                 resend_after: Duration::from_secs(4),
                 channel_capacity: 1,
                 poll_interval: Duration::from_millis(1),
@@ -263,7 +260,7 @@ mod tests {
     fn to_wire_carries_the_sender_hash_and_encoded_bytes() {
         let transaction = transaction(3);
 
-        let converted = TestConsumer::to_wire(&transaction);
+        let converted = TestReader::to_wire(&transaction);
 
         assert_eq!(converted.tx_hash, *transaction.hash());
         assert_eq!(converted.transaction.sender, *transaction.sender_ref());
@@ -275,24 +272,21 @@ mod tests {
         let (sender, mut receiver) = mpsc::channel(1);
         sender.try_send(wire(0)).unwrap();
         let expected = transaction(1);
-        let consumer = consumer(sender, CancellationToken::new());
+        let reader = reader(sender, CancellationToken::new());
 
-        assert!(matches!(
-            consumer.try_enqueue(&expected),
-            Err(mpsc::error::TrySendError::Full(()))
-        ));
+        assert!(matches!(reader.try_enqueue(&expected), Err(mpsc::error::TrySendError::Full(()))));
         assert_eq!(receiver.try_recv().unwrap().tx_hash, wire(0).tx_hash);
         assert!(receiver.try_recv().is_err());
     }
 
     #[test]
-    fn closed_queue_stops_the_consumer() {
+    fn closed_queue_stops_the_reader() {
         let (sender, receiver) = mpsc::channel(1);
         drop(receiver);
-        let consumer = consumer(sender, CancellationToken::new());
+        let reader = reader(sender, CancellationToken::new());
 
         assert!(matches!(
-            consumer.try_enqueue(&transaction(1)),
+            reader.try_enqueue(&transaction(1)),
             Err(mpsc::error::TrySendError::Closed(()))
         ));
     }

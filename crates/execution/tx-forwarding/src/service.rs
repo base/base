@@ -15,8 +15,8 @@ use url::Url;
 
 use crate::{
     TxForwardingConfig,
-    consumer::DestinationConsumer,
     forwarder::{DestinationForwarder, ForwardRequest},
+    reader::DestinationReader,
 };
 
 /// Why a forwarding destination could not be started.
@@ -73,18 +73,18 @@ impl TxForwardingService {
         <P::Transaction as PoolTransaction>::Consensus: Encodable2718,
         E: ValidatedTransactionExtensions<P::Transaction>,
     {
-        let consumer_cancel = CancellationToken::new();
+        let reader_cancel = CancellationToken::new();
         if !self.config.enabled {
             return TxForwardingHandle {
-                consumer_cancel,
-                consumer_tasks: Vec::new(),
+                reader_cancel,
+                reader_tasks: Vec::new(),
                 forwarder_tasks: Vec::new(),
             };
         }
 
-        let consumer_config = self.config.consumer_config();
+        let reader_config = self.config.reader_config();
         let forwarder_config = Arc::new(self.config.forwarder_config());
-        let mut consumer_tasks = Vec::with_capacity(self.config.builder_urls.len());
+        let mut reader_tasks = Vec::with_capacity(self.config.builder_urls.len());
         let mut forwarder_tasks = Vec::with_capacity(self.config.builder_urls.len());
 
         for builder_url in &self.config.builder_urls {
@@ -103,14 +103,14 @@ impl TxForwardingService {
                 }
             };
 
-            let (sender, receiver) = mpsc::channel(consumer_config.channel_capacity);
+            let (sender, receiver) = mpsc::channel(reader_config.channel_capacity);
             // `E` is named explicitly: nothing else in this expression pins the queue's item type,
             // since both ends are generic over it.
-            let mut consumer = DestinationConsumer::<P, E>::new(
+            let mut reader = DestinationReader::<P, E>::new(
                 pool.clone(),
-                consumer_config.clone(),
+                reader_config.clone(),
                 sender,
-                consumer_cancel.child_token(),
+                reader_cancel.child_token(),
                 builder_url.clone(),
             );
             let forwarder = DestinationForwarder::new(
@@ -120,8 +120,8 @@ impl TxForwardingService {
                 Arc::clone(&forwarder_config),
             );
 
-            consumer_tasks.push(executor.spawn_blocking_task(Box::pin(async move {
-                consumer.run();
+            reader_tasks.push(executor.spawn_blocking_task(Box::pin(async move {
+                reader.run();
             })));
             forwarder_tasks.push(executor.spawn_task(Box::pin(async move {
                 forwarder.run().await;
@@ -129,12 +129,12 @@ impl TxForwardingService {
             info!(builder_url = %builder_url, "started transaction forwarding destination");
         }
 
-        TxForwardingHandle { consumer_cancel, consumer_tasks, forwarder_tasks }
+        TxForwardingHandle { reader_cancel, reader_tasks, forwarder_tasks }
     }
 
     /// Starts one forwarder per destination, driven by queues the caller owns.
     ///
-    /// The pool-polling consumer is bypassed entirely: the caller produces requests itself and
+    /// The pool-polling reader is bypassed entirely: the caller produces requests itself and
     /// holds the sending halves. Use this when requests arrive by push rather than by draining a
     /// [`TransactionPool`], while still getting this crate's batching, rate limiting, retries,
     /// metrics and shutdown. The caller chooses its queue capacity and its own overflow policy,
@@ -175,8 +175,8 @@ impl TxForwardingService {
         }
 
         Ok(TxForwardingHandle {
-            consumer_cancel: CancellationToken::new(),
-            consumer_tasks: Vec::new(),
+            reader_cancel: CancellationToken::new(),
+            reader_tasks: Vec::new(),
             forwarder_tasks,
         })
     }
@@ -184,19 +184,19 @@ impl TxForwardingService {
 
 /// Handle used to gracefully stop a [`TxForwardingService`].
 pub struct TxForwardingHandle {
-    consumer_cancel: CancellationToken,
-    consumer_tasks: Vec<JoinHandle<()>>,
+    reader_cancel: CancellationToken,
+    reader_tasks: Vec<JoinHandle<()>>,
     forwarder_tasks: Vec<JoinHandle<()>>,
 }
 
 impl TxForwardingHandle {
-    /// Stops pool consumers, drains each destination queue, and reports task outcomes.
+    /// Stops pool readers, drains each destination queue, and reports task outcomes.
     pub async fn shutdown(self) -> ShutdownReport {
-        self.consumer_cancel.cancel();
+        self.reader_cancel.cancel();
 
-        let consumer_results = join_all(self.consumer_tasks).await;
-        let consumers_completed = consumer_results.iter().filter(|result| result.is_ok()).count();
-        let mut task_failures = consumer_results.len() - consumers_completed;
+        let reader_results = join_all(self.reader_tasks).await;
+        let readers_completed = reader_results.iter().filter(|result| result.is_ok()).count();
+        let mut task_failures = reader_results.len() - readers_completed;
 
         let mut forwarders: FuturesUnordered<_> = self.forwarder_tasks.into_iter().collect();
         let deadline = tokio::time::Instant::now() + SHUTDOWN_TIMEOUT;
@@ -224,16 +224,16 @@ impl TxForwardingHandle {
             }
         }
 
-        ShutdownReport { consumers_completed, forwarders_completed, task_failures, timed_out }
+        ShutdownReport { readers_completed, forwarders_completed, task_failures, timed_out }
     }
 }
 
 impl std::fmt::Debug for TxForwardingHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TxForwardingHandle")
-            .field("consumers", &self.consumer_tasks.len())
+            .field("readers", &self.reader_tasks.len())
             .field("forwarders", &self.forwarder_tasks.len())
-            .field("cancelled", &self.consumer_cancel.is_cancelled())
+            .field("cancelled", &self.reader_cancel.is_cancelled())
             .finish()
     }
 }
@@ -241,8 +241,8 @@ impl std::fmt::Debug for TxForwardingHandle {
 /// Summary of transaction forwarding task shutdown.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ShutdownReport {
-    /// Consumer tasks that stopped cleanly.
-    pub consumers_completed: usize,
+    /// Reader tasks that stopped cleanly.
+    pub readers_completed: usize,
     /// Forwarder tasks that drained and stopped cleanly.
     pub forwarders_completed: usize,
     /// Tasks that exited with a join error.
@@ -346,26 +346,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_cancels_consumers_before_waiting_for_forwarders() {
-        let consumer_cancel = CancellationToken::new();
-        let consumer_signal = consumer_cancel.child_token();
-        let (consumer_stopped, wait_for_consumer) = oneshot::channel();
-        let consumer_task = tokio::spawn(async move {
-            consumer_signal.cancelled().await;
-            consumer_stopped.send(()).unwrap();
+    async fn shutdown_cancels_readers_before_waiting_for_forwarders() {
+        let reader_cancel = CancellationToken::new();
+        let reader_signal = reader_cancel.child_token();
+        let (reader_stopped, wait_for_reader) = oneshot::channel();
+        let reader_task = tokio::spawn(async move {
+            reader_signal.cancelled().await;
+            reader_stopped.send(()).unwrap();
         });
         let forwarder_task = tokio::spawn(async move {
-            wait_for_consumer.await.unwrap();
+            wait_for_reader.await.unwrap();
         });
         let handle = TxForwardingHandle {
-            consumer_cancel,
-            consumer_tasks: vec![consumer_task],
+            reader_cancel,
+            reader_tasks: vec![reader_task],
             forwarder_tasks: vec![forwarder_task],
         };
 
         let report = handle.shutdown().await;
 
-        assert_eq!(report.consumers_completed, 1);
+        assert_eq!(report.readers_completed, 1);
         assert_eq!(report.forwarders_completed, 1);
         assert_eq!(report.task_failures, 0);
         assert!(!report.timed_out);
@@ -374,14 +374,14 @@ mod tests {
     #[tokio::test]
     async fn shutdown_reports_join_failures() {
         let handle = TxForwardingHandle {
-            consumer_cancel: CancellationToken::new(),
-            consumer_tasks: vec![tokio::spawn(async { panic!("consumer failed") })],
+            reader_cancel: CancellationToken::new(),
+            reader_tasks: vec![tokio::spawn(async { panic!("reader failed") })],
             forwarder_tasks: vec![tokio::spawn(async { panic!("forwarder failed") })],
         };
 
         let report = handle.shutdown().await;
 
-        assert_eq!(report.consumers_completed, 0);
+        assert_eq!(report.readers_completed, 0);
         assert_eq!(report.forwarders_completed, 0);
         assert_eq!(report.task_failures, 2);
         assert!(!report.timed_out);
@@ -390,14 +390,14 @@ mod tests {
     #[tokio::test]
     async fn shutdown_aborts_forwarders_after_timeout() {
         let handle = TxForwardingHandle {
-            consumer_cancel: CancellationToken::new(),
-            consumer_tasks: Vec::new(),
+            reader_cancel: CancellationToken::new(),
+            reader_tasks: Vec::new(),
             forwarder_tasks: vec![tokio::spawn(std::future::pending())],
         };
 
         let report = handle.shutdown().await;
 
-        assert_eq!(report.consumers_completed, 0);
+        assert_eq!(report.readers_completed, 0);
         assert_eq!(report.forwarders_completed, 0);
         assert_eq!(report.task_failures, 1);
         assert!(report.timed_out);

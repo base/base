@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-/// Configuration for a transaction pool consumer task.
+/// Configuration for a transaction pool reader task.
 ///
-/// The consumer continuously reads from the pool's `best_transactions()` iterator,
+/// The reader continuously reads from the pool's `best_transactions()` iterator,
 /// deduplicates transactions for one destination, and queues them for forwarding.
 #[derive(Debug, Clone)]
-pub(crate) struct ConsumerConfig {
+pub(crate) struct ReaderConfig {
     /// Duration after which a previously sent transaction may be re-sent.
     ///
     /// Transactions seen within this window are skipped to avoid sending
@@ -20,7 +20,7 @@ pub(crate) struct ConsumerConfig {
     pub(crate) poll_interval: Duration,
 }
 
-impl Default for ConsumerConfig {
+impl Default for ReaderConfig {
     fn default() -> Self {
         Self {
             resend_after: Duration::from_secs(4),
@@ -36,7 +36,7 @@ mod tests {
 
     #[test]
     fn defaults() {
-        let config = ConsumerConfig::default();
+        let config = ReaderConfig::default();
         assert_eq!(config.resend_after, Duration::from_secs(4));
         assert_eq!(config.channel_capacity, 10_000);
         assert_eq!(config.poll_interval, Duration::from_millis(10));

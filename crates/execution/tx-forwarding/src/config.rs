@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use url::Url;
 
-use crate::{consumer::ConsumerConfig, forwarder::ForwarderConfig};
+use crate::{forwarder::ForwarderConfig, reader::ReaderConfig};
 
 /// Default resend-after window in milliseconds (~2 blocks on Base).
 pub const DEFAULT_RESEND_AFTER_MS: u64 = 4000;
@@ -69,9 +69,9 @@ impl TxForwardingConfig {
         self
     }
 
-    /// Builds the per-destination consumer configuration.
-    pub(crate) fn consumer_config(&self) -> ConsumerConfig {
-        ConsumerConfig {
+    /// Builds the per-destination reader configuration.
+    pub(crate) fn reader_config(&self) -> ReaderConfig {
+        ReaderConfig {
             resend_after: Duration::from_millis(self.resend_after_ms),
             ..Default::default()
         }

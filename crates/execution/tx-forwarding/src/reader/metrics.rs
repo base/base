@@ -1,8 +1,8 @@
-//! Metrics for transaction consumers.
+//! Metrics for transaction pool readers.
 
 base_metrics::define_metrics! {
-    txpool.consumer
-    #[describe("Total consumer loop iterations")]
+    txpool.reader
+    #[describe("Total reader loop iterations")]
     #[label(builder_url)]
     iterations: counter,
     #[describe("Total transactions read from the pool iterator")]
