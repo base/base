@@ -161,6 +161,9 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 }
                 C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
                 C::SEIZE_HOLDER_POLICY(_) => B20PolicyType::SeizeHolder.id().abi_encode().into(),
+                C::SEIZE_RECEIVER_POLICY(_) => {
+                    B20PolicyType::SeizeReceiver.id().abi_encode().into()
+                }
                 C::hasRole(c) => logic.has_role(self, c.role, c.account)?.abi_encode().into(),
                 C::getRoleAdmin(c) => logic.role_admin(self, c.role)?.abi_encode().into(),
                 C::pausedFeatures(_) => logic.paused_features(self)?.abi_encode().into(),

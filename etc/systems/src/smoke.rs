@@ -1,12 +1,12 @@
 //! System test stack orchestration and lifecycle management.
 
+#[cfg(feature = "upgrade-signal")]
 use std::{
     collections::BTreeSet,
-    num::NonZeroU64,
-    path::PathBuf,
     sync::{Mutex, OnceLock},
     time::Duration,
 };
+use std::{num::NonZeroU64, path::PathBuf};
 
 use alloy_network::Ethereum;
 use alloy_primitives::B256;
@@ -14,13 +14,18 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
+#[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::Base;
 use base_tx_forwarding::TxForwardingConfig;
-use eyre::{OptionExt, Result, WrapErr, ensure};
+#[cfg(feature = "upgrade-signal")]
+use eyre::ensure;
+use eyre::{OptionExt, Result, WrapErr};
 use tempfile::TempDir;
 use url::Url;
 
+#[cfg(feature = "upgrade-signal")]
+use crate::upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 use crate::{
     BATCHER, BUILDER, SEQUENCER,
     l1::{L1ContainerConfig, L1Stack, L1StackConfig},
@@ -29,7 +34,6 @@ use crate::{
     },
     setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer},
     system_config::StableSystemTestConfig,
-    upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions},
 };
 
 const DEFAULT_L1_CHAIN_ID: u64 = 1337;
@@ -39,10 +43,13 @@ const DEFAULT_SHADOW_BLOCKS_PER_CYCLE: NonZeroU64 = NonZeroU64::new(3).unwrap();
 
 /// Longest wait for a live L1 schedule change to be re-applied by a runtime-admin node (the
 /// upgrade signal poll interval is 12s).
+#[cfg(feature = "upgrade-signal")]
 const LIVE_APPLY_TIMEOUT: Duration = Duration::from_secs(90);
 /// Interval between runtime registry checks while awaiting a live schedule apply.
+#[cfg(feature = "upgrade-signal")]
 const LIVE_APPLY_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
+#[cfg(feature = "upgrade-signal")]
 static RUNTIME_UPGRADE_SIGNAL_OWNERS: OnceLock<Mutex<BTreeSet<u64>>> = OnceLock::new();
 
 /// Exclusive ownership of the process-global [`RuntimeUpgradeRegistry`] entries for one L2
@@ -53,11 +60,13 @@ static RUNTIME_UPGRADE_SIGNAL_OWNERS: OnceLock<Mutex<BTreeSet<u64>>> = OnceLock:
 /// the same chain ID. Ownership is exclusive: acquiring a chain ID that another live guard
 /// already owns fails, because the registry is shared by every in-process node in the test
 /// binary and two concurrent writers for the same chain cannot be isolated from each other.
+#[cfg(feature = "upgrade-signal")]
 #[derive(Debug)]
 pub struct RuntimeUpgradeSignalGuard {
     chain_id: u64,
 }
 
+#[cfg(feature = "upgrade-signal")]
 impl RuntimeUpgradeSignalGuard {
     /// Acquires exclusive runtime-registry ownership of the given L2 chain ID.
     ///
@@ -76,6 +85,7 @@ impl RuntimeUpgradeSignalGuard {
     }
 }
 
+#[cfg(feature = "upgrade-signal")]
 impl Drop for RuntimeUpgradeSignalGuard {
     fn drop(&mut self) {
         RuntimeUpgradeRegistry::clear_chain(self.chain_id);
@@ -90,14 +100,17 @@ impl Drop for RuntimeUpgradeSignalGuard {
 /// A complete L1+L2 stack for system tests.
 pub struct SystemTestStack {
     _temp_dir: TempDir,
+    #[cfg(feature = "upgrade-signal")]
     l2_chain_id: u64,
     l1_genesis: L1GenesisOutput,
     l2_deployment: L2DeploymentOutput,
     l1_stack: L1Stack,
     l2_stack: L2Stack,
+    #[cfg(feature = "upgrade-signal")]
     upgrade_signal: Option<MockProtocolVersionsClient>,
     /// Must be the last field: it clears the runtime registry on drop, so the stacks above
     /// (and their upgrade-signal writer tasks) must shut down first.
+    #[cfg(feature = "upgrade-signal")]
     _runtime_upgrade_signal_guard: Option<RuntimeUpgradeSignalGuard>,
 }
 
@@ -195,6 +208,7 @@ impl SystemTestStack {
 
     /// Returns the mock L1 upgrade signal contract client, when the stack was built with
     /// [`SystemTestStackBuilder::with_upgrade_signal`].
+    #[cfg(feature = "upgrade-signal")]
     pub const fn upgrade_signal(&self) -> Option<&MockProtocolVersionsClient> {
         self.upgrade_signal.as_ref()
     }
@@ -205,6 +219,7 @@ impl SystemTestStack {
     /// Requires the stack to have been built with
     /// [`SystemTestStackBuilder::with_upgrade_signal`] and a node running in a runtime-admin
     /// mode that re-applies live schedule changes.
+    #[cfg(feature = "upgrade-signal")]
     pub async fn set_schedule_and_await_runtime_apply(
         &self,
         upgrade: BaseUpgrade,
@@ -268,6 +283,7 @@ pub struct SystemTestStackBuilder {
     client_consensus_mode: L2ClientConsensusMode,
     shadow_sequencer_count: usize,
     shadow_blocks_per_cycle: Option<NonZeroU64>,
+    #[cfg(feature = "upgrade-signal")]
     upgrade_signal: Option<UpgradeSignalStackOptions>,
 }
 
@@ -378,6 +394,7 @@ impl SystemTestStackBuilder {
     /// Enables the L1 upgrade signal: deploys a mock `ProtocolVersions` contract to L1, seeds
     /// it with the options' schedule, and starts both consensus nodes (and, when an execution
     /// mode is set, the client execution node) reading it.
+    #[cfg(feature = "upgrade-signal")]
     pub fn with_upgrade_signal(mut self, options: UpgradeSignalStackOptions) -> Self {
         self.upgrade_signal = Some(options);
         self
@@ -392,6 +409,7 @@ impl SystemTestStackBuilder {
         // Acquire runtime-registry ownership before any node starts, so live overrides are
         // cleared even when a later startup step fails, and so a chain-ID conflict with a
         // concurrently running runtime-admin stack fails fast.
+        #[cfg(feature = "upgrade-signal")]
         let runtime_upgrade_signal_guard = self
             .upgrade_signal
             .as_ref()
@@ -516,21 +534,38 @@ impl SystemTestStackBuilder {
             }
         });
 
-        let upgrade_signal = match &self.upgrade_signal {
-            Some(options) => {
-                let rollup_config: RollupConfig = serde_json::from_slice(&rollup_config_bytes)
-                    .wrap_err("Failed to parse rollup config for upgrade signal baseline")?;
-                let l1_public_rpc_url = l1_stack.rpc_url().await?;
-                let client =
-                    MockProtocolVersionsClient::deploy(l1_public_rpc_url, options, &rollup_config)
-                        .await
-                        .wrap_err("Failed to deploy upgrade signal mock contract")?;
-                Some(client)
-            }
-            None => None,
+        // The upgrade-signal path deploys a mock ProtocolVersions contract via base-test-utils.
+        // That crate embeds Foundry artifacts at compile time and cannot build as a git
+        // dependency, so it and this path are gated behind the (default-on) `upgrade-signal`
+        // feature. With the feature off the stack simply runs without an L1 upgrade signal.
+        #[cfg(feature = "upgrade-signal")]
+        let (upgrade_signal, l2_upgrade_signal, l2_execution_upgrade_signal) = {
+            let upgrade_signal = match &self.upgrade_signal {
+                Some(options) => {
+                    let rollup_config: RollupConfig = serde_json::from_slice(&rollup_config_bytes)
+                        .wrap_err("Failed to parse rollup config for upgrade signal baseline")?;
+                    let l1_public_rpc_url = l1_stack.rpc_url().await?;
+                    let client = MockProtocolVersionsClient::deploy(
+                        l1_public_rpc_url,
+                        options,
+                        &rollup_config,
+                    )
+                    .await
+                    .wrap_err("Failed to deploy upgrade signal mock contract")?;
+                    Some(client)
+                }
+                None => None,
+            };
+            let signal_parts = self.upgrade_signal.as_ref().zip(upgrade_signal.as_ref());
+            let l2_upgrade_signal =
+                signal_parts.map(|(options, client)| options.signal_config(client.address));
+            let l2_execution_upgrade_signal = signal_parts.and_then(|(options, client)| {
+                options.execution_signal_config(client.address, client.l1_rpc_url.clone())
+            });
+            (upgrade_signal, l2_upgrade_signal, l2_execution_upgrade_signal)
         };
-
-        let signal_parts = self.upgrade_signal.as_ref().zip(upgrade_signal.as_ref());
+        #[cfg(not(feature = "upgrade-signal"))]
+        let (l2_upgrade_signal, l2_execution_upgrade_signal) = (None, None);
 
         let l2_config = L2StackConfig {
             l2_genesis: l2_genesis_bytes,
@@ -546,11 +581,8 @@ impl SystemTestStackBuilder {
             tx_forwarding_config: self.tx_forwarding_config,
             verifier_l1_confs: self.verifier_l1_confs,
             client_consensus_mode: self.client_consensus_mode,
-            upgrade_signal: signal_parts
-                .map(|(options, client)| options.signal_config(client.address)),
-            execution_upgrade_signal: signal_parts.and_then(|(options, client)| {
-                options.execution_signal_config(client.address, client.l1_rpc_url.clone())
-            }),
+            upgrade_signal: l2_upgrade_signal,
+            execution_upgrade_signal: l2_execution_upgrade_signal,
             shadow_sequencers,
         };
 
@@ -558,12 +590,15 @@ impl SystemTestStackBuilder {
 
         Ok(SystemTestStack {
             _temp_dir: temp_dir,
+            #[cfg(feature = "upgrade-signal")]
             l2_chain_id,
             l1_genesis,
             l2_deployment,
             l1_stack,
             l2_stack,
+            #[cfg(feature = "upgrade-signal")]
             upgrade_signal,
+            #[cfg(feature = "upgrade-signal")]
             _runtime_upgrade_signal_guard: runtime_upgrade_signal_guard,
         })
     }

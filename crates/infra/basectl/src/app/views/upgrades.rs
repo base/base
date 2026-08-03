@@ -881,7 +881,7 @@ impl UpgradesView {
     fn rpc_for_selected(&self, resources: &Resources) -> Option<String> {
         let chain = &self.chains[self.selected_chain];
         if chain_name_matches_loaded(chain.display_name, &resources.config.name) {
-            Some(resources.config.rpc.to_string())
+            Some(resources.config.public_rpc.as_ref().unwrap_or(&resources.config.rpc).to_string())
         } else {
             chain.rpc.clone()
         }
@@ -3222,6 +3222,19 @@ mod tests {
 
         view.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), &mut resources);
         assert_eq!(view.selected_check_upgrade(100), Some("Beryl"));
+    }
+
+    #[test]
+    fn loaded_chain_upgrade_rpc_prefers_public_with_local_fallback() {
+        let mut view = UpgradesView::new();
+        view.selected_chain = 3; // Mainnet
+        let mut resources = Resources::new(MonitoringConfig::mainnet());
+
+        assert_eq!(view.rpc_for_selected(&resources).as_deref(), Some("https://mainnet.base.org/"));
+
+        resources.config.public_rpc = None;
+
+        assert_eq!(view.rpc_for_selected(&resources).as_deref(), Some("http://127.0.0.1:8545/"));
     }
 
     #[test]

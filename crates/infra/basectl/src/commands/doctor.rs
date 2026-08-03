@@ -26,14 +26,13 @@ const ANSI_RESET: &str = "\x1b[0m";
 pub struct DoctorCommand {
     /// Override the execution-layer RPC URL.
     ///
-    /// Defaults to the chain config's `rpc` field. Pass this flag to diagnose
-    /// a specific node instead of a public preset RPC.
+    /// Defaults to the chain config's local `rpc` field.
     #[arg(long = "el-rpc", value_name = "URL")]
     pub el_rpc: Option<Url>,
     /// Override the consensus-node RPC URL.
     ///
-    /// If omitted and the selected config has no `consensus_node_rpc`, CL
-    /// checks are skipped with hints while EL/L1/config checks still run.
+    /// Defaults to the chain config's `consensus_node_rpc` field. If neither
+    /// is set, CL checks are skipped with hints while EL/L1/config checks run.
     #[arg(long = "cl-rpc", value_name = "URL")]
     pub cl_rpc: Option<Url>,
     /// Path to the local `reth.toml` file.

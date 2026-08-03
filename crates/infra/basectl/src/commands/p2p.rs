@@ -56,16 +56,12 @@ pub enum P2pCommands {
 pub struct P2pArgs {
     /// Override the execution-layer RPC URL.
     ///
-    /// Defaults to the chain config's `rpc` field, which on the
-    /// `mainnet` and `sepolia` presets resolves to the public proxyd
-    /// fleet. Pass this flag to query a single node directly.
+    /// Defaults to the chain config's local `rpc` field.
     #[arg(long = "el-rpc", value_name = "URL")]
     pub el_rpc: Option<Url>,
     /// Override the consensus-node RPC URL.
     ///
-    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
-    /// so non-devnet users must pass this flag (or set the field in
-    /// their YAML config).
+    /// Defaults to the chain config's `consensus_node_rpc` field.
     #[arg(long = "cl-rpc", value_name = "URL")]
     pub cl_rpc: Option<Url>,
     /// Emit JSON instead of the pretty table output.
@@ -84,16 +80,12 @@ pub struct DestructivePeerArgs {
     pub target: String,
     /// Override the execution-layer RPC URL.
     ///
-    /// Defaults to the chain config's `rpc` field, which on the
-    /// `mainnet` and `sepolia` presets resolves to the public proxyd
-    /// fleet. Pass this flag to query a single node directly.
+    /// Defaults to the chain config's local `rpc` field.
     #[arg(long = "el-rpc", value_name = "URL")]
     pub el_rpc: Option<Url>,
     /// Override the consensus-node RPC URL.
     ///
-    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
-    /// so non-devnet users must pass this flag (or set the field in
-    /// their YAML config).
+    /// Defaults to the chain config's `consensus_node_rpc` field.
     #[arg(long = "cl-rpc", value_name = "URL")]
     pub cl_rpc: Option<Url>,
     /// Skip the interactive confirmation prompt.
@@ -109,9 +101,7 @@ pub struct DestructivePeerArgs {
 pub struct DestructiveClBulkArgs {
     /// Override the consensus-node RPC URL.
     ///
-    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
-    /// so non-devnet users must pass this flag (or set the field in
-    /// their YAML config).
+    /// Defaults to the chain config's `consensus_node_rpc` field.
     #[arg(long = "cl-rpc", value_name = "URL")]
     pub cl_rpc: Option<Url>,
     /// Skip the interactive confirmation prompt.
@@ -863,6 +853,7 @@ mod tests {
             name: "devnet".to_string(),
             rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
             el_ws_rpc: None,
+            public_rpc: None,
             flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
             l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
             consensus_node_rpc,
