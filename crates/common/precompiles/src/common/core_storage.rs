@@ -80,12 +80,16 @@ pub struct B20CoreStorage {
     pub nonces: Mapping<Address, U256>, // offset 13
     // The base-std mock keeps an `initialized` bootstrap flag as its last field; this impl checks
     // factory-init via deployed marker bytecode instead, so it stores no such field.
-    /// Seizable-account policy ID, consulted by the seize operations.
+    /// Seizable-account policy ID, consulted against `from` by the seize operations.
     #[accessor]
     #[mutator]
     pub seize_holder_policy_id: u64, // slot 14, offset 0
+    /// Seize-receiver policy ID, consulted against `to` by the seize operations.
+    #[accessor]
+    #[mutator]
+    pub seize_receiver_policy_id: u64, // slot 14, offset 8
     /// Reserved padding to close slot 14.
-    pub seize_reserved: FixedBytes<24>, // slot 14, offset 8
+    pub seize_reserved: FixedBytes<16>, // slot 14, offset 16
 }
 
 #[cfg(test)]
@@ -131,7 +135,9 @@ mod tests {
         assert_eq!(__packing_b20_core_storage::NONCES_LOC.offset_slots, 13);
         assert_eq!(__packing_b20_core_storage::SEIZE_HOLDER_POLICY_ID_LOC.offset_slots, 14);
         assert_eq!(__packing_b20_core_storage::SEIZE_HOLDER_POLICY_ID_LOC.offset_bytes, 0);
+        assert_eq!(__packing_b20_core_storage::SEIZE_RECEIVER_POLICY_ID_LOC.offset_slots, 14);
+        assert_eq!(__packing_b20_core_storage::SEIZE_RECEIVER_POLICY_ID_LOC.offset_bytes, 8);
         assert_eq!(__packing_b20_core_storage::SEIZE_RESERVED_LOC.offset_slots, 14);
-        assert_eq!(__packing_b20_core_storage::SEIZE_RESERVED_LOC.offset_bytes, 8);
+        assert_eq!(__packing_b20_core_storage::SEIZE_RESERVED_LOC.offset_bytes, 16);
     }
 }

@@ -345,6 +345,9 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
         B20Guards::ensure_seizable(token, from)?;
+        // Gate the destination like `mint` gates `MintReceiver`: an unset scope is always-allow, so a
+        // treasury need not be allowlisted by default.
+        B20Guards::ensure_policy_type(token, B20PolicyType::SeizeReceiver, to)?;
         self.move_balance(token, from, to, amount)?;
         // `Memo` must immediately follow the `Transfer` (from `move_balance`), before `Seized`.
         self.emit_memo(token, caller, memo)?;
@@ -1329,6 +1332,95 @@ mod tests {
             .unwrap();
         LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn seize_reverts_when_receiver_policy_forbids() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(50u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizeReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+        let err =
+            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::SeizeReceiver.id(),
+                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            })
+        );
+    }
+
+    #[test]
+    fn seize_unset_receiver_policy_allows_any_destination() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(50u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        // SEIZE_RECEIVER_POLICY left unset => ALWAYS_ALLOW => any destination is allowed.
+        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn seize_succeeds_with_configured_receiver_policy_allow() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(50u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizeReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_ALLOW_ID,
+            )
+            .unwrap();
+        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn seize_holder_policy_beats_receiver_policy() {
+        let mut tok = token();
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        // SEIZE_HOLDER unset => ALICE not seizable; SEIZE_RECEIVER blocks BOB. Holder check fires first.
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizeReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+        let err =
+            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotSeizable { account: ALICE }));
+    }
+
+    #[test]
+    fn seize_receiver_policy_beats_balance() {
+        let mut tok = token();
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        // ALICE is seizable and has zero balance, but the receiver policy forbids BOB first.
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizeReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+        let err =
+            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::SeizeReceiver.id(),
+                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            })
+        );
     }
 
     #[test]
