@@ -5,7 +5,7 @@ use crate::config::{DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS};
 /// Configuration for transaction forwarders.
 ///
 /// Each forwarder receives from its own queue and forwards transactions via
-/// `base_insertValidatedTransactions`.
+/// `base_insertValidatedTransaction`.
 /// Under normal load, transactions are sent immediately (batch of 1). When the
 /// sliding window rate limit is hit, incoming transactions buffer and flush as
 /// a single batch once the window opens.
