@@ -21,18 +21,12 @@ use crate::{
 pub struct SyncStatusCommand {
     /// Override the execution-layer RPC URL.
     ///
-    /// Defaults to the chain config's `rpc` field, which on the
-    /// `mainnet` and `sepolia` presets resolves to the public proxyd
-    /// fleet — `eth_syncing` against that always reports "not syncing"
-    /// because proxyd routes only-healthy backends. Pass this flag to
-    /// point at a single node.
+    /// Defaults to the chain config's local `rpc` field.
     #[arg(long = "el-rpc", value_name = "URL")]
     pub el_rpc: Option<Url>,
     /// Override the consensus-node RPC URL.
     ///
-    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset, so
-    /// non-devnet users must pass this flag (or set the field in their YAML
-    /// config).
+    /// Defaults to the chain config's `consensus_node_rpc` field.
     #[arg(long = "cl-rpc", value_name = "URL")]
     pub cl_rpc: Option<Url>,
     /// Block tolerance for the tip-reference `caught_up` classification.
@@ -59,16 +53,17 @@ impl SyncStatusCommand {
     pub async fn run(self, config: MonitoringConfig) -> Result<()> {
         let el_rpc = self.el_rpc.unwrap_or_else(|| config.rpc.clone());
         let cl_rpc = config.resolve_cl_rpc(self.cl_rpc.as_ref(), "sync-status")?;
+        let public_rpc = config.public_rpc.as_ref().unwrap_or(&config.rpc);
         // Public tip reference is best-effort — failure marks the row unavailable
         // rather than failing the whole command. Run in parallel with the local
         // sync fetch.
         let (sync_result, tip_result) = tokio::join!(
             fetch_sync_status(&el_rpc, &cl_rpc),
-            fetch_block(&config.rpc, BlockId::Number(BlockNumberOrTag::Latest)),
+            fetch_block(public_rpc, BlockId::Number(BlockNumberOrTag::Latest)),
         );
         let report = sync_result?;
         let public_tip_block = tip_result.ok().map(|b| b.header.number);
-        let tip_url = config.rpc.as_str();
+        let tip_url = public_rpc.as_str();
 
         match (self.json, self.raw) {
             (true, true) => JsonOutput::print(&report.cl)?,
@@ -308,14 +303,14 @@ pub struct ElSyncInfoJson {
     pub remaining_blocks: u64,
 }
 
-/// Comparison of the local node's unsafe L2 head against a public-RPC
-/// reference (`config.rpc` for the active preset). Best-effort — when the
-/// public fetch fails, `block_number` and `delta_blocks` are `None` and
-/// `status` is `unavailable`.
+/// Comparison of the local node's unsafe L2 head against the configured public
+/// RPC, falling back to `config.rpc` when `config.public_rpc` is unset.
+/// Best-effort — when the fetch fails, `block_number` and `delta_blocks` are
+/// `None` and `status` is `unavailable`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TipReferenceJson {
-    /// The public-RPC URL queried (the preset's `config.rpc`).
+    /// The effective public-reference RPC URL queried.
     pub url: String,
     /// Latest block number reported by the public RPC. `None` if the call failed.
     pub block_number: Option<u64>,

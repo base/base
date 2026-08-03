@@ -214,6 +214,7 @@ impl Doctor {
     /// Runs doctor checks and returns a complete report.
     pub async fn run(config: MonitoringConfig, options: DoctorOptions) -> DoctorReport {
         let el_rpc = options.el_rpc.clone();
+        let public_tip_rpc = config.public_rpc.as_ref().unwrap_or(&config.rpc);
         let (
             (el_info, chain_id, telemetry_url, el_reachability),
             cl_info,
@@ -246,7 +247,7 @@ impl Doctor {
                 }
             },
             fetch_l2_block_number(&options.el_rpc),
-            fetch_l2_block_number(&config.rpc),
+            fetch_l2_block_number(public_tip_rpc),
             async {
                 match &options.cl_rpc {
                     Some(cl_rpc) => Some(fetch_sync_status(&options.el_rpc, cl_rpc).await),
@@ -260,7 +261,7 @@ impl Doctor {
             el_rpc: options.el_rpc.clone(),
             cl_rpc: options.cl_rpc.clone(),
             l1_rpc: config.l1_rpc.clone(),
-            public_tip_rpc: config.rpc.clone(),
+            public_tip_rpc: public_tip_rpc.clone(),
             reth_config: options.reth_config.clone(),
             telemetry_url: telemetry_url.clone(),
         };
@@ -328,7 +329,7 @@ impl Doctor {
                 &public_head,
                 &options.thresholds,
                 &options.el_rpc,
-                &config.rpc,
+                public_tip_rpc,
             ),
             Self::safe_head_recency_check(sync_status.as_ref(), &options.thresholds),
             Self::l1_reachability_check(&l1_head, &config.l1_rpc),
@@ -1327,6 +1328,7 @@ mod tests {
         MonitoringConfig {
             name: name.to_string(),
             rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
+            public_rpc: None,
             flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
             l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
             consensus_node_rpc: None,
