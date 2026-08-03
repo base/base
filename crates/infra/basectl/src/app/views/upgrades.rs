@@ -1428,17 +1428,24 @@ fn render_checks_panel(
     let failed = panel.results.values().filter(|r| r.passed == Some(false)).count();
     let indeterminate = panel.results.values().filter(|r| r.passed.is_none()).count();
 
+    let refresh_tag = if panel.running {
+        format!("  {} refreshing", spinner[(tick / 2) as usize % spinner.len()])
+    } else {
+        String::new()
+    };
     let auto_tag = if auto_refresh { "  · auto" } else { "" };
     let (title, border_color) = if failed > 0 {
         (
             format!(
-                " {hf} Checks ({mode_str})  FAIL {failed}  INDET {indeterminate}  PASS {passed}{auto_tag} "
+                " {hf} Checks ({mode_str})  FAIL {failed}  UNKNOWN {indeterminate}  PASS {passed}{refresh_tag}{auto_tag} "
             ),
             Color::Red,
         )
     } else if indeterminate > 0 {
         (
-            format!(" {hf} Checks ({mode_str})  INDET {indeterminate}  PASS {passed}{auto_tag} "),
+            format!(
+                " {hf} Checks ({mode_str})  UNKNOWN {indeterminate}  PASS {passed}{refresh_tag}{auto_tag} "
+            ),
             Color::Yellow,
         )
     } else if panel.running {
@@ -1474,7 +1481,7 @@ fn render_checks_panel(
                 },
                 |result| {
                     let (status_str, status_color) = match result.passed {
-                        None => ("INDET".to_string(), Color::Yellow),
+                        None => ("UNKNOWN".to_string(), Color::Yellow),
                         Some(true) => ("PASS".to_string(), Color::LightGreen),
                         Some(false) => ("FAIL".to_string(), Color::Red),
                     };
@@ -1493,7 +1500,7 @@ fn render_checks_panel(
     let header = Row::new(["CHECK", "", "DETAIL"])
         .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
 
-    let widths = [Constraint::Length(49), Constraint::Length(5), Constraint::Min(8)];
+    let widths = [Constraint::Length(49), Constraint::Length(7), Constraint::Min(8)];
 
     let block = Block::default()
         .title(title)
@@ -2152,10 +2159,6 @@ async fn run_zenith_checks_streaming(
     cursor: Option<ZenithCheckCursor>,
     tx: mpsc::Sender<CheckUpdate>,
 ) {
-    if tx.send(CheckUpdate::Starting("proxy_code_hash".to_string())).await.is_err() {
-        return;
-    }
-
     let report = match (Url::parse(&rpc_url), consensus_rpc) {
         (Ok(el_rpc), Some(cl_rpc)) => {
             ZenithChecker::new(expected_chain_id)
