@@ -19,6 +19,13 @@ pub use commands::{
     TxpoolReadJson, UnsafeHeadSource,
 };
 
+mod zenith;
+pub use zenith::{
+    ZenithCheck, ZenithCheckContext, ZenithCheckStatus, ZenithCheckTarget, ZenithChecker,
+    ZenithInstallation, ZenithObservations, ZenithReport, ZenithRpcStatus, ZenithSchedule,
+    ZenithStatus,
+};
+
 mod confirm;
 pub use confirm::Confirm;
 

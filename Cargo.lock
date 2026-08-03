@@ -6812,6 +6812,7 @@ dependencies = [
  "axum 0.8.9",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-evm",
  "base-common-flashblocks",
  "base-common-genesis",
  "base-common-network",
