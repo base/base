@@ -10,3 +10,11 @@ pub use config::{
 
 mod extension;
 pub use extension::TxForwardingExtension;
+
+mod forwarder;
+pub use forwarder::{ForwardRequest, InsertValidatedTransaction};
+
+mod reader;
+
+mod service;
+pub use service::{ForwardingSetupError, ShutdownReport, TxForwardingHandle, TxForwardingService};

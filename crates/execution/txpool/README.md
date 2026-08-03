@@ -7,8 +7,7 @@ Transaction pool for Base.
 Extends Reth's transaction pool with Base-specific validation and ordering for the Base node.
 `BaseTransactionValidator` enforces L1 data fee checks and Base-specific validity rules.
 `BaseOrdering` and `TimestampOrdering` provide customizable transaction prioritization strategies.
-Also includes a `Consumer` for processing mempool events, a `Forwarder` for relaying transactions,
-and a `BuilderApiImpl` for builder-specific pool management.
+Also includes a `BuilderApiImpl` for builder-specific pool management.
 
 ### Pluggable builder wire format
 
@@ -22,8 +21,7 @@ Downstream node builds substitute their own payload by implementing
 
 ```rust,ignore
 use base_execution_txpool::{
-    BuilderApiImpl, BuilderApiServer, ExtensionError, SpawnedForwarder,
-    ValidatedTransactionExtensions,
+    BuilderApiImpl, BuilderApiServer, ExtensionError, ValidatedTransactionExtensions,
 };
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -41,8 +39,7 @@ impl ValidatedTransactionExtensions<MyPooledTx> for MyExtensions {
 let api = BuilderApiImpl::<_, MyExtensions>::with_extensions(pool);
 modules.merge_configured(api.into_rpc())?;
 
-// Mempool (egress) side, in place of `SpawnedForwarder::spawn`:
-SpawnedForwarder::spawn_with_extensions::<MyPooledTx, MyExtensions>(sender, config, &executor);
+// Mempool (egress) forwarding is provided by `base-tx-forwarding`.
 ```
 
 Extension payloads must serialize as a JSON map (a braced struct, not a unit struct) and must avoid

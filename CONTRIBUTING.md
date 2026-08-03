@@ -84,6 +84,8 @@ If you want to work on something that doesn't have an issue yet, open an issue f
    ```sh
    just ci
    ```
+   See [docs/guides/TESTING.md](docs/guides/TESTING.md) for what `just ci` runs, the different
+   testing tiers (unit/action/system/fuzz), and how local checks map to CI.
 
 ### Opening the Pull Request
 
