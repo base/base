@@ -1,6 +1,10 @@
 # Compiler files
 cache/
 out/
+# Exception: the specific artifacts embedded by base-test-utils via `sol!(..., ".../out/*.json")`
+# are force-committed (see `git ls-files .../out`) so the crate is self-contained and usable as a
+# git dependency, where gitignored build output would be absent and the compile-time include would
+# fail. Regenerate them with `forge build`; they are deterministic for the pinned solc + soldeer deps.
 
 # Ignores development broadcast logs
 !/broadcast
