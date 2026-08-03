@@ -46,8 +46,9 @@ pub enum AdminCommand {
     Pause,
     /// Force-close the current encoding channel (equivalent to a flush event).
     Flush {
-        /// Fired once every frame resulting from this flush has been encoded and handed to
-        /// the tx manager (not just the first). See [`AdminHandle::flush_and_wait`].
+        /// Fired once the driver's encoding and submission are both fully drained (not just
+        /// after the first frame) — see [`AdminHandle::flush_and_wait`] for the precise
+        /// "whole pipeline idle, not just this flush" caveat.
         #[debug(skip)]
         ack: Option<oneshot::Sender<()>>,
     },
@@ -117,9 +118,16 @@ impl AdminHandle {
     /// been encoded and handed to the tx manager.
     ///
     /// Unlike [`flush`](Self::flush), which only guarantees the command was queued, this
-    /// waits for the driver to report that encoding and submission are both fully drained
-    /// for the current channel — a deterministic signal that every frame from this flush
-    /// (not just the first) has been submitted.
+    /// waits for the driver to report that encoding and submission are both fully drained —
+    /// a deterministic signal that every frame from this flush (not just the first) has been
+    /// submitted.
+    ///
+    /// The wait is for the *whole pipeline* going idle, not specifically for this flush's own
+    /// frames: if new blocks keep arriving and producing fresh encoding/submission work while
+    /// this call is outstanding, the ack is delayed until that work drains too, and under
+    /// sustained continuous ingestion it may not fire at all. This call therefore gives a
+    /// precise, meaningful guarantee only when the source is otherwise quiesced (as in the
+    /// action-test harness, which never calls this while blocks are still streaming in).
     pub async fn flush_and_wait(&self) -> AdminResult<()> {
         let (tx, rx) = oneshot::channel();
         self.send(AdminCommand::Flush { ack: Some(tx) }).await?;

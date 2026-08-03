@@ -154,7 +154,15 @@ where
     ///
     /// If a [`DriverEvent::Flush`] carried an acknowledgement, it fires as soon as a later
     /// CPU phase reports both encoding and submission fully drained (i.e. the flush's frames
-    /// have all been handed to the tx manager) — see [`Self::pending_flush_acks`].
+    /// have all been handed to the tx manager) — see the `pending_flush_acks` field.
+    ///
+    /// This "fully drained" check is global, not scoped to the triggering flush: it's the
+    /// weakest condition that's still always *sufficient* (the flush's own frames can never be
+    /// dequeued before this fires) but not *tight* — if further `Block` events keep arriving
+    /// and producing fresh encoding/submission work while the ack is outstanding, it's delayed
+    /// until that work drains too, and under sustained continuous ingestion may not fire at
+    /// all. Callers that need a precise, always-terminating signal must ensure the source is
+    /// otherwise quiesced before flushing (as the action-test harness does).
     pub async fn run(mut self) -> Result<(), BatchDriverError> {
         if self.stopped {
             info!(
