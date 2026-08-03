@@ -331,8 +331,15 @@ impl CheckpointGuard<'_> {
     /// surface loudly. Contrast with `drop` below, which uses `try_borrow_mut`
     /// because `drop` may run during unwinding where a second panic would abort.
     pub fn commit(mut self) {
-        if self.checkpoint.take().is_some() {
-            self.storage.with_storage(|s| s.checkpoint_commit());
+        let checkpoint = self.checkpoint.take();
+        if let Some(checkpoint) = checkpoint {
+            self.storage.with_storage(|storage| {
+                #[cfg(any(test, feature = "test-utils"))]
+                storage.assert_latest_checkpoint(checkpoint);
+                #[cfg(not(any(test, feature = "test-utils")))]
+                let _ = checkpoint;
+                storage.commit_latest_checkpoint();
+            });
         }
     }
 }
@@ -494,6 +501,19 @@ mod tests {
                 ctx.sstore(addr, key, U256::from(1)).unwrap();
             }
             assert_eq!(ctx.sload(addr, key).unwrap(), U256::from(99));
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "out-of-order checkpoint commit (expected top of stack)")]
+    fn checkpoint_commit_rejects_non_lifo_order() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let outer = ctx.checkpoint();
+            let _inner = ctx.checkpoint();
+
+            outer.commit();
         });
     }
 

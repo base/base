@@ -14,7 +14,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_execution_txpool::ValidatedTransaction;
+use base_execution_txpool::{NoExtensions, ValidatedTransaction};
 use base_system_tests::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, SystemTestStackBuilder,
 };
@@ -111,6 +111,7 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        extensions: NoExtensions {},
     };
 
     // Create RPC client for the builder

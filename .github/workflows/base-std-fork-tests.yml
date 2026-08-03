@@ -34,11 +34,10 @@ jobs:
             key: beryl
             base_anvil_ref: 6d744e03224977edd42a36699ba9ff42be25e8cb
             base_std_ref: v1.0.0
-          # Point to the base-std release tag once the Cobalt hardfork is ready.
           - fork: Cobalt
             key: cobalt
             base_anvil_ref: ae7557c4f8602caa1da0be33143bb2504c85b0c8
-            base_std_ref: b0a4f048684c4cd279025bf2ba3aa76c45569fa4
+            base_std_ref: 96e96870937fa8c2ef5ad21a8433a9e5bdce07fa
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}

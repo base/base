@@ -1,32 +1,14 @@
-//! Capability extension traits for B-20 token variants.
+//! Shared building blocks for B-20 token operations.
 //!
-//! Each trait provides a composable set of token operations with default implementations
-//! built entirely on top of [`TokenAccounting`]. A token variant opts in to a
-//! capability by implementing the corresponding trait — no body required when the default
-//! impl is sufficient.
-//!
-//! [`TokenAccounting`]: crate::TokenAccounting
-
-mod burnable;
-pub use burnable::Burnable;
-
-mod configurable;
-pub use configurable::Configurable;
+//! Token behavior itself lives in each variant's versioned `logic/vN` implementation. What stays
+//! here is the part every version must agree on: the authorization guards, the built-in role
+//! identifiers, and the EIP-2612 permit argument hashing.
 
 mod guards;
 pub use guards::B20Guards;
 
-mod mintable;
-pub use mintable::Mintable;
-
-mod pausable;
-pub use pausable::Pausable;
-
-mod permittable;
-pub use permittable::{Eip712Domain, PermitArgs, Permittable};
+mod permit;
+pub use permit::{Eip712Domain, PermitArgs};
 
 mod roles;
-pub use roles::{B20TokenRole, RoleManaged};
-
-mod transferable;
-pub use transferable::Transferable;
+pub use roles::B20TokenRole;

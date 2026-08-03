@@ -1,6 +1,6 @@
 //! P2P RPC fetch helpers — EL admin / net and CL opp2p endpoints.
 
-use std::{net::IpAddr, str::FromStr, time::Duration};
+use std::{fmt, net::IpAddr, str::FromStr, time::Duration};
 
 use alloy_provider::{
     Provider, ProviderBuilder,
@@ -11,7 +11,7 @@ use alloy_transport::TransportError;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
 use base_common_network::Base;
-use base_consensus_gossip::{PeerInfo, PeerStats};
+use base_consensus_gossip::{Direction, PeerInfo, PeerStats};
 use base_consensus_peers::{BootNode, NodeRecord};
 use base_consensus_rpc::BaseP2PApiClient;
 use jsonrpsee::{
@@ -165,8 +165,39 @@ pub struct PeerSummary {
     pub id: String,
     /// Best-effort remote address string.
     pub address: String,
-    /// Connection direction label.
-    pub direction: String,
+    /// Connection direction.
+    pub direction: PeerDirection,
+}
+
+/// Connection direction of a peer relative to the local node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum PeerDirection {
+    /// The node did not report a direction.
+    Unknown,
+    /// The remote peer initiated the connection.
+    Inbound,
+    /// The local peer initiated the connection.
+    Outbound,
+}
+
+impl fmt::Display for PeerDirection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unknown => f.write_str("Unknown"),
+            Self::Inbound => f.write_str("Inbound"),
+            Self::Outbound => f.write_str("Outbound"),
+        }
+    }
+}
+
+impl From<Direction> for PeerDirection {
+    fn from(direction: Direction) -> Self {
+        match direction {
+            Direction::Unknown => Self::Unknown,
+            Direction::Inbound => Self::Inbound,
+            Direction::Outbound => Self::Outbound,
+        }
+    }
 }
 
 /// Connected peers per layer.
@@ -485,9 +516,9 @@ pub async fn fetch_connected_peers(rpc: &Url, cl_rpc: &Url) -> Result<PeerListRe
                             id: peer.id,
                             address: peer.network.remote_address.to_string(),
                             direction: if peer.network.inbound {
-                                "Inbound".to_string()
+                                PeerDirection::Inbound
                             } else {
-                                "Outbound".to_string()
+                                PeerDirection::Outbound
                             },
                         })
                         .collect::<Vec<_>>();
@@ -516,7 +547,7 @@ pub async fn fetch_connected_peers(rpc: &Url, cl_rpc: &Url) -> Result<PeerListRe
             .map(|(id, peer)| PeerSummary {
                 id,
                 address: peer.addresses.join(", "),
-                direction: peer.direction.to_string(),
+                direction: peer.direction.into(),
             })
             .collect::<Vec<_>>();
         cl.sort_by(|a, b| a.id.cmp(&b.id));
@@ -773,7 +804,7 @@ mod tests {
     };
 
     use super::{
-        ClNodeIdentity, ElNodeIdentity, NodeEndpoint, parse_cl_node_endpoint,
+        ClNodeIdentity, ElNodeIdentity, NodeEndpoint, PeerDirection, parse_cl_node_endpoint,
         parse_el_node_endpoint,
     };
 
@@ -863,5 +894,24 @@ mod tests {
         assert!(endpoint.discovery.udp_port > 0);
         assert!(!endpoint.discovery.v4_enabled);
         assert!(endpoint.discovery.v5_enabled);
+    }
+
+    #[test]
+    fn peer_direction_keeps_stable_json_and_display_spelling() {
+        for (direction, label) in [
+            (PeerDirection::Unknown, "Unknown"),
+            (PeerDirection::Inbound, "Inbound"),
+            (PeerDirection::Outbound, "Outbound"),
+        ] {
+            assert_eq!(serde_json::to_value(direction).unwrap(), label);
+            assert_eq!(direction.to_string(), label);
+        }
+    }
+
+    #[test]
+    fn peer_direction_maps_upstream_direction_variants() {
+        assert_eq!(PeerDirection::from(Direction::Unknown), PeerDirection::Unknown);
+        assert_eq!(PeerDirection::from(Direction::Inbound), PeerDirection::Inbound);
+        assert_eq!(PeerDirection::from(Direction::Outbound), PeerDirection::Outbound);
     }
 }

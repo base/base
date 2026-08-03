@@ -1,6 +1,7 @@
 //! Shadow-mode batch inbox parity monitoring.
 
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
     panic::AssertUnwindSafe,
     sync::Arc,
@@ -81,6 +82,14 @@ pub struct ParityCompareStats {
     pub matches: usize,
     /// Number of diverging batches compared.
     pub divergences: usize,
+    /// Canonical batches skipped while seeking the first common L2 timestamp.
+    pub canonical_pre_alignment_skips: usize,
+    /// Shadow batches skipped while seeking the first common L2 timestamp.
+    pub shadow_pre_alignment_skips: usize,
+    /// Canonical batches missing after the streams aligned.
+    pub missing_canonical: usize,
+    /// Shadow batches missing after the streams aligned.
+    pub missing_shadow: usize,
 }
 
 /// Stateful parity comparison data.
@@ -92,6 +101,8 @@ pub struct ParityState {
     pub shadow: ParitySideState,
     /// Last comparison result, if any comparison has completed.
     pub last_result: Option<bool>,
+    /// Whether both streams have reached a common L2 timestamp.
+    pub has_aligned: bool,
     /// Last pending queue drift reported to logs.
     pub last_reported_pending_drift: usize,
 }
@@ -329,6 +340,11 @@ impl ShadowParityMonitor {
                 evicted_channels = %evicted_channels,
                 "evicted stale shadow parity channels"
             );
+
+            let canonical = self.state.canonical.drain_ready_channels(&self.config.rollup_config);
+            let shadow = self.state.shadow.drain_ready_channels(&self.config.rollup_config);
+            ParitySide::Canonical.record_ingested(canonical);
+            ParitySide::Shadow.record_ingested(shadow);
         }
 
         let stats = self.state.compare_ready(block_number);
@@ -347,11 +363,15 @@ impl ShadowParityMonitor {
         self.state.record_alignment_metric();
         BatcherServiceMetrics::latest_l1_block().set(block_number as f64);
 
-        if stats.matches > 0 || stats.divergences > 0 {
+        if stats != ParityCompareStats::default() {
             debug!(
                 l1_block = %block_number,
                 matches = %stats.matches,
                 divergences = %stats.divergences,
+                canonical_pre_alignment_skips = %stats.canonical_pre_alignment_skips,
+                shadow_pre_alignment_skips = %stats.shadow_pre_alignment_skips,
+                missing_canonical = %stats.missing_canonical,
+                missing_shadow = %stats.missing_shadow,
                 canonical_pending = %self.state.canonical.pending_batches(),
                 shadow_pending = %self.state.shadow.pending_batches(),
                 "shadow parity comparisons processed"
@@ -522,12 +542,7 @@ impl ShadowParityMonitor {
     /// Parse and ingest frame data from one DA payload.
     pub fn ingest_payload(&mut self, side: ParitySide, payload: &[u8], block_info: BlockInfo) {
         match self.state.ingest_payload(side, payload, block_info, &self.config.rollup_config) {
-            Ok(decoded) => {
-                if decoded.complete_channels > 0 {
-                    side.increment_complete_channels(decoded.complete_channels as u64);
-                    side.increment_batches(decoded.batches as u64);
-                }
-            }
+            Ok(decoded) => side.record_ingested(decoded),
             Err(e) => {
                 BatcherServiceMetrics::extraction_errors_total().increment(1);
                 warn!(
@@ -572,6 +587,14 @@ impl ParitySide {
             }
         }
     }
+
+    /// Record channels and batches decoded for this side.
+    pub fn record_ingested(self, ingested: IngestedPayload) {
+        if ingested.complete_channels > 0 {
+            self.increment_complete_channels(ingested.complete_channels as u64);
+            self.increment_batches(ingested.batches as u64);
+        }
+    }
 }
 
 /// Result from ingesting one payload into a side state.
@@ -605,17 +628,63 @@ impl ParityState {
     /// Compare all currently paired decoded batches.
     pub fn compare_ready(&mut self, l1_block: u64) -> ParityCompareStats {
         let mut stats = ParityCompareStats::default();
-        let mut compared_batches = false;
+        let mut observed_result = false;
         let mut batches_aligned = true;
-        // Comparisons are intentionally positional: once one side emits an
-        // extra or missing batch, the pending queue delta below is the operator
-        // signal that later comparisons may be offset rather than independently
-        // divergent.
         while !self.canonical.batches.is_empty() && !self.shadow.batches.is_empty() {
+            let canonical_start = self
+                .canonical
+                .batches
+                .front()
+                .expect("canonical queue is non-empty")
+                .start_timestamp;
+            let shadow_start =
+                self.shadow.batches.front().expect("shadow queue is non-empty").start_timestamp;
+
+            match canonical_start.cmp(&shadow_start) {
+                Ordering::Less if !self.has_aligned => {
+                    self.canonical.batches.pop_front();
+                    stats.canonical_pre_alignment_skips += 1;
+                    BatcherServiceMetrics::canonical_pre_alignment_skips_total().increment(1);
+                    continue;
+                }
+                Ordering::Greater if !self.has_aligned => {
+                    self.shadow.batches.pop_front();
+                    stats.shadow_pre_alignment_skips += 1;
+                    BatcherServiceMetrics::shadow_pre_alignment_skips_total().increment(1);
+                    continue;
+                }
+                Ordering::Less => {
+                    self.canonical.batches.pop_front();
+                    stats.missing_shadow += 1;
+                    BatcherServiceMetrics::missing_shadow_batches_total().increment(1);
+                    observed_result = true;
+                    batches_aligned = false;
+                    continue;
+                }
+                Ordering::Greater => {
+                    self.shadow.batches.pop_front();
+                    stats.missing_canonical += 1;
+                    BatcherServiceMetrics::missing_canonical_batches_total().increment(1);
+                    observed_result = true;
+                    batches_aligned = false;
+                    continue;
+                }
+                Ordering::Equal => {}
+            }
+
+            if !self.has_aligned {
+                self.has_aligned = true;
+                info!(
+                    l1_block = %l1_block,
+                    l2_timestamp = %canonical_start,
+                    "shadow parity batch streams aligned"
+                );
+            }
+
             let canonical =
                 self.canonical.batches.pop_front().expect("canonical queue is non-empty");
             let shadow = self.shadow.batches.pop_front().expect("shadow queue is non-empty");
-            compared_batches = true;
+            observed_result = true;
             if canonical == shadow {
                 stats.matches += 1;
                 BatcherServiceMetrics::matches_total().increment(1);
@@ -639,21 +708,32 @@ impl ParityState {
                 );
             }
         }
-        if compared_batches {
+        if stats.missing_canonical > 0 || stats.missing_shadow > 0 {
+            warn!(
+                l1_block = %l1_block,
+                missing_canonical = %stats.missing_canonical,
+                missing_shadow = %stats.missing_shadow,
+                "shadow parity batches missing after alignment"
+            );
+        }
+        if observed_result {
             self.last_result = Some(batches_aligned);
         }
         stats
     }
 
-    /// Record pending-batch gauges.
+    /// Record pending channel and batch gauges.
     pub fn record_pending_metrics(&self) {
+        BatcherServiceMetrics::canonical_pending_channels()
+            .set(self.canonical.pending_channels() as f64);
+        BatcherServiceMetrics::shadow_pending_channels().set(self.shadow.pending_channels() as f64);
         BatcherServiceMetrics::canonical_pending_batches()
             .set(self.canonical.pending_batches() as f64);
         BatcherServiceMetrics::shadow_pending_batches().set(self.shadow.pending_batches() as f64);
         BatcherServiceMetrics::pending_batch_delta().set(self.pending_batch_delta() as f64);
     }
 
-    /// Warn when positional comparison queues are persistently drifting apart.
+    /// Warn when decoded-batch queues are persistently drifting apart.
     pub fn warn_on_pending_drift(&mut self, l1_block: u64) {
         let drift = self.pending_batch_delta();
         if drift < PENDING_QUEUE_DRIFT_WARN_THRESHOLD {
@@ -722,7 +802,7 @@ impl ParitySideState {
         for frame in frames {
             self.ingest_frame(frame, block_info);
         }
-        Ok(self.drain_ready_channels(block_info.timestamp, rollup_config))
+        Ok(self.drain_ready_channels(rollup_config))
     }
 
     /// Ingest one frame.
@@ -744,25 +824,24 @@ impl ParitySideState {
         }
     }
 
-    /// Drain every ready channel into the decoded-batch queue.
-    pub fn drain_ready_channels(
-        &mut self,
-        inclusion_timestamp: u64,
-        rollup_config: &RollupConfig,
-    ) -> IngestedPayload {
-        let ready_ids = self
-            .channel_order
-            .iter()
-            .copied()
-            .filter(|id| self.channels.get(id).is_some_and(Channel::is_ready))
-            .collect::<Vec<_>>();
+    /// Drain the contiguous ready prefix into the decoded-batch queue.
+    pub fn drain_ready_channels(&mut self, rollup_config: &RollupConfig) -> IngestedPayload {
         let mut result = IngestedPayload::default();
 
-        for id in ready_ids {
-            let Some(channel) = self.channels.remove(&id) else { continue };
+        while let Some(id) = self.channel_order.front().copied() {
+            let Some(channel) = self.channels.get(&id) else {
+                self.channel_order.pop_front();
+                continue;
+            };
+            if !channel.is_ready() {
+                break;
+            }
+
+            let channel = self.channels.remove(&id).expect("channel was present");
+            self.channel_order.pop_front();
             match ParityNormalizer::try_normalize_channel(
                 &channel,
-                inclusion_timestamp,
+                channel.highest_l1_inclusion_block.timestamp,
                 rollup_config,
             ) {
                 Ok(batches) => {
@@ -781,7 +860,6 @@ impl ParitySideState {
                 }
             }
         }
-        self.channel_order.retain(|id| self.channels.contains_key(id));
 
         result
     }
@@ -800,7 +878,8 @@ impl ParitySideState {
             .copied()
             .filter(|id| {
                 self.channels.get(id).is_some_and(|channel| {
-                    channel.open_block_number().saturating_add(timeout) < l1_block
+                    !channel.is_ready()
+                        && channel.open_block_number().saturating_add(timeout) < l1_block
                 })
             })
             .collect::<Vec<_>>();
@@ -815,6 +894,11 @@ impl ParitySideState {
         let expired = expired.into_iter().collect::<HashSet<_>>();
         self.channel_order.retain(|id| !expired.contains(id));
         expired.len()
+    }
+
+    /// Number of channels waiting for completion or ordered decoding.
+    pub fn pending_channels(&self) -> usize {
+        self.channels.len()
     }
 
     /// Number of decoded batches waiting for comparison.
@@ -947,21 +1031,26 @@ mod tests {
     #[test]
     fn compare_ready_records_divergence() {
         let mut state = ParityState::default();
+        let mut shadow = normalized_batch(100);
+        shadow.tx_counts = vec![1];
         state.canonical.batches.push_back(normalized_batch(100));
-        state.shadow.batches.push_back(normalized_batch(102));
+        state.shadow.batches.push_back(shadow);
 
         let stats = state.compare_ready(50);
 
         assert_eq!(stats.matches, 0);
         assert_eq!(stats.divergences, 1);
+        assert!(state.has_aligned);
         assert_eq!(state.is_aligned(), Some(false));
     }
 
     #[test]
     fn compare_ready_preserves_batch_divergence_when_later_pair_matches() {
         let mut state = ParityState::default();
+        let mut shadow = normalized_batch(100);
+        shadow.tx_counts = vec![1];
         state.canonical.batches.push_back(normalized_batch(100));
-        state.shadow.batches.push_back(normalized_batch(102));
+        state.shadow.batches.push_back(shadow);
         state.canonical.batches.push_back(normalized_batch(104));
         state.shadow.batches.push_back(normalized_batch(104));
 
@@ -969,6 +1058,120 @@ mod tests {
 
         assert_eq!(stats.matches, 1);
         assert_eq!(stats.divergences, 1);
+        assert_eq!(state.is_aligned(), Some(false));
+    }
+
+    #[test]
+    fn compare_ready_skips_canonical_prefix_before_alignment() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(100));
+        state.canonical.batches.push_back(normalized_batch(102));
+        state.canonical.batches.push_back(normalized_batch(104));
+        state.shadow.batches.push_back(normalized_batch(104));
+
+        let stats = state.compare_ready(50);
+
+        assert_eq!(stats.matches, 1);
+        assert_eq!(stats.canonical_pre_alignment_skips, 2);
+        assert_eq!(stats.divergences, 0);
+        assert!(state.has_aligned);
+        assert_eq!(state.is_aligned(), Some(true));
+    }
+
+    #[test]
+    fn compare_ready_skips_shadow_prefix_before_alignment() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(104));
+        state.shadow.batches.push_back(normalized_batch(100));
+        state.shadow.batches.push_back(normalized_batch(102));
+        state.shadow.batches.push_back(normalized_batch(104));
+
+        let stats = state.compare_ready(50);
+
+        assert_eq!(stats.matches, 1);
+        assert_eq!(stats.shadow_pre_alignment_skips, 2);
+        assert_eq!(stats.divergences, 0);
+        assert!(state.has_aligned);
+        assert_eq!(state.is_aligned(), Some(true));
+    }
+
+    #[test]
+    fn compare_ready_remains_unknown_until_common_timestamp_arrives() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(100));
+        state.shadow.batches.push_back(normalized_batch(102));
+
+        let stats = state.compare_ready(50);
+
+        assert_eq!(stats.canonical_pre_alignment_skips, 1);
+        assert!(!state.has_aligned);
+        assert_eq!(state.is_aligned(), None);
+        assert_eq!(state.shadow.pending_batches(), 1);
+
+        state.canonical.batches.push_back(normalized_batch(102));
+        let stats = state.compare_ready(51);
+
+        assert_eq!(stats.matches, 1);
+        assert!(state.has_aligned);
+        assert_eq!(state.is_aligned(), Some(true));
+    }
+
+    #[test]
+    fn compare_ready_waits_for_delayed_batch_after_alignment() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(100));
+        state.shadow.batches.push_back(normalized_batch(100));
+        state.compare_ready(50);
+
+        state.canonical.batches.push_back(normalized_batch(102));
+        let stats = state.compare_ready(51);
+
+        assert_eq!(stats, ParityCompareStats::default());
+        assert_eq!(state.canonical.pending_batches(), 1);
+
+        state.shadow.batches.push_back(normalized_batch(102));
+        let stats = state.compare_ready(52);
+
+        assert_eq!(stats.matches, 1);
+        assert_eq!(stats.missing_shadow, 0);
+        assert_eq!(state.is_aligned(), Some(true));
+    }
+
+    #[test]
+    fn compare_ready_reports_missing_shadow_batch_after_alignment() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(100));
+        state.shadow.batches.push_back(normalized_batch(100));
+        state.compare_ready(50);
+
+        state.canonical.batches.push_back(normalized_batch(102));
+        state.canonical.batches.push_back(normalized_batch(104));
+        state.shadow.batches.push_back(normalized_batch(104));
+
+        let stats = state.compare_ready(51);
+
+        assert_eq!(stats.matches, 1);
+        assert_eq!(stats.missing_shadow, 1);
+        assert_eq!(stats.missing_canonical, 0);
+        assert_eq!(state.is_aligned(), Some(false));
+    }
+
+    #[test]
+    fn compare_ready_reports_missing_canonical_batch_after_alignment() {
+        let mut state = ParityState::default();
+        state.canonical.batches.push_back(normalized_batch(100));
+        state.shadow.batches.push_back(normalized_batch(100));
+        state.compare_ready(50);
+
+        state.canonical.batches.push_back(normalized_batch(104));
+        state.shadow.batches.push_back(normalized_batch(102));
+        state.shadow.batches.push_back(normalized_batch(104));
+
+        let stats = state.compare_ready(51);
+
+        assert_eq!(stats.matches, 1);
+        assert_eq!(stats.missing_canonical, 1);
+        assert_eq!(stats.missing_shadow, 0);
         assert_eq!(state.is_aligned(), Some(false));
     }
 
@@ -1009,7 +1212,7 @@ mod tests {
         state.ingest_frame(single_frame(corrupt_id, vec![0x02]), block_info);
         state.ingest_frame(single_frame(valid_id, encode_single_batch(&batch)), block_info);
 
-        let ingested = state.drain_ready_channels(0, &rollup_config);
+        let ingested = state.drain_ready_channels(&rollup_config);
 
         assert_eq!(ingested.complete_channels, 1);
         assert_eq!(ingested.batches, 1);
@@ -1017,6 +1220,70 @@ mod tests {
         assert_eq!(state.pending_batches(), 1);
         assert!(state.channels.is_empty());
         assert!(state.channel_order.is_empty());
+    }
+
+    #[test]
+    fn drain_ready_channels_waits_for_older_incomplete_channel() {
+        let rollup_config = test_rollup_config();
+        let mut state = ParitySideState::default();
+        let older_id = [1u8; Channel::ID_LENGTH];
+        let newer_id = [2u8; Channel::ID_LENGTH];
+        let older_batch = SingleBatch { timestamp: 1000, ..Default::default() };
+        let newer_batch = SingleBatch { timestamp: 1002, ..Default::default() };
+        let older_data = encode_single_batch(&older_batch);
+        let split = older_data.len() / 2;
+
+        state.ingest_frame(
+            Frame { id: older_id, number: 0, data: older_data[..split].to_vec(), is_last: false },
+            BlockInfo { number: 10, timestamp: 100, ..Default::default() },
+        );
+        state.ingest_frame(
+            single_frame(newer_id, encode_single_batch(&newer_batch)),
+            BlockInfo { number: 11, timestamp: 101, ..Default::default() },
+        );
+
+        assert_eq!(state.drain_ready_channels(&rollup_config), IngestedPayload::default());
+        assert_eq!(state.pending_channels(), 2);
+        assert_eq!(state.pending_batches(), 0);
+
+        state.ingest_frame(
+            Frame { id: older_id, number: 1, data: older_data[split..].to_vec(), is_last: true },
+            BlockInfo { number: 12, timestamp: 102, ..Default::default() },
+        );
+        let ingested = state.drain_ready_channels(&rollup_config);
+
+        assert_eq!(ingested.complete_channels, 2);
+        assert_eq!(ingested.batches, 2);
+        assert_eq!(state.pending_channels(), 0);
+        assert_eq!(
+            state.batches.iter().map(|batch| batch.start_timestamp).collect::<Vec<_>>(),
+            vec![1000, 1002]
+        );
+    }
+
+    #[test]
+    fn expired_incomplete_channel_releases_ready_successor() {
+        let rollup_config = test_rollup_config();
+        let mut state = ParitySideState::default();
+        let expired_id = [1u8; Channel::ID_LENGTH];
+        let ready_id = [2u8; Channel::ID_LENGTH];
+        let batch = SingleBatch { timestamp: 1000, ..Default::default() };
+        let block_info = BlockInfo { number: 10, timestamp: 100, ..Default::default() };
+
+        state.ingest_frame(
+            Frame { id: expired_id, number: 0, data: vec![0x01], is_last: false },
+            block_info,
+        );
+        state.ingest_frame(single_frame(ready_id, encode_single_batch(&batch)), block_info);
+
+        assert_eq!(state.drain_ready_channels(&rollup_config), IngestedPayload::default());
+        assert_eq!(state.evict_expired_channels(16, 100, &rollup_config), 1);
+        let ingested = state.drain_ready_channels(&rollup_config);
+
+        assert_eq!(ingested.complete_channels, 1);
+        assert_eq!(ingested.batches, 1);
+        assert_eq!(state.pending_channels(), 0);
+        assert_eq!(state.pending_batches(), 1);
     }
 
     #[test]

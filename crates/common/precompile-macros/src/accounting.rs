@@ -251,7 +251,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                         self.b20.transfer_executor_policy_id()
                     }
                     crate::B20PolicyType::MintReceiver => self.b20.mint_receiver_policy_id(),
-                    crate::B20PolicyType::SeizableAccount => self.b20.seizable_policy_id(),
+                    crate::B20PolicyType::SeizeHolder => self.b20.seize_holder_policy_id(),
                 }
             }
 
@@ -273,8 +273,8 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                     crate::B20PolicyType::MintReceiver => {
                         self.b20.set_mint_receiver_policy_id(policy_id)
                     }
-                    crate::B20PolicyType::SeizableAccount => {
-                        self.b20.set_seizable_policy_id(policy_id)
+                    crate::B20PolicyType::SeizeHolder => {
+                        self.b20.set_seize_holder_policy_id(policy_id)
                     }
                 }
             }

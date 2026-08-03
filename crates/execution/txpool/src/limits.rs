@@ -183,13 +183,10 @@ impl PayerBook {
         self.balance = balance;
         let mut evicted = Vec::new();
         while self.reserved > self.balance {
-            let Some((&(priority, hash), &max_cost)) = self.by_priority.iter().next() else {
+            let Some(&(_, hash)) = self.by_priority.keys().next() else {
                 break;
             };
-            self.by_priority.remove(&(priority, hash));
-            self.entries.remove(&hash);
-            debug_assert!(self.reserved >= max_cost, "reserved balance accounting underflow");
-            self.reserved = self.reserved.saturating_sub(max_cost);
+            assert!(self.remove(&hash), "priority index must reference an existing reservation");
             evicted.push(hash);
         }
         evicted

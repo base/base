@@ -27,13 +27,19 @@ pub struct PruneCommand<C: ChainSpecParser> {
     /// The path to the storage DB for proofs history.
     #[arg(
         long = "proofs-history.storage-path",
+        visible_alias = "proofs.storage-path",
         value_name = "PROOFS_HISTORY_STORAGE_PATH",
         required = true
     )]
     pub storage_path: PathBuf,
 
     /// The on-disk database backend for proofs history.
-    #[arg(long = "proofs-history.db", value_name = "PROOFS_HISTORY_DB", default_value = "mdbx")]
+    #[arg(
+        long = "proofs-history.db",
+        visible_alias = "proofs.db",
+        value_name = "PROOFS_HISTORY_DB",
+        default_value = "mdbx"
+    )]
     pub proofs_history_db: ProofsHistoryDbBackend,
 
     /// Runtime tuning options for the `RocksDB` proofs history backend.
@@ -47,6 +53,7 @@ pub struct PruneCommand<C: ChainSpecParser> {
     /// Must be greater than 12 hours of blocks based on 2 seconds block time.
     #[arg(
         long = "proofs-history.window",
+        visible_alias = "proofs.window",
         default_value_t = DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
         value_name = "PROOFS_HISTORY_WINDOW",
         value_parser = clap::value_parser!(u64).range((TWELVE_HOURS_IN_BLOCKS + 1)..)
@@ -59,6 +66,7 @@ pub struct PruneCommand<C: ChainSpecParser> {
     /// reduce this value to bound memory usage when pruning a large range.
     #[arg(
         long = "proofs-history.prune-batch-size",
+        visible_alias = "proofs.prune-batch-size",
         default_value_t = 1000,
         value_name = "PROOFS_HISTORY_PRUNE_BATCH_SIZE",
         value_parser = clap::value_parser!(u64).range(1..)

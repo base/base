@@ -13,7 +13,9 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::NodeMode;
+use base_execution_cli::ExecutionUpgradeSignalConfig;
 use base_tx_forwarding::TxForwardingConfig;
+use base_upgrade_signal::UpgradeSignalConfig;
 use eyre::{Result, WrapErr};
 use url::Url;
 
@@ -66,6 +68,10 @@ pub struct L2StackConfig {
     pub verifier_l1_confs: u64,
     /// Consensus mode for the L2 client node.
     pub client_consensus_mode: L2ClientConsensusMode,
+    /// Optional L1 upgrade signal configuration shared by both consensus nodes.
+    pub upgrade_signal: Option<UpgradeSignalConfig>,
+    /// Optional L1 upgrade signal configuration for the client execution node.
+    pub execution_upgrade_signal: Option<ExecutionUpgradeSignalConfig>,
     /// Shadow sequencer configuration. When [`None`], no shadow sequencers are started.
     pub shadow_sequencers: Option<ShadowSequencersConfig>,
 }
@@ -96,6 +102,14 @@ impl L2ClientConsensus {
         match self {
             Self::Validator(consensus) => consensus.rpc_url(),
             Self::Follow(consensus) => consensus.rpc_url(),
+        }
+    }
+
+    /// Returns the follow-mode rollup configuration, when this is a follow-mode consensus node.
+    pub fn follow_rollup_config(&self) -> Option<&RollupConfig> {
+        match self {
+            Self::Validator(_) => None,
+            Self::Follow(consensus) => Some(consensus.rollup_config()),
         }
     }
 }
@@ -189,6 +203,7 @@ impl L2Stack {
             sequencer_stopped: true,
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: None,
+            upgrade_signal: config.upgrade_signal.clone(),
         };
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
             .await
@@ -229,6 +244,7 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.client_auth_port),
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             tx_forwarding_config,
+            upgrade_signal: config.execution_upgrade_signal.clone(),
         };
         let client = InProcessClient::start(client_config)
             .await
@@ -255,6 +271,7 @@ impl L2Stack {
                     sequencer_stopped: false,
                     verifier_l1_confs: config.verifier_l1_confs,
                     shadow_blocks_per_cycle: None,
+                    upgrade_signal: config.upgrade_signal.clone(),
                 };
                 let client_consensus = InProcessConsensus::start(client_consensus_config)
                     .await
@@ -278,6 +295,7 @@ impl L2Stack {
                     local_l2_rpc_url: client.rpc_url()?,
                     source_l2_rpc_url: builder.rpc_url()?,
                     l2_engine_url: client.engine_url()?,
+                    upgrade_signal: config.upgrade_signal.clone(),
                     rpc_port: container_config.and_then(|c| c.client_consensus_rpc_port),
                     insert_delay: Duration::ZERO,
                 };
@@ -389,5 +407,10 @@ impl L2Stack {
     /// Returns the client consensus node's RPC URL.
     pub fn client_consensus_rpc_url(&self) -> Url {
         self.client_consensus.rpc_url()
+    }
+
+    /// Returns the follow-mode client consensus rollup configuration, when enabled.
+    pub fn client_follow_rollup_config(&self) -> Option<&RollupConfig> {
+        self.client_consensus.follow_rollup_config()
     }
 }

@@ -1,4 +1,6 @@
-//! ABI definition for the `IB20Factory` interface.
+//! The `IB20Factory` wire surface frozen at Beryl, the fork where the factory activates. Also the
+//! canonical live surface, re-exported unqualified by [`super`].
+//! A new wire surface goes in a new `abi/vN.rs`; see [`super`].
 
 use alloy_sol_types::sol;
 
@@ -101,34 +103,46 @@ sol! {
     }
 }
 
-impl IB20Factory::IB20FactoryCalls {
-    /// Returns the stable metric label for this decoded factory call.
-    pub const fn as_label(&self) -> &'static str {
-        match self {
-            Self::createB20(_) => "factory.createB20",
-            Self::getB20Address(_) => "factory.getB20Address",
-            Self::isB20(_) => "factory.isB20",
-            Self::isB20Initialized(_) => "factory.isB20Initialized",
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256};
+    use alloc::vec::Vec;
 
-    use crate::IB20Factory;
+    use alloy_sol_types::{SolCall, SolEnum, SolInterface};
 
+    use super::IB20Factory;
+
+    /// The interface name reaches consensus data via `AbiDecodeFailed` on short calldata, so it is
+    /// pinned here rather than left to a future rename. See the module docs.
     #[test]
-    fn factory_call_labels_are_stable() {
-        assert_eq!(
-            IB20Factory::IB20FactoryCalls::getB20Address(IB20Factory::getB20AddressCall {
-                variant: IB20Factory::B20Variant::ASSET,
-                sender: Address::ZERO,
-                salt: B256::ZERO,
-            })
-            .as_label(),
-            "factory.getB20Address"
-        );
+    fn interface_name_is_frozen() {
+        assert_eq!(IB20Factory::IB20FactoryCalls::NAME, "IB20FactoryCalls");
+    }
+
+    /// Beryl's `B20Variant` has exactly two variants. A third would make its discriminant decode
+    /// at Beryl, minting a token at an address byte `[10]` no Beryl binary could produce.
+    #[test]
+    fn b20_variant_is_frozen() {
+        assert_eq!(IB20Factory::B20Variant::COUNT, 2);
+        assert!(IB20Factory::B20Variant::try_from(2u8).is_err());
+        assert!(IB20Factory::B20Variant::try_from(0xffu8).is_err());
+    }
+
+    /// The exact selector set dialable at Beryl. Adding or removing one changes which calls
+    /// historical blocks could make.
+    #[test]
+    fn selector_set_is_frozen() {
+        let mut selectors: Vec<[u8; 4]> = IB20Factory::IB20FactoryCalls::selectors().collect();
+        selectors.sort_unstable();
+
+        let mut expected: Vec<[u8; 4]> = alloc::vec![
+            IB20Factory::createB20Call::SELECTOR,
+            IB20Factory::getB20AddressCall::SELECTOR,
+            IB20Factory::isB20Call::SELECTOR,
+            IB20Factory::isB20InitializedCall::SELECTOR,
+        ];
+        expected.sort_unstable();
+
+        assert_eq!(selectors.len(), 4);
+        assert_eq!(selectors, expected);
     }
 }

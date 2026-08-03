@@ -163,8 +163,8 @@ mod tests {
     }
 
     /// The dispatcher re-decodes against the canonical surface after a frozen surface accepts, so
-    /// every frozen selector must exist on canonical. The difference is exactly the two composite
-    /// selectors Cobalt introduced.
+    /// every frozen selector must exist on canonical. The difference is exactly the three
+    /// composite selectors Cobalt introduced.
     #[test]
     fn v1_selectors_are_a_subset_of_v2() {
         let v1: Vec<[u8; 4]> = IPolicyRegistryV1::IPolicyRegistryCalls::selectors().collect();
@@ -178,9 +178,10 @@ mod tests {
         let added: Vec<[u8; 4]> = IPolicyRegistryV2::IPolicyRegistryCalls::selectors()
             .filter(|selector| !PolicyAbi::V1.valid_selector(*selector))
             .collect();
-        assert_eq!(added.len(), 2);
+        assert_eq!(added.len(), 3);
         assert!(added.contains(&IPolicyRegistry::createCompositePolicyCall::SELECTOR));
         assert!(added.contains(&IPolicyRegistry::updateCompositeCall::SELECTOR));
+        assert!(added.contains(&IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR));
     }
 
     /// `abi_decode_validate` short-circuits on `len < MIN_DATA_LENGTH + 4` before looking at the
@@ -211,7 +212,13 @@ mod tests {
             !PolicyAbi::V1.valid_selector(IPolicyRegistry::createCompositePolicyCall::SELECTOR)
         );
         assert!(!PolicyAbi::V1.valid_selector(IPolicyRegistry::updateCompositeCall::SELECTOR));
+        assert!(
+            !PolicyAbi::V1.valid_selector(IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR)
+        );
         assert!(PolicyAbi::V2.valid_selector(IPolicyRegistry::createCompositePolicyCall::SELECTOR));
         assert!(PolicyAbi::V2.valid_selector(IPolicyRegistry::updateCompositeCall::SELECTOR));
+        assert!(
+            PolicyAbi::V2.valid_selector(IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR)
+        );
     }
 }
