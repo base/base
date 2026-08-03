@@ -15,6 +15,7 @@ workspace = true
 # base
 base-health.workspace = true
 base-proof-host.workspace = true
+base-proof-worker.workspace = true
 base-proof-preimage.workspace = true
 base-proof-contracts.workspace = true
 base-prover-service-client.workspace = true
