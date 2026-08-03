@@ -196,8 +196,8 @@ impl RealTokenAcquisition {
     }
 }
 
-/// Default maximum gas price cap (0.01 gwei).
-pub const DEFAULT_MAX_GAS_PRICE: u128 = 10_000_000;
+/// Default maximum gas price cap (1000 gwei).
+pub const DEFAULT_MAX_GAS_PRICE: u128 = 1_000_000_000_000;
 
 /// Configuration for a load test run.
 #[derive(Debug, Clone)]
@@ -231,7 +231,25 @@ pub struct LoadConfig {
     /// Duration of the load test. `None` means run indefinitely until stopped.
     pub duration: Option<Duration>,
     /// Maximum in-flight (unconfirmed) transactions per sender.
-    pub max_in_flight_per_sender: u64,
+    pub max_in_flight_per_sender: usize,
+    /// Optional ceiling on total in-flight (unconfirmed) transactions across all senders.
+    ///
+    /// Without this, the aggregate cap is implicitly `max_in_flight_per_sender *
+    /// account_count`. Setting this bounds the open-loop headroom target
+    /// independently of sender count, e.g. to protect a shared target node's
+    /// mempool size regardless of how many senders are configured. `None` keeps
+    /// the previous per-sender-derived behavior.
+    pub max_total_in_flight: Option<usize>,
+    /// Optional cap on concurrent outbound submission RPC requests across all
+    /// sender workers.
+    ///
+    /// This throttles request *rate* to the submission endpoint(s) directly,
+    /// independently of `max_in_flight_per_sender` / `max_total_in_flight`
+    /// (which bound unconfirmed transactions, not outbound requests). Useful
+    /// for staying under an RPC endpoint's rate limit without shrinking the
+    /// in-flight inventory target. `None` leaves concurrency bounded only by the
+    /// sender worker count.
+    pub max_concurrent_submit_requests: Option<usize>,
     /// Maximum gas price cap to prevent overspending during congestion.
     pub max_gas_price: u128,
     /// Builder flashblocks broadcast WebSocket endpoint.
@@ -239,10 +257,6 @@ pub struct LoadConfig {
     /// Fraction of transactions that draw a fresh recipient address instead of cycling through
     /// the sender pool. Used to drive account-trie fan-out for account-create workloads.
     pub fresh_recipient_ratio: f64,
-    /// Number of transactions to batch together when funding/setup phases submit from a single
-    /// funder account. Kept below the target txpool's per-sender slot limit to avoid "txpool is
-    /// full" rejections.
-    pub funding_batch_size: usize,
 }
 
 impl LoadConfig {
@@ -266,10 +280,11 @@ impl LoadConfig {
             separate_setup: None,
             duration: Some(Duration::from_secs(30)),
             max_in_flight_per_sender: 128,
+            max_total_in_flight: None,
+            max_concurrent_submit_requests: None,
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: "ws://localhost:7111".parse().expect("valid default flashblocks_ws"),
             fresh_recipient_ratio: 0.0,
-            funding_batch_size: 8,
         }
     }
 
@@ -293,6 +308,14 @@ impl LoadConfig {
         }
         if self.mempool_target_blocks == 0 {
             return Err(BaselineError::Config("mempool_target_blocks must be > 0".into()));
+        }
+        if self.max_total_in_flight == Some(0) {
+            return Err(BaselineError::Config("max_total_in_flight must be > 0 when set".into()));
+        }
+        if self.max_concurrent_submit_requests == Some(0) {
+            return Err(BaselineError::Config(
+                "max_concurrent_submit_requests must be > 0 when set".into(),
+            ));
         }
         if self.duration == Some(Duration::ZERO) {
             return Err(BaselineError::Config(
@@ -397,14 +420,67 @@ impl LoadConfig {
     }
 
     /// Sets the maximum in-flight transactions per sender.
-    pub const fn with_max_in_flight_per_sender(mut self, max: u64) -> Self {
+    pub const fn with_max_in_flight_per_sender(mut self, max: usize) -> Self {
         self.max_in_flight_per_sender = max;
         self
     }
 
-    /// Sets the funding-phase batch size.
-    pub const fn with_funding_batch_size(mut self, size: usize) -> Self {
-        self.funding_batch_size = size;
+    /// Sets an optional ceiling on total in-flight transactions across all senders.
+    pub const fn with_max_total_in_flight(mut self, max: Option<usize>) -> Self {
+        self.max_total_in_flight = max;
         self
+    }
+
+    /// Sets an optional cap on concurrent outbound submission RPC requests.
+    pub const fn with_max_concurrent_submit_requests(mut self, max: Option<usize>) -> Self {
+        self.max_concurrent_submit_requests = max;
+        self
+    }
+
+    /// Returns the effective in-flight capacity for `account_count` senders: the
+    /// per-sender limit multiplied by the sender count, clamped by
+    /// [`Self::max_total_in_flight`] when set.
+    pub fn effective_in_flight_capacity(&self, account_count: usize) -> usize {
+        let per_sender_capacity = self.max_in_flight_per_sender.saturating_mul(account_count);
+        self.max_total_in_flight
+            .map_or(per_sender_capacity, |max_total| per_sender_capacity.min(max_total))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_in_flight_capacity_defaults_to_per_sender_times_count() {
+        let config = LoadConfig::devnet().with_max_in_flight_per_sender(128);
+        assert_eq!(config.effective_in_flight_capacity(10), 1280);
+    }
+
+    #[test]
+    fn effective_in_flight_capacity_clamps_to_max_total_in_flight() {
+        let config = LoadConfig::devnet()
+            .with_max_in_flight_per_sender(128)
+            .with_max_total_in_flight(Some(500));
+        assert_eq!(config.effective_in_flight_capacity(10), 500, "clamped below per-sender total");
+        assert_eq!(config.effective_in_flight_capacity(2), 256, "per-sender total stays below cap");
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_total_in_flight() {
+        let config = LoadConfig::devnet().with_max_total_in_flight(Some(0));
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_concurrent_submit_requests() {
+        let config = LoadConfig::devnet().with_max_concurrent_submit_requests(Some(0));
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_max_concurrent_submit_requests() {
+        let config = LoadConfig::devnet().with_max_concurrent_submit_requests(Some(4));
+        assert!(config.validate().is_ok());
     }
 }

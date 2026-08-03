@@ -12,6 +12,9 @@ pub struct DisplaySnapshot {
     pub elapsed: Duration,
     /// Total run duration (`None` = continuous).
     pub duration: Option<Duration>,
+    /// Optional setup-phase label (handshake, nonce fetch, etc.). When set, the header
+    /// shows this instead of the measured-run elapsed/remaining text.
+    pub phase: Option<String>,
     /// Total transactions submitted.
     pub submitted: u64,
     /// Total transactions confirmed.
@@ -142,11 +145,18 @@ impl LoadTestDisplay {
         !self.header.is_hidden()
     }
 
+    /// Updates the header message for a long-running setup phase (handshake, nonce fetch, etc.).
+    pub fn set_phase(&self, phase: &str) {
+        self.header.set_message(format!("Base Load Test  {phase}"));
+    }
+
     /// Updates all bars with the latest snapshot.
     pub fn update(&self, snap: &DisplaySnapshot) {
         let elapsed_str = fmt_hms(snap.elapsed);
 
-        if let Some(d) = self.duration {
+        if let Some(phase) = snap.phase.as_deref() {
+            self.header.set_message(format!("Base Load Test  {phase}"));
+        } else if let Some(d) = self.duration {
             self.header.set_position(snap.elapsed.as_secs().min(d.as_secs()));
             self.header.set_message(format!(
                 "Base Load Test  elapsed {}   remaining {}",
@@ -200,7 +210,7 @@ impl LoadTestDisplay {
             (Some(total), Some(min)) => {
                 format!("funding total {total} ETH   min/acct {min} ETH")
             }
-            _ => "funding fetching...".to_string(),
+            _ => "funding (balances not sampled yet)".to_string(),
         });
 
         self.gas_lat.set_message(format!(

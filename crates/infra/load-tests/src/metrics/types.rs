@@ -232,8 +232,12 @@ pub struct ConfigSummary {
     pub sender_offset: u32,
     /// Maximum in-flight transactions per sender.
     pub in_flight_per_sender: u32,
-    /// Number of transactions per RPC batch during funding/setup phases.
-    pub funding_batch_size: u32,
+    /// Optional ceiling on total in-flight transactions across all senders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_in_flight: Option<u32>,
+    /// Optional cap on concurrent outbound submission RPC requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_submit_requests: Option<u32>,
     /// Test duration.
     pub duration: Option<String>,
     /// Optional gas-per-second ceiling for adaptive pacing.

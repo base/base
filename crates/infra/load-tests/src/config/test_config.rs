@@ -55,11 +55,26 @@ pub struct TestConfig {
     /// Maximum in-flight transactions per sender.
     pub in_flight_per_sender: u32,
 
-    /// Number of transactions to batch together when funding/setup phases submit from a single
-    /// funder account. Kept below the target txpool's per-sender slot limit (e.g. reth default is
-    /// 16) to avoid "txpool is full" rejections.
-    #[serde(default = "default_funding_batch_size")]
-    pub funding_batch_size: u32,
+    /// Optional ceiling on total in-flight transactions across all senders.
+    ///
+    /// Without this, the aggregate cap is implicitly `in_flight_per_sender *
+    /// sender_count`. Set this to bound the open-loop headroom target
+    /// independently of sender count, e.g. to protect a shared target node's
+    /// mempool regardless of how many senders are configured. Omit for the
+    /// previous per-sender-derived behavior.
+    #[serde(default)]
+    pub max_total_in_flight: Option<u32>,
+
+    /// Optional cap on concurrent outbound submission RPC requests across all
+    /// sender workers.
+    ///
+    /// Use this to throttle request *rate* to the submission endpoint(s)
+    /// directly (e.g. to stay under an RPC-side rate limit), independently of
+    /// `in_flight_per_sender` / `max_total_in_flight`, which bound unconfirmed
+    /// transactions rather than outbound requests. Omit to leave concurrency
+    /// bounded only by the sender worker count.
+    #[serde(default)]
+    pub max_concurrent_submit_requests: Option<u32>,
 
     /// Test duration (e.g., "30s", "5m", "1h").
     pub duration: Option<String>,
@@ -71,6 +86,7 @@ pub struct TestConfig {
     pub target_gps: Option<u64>,
 
     /// Number of blocks of gas kept outstanding during measurement.
+    #[serde(default = "default_mempool_target_blocks")]
     pub mempool_target_blocks: u64,
 
     /// Seed for deterministic account generation (used if mnemonic not provided).
@@ -139,10 +155,11 @@ impl Default for TestConfig {
             sender_count: 100,
             sender_offset: 0,
             in_flight_per_sender: 256,
-            funding_batch_size: default_funding_batch_size(),
+            max_total_in_flight: None,
+            max_concurrent_submit_requests: None,
             duration: Some("60s".to_string()),
             target_gps: Some(20_000_000),
-            mempool_target_blocks: 3,
+            mempool_target_blocks: default_mempool_target_blocks(),
             seed: 12345,
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
@@ -168,7 +185,8 @@ impl fmt::Debug for TestConfig {
             .field("sender_count", &self.sender_count)
             .field("sender_offset", &self.sender_offset)
             .field("in_flight_per_sender", &self.in_flight_per_sender)
-            .field("funding_batch_size", &self.funding_batch_size)
+            .field("max_total_in_flight", &self.max_total_in_flight)
+            .field("max_concurrent_submit_requests", &self.max_concurrent_submit_requests)
             .field("duration", &self.duration)
             .field("target_gps", &self.target_gps)
             .field("mempool_target_blocks", &self.mempool_target_blocks)
@@ -353,8 +371,8 @@ const fn default_aerodrome_tick_spacing() -> i32 {
     100
 }
 
-const fn default_funding_batch_size() -> u32 {
-    8
+const fn default_mempool_target_blocks() -> u64 {
+    3
 }
 
 fn default_swap_token_amount() -> String {
@@ -533,7 +551,8 @@ impl TestConfig {
             sender_count: self.sender_count,
             sender_offset: self.sender_offset,
             in_flight_per_sender: self.in_flight_per_sender,
-            funding_batch_size: self.funding_batch_size,
+            max_total_in_flight: self.max_total_in_flight,
+            max_concurrent_submit_requests: self.max_concurrent_submit_requests,
             duration: self.duration.clone(),
             target_gps: self.target_gps,
             mempool_target_blocks: self.mempool_target_blocks,
@@ -604,8 +623,11 @@ impl TestConfig {
             block_gas_limit: None,
             separate_setup: None,
             duration,
-            max_in_flight_per_sender: self.in_flight_per_sender as u64,
-            funding_batch_size: self.funding_batch_size.max(1) as usize,
+            max_in_flight_per_sender: self.in_flight_per_sender as usize,
+            max_total_in_flight: self.max_total_in_flight.map(|max| max as usize),
+            max_concurrent_submit_requests: self
+                .max_concurrent_submit_requests
+                .map(|max| max as usize),
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: self
                 .flashblocks_ws

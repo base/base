@@ -179,11 +179,14 @@ impl LoadTestExecutor {
         let (summary, run_error) = match run_result {
             Ok(summary) => (summary, None),
             Err(error) => {
-                let summary = MetricsSummary {
+                // Prefer stats the runner already collected before failing (e.g. an
+                // open-loop enqueue timeout after transactions were submitted) over an
+                // all-zero summary, so callers still see real throughput/confirmations.
+                let summary = runner.take_partial_summary().unwrap_or_else(|| MetricsSummary {
                     config: Some(config_summary),
                     error: Some(error.to_string()),
                     ..MetricsSummary::default()
-                };
+                });
                 (summary, Some(error))
             }
         };

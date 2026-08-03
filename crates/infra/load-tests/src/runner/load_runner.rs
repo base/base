@@ -9,13 +9,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::transaction::SignableTransaction;
-use alloy_eips::Encodable2718;
 use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, utils::format_ether};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
-use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, sol};
 use base_common_network::Base;
@@ -34,7 +31,7 @@ use tracing::{debug, error, info, instrument, warn};
 pub(super) const FUNDING_CONCURRENCY: usize = 32;
 
 use super::{
-    BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadConfig, LoadTestDisplay,
+    BlockWatcher, DisplaySnapshot, Fees, FlashblockWatcher, GasPricer, LoadConfig, LoadTestDisplay,
     PipelineStartConfig, PreparedTransaction, QueuedSubmitFailures, ResultsTracker, SignedBatch,
     SignedTransaction, SubmissionPipeline, SubmitEvent, TxType,
 };
@@ -54,18 +51,36 @@ use crate::{
 };
 
 const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
+const BASE_FEE_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
 const SUBMIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(200);
 const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(200);
+/// How long the post-run drain waits for progress (a confirmation or a shrinking
+/// pending count) before force-expiring whatever is left and returning early.
+///
+/// Without this, a straggler submitted near the very end of the run effectively
+/// gets its own full `PENDING_CONFIRMATION_TIMEOUT` window measured from
+/// `drain_start` (not from when it was submitted), because `drain_expiry` only
+/// shrinks to zero at `drain_start + PENDING_CONFIRMATION_TIMEOUT`. A handful of
+/// stuck stragglers can therefore hold up the whole drain for ~200s even on a
+/// 30s test. Bounding on stalled *progress* instead ends the drain quickly once
+/// it's clear nothing more is going to confirm.
+const DRAIN_STALL_TIMEOUT: Duration = Duration::from_secs(20);
 const TXPOOL_CLEAR_CONCURRENCY: usize = 64;
 const FRESH_RECIPIENT_RNG_SALT: u64 = 0x6672_6573_685f_7263; // "fresh_rc"
 const OPEN_LOOP_SIGNED_BATCH_SIZE: usize = 200;
+// Bounds queued presigned memory to two chunks. Each chunk contains one sender-sized vector per
+// configured sender, and backpressure stops the producer while both channel slots are occupied.
 const OPEN_LOOP_PRESIGN_CHANNEL_BUFFER: usize = 2;
 const OPEN_LOOP_IDLE_SLEEP: Duration = Duration::from_millis(10);
 const OPEN_LOOP_HEADROOM_RECHECK_INTERVAL: Duration = Duration::from_millis(100);
-const OPEN_LOOP_HEADROOM_STALL_TIMEOUT: Duration = Duration::from_secs(30);
-const OPEN_LOOP_PREFILL_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long outstanding work may stay flat before the headroom gate fails closed.
+/// Slow inclusion paths (e.g. mempool forwarder drip) can sit at the fill target for
+/// longer than a single block without outstanding decreasing.
+const OPEN_LOOP_HEADROOM_STALL_TIMEOUT: Duration = Duration::from_secs(120);
+/// How often the TUI / snapshot channel is refreshed during open-loop enqueue.
+const OPEN_LOOP_DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
 /// Adaptive open-loop target update cadence, matching closed-loop rate-limiter updates.
 const OPEN_LOOP_TARGET_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
 /// Multiplicative headroom above observed confirmed TPS when deriving open-loop depth.
@@ -119,11 +134,84 @@ struct OpenLoopEnqueueProgress {
     headroom_target: OpenLoopHeadroomTarget,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct OpenLoopEnqueueLimits {
+    deadline: Option<Instant>,
+}
+
+/// Live TUI / snapshot updates while the open-loop enqueue loop owns the collector.
+struct OpenLoopProgressDisplay<'a> {
+    display: Option<&'a LoadTestDisplay>,
+    snapshot_tx: Option<&'a watch::Sender<DisplaySnapshot>>,
+    last_update: Instant,
+    start: Instant,
+    duration: Option<Duration>,
+    phase: Option<String>,
+    max_in_flight_per_sender: usize,
+    account_count: usize,
+    gas_price_gwei: f64,
+    total_eth: Option<String>,
+    min_eth: Option<String>,
+    funds_low: bool,
+    funder_address: Option<String>,
+    sender_addresses: Vec<String>,
+}
+
+impl OpenLoopProgressDisplay<'_> {
+    fn maybe_refresh(
+        &mut self,
+        collector: &mut MetricsCollector,
+        results_tracker: &ResultsTracker,
+    ) {
+        if self.display.is_none() && self.snapshot_tx.is_none() {
+            return;
+        }
+        if self.last_update.elapsed() < OPEN_LOOP_DISPLAY_RENDER_INTERVAL {
+            return;
+        }
+        self.last_update = Instant::now();
+        collector.sample_throughput(self.start.elapsed());
+
+        let (p50, p99) = collector.rolling_p50_p99();
+        let (flashblocks_p50, flashblocks_p99) = collector.rolling_flashblocks_p50_p99();
+        let snap = DisplaySnapshot {
+            elapsed: self.start.elapsed(),
+            duration: self.duration,
+            phase: self.phase.clone(),
+            submitted: collector.submitted_count(),
+            confirmed: collector.confirmed_count(),
+            failed: collector.failed_count(),
+            in_flight: results_tracker.total_in_flight(),
+            senders_blocked: results_tracker.senders_at_limit(self.max_in_flight_per_sender as u64),
+            total_senders: self.account_count,
+            rolling_tps: collector.rolling_tps(),
+            rolling_gps: collector.rolling_gps(),
+            p50_latency: p50,
+            p99_latency: p99,
+            flashblocks_p50_latency: flashblocks_p50,
+            flashblocks_p99_latency: flashblocks_p99,
+            gas_price_gwei: self.gas_price_gwei,
+            total_eth: self.total_eth.clone(),
+            min_eth: self.min_eth.clone(),
+            funds_low: self.funds_low,
+            funder_address: self.funder_address.clone(),
+            sender_addresses: self.sender_addresses.clone(),
+        };
+        if let Some(display) = self.display {
+            display.update(&snap);
+        }
+        if let Some(tx) = self.snapshot_tx {
+            let _ = tx.send(snap);
+        }
+    }
+}
+
 struct OpenLoopDrainState<'a> {
     submit_event_rx: &'a mut mpsc::Receiver<SubmitEvent>,
     queued_per_sender: &'a mut HashMap<Address, u64>,
     collector: &'a mut MetricsCollector,
     results_tracker: &'a ResultsTracker,
+    progress_display: Option<OpenLoopProgressDisplay<'a>>,
 }
 
 impl OpenLoopDrainState<'_> {
@@ -138,6 +226,9 @@ impl OpenLoopDrainState<'_> {
             self.collector,
             self.results_tracker,
         );
+        if let Some(progress) = self.progress_display.as_mut() {
+            progress.maybe_refresh(self.collector, self.results_tracker);
+        }
     }
 
     /// Total outstanding work: submissions accepted by an RPC and awaiting canonical
@@ -152,6 +243,10 @@ impl OpenLoopDrainState<'_> {
             self.queued_per_sender.values().fold(0u64, |total, count| total.saturating_add(*count));
 
         self.results_tracker.total_in_flight().saturating_add(queued)
+    }
+
+    fn queued_count(&self) -> u64 {
+        self.queued_per_sender.values().fold(0u64, |total, count| total.saturating_add(*count))
     }
 }
 
@@ -241,7 +336,7 @@ impl OpenLoopHeadroomTarget {
         }
     }
 
-    fn saturated(
+    const fn saturated(
         target_outstanding_gas: u128,
         target_in_flight: u64,
         max_target_in_flight: u64,
@@ -336,8 +431,7 @@ impl OpenLoopHeadroomTarget {
             });
         }
 
-        // Capped runs use a fixed calibrated prefill target. Cumulative pacing begins only after
-        // warmup is excluded and the measured run clock is reset.
+        // Cumulative GPS pacing begins only after the measured run clock is started.
         if self.target_gps.is_some() && self.measurement_started_at.is_none() {
             self.last_confirmed_sample_count = confirmed_count;
             self.last_confirmed_sample_at = now;
@@ -386,7 +480,12 @@ impl OpenLoopHeadroomTarget {
         let adaptive_target = (self.smoothed_confirmed_tps
             * OPEN_LOOP_TARGET_MARGIN_MULTIPLIER
             * OPEN_LOOP_TARGET_LOOKAHEAD_SECONDS)
-            .ceil() as u64;
+            .ceil();
+        let adaptive_target = if adaptive_target.is_finite() {
+            adaptive_target.clamp(0.0, self.max_target_in_flight as f64) as u64
+        } else {
+            self.max_target_in_flight
+        };
         let target_with_batch_buffer =
             adaptive_target.saturating_add(OPEN_LOOP_SIGNED_BATCH_SIZE as u64);
         let updated_target_in_flight = self.clamp_target_in_flight(target_with_batch_buffer);
@@ -431,6 +530,10 @@ pub struct LoadRunner {
     pub(super) b20_run_salt: Option<B256>,
     recipient_keys: Option<KeyStream>,
     recipient_rng: SeededRng,
+    /// Metrics collected before a fatal error cut the run short, so callers can still
+    /// present real throughput/confirmation stats instead of an all-zero summary.
+    /// Set only when [`Self::run`] fails after transactions may have been submitted.
+    partial_summary: Option<MetricsSummary>,
 }
 
 impl LoadRunner {
@@ -554,6 +657,7 @@ impl LoadRunner {
             b20_run_salt: None,
             recipient_keys,
             recipient_rng,
+            partial_summary: None,
         })
     }
 
@@ -580,6 +684,15 @@ impl LoadRunner {
     /// Sets the config summary for inclusion in JSON output.
     pub fn set_config_summary(&mut self, summary: ConfigSummary) {
         self.config_summary = Some(summary);
+    }
+
+    /// Takes the metrics collected before [`Self::run`] returned a fatal error, if any.
+    ///
+    /// Lets callers present real throughput/confirmation stats (rather than an all-zero
+    /// summary) when the run fails after transactions were already submitted, e.g. an
+    /// open-loop enqueue timeout.
+    pub const fn take_partial_summary(&mut self) -> Option<MetricsSummary> {
+        self.partial_summary.take()
     }
 
     /// Returns the number of configured txpool nodes to clear before test startup.
@@ -713,8 +826,13 @@ impl LoadRunner {
             return Err(BaselineError::Config("total transaction weight must be > 0".into()));
         }
 
+        // Phase 1: submit one sample transaction per weighted type. Submission does not
+        // block on confirmation, so all samples land in the mempool without serializing
+        // behind each other's block-inclusion latency.
         let accounts = self.accounts.accounts();
-        let mut weighted_gas = 0u128;
+        let fees =
+            GasPricer::new(self.config.max_gas_price).fees_for(self.client.get_base_fee().await?);
+        let mut samples = Vec::new();
         for (type_index, tx_config) in self.config.transactions.iter().enumerate() {
             if tx_config.weight == 0 {
                 continue;
@@ -735,46 +853,62 @@ impl LoadRunner {
                 .pending()
                 .await
                 .rpc("get calibration transaction nonce")?;
-            let base_fee = self.client.get_base_fee().await?;
-            let priority_fee = (base_fee / 10).max(1).min(self.config.max_gas_price);
-            let max_fee = SubmissionPipeline::submission_max_fee(
-                base_fee,
-                priority_fee,
-                self.config.max_gas_price,
-            );
             let request = generator
                 .generate_payload(from, to)?
                 .with_from(from)
                 .with_nonce(nonce)
                 .with_chain_id(self.config.chain_id)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(priority_fee);
+                .with_max_fee_per_gas(fees.max_fee)
+                .with_max_priority_fee_per_gas(fees.priority_fee);
             let provider = create_wallet_provider(
                 self.config.primary_submission_rpc().clone(),
                 EthereumWallet::from(account.signer.clone()),
             );
-            let receipt = provider
-                .send_transaction(request)
-                .await
-                .rpc("submit calibration transaction")?
-                .get_receipt()
-                .await
-                .rpc("confirm calibration transaction")?;
-            if !receipt.status() {
-                return Err(BaselineError::Transaction(format!(
-                    "calibration transaction type {type_index} ({:?}) reverted",
+            let pending = provider.send_transaction(request).await.map_err(|e| {
+                BaselineError::Transaction(format!(
+                    "calibration transaction type {type_index} ({:?}) failed to send: {e}",
                     tx_config.tx_type
+                ))
+            })?;
+            samples.push((
+                type_index,
+                tx_config.weight,
+                tx_config.tx_type.clone(),
+                *pending.tx_hash(),
+            ));
+        }
+
+        // Phase 2: confirm every sample by watching canonical blocks and batch-fetching
+        // receipts for the blocks they land in, rather than polling each hash individually.
+        let pending_hashes = samples.iter().map(|(_, _, _, hash)| *hash).collect();
+        let receipts = BlockWatcher::confirm_and_fetch_receipts(
+            &self.client,
+            pending_hashes,
+            PENDING_CONFIRMATION_TIMEOUT,
+            |_hash| {},
+        )
+        .await?;
+
+        let mut weighted_gas = 0u128;
+        for (type_index, weight, tx_type, tx_hash) in samples {
+            let receipt = receipts.get(&tx_hash).ok_or_else(|| {
+                BaselineError::Transaction(format!(
+                    "calibration transaction type {type_index} ({tx_type:?}) receipt unavailable"
+                ))
+            })?;
+            if !receipt.success {
+                return Err(BaselineError::Transaction(format!(
+                    "calibration transaction type {type_index} ({tx_type:?}) reverted"
                 )));
             }
-            let average = receipt.gas_used;
             info!(
                 transaction_type_index = type_index,
-                weight = tx_config.weight,
-                average_gas = average,
+                weight,
+                average_gas = receipt.gas_used,
                 "calibrated transaction gas"
             );
             weighted_gas =
-                weighted_gas.saturating_add(u128::from(average) * u128::from(tx_config.weight));
+                weighted_gas.saturating_add(u128::from(receipt.gas_used) * u128::from(weight));
         }
 
         u64::try_from(weighted_gas / u128::from(total_weight))
@@ -821,6 +955,10 @@ impl LoadRunner {
         let Some(control_dir) = self.config.separate_setup.as_deref() else { return Ok(()) };
         let path = control_dir.join("start");
         let started = Instant::now();
+        if let Some(display) = self.display.as_ref() {
+            display.set_phase(&format!("waiting for start file ({})", path.display()));
+        }
+        info!(path = %path.display(), "waiting for start handshake file");
         while !path.exists() {
             if self.stop_flag.load(Ordering::SeqCst) || self.cancel_token.is_cancelled() {
                 return Err(BaselineError::Transaction(
@@ -975,6 +1113,7 @@ impl LoadRunner {
 
         if accounts_to_fund.is_empty() && stale_nonce_count == 0 {
             info!("all accounts already have sufficient balance, skipping funding");
+            self.refresh_funding_display_stats();
             return Ok(());
         }
 
@@ -1003,7 +1142,8 @@ impl LoadRunner {
         // Reth only classifies the full nonce chain as executable when the funder can afford every
         // transaction's maximum declared L2 cost. Using an expected EIP-1559 price here can leave
         // an affordable pending prefix followed by queued descendants.
-        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(max_gas_price));
+        let base_fee = client.get_base_fee().await?;
+        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(base_fee));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(funding_request_count));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
@@ -1054,23 +1194,28 @@ impl LoadRunner {
         let mut next_retry_nonce = canonical_nonce
             .checked_add(u64::try_from(funding_request_count).expect("request count exceeds u64"))
             .expect("nonce overflow");
+        let pricer = GasPricer::new(max_gas_price);
         while !txs_remaining.is_empty() {
             let base_fee = client.get_base_fee().await?;
-            let max_priority_fee = (base_fee / 10).max(1).min(max_gas_price);
-            // Funding transactions form one strict nonce chain and may wait several blocks behind
-            // earlier transfers. Use the configured safety cap as maxFeePerGas so a rising base
-            // fee cannot make the head transaction non-executable and strand every later nonce.
-            // EIP-1559 still charges only base fee plus priority fee, not this full cap.
-            let max_fee = max_gas_price;
-            info!(base_fee, max_fee, max_priority_fee, "pricing funding transaction batch");
-            let batch: Vec<_> = (0..self.config.funding_batch_size)
+            let fees = pricer.fees_for(base_fee);
+            info!(
+                base_fee,
+                max_fee = fees.max_fee,
+                priority_fee = fees.priority_fee,
+                "pricing funding transaction batch"
+            );
+            let batch: Vec<_> = (0..self.config.max_in_flight_per_sender)
                 .filter_map(|_| txs_remaining.pop_front())
                 .collect();
             let reclaimed_nonce_target = batch
                 .iter()
                 .filter_map(|(_, _, nonce, _)| (*nonce < stale_end_nonce).then_some(*nonce + 1))
                 .max();
-            let mut batch_pending: Vec<Address> = Vec::with_capacity(batch.len());
+            // Prefer confirming by watching block tx hashes. Balance polling is only a
+            // fallback when the RPC accepted an already-known tx without returning a hash.
+            let mut pending_tx_hashes: HashSet<TxHash> = HashSet::new();
+            let mut funding_tx_hashes: HashSet<TxHash> = HashSet::new();
+            let mut funding_balance_fallback: Vec<Address> = Vec::new();
             let mut retries: Vec<(Address, U256, u64, bool)> = Vec::new();
             let mut consumed_funding_nonces: Vec<(Address, U256, u64)> = Vec::new();
             let mut existing_nonce_targets = Vec::new();
@@ -1085,15 +1230,15 @@ impl LoadRunner {
                         .with_nonce(nonce)
                         .with_chain_id(chain_id)
                         .with_gas_limit(21_000)
-                        .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee);
+                        .with_max_fee_per_gas(fees.max_fee)
+                        .with_max_priority_fee_per_gas(fees.priority_fee);
                     let result = provider.send_transaction(tx).await;
                     (result, address, deficit, nonce, fund_account)
                 }
             });
 
             let mut send_stream =
-                stream::iter(send_futs).buffer_unordered(self.config.funding_batch_size);
+                stream::iter(send_futs).buffer_unordered(self.config.max_in_flight_per_sender);
 
             while let Some((result, address, deficit, nonce, fund_account)) =
                 send_stream.next().await
@@ -1102,8 +1247,9 @@ impl LoadRunner {
                     Ok(pending) => {
                         let tx_hash = *pending.tx_hash();
                         debug!(to = %address, deficit = %deficit, nonce, tx_hash = %tx_hash, fund_account, "funder transaction sent");
+                        pending_tx_hashes.insert(tx_hash);
                         if fund_account {
-                            batch_pending.push(address);
+                            funding_tx_hashes.insert(tx_hash);
                         }
                     }
                     Err(e) => {
@@ -1114,7 +1260,11 @@ impl LoadRunner {
                             // the same nonce.
                             info!(to = %address, nonce, fund_account, "funder transaction already pending");
                             if fund_account {
-                                batch_pending.push(address);
+                                funding_balance_fallback.push(address);
+                            } else {
+                                // Cancellation txs still need canonical settlement when we have
+                                // no hash to watch.
+                                existing_nonce_targets.push(nonce.saturating_add(1));
                             }
                         } else if error_str.contains("replacement transaction underpriced") {
                             retries.push((address, deficit, nonce, fund_account));
@@ -1147,26 +1297,14 @@ impl LoadRunner {
             }
 
             if !retries.is_empty() {
-                let replacement_addresses: Vec<Address> = retries
-                    .iter()
-                    .filter_map(|(address, _, _, fund)| fund.then_some(*address))
-                    .collect();
                 let retry_futs = retries.into_iter().map(|(address, deficit, nonce, fund_account)| {
                     let provider = Arc::clone(&funder_provider);
                     async move {
-                        let mut replacement_max_fee = max_fee;
-                        let mut replacement_priority_fee = max_priority_fee;
+                        let mut replacement_fees = fees;
 
                         for attempt in 1..=FUNDING_REPLACEMENT_MAX_ATTEMPTS {
-                            let next_max_fee = replacement_max_fee
-                                .saturating_mul(FUNDING_REPLACEMENT_FEE_MULTIPLIER)
-                                .min(max_gas_price);
-                            let next_priority_fee = replacement_priority_fee
-                                .saturating_mul(FUNDING_REPLACEMENT_FEE_MULTIPLIER)
-                                .min(next_max_fee);
-                            if next_max_fee == replacement_max_fee
-                                && next_priority_fee == replacement_priority_fee
-                            {
+                            let next_fees = pricer.bumped(replacement_fees, FUNDING_REPLACEMENT_FEE_MULTIPLIER);
+                            if next_fees == replacement_fees {
                                 // A transaction from a previous run may already use the configured
                                 // absolute fee cap and therefore be impossible to replace. Let the
                                 // executable original settle, then verify the intended recipient.
@@ -1180,8 +1318,7 @@ impl LoadRunner {
                                     true,
                                 ));
                             }
-                            replacement_max_fee = next_max_fee;
-                            replacement_priority_fee = next_priority_fee;
+                            replacement_fees = next_fees;
 
                             let replacement = TransactionRequest::default()
                                 .with_to(address)
@@ -1189,8 +1326,8 @@ impl LoadRunner {
                                 .with_nonce(nonce)
                                 .with_chain_id(chain_id)
                                 .with_gas_limit(21_000)
-                                .with_max_fee_per_gas(replacement_max_fee)
-                                .with_max_priority_fee_per_gas(replacement_priority_fee);
+                                .with_max_fee_per_gas(replacement_fees.max_fee)
+                                .with_max_priority_fee_per_gas(replacement_fees.priority_fee);
 
                             match provider.send_transaction(replacement).await {
                                 Ok(pending) => {
@@ -1237,8 +1374,8 @@ impl LoadRunner {
                                         to = %address,
                                         nonce,
                                         attempt,
-                                        replacement_max_fee,
-                                        replacement_priority_fee,
+                                        replacement_max_fee = replacement_fees.max_fee,
+                                        replacement_priority_fee = replacement_fees.priority_fee,
                                         "replacement funding transaction still underpriced"
                                     );
                                 }
@@ -1258,7 +1395,7 @@ impl LoadRunner {
                 });
 
                 let mut retry_stream =
-                    stream::iter(retry_futs).buffer_unordered(self.config.funding_batch_size);
+                    stream::iter(retry_futs).buffer_unordered(self.config.max_in_flight_per_sender);
 
                 while let Some(result) = retry_stream.next().await {
                     match result {
@@ -1281,6 +1418,15 @@ impl LoadRunner {
                             );
                             if fund_account && verify_after_existing {
                                 consumed_funding_nonces.push((address, deficit, nonce));
+                            } else if let Some(hash) = tx_hash {
+                                pending_tx_hashes.insert(hash);
+                                if fund_account {
+                                    funding_tx_hashes.insert(hash);
+                                }
+                            } else if fund_account {
+                                funding_balance_fallback.push(address);
+                            } else {
+                                existing_nonce_targets.push(nonce.saturating_add(1));
                             }
                             if verify_after_existing {
                                 existing_nonce_targets.push(nonce.saturating_add(1));
@@ -1300,12 +1446,6 @@ impl LoadRunner {
                         fatal_errors.join("; "),
                     )));
                 }
-
-                // Do not wait for an intended recipient whose nonce was consumed by a different
-                // stale transaction. It is checked and, if needed, requeued below.
-                batch_pending.extend(replacement_addresses.into_iter().filter(|address| {
-                    !consumed_funding_nonces.iter().any(|(consumed, _, _)| consumed == address)
-                }));
             }
 
             // Balance polling cannot confirm zero-value cancellation transactions. Wait until the
@@ -1338,10 +1478,10 @@ impl LoadRunner {
                 }
             }
 
-            for (address, _, _) in consumed_funding_nonces {
+            for (address, _, _) in &consumed_funding_nonces {
                 // Read through the same provider whose canonical nonce was observed above so a
                 // lagging query endpoint cannot cause a duplicate transfer.
-                let balance = funder_provider.get_balance(address).await.rpc("get balance")?;
+                let balance = funder_provider.get_balance(*address).await.rpc("get balance")?;
                 if balance >= amount_per_account {
                     pb_fund.inc(1);
                     continue;
@@ -1372,11 +1512,38 @@ impl LoadRunner {
                     nonce = next_retry_nonce,
                     "stale transaction consumed nonce without funding intended account; requeuing transfer"
                 );
-                txs_remaining.push_back((address, deficit, next_retry_nonce, true));
+                txs_remaining.push_back((*address, deficit, next_retry_nonce, true));
                 next_retry_nonce = next_retry_nonce.checked_add(1).expect("nonce overflow");
             }
 
-            Self::await_balances(&client, &mut batch_pending, amount_per_account, &pb_fund).await?;
+            if !pending_tx_hashes.is_empty() {
+                let funding_hashes = funding_tx_hashes.clone();
+                BlockWatcher::await_hashes(
+                    &client,
+                    &mut pending_tx_hashes,
+                    PENDING_CONFIRMATION_TIMEOUT,
+                    |hash, _block_number| {
+                        if funding_hashes.contains(&hash) {
+                            pb_fund.inc(1);
+                        }
+                    },
+                )
+                .await?;
+            }
+
+            // Already-known funding txs may not return a hash; fall back to balance checks.
+            funding_balance_fallback.retain(|address| {
+                !consumed_funding_nonces.iter().any(|(consumed, _, _)| consumed == address)
+            });
+            if !funding_balance_fallback.is_empty() {
+                Self::await_balances(
+                    &client,
+                    &mut funding_balance_fallback,
+                    amount_per_account,
+                    &pb_fund,
+                )
+                .await?;
+            }
         }
         pb_fund.finish_and_clear();
 
@@ -1425,8 +1592,24 @@ impl LoadRunner {
             debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
         }
 
+        self.refresh_funding_display_stats();
         info!(funded = accounts_to_fund.len(), "funding complete");
         Ok(())
+    }
+
+    /// Refreshes the TUI funding line from in-memory account balances.
+    fn refresh_funding_display_stats(&mut self) {
+        let mut total = U256::ZERO;
+        let mut min = None;
+        for account in self.accounts.accounts() {
+            total = total.saturating_add(account.balance);
+            min = Some(min.map_or(account.balance, |current: U256| current.min(account.balance)));
+        }
+        self.last_total_eth = Some(format_ether(total));
+        self.last_min_eth = min.map(format_ether);
+        // Dust threshold: warn when any account is below ~0.0001 ETH.
+        const LOW_BALANCE_WEI: u128 = 100_000_000_000_000;
+        self.last_funds_low = min.is_some_and(|balance| balance < U256::from(LOW_BALANCE_WEI));
     }
 
     /// Collects unique token addresses from configured swap transaction types.
@@ -1641,13 +1824,11 @@ impl LoadRunner {
         let max_gas_price = self.config.max_gas_price;
 
         let base_fee = self.client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1).min(max_gas_price);
-        let max_fee =
-            SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
+        let fees = GasPricer::new(max_gas_price).fees_for(base_fee);
 
         // Pre-flight balance check — abort before sending any TXs if the funder
         // cannot cover the total gas cost for needed token transfers.
-        let gas_cost_per_tx = U256::from(65_000u64).saturating_mul(U256::from(max_fee));
+        let gas_cost_per_tx = U256::from(65_000u64).saturating_mul(U256::from(fees.max_fee));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(transfers_needed.len()));
         let funder_balance = self.client.get_balance(funder_address).await.rpc("get balance")?;
 
@@ -1683,8 +1864,8 @@ impl LoadRunner {
                     .with_nonce(nonce)
                     .with_chain_id(chain_id)
                     .with_gas_limit(65_000)
-                    .with_max_fee_per_gas(max_fee)
-                    .with_max_priority_fee_per_gas(max_priority_fee);
+                    .with_max_fee_per_gas(fees.max_fee)
+                    .with_max_priority_fee_per_gas(fees.priority_fee);
                 nonce += 1;
                 (tx, token, sender)
             })
@@ -1694,7 +1875,7 @@ impl LoadRunner {
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
             let batch: Vec<_> =
-                txs_remaining.by_ref().take(self.config.funding_batch_size).collect();
+                txs_remaining.by_ref().take(self.config.max_in_flight_per_sender).collect();
             let mut pending_txs: Vec<(Address, Address)> = Vec::new();
 
             let send_futs = batch.into_iter().map(|(tx, token, sender)| {
@@ -1706,7 +1887,7 @@ impl LoadRunner {
             });
 
             let mut send_stream =
-                stream::iter(send_futs).buffer_unordered(self.config.funding_batch_size);
+                stream::iter(send_futs).buffer_unordered(self.config.max_in_flight_per_sender);
 
             while let Some((result, token, sender)) = send_stream.next().await {
                 match result {
@@ -1846,6 +2027,7 @@ impl LoadRunner {
             PipelineStartConfig {
                 chain_id: self.config.chain_id,
                 max_gas_price: self.config.max_gas_price,
+                max_concurrent_submit_requests: self.config.max_concurrent_submit_requests,
             },
         );
         let next_submit_batch_id = AtomicU64::new(0);
@@ -1887,13 +2069,23 @@ impl LoadRunner {
         let pre_sign_started = Instant::now();
         let sender_addresses: Vec<Address> =
             self.accounts.accounts().iter().map(|account| account.address).collect();
+        if let Some(display) = self.display.as_ref() {
+            display.set_phase("fetching sender nonces...");
+        }
         let sender_start_nonces = self.open_loop_sender_start_nonces(&sender_addresses).await?;
         let sender_count = sender_addresses.len();
 
-        let capacity = max_in_flight_per_sender.saturating_mul(account_count as u64);
+        let capacity = self.config.effective_in_flight_capacity(account_count);
+        if let Some(max_total) = self.config.max_total_in_flight {
+            info!(
+                max_total_in_flight = max_total,
+                effective_capacity = capacity,
+                "capping open-loop in-flight target with max_total_in_flight"
+            );
+        }
         let open_loop_headroom_target = if self.config.target_gps.is_some() {
             OpenLoopHeadroomTarget::new(
-                capacity,
+                capacity as u64,
                 self.config.target_gps,
                 initial_avg_gas,
                 self.collector.confirmed_count() as u64,
@@ -1918,14 +2110,14 @@ impl LoadRunner {
                 block_gas_limit,
                 self.config.mempool_target_blocks,
                 initial_avg_gas,
-                capacity,
+                capacity as u64,
             )?;
             let target_gas =
                 u128::from(block_gas_limit) * u128::from(self.config.mempool_target_blocks);
             OpenLoopHeadroomTarget::saturated(
                 target_gas,
                 target,
-                capacity,
+                capacity as u64,
                 initial_avg_gas,
                 Instant::now(),
             )
@@ -1948,8 +2140,24 @@ impl LoadRunner {
                 tokio::select! {
                     () = base_fee_cancel.cancelled() => break,
                     () = tokio::time::sleep(Duration::from_secs(1)) => {
-                        if let Ok(base_fee) = base_fee_client.get_base_fee().await {
-                            base_fee_tx.send_replace(base_fee);
+                        match tokio::time::timeout(
+                            BASE_FEE_REFRESH_TIMEOUT,
+                            base_fee_client.get_base_fee(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(base_fee)) => {
+                                base_fee_tx.send_replace(base_fee);
+                            }
+                            Ok(Err(error)) => {
+                                warn!(%error, "base fee refresh failed");
+                            }
+                            Err(_) => {
+                                warn!(
+                                    timeout_secs = BASE_FEE_REFRESH_TIMEOUT.as_secs(),
+                                    "base fee refresh timed out"
+                                );
+                            }
                         }
                     }
                 }
@@ -1986,98 +2194,67 @@ impl LoadRunner {
             "started open-loop streaming pre-sign pipeline"
         );
 
-        let prefill_deadline = Instant::now() + OPEN_LOOP_PREFILL_TIMEOUT;
-        let mut prefill_result = Self::enqueue_open_loop_signed_transactions(
+        let ready_file = self.config.separate_setup.as_deref().map(|dir| dir.join("ready"));
+        Self::publish_handshake(ready_file.as_deref())?;
+        self.wait_for_start_file().await?;
+        results_tracker.begin_measurement();
+        self.collector.reset();
+        self.collector.set_estimated_gas(initial_avg_gas);
+        start = Instant::now();
+        progress.headroom_target.begin_measurement(
+            start,
+            self.config.duration.map(|duration| start + duration),
+            0,
+        );
+        let started_file = self.config.separate_setup.as_deref().map(|dir| dir.join("started"));
+        Self::publish_handshake(started_file.as_deref())?;
+
+        if let Some(display) = self.display.as_ref() {
+            display
+                .set_phase(&format!("submitting (target_in_flight={initial_target_in_flight})..."));
+        }
+        info!(
+            initial_target_in_flight,
+            duration_secs = ?self.config.duration.map(|d| d.as_secs()),
+            "starting open-loop measured enqueue"
+        );
+
+        let enqueue_deadline = self.config.duration.map(|d| start + d);
+        let enqueue_result = Self::enqueue_open_loop_signed_transactions(
             &submission_pipeline,
             &next_submit_batch_id,
             &mut signed_chunk_rx,
             &mut progress,
-            Some(prefill_deadline),
-            true,
+            OpenLoopEnqueueLimits { deadline: enqueue_deadline },
             &self.stop_flag,
             &mut OpenLoopDrainState {
                 submit_event_rx: &mut submit_event_rx,
                 queued_per_sender: &mut queued_per_sender,
                 collector: &mut self.collector,
                 results_tracker: &results_tracker,
+                progress_display: (use_live_display || use_snapshot_tx).then(|| {
+                    OpenLoopProgressDisplay {
+                        display: self.display.as_ref(),
+                        snapshot_tx: self.snapshot_tx.as_ref(),
+                        last_update: Instant::now()
+                            .checked_sub(OPEN_LOOP_DISPLAY_RENDER_INTERVAL)
+                            .unwrap_or_else(Instant::now),
+                        start,
+                        duration: self.config.duration,
+                        phase: None,
+                        max_in_flight_per_sender,
+                        account_count,
+                        gas_price_gwei: self.base_fee as f64 / 1e9,
+                        total_eth: self.last_total_eth.clone(),
+                        min_eth: self.last_min_eth.clone(),
+                        funds_low: self.last_funds_low,
+                        funder_address: self.funder_address.clone(),
+                        sender_addresses: self.sender_addresses.clone(),
+                    }
+                }),
             },
         )
         .await;
-
-        if prefill_result.is_ok() {
-            let drain_started = Instant::now();
-            while submission_pipeline.pending_batches() > 0
-                && drain_started.elapsed() < SUBMIT_DRAIN_TIMEOUT
-            {
-                Self::drain_run_events(
-                    &mut submit_event_rx,
-                    &mut queued_per_sender,
-                    &mut self.collector,
-                    &results_tracker,
-                );
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-            Self::drain_run_events(
-                &mut submit_event_rx,
-                &mut queued_per_sender,
-                &mut self.collector,
-                &results_tracker,
-            );
-            let pending_batches = submission_pipeline.pending_batches();
-            if pending_batches > 0 {
-                prefill_result = Err(BaselineError::Timeout {
-                    operation: format!(
-                        "setup submission pipeline drain ({pending_batches} batches pending)"
-                    ),
-                    duration: SUBMIT_DRAIN_TIMEOUT,
-                });
-            }
-        }
-
-        if prefill_result.is_ok() {
-            let ready_file = self.config.separate_setup.as_deref().map(|dir| dir.join("ready"));
-            Self::publish_handshake(ready_file.as_deref())?;
-            self.wait_for_start_file().await?;
-            Self::drain_run_events(
-                &mut submit_event_rx,
-                &mut queued_per_sender,
-                &mut self.collector,
-                &results_tracker,
-            );
-            results_tracker.begin_measurement();
-            self.collector.reset();
-            self.collector.set_estimated_gas(initial_avg_gas);
-            start = Instant::now();
-            progress.headroom_target.begin_measurement(
-                start,
-                self.config.duration.map(|duration| start + duration),
-                0,
-            );
-            let started_file = self.config.separate_setup.as_deref().map(|dir| dir.join("started"));
-            Self::publish_handshake(started_file.as_deref())?;
-        }
-
-        let enqueue_deadline = self.config.duration.map(|d| start + d);
-        let enqueue_result = if let Err(err) = prefill_result {
-            Err(err)
-        } else {
-            Self::enqueue_open_loop_signed_transactions(
-                &submission_pipeline,
-                &next_submit_batch_id,
-                &mut signed_chunk_rx,
-                &mut progress,
-                enqueue_deadline,
-                false,
-                &self.stop_flag,
-                &mut OpenLoopDrainState {
-                    submit_event_rx: &mut submit_event_rx,
-                    queued_per_sender: &mut queued_per_sender,
-                    collector: &mut self.collector,
-                    results_tracker: &results_tracker,
-                },
-            )
-            .await
-        };
 
         let finished_file = self.config.separate_setup.as_deref().map(|dir| dir.join("finished"));
         Self::publish_handshake(finished_file.as_deref())?;
@@ -2146,16 +2323,6 @@ impl LoadRunner {
                 &results_tracker,
             );
 
-            // Drain flashblock observations for the rolling window (separate from
-            // confirmed metrics to avoid double-counting in the final summary).
-            for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
-                self.collector.record_flashblock_observed(latency, observed_at);
-            }
-            // Drain confirmed metrics non-blocking so the rolling window stays
-            // current during the run (not just during the post-run drain).
-            for metrics in results_tracker.drain_confirmed_metrics() {
-                self.collector.record_confirmed(metrics);
-            }
             let expired = results_tracker.expire_pending(PENDING_CONFIRMATION_TIMEOUT);
             if expired > 0 {
                 self.collector.record_failures("expired without confirmation", expired);
@@ -2186,7 +2353,8 @@ impl LoadRunner {
                 let failed = self.collector.failed_count();
                 let in_flight = results_tracker.total_in_flight();
                 let pending = results_tracker.pending_count();
-                let senders_blocked = results_tracker.senders_at_limit(max_in_flight_per_sender);
+                let senders_blocked =
+                    results_tracker.senders_at_limit(max_in_flight_per_sender as u64);
                 let total_queued: u64 = queued_per_sender.values().sum();
                 let (p50, p99) = self.collector.rolling_p50_p99();
                 let (flashblocks_p50, flashblocks_p99) =
@@ -2294,13 +2462,16 @@ impl LoadRunner {
         };
         let results_poll_interval = Duration::from_millis(600);
         let mut last_confirmed_at = start.elapsed();
+        let mut last_pending_count = results_tracker.pending_count();
+        let mut last_drain_progress = Instant::now();
 
         while drain_start.elapsed() < confirmation_drain_timeout {
             for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
                 self.collector.record_flashblock_observed(latency, observed_at);
             }
             let metrics = results_tracker.drain_confirmed_metrics();
-            if !metrics.is_empty() {
+            let has_confirmed = !metrics.is_empty();
+            if has_confirmed {
                 last_confirmed_at = start.elapsed();
                 for metrics in metrics {
                     self.collector.record_confirmed(metrics);
@@ -2315,7 +2486,26 @@ impl LoadRunner {
                 self.collector.record_failures("expired without confirmation", expired);
             }
 
-            if results_tracker.pending_count() == 0 {
+            let pending_count = results_tracker.pending_count();
+            if pending_count == 0 {
+                break;
+            }
+            if pending_count < last_pending_count || has_confirmed {
+                last_pending_count = pending_count;
+                last_drain_progress = Instant::now();
+            } else if last_drain_progress.elapsed() >= DRAIN_STALL_TIMEOUT {
+                // No confirmations and no shrinkage for a while: the remainder is
+                // stuck (dropped, replaced, or the mempool forwarder never picked
+                // it up). Force-expire now instead of waiting out the full window.
+                let stalled = results_tracker.expire_pending(Duration::ZERO);
+                if stalled > 0 {
+                    self.collector.record_failures("expired without confirmation", stalled);
+                }
+                warn!(
+                    stalled,
+                    stall_secs = DRAIN_STALL_TIMEOUT.as_secs(),
+                    "confirmation drain stalled with no progress, force-expiring remainder"
+                );
                 break;
             }
 
@@ -2373,7 +2563,7 @@ impl LoadRunner {
             );
         }
 
-        let summary = self.collector.summarize_with_fresh_recipient_count(
+        let mut summary = self.collector.summarize_with_fresh_recipient_count(
             last_confirmed_at,
             self.config_summary.clone(),
             self.fresh_recipient_count(),
@@ -2383,6 +2573,11 @@ impl LoadRunner {
         }
 
         if let Some(err) = open_loop_enqueue_error {
+            // Stash the real stats gathered so far (submitted/confirmed/failed counts, gas,
+            // latencies) so callers can present them alongside the error instead of an
+            // all-zero summary — plenty of transactions may have landed before the failure.
+            summary.error = Some(err.to_string());
+            self.partial_summary = Some(summary);
             return Err(err);
         }
         Ok(summary)
@@ -2504,8 +2699,7 @@ impl LoadRunner {
             return Ok(Vec::new());
         }
 
-        let priority_fee = (base_fee / 10).max(1).min(max_gas_price);
-        let max_fee = SubmissionPipeline::submission_max_fee(base_fee, priority_fee, max_gas_price);
+        let fees = GasPricer::new(max_gas_price).fees_for(base_fee);
 
         let mut signing_tasks = Vec::with_capacity(sender_count);
         for sender_job in sender_jobs {
@@ -2516,7 +2710,7 @@ impl LoadRunner {
                 )));
             };
             signing_tasks.push(task::spawn_blocking(move || {
-                Self::sign_open_loop_sender_job(sender_job, signer, chain_id, priority_fee, max_fee)
+                Self::sign_open_loop_sender_job(sender_job, &signer, chain_id, fees)
             }));
         }
 
@@ -2612,10 +2806,9 @@ impl LoadRunner {
 
     fn sign_open_loop_sender_job(
         sender_job: OpenLoopSenderJob,
-        signer: PrivateKeySigner,
+        signer: &PrivateKeySigner,
         chain_id: u64,
-        priority_fee: u128,
-        max_fee: u128,
+        fees: Fees,
     ) -> Result<OpenLoopSignedSender> {
         let mut signed_txs = Vec::with_capacity(sender_job.prepared_txs.len());
 
@@ -2630,39 +2823,15 @@ impl LoadRunner {
                 ))
             })?;
 
-            let mut tx = TransactionRequest::default()
-                .with_from(prepared.from)
-                .with_value(prepared.value)
-                .with_input(prepared.data)
-                .with_nonce(nonce)
-                .with_chain_id(chain_id)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(priority_fee)
-                .with_gas_limit(prepared.gas_limit);
-            if let Some(to) = prepared.to {
-                tx = tx.with_to(to);
-            }
-
-            let typed_tx = tx.build_typed_tx().map_err(|e| {
-                BaselineError::Transaction(format!(
-                    "failed to build typed tx for sender {} nonce {}: {e:?}",
-                    prepared.from, nonce
-                ))
-            })?;
-
-            let sig_hash = typed_tx.signature_hash();
-            let signature = signer.sign_hash_sync(&sig_hash).map_err(|e| {
-                BaselineError::Transaction(format!(
-                    "failed to sign tx for sender {} nonce {}: {e}",
-                    prepared.from, nonce
-                ))
-            })?;
-
-            let signed = typed_tx.into_signed(signature);
-            let tx_hash = *signed.hash();
-            let raw = Bytes::from(signed.encoded_2718());
-
-            signed_txs.push(SignedTransaction { raw, tx_hash, from: prepared.from, nonce });
+            let signed =
+                SubmissionPipeline::sign_at_nonce(signer, &prepared, chain_id, nonce, fees)
+                    .map_err(|e| {
+                        BaselineError::Transaction(format!(
+                            "failed to sign tx for sender {} nonce {nonce}: {e}",
+                            prepared.from
+                        ))
+                    })?;
+            signed_txs.push(signed);
         }
 
         Ok(OpenLoopSignedSender { sender_index: sender_job.sender_index, signed_txs })
@@ -2714,7 +2883,6 @@ impl LoadRunner {
     async fn wait_for_outstanding_headroom(
         target_in_flight: u64,
         deadline: Option<Instant>,
-        stop_when_accepted_target_reached: bool,
         stop_flag: &AtomicBool,
         drain_state: &mut OpenLoopDrainState<'_>,
     ) -> Result<()> {
@@ -2723,24 +2891,14 @@ impl LoadRunner {
         }
 
         let mut last_outstanding = drain_state.total_outstanding();
+        let mut last_confirmed = drain_state.collector.confirmed_count();
         let mut last_progress = Instant::now();
 
         while drain_state.total_outstanding() >= target_in_flight {
             if stop_flag.load(Ordering::SeqCst) {
                 return Err(BaselineError::Transaction("stopped during open-loop enqueue".into()));
             }
-            if stop_when_accepted_target_reached
-                && drain_state.results_tracker.total_in_flight() >= target_in_flight
-            {
-                return Ok(());
-            }
             if deadline.is_some_and(|d| Instant::now() >= d) {
-                if stop_when_accepted_target_reached {
-                    return Err(BaselineError::Timeout {
-                        operation: "open-loop mempool prefill".into(),
-                        duration: OPEN_LOOP_PREFILL_TIMEOUT,
-                    });
-                }
                 return Ok(());
             }
 
@@ -2759,13 +2917,19 @@ impl LoadRunner {
             }
 
             let current = drain_state.total_outstanding();
-            if current < last_outstanding {
+            let confirmed = drain_state.collector.confirmed_count();
+            if current < last_outstanding || confirmed > last_confirmed {
                 last_outstanding = current;
+                last_confirmed = confirmed;
                 last_progress = Instant::now();
             } else if last_progress.elapsed() >= OPEN_LOOP_HEADROOM_STALL_TIMEOUT {
+                let in_flight = drain_state.results_tracker.total_in_flight();
+                let queued = drain_state.queued_count();
                 return Err(BaselineError::Timeout {
                     operation: format!(
-                        "open-loop outstanding headroom (stuck at {current} outstanding, target {target_in_flight})"
+                        "open-loop outstanding headroom (stuck at {current} outstanding \
+                         in_flight={in_flight} queued={queued}, target {target_in_flight}; \
+                         no outstanding decrease or confirmations)"
                     ),
                     duration: OPEN_LOOP_HEADROOM_STALL_TIMEOUT,
                 });
@@ -2780,47 +2944,19 @@ impl LoadRunner {
         next_submit_batch_id: &AtomicU64,
         signed_chunk_rx: &mut mpsc::Receiver<Vec<Vec<SignedTransaction>>>,
         progress: &mut OpenLoopEnqueueProgress,
-        deadline: Option<Instant>,
-        stop_when_accepted_target_reached: bool,
+        limits: OpenLoopEnqueueLimits,
         stop_flag: &AtomicBool,
         drain_state: &mut OpenLoopDrainState<'_>,
     ) -> Result<()> {
+        let OpenLoopEnqueueLimits { deadline } = limits;
         let mut pending_signed_batch = Vec::with_capacity(OPEN_LOOP_SIGNED_BATCH_SIZE);
-        let mut setup_target_reached = false;
 
         loop {
             drain_state.drain_run_events();
             if stop_flag.load(Ordering::SeqCst) {
                 return Err(BaselineError::Transaction("stopped during open-loop enqueue".into()));
             }
-            if stop_when_accepted_target_reached
-                && drain_state.results_tracker.total_in_flight()
-                    >= progress.headroom_target.current_target_in_flight()
-            {
-                if !pending_signed_batch.is_empty()
-                    && !Self::enqueue_open_loop_signed_batch(
-                        submission_pipeline,
-                        next_submit_batch_id,
-                        &mut pending_signed_batch,
-                        usize::MAX,
-                        false,
-                        drain_state,
-                    )
-                    .await
-                {
-                    return Err(BaselineError::Transaction(
-                        "submit queue closed while flushing setup nonce range".into(),
-                    ));
-                }
-                return Ok(());
-            }
             if deadline.is_some_and(|d| Instant::now() >= d) {
-                if stop_when_accepted_target_reached {
-                    return Err(BaselineError::Timeout {
-                        operation: "open-loop mempool prefill".into(),
-                        duration: OPEN_LOOP_PREFILL_TIMEOUT,
-                    });
-                }
                 return Ok(());
             }
 
@@ -2851,91 +2987,19 @@ impl LoadRunner {
                         made_progress = true;
                         pending_signed_batch.push(signed_tx);
 
-                        if pending_signed_batch.len() >= OPEN_LOOP_SIGNED_BATCH_SIZE {
-                            if !setup_target_reached {
-                                if let Some(update) = progress.headroom_target.maybe_update(
-                                    Instant::now(),
-                                    drain_state.collector.confirmed_count() as u64,
-                                    drain_state.results_tracker.observed_avg_gas(),
-                                ) {
-                                    debug!(
-                                        previous_target_in_flight =
-                                            update.previous_target_in_flight,
-                                        updated_target_in_flight = update.updated_target_in_flight,
-                                        confirmed_delta = update.confirmed_delta,
-                                        sample_tps = update.sample_tps,
-                                        smoothed_tps = update.smoothed_tps,
-                                        "adjusted open-loop in-flight target"
-                                    );
-                                }
-                                Self::wait_for_outstanding_headroom(
-                                    progress.headroom_target.current_target_in_flight(),
-                                    deadline,
-                                    stop_when_accepted_target_reached,
-                                    stop_flag,
-                                    drain_state,
-                                )
-                                .await?;
-                                if !stop_when_accepted_target_reached
-                                    && progress.headroom_target.target_gps.is_some()
-                                {
-                                    progress.headroom_target.maybe_update(
-                                        Instant::now(),
-                                        drain_state.collector.confirmed_count() as u64,
-                                        drain_state.results_tracker.observed_avg_gas(),
-                                    );
-                                    Self::wait_for_outstanding_headroom(
-                                        progress.headroom_target.current_target_in_flight(),
-                                        deadline,
-                                        false,
-                                        stop_flag,
-                                        drain_state,
-                                    )
-                                    .await?;
-                                }
-                                setup_target_reached = stop_when_accepted_target_reached
-                                    && drain_state.results_tracker.total_in_flight()
-                                        >= progress.headroom_target.current_target_in_flight();
-                                if !setup_target_reached
-                                    && deadline.is_some_and(|d| Instant::now() >= d)
-                                {
-                                    if stop_when_accepted_target_reached {
-                                        return Err(BaselineError::Timeout {
-                                            operation: "open-loop mempool prefill".into(),
-                                            duration: OPEN_LOOP_PREFILL_TIMEOUT,
-                                        });
-                                    }
-                                    return Ok(());
-                                }
-                            }
-                            let available_headroom = progress
-                                .headroom_target
-                                .current_target_in_flight()
-                                .saturating_sub(drain_state.total_outstanding())
-                                .max(1);
-                            if !Self::enqueue_open_loop_signed_batch(
+                        if pending_signed_batch.len() >= OPEN_LOOP_SIGNED_BATCH_SIZE
+                            && Self::pace_and_enqueue_open_loop_batch(
                                 submission_pipeline,
                                 next_submit_batch_id,
                                 &mut pending_signed_batch,
-                                if stop_when_accepted_target_reached
-                                    || progress.headroom_target.target_gps.is_none()
-                                {
-                                    usize::MAX
-                                } else {
-                                    usize::try_from(available_headroom).unwrap_or(usize::MAX)
-                                },
-                                !stop_when_accepted_target_reached,
+                                progress,
+                                deadline,
+                                stop_flag,
                                 drain_state,
                             )
-                            .await
-                            {
-                                if stop_when_accepted_target_reached {
-                                    return Err(BaselineError::Transaction(
-                                        "submit queue closed during setup prefill".into(),
-                                    ));
-                                }
-                                return Ok(());
-                            }
+                            .await?
+                        {
+                            return Ok(());
                         }
                     }
                 }
@@ -2945,94 +3009,95 @@ impl LoadRunner {
                 }
             }
 
-            if setup_target_reached {
-                if !pending_signed_batch.is_empty()
-                    && !Self::enqueue_open_loop_signed_batch(
-                        submission_pipeline,
-                        next_submit_batch_id,
-                        &mut pending_signed_batch,
-                        usize::MAX,
-                        false,
-                        drain_state,
-                    )
-                    .await
-                {
-                    return Err(BaselineError::Transaction(
-                        "submit queue closed while flushing setup nonce range".into(),
-                    ));
-                }
-                return Ok(());
-            }
-
             drain_state.drain_run_events();
         }
 
         if !pending_signed_batch.is_empty() {
-            if let Some(update) = progress.headroom_target.maybe_update(
-                Instant::now(),
-                drain_state.collector.confirmed_count() as u64,
-                drain_state.results_tracker.observed_avg_gas(),
-            ) {
-                debug!(
-                    previous_target_in_flight = update.previous_target_in_flight,
-                    updated_target_in_flight = update.updated_target_in_flight,
-                    confirmed_delta = update.confirmed_delta,
-                    sample_tps = update.sample_tps,
-                    smoothed_tps = update.smoothed_tps,
-                    "adjusted open-loop in-flight target"
-                );
-            }
-            Self::wait_for_outstanding_headroom(
-                progress.headroom_target.current_target_in_flight(),
+            let _ = Self::pace_and_enqueue_open_loop_batch(
+                submission_pipeline,
+                next_submit_batch_id,
+                &mut pending_signed_batch,
+                progress,
                 deadline,
-                stop_when_accepted_target_reached,
                 stop_flag,
                 drain_state,
             )
             .await?;
-            if !stop_when_accepted_target_reached && progress.headroom_target.target_gps.is_some() {
-                progress.headroom_target.maybe_update(
-                    Instant::now(),
-                    drain_state.collector.confirmed_count() as u64,
-                    drain_state.results_tracker.observed_avg_gas(),
-                );
-                Self::wait_for_outstanding_headroom(
-                    progress.headroom_target.current_target_in_flight(),
-                    deadline,
-                    false,
-                    stop_flag,
-                    drain_state,
-                )
-                .await?;
-            }
-            let available_headroom = progress
-                .headroom_target
-                .current_target_in_flight()
-                .saturating_sub(drain_state.total_outstanding())
-                .max(1);
-            let enqueued = Self::enqueue_open_loop_signed_batch(
-                submission_pipeline,
-                next_submit_batch_id,
-                &mut pending_signed_batch,
-                if stop_when_accepted_target_reached
-                    || progress.headroom_target.target_gps.is_none()
-                {
-                    usize::MAX
-                } else {
-                    usize::try_from(available_headroom).unwrap_or(usize::MAX)
-                },
-                !stop_when_accepted_target_reached,
-                drain_state,
-            )
-            .await;
-            if !enqueued && stop_when_accepted_target_reached {
-                return Err(BaselineError::Transaction(
-                    "submit queue closed while flushing setup nonce range".into(),
-                ));
-            }
         }
 
         Ok(())
+    }
+
+    /// Updates the in-flight target, waits for headroom, then enqueues one signed batch.
+    ///
+    /// Returns `Ok(true)` when the submit queue closed (caller should stop enqueueing)
+    /// and `Ok(false)` when the batch was accepted.
+    async fn pace_and_enqueue_open_loop_batch(
+        submission_pipeline: &SubmissionPipeline,
+        next_submit_batch_id: &AtomicU64,
+        pending_signed_batch: &mut Vec<SignedTransaction>,
+        progress: &mut OpenLoopEnqueueProgress,
+        deadline: Option<Instant>,
+        stop_flag: &AtomicBool,
+        drain_state: &mut OpenLoopDrainState<'_>,
+    ) -> Result<bool> {
+        if let Some(update) = progress.headroom_target.maybe_update(
+            Instant::now(),
+            drain_state.collector.confirmed_count() as u64,
+            drain_state.results_tracker.observed_avg_gas(),
+        ) {
+            debug!(
+                previous_target_in_flight = update.previous_target_in_flight,
+                updated_target_in_flight = update.updated_target_in_flight,
+                confirmed_delta = update.confirmed_delta,
+                sample_tps = update.sample_tps,
+                smoothed_tps = update.smoothed_tps,
+                "adjusted open-loop in-flight target"
+            );
+        }
+        Self::wait_for_outstanding_headroom(
+            progress.headroom_target.current_target_in_flight(),
+            deadline,
+            stop_flag,
+            drain_state,
+        )
+        .await?;
+        if progress.headroom_target.target_gps.is_some() {
+            progress.headroom_target.maybe_update(
+                Instant::now(),
+                drain_state.collector.confirmed_count() as u64,
+                drain_state.results_tracker.observed_avg_gas(),
+            );
+            Self::wait_for_outstanding_headroom(
+                progress.headroom_target.current_target_in_flight(),
+                deadline,
+                stop_flag,
+                drain_state,
+            )
+            .await?;
+        }
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            return Ok(true);
+        }
+
+        let available_headroom = progress
+            .headroom_target
+            .current_target_in_flight()
+            .saturating_sub(drain_state.total_outstanding())
+            .max(1);
+        let max_batch_len = if progress.headroom_target.target_gps.is_none() {
+            usize::MAX
+        } else {
+            usize::try_from(available_headroom).unwrap_or(usize::MAX)
+        };
+        Ok(!Self::enqueue_open_loop_signed_batch(
+            submission_pipeline,
+            next_submit_batch_id,
+            pending_signed_batch,
+            max_batch_len,
+            drain_state,
+        )
+        .await)
     }
 
     async fn enqueue_open_loop_signed_batch(
@@ -3040,7 +3105,6 @@ impl LoadRunner {
         next_submit_batch_id: &AtomicU64,
         pending_signed_batch: &mut Vec<SignedTransaction>,
         max_batch_len: usize,
-        measured: bool,
         drain_state: &mut OpenLoopDrainState<'_>,
     ) -> bool {
         let batch_len = pending_signed_batch.len().min(max_batch_len);
@@ -3055,7 +3119,7 @@ impl LoadRunner {
                 .or_insert(1);
         }
 
-        let batch = SignedBatch { id: batch_id, attempt: 0, measured, txs: signed_txs };
+        let batch = SignedBatch { id: batch_id, attempt: 0, measured: true, txs: signed_txs };
         match Self::enqueue_signed_while_draining(submission_pipeline, batch, drain_state).await {
             Ok(()) => {
                 debug!(batch_id, batch_len, "queued open-loop signed batch");
@@ -3082,7 +3146,7 @@ impl LoadRunner {
         &mut self,
         start: Instant,
         results_tracker: &ResultsTracker,
-        max_in_flight_per_sender: u64,
+        max_in_flight_per_sender: usize,
         account_count: usize,
     ) -> DisplaySnapshot {
         let (p50, p99) = self.collector.rolling_p50_p99();
@@ -3090,11 +3154,12 @@ impl LoadRunner {
         DisplaySnapshot {
             elapsed: start.elapsed(),
             duration: self.config.duration,
+            phase: None,
             submitted: self.collector.submitted_count(),
             confirmed: self.collector.confirmed_count(),
             failed: self.collector.failed_count(),
             in_flight: results_tracker.total_in_flight(),
-            senders_blocked: results_tracker.senders_at_limit(max_in_flight_per_sender),
+            senders_blocked: results_tracker.senders_at_limit(max_in_flight_per_sender as u64),
             total_senders: account_count,
             rolling_tps: self.collector.rolling_tps(),
             rolling_gps: self.collector.rolling_gps(),
@@ -3151,6 +3216,9 @@ impl LoadRunner {
         for metrics in results_tracker.drain_confirmed_metrics() {
             collector.record_confirmed(metrics);
         }
+        for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
+            collector.record_flashblock_observed(latency, observed_at);
+        }
     }
 
     fn apply_queued_submit_failures(
@@ -3180,17 +3248,12 @@ impl LoadRunner {
         let chain_id = self.config.chain_id;
 
         let base_fee = client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1).min(self.config.max_gas_price);
-        let max_fee = SubmissionPipeline::submission_max_fee(
-            base_fee,
-            max_priority_fee,
-            self.config.max_gas_price,
-        );
+        let fees = GasPricer::new(self.config.max_gas_price).fees_for(base_fee);
         let drain_gas_limit = 21_000u128;
         // L1 data fee on Base can be significant (0.0001-0.001 ETH depending on L1 gas prices).
         // Use 0.001 ETH (1e15 wei) buffer to be safe. We may leave dust in accounts.
         let l1_fee_buffer = 1_000_000_000_000_000u128;
-        let drain_gas_cost = U256::from(drain_gas_limit * max_fee + l1_fee_buffer);
+        let drain_gas_cost = U256::from(drain_gas_limit * fees.max_fee + l1_fee_buffer);
 
         let total_accounts = self.accounts.len();
         let pb_drain = self.progress_bar(total_accounts as u64, "Draining accounts");
@@ -3234,8 +3297,8 @@ impl LoadRunner {
                         .with_nonce(nonce)
                         .with_chain_id(chain_id)
                         .with_gas_limit(drain_gas_limit as u64)
-                        .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee);
+                        .with_max_fee_per_gas(fees.max_fee)
+                        .with_max_priority_fee_per_gas(fees.priority_fee);
 
                     match provider.send_transaction(tx).await {
                         Ok(pending) => {
@@ -3454,6 +3517,7 @@ impl LoadRunner {
             debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
         }
 
+        self.refresh_funding_display_stats();
         Ok(())
     }
 
@@ -3613,7 +3677,11 @@ mod tests {
             Arc::new(Vec::new()),
             results_tracker.clone(),
             submit_event_tx.clone(),
-            PipelineStartConfig { chain_id: 1, max_gas_price: u128::MAX },
+            PipelineStartConfig {
+                chain_id: 1,
+                max_gas_price: u128::MAX,
+                max_concurrent_submit_requests: None,
+            },
         );
 
         submission_pipeline.shutdown_and_join(Duration::from_secs(1)).await;
@@ -3644,6 +3712,7 @@ mod tests {
                 queued_per_sender: &mut queued_per_sender,
                 collector: &mut collector,
                 results_tracker: &results_tracker,
+                progress_display: None,
             };
             let enqueue_attempt = LoadRunner::enqueue_signed_while_draining(
                 &submission_pipeline,
@@ -3696,6 +3765,7 @@ mod tests {
             queued_per_sender: &mut queued_per_sender,
             collector: &mut collector,
             results_tracker: &results_tracker,
+            progress_display: None,
         };
 
         let result = tokio::time::timeout(
@@ -3703,7 +3773,6 @@ mod tests {
             LoadRunner::wait_for_outstanding_headroom(
                 1,
                 None,
-                false,
                 &AtomicBool::new(false),
                 &mut drain_state,
             ),
@@ -3736,6 +3805,7 @@ mod tests {
             queued_per_sender: &mut queued_per_sender,
             collector: &mut collector,
             results_tracker: &results_tracker,
+            progress_display: None,
         };
 
         let result = tokio::time::timeout(
@@ -3743,7 +3813,6 @@ mod tests {
             LoadRunner::wait_for_outstanding_headroom(
                 0,
                 None,
-                false,
                 &AtomicBool::new(false),
                 &mut drain_state,
             ),
@@ -3776,6 +3845,7 @@ mod tests {
             queued_per_sender: &mut queued_per_sender,
             collector: &mut collector,
             results_tracker: &results_tracker,
+            progress_display: None,
         };
 
         let past_deadline = Some(Instant::now() - Duration::from_secs(1));
@@ -3784,7 +3854,6 @@ mod tests {
             LoadRunner::wait_for_outstanding_headroom(
                 1,
                 past_deadline,
-                false,
                 &AtomicBool::new(false),
                 &mut drain_state,
             ),
@@ -3808,7 +3877,7 @@ mod tests {
         assert_eq!(
             target.current_target_in_flight(),
             150,
-            "prefill covers the 1.5-second lookahead"
+            "initial inventory covers the 1.5-second lookahead"
         );
         target.begin_measurement(started_at, None, 0);
 

@@ -29,7 +29,7 @@ const RESCUE_CONCURRENCY: usize = 32;
 const DEFAULT_RESCUE_SCAN_COUNT: usize = 1000;
 
 /// Default maximum gas price (1000 gwei).
-const DEFAULT_MAX_GAS_PRICE: u128 = 1_000_000_000_000;
+const DEFAULT_MAX_GAS_PRICE: u128 = 1_000_000_000;
 
 /// The Base load tester CLI.
 #[derive(Parser, Clone, Debug)]
@@ -86,11 +86,11 @@ struct LoadArgs {
     #[arg(long)]
     skip_drain: bool,
 
-    /// Benchmark-only directory for the ready/start handshake that separates setup from the run.
+    /// Benchmark-only directory for the ready/start handshake before measured submission.
     #[arg(long, value_name = "DIR", requires = "block_gas_limit")]
     separate_setup: Option<PathBuf>,
 
-    /// Block gas limit used for mempool sizing instead of the latest RPC block.
+    /// Block gas limit used for in-flight inventory sizing instead of the latest RPC block.
     #[arg(long, requires = "separate_setup")]
     block_gas_limit: Option<NonZeroU64>,
 

@@ -7,6 +7,7 @@ use alloy_provider::{
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
 use base_common_network::Base;
+use tokio::sync::Semaphore;
 use tracing::{debug, instrument, warn};
 use url::Url;
 
@@ -206,17 +207,30 @@ impl BatchRpcClient {
     /// Returns one [`BatchSendResult`] per input, preserving order.
     ///
     /// Large requests are automatically split into sub-batches of
-    /// [`MAX_BATCH_RPC_SIZE`] and sent concurrently.
+    /// [`MAX_BATCH_RPC_SIZE`] and sent sequentially to avoid overwhelming the RPC endpoint.
+    ///
+    /// `request_limiter`, when set, bounds the number of these sub-batch HTTP
+    /// requests that may be outstanding concurrently across all callers
+    /// sharing the semaphore, independent of how many sender workers exist or
+    /// how many transactions are unconfirmed.
     ///
     /// Each element in `raw_txs` must be the EIP-2718 encoded signed
     /// transaction bytes (as produced by `Encodable2718::encoded_2718`).
-    pub async fn send_raw_transactions(&self, raw_txs: &[Bytes]) -> Result<Vec<BatchSendResult>> {
+    pub async fn send_raw_transactions(
+        &self,
+        raw_txs: &[Bytes],
+        request_limiter: Option<&Semaphore>,
+    ) -> Result<Vec<BatchSendResult>> {
         if raw_txs.is_empty() {
             return Ok(Vec::new());
         }
 
         let mut all_results: Vec<BatchSendResult> = Vec::with_capacity(raw_txs.len());
         for chunk in raw_txs.chunks(MAX_BATCH_RPC_SIZE) {
+            let _permit = match request_limiter {
+                Some(limiter) => Some(limiter.acquire().await.expect("semaphore never closed")),
+                None => None,
+            };
             all_results.extend(self.send_raw_chunk(chunk).await?);
         }
 

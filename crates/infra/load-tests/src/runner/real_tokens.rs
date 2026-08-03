@@ -1,10 +1,10 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap, HashSet},
     time::{Duration, Instant},
 };
 
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, Signed, U160, U256, Uint, utils::format_ether};
+use alloy_primitives::{Address, Bytes, Signed, TxHash, U160, U256, Uint, utils::format_ether};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_sol_types::{SolCall, sol};
@@ -13,7 +13,8 @@ use indicatif::ProgressBar;
 use tracing::{debug, info, instrument, warn};
 
 use super::{
-    RealTokenAcquisition, RealTokenRecoverySummary, RealTokenSetup, SubmissionPipeline,
+    BlockReceipt, BlockWatcher, GasPricer, RealTokenAcquisition, RealTokenRecoverySummary,
+    RealTokenSetup,
     load_runner::{FUNDING_CONCURRENCY, LoadRunner},
 };
 use crate::{
@@ -25,6 +26,10 @@ const WETH_DEPOSIT_GAS_LIMIT: u64 = 100_000;
 const WETH_WITHDRAW_GAS_LIMIT: u64 = 45_000;
 const ERC20_APPROVE_GAS_LIMIT: u64 = 65_000;
 const SETUP_SWAP_GAS_LIMIT: u64 = 250_000;
+/// Timeout for confirming setup/recovery transactions via the block watcher.
+const REAL_TOKEN_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(120);
+/// A single sent transaction, labeled for descriptive revert/timeout errors.
+type LabeledTxHash = (TxHash, &'static str);
 
 type U24 = Uint<24, 1>;
 type I24 = Signed<24, 1>;
@@ -108,12 +113,7 @@ impl LoadRunner {
         let approval_targets = self.collect_real_token_setup_approvals(setup);
 
         let base_fee = self.client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1).min(self.config.max_gas_price);
-        let max_fee = SubmissionPipeline::submission_max_fee(
-            base_fee,
-            max_priority_fee,
-            self.config.max_gas_price,
-        );
+        let fees = GasPricer::new(self.config.max_gas_price).fees_for(base_fee);
 
         let account_data: Vec<_> =
             self.accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect();
@@ -177,7 +177,8 @@ impl LoadRunner {
                     .block_id(BlockNumberOrTag::Pending.into())
                     .await
                     .rpc("get pending balance")?;
-                let setup_gas_cost = U256::from(setup_gas_limit).saturating_mul(U256::from(max_fee));
+                let setup_gas_cost =
+                    U256::from(setup_gas_limit).saturating_mul(U256::from(fees.max_fee));
                 let total_setup_cost = deposit_deficit.saturating_add(setup_gas_cost);
                 if native_balance < total_setup_cost {
                     return Err(BaselineError::Transaction(format!(
@@ -197,7 +198,11 @@ impl LoadRunner {
                     .pending()
                     .await
                     .rpc("get pending transaction count")?;
-                let mut sent = 0usize;
+                // Steps are submitted back-to-back at increasing nonces without waiting for
+                // each one to land; same-sender nonce ordering guarantees they can only be
+                // included in that order. Confirmation happens once, for every sender, via a
+                // single block-watching pass below.
+                let mut hashes: Vec<LabeledTxHash> = Vec::new();
 
                 if deposit_deficit > U256::ZERO {
                     let tx = TransactionRequest::default()
@@ -207,23 +212,15 @@ impl LoadRunner {
                         .with_nonce(nonce)
                         .with_chain_id(chain_id)
                         .with_gas_limit(WETH_DEPOSIT_GAS_LIMIT)
-                        .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee);
-                    let pending = provider.send_transaction(tx).await.rpc("send WETH deposit")?;
-                    debug!(
-                        sender = %sender,
-                        tx_hash = %pending.tx_hash(),
-                        amount = %deposit_deficit,
-                        "WETH deposit sent"
-                    );
-                    let receipt = pending.get_receipt().await.rpc("confirm WETH deposit")?;
-                    if !receipt.status() {
-                        return Err(BaselineError::Transaction(format!(
-                            "WETH deposit reverted for sender {sender}"
-                        )));
-                    }
+                        .with_max_fee_per_gas(fees.max_fee)
+                        .with_max_priority_fee_per_gas(fees.priority_fee);
+                    let pending = provider.send_transaction(tx).await.map_err(|e| {
+                        BaselineError::Transaction(format!(
+                            "WETH deposit failed to send for sender {sender}: {e}"
+                        ))
+                    })?;
+                    hashes.push((*pending.tx_hash(), "WETH deposit"));
                     nonce += 1;
-                    sent += 1;
                 }
 
                 for (token, router) in approvals {
@@ -233,24 +230,15 @@ impl LoadRunner {
                         .with_nonce(nonce)
                         .with_chain_id(chain_id)
                         .with_gas_limit(ERC20_APPROVE_GAS_LIMIT)
-                        .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee);
-                    let pending = provider.send_transaction(tx).await.rpc("send ERC20 approval")?;
-                    debug!(
-                        sender = %sender,
-                        token = %token,
-                        router = %router,
-                        tx_hash = %pending.tx_hash(),
-                        "router approval sent"
-                    );
-                    let receipt = pending.get_receipt().await.rpc("confirm ERC20 approval")?;
-                    if !receipt.status() {
-                        return Err(BaselineError::Transaction(format!(
-                            "ERC20 approval reverted for sender {sender}"
-                        )));
-                    }
+                        .with_max_fee_per_gas(fees.max_fee)
+                        .with_max_priority_fee_per_gas(fees.priority_fee);
+                    let pending = provider.send_transaction(tx).await.map_err(|e| {
+                        BaselineError::Transaction(format!(
+                            "ERC20 approval failed to send for sender {sender}: {e}"
+                        ))
+                    })?;
+                    hashes.push((*pending.tx_hash(), "ERC20 approval"));
                     nonce += 1;
-                    sent += 1;
                 }
 
                 if needs_pair_token {
@@ -267,25 +255,17 @@ impl LoadRunner {
                         .with_nonce(nonce)
                         .with_chain_id(chain_id)
                         .with_gas_limit(SETUP_SWAP_GAS_LIMIT)
-                        .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee);
-                    let pending = provider.send_transaction(tx).await.rpc("send setup swap")?;
-                    debug!(
-                        sender = %sender,
-                        router = %router,
-                        tx_hash = %pending.tx_hash(),
-                        "pair-token acquisition swap sent"
-                    );
-                    let receipt = pending.get_receipt().await.rpc("confirm setup swap")?;
-                    if !receipt.status() {
-                        return Err(BaselineError::Transaction(format!(
-                            "pair-token acquisition swap reverted for sender {sender}"
-                        )));
-                    }
-                    sent += 1;
+                        .with_max_fee_per_gas(fees.max_fee)
+                        .with_max_priority_fee_per_gas(fees.priority_fee);
+                    let pending = provider.send_transaction(tx).await.map_err(|e| {
+                        BaselineError::Transaction(format!(
+                            "pair-token acquisition swap failed to send for sender {sender}: {e}"
+                        ))
+                    })?;
+                    hashes.push((*pending.tx_hash(), "pair-token acquisition swap"));
                 }
 
-                Ok::<_, BaselineError>((sender, sent))
+                Ok::<_, BaselineError>((sender, hashes))
             }
         });
 
@@ -297,10 +277,13 @@ impl LoadRunner {
         pb_setup.finish_and_clear();
 
         let mut sent_total = 0usize;
+        let mut hashes_by_sender = Vec::new();
         for result in setup_results {
-            let (_, sent) = result?;
-            sent_total += sent;
+            let (sender, hashes) = result?;
+            sent_total += hashes.len();
+            hashes_by_sender.push((sender, hashes));
         }
+        Self::confirm_real_token_txs(&self.client, &hashes_by_sender).await?;
 
         let sender_addresses: Vec<Address> =
             self.accounts.accounts().iter().map(|a| a.address).collect();
@@ -369,12 +352,7 @@ impl LoadRunner {
         let chain_id = self.config.chain_id;
 
         let base_fee = client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1).min(self.config.max_gas_price);
-        let max_fee = SubmissionPipeline::submission_max_fee(
-            base_fee,
-            max_priority_fee,
-            self.config.max_gas_price,
-        );
+        let fees = GasPricer::new(self.config.max_gas_price).fees_for(base_fee);
 
         let account_data: Vec<_> =
             self.accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect();
@@ -388,7 +366,6 @@ impl LoadRunner {
                 let primary_submission_rpc = primary_submission_rpc.clone();
                 let setup = setup.clone();
                 async move {
-                    let mut summary = RealTokenRecoverySummary::default();
                     let wallet = EthereumWallet::from(signer);
                     let provider = create_wallet_provider(primary_submission_rpc, wallet);
                     let mut nonce = provider
@@ -396,6 +373,11 @@ impl LoadRunner {
                         .pending()
                         .await
                         .rpc("get pending transaction count")?;
+                    // Steps are submitted back-to-back without waiting for confirmation; see
+                    // the block-watching pass below and `confirm_real_token_txs`.
+                    let mut hashes: Vec<LabeledTxHash> = Vec::new();
+                    let mut pair_swap: Option<(TxHash, U256)> = None;
+                    let mut weth_withdraw: Option<(TxHash, U256)> = None;
 
                     let pair_balance =
                         Self::read_erc20_balance(&client, setup.pair_token.token, sender).await?;
@@ -420,24 +402,14 @@ impl LoadRunner {
                                 .with_nonce(nonce)
                                 .with_chain_id(chain_id)
                                 .with_gas_limit(ERC20_APPROVE_GAS_LIMIT)
-                                .with_max_fee_per_gas(max_fee)
-                                .with_max_priority_fee_per_gas(max_priority_fee);
-                            let pending =
-                                provider.send_transaction(tx).await.rpc("send pair approval")?;
-                            debug!(
-                                sender = %sender,
-                                token = %setup.pair_token.token,
-                                router = %recovery_router,
-                                tx_hash = %pending.tx_hash(),
-                                "recovery pair-token approval sent"
-                            );
-                            let receipt =
-                                pending.get_receipt().await.rpc("confirm pair approval")?;
-                            if !receipt.status() {
-                                return Err(BaselineError::Transaction(format!(
-                                    "pair-token approval reverted for sender {sender}"
-                                )));
-                            }
+                                .with_max_fee_per_gas(fees.max_fee)
+                                .with_max_priority_fee_per_gas(fees.priority_fee);
+                            let pending = provider.send_transaction(tx).await.map_err(|e| {
+                                BaselineError::Transaction(format!(
+                                    "pair-token approval failed to send for sender {sender}: {e}"
+                                ))
+                            })?;
+                            hashes.push((*pending.tx_hash(), "pair-token approval"));
                             nonce += 1;
                         }
 
@@ -454,29 +426,16 @@ impl LoadRunner {
                             .with_nonce(nonce)
                             .with_chain_id(chain_id)
                             .with_gas_limit(SETUP_SWAP_GAS_LIMIT)
-                            .with_max_fee_per_gas(max_fee)
-                            .with_max_priority_fee_per_gas(max_priority_fee);
-                        let pending = provider
-                            .send_transaction(tx)
-                            .await
-                            .rpc("send pair-token recovery swap")?;
-                        debug!(
-                            sender = %sender,
-                            router = %router,
-                            amount = %pair_balance,
-                            tx_hash = %pending.tx_hash(),
-                            "pair-token recovery swap sent"
-                        );
-                        let receipt =
-                            pending.get_receipt().await.rpc("confirm pair-token recovery swap")?;
-                        if !receipt.status() {
-                            return Err(BaselineError::Transaction(format!(
-                                "pair-token recovery swap reverted for sender {sender}"
-                            )));
-                        }
+                            .with_max_fee_per_gas(fees.max_fee)
+                            .with_max_priority_fee_per_gas(fees.priority_fee);
+                        let pending = provider.send_transaction(tx).await.map_err(|e| {
+                            BaselineError::Transaction(format!(
+                                "pair-token recovery swap failed to send for sender {sender}: {e}"
+                            ))
+                        })?;
+                        hashes.push((*pending.tx_hash(), "pair-token recovery swap"));
+                        pair_swap = Some((*pending.tx_hash(), pair_balance));
                         nonce += 1;
-                        summary.pair_token_swapped =
-                            summary.pair_token_swapped.saturating_add(pair_balance);
                     }
 
                     let weth_balance =
@@ -488,27 +447,18 @@ impl LoadRunner {
                             .with_nonce(nonce)
                             .with_chain_id(chain_id)
                             .with_gas_limit(WETH_WITHDRAW_GAS_LIMIT)
-                            .with_max_fee_per_gas(max_fee)
-                            .with_max_priority_fee_per_gas(max_priority_fee);
-                        let pending =
-                            provider.send_transaction(tx).await.rpc("send WETH withdraw")?;
-                        debug!(
-                            sender = %sender,
-                            amount = %weth_balance,
-                            tx_hash = %pending.tx_hash(),
-                            "recovery WETH withdraw sent"
-                        );
-                        let receipt = pending.get_receipt().await.rpc("confirm WETH withdraw")?;
-                        if !receipt.status() {
-                            return Err(BaselineError::Transaction(format!(
-                                "WETH withdraw reverted for sender {sender}"
-                            )));
-                        }
-                        summary.weth_unwrapped =
-                            summary.weth_unwrapped.saturating_add(weth_balance);
+                            .with_max_fee_per_gas(fees.max_fee)
+                            .with_max_priority_fee_per_gas(fees.priority_fee);
+                        let pending = provider.send_transaction(tx).await.map_err(|e| {
+                            BaselineError::Transaction(format!(
+                                "WETH withdraw failed to send for sender {sender}: {e}"
+                            ))
+                        })?;
+                        hashes.push((*pending.tx_hash(), "WETH withdraw"));
+                        weth_withdraw = Some((*pending.tx_hash(), weth_balance));
                     }
 
-                    Ok::<_, BaselineError>(summary)
+                    Ok::<_, BaselineError>((sender, hashes, pair_swap, weth_withdraw))
                 }
             })
             .collect();
@@ -520,13 +470,27 @@ impl LoadRunner {
             .await;
         pb_recover.finish_and_clear();
 
-        let mut summary = RealTokenRecoverySummary::default();
+        let mut hashes_by_sender = Vec::new();
+        let mut pair_swaps = Vec::new();
+        let mut weth_withdraws = Vec::new();
         for result in recover_results {
-            let account_summary = result?;
-            summary.pair_token_swapped =
-                summary.pair_token_swapped.saturating_add(account_summary.pair_token_swapped);
-            summary.weth_unwrapped =
-                summary.weth_unwrapped.saturating_add(account_summary.weth_unwrapped);
+            let (sender, hashes, pair_swap, weth_withdraw) = result?;
+            hashes_by_sender.push((sender, hashes));
+            pair_swaps.extend(pair_swap);
+            weth_withdraws.extend(weth_withdraw);
+        }
+        let receipts = Self::confirm_real_token_txs(&client, &hashes_by_sender).await?;
+
+        let mut summary = RealTokenRecoverySummary::default();
+        for (tx_hash, amount) in pair_swaps {
+            if receipts.get(&tx_hash).is_some_and(|r| r.success) {
+                summary.pair_token_swapped = summary.pair_token_swapped.saturating_add(amount);
+            }
+        }
+        for (tx_hash, amount) in weth_withdraws {
+            if receipts.get(&tx_hash).is_some_and(|r| r.success) {
+                summary.weth_unwrapped = summary.weth_unwrapped.saturating_add(amount);
+            }
         }
 
         info!(
@@ -535,6 +499,66 @@ impl LoadRunner {
             "real-token recovery complete"
         );
         Ok(summary)
+    }
+
+    /// Confirms every sender's submitted transactions by watching canonical blocks and
+    /// batch-fetching receipts for the touched blocks, instead of polling
+    /// `eth_getTransactionReceipt` once per transaction. Returns the receipts so callers
+    /// that need per-transaction outcomes (e.g. recovery's swapped/unwrapped amounts) can
+    /// look them up by hash.
+    async fn confirm_real_token_txs(
+        client: &QueryProvider,
+        hashes_by_sender: &[(Address, Vec<LabeledTxHash>)],
+    ) -> Result<HashMap<TxHash, BlockReceipt>> {
+        let pending_hashes: HashSet<TxHash> = hashes_by_sender
+            .iter()
+            .flat_map(|(_, hashes)| hashes.iter().map(|(hash, _)| *hash))
+            .collect();
+        if pending_hashes.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let receipts = BlockWatcher::confirm_and_fetch_receipts(
+            client,
+            pending_hashes,
+            REAL_TOKEN_CONFIRMATION_TIMEOUT,
+            |_hash| {},
+        )
+        .await?;
+
+        let mut failed = 0usize;
+        let mut first_error: Option<String> = None;
+        for (sender, hashes) in hashes_by_sender {
+            for (tx_hash, label) in hashes {
+                match receipts.get(tx_hash) {
+                    Some(receipt) if receipt.success => {}
+                    Some(_) => {
+                        failed += 1;
+                        warn!(sender = %sender, tx_hash = %tx_hash, label, "real-token transaction reverted");
+                        first_error.get_or_insert_with(|| {
+                            format!("{label} reverted for sender {sender} (tx {tx_hash})")
+                        });
+                    }
+                    None => {
+                        failed += 1;
+                        warn!(sender = %sender, tx_hash = %tx_hash, label, "real-token transaction receipt unavailable");
+                        first_error.get_or_insert_with(|| {
+                            format!(
+                                "{label} receipt unavailable for sender {sender} (tx {tx_hash})"
+                            )
+                        });
+                    }
+                }
+            }
+        }
+
+        if failed > 0 {
+            return Err(BaselineError::Transaction(format!(
+                "{failed} real-token setup/recovery transaction(s) failed: {}",
+                first_error.unwrap_or_else(|| "unknown error".to_string())
+            )));
+        }
+        Ok(receipts)
     }
 
     async fn read_erc20_balance(
