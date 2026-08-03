@@ -691,14 +691,14 @@ sequencing.
 ### Transaction forwarding
 
 For non-sequencer nodes, transactions received in the mempool need to be forwarded to the sequencer
-for inclusion. This is handled by the reader/forwarder pipeline in the tx-forwarding crate.
+for inclusion. This is handled by the consumer/forwarder pipeline in the txpool crate.
 
 The
-[`DestinationReader`](https://github.com/base/base/blob/main/crates/execution/tx-forwarding/src/reader/task.rs)
-polls the transaction pool for new pending transactions and queues them through a bounded
-`tokio::mpsc` channel. The
-[`DestinationForwarder`](https://github.com/base/base/blob/main/crates/execution/tx-forwarding/src/forwarder/task.rs)
-receives queued transactions and forwards them via a custom JSON-RPC method
+[`SpawnedConsumer`](https://github.com/base/base/blob/main/crates/execution/txpool/src/consumer/mod.rs)
+polls the transaction pool for new pending transactions and broadcasts them through a
+`tokio::broadcast` channel. The
+[`SpawnedForwarder`](https://github.com/base/base/blob/main/crates/execution/txpool/src/forwarder/mod.rs)
+subscribes to this broadcast channel and forwards each transaction via a custom JSON-RPC method
 (`base_insertValidatedTransactions`) to configured builder endpoints. One forwarder task is spawned
 per builder URL, so multiple downstream builders can receive transactions simultaneously. This
 pipeline runs as background tasks on the node's task executor.
@@ -819,10 +819,10 @@ networks are completely separate and serve different purposes.
   [`crates/execution/txpool/src/ordering.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/src/ordering.rs)
   — BaseOrdering (fee-based vs FIFO)
 -
-  [`crates/execution/tx-forwarding/src/reader/`](https://github.com/base/base/tree/main/crates/execution/tx-forwarding/src/reader)
-  — Transaction pool reader
+  [`crates/execution/txpool/src/consumer/`](https://github.com/base/base/tree/main/crates/execution/txpool/src/consumer)
+  — Transaction pool consumer
 -
-  [`crates/execution/tx-forwarding/src/forwarder/`](https://github.com/base/base/tree/main/crates/execution/tx-forwarding/src/forwarder)
+  [`crates/execution/txpool/src/forwarder/`](https://github.com/base/base/tree/main/crates/execution/txpool/src/forwarder)
   — Transaction forwarder to sequencer
 
 
