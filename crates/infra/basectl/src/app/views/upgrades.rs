@@ -31,6 +31,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use url::Url;
 
 use crate::{
+    ZenithCheck, ZenithCheckStatus, ZenithCheckTarget, ZenithChecker,
     app::{Action, Resources, View},
     output::COLOR_BASE_BLUE,
     tui::Keybinding,
@@ -106,6 +107,7 @@ impl ChainUpgrades {
         self.set_timestamp(BaseUpgrade::Azul, upgrades.base.azul);
         self.set_timestamp(BaseUpgrade::Beryl, upgrades.base.beryl);
         self.set_timestamp(BaseUpgrade::Cobalt, upgrades.base.cobalt);
+        self.set_timestamp(BaseUpgrade::Zenith, upgrades.base.zenith);
     }
 
     fn next_scheduled_spec(&self, now: u64) -> Option<&UpgradeSpec> {
@@ -189,6 +191,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             name: "Cobalt",
             timestamp: cfg.cobalt_timestamp,
         },
+        UpgradeSpec { upgrade: BaseUpgrade::Zenith, name: "Zenith", timestamp: None },
     ]
 }
 
@@ -278,6 +281,22 @@ const BERYL_CHECK_NAMES: &[&str] = &[
     "B-20 asset feature",
 ];
 
+/// Expected Zenith check names, in report order.
+const ZENITH_CHECK_NAMES: &[&str] = &[
+    "chain_id",
+    "el_syncing",
+    "snapshot_consistency",
+    "proxy_code_hash",
+    "proxy_admin",
+    "implementation",
+    "metadata",
+    "metadata_receipt",
+    "header_timestamp_ms",
+    "storage_millis_part",
+    "getter_millis_part",
+    "getter_timestamp_ms",
+];
+
 const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
     ("policy registry feature", ActivationFeature::PolicyRegistry),
     ("B-20 stablecoin feature", ActivationFeature::B20Stablecoin),
@@ -286,6 +305,7 @@ const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
 
 fn check_names_for(upgrade: &str) -> &'static [&'static str] {
     match upgrade {
+        "Zenith" => ZENITH_CHECK_NAMES,
         "Beryl" => BERYL_CHECK_NAMES,
         "Azul" => AZUL_CHECK_NAMES,
         "Jovian" => JOVIAN_CHECK_NAMES,
@@ -369,7 +389,15 @@ struct ChecksPanel {
 }
 
 impl ChecksPanel {
-    fn start(&mut self, chain_idx: usize, rpc_url: String, upgrade: &'static str, mode: CheckMode) {
+    fn start(
+        &mut self,
+        chain_idx: usize,
+        rpc_url: String,
+        consensus_rpc: Option<Url>,
+        expected_chain_id: Option<u64>,
+        upgrade: &'static str,
+        mode: CheckMode,
+    ) {
         if let Some(h) = self.handle.take() {
             h.abort();
         }
@@ -391,7 +419,14 @@ impl ChecksPanel {
         self.running = true;
         self.rx = Some(rx);
         self.last_run_at = Some(Instant::now());
-        self.handle = Some(tokio::spawn(run_checks_streaming(upgrade, rpc_url, mode, tx)));
+        self.handle = Some(tokio::spawn(run_checks_streaming(
+            upgrade,
+            rpc_url,
+            consensus_rpc,
+            expected_chain_id,
+            mode,
+            tx,
+        )));
     }
 
     fn reset(&mut self) {
@@ -742,7 +777,22 @@ impl UpgradesView {
         };
         let Some(rpc) = self.rpc_for_selected(resources) else { return };
         let mode = if ts > now { CheckMode::Before } else { CheckMode::After };
-        self.checks.start(self.selected_chain, rpc, upgrade, mode);
+        let chain = &self.chains[self.selected_chain];
+        let loaded = chain_name_matches_loaded(chain.display_name, &resources.config.name);
+        let consensus_rpc = loaded.then(|| resources.config.consensus_node_rpc.clone()).flatten();
+        let expected_chain_id = if loaded {
+            resources.config.chain_id.or(Some(chain.chain_id))
+        } else {
+            Some(chain.chain_id)
+        };
+        self.checks.start(
+            self.selected_chain,
+            rpc,
+            consensus_rpc,
+            expected_chain_id,
+            upgrade,
+            mode,
+        );
     }
 
     fn selected_check_spec(&self, now: u64) -> Option<&UpgradeSpec> {
@@ -1937,14 +1987,116 @@ async fn run_admin_activity_streaming(
 async fn run_checks_streaming(
     upgrade: &'static str,
     rpc_url: String,
+    consensus_rpc: Option<Url>,
+    expected_chain_id: Option<u64>,
     mode: CheckMode,
     tx: mpsc::Sender<CheckUpdate>,
 ) {
     match upgrade {
+        "Zenith" => {
+            run_zenith_checks_streaming(rpc_url, consensus_rpc, expected_chain_id, tx).await
+        }
         "Beryl" => run_beryl_checks_streaming(rpc_url, mode, tx).await,
         "Azul" => run_azul_checks_streaming(rpc_url, tx).await,
         "Jovian" => run_jovian_checks_streaming(rpc_url, mode, tx).await,
         _ => {}
+    }
+}
+
+fn zenith_check_result(check: ZenithCheck) -> CheckResult {
+    let passed = match check.status {
+        ZenithCheckStatus::Pass => Some(true),
+        ZenithCheckStatus::Fail => Some(false),
+        ZenithCheckStatus::Indeterminate => None,
+    };
+    let remediation = if check.status == ZenithCheckStatus::Fail {
+        format!("; remediation: {}", check.remediation)
+    } else {
+        String::new()
+    };
+    CheckResult {
+        passed,
+        detail: format!(
+            "{} · block {} {} · expected {}; observed {}{}",
+            check.endpoint,
+            check.block_number,
+            check.block_hash,
+            check.expected,
+            check.observed,
+            remediation
+        ),
+    }
+}
+
+async fn run_zenith_checks_streaming(
+    rpc_url: String,
+    consensus_rpc: Option<Url>,
+    expected_chain_id: Option<u64>,
+    tx: mpsc::Sender<CheckUpdate>,
+) {
+    if tx.send(CheckUpdate::Starting("chain_id".to_string())).await.is_err() {
+        return;
+    }
+
+    let report = match (Url::parse(&rpc_url), consensus_rpc) {
+        (Ok(el_rpc), Some(cl_rpc)) => {
+            ZenithChecker::new(expected_chain_id)
+                .check(&el_rpc, &cl_rpc, ZenithCheckTarget::Latest)
+                .await
+        }
+        (Err(error), _) => Err(anyhow::anyhow!("invalid execution RPC URL: {error}")),
+        (_, None) => Err(anyhow::anyhow!("consensus node RPC is not configured")),
+    };
+
+    match report {
+        Ok(report) => {
+            let mut checks: HashMap<_, _> =
+                report.checks.into_iter().map(|check| (check.name.clone(), check)).collect();
+            for name in ZENITH_CHECK_NAMES {
+                if tx.send(CheckUpdate::Starting((*name).to_string())).await.is_err() {
+                    return;
+                }
+                let result = checks.remove(*name).map_or_else(
+                    || CheckResult {
+                        passed: None,
+                        detail: format!("not applicable for {:?} snapshot", report.schedule),
+                    },
+                    zenith_check_result,
+                );
+                if tx
+                    .send(CheckUpdate::Completed { name: (*name).to_string(), result })
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
+        Err(error) => {
+            for (index, name) in ZENITH_CHECK_NAMES.iter().enumerate() {
+                if tx.send(CheckUpdate::Starting((*name).to_string())).await.is_err() {
+                    return;
+                }
+                let result = if index == 0 {
+                    CheckResult {
+                        passed: Some(false),
+                        detail: format!("Zenith check unavailable: {error}"),
+                    }
+                } else {
+                    CheckResult {
+                        passed: None,
+                        detail: "skipped because the Zenith checker is unavailable".to_string(),
+                    }
+                };
+                if tx
+                    .send(CheckUpdate::Completed { name: (*name).to_string(), result })
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -2579,6 +2731,7 @@ mod tests {
     use alloy_sol_types::SolEvent;
     use base_common_genesis::BaseUpgradeConfig;
     use crossterm::event::KeyModifiers;
+    use ratatui::{Terminal, backend::TestBackend};
 
     use super::*;
     use crate::config::MonitoringConfig;
@@ -2619,6 +2772,26 @@ mod tests {
 
         assert_eq!(target_upgrade(&chain, 15), Some("Azul"));
         assert_eq!(target_upgrade(&chain, 21), Some("Beryl"));
+    }
+
+    #[test]
+    fn live_rollup_config_schedules_zenith() {
+        let mut chain = ChainUpgrades {
+            display_name: "Devnet",
+            chain_id: ChainConfig::devnet().chain_id,
+            rpc: None,
+            specs: specs_from_config(ChainConfig::devnet()),
+        };
+
+        chain.apply_upgrades(&UpgradeConfig {
+            base: BaseUpgradeConfig { zenith: Some(30), ..BaseUpgradeConfig::default() },
+            ..UpgradeConfig::default()
+        });
+
+        let zenith = chain.specs.iter().find(|spec| spec.name == "Zenith").unwrap();
+        assert_eq!(zenith.timestamp, Some(30));
+        assert_eq!(target_upgrade(&chain, 29), Some("Zenith"));
+        assert_eq!(target_upgrade(&chain, 30), Some("Zenith"));
     }
 
     #[test]
@@ -2663,7 +2836,110 @@ mod tests {
         let names: Vec<_> =
             checkable_specs_display(&chain).into_iter().map(|spec| spec.name).collect();
 
-        assert_eq!(names, vec!["Beryl", "Azul", "Jovian"]);
+        assert_eq!(names, vec!["Zenith", "Beryl", "Azul", "Jovian"]);
+    }
+
+    #[test]
+    fn zenith_report_checks_map_to_existing_rows() {
+        let (tx, rx) = mpsc::channel(2);
+        let check = ZenithCheck {
+            name: "chain_id".to_string(),
+            status: ZenithCheckStatus::Fail,
+            endpoint: "http://el, http://cl".to_string(),
+            block_number: 42,
+            block_hash: B256::repeat_byte(0x44),
+            expected: "8453".to_string(),
+            observed: "el=8453, cl=10".to_string(),
+            remediation: "point all endpoints at the same chain".to_string(),
+        };
+        let result = zenith_check_result(check);
+        tx.try_send(CheckUpdate::Starting("chain_id".to_string())).unwrap();
+        tx.try_send(CheckUpdate::Completed { name: "chain_id".to_string(), result }).unwrap();
+        drop(tx);
+        let mut panel = ChecksPanel { rx: Some(rx), running: true, ..ChecksPanel::default() };
+
+        panel.poll();
+
+        let result = panel.results.get("chain_id").unwrap();
+        assert_eq!(result.passed, Some(false));
+        assert!(result.detail.contains("http://el, http://cl"));
+        assert!(result.detail.contains("block 42"));
+        assert!(result.detail.contains("expected 8453"));
+        assert!(result.detail.contains("observed el=8453, cl=10"));
+        assert!(result.detail.contains("remediation: point all endpoints at the same chain"));
+        assert!(!panel.running);
+    }
+
+    fn rendered_checks_panel(mode: CheckMode) -> String {
+        let backend = TestBackend::new(160, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let panel = ChecksPanel {
+            chain_idx: Some(0),
+            upgrade: Some("Zenith"),
+            mode: Some(mode),
+            rpc_url: "http://localhost:7545".to_string(),
+            ..ChecksPanel::default()
+        };
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_checks_panel(frame, area, &panel, 0, None, false);
+            })
+            .unwrap();
+        terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect()
+    }
+
+    #[test]
+    fn zenith_checks_render_before_and_after_modes() {
+        let before = rendered_checks_panel(CheckMode::Before);
+        let after = rendered_checks_panel(CheckMode::After);
+
+        assert!(before.contains("Zenith Checks (before)"));
+        assert!(after.contains("Zenith Checks (after)"));
+        assert!(before.contains("chain_id"));
+        assert!(after.contains("getter_timestamp_ms"));
+    }
+
+    #[tokio::test]
+    async fn starting_checks_cancels_the_previous_task() {
+        let previous = tokio::spawn(std::future::pending::<()>());
+        let previous_abort = previous.abort_handle();
+        let mut panel = ChecksPanel { handle: Some(previous), ..ChecksPanel::default() };
+
+        panel.start(
+            0,
+            "http://localhost:7545".to_string(),
+            None,
+            Some(1337),
+            "unknown",
+            CheckMode::Before,
+        );
+        tokio::task::yield_now().await;
+
+        assert!(previous_abort.is_finished());
+    }
+
+    #[tokio::test]
+    async fn unavailable_zenith_checker_fails_once_and_skips_unevaluated_rows() {
+        let (tx, mut rx) = mpsc::channel(64);
+
+        run_zenith_checks_streaming("http://localhost:7545".to_string(), None, Some(1337), tx)
+            .await;
+
+        let mut started = Vec::new();
+        let mut completed = Vec::new();
+        while let Some(update) = rx.recv().await {
+            match update {
+                CheckUpdate::Starting(name) => started.push(name),
+                CheckUpdate::Completed { name, result } => completed.push((name, result)),
+            }
+        }
+
+        assert!(ZENITH_CHECK_NAMES.iter().all(|name| started.iter().any(|seen| seen == name)));
+        assert_eq!(completed.len(), ZENITH_CHECK_NAMES.len());
+        assert_eq!(completed[0].1.passed, Some(false));
+        assert!(completed[0].1.detail.contains("consensus node RPC is not configured"));
+        assert!(completed[1..].iter().all(|(_, result)| result.passed.is_none()));
     }
 
     #[test]
