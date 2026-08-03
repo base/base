@@ -22,17 +22,12 @@ BUILDER_ENODE_ID="${BUILDER_ENODE_ID:-3255458e24278e31d5940f304b16300fdff3f6efd3
 SEQ1_P2P_KEY="${SEQ1_P2P_KEY:-7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6}"
 SEQ2_P2P_KEY="${SEQ2_P2P_KEY:-47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a}"
 
-# Multiproof fields — zero defaults disable multiproof in eth-l1 mode; overridden by devnet-l3-env.
-MULTIPROOF_CONFIG_HASH="${MULTIPROOF_CONFIG_HASH:-0x0000000000000000000000000000000000000000000000000000000000000000}"
-DEV_TEE_SIGNER="${DEV_TEE_SIGNER:-0x0000000000000000000000000000000000000000}"
-TEE_IMAGE_HASH="${TEE_IMAGE_HASH:-0x0000000000000000000000000000000000000000000000000000000000000000}"
-# When true, SystemDeploy skips the AggregateVerifier; the register-aggregate-verifier one-shot
-# deploys + registers it after L2 genesis with the real config hash (see devnet-l3-env).
-MULTIPROOF_DEFER_REGISTRATION="${MULTIPROOF_DEFER_REGISTRATION:-false}"
-# Anchor (L2 genesis output root) seeded into the AnchorStateRegistry. The real value is only
-# known after L2 genesis, so the main deploy uses a non-zero placeholder (required to pass
-# SystemDeploy's startingAnchorRoot validation) and the register-aggregate-verifier one-shot
-# recomputes the real root and initializes the registry. Exported for envsubst (Step 1).
+# AggregateVerifier is the only dispute game SystemDeploy knows how to deploy, so every devnet
+# (not just dev-multiproof) registers one; these are its required deploy-config fields. Zero
+# defaults deploy an inert verifier that never resolves games — dev-multiproof callers override
+# them with real values. Exported for envsubst (Step 1).
+export MULTIPROOF_CONFIG_HASH="${MULTIPROOF_CONFIG_HASH:-0x0000000000000000000000000000000000000000000000000000000000000000}"
+export TEE_IMAGE_HASH="${TEE_IMAGE_HASH:-0x0000000000000000000000000000000000000000000000000000000000000000}"
 export MULTIPROOF_GENESIS_OUTPUT_ROOT="${MULTIPROOF_GENESIS_OUTPUT_ROOT:-0x0000000000000000000000000000000000000000000000000000000000000001}"
 
 replace_output_file() {
@@ -149,7 +144,6 @@ echo "--- Step 2: Deploying L1 contracts ---"
   cd /contracts
   FOUNDRY_SCRIPT_EXECUTION_PROTECTION=false \
     DEPLOY_CONFIG_PATH="$WORKDIR/deploy-config/devnet.json" \
-    MULTIPROOF_DEFER_REGISTRATION="$MULTIPROOF_DEFER_REGISTRATION" \
     forge script scripts/deploy/SystemDeploy.s.sol:SystemDeploy \
     --sender "$DEPLOYER_ADDR" \
     --rpc-url "$L1_RPC_URL" \
@@ -157,15 +151,6 @@ echo "--- Step 2: Deploying L1 contracts ---"
     --broadcast \
     --slow
 )
-
-# When deferring AggregateVerifier registration, persist the deploy outfile to the shared
-# volume. The deploy ran in this container's ephemeral /contracts/deployments, but the
-# post-genesis register-aggregate-verifier one-shot runs in a fresh container and reloads
-# these addresses (via Artifacts.load) to deploy + register the verifier.
-if [ "$MULTIPROOF_DEFER_REGISTRATION" = "true" ]; then
-  cp "$WORKDIR/deployments/${L1_CHAIN_ID}-deploy.json" "$OUTPUT_DIR/${L1_CHAIN_ID}-deploy.json"
-  echo "Copied deploy outfile to $OUTPUT_DIR/${L1_CHAIN_ID}-deploy.json for deferred registration"
-fi
 
 # Step 3: Generate L2 genesis allocs via forge script
 # Uses L2GenesisDevnet.s.sol wrapper that reads deploy-config + L1 addresses,

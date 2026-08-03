@@ -5,17 +5,8 @@ _ha := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ha.yml"
 _base := "-f etc/docker/docker-compose.yml"
 _env := "--env-file etc/docker/devnet-env"
 _yaml_to_env := "etc/scripts/yaml-to-compose-env.py"
-# Mode-specific env layers + compose profiles.
-# eth-l1 (default): Ethereum L1 (reth + lighthouse), blob batches.
-# base-l1 (L3):     Base L1 (base-anvil), beaconless, calldata batches.
-_env_eth := "--env-file etc/docker/devnet-env --env-file etc/docker/devnet-eth-env"
-# devnet-tee.env (gitignored) carries DEV_TEE_SIGNER_KEY — the private key for the dev TEE
-# signer registered on-chain during SystemDeploy. nitro-local signs proofs with it, so it must
-# match DEV_TEE_SIGNER in devnet-l3-env. Layered last so `${DEV_TEE_SIGNER_KEY}` interpolates.
-_env_l3 := "--env-file etc/docker/devnet-env --env-file etc/docker/devnet-l3-env --env-file etc/docker/devnet-tee.env"
 _eth := "--profile eth-l1"
-_l3 := "--profile base-l1"
-_all_profiles := "--profile eth-l1 --profile base-l1 --profile profiling"
+_all_profiles := "--profile eth-l1 --profile profiling"
 
 # Show devnet commands
 default:
@@ -23,25 +14,17 @@ default:
 
 # Stops devnet, deletes data, and starts fresh (3-node HA conductor cluster)
 up zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "ha" "eth" {{ quote(zk) }}
+    just --justfile {{ source_file() }} _up-devnet "ha" {{ quote(zk) }}
 
 # Stops devnet, deletes data, and starts fresh with a single sequencer (no conductor)
 up-single zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "base" "eth" {{ quote(zk) }}
-
-# Stops devnet, starts fresh as an L3 settling to Base (base-anvil L1, HA conductor cluster)
-up-l3 zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "ha" "l3" {{ quote(zk) }}
-
-# Stops devnet, starts fresh as an L3 settling to Base with a single sequencer (no conductor)
-up-l3-single zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "base" "l3" {{ quote(zk) }}
+    just --justfile {{ source_file() }} _up-devnet "base" {{ quote(zk) }}
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
 profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
-    docker compose {{ _env_eth }} {{ _ha }} {{ _eth }} --profile profiling up -d --no-build
+    docker compose {{ _env }} {{ _ha }} {{ _eth }} --profile profiling up -d --no-build
 
-# Stops devnet and deletes all data (covers both L1 modes)
+# Stops devnet and deletes all data
 down:
     -docker compose {{ _env }} {{ _ha }} {{ _all_profiles }} down
     -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
@@ -109,7 +92,7 @@ conductor:
 
 # Stops devnet+ingress, deletes data, and starts fresh with full ingress stack (eth-l1)
 ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")
-    docker compose {{ _env_eth }} {{ _base }} -f etc/docker/docker-compose.ingress.yml {{ _eth }} up -d --no-build
+    docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml {{ _eth }} up -d --no-build
 
 # Stops devnet+ingress and deletes all data
 ingress-down:
@@ -145,7 +128,6 @@ pull-images:
         $(if [ -n "$CONTRACTS_COMMIT" ]; then echo "--build-arg CONTRACTS_COMMIT=$CONTRACTS_COMMIT"; fi) .
     docker pull ghcr.io/paradigmxyz/reth:v1.11.4
     docker pull sigp/lighthouse:v8.0.1
-    docker pull ghcr.io/base/base-anvil:main
 
 # Runs system tests (requires Docker)
 tests: _install-nextest _build-contracts
@@ -174,13 +156,6 @@ _build-setup-image:
     docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet \
         $(if [ -n "$CONTRACTS_COMMIT" ]; then echo "--build-arg CONTRACTS_COMMIT=$CONTRACTS_COMMIT"; fi) .
 
-# nitro-host-local image — used by the L3 dev-multiproof compute-config-hash one-shot (and the
-# nitro-local prover service). Built with the dev profile to match the other devnet images.
-[private]
-_build-nitro-host-local:
-    docker build -t nitro-host-local:local -f etc/docker/Dockerfile.nitro-host-local \
-        --build-arg PROFILE=dev .
-
 [private]
 _build-rust-images group profile='dev':
     #!/usr/bin/env bash
@@ -201,11 +176,10 @@ _build-rust-images group profile='dev':
     PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
-_up-devnet compose_profile l1_mode zk:
+_up-devnet compose_profile zk:
     #!/usr/bin/env bash
     set -euo pipefail
     compose_profile={{ quote(compose_profile) }}
-    l1_mode={{ quote(l1_mode) }}
     zk_mode={{ quote(zk) }}
     zk_mode="${zk_mode#zk=}"
 
@@ -218,38 +192,14 @@ _up-devnet compose_profile l1_mode zk:
         ;;
     esac
 
-    # Select the L1 parent stack: eth (reth + lighthouse, blob DA) or l3 (base-anvil,
-    # calldata DA). Each layers its own env file and activates the matching compose profile.
-    case "$l1_mode" in
-      eth) env_files=({{ _env_eth }}); l1_profile=({{ _eth }}) ;;
-      l3)
-        env_files=({{ _env_l3 }}); l1_profile=({{ _l3 }})
-        # devnet-tee.env is gitignored and has no committed default; fail early with a fix-it
-        # hint rather than letting docker compose emit a cryptic "env file not found" error.
-        if [ ! -f etc/docker/devnet-tee.env ]; then
-          echo "ERROR: etc/docker/devnet-tee.env not found (required for L3 dev-multiproof)." >&2
-          echo "It carries DEV_TEE_SIGNER_KEY — the dev TEE signer key registered on-chain during" >&2
-          echo "SystemDeploy; nitro-local signs proofs with it. It must match DEV_TEE_SIGNER in" >&2
-          echo "devnet-l3-env. Create it with:" >&2
-          echo "  echo 'DEV_TEE_SIGNER_KEY=0x<private-key>' > etc/docker/devnet-tee.env" >&2
-          exit 1
-        fi
-        ;;
-      *)
-        echo "ERROR: l1 mode must be 'eth' or 'l3' (got '${l1_mode}')" >&2
-        exit 1
-        ;;
-    esac
+    env_files=({{ _env }})
+    l1_profile=({{ _eth }})
 
     case "$zk_mode" in
       dry-run)
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        if [ "$l1_mode" = "l3" ]; then
-          just --justfile {{ source_file() }} _build-nitro-host-local
-          just --justfile {{ source_file() }} _build-rust-images "devnet-l3" "dev"
-        fi
         docker compose "${env_files[@]}" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build --remove-orphans
         ;;
       cluster)
@@ -297,10 +247,6 @@ _up-devnet compose_profile l1_mode zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        if [ "$l1_mode" = "l3" ]; then
-          just --justfile {{ source_file() }} _build-nitro-host-local
-          just --justfile {{ source_file() }} _build-rust-images "devnet-l3" "dev"
-        fi
         docker compose "${env_files[@]}" --env-file "$cluster_env" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build --remove-orphans
         ;;
       *)
