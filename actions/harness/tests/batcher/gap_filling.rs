@@ -235,6 +235,141 @@ async fn batcher_gap_fill_with_safe_head_tracking() {
 }
 
 // ---------------------------------------------------------------------------
+// B2. Gap-filling triggered purely by a safe-head regression (L1 reorg model)
+// ---------------------------------------------------------------------------
+
+/// End-to-end coverage of the safe-head regression recovery path. A regression
+/// on the watch channel, and nothing else, must let the batcher fill a gap and
+/// let the verifier derive through it. There is no [`signal_reorg`] in the
+/// recovery phase, unlike [`batcher_gap_fill_with_safe_head_tracking`].
+///
+/// This exercises the production wiring for the permanent-gap fix. After an L1
+/// reorg drops batches that had advanced the safe head, the rollup node
+/// re-derives a lower safe head, which arrives here as a watch-channel
+/// regression. The driver must react to that regression alone by resetting the
+/// encoder and restarting catchup from `safe_head + 1`, so the re-posted blocks
+/// fill the gap.
+///
+/// Note on discrimination. This test drives the full wired path but is not by
+/// itself a fail-without-fix guarantee, because the action harness prunes
+/// fully-confirmed blocks from the encoder buffer (see
+/// `BatchEncoder::confirm`), which empties it and sidesteps the parent-hash
+/// guard on re-post. The exact regression behavior — reset plus
+/// `reset_catchup(safe_head + 1)`, and never pruning on a regression — is pinned
+/// by the discriminating unit tests `safe_head_regression_resets_and_catches_up`
+/// and `safe_head_advance_prunes_without_reset` in `base-batcher-core`, and by
+/// `poll_propagates_regression` in `base-batcher-service`.
+///
+/// Scenario:
+///
+/// 1. **Phase 1** — Batcher follows a divergent node (safe head 7 via
+///    [`signal_reorg`]) and posts blocks 8-10. They land on L1 but are not
+///    derivable because blocks 6-7 are missing, so the verifier stays at safe
+///    head 5.
+///
+/// 2. **Phase 2** — The batcher's safe head latches at 7, the divergent node's
+///    head. This is the bug precondition: a stale safe head sitting above the
+///    true one.
+///
+/// 3. **Phase 3** — The L1 reorg drops those batches and the rollup node
+///    re-derives the true safe head of 5. It arrives as a watch-channel
+///    **regression** from 7 down to 5, with no [`signal_reorg`]. The driver must
+///    reset the encoder and set `catchup_from = 6` on its own, so the re-posted
+///    blocks 6-10 fill the gap and the verifier derives through to 10.
+///
+/// [`signal_reorg`]: Batcher::signal_reorg
+/// [`batcher_gap_fill_with_safe_head_tracking`]: super::batcher_gap_fill_with_safe_head_tracking
+#[tokio::test]
+async fn batcher_gap_fill_on_safe_head_regression() {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+
+    let mut blocks = Vec::with_capacity(10);
+    for _ in 0..10 {
+        blocks.push(sequencer.build_next_block_with_single_transaction().await);
+    }
+
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    // Wire a safe-head watch channel into the batcher, seeded at 0.
+    let (safe_head_tx, safe_head_rx) = tokio::sync::watch::channel(0u64);
+    let mut batcher = Batcher::with_safe_head_rx(
+        ActionL2Source::new(),
+        &h.rollup_config,
+        batcher_cfg.clone(),
+        safe_head_rx,
+    );
+
+    // Establish the initial safe head at 5 by posting blocks 1-5.
+    for block in &blocks[..5] {
+        batcher.push_block(block.clone());
+    }
+    batcher.advance(&mut h.l1).await;
+    chain.push(h.l1.tip().clone());
+
+    node.initialize().await;
+    let derived = node.run_until_idle().await;
+    assert_eq!(derived, 5, "setup: expected 5 L2 blocks derived");
+    assert_eq!(node.l2_safe_number(), 5, "setup: safe head must be 5");
+    safe_head_tx.send(5).expect("watch channel open");
+    tokio::task::yield_now().await;
+
+    // ----- Phase 1: follow a divergent node, post gap blocks 8-10 -----
+    // signal_reorg models the batcher briefly following a divergent chain
+    // (node B, safe head 7). Blocks 8-10 land on L1 but are not derivable, and
+    // remain buffered in the encoder with the tip at block 10.
+    batcher.signal_reorg(DummyL2Info::at_number(7)).await;
+    for block in &blocks[7..10] {
+        batcher.push_block(block.clone());
+    }
+    batcher.advance(&mut h.l1).await;
+    chain.push(h.l1.tip().clone());
+
+    let derived = node.run_until_idle().await;
+    assert_eq!(node.l2_safe_number(), 5, "Phase 1: safe head must stay at 5 (gap 6-7 missing)");
+    assert_eq!(derived, 0, "Phase 1: no blocks derived");
+
+    // ----- Phase 2: latch the batcher safe head at the divergent head 7 -----
+    // 7 is above blocks 8-10, so this does NOT prune them from the encoder.
+    // They stay buffered with the tip at 10, the stale-forward precondition.
+    safe_head_tx.send(7).expect("watch channel open");
+    tokio::task::yield_now().await;
+
+    // ----- Phase 3: the L1 reorg drops the batches; safe head regresses to 5 -----
+    // No signal_reorg. The regression alone must reset the encoder and set
+    // catchup_from = 6. Yield enough for the driver to process the reset.
+    safe_head_tx.send(5).expect("watch channel open");
+    for _ in 0..4 {
+        tokio::task::yield_now().await;
+    }
+
+    // Post blocks 6-10 from the true safe head to fill the gap.
+    for block in &blocks[5..10] {
+        batcher.push_block(block.clone());
+    }
+    batcher.advance(&mut h.l1).await;
+    chain.push(h.l1.tip().clone());
+
+    let derived = node.run_until_idle().await;
+    assert_eq!(derived, 5, "Phase 3: expected 5 L2 blocks derived (6-10)");
+    assert_eq!(
+        node.l2_safe_number(),
+        10,
+        "Phase 3: safe head must reach 10 after the regression-triggered gap fill"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // C. Gap-filling with separate batcher instances (restart model)
 // ---------------------------------------------------------------------------
 

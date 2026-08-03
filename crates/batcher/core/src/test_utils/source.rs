@@ -1,9 +1,40 @@
 //! Test [`UnsafeBlockSource`] and [`L1HeadSource`] implementations.
 
+use std::sync::{Arc, Mutex};
+
 use async_trait::async_trait;
 use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
+
+/// [`UnsafeBlockSource`] that parks the select arm forever but records every
+/// [`reset_catchup`](UnsafeBlockSource::reset_catchup) call.
+///
+/// Use this to assert the block number the driver restarts sequential catchup
+/// from after a reorg or a safe-head regression.
+#[derive(Debug, Clone, Default)]
+pub struct RecordingSource {
+    /// `start_from` values passed to `reset_catchup`, in call order.
+    pub catchups: Arc<Mutex<Vec<u64>>>,
+}
+
+impl RecordingSource {
+    /// Create a new recording source backed by the given shared vector.
+    pub const fn new(catchups: Arc<Mutex<Vec<u64>>>) -> Self {
+        Self { catchups }
+    }
+}
+
+#[async_trait]
+impl UnsafeBlockSource for RecordingSource {
+    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+        std::future::pending().await
+    }
+
+    fn reset_catchup(&mut self, start_from: u64) {
+        self.catchups.lock().unwrap().push(start_from);
+    }
+}
 
 /// [`UnsafeBlockSource`] that parks the select arm forever.
 ///

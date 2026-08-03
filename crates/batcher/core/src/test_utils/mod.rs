@@ -9,7 +9,7 @@ pub use pipeline::{OneReorgPipeline, Recorded, ReorgPipeline, TrackingPipeline};
 #[cfg(any(test, feature = "test-utils"))]
 mod source;
 #[cfg(any(test, feature = "test-utils"))]
-pub use source::{OneBlockSource, PendingL1HeadSource, PendingSource};
+pub use source::{OneBlockSource, PendingL1HeadSource, PendingSource, RecordingSource};
 
 #[cfg(any(test, feature = "test-utils"))]
 mod builder;

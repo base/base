@@ -52,6 +52,14 @@ where
     l1_head_source: Option<L>,
     /// Optional external L2 safe head feed for pruning confirmed blocks.
     safe_head_rx: Option<tokio::sync::watch::Receiver<u64>>,
+    /// Highest safe L2 head observed from [`Self::safe_head_rx`].
+    ///
+    /// Used to detect a safe-head *regression*, which happens when an L1 reorg
+    /// drops already-submitted batches and the rollup node re-derives a lower
+    /// safe head. On regression the driver resets the pipeline and re-fetches
+    /// from the new (lower) safe head so the orphaned block range is re-batched
+    /// instead of skipped forever.
+    last_safe_head: u64,
     /// Maximum wall-clock time to wait for in-flight submissions to settle
     /// when draining on cancellation or source exhaustion.
     drain_timeout: Duration,
@@ -101,6 +109,7 @@ where
             throttle,
             l1_head_source: Some(l1_head_source),
             safe_head_rx: None,
+            last_safe_head: 0,
             drain_timeout: config.drain_timeout,
             stopped: false,
             admin_rx: None,
@@ -110,10 +119,18 @@ where
 
     /// Attach an external L2 safe head watch channel.
     ///
-    /// When the receiver fires, the pipeline's [`prune_safe`](BatchPipeline::prune_safe)
-    /// is called with the new safe L2 block number, allowing the encoder to
-    /// free blocks that are confirmed safe on L2.
+    /// When the receiver fires with a higher value, the pipeline's
+    /// [`prune_safe`](BatchPipeline::prune_safe) is called with the new safe L2
+    /// block number, allowing the encoder to free blocks that are confirmed safe
+    /// on L2. When it fires with a *lower* value (a regression caused by an L1
+    /// reorg dropping already-submitted batches), the driver resets the pipeline
+    /// and restarts catchup from the new safe head so the orphaned range is
+    /// re-batched. See [`Self::last_safe_head`].
+    ///
+    /// The current watch value seeds [`Self::last_safe_head`] so a regression
+    /// relative to the startup safe head is detected on the first update.
     pub fn with_safe_head_rx(mut self, rx: tokio::sync::watch::Receiver<u64>) -> Self {
+        self.last_safe_head = *rx.borrow();
         self.safe_head_rx = Some(rx);
         self
     }
@@ -208,8 +225,28 @@ where
                     debug!(l1_head = %n, "L1 head advanced via source");
                 }
                 DriverEvent::SafeHead(n) => {
-                    self.pipeline.prune_safe(n);
-                    debug!(safe_l2_number = %n, "pruned safe blocks via watch");
+                    if n < self.last_safe_head {
+                        // The safe head moved backward, which means an L1 reorg
+                        // dropped batches that had already advanced it. Recover
+                        // exactly like an L2 reorg: discard in-flight submissions,
+                        // reset the encoder, and restart sequential catchup from
+                        // the new (lower) safe head so the orphaned blocks are
+                        // re-batched instead of skipped forever.
+                        let catchup_from = n + 1;
+                        warn!(
+                            old_safe_head = %self.last_safe_head,
+                            new_safe_head = %n,
+                            catchup_from = %catchup_from,
+                            "safe head regressed after L1 reorg, resetting pipeline and catching up from safe head"
+                        );
+                        self.submissions.discard();
+                        self.pipeline.reset();
+                        self.source.reset_catchup(catchup_from);
+                    } else {
+                        self.pipeline.prune_safe(n);
+                        debug!(safe_l2_number = %n, "pruned safe blocks via watch");
+                    }
+                    self.last_safe_head = n;
                 }
                 DriverEvent::L1SourceClosed => {
                     debug!("L1 head source closed, disabling arm");
@@ -456,7 +493,8 @@ mod tests {
         event::DriverEvent,
         test_utils::{
             DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager,
-            NeverConfirmTxManager, Recorded, SubmissionStub, TrackingPipeline,
+            NeverConfirmTxManager, PendingL1HeadSource, Recorded, RecordingSource, SubmissionStub,
+            TrackingPipeline,
         },
     };
 
@@ -778,6 +816,106 @@ mod tests {
 
             let event = driver.next_event().await.expect("next_event should succeed");
             assert!(matches!(event, DriverEvent::SafeHead(7)));
+        });
+    }
+
+    /// A forward safe-head update prunes confirmed blocks and must NOT reset the
+    /// pipeline or restart catchup.
+    #[test]
+    fn safe_head_advance_prunes_without_reset() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let catchups = Arc::new(Mutex::new(Vec::<u64>::new()));
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+
+            let (safe_tx, safe_rx) = watch::channel(0u64);
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                RecordingSource::new(Arc::clone(&catchups)),
+                NeverConfirmTxManager,
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                    force_blobs_when_throttling: false,
+                },
+                DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+                PendingL1HeadSource,
+            )
+            .with_safe_head_rx(safe_rx);
+
+            let handle = ctx.spawn(driver.run());
+
+            safe_tx.send(5).expect("driver holds the safe-head receiver");
+            ctx.sleep(Duration::from_millis(50)).await;
+
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+
+            let recorded = recorded.lock().unwrap();
+            assert_eq!(recorded.safe_numbers, vec![5], "forward safe head must prune at 5");
+            assert_eq!(recorded.resets, 0, "forward safe head must not reset the pipeline");
+            assert!(
+                catchups.lock().unwrap().is_empty(),
+                "forward safe head must not restart catchup"
+            );
+        });
+    }
+
+    /// A safe-head *regression* models an L1 reorg that dropped already-submitted
+    /// batches. The driver must reset the pipeline and restart sequential catchup
+    /// from `regressed_safe_head + 1` so the orphaned block range is re-batched
+    /// instead of skipped forever. A regression must NOT be treated as a prune.
+    #[test]
+    fn safe_head_regression_resets_and_catches_up() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let catchups = Arc::new(Mutex::new(Vec::<u64>::new()));
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+
+            let (safe_tx, safe_rx) = watch::channel(0u64);
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                RecordingSource::new(Arc::clone(&catchups)),
+                NeverConfirmTxManager,
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                    force_blobs_when_throttling: false,
+                },
+                DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+                PendingL1HeadSource,
+            )
+            .with_safe_head_rx(safe_rx);
+
+            let handle = ctx.spawn(driver.run());
+
+            // Advance the safe head to 10 (batches confirmed on L1).
+            safe_tx.send(10).expect("driver holds the safe-head receiver");
+            ctx.sleep(Duration::from_millis(50)).await;
+            // An L1 reorg drops those batches; the rollup node re-derives a lower
+            // safe head of 6.
+            safe_tx.send(6).expect("driver holds the safe-head receiver");
+            ctx.sleep(Duration::from_millis(50)).await;
+
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+
+            let recorded = recorded.lock().unwrap();
+            assert_eq!(
+                recorded.safe_numbers,
+                vec![10],
+                "only the forward update should prune; the regression must not"
+            );
+            assert_eq!(recorded.resets, 1, "the regression must reset the pipeline exactly once");
+            assert_eq!(
+                *catchups.lock().unwrap(),
+                vec![7],
+                "catchup must restart from regressed_safe_head + 1 = 7"
+            );
         });
     }
 

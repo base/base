@@ -25,12 +25,15 @@ impl SafeHeadProvider for jsonrpsee::http_client::HttpClient {
     }
 }
 
-/// Polls a [`SafeHeadProvider`] at a fixed interval and advances a watch
-/// channel when the safe L2 head moves forward.
+/// Polls a [`SafeHeadProvider`] at a fixed interval and republishes the safe L2
+/// head into a watch channel whenever it changes.
 ///
 /// The poller waits `poll_interval` before the first call, then loops.
-/// When the safe head advances, it calls [`watch::Sender::send_if_modified`]
-/// so receivers are only woken when the value actually changes.
+/// When the safe head changes in either direction, it calls
+/// [`watch::Sender::send_if_modified`] so receivers are only woken on a real
+/// change. Regressions are published too: an L1 reorg can drop already-submitted
+/// batches and move the safe head backward, and the driver relies on seeing that
+/// to re-batch the orphaned range rather than skipping it.
 ///
 /// Stops cleanly when the runtime passed to [`run`](Self::run) is cancelled.
 /// At most one in-flight RPC call is waited for before exit.
@@ -64,8 +67,14 @@ impl<C: SafeHeadProvider> SafeHeadPoller<C> {
             }
             match self.provider.safe_l2_number().await {
                 Ok(n) => {
+                    // Publish the rollup node's current safe head verbatim,
+                    // including regressions. An L1 reorg can drop batches that
+                    // already advanced the safe head, moving it backward, and the
+                    // driver must observe that to re-batch the orphaned range.
+                    // Only skip the update when the value is unchanged so
+                    // receivers are not woken for no-ops.
                     self.safe_head_tx.send_if_modified(|old| {
-                        if n > *old {
+                        if n != *old {
                             *old = n;
                             true
                         } else {
@@ -121,6 +130,15 @@ mod tests {
     impl SafeHeadProvider for ErrorProvider {
         async fn safe_l2_number(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
             Err("rpc error".into())
+        }
+    }
+
+    /// Always returns the same fixed value.
+    struct ConstantProvider(u64);
+
+    impl SafeHeadProvider for ConstantProvider {
+        async fn safe_l2_number(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(self.0)
         }
     }
 
@@ -181,7 +199,7 @@ mod tests {
         });
     }
 
-    /// When the provider returns the same or lower value, `send_if_modified`
+    /// When the provider keeps returning the current value, `send_if_modified`
     /// must not notify receivers. Check while the poller is still running
     /// (sender alive) so a dropped-sender signal cannot mask a missing change.
     #[test]
@@ -191,20 +209,43 @@ mod tests {
             // Mark the initial value as seen so `changed()` only fires on a new send.
             let _ = rx.borrow_and_update();
 
-            // MockProvider with no queued values returns 0, which is < 10 (initial),
-            // so send_if_modified will always return false.
-            let provider = MockProvider { values: Arc::new(Mutex::new(vec![])) };
-
-            let poller = SafeHeadPoller::new(provider, Duration::from_secs(1), tx);
+            // ConstantProvider always returns 10, equal to the current value, so
+            // send_if_modified always returns false.
+            let poller = SafeHeadPoller::new(ConstantProvider(10), Duration::from_secs(1), tx);
             let handle = ctx.spawn(poller.run(ctx.clone()));
             let timeout_ctx = ctx.clone();
 
             tokio::select! {
                 changed = rx.changed() => {
-                    panic!("watch fired without advancement: {changed:?}");
+                    panic!("watch fired without a value change: {changed:?}");
                 }
                 _ = timeout_ctx.sleep(Duration::from_secs(3)) => {}
             }
+
+            ctx.cancel();
+            handle.await.expect("poller task should stop");
+        });
+    }
+
+    /// When the provider reports a *lower* safe head (an L1 reorg dropped
+    /// already-submitted batches and the rollup node re-derived a lower safe
+    /// head), the poller must publish the regression so the driver can re-batch
+    /// the orphaned range. This is the core of the gap-after-reorg fix.
+    #[test]
+    fn poll_propagates_regression() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (tx, mut rx) = watch::channel(10u64);
+            // Mark the initial value (10) as seen so `changed()` fires on the regression.
+            let _ = rx.borrow_and_update();
+
+            // Provider reports a safe head of 5, below the current 10.
+            let provider = MockProvider { values: Arc::new(Mutex::new(vec![5])) };
+
+            let poller = SafeHeadPoller::new(provider, Duration::from_secs(1), tx);
+            let handle = ctx.spawn(poller.run(ctx.clone()));
+
+            rx.changed().await.expect("sender should still be alive");
+            assert_eq!(*rx.borrow(), 5, "safe head must regress to the lower reported value");
 
             ctx.cancel();
             handle.await.expect("poller task should stop");
