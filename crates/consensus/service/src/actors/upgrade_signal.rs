@@ -1,10 +1,12 @@
 //! Upgrade signal metrics observer actor.
 
+use core::time::Duration;
+
 use alloy_provider::RootProvider;
 use base_consensus_providers::L1RpcProvider;
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalError,
-    UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
+    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetricLayer,
+    UpgradeSignalMonitor, UpgradeSignalRefresher,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -73,6 +75,8 @@ pub struct UpgradeSignalMetricsActor {
     pub reader: AlloyUpgradeSignalReader,
     /// Live metrics state.
     pub monitor: UpgradeSignalMonitor,
+    /// Interval between live L1 upgrade signal contract reads.
+    pub poll_interval: Duration,
     /// Runtime refresher applied automatically on observed live updates, when enabled.
     pub refresher: Option<UpgradeSignalRefresher>,
     /// Cancellation token shared with the rollup node.
@@ -87,10 +91,11 @@ impl UpgradeSignalMetricsActor {
         refresher: Option<UpgradeSignalRefresher>,
         cancellation: CancellationToken,
     ) -> Self {
+        let poll_interval = config.l1_block_tag.poll_interval();
         let reader = config.reader(l1_provider);
         let monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus);
 
-        Self { reader, monitor, refresher, cancellation }
+        Self { reader, monitor, poll_interval, refresher, cancellation }
     }
 
     /// Polls L1 upgrade signal state, records metrics, and auto-applies observed changes when
@@ -118,7 +123,7 @@ impl NodeActor for UpgradeSignalMetricsActor {
 
     async fn start(mut self, _ctx: ()) -> Result<(), Self::Error> {
         let cancellation = self.cancellation.clone();
-        let mut interval = tokio::time::interval(UpgradeSignalDefaults::POLL_INTERVAL);
+        let mut interval = tokio::time::interval(self.poll_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
