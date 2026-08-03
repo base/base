@@ -327,7 +327,7 @@ impl ZenithChecker {
 
         let active = rollup.upgrades.base.zenith.is_some_and(|at| full_hash.header.timestamp >= at);
         let envelopes: Vec<_> =
-            full_hash.transactions.txns().map(|tx| tx.as_ref().clone()).collect();
+            full_hash.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect();
         let metadata = active
             .then(|| BaseTimeUpdateTx::extract_from_transactions(&envelopes, number))
             .transpose();
