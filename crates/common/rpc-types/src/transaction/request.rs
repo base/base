@@ -4,7 +4,7 @@ use alloy_consensus::{
     Sealed, SignableTransaction, Signed, TxEip1559, TxEip4844, TypedTransaction,
 };
 use alloy_eips::eip7702::SignedAuthorization;
-#[cfg(feature = "reth")]
+#[cfg(feature = "network")]
 use alloy_network::TransactionBuilder;
 use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
@@ -451,7 +451,7 @@ impl TransactionBuilder7702 for BaseTransactionRequest {
     }
 }
 
-#[cfg(feature = "reth")]
+#[cfg(feature = "network")]
 impl TransactionBuilder for BaseTransactionRequest {
     fn chain_id(&self) -> Option<ChainId> {
         self.as_ref().chain_id()

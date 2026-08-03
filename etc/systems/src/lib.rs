@@ -68,10 +68,13 @@ pub use setup::{
 };
 
 mod smoke;
-pub use smoke::{SystemTestStack, SystemTestStackBuilder};
+pub use smoke::{RuntimeUpgradeSignalGuard, SystemTestStack, SystemTestStackBuilder};
 
 mod system_config;
 pub use system_config::{StableSystemTestConfig, SystemTestPorts};
+
+mod upgrade_signal;
+pub use upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 
 mod urls;
 pub use urls::SystemTestUrls;

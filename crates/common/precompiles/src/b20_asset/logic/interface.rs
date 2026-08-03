@@ -73,6 +73,21 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
         privileged: bool,
     ) -> Result<()>;
 
+    /// Transfer-based seize: reassigns a seizable `from`'s balance to `to`
+    /// (`Transfer` -> `Memo` -> `Seized`). Introduced at `AssetV2`.
+    /// An admin op with no factory-privileged path, so the role is always enforced.
+    fn seize_with_memo(
+        &self,
+        _token: &mut B20AssetToken<S, A>,
+        _caller: Address,
+        _from: Address,
+        _to: Address,
+        _amount: U256,
+        _memo: B256,
+    ) -> Result<()> {
+        reject_frozen_selector!()
+    }
+
     /// Pauses the given features.
     fn pause(
         &self,

@@ -125,12 +125,26 @@ impl ResolvedChainConfig {
 pub(crate) struct ChainResolver {
     /// The requested chain input.
     pub(crate) chain: ChainArg,
+    /// Whether the chain was explicitly supplied through CLI args or env.
+    pub(crate) chain_explicitly_set: bool,
 }
 
 impl ChainResolver {
     /// Creates a new chain resolver.
-    pub(crate) const fn new(chain: ChainArg) -> Self {
-        Self { chain }
+    pub(crate) fn new(chain: Option<ChainArg>) -> Self {
+        let chain_explicitly_set = chain.is_some();
+        Self { chain: chain.unwrap_or_default(), chain_explicitly_set }
+    }
+
+    /// Rejects top-level chain selectors before dispatching to reth-derived subcommands.
+    pub(crate) fn reject_for_reth_command(&self, command: &str) -> eyre::Result<()> {
+        if !self.chain_explicitly_set {
+            return Ok(());
+        }
+
+        eyre::bail!(
+            "`base --chain`/`BASE_CHAIN` only applies to integrated node commands; pass `--chain` to `{command}` instead"
+        );
     }
 
     /// Resolves the configured chain input.
@@ -190,8 +204,9 @@ mod tests {
     #[allow(clippy::result_large_err)]
     fn resolves_mainnet_builtin() {
         with_cleared_env(|_| {
-            let resolved =
-                ChainResolver::new(ChainArg::BuiltIn("mainnet".to_owned())).resolve().unwrap();
+            let resolved = ChainResolver::new(Some(ChainArg::BuiltIn("mainnet".to_owned())))
+                .resolve()
+                .unwrap();
 
             assert_eq!(resolved.name, "mainnet");
             assert_eq!(resolved.l2_chain_id, 8453);
@@ -206,8 +221,9 @@ mod tests {
     #[allow(clippy::result_large_err)]
     fn resolves_sepolia_builtin() {
         with_cleared_env(|_| {
-            let resolved =
-                ChainResolver::new(ChainArg::BuiltIn("sepolia".to_owned())).resolve().unwrap();
+            let resolved = ChainResolver::new(Some(ChainArg::BuiltIn("sepolia".to_owned())))
+                .resolve()
+                .unwrap();
 
             assert_eq!(resolved.name, "sepolia");
             assert_eq!(resolved.l2_chain_id, 84532);
@@ -221,8 +237,9 @@ mod tests {
     #[allow(clippy::result_large_err)]
     fn resolves_zeronet_builtin() {
         with_cleared_env(|_| {
-            let resolved =
-                ChainResolver::new(ChainArg::BuiltIn("zeronet".to_owned())).resolve().unwrap();
+            let resolved = ChainResolver::new(Some(ChainArg::BuiltIn("zeronet".to_owned())))
+                .resolve()
+                .unwrap();
 
             assert_eq!(resolved.name, "zeronet");
             assert_eq!(resolved.l2_chain_id, 763360);
@@ -237,7 +254,7 @@ mod tests {
     fn resolves_dev_builtin() {
         with_cleared_env(|_| {
             let resolved =
-                ChainResolver::new(ChainArg::BuiltIn("dev".to_owned())).resolve().unwrap();
+                ChainResolver::new(Some(ChainArg::BuiltIn("dev".to_owned()))).resolve().unwrap();
 
             assert_eq!(resolved.name, "dev");
             assert_eq!(resolved.l2_chain_id, 1337);

@@ -25,6 +25,9 @@ alloy-eips = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
 
+# network
+alloy-network = { workspace = true, optional = true }
+
 # Serde
 serde_json = { workspace = true, features = ["alloc"] }
 serde = { workspace = true, features = ["derive", "alloc"] }
@@ -38,7 +41,6 @@ reth-rpc-convert = { workspace = true, optional = true }
 
 # signing
 alloy-signer = { workspace = true, optional = true }
-alloy-network = { workspace = true, optional = true }
 
 
 # arbitrary
@@ -97,13 +99,14 @@ serde = [
 	"reth-primitives-traits?/serde",
 	"revm?/serde",
 ]
+network = [ "dep:alloy-network" ]
 reth = [
 	"dep:alloy-evm",
-	"dep:alloy-network",
 	"dep:alloy-signer",
 	"dep:base-common-evm",
 	"dep:reth-primitives-traits",
 	"dep:reth-rpc-convert",
 	"dep:revm",
+	"network",
 	"std",
 ]

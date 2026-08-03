@@ -6,8 +6,7 @@ const MINT_ROLE: B256 = b256!("154c00819833dac601ee5ddded6fda79d9d8b506b911b3dbd
 const BURN_ROLE: B256 = b256!("e97b137254058bd94f28d2f3eb79e2d34074ffb488d042e3bc958e0a57d2fa22");
 const BURN_BLOCKED_ROLE: B256 =
     b256!("7408fdc0d31c7bcb349eab611f5d1168acd4303574993f8cdc98b1cd18c41cae");
-const TRANSFER_FROM_SEIZABLE_ROLE: B256 =
-    b256!("466d0fa97b99b3315998c229880e8a3a6aa5f5586b46f762a35e210facb4ea63");
+const SEIZE_ROLE: B256 = b256!("3469b8b0d89e9604f8510ed143f74a8336d22955d4f83e23bf53d9414e27f432");
 const PAUSE_ROLE: B256 = b256!("139c2898040ef16910dc9f44dc697df79363da767d8bc92f2e310312b816e46d");
 const UNPAUSE_ROLE: B256 =
     b256!("265b220c5a8891efdd9e1b1b7fa72f257bd5169f8d87e319cf3dad6ff52b94ae");
@@ -25,9 +24,9 @@ pub enum B20TokenRole {
     Burn,
     /// Role required for `burnBlocked`; permits burning from blocked accounts without `BURN_ROLE`.
     BurnBlocked,
-    /// Role required for `transferFromSeizableWithMemo`; permits reassigning a blocked account's
+    /// Role required for `seizeWithMemo`; permits reassigning a blocked account's
     /// balance without `TRANSFER_SENDER_POLICY` authorization.
-    TransferFromSeizable,
+    Seize,
     /// Role required for `pause`.
     Pause,
     /// Role required for `unpause`.
@@ -44,7 +43,7 @@ impl B20TokenRole {
             Self::Mint => MINT_ROLE,
             Self::Burn => BURN_ROLE,
             Self::BurnBlocked => BURN_BLOCKED_ROLE,
-            Self::TransferFromSeizable => TRANSFER_FROM_SEIZABLE_ROLE,
+            Self::Seize => SEIZE_ROLE,
             Self::Pause => PAUSE_ROLE,
             Self::Unpause => UNPAUSE_ROLE,
             Self::Metadata => METADATA_ROLE,
@@ -71,10 +70,7 @@ mod tests {
         assert_eq!(B20TokenRole::Mint.id(), keccak256("MINT_ROLE"));
         assert_eq!(B20TokenRole::Burn.id(), keccak256("BURN_ROLE"));
         assert_eq!(B20TokenRole::BurnBlocked.id(), keccak256("BURN_BLOCKED_ROLE"));
-        assert_eq!(
-            B20TokenRole::TransferFromSeizable.id(),
-            keccak256("TRANSFER_FROM_SEIZABLE_ROLE")
-        );
+        assert_eq!(B20TokenRole::Seize.id(), keccak256("SEIZE_ROLE"));
         assert_eq!(B20TokenRole::Pause.id(), keccak256("PAUSE_ROLE"));
         assert_eq!(B20TokenRole::Unpause.id(), keccak256("UNPAUSE_ROLE"));
         assert_eq!(B20TokenRole::Metadata.id(), keccak256("METADATA_ROLE"));
