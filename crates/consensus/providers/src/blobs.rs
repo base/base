@@ -77,6 +77,9 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
         if timestamp < genesis {
             return Err(BlobProviderError::SlotDerivation);
         }
+        if slot_time == 0 {
+            return Err(BlobProviderError::SlotDerivation);
+        }
         Ok((timestamp - genesis) / slot_time)
     }
 
@@ -289,6 +292,13 @@ mod tests {
         let kzg_blob = c_kzg::Blob::new(blob.0);
         let commitment = kzg_settings.get().blob_to_kzg_commitment(&kzg_blob).unwrap();
         kzg_to_versioned_hash(commitment.as_slice())
+    }
+
+    #[test]
+    fn test_slot_with_zero_slot_time_returns_error() {
+        let result = OnlineBlobProvider::<MockBeaconClient>::slot(0, 0, 12);
+
+        assert_eq!(result, Err(BlobProviderError::SlotDerivation));
     }
 
     /// An empty `blob_hashes` slice must return `Ok(vec![])` without touching the beacon client.
