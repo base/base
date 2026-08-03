@@ -7,6 +7,20 @@ use base_precompile_storage::Result;
 /// Maximum total supply for a B-20 token.
 pub const B20_MAX_SUPPLY_CAP: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
 
+/// The three transfer policy ids read together from their shared packed slot.
+///
+/// The sender/receiver/executor ids all live in one storage word, so a transfer needs only a single
+/// SLOAD to fetch all three. See [`TokenAccounting::transfer_policy_ids`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransferPolicyIds {
+    /// `TRANSFER_SENDER_POLICY` id.
+    pub sender: u64,
+    /// `TRANSFER_RECEIVER_POLICY` id.
+    pub receiver: u64,
+    /// `TRANSFER_EXECUTOR_POLICY` id.
+    pub executor: u64,
+}
+
 /// Outbound port: all data reads and writes the core business logic requires.
 ///
 /// Each token variant's `#[contract]` storage struct implements this trait.
@@ -99,6 +113,19 @@ pub trait TokenAccounting {
     fn policy_id(&self, policy_scope: B256) -> Result<u64>;
     /// Overwrites the policy ID assigned to `policy_scope`.
     fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()>;
+
+    /// Returns the sender/receiver/executor transfer policy ids together.
+    ///
+    /// The three ids share one storage word, so an EVM-backed adapter overrides this with a single
+    /// SLOAD (see the `TokenAccounting` derive). The default reads each id separately and exists for
+    /// in-memory test adapters where SLOAD count is irrelevant; it is behaviorally identical.
+    fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
+        Ok(TransferPolicyIds {
+            sender: self.policy_id(crate::B20PolicyType::TransferSender.id())?,
+            receiver: self.policy_id(crate::B20PolicyType::TransferReceiver.id())?,
+            executor: self.policy_id(crate::B20PolicyType::TransferExecutor.id())?,
+        })
+    }
 
     // --- Event emission ---
 
