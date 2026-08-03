@@ -1,11 +1,11 @@
 x-sequencer-base: &sequencer-base
-  image: base:local
+  image: base-slim:local
   build:
     context: ../..
     dockerfile: etc/docker/Dockerfile.rust-services
     args:
       PROFILE: "${CARGO_PROFILE:-dev}"
-    target: base
+    target: base-slim
   entrypoint: /app/base-entrypoint.sh
   depends_on:
     setup-l2:

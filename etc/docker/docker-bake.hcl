@@ -23,11 +23,11 @@ variable "PLATFORM_PAIR" {
 }
 
 variable "DEVNET_TARGETS" {
-  default = ["base", "batcher"]
+  default = ["base-slim", "batcher"]
 }
 
 variable "INGRESS_TARGETS" {
-  default = ["base", "batcher", "ingress-rpc", "audit-archiver"]
+  default = ["base-slim", "batcher", "ingress-rpc", "audit-archiver"]
 }
 
 group "default" {
@@ -37,6 +37,7 @@ group "default" {
 group "rust-services" {
   targets = [
     "base",
+    "base-slim",
     "execution",
     "consensus",
     "builder",
@@ -57,6 +58,10 @@ group "devnet" {
   targets = DEVNET_TARGETS
 }
 
+group "slim" {
+  targets = ["base-slim"]
+}
+
 group "ingress" {
   targets = INGRESS_TARGETS
 }
@@ -75,6 +80,16 @@ target "base" {
   inherits = ["_rust-service-common"]
   target = "base"
   tags = ["base:local"]
+}
+
+target "base-slim" {
+  inherits = ["_rust-service-common"]
+  target = "base-slim"
+  tags = ["base-slim:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-base-slim-${PLATFORM_PAIR}",
+  ]
 }
 
 target "execution" {

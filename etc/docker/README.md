@@ -4,7 +4,10 @@ This directory contains the Dockerfiles and Compose configuration for the Base n
 
 ## Dockerfiles
 
-`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. The local devnet builds the unified `base` image for L2 bootnode, sequencer, and validator/RPC nodes.
+`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services.
+
+- `base` (tag `base:local`) is the default multi-bin image (`base` plus `base-reth-node`, `base-consensus`, and `snapshotter`). CI publishes this to `ghcr.io/.../node-reth-dev` for bare-metal consumers.
+- `base-slim` (tag `base-slim:local`) is the slim image with only the unified `base` binary. Local devnet and Compose use this for L2 bootnode, sequencer, and validator/RPC nodes.
 
 `Dockerfile.devnet` builds a utility image containing genesis generation tools (`eth-genesis-state-generator`, `eth2-val-tools`, `op-deployer`) and setup scripts. This image bootstraps L1 and L2 chain configurations for local development.
 
@@ -64,11 +67,13 @@ UPGRADE_SIGNAL_MODE=metrics-only just devnet up
 To build a specific Rust service image directly:
 
 ```bash
-just devnet build-image base release
+just devnet build-image base release        # multi-bin default (bare metal / GHCR)
+just devnet build-image base-slim release   # slim (devnet)
 ```
 
 Plain `docker build` still works if you prefer it:
 
 ```bash
 docker build -t base -f etc/docker/Dockerfile.rust-services --target base .
+docker build -t base-slim -f etc/docker/Dockerfile.rust-services --target base-slim .
 ```

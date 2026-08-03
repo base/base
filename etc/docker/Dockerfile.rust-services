@@ -42,7 +42,7 @@ FROM source AS base-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=base-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package base --bin base && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base /app/base
 
@@ -50,7 +50,7 @@ FROM source AS execution-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=execution-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package base-reth-node --bin base-reth-node && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-reth-node /app/base-reth-node
 
@@ -58,7 +58,7 @@ FROM source AS consensus-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=consensus-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package base-consensus --bin base-consensus && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-consensus /app/base-consensus
 
@@ -66,7 +66,7 @@ FROM source AS builder-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=builder-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package base-builder-bin --bin base-builder && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-builder /app/base-builder
 
@@ -74,7 +74,7 @@ FROM source AS basectl-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=basectl-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package basectl --bin basectl && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/basectl /app/basectl
 
@@ -82,7 +82,7 @@ FROM source AS snapshotter-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=snapshotter-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package base-snapshotter-bin --bin snapshotter && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/snapshotter /app/snapshotter
 
@@ -90,7 +90,7 @@ FROM source AS proposer-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=proposer-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package base-proposer-bin --bin base-proposer && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-proposer /app/base-proposer
 
@@ -98,7 +98,7 @@ FROM source AS websocket-proxy-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=websocket-proxy-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package websocket-proxy-bin --bin websocket-proxy && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/websocket-proxy /app/websocket-proxy
 
@@ -106,7 +106,7 @@ FROM source AS ingress-rpc-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=ingress-rpc-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package ingress-rpc --bin ingress-rpc && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/ingress-rpc /app/ingress-rpc
 
@@ -114,7 +114,7 @@ FROM source AS audit-archiver-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=audit-archiver-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package audit-archiver --bin audit-archiver && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/audit-archiver /app/audit-archiver
 
@@ -122,7 +122,7 @@ FROM source AS batcher-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=batcher-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package base-batcher-bin --bin base-batcher && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-batcher /app/base-batcher
 
@@ -130,7 +130,7 @@ FROM source AS sidecrush-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=sidecrush-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package base-sidecrush-bin --bin sidecrush && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/sidecrush /app/sidecrush
 
@@ -138,7 +138,7 @@ FROM source AS prover-service-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=prover-service-target,sharing=locked \
+    --mount=type=cache,target=/app/target,id=rust-target,sharing=locked \
     cargo build --profile $PROFILE --package base-prover-service-bin --bin base-prover-service && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-service /app/base-prover-service
 
@@ -160,18 +160,23 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
+# Default full multi-bin image (bare metal / published GHCR artifact).
+# Retire split bins here once independent images cover those consumers.
 FROM runtime-base AS base
 COPY --from=base-builder /app/base ./base
 # Compose uses this wrapper to source generated devnet upgrade-signal env before /app/base.
 COPY etc/scripts/devnet/base-entrypoint.sh ./base-entrypoint.sh
 RUN chmod +x ./base-entrypoint.sh
-# Keep split binaries here for now, needed for bare metal work
-# Remove only when there is an alternative available
-# e.g. when we publish independent separate Docker images for each
-# via the CI
 COPY --from=execution-builder /app/base-reth-node ./base-reth-node
 COPY --from=consensus-builder /app/base-consensus ./base-consensus
 COPY --from=snapshotter-builder /app/snapshotter ./snapshotter
+ENTRYPOINT ["./base"]
+
+# Slim local/devnet image: unified binary only. Avoids building split binaries.
+FROM runtime-base AS base-slim
+COPY --from=base-builder /app/base ./base
+COPY etc/scripts/devnet/base-entrypoint.sh ./base-entrypoint.sh
+RUN chmod +x ./base-entrypoint.sh
 ENTRYPOINT ["./base"]
 
 FROM runtime-base AS execution

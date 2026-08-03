@@ -181,10 +181,10 @@ services:
     entrypoint: ["/usr/local/bin/setup-l2.sh"]
 
   base-bootnode:
-    image: base:local
+    image: base-slim:local
     build:
       <<: *rust-service-build
-      target: base
+      target: base-slim
     container_name: base-bootnode
     depends_on:
       setup-l2:
@@ -236,10 +236,10 @@ services:
     restart: unless-stopped
 
   base-builder:
-    image: base:local
+    image: base-slim:local
     build:
       <<: *rust-service-build
-      target: base
+      target: base-slim
     container_name: base-builder
     depends_on:
       setup-l2:
@@ -393,10 +393,10 @@ services:
     restart: unless-stopped
 
   base-client:
-    image: base:local
+    image: base-slim:local
     build:
       <<: *rust-service-build
-      target: base
+      target: base-slim
     container_name: base-client
     depends_on:
       setup-l2:
@@ -512,10 +512,10 @@ services:
     restart: unless-stopped
 
   base-rpc:
-    image: base:local
+    image: base-slim:local
     build:
       <<: *rust-service-build
-      target: base
+      target: base-slim
     container_name: base-rpc
     depends_on:
       setup-l2:
