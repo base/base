@@ -283,8 +283,6 @@ const BERYL_CHECK_NAMES: &[&str] = &[
 
 /// Expected Zenith check names, in report order.
 const ZENITH_CHECK_NAMES: &[&str] = &[
-    "el_syncing",
-    "snapshot_consistency",
     "proxy_code_hash",
     "proxy_admin",
     "implementation",
@@ -309,6 +307,24 @@ fn check_names_for(upgrade: &str) -> &'static [&'static str] {
         "Azul" => AZUL_CHECK_NAMES,
         "Jovian" => JOVIAN_CHECK_NAMES,
         _ => &[],
+    }
+}
+
+fn check_display_name(upgrade: &str, name: &'static str) -> &'static str {
+    if upgrade != "Zenith" {
+        return name;
+    }
+    match name {
+        "proxy_code_hash" => "BaseTime proxy code",
+        "proxy_admin" => "BaseTime proxy admin",
+        "implementation" => "BaseTime implementation",
+        "metadata" => "BaseTime update tx",
+        "metadata_receipt" => "BaseTime update receipt",
+        "header_timestamp_ms" => "header timestampMs",
+        "storage_millis_part" => "BaseTime millis storage",
+        "getter_millis_part" => "BaseTime millis getter",
+        "getter_timestamp_ms" => "BaseTime timestamp getter",
+        _ => name,
     }
 }
 
@@ -1298,7 +1314,11 @@ fn render_checks_panel(
             );
             return;
         }
-        let check_list = check_names_for(hf_name).join(" · ");
+        let check_list = check_names_for(hf_name)
+            .iter()
+            .map(|name| check_display_name(hf_name, name))
+            .collect::<Vec<_>>()
+            .join(" · ");
         let hint = if auto_refresh {
             format!("Auto-refreshing {hf_name} checks every 2s · ↑/↓ to change · [a] to disable")
         } else {
@@ -1348,19 +1368,20 @@ fn render_checks_panel(
     let rows: Vec<Row<'static>> = check_names
         .iter()
         .map(|&name| {
+            let display_name = check_display_name(hf, name);
             panel.results.get(name).map_or_else(
                 || {
                     if panel.current.as_deref() == Some(name) {
                         let spin = spinner[(tick / 2) as usize % spinner.len()];
                         Row::new([
-                            Cell::from(name).style(Style::default().fg(Color::White)),
+                            Cell::from(display_name).style(Style::default().fg(Color::White)),
                             Cell::from(spin.to_string()).style(Style::default().fg(Color::Yellow)),
                             Cell::from("").style(Style::default()),
                         ])
                     } else {
                         // Not yet started.
                         Row::new([
-                            Cell::from(name).style(Style::default().fg(Color::DarkGray)),
+                            Cell::from(display_name).style(Style::default().fg(Color::DarkGray)),
                             Cell::from(""),
                             Cell::from(""),
                         ])
@@ -1373,7 +1394,7 @@ fn render_checks_panel(
                         Some(false) => ("FAIL".to_string(), Color::Red),
                     };
                     Row::new([
-                        Cell::from(name).style(Style::default().fg(Color::White)),
+                        Cell::from(display_name).style(Style::default().fg(Color::White)),
                         Cell::from(status_str)
                             .style(Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
                         Cell::from(result.detail.clone())
@@ -1387,7 +1408,7 @@ fn render_checks_panel(
     let header = Row::new(["CHECK", "", "DETAIL"])
         .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
 
-    let widths = [Constraint::Length(24), Constraint::Length(5), Constraint::Min(8)];
+    let widths = [Constraint::Length(26), Constraint::Length(5), Constraint::Min(8)];
 
     let block = Block::default()
         .title(title)
@@ -2008,22 +2029,18 @@ fn zenith_check_result(check: ZenithCheck) -> CheckResult {
         ZenithCheckStatus::Fail => Some(false),
         ZenithCheckStatus::Indeterminate => None,
     };
-    let remediation = if check.status == ZenithCheckStatus::Fail {
-        format!("; remediation: {}", check.remediation)
-    } else {
-        String::new()
+    let shorten = |value: String| {
+        if value.starts_with("0x") { truncate_hex(value, 14) } else { value }
     };
+    let expected = shorten(check.expected);
+    let observed = shorten(check.observed);
     CheckResult {
         passed,
-        detail: format!(
-            "{} · block {} {} · expected {}; observed {}{}",
-            check.endpoint,
-            check.block_number,
-            check.block_hash,
-            check.expected,
-            check.observed,
-            remediation
-        ),
+        detail: match check.status {
+            ZenithCheckStatus::Pass => observed,
+            ZenithCheckStatus::Fail => format!("expected {expected}; got {observed}"),
+            ZenithCheckStatus::Indeterminate => "not required before Zenith".to_string(),
+        },
     }
 }
 
@@ -2033,7 +2050,7 @@ async fn run_zenith_checks_streaming(
     expected_chain_id: Option<u64>,
     tx: mpsc::Sender<CheckUpdate>,
 ) {
-    if tx.send(CheckUpdate::Starting("el_syncing".to_string())).await.is_err() {
+    if tx.send(CheckUpdate::Starting("proxy_code_hash".to_string())).await.is_err() {
         return;
     }
 
@@ -2071,7 +2088,7 @@ async fn run_zenith_checks_streaming(
                 }
             }
         }
-        Err(error) => {
+        Err(_) => {
             for (index, name) in ZENITH_CHECK_NAMES.iter().enumerate() {
                 if tx.send(CheckUpdate::Starting((*name).to_string())).await.is_err() {
                     return;
@@ -2079,7 +2096,7 @@ async fn run_zenith_checks_streaming(
                 let result = if index == 0 {
                     CheckResult {
                         passed: Some(false),
-                        detail: format!("Zenith check unavailable: {error}"),
+                        detail: "checker unavailable; verify EL and CL connectivity".to_string(),
                     }
                 } else {
                     CheckResult {
@@ -2842,30 +2859,29 @@ mod tests {
     fn zenith_report_checks_map_to_existing_rows() {
         let (tx, rx) = mpsc::channel(2);
         let check = ZenithCheck {
-            name: "el_syncing".to_string(),
+            name: "proxy_code_hash".to_string(),
             status: ZenithCheckStatus::Fail,
             endpoint: "http://el".to_string(),
             block_number: 42,
             block_hash: B256::repeat_byte(0x44),
-            expected: "false".to_string(),
-            observed: "true".to_string(),
-            remediation: "wait for the EL to finish syncing".to_string(),
+            expected: B256::repeat_byte(0xaa).to_string(),
+            observed: B256::repeat_byte(0xbb).to_string(),
+            remediation: "install the canonical BaseTime proxy".to_string(),
         };
         let result = zenith_check_result(check);
-        tx.try_send(CheckUpdate::Starting("el_syncing".to_string())).unwrap();
-        tx.try_send(CheckUpdate::Completed { name: "el_syncing".to_string(), result }).unwrap();
+        tx.try_send(CheckUpdate::Starting("proxy_code_hash".to_string())).unwrap();
+        tx.try_send(CheckUpdate::Completed { name: "proxy_code_hash".to_string(), result })
+            .unwrap();
         drop(tx);
         let mut panel = ChecksPanel { rx: Some(rx), running: true, ..ChecksPanel::default() };
 
         panel.poll();
 
-        let result = panel.results.get("el_syncing").unwrap();
+        let result = panel.results.get("proxy_code_hash").unwrap();
         assert_eq!(result.passed, Some(false));
-        assert!(result.detail.contains("http://el"));
-        assert!(result.detail.contains("block 42"));
-        assert!(result.detail.contains("expected false"));
-        assert!(result.detail.contains("observed true"));
-        assert!(result.detail.contains("remediation: wait for the EL to finish syncing"));
+        assert_eq!(result.detail, "expected 0xaaaaaaaaaaaa..aaaa; got 0xbbbbbbbbbbbb..bbbb");
+        assert!(!result.detail.contains("http://el"));
+        assert!(!result.detail.contains("block 42"));
         assert!(!panel.running);
     }
 
@@ -2895,8 +2911,13 @@ mod tests {
 
         assert!(before.contains("Zenith Checks (before)"));
         assert!(after.contains("Zenith Checks (after)"));
-        assert!(before.contains("el_syncing"));
-        assert!(after.contains("getter_timestamp_ms"));
+        assert!(before.contains("BaseTime implementation"));
+        assert!(after.contains("BaseTime update tx"));
+        assert!(after.contains("BaseTime update receipt"));
+        assert!(after.contains("BaseTime millis getter"));
+        assert!(after.contains("BaseTime timestamp getter"));
+        assert!(!after.contains("el_syncing"));
+        assert!(!after.contains("snapshot_consistency"));
     }
 
     #[tokio::test]
@@ -2937,7 +2958,7 @@ mod tests {
         assert!(ZENITH_CHECK_NAMES.iter().all(|name| started.iter().any(|seen| seen == name)));
         assert_eq!(completed.len(), ZENITH_CHECK_NAMES.len());
         assert_eq!(completed[0].1.passed, Some(false));
-        assert!(completed[0].1.detail.contains("consensus node RPC is not configured"));
+        assert_eq!(completed[0].1.detail, "checker unavailable; verify EL and CL connectivity");
         assert!(completed[1..].iter().all(|(_, result)| result.passed.is_none()));
     }
 
