@@ -2,10 +2,9 @@
 
 use std::time::Duration;
 
-use base_execution_txpool::{
-    ConsumerConfig as TxpoolConsumerConfig, ForwarderConfig as TxpoolForwarderConfig,
-};
 use url::Url;
+
+use crate::{forwarder::ForwarderConfig, reader::ReaderConfig};
 
 /// Default resend-after window in milliseconds (~2 blocks on Base).
 pub const DEFAULT_RESEND_AFTER_MS: u64 = 4000;
@@ -70,17 +69,20 @@ impl TxForwardingConfig {
         self
     }
 
-    /// Converts to the consumer config used by `base-txpool`.
-    pub fn to_consumer_config(&self) -> TxpoolConsumerConfig {
-        TxpoolConsumerConfig::default()
-            .with_resend_after(Duration::from_millis(self.resend_after_ms))
+    /// Builds the per-destination reader configuration.
+    pub(crate) fn reader_config(&self) -> ReaderConfig {
+        ReaderConfig {
+            resend_after: Duration::from_millis(self.resend_after_ms),
+            ..Default::default()
+        }
     }
 
-    /// Converts to the forwarder config used by `base-txpool`.
-    pub fn to_forwarder_config(&self) -> TxpoolForwarderConfig {
-        TxpoolForwarderConfig::default()
-            .with_builder_urls(self.builder_urls.clone())
-            .with_max_batch_size(self.max_batch_size)
-            .with_max_rps(self.max_rps)
+    /// Builds the destination forwarder configuration.
+    pub(crate) fn forwarder_config(&self) -> ForwarderConfig {
+        ForwarderConfig {
+            max_batch_size: self.max_batch_size,
+            max_rps: self.max_rps,
+            ..Default::default()
+        }
     }
 }
