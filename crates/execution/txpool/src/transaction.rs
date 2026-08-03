@@ -762,17 +762,19 @@ mod tests {
     }
 
     #[test]
-    fn default_extension_is_unset_and_costs_one_word() {
+    fn default_extension_is_unset_and_costs_something() {
         let tx = eip8130_pooled(U256::ZERO);
         // The stock alias carries `Extension = ()`, so the slot is present but empty.
         assert!(BasePooledTx::extension(&tx).is_none());
 
-        // `OnceLock<()>` is not zero-sized: it still carries the `Once` state
-        // word. The default therefore costs one word per pooled transaction,
-        // which is the price of `set_extension` taking `&self` (the pool stores
-        // transactions behind an `Arc`, so the slot needs interior mutability).
-        // Pinned here so a regression in that cost is visible in review.
-        assert_eq!(core::mem::size_of::<std::sync::OnceLock<()>>(), 8);
+        // `OnceLock<()>` is not zero-sized: it still carries the `Once` state,
+        // whose exact size is platform-dependent (e.g. 4 bytes on Linux, 8 on
+        // macOS). The default therefore costs something per pooled
+        // transaction, which is the price of `set_extension` taking `&self`
+        // (the pool stores transactions behind an `Arc`, so the slot needs
+        // interior mutability). Pinned here so a regression to zero-sized is
+        // visible in review.
+        assert_ne!(core::mem::size_of::<std::sync::OnceLock<()>>(), 0);
     }
 
     #[tokio::test]
