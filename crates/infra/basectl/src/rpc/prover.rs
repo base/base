@@ -1,6 +1,6 @@
 //! Prover-service requester client helpers for the `basectl proofs` command group.
 
-use std::{num::NonZeroU64, time::Duration};
+use std::time::Duration;
 
 use alloy_primitives::{Address, B256};
 use base_prover_service_client::{
@@ -19,84 +19,6 @@ use crate::{
     errors::ProofsCommandError,
     rpc::games::{GameDetails, GameStatus},
 };
-
-/// Parameters for a `basectl proofs finalize` compressed ZK proof request.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProofFinalizeRequest {
-    /// First L2 block number to prove.
-    pub start_block: NonZeroU64,
-    /// Number of consecutive L2 blocks to prove.
-    pub num_blocks: u64,
-    /// ZK proving backend that executes the proof.
-    pub zk_backend: ZkBackend,
-    /// Explicit session ID override. When `None`, an idempotent session ID is
-    /// derived from the network name, ZK backend, and block range.
-    pub session_id: Option<String>,
-    /// Optional L1 head hash used for witness generation.
-    pub l1_head: Option<B256>,
-    /// Optional sequencing window.
-    pub sequence_window: Option<u64>,
-    /// Optional intermediate output root interval.
-    pub intermediate_root_interval: Option<u64>,
-}
-
-impl ProofFinalizeRequest {
-    /// Session ID namespace for proofs requested via basectl.
-    const SESSION_NAMESPACE: &'static [u8] = b"basectl";
-
-    /// Returns the session ID proof subtype for the selected ZK backend.
-    ///
-    /// Each backend derives distinct session IDs so the same block range can
-    /// be proved on different backends without colliding on the
-    /// prover-service idempotency key.
-    const fn session_subtype(&self) -> &'static str {
-        match self.zk_backend {
-            ZkBackend::DryRun => "zk/sp1/compressed/dry_run",
-            ZkBackend::Cluster => "zk/sp1/compressed",
-            ZkBackend::Network => "zk/sp1/compressed/network",
-        }
-    }
-
-    /// Returns the effective session ID for `network`.
-    ///
-    /// Uses the explicit override when set; otherwise derives an idempotent
-    /// `UUIDv5` from the network name, ZK backend, and block range so
-    /// re-running the same command resolves to the same prover-service
-    /// session instead of enqueueing a duplicate proof.
-    pub fn effective_session_id(&self, network: &str) -> String {
-        self.session_id.clone().unwrap_or_else(|| {
-            let pre_state_block = self.start_block.get() - 1;
-            ProofSessionId::derive_from_components(
-                Self::SESSION_NAMESPACE,
-                self.session_subtype(),
-                &[
-                    network.as_bytes(),
-                    &pre_state_block.to_be_bytes(),
-                    &self.num_blocks.to_be_bytes(),
-                ],
-            )
-        })
-    }
-
-    /// Builds the prover-service prove-block-range request for `network`, deriving
-    /// its effective session ID with [`Self::effective_session_id`].
-    pub fn to_prove_request(&self, network: &str) -> ProveBlockRangeRequest {
-        ProveBlockRangeRequest {
-            proof: ProofRequest {
-                session_id: self.effective_session_id(network),
-                request: ProofRequestKind::Compressed(ZkProofRequest {
-                    start_block_number: self.start_block.get() - 1,
-                    number_of_blocks_to_prove: self.num_blocks,
-                    sequence_window: self.sequence_window,
-                    l1_head: self.l1_head,
-                    intermediate_root_interval: self.intermediate_root_interval,
-                    zk_vm: ZkVm::Sp1,
-                    zk_backend: self.zk_backend,
-                }),
-            },
-        }
-    }
-}
 
 /// Parameters for a `basectl proofs propose` game-matched PLONK proof request.
 ///
@@ -390,7 +312,6 @@ mod tests {
     use std::{
         collections::VecDeque,
         net::SocketAddr,
-        num::NonZeroU64,
         sync::{Arc, Mutex},
         time::Duration,
     };
@@ -398,7 +319,7 @@ mod tests {
     use alloy_primitives::{Address, B256};
     use base_prover_service_protocol::{
         DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
-        ListProofsRequest, ListProofsResponse, ProofRequestKind, ProofSessionId, ProofStatus,
+        ListProofsRequest, ListProofsResponse, ProofRequestKind, ProofStatus,
         ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkBackend, ZkVm,
     };
     use jsonrpsee::{
@@ -408,23 +329,11 @@ mod tests {
     };
     use url::Url;
 
-    use super::{ProofFinalizeRequest, ProofProposeRequest, ProofsClient};
+    use super::{ProofProposeRequest, ProofsClient};
     use crate::{
         errors::ProofsCommandError,
         rpc::games::{GameDetails, GameStatus},
     };
-
-    fn finalize_request() -> ProofFinalizeRequest {
-        ProofFinalizeRequest {
-            start_block: NonZeroU64::new(100).unwrap(),
-            num_blocks: 5,
-            zk_backend: ZkBackend::Cluster,
-            session_id: None,
-            l1_head: None,
-            sequence_window: None,
-            intermediate_root_interval: None,
-        }
-    }
 
     fn provable_game() -> GameDetails {
         GameDetails {
@@ -456,80 +365,6 @@ mod tests {
             None,
         )
         .expect("provable game should build a request")
-    }
-
-    #[test]
-    fn session_id_is_deterministic_per_network_and_range() {
-        let request = finalize_request();
-
-        assert_eq!(
-            request.effective_session_id("mainnet"),
-            request.effective_session_id("mainnet")
-        );
-        assert_ne!(
-            request.effective_session_id("mainnet"),
-            request.effective_session_id("sepolia")
-        );
-
-        let other_range = ProofFinalizeRequest {
-            start_block: NonZeroU64::new(101).unwrap(),
-            ..finalize_request()
-        };
-        assert_ne!(
-            request.effective_session_id("mainnet"),
-            other_range.effective_session_id("mainnet")
-        );
-    }
-
-    #[test]
-    fn session_id_uses_protocol_pre_state_block() {
-        let request = finalize_request();
-        let pre_state_block = 99_u64.to_be_bytes();
-        let num_blocks = 5_u64.to_be_bytes();
-        let expected = ProofSessionId::derive_from_components(
-            b"basectl",
-            "zk/sp1/compressed",
-            &[b"mainnet", &pre_state_block, &num_blocks],
-        );
-
-        assert_eq!(request.effective_session_id("mainnet"), expected);
-    }
-
-    #[test]
-    fn session_id_is_distinct_per_backend() {
-        let cluster = finalize_request();
-        let network = ProofFinalizeRequest { zk_backend: ZkBackend::Network, ..cluster.clone() };
-        let dry_run = ProofFinalizeRequest { zk_backend: ZkBackend::DryRun, ..cluster.clone() };
-
-        let ids = [
-            cluster.effective_session_id("mainnet"),
-            network.effective_session_id("mainnet"),
-            dry_run.effective_session_id("mainnet"),
-        ];
-        assert_ne!(ids[0], ids[1]);
-        assert_ne!(ids[0], ids[2]);
-        assert_ne!(ids[1], ids[2]);
-    }
-
-    #[test]
-    fn to_prove_request_propagates_each_backend() {
-        for backend in [ZkBackend::Cluster, ZkBackend::Network, ZkBackend::DryRun] {
-            let request = ProofFinalizeRequest { zk_backend: backend, ..finalize_request() };
-            match request.to_prove_request("devnet").proof.request {
-                ProofRequestKind::Compressed(zk) => assert_eq!(zk.zk_backend, backend),
-                other => panic!("unexpected proof request kind: {other:?}"),
-            }
-        }
-    }
-
-    #[test]
-    fn explicit_session_id_overrides_derivation() {
-        let request = ProofFinalizeRequest {
-            session_id: Some("custom-session".to_string()),
-            ..finalize_request()
-        };
-
-        assert_eq!(request.effective_session_id("mainnet"), "custom-session");
     }
 
     #[test]
@@ -649,34 +484,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn to_prove_request_maps_all_fields() {
-        let request = ProofFinalizeRequest {
-            start_block: NonZeroU64::new(100).unwrap(),
-            num_blocks: 5,
-            zk_backend: ZkBackend::Network,
-            session_id: Some("session-map".to_string()),
-            l1_head: Some(alloy_primitives::B256::repeat_byte(0xaa)),
-            sequence_window: Some(3600),
-            intermediate_root_interval: Some(10),
-        };
-
-        let prove = request.to_prove_request("devnet");
-        assert_eq!(prove.proof.session_id, "session-map");
-        match prove.proof.request {
-            ProofRequestKind::Compressed(zk) => {
-                assert_eq!(zk.start_block_number, 99);
-                assert_eq!(zk.number_of_blocks_to_prove, 5);
-                assert_eq!(zk.sequence_window, Some(3600));
-                assert_eq!(zk.l1_head, Some(alloy_primitives::B256::repeat_byte(0xaa)));
-                assert_eq!(zk.intermediate_root_interval, Some(10));
-                assert_eq!(zk.zk_vm, ZkVm::Sp1);
-                assert_eq!(zk.zk_backend, ZkBackend::Network);
-            }
-            other => panic!("unexpected proof request kind: {other:?}"),
-        }
-    }
-
     /// Mock requester API that returns scripted `get_proof` statuses in order,
     /// repeating the final status once the script is exhausted.
     #[derive(Clone, Debug)]
@@ -760,11 +567,11 @@ mod tests {
         let api = MockRequesterApi::scripted([], ProofStatus::Queued);
         let (client, handle) = spawn_mock(api).await;
 
-        let request = finalize_request();
+        let request = propose_request();
         let session_id =
             client.submit(request.to_prove_request("devnet")).await.expect("submit should succeed");
 
-        assert_eq!(session_id, finalize_request().effective_session_id("devnet"));
+        assert_eq!(session_id, propose_request().effective_session_id("devnet"));
         shutdown(handle).await;
     }
 

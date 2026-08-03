@@ -393,32 +393,6 @@ mod tests {
 
     #[test]
     fn proofs_commands_parse() {
-        assert!(try_parse(["basectl", "proofs", "finalize", "100", "5", "--yes"]).is_ok());
-        assert!(
-            try_parse([
-                "basectl",
-                "proofs",
-                "finalize",
-                "100",
-                "5",
-                "--zk-backend",
-                "network",
-                "--session-id",
-                "custom-session",
-                "--l1-head",
-                "0x1111111111111111111111111111111111111111111111111111111111111111",
-                "--sequence-window",
-                "3600",
-                "--intermediate-root-interval",
-                "10",
-                "--wait",
-                "--prover-rpc",
-                "http://127.0.0.1:9000",
-                "--yes",
-                "--json",
-            ])
-            .is_ok()
-        );
         assert!(try_parse(["basectl", "proofs", "status", "session-1"]).is_ok());
         assert!(
             try_parse([
@@ -620,22 +594,92 @@ mod tests {
     }
 
     #[test]
+    fn proofs_finalize_parse() {
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "0x9999999999999999999999999999999999999999999999999999999999999999",
+                "--private-key",
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "0x9999999999999999999999999999999999999999999999999999999999999999",
+                "--private-key",
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "--zk-backend",
+                "cluster",
+                "--session-id",
+                "custom-session",
+                "--intermediate-root-interval",
+                "100",
+                "--prover-rpc",
+                "http://127.0.0.1:9000",
+                "--factory",
+                "0xffffffffffffffffffffffffffffffffffffffff",
+                "--l1-rpc",
+                "http://127.0.0.1:8545",
+                "--yes",
+                "--json",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn proofs_finalize_rejects_bad_inputs() {
+        // Transaction hash and private key are both required.
+        assert!(try_parse(["basectl", "proofs", "finalize"]).is_err());
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "0x9999999999999999999999999999999999999999999999999999999999999999",
+            ])
+            .is_err()
+        );
+        // Transaction hash must be a 32-byte hex hash.
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "not-a-hash",
+                "--private-key",
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+            ])
+            .is_err()
+        );
+        // JSON output requires --yes so scripts do not hang on the prompt.
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "0x9999999999999999999999999999999999999999999999999999999999999999",
+                "--private-key",
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "--json",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
     fn proofs_games_rejects_bad_inputs() {
         // Limit must be within 1..=100.
         assert!(try_parse(["basectl", "proofs", "games", "--limit", "0"]).is_err());
         assert!(try_parse(["basectl", "proofs", "games", "--limit", "101"]).is_err());
         // Game address must be a 20-byte hex address.
         assert!(try_parse(["basectl", "proofs", "games", "not-an-address"]).is_err());
-    }
-
-    #[test]
-    fn proofs_finalize_rejects_zero_blocks() {
-        assert!(try_parse(["basectl", "proofs", "finalize", "100", "0", "--yes"]).is_err());
-    }
-
-    #[test]
-    fn proofs_finalize_rejects_genesis_as_first_block() {
-        assert!(try_parse(["basectl", "proofs", "finalize", "0", "5", "--yes"]).is_err());
     }
 
     #[test]
@@ -646,11 +690,11 @@ mod tests {
                     "basectl",
                     "proofs",
                     "finalize",
-                    "100",
-                    "5",
+                    "0x9999999999999999999999999999999999999999999999999999999999999999",
+                    "--private-key",
+                    "0x0000000000000000000000000000000000000000000000000000000000000001",
                     "--zk-backend",
                     backend,
-                    "--yes",
                 ])
                 .is_ok(),
                 "backend {backend} should parse"
@@ -661,36 +705,35 @@ mod tests {
                 "basectl",
                 "proofs",
                 "finalize",
-                "100",
-                "5",
+                "0x9999999999999999999999999999999999999999999999999999999999999999",
+                "--private-key",
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
                 "--zk-backend",
                 "unknown",
-                "--yes",
             ])
             .is_err()
         );
     }
 
     #[test]
-    fn proofs_finalize_defaults_to_cluster_backend() {
-        let cli = try_parse(["basectl", "proofs", "finalize", "100", "5", "--yes"])
-            .expect("finalize should parse");
+    fn proofs_finalize_defaults_to_network_backend() {
+        let cli = try_parse([
+            "basectl",
+            "proofs",
+            "finalize",
+            "0x9999999999999999999999999999999999999999999999999999999999999999",
+            "--private-key",
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+        ])
+        .expect("finalize should parse");
         match cli.command {
             Some(Commands::Proofs(crate::ProofsCommand {
                 command: ProofsCommands::Finalize(args),
             })) => {
-                assert_eq!(args.zk_backend, ZkBackendOption::Cluster);
+                assert_eq!(args.zk_backend, ZkBackendOption::Network);
             }
             other => panic!("unexpected command: {other:?}"),
         }
-    }
-
-    #[test]
-    fn proofs_finalize_json_requires_yes() {
-        assert!(try_parse(["basectl", "proofs", "finalize", "100", "5", "--json"]).is_err());
-        assert!(
-            try_parse(["basectl", "proofs", "finalize", "100", "5", "--yes", "--json"]).is_ok()
-        );
     }
 
     #[test]

@@ -3,7 +3,6 @@
 use std::{
     fmt,
     io::{self, Write},
-    num::NonZeroU64,
 };
 
 use alloy_primitives::{Address, B256};
@@ -19,9 +18,9 @@ use url::Url;
 
 use crate::{
     CommandOutcome, Confirm, EXPECTED_RESOLUTION_NEVER, GameDetails, GameListFilter, GameStatus,
-    GameSummary, GamesClient, JsonOutput, KeyValueTable, MonitoringConfig, ProofFinalizeRequest,
-    ProofProposeRequest, ProofsClient, ProofsCommandError, ProposalProofSubmitter,
-    SnarkPlonkProofBytes, SubmitterKey, format_unix_timestamp,
+    GameSummary, GamesClient, JsonOutput, KeyValueTable, MonitoringConfig, ProofProposeRequest,
+    ProofsClient, ProofsCommandError, ProposalProofSubmitter, SnarkPlonkProofBytes, SubmitterKey,
+    format_unix_timestamp,
 };
 
 /// Request and inspect ZK proofs on the internal prover service.
@@ -35,7 +34,7 @@ pub struct ProofsCommand {
 /// Prover-service proof request and inspection commands.
 #[derive(Debug, Subcommand)]
 pub enum ProofsCommands {
-    /// Submit a compressed ZK proof request for a block range to speed up finality.
+    /// Prove and finalize a dispute game in one shot from its L1 creation transaction.
     Finalize(ProofsFinalizeArgs),
     /// Show status and result data for a submitted proof request.
     Status(ProofsStatusArgs),
@@ -47,62 +46,6 @@ pub enum ProofsCommands {
     Propose(ProofsProposeArgs),
     /// Submit a completed PLONK proposal proof to its L1 dispute game.
     Submit(ProofsSubmitArgs),
-}
-
-/// Flags for `basectl proofs finalize`.
-#[derive(Debug, Args)]
-pub struct ProofsFinalizeArgs {
-    /// First L2 block number to prove.
-    #[arg(value_name = "START_BLOCK")]
-    pub start_block: NonZeroU64,
-    /// Number of consecutive L2 blocks to prove.
-    #[arg(value_name = "NUM_BLOCKS", value_parser = clap::value_parser!(u64).range(1..))]
-    pub num_blocks: u64,
-    /// ZK proving backend that executes the proof.
-    ///
-    /// `cluster` uses a self-hosted SP1 cluster, `network` buys the proof on
-    /// the Succinct Prover Network (paid in PROVE), and `dry-run` executes the
-    /// range locally for cycle statistics without producing proof bytes.
-    #[arg(
-        long = "zk-backend",
-        value_enum,
-        value_name = "BACKEND",
-        default_value_t = ZkBackendOption::Cluster
-    )]
-    pub zk_backend: ZkBackendOption,
-    /// Explicit proof session ID (prover-service idempotency key).
-    ///
-    /// If omitted, basectl derives a deterministic session ID from the
-    /// network name, ZK backend, and block range, so re-running the same
-    /// command resolves to the existing prover-service session instead of
-    /// enqueueing a duplicate proof.
-    #[arg(long = "session-id", value_name = "ID")]
-    pub session_id: Option<String>,
-    /// L1 head hash used for witness generation.
-    ///
-    /// If omitted, the prover service picks one.
-    #[arg(long = "l1-head", value_name = "HASH")]
-    pub l1_head: Option<B256>,
-    /// Sequencing window passed to the prover.
-    #[arg(long = "sequence-window", value_name = "N")]
-    pub sequence_window: Option<u64>,
-    /// Intermediate output root interval passed to the prover.
-    #[arg(long = "intermediate-root-interval", value_name = "N")]
-    pub intermediate_root_interval: Option<u64>,
-    /// Poll the prover service until the proof succeeds or fails.
-    ///
-    /// Exits non-zero when the proof fails or does not complete in time.
-    #[arg(long)]
-    pub wait: bool,
-    /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
-    #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
-    pub prover_rpc: Option<Url>,
-    /// Skip the interactive confirmation prompt.
-    #[arg(long)]
-    pub yes: bool,
-    /// Emit a structured JSON action outcome instead of pretty text.
-    #[arg(long, requires = "yes")]
-    pub json: bool,
 }
 
 /// Flags for `basectl proofs status`.
@@ -284,6 +227,72 @@ pub struct ProofsSubmitArgs {
     pub json: bool,
 }
 
+/// Flags for `basectl proofs finalize`.
+#[derive(Debug, Args)]
+pub struct ProofsFinalizeArgs {
+    /// L1 transaction hash that created the dispute game (the TEE proof
+    /// submission transaction).
+    ///
+    /// Must be a mined, successful `createWithInitData` call sent directly
+    /// to the `DisputeGameFactory`; finalize resolves the created game from it.
+    #[arg(value_name = "TXN_HASH")]
+    pub tx_hash: B256,
+    /// Hex private key of the L1 wallet that signs and pays for the
+    /// `verifyProposalProof` transaction.
+    ///
+    /// The proof journal commits to this wallet's address as the proposer,
+    /// so the same key requests the proof and submits it on chain.
+    #[arg(
+        long = "private-key",
+        env = "BASECTL_SUBMITTER_PRIVATE_KEY",
+        value_name = "HEX",
+        hide_env_values = true
+    )]
+    pub private_key: String,
+    /// ZK proving backend that executes the proof.
+    ///
+    /// Defaults to `network` (Succinct Prover Network, paid in PROVE)
+    /// because proposal proofs are the standalone proving workflow;
+    /// `cluster` uses a self-hosted SP1 cluster and `dry-run` executes
+    /// locally without producing proof bytes.
+    #[arg(
+        long = "zk-backend",
+        value_enum,
+        value_name = "BACKEND",
+        default_value_t = ZkBackendOption::Network
+    )]
+    pub zk_backend: ZkBackendOption,
+    /// Explicit proof session ID (prover-service idempotency key).
+    ///
+    /// If omitted, basectl derives a deterministic session ID from the
+    /// network name, ZK backend, game address, block range, and wallet
+    /// address, so re-running the same command resumes the existing
+    /// prover-service session instead of enqueueing a duplicate proof.
+    #[arg(long = "session-id", value_name = "ID")]
+    pub session_id: Option<String>,
+    /// Intermediate output root interval override.
+    ///
+    /// If omitted, the interval is derived from the game's committed
+    /// intermediate roots.
+    #[arg(long = "intermediate-root-interval", value_name = "N")]
+    pub intermediate_root_interval: Option<u64>,
+    /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
+    #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
+    pub prover_rpc: Option<Url>,
+    /// `DisputeGameFactory` address (overrides config `proofs.dispute_game_factory`).
+    #[arg(long = "factory", value_name = "ADDRESS")]
+    pub factory: Option<Address>,
+    /// L1 RPC URL (overrides config `l1_rpc`).
+    #[arg(long = "l1-rpc", value_name = "URL")]
+    pub l1_rpc: Option<Url>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub json: bool,
+}
+
 /// ZK proving backend accepted by `basectl proofs finalize`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ZkBackendOption {
@@ -340,100 +349,6 @@ fn resolve_prover_rpc(
 ) -> Result<Url, ProofsCommandError> {
     flag.or_else(|| config.prover_rpc.clone())
         .ok_or_else(|| ProofsCommandError::MissingProverRpc { config_name: config.name.clone() })
-}
-
-async fn run_finalize(
-    config: MonitoringConfig,
-    args: ProofsFinalizeArgs,
-) -> Result<CommandOutcome> {
-    let ProofsFinalizeArgs {
-        start_block,
-        num_blocks,
-        zk_backend,
-        session_id,
-        l1_head,
-        sequence_window,
-        intermediate_root_interval,
-        wait,
-        prover_rpc,
-        yes,
-        json,
-    } = args;
-    let zk_backend = zk_backend_from_option(zk_backend);
-    let endpoint = resolve_prover_rpc(&config, prover_rpc)?;
-    let first_block = start_block.get();
-    let pre_state_block = first_block - 1;
-    let request = ProofFinalizeRequest {
-        start_block,
-        num_blocks,
-        zk_backend,
-        session_id,
-        l1_head,
-        sequence_window,
-        intermediate_root_interval,
-    };
-    let request = request.to_prove_request(&config.name);
-    let end_block = first_block.saturating_add(num_blocks.saturating_sub(1));
-    info!(
-        network = %config.name,
-        prover_rpc = %endpoint,
-        start_block = first_block,
-        end_block,
-        pre_state_block,
-        zk_backend = %zk_backend,
-        session_id = %request.proof.session_id,
-        wait,
-        "running proofs finalize command"
-    );
-
-    let paid_warning = if zk_backend == ZkBackend::Network {
-        " This is a PAID request billed to the worker's Succinct Network requester key."
-    } else {
-        ""
-    };
-    let prompt = format!(
-        "Submit compressed ZK proof request for blocks {first_block}..={end_block} \
-         ({num_blocks} block(s), pre-state block {pre_state_block}) via the {zk_backend} backend \
-         to {endpoint}?{paid_warning} [y/N] "
-    );
-    if !Confirm::prompt_or_abort(&prompt, yes)? {
-        return Ok(CommandOutcome::Success);
-    }
-
-    let client = ProofsClient::connect(&endpoint)?;
-    let accepted_session_id = client.submit(request).await?;
-
-    if !wait {
-        let outcome = ProofsFinalizeJson::submitted(
-            &config.name,
-            &endpoint,
-            &accepted_session_id,
-            first_block,
-            num_blocks,
-        );
-        print_finalize_outcome(&outcome, json)?;
-        return Ok(CommandOutcome::Success);
-    }
-
-    let response = client.wait_for_completion(&accepted_session_id).await?;
-    let failed = response.status == ProofStatus::Failed;
-    let outcome = ProofsFinalizeJson::completed(
-        &config.name,
-        &endpoint,
-        &accepted_session_id,
-        first_block,
-        num_blocks,
-        &response,
-    );
-    print_finalize_outcome(&outcome, json)?;
-    info!(
-        network = %config.name,
-        prover_rpc = %endpoint,
-        session_id = %accepted_session_id,
-        status = %ProofOutputStatus::from(response.status),
-        "proofs finalize wait completed"
-    );
-    Ok(CommandOutcome::from_failures(failed))
 }
 
 async fn run_status(config: MonitoringConfig, args: ProofsStatusArgs) -> Result<CommandOutcome> {
@@ -745,6 +660,120 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
     Ok(CommandOutcome::Success)
 }
 
+async fn run_finalize(
+    config: MonitoringConfig,
+    args: ProofsFinalizeArgs,
+) -> Result<CommandOutcome> {
+    let ProofsFinalizeArgs {
+        tx_hash,
+        private_key,
+        zk_backend,
+        session_id,
+        intermediate_root_interval,
+        prover_rpc,
+        factory,
+        l1_rpc,
+        yes,
+        json,
+    } = args;
+    let zk_backend = zk_backend_from_option(zk_backend);
+    let endpoint = resolve_prover_rpc(&config, prover_rpc)?;
+    let factory = resolve_factory(&config, factory)?;
+    let l1_rpc = l1_rpc.unwrap_or_else(|| config.l1_rpc.clone());
+    let key = SubmitterKey::parse(&private_key)?;
+    drop(private_key);
+    let sender = key.address();
+
+    let games_client = GamesClient::connect(factory, &l1_rpc)?;
+    let game = games_client.game_from_creation_tx(tx_hash).await?;
+    let details = games_client.game_details(game).await?;
+    let request = ProofProposeRequest::for_game(
+        &details,
+        sender,
+        zk_backend,
+        session_id,
+        intermediate_root_interval,
+    )?;
+    let prove_request = request.to_prove_request(&config.name);
+    info!(
+        network = %config.name,
+        prover_rpc = %endpoint,
+        l1_rpc = %l1_rpc,
+        creation_tx = %tx_hash,
+        game = %game,
+        sender = %sender,
+        pre_state_block = request.pre_state_block,
+        num_blocks = request.num_blocks,
+        zk_backend = %zk_backend,
+        session_id = %prove_request.proof.session_id,
+        "running proofs finalize command"
+    );
+
+    let first_block = request.pre_state_block.saturating_add(1);
+    let end_block = details.target_block;
+    let num_blocks = request.num_blocks;
+    let paid_warning = if zk_backend == ZkBackend::Network {
+        " The proof is a PAID request billed to the worker's Succinct Network requester key."
+    } else {
+        ""
+    };
+    let prompt = format!(
+        "Finalize game {game} (created by tx {tx_hash}) covering blocks \
+         {first_block}..={end_block} ({num_blocks} block(s)): request a PLONK proposal \
+         proof via the {zk_backend} backend at {endpoint}, wait for it to complete, then \
+         submit verifyProposalProof from wallet {sender} via {l1_rpc}?{paid_warning} \
+         The final step sends an L1 transaction that costs gas. [y/N] "
+    );
+    if !Confirm::prompt_or_abort(&prompt, yes)? {
+        return Ok(CommandOutcome::Success);
+    }
+
+    let client = ProofsClient::connect(&endpoint)?;
+    let session_id = client.submit(prove_request).await?;
+    info!(
+        session_id = %session_id,
+        "proof request accepted; waiting for completion (re-run finalize to resume on timeout)"
+    );
+    let response = client.wait_for_completion(&session_id).await?;
+    let plonk = SnarkPlonkProofBytes::from_response(&session_id, &response)?;
+
+    let proof_bytes = plonk.proof.len();
+    let submitter = ProposalProofSubmitter::connect(&l1_rpc, key).await?;
+    let submitted = submitter.submit(game, plonk.proof).await?;
+    info!(
+        network = %config.name,
+        game = %game,
+        session_id = %session_id,
+        tx_hash = %submitted.tx_hash,
+        block_number = ?submitted.block_number,
+        "proposal proof verified on chain"
+    );
+
+    let outcome = ProofsFinalizeJson {
+        network: config.name.clone(),
+        l1_rpc: l1_rpc.to_string(),
+        prover_rpc: endpoint.to_string(),
+        session_id,
+        creation_tx: tx_hash,
+        game,
+        sender,
+        start_block: first_block,
+        end_block,
+        num_blocks,
+        proof_bytes,
+        tx_hash: submitted.tx_hash,
+        block_number: submitted.block_number,
+        gas_used: submitted.gas_used,
+        status: "verified",
+    };
+    if json {
+        JsonOutput::print(&outcome)?;
+    } else {
+        print_finalize_pretty_to(&mut io::stdout().lock(), &outcome)?;
+    }
+    Ok(CommandOutcome::Success)
+}
+
 /// Resolves the `DisputeGameFactory` address from the CLI flag or config.
 fn resolve_factory(
     config: &MonitoringConfig,
@@ -815,72 +844,6 @@ impl From<ProofStatus> for ProofOutputStatus {
             ProofStatus::Running => Self::Running,
             ProofStatus::Succeeded => Self::Succeeded,
             ProofStatus::Failed => Self::Failed,
-        }
-    }
-}
-
-/// Humanized JSON shape for a `basectl proofs finalize` outcome.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProofsFinalizeJson {
-    /// Selected network name.
-    pub network: String,
-    /// Prover-service RPC endpoint.
-    pub prover_rpc: String,
-    /// Prover-service session identifier.
-    pub session_id: String,
-    /// First L2 block in the proof range.
-    pub start_block: u64,
-    /// Last L2 block in the inclusive proof range.
-    pub end_block: u64,
-    /// Number of consecutive L2 blocks in the proof range.
-    pub num_blocks: u64,
-    /// Current proof request status.
-    pub status: ProofOutputStatus,
-    /// Prover-service failure message, when present.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_message: Option<String>,
-    /// Humanized proof result, when the proof has completed successfully.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<ProofResultJson>,
-}
-
-impl ProofsFinalizeJson {
-    /// Builds the outcome for an accepted proof request that is not being awaited.
-    pub fn submitted(
-        network: &str,
-        prover_rpc: &Url,
-        session_id: &str,
-        start_block: u64,
-        num_blocks: u64,
-    ) -> Self {
-        Self {
-            network: network.to_string(),
-            prover_rpc: prover_rpc.to_string(),
-            session_id: session_id.to_string(),
-            start_block,
-            end_block: start_block.saturating_add(num_blocks.saturating_sub(1)),
-            num_blocks,
-            status: ProofOutputStatus::Submitted,
-            error_message: None,
-            result: None,
-        }
-    }
-
-    /// Builds the outcome for a proof request after completion polling.
-    pub fn completed(
-        network: &str,
-        prover_rpc: &Url,
-        session_id: &str,
-        start_block: u64,
-        num_blocks: u64,
-        response: &GetProofResponse,
-    ) -> Self {
-        Self {
-            status: response.status.into(),
-            error_message: response.error_message.clone(),
-            result: response.result.as_ref().map(ProofResultJson::from_result),
-            ..Self::submitted(network, prover_rpc, session_id, start_block, num_blocks)
         }
     }
 }
@@ -965,6 +928,33 @@ struct ProofsSubmitJson {
     num_blocks: u64,
     /// Size of the submitted PLONK proof in bytes.
     proof_bytes: usize,
+    tx_hash: B256,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    block_number: Option<u64>,
+    gas_used: u64,
+    status: &'static str,
+}
+
+/// Humanized JSON shape for a `basectl proofs finalize` outcome.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProofsFinalizeJson {
+    network: String,
+    l1_rpc: String,
+    prover_rpc: String,
+    session_id: String,
+    /// L1 transaction that created the dispute game.
+    creation_tx: B256,
+    game: Address,
+    sender: Address,
+    /// First block covered by the proof.
+    start_block: u64,
+    /// Last block covered by the proof.
+    end_block: u64,
+    num_blocks: u64,
+    /// Size of the submitted PLONK proof in bytes.
+    proof_bytes: usize,
+    /// L1 transaction that submitted the proof to the game.
     tx_hash: B256,
     #[serde(skip_serializing_if = "Option::is_none")]
     block_number: Option<u64>,
@@ -1457,22 +1447,16 @@ fn print_submit_pretty_to<W: Write>(writer: &mut W, outcome: &ProofsSubmitJson) 
     Ok(())
 }
 
-fn print_finalize_outcome(outcome: &ProofsFinalizeJson, json: bool) -> Result<()> {
-    if json {
-        JsonOutput::print(outcome)?;
-    } else {
-        let mut stdout = io::stdout().lock();
-        print_finalize_pretty_to(&mut stdout, outcome)?;
-    }
-    Ok(())
-}
-
 fn print_finalize_pretty_to<W: Write>(writer: &mut W, outcome: &ProofsFinalizeJson) -> Result<()> {
     let mut table = KeyValueTable::new();
     table
         .row("network", &outcome.network)
+        .row("l1 rpc", &outcome.l1_rpc)
         .row("prover rpc", &outcome.prover_rpc)
         .row("session id", &outcome.session_id)
+        .row("creation tx", outcome.creation_tx.to_string())
+        .row("game", outcome.game.to_string())
+        .row("sender", outcome.sender.to_string())
         .row(
             "blocks",
             format!(
@@ -1480,17 +1464,16 @@ fn print_finalize_pretty_to<W: Write>(writer: &mut W, outcome: &ProofsFinalizeJs
                 outcome.start_block, outcome.end_block, outcome.num_blocks
             ),
         )
-        .row("status", outcome.status.as_str());
-    if let Some(error_message) = &outcome.error_message {
-        table.row("error", error_message);
-    }
-    if let Some(result) = &outcome.result {
-        append_result_rows(&mut table, result);
-    }
+        .row("proof size", format!("{} byte(s)", outcome.proof_bytes))
+        .row("tx hash", outcome.tx_hash.to_string())
+        .row(
+            "block",
+            outcome.block_number.map_or_else(|| "<pending>".to_string(), |n| n.to_string()),
+        )
+        .row("gas used", outcome.gas_used.to_string())
+        .row("status", outcome.status);
     table.render(writer)?;
-    if outcome.status == ProofOutputStatus::Submitted {
-        writeln!(writer, "check progress with `basectl proofs status {}`", outcome.session_id)?;
-    }
+    writeln!(writer, "proposal proof verified on chain; the game can now resolve")?;
     Ok(())
 }
 
@@ -1613,40 +1596,6 @@ mod tests {
 
     fn chrono_datetime() -> chrono::DateTime<chrono::Utc> {
         chrono::DateTime::from_timestamp(1_750_000_000, 0).unwrap()
-    }
-
-    #[test]
-    fn finalize_submitted_json_shape() {
-        let outcome = ProofsFinalizeJson::submitted("mainnet", &prover_rpc(), "session-1", 100, 5);
-        let value = serde_json::to_value(&outcome).unwrap();
-
-        assert_eq!(value["network"], "mainnet");
-        assert_eq!(value["proverRpc"], "http://127.0.0.1:9000/");
-        assert_eq!(value["sessionId"], "session-1");
-        assert_eq!(value["startBlock"], 100);
-        assert_eq!(value["endBlock"], 104);
-        assert_eq!(value["numBlocks"], 5);
-        assert_eq!(value["status"], "submitted");
-        assert!(value.get("errorMessage").is_none());
-        assert!(value.get("result").is_none());
-    }
-
-    #[test]
-    fn finalize_completed_json_includes_result() {
-        let outcome = ProofsFinalizeJson::completed(
-            "mainnet",
-            &prover_rpc(),
-            "session-1",
-            100,
-            5,
-            &succeeded_response(),
-        );
-        let value = serde_json::to_value(&outcome).unwrap();
-
-        assert_eq!(value["status"], "succeeded");
-        assert_eq!(value["result"]["proofType"], "compressed");
-        assert_eq!(value["result"]["zkVm"], "sp1");
-        assert_eq!(value["result"]["proofBytes"], 2);
     }
 
     #[test]
@@ -1821,19 +1770,59 @@ mod tests {
         assert!(json.get("blockNumber").is_none());
     }
 
+    fn sample_finalize_outcome() -> ProofsFinalizeJson {
+        ProofsFinalizeJson {
+            network: "mainnet".to_string(),
+            l1_rpc: "http://127.0.0.1:8545/".to_string(),
+            prover_rpc: prover_rpc().to_string(),
+            session_id: "finalize-session".to_string(),
+            creation_tx: B256::repeat_byte(0x99),
+            game: Address::repeat_byte(0xAA),
+            sender: Address::repeat_byte(0xDD),
+            start_block: 4001,
+            end_block: 5000,
+            num_blocks: 1000,
+            proof_bytes: 1234,
+            tx_hash: B256::repeat_byte(0x42),
+            block_number: Some(19_000_001),
+            gas_used: 321_000,
+            status: "verified",
+        }
+    }
+
+    #[test]
+    fn finalize_json_shape() {
+        let value = serde_json::to_value(sample_finalize_outcome()).unwrap();
+
+        assert_eq!(value["network"], "mainnet");
+        assert_eq!(value["sessionId"], "finalize-session");
+        assert_eq!(value["creationTx"], serde_json::to_value(B256::repeat_byte(0x99)).unwrap());
+        assert_eq!(value["game"], serde_json::to_value(Address::repeat_byte(0xAA)).unwrap());
+        assert_eq!(value["sender"], serde_json::to_value(Address::repeat_byte(0xDD)).unwrap());
+        assert_eq!(value["startBlock"], 4001);
+        assert_eq!(value["endBlock"], 5000);
+        assert_eq!(value["numBlocks"], 1000);
+        assert_eq!(value["proofBytes"], 1234);
+        assert_eq!(value["txHash"], serde_json::to_value(B256::repeat_byte(0x42)).unwrap());
+        assert_eq!(value["blockNumber"], 19_000_001);
+        assert_eq!(value["gasUsed"], 321_000);
+        assert_eq!(value["status"], "verified");
+    }
+
     #[test]
     fn finalize_pretty_output_smoke() {
-        let outcome = ProofsFinalizeJson::submitted("mainnet", &prover_rpc(), "session-1", 100, 5);
         let mut output = Vec::new();
 
-        print_finalize_pretty_to(&mut output, &outcome).unwrap();
+        print_finalize_pretty_to(&mut output, &sample_finalize_outcome()).unwrap();
         let rendered = String::from_utf8(output).unwrap();
 
-        assert!(rendered.contains("network     mainnet"));
-        assert!(rendered.contains("session id  session-1"));
-        assert!(rendered.contains("blocks      100..=104 (5 block(s))"));
-        assert!(rendered.contains("status      submitted"));
-        assert!(rendered.contains("basectl proofs status session-1"));
+        assert!(rendered.contains("finalize-session"));
+        assert!(rendered.contains(&B256::repeat_byte(0x99).to_string()));
+        assert!(rendered.contains("4001..=5000 (1000 block(s))"));
+        assert!(rendered.contains("1234 byte(s)"));
+        assert!(rendered.contains(&B256::repeat_byte(0x42).to_string()));
+        assert!(rendered.contains("verified"));
+        assert!(rendered.contains("the game can now resolve"));
     }
 
     #[test]

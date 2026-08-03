@@ -212,6 +212,14 @@ pub enum ProofsCommandError {
         /// Why the game cannot accept a ZK proposal proof.
         reason: String,
     },
+    /// A dispute game could not be resolved from an L1 transaction hash.
+    #[error("cannot resolve a dispute game from transaction {tx_hash}: {reason}")]
+    GameFromTransaction {
+        /// The L1 transaction hash supplied by the caller.
+        tx_hash: B256,
+        /// Why the transaction does not resolve to a created game.
+        reason: String,
+    },
     /// The submitter private key could not be parsed.
     #[error("invalid submitter private key: {message}")]
     InvalidSubmitterKey {

@@ -52,7 +52,7 @@ mod pods;
 pub use pods::{PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, run_pods_poller};
 
 mod prover;
-pub use prover::{ProofFinalizeRequest, ProofProposeRequest, ProofsClient};
+pub use prover::{ProofProposeRequest, ProofsClient};
 
 mod rollup;
 pub use rollup::{

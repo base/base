@@ -1,0 +1,22 @@
+{
+  "name": "Base standalone prover",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-trixie",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:4": {
+      "moby": false,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+  "containerEnv": {
+    "BASECTL_PROVER_RPC": "http://127.0.0.1:9000"
+  },
+  "forwardPorts": [9000],
+  "portsAttributes": {
+    "9000": {
+      "label": "Base prover service",
+      "onAutoForward": "notify"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "remoteUser": "vscode"
+}

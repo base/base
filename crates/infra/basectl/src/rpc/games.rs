@@ -1,10 +1,13 @@
 //! Dispute-game discovery client for the `basectl proofs games` command group.
 
+use alloy_consensus::Transaction as _;
 use alloy_primitives::{Address, B256};
+use alloy_provider::{Provider, RootProvider};
+use alloy_transport::TransportError;
 pub use base_proof_contracts::GameStatus;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, ContractError,
-    DisputeGameFactoryClient, DisputeGameFactoryContractClient,
+    DisputeGameFactoryClient, DisputeGameFactoryContractClient, decode_create_calldata,
 };
 use futures::try_join;
 use url::Url;
@@ -125,6 +128,8 @@ impl GameDetails {
 #[derive(Debug)]
 pub struct GamesClient {
     endpoint: Url,
+    provider: RootProvider,
+    factory_address: Address,
     factory: DisputeGameFactoryContractClient,
     verifier: AggregateVerifierContractClient,
 }
@@ -143,7 +148,69 @@ impl GamesClient {
                 message: error.to_string(),
             }
         })?;
-        Ok(Self { endpoint: l1_rpc.clone(), factory: factory_client, verifier })
+        Ok(Self {
+            endpoint: l1_rpc.clone(),
+            provider: RootProvider::new_http(l1_rpc.clone()),
+            factory_address: factory,
+            factory: factory_client,
+            verifier,
+        })
+    }
+
+    /// Resolves the dispute game created by an L1 factory transaction.
+    ///
+    /// The transaction must be a mined, successful `createWithInitData` call
+    /// sent directly to the configured factory. The created game proxy is
+    /// recovered via `DisputeGameFactory.games()` with the decoded calldata,
+    /// so wrapped or multicall game creations are rejected.
+    pub async fn game_from_creation_tx(
+        &self,
+        tx_hash: B256,
+    ) -> Result<Address, ProofsCommandError> {
+        let unresolvable =
+            |reason: String| ProofsCommandError::GameFromTransaction { tx_hash, reason };
+
+        let tx = self
+            .provider
+            .get_transaction_by_hash(tx_hash)
+            .await
+            .map_err(|error| self.provider_error(error))?
+            .ok_or_else(|| unresolvable("transaction not found on L1".to_string()))?;
+        if tx.to() != Some(self.factory_address) {
+            return Err(unresolvable(format!(
+                "transaction does not call the DisputeGameFactory at {}",
+                self.factory_address
+            )));
+        }
+        let calldata = decode_create_calldata(tx.input()).ok_or_else(|| {
+            unresolvable(
+                "transaction is not a direct createWithInitData call; \
+                 wrapped or multicall game creations are not supported"
+                    .to_string(),
+            )
+        })?;
+
+        let receipt = self
+            .provider
+            .get_transaction_receipt(tx_hash)
+            .await
+            .map_err(|error| self.provider_error(error))?
+            .ok_or_else(|| unresolvable("transaction is not mined yet".to_string()))?;
+        if !receipt.status() {
+            return Err(unresolvable("transaction reverted, so it created no game".to_string()));
+        }
+
+        let game = self
+            .factory
+            .games(calldata.game_type, calldata.root_claim, calldata.extra_data)
+            .await
+            .map_err(|error| self.contract_error(error))?;
+        if game == Address::ZERO {
+            return Err(unresolvable(
+                "factory has no game matching the transaction's calldata".to_string(),
+            ));
+        }
+        Ok(game)
     }
 
     /// Returns the total number of games created by the factory.
@@ -270,6 +337,14 @@ impl GamesClient {
             zk_prover,
             expected_resolution,
         })
+    }
+
+    /// Maps an L1 provider RPC failure onto the proofs command error type.
+    fn provider_error(&self, error: TransportError) -> ProofsCommandError {
+        ProofsCommandError::L1Contract {
+            endpoint: self.endpoint.to_string(),
+            message: error.to_string(),
+        }
     }
 
     /// Maps a contract read failure onto the proofs command error type.
