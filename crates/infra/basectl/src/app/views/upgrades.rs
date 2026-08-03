@@ -283,7 +283,6 @@ const BERYL_CHECK_NAMES: &[&str] = &[
 
 /// Expected Zenith check names, in report order.
 const ZENITH_CHECK_NAMES: &[&str] = &[
-    "chain_id",
     "el_syncing",
     "snapshot_consistency",
     "proxy_code_hash",
@@ -2034,7 +2033,7 @@ async fn run_zenith_checks_streaming(
     expected_chain_id: Option<u64>,
     tx: mpsc::Sender<CheckUpdate>,
 ) {
-    if tx.send(CheckUpdate::Starting("chain_id".to_string())).await.is_err() {
+    if tx.send(CheckUpdate::Starting("el_syncing".to_string())).await.is_err() {
         return;
     }
 
@@ -2843,30 +2842,30 @@ mod tests {
     fn zenith_report_checks_map_to_existing_rows() {
         let (tx, rx) = mpsc::channel(2);
         let check = ZenithCheck {
-            name: "chain_id".to_string(),
+            name: "el_syncing".to_string(),
             status: ZenithCheckStatus::Fail,
-            endpoint: "http://el, http://cl".to_string(),
+            endpoint: "http://el".to_string(),
             block_number: 42,
             block_hash: B256::repeat_byte(0x44),
-            expected: "8453".to_string(),
-            observed: "el=8453, cl=10".to_string(),
-            remediation: "point all endpoints at the same chain".to_string(),
+            expected: "false".to_string(),
+            observed: "true".to_string(),
+            remediation: "wait for the EL to finish syncing".to_string(),
         };
         let result = zenith_check_result(check);
-        tx.try_send(CheckUpdate::Starting("chain_id".to_string())).unwrap();
-        tx.try_send(CheckUpdate::Completed { name: "chain_id".to_string(), result }).unwrap();
+        tx.try_send(CheckUpdate::Starting("el_syncing".to_string())).unwrap();
+        tx.try_send(CheckUpdate::Completed { name: "el_syncing".to_string(), result }).unwrap();
         drop(tx);
         let mut panel = ChecksPanel { rx: Some(rx), running: true, ..ChecksPanel::default() };
 
         panel.poll();
 
-        let result = panel.results.get("chain_id").unwrap();
+        let result = panel.results.get("el_syncing").unwrap();
         assert_eq!(result.passed, Some(false));
-        assert!(result.detail.contains("http://el, http://cl"));
+        assert!(result.detail.contains("http://el"));
         assert!(result.detail.contains("block 42"));
-        assert!(result.detail.contains("expected 8453"));
-        assert!(result.detail.contains("observed el=8453, cl=10"));
-        assert!(result.detail.contains("remediation: point all endpoints at the same chain"));
+        assert!(result.detail.contains("expected false"));
+        assert!(result.detail.contains("observed true"));
+        assert!(result.detail.contains("remediation: wait for the EL to finish syncing"));
         assert!(!panel.running);
     }
 
@@ -2896,7 +2895,7 @@ mod tests {
 
         assert!(before.contains("Zenith Checks (before)"));
         assert!(after.contains("Zenith Checks (after)"));
-        assert!(before.contains("chain_id"));
+        assert!(before.contains("el_syncing"));
         assert!(after.contains("getter_timestamp_ms"));
     }
 
