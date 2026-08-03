@@ -32,6 +32,10 @@ RPC flags or a config override to target different endpoints.
 ### `basectl monitor`
 
 Opens the interactive TUI. With no subcommand, opens the Home view.
+The top-right badge shows the active EL and CL endpoints. Press `e` from any
+non-input view to switch the EL between the configured `rpc` and `public_rpc`;
+the CL endpoint is unchanged. Switching rebuilds the active monitors so their
+background requests reconnect to the selected EL endpoint.
 
 | Command                  | Alias | Description                                      |
 | ------------------------ | ----- | ------------------------------------------------ |

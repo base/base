@@ -83,8 +83,9 @@ fn render_chain_config(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     ];
 
     let fields: &[(&str, &str)] = &[
-        ("RPC", config.rpc.as_str()),
-        ("Public RPC", config.public_rpc.as_ref().unwrap_or(&config.rpc).as_str()),
+        ("Active EL RPC", config.rpc.as_str()),
+        ("Configured EL RPC", resources.configured_rpc.as_str()),
+        ("Public EL RPC", config.public_rpc.as_ref().map_or("-", |url| url.as_str())),
         ("Flashblocks WS", config.flashblocks_ws.as_str()),
         ("L1 RPC", config.l1_rpc.as_str()),
         (
