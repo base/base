@@ -701,8 +701,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
         call: &Bytes,
         err: BasePrecompileError,
     ) -> BasePrecompileError {
-        // Frozen at Beryl: every system error (Panic / OutOfGas / Fatal / SlotOverflow) propagates
-        // raw; only ordinary reverts are wrapped. Byte-identical to the pre-BOP-485 inline mapping.
+        // Frozen at Beryl: every system error propagates raw; only ordinary reverts are wrapped
         if err.is_system_error() {
             err
         } else {
@@ -1632,9 +1631,6 @@ mod tests {
         assert_eq!(last_event_sig(&tok), IB20Asset::EndAnnouncement::SIGNATURE_HASH);
     }
 
-    /// Frozen at Beryl: every system error — including `Panic` — propagates raw from an inner
-    /// `announce` call; only ordinary reverts are wrapped. Pins the classification against
-    /// `AssetV2`'s Panic-wrapping divergence (BOP-485).
     #[test]
     fn map_announce_internal_error_keeps_system_errors_raw() {
         let call = alloy_primitives::Bytes::from(vec![1u8, 2, 3, 4]);

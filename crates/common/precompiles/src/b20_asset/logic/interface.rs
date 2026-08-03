@@ -254,14 +254,6 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
     fn end_announce(&self, token: &mut B20AssetToken<S, A>, id: String) -> Result<()>;
 
     /// Maps a failure from an `announce` internal call to the error this version surfaces.
-    ///
-    /// The dispatcher runs each `internalCalls` entry through `route` and hands any failure here.
-    /// The classification is consensus-frozen per fork, so it lives on the version: `AssetV1`
-    /// (Beryl) propagates system errors (`Panic` / `OutOfGas` / `Fatal` / `SlotOverflow`) raw and
-    /// wraps only ordinary reverts as `InternalCallFailed`; `AssetV2` (Cobalt) additionally remaps
-    /// `Panic` to `InternalCallFailed`, while still propagating `OutOfGas` / `Fatal` /
-    /// `SlotOverflow` raw (converting those would break EVM gas semantics or mask unrecoverable
-    /// faults).
     fn map_announce_internal_error(
         &self,
         call: &Bytes,
