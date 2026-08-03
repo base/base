@@ -17,6 +17,10 @@ use tokio::{sync::mpsc, time};
 use tracing::{debug, error, info, trace};
 
 use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::ForwardRequest};
+
+/// Internal buffer cap used when RPC batch size is configured as unlimited.
+const UNLIMITED_BATCH_BUFFER_LIMIT: usize = 1024;
+
 /// Sliding window rate limiter that tracks request timestamps.
 ///
 /// Maintains a bounded deque of send timestamps within a 1-second window.
@@ -96,11 +100,13 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         client: HttpClient,
         receiver: mpsc::Receiver<R>,
         config: Arc<ForwarderConfig>,
-        queue_capacity: usize,
     ) -> Self {
         let limiter = RateLimiter::new(config.max_rps);
-        let buffer_limit =
-            if config.max_batch_size == 0 { queue_capacity } else { config.max_batch_size };
+        let buffer_limit = if config.max_batch_size == 0 {
+            UNLIMITED_BATCH_BUFFER_LIMIT
+        } else {
+            config.max_batch_size
+        };
         let buffer = Vec::with_capacity(buffer_limit);
         let url_label: Arc<str> = builder_url.to_string().into();
         Self { builder_url, url_label, client, receiver, config, limiter, buffer, buffer_limit }
@@ -204,6 +210,9 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
     }
 
     async fn send_with_retries(&self, batch: Vec<R>) {
+        // Shutdown waits for this in-flight retry loop to finish. With the default backoff and
+        // retry count, a down endpoint can add up to 700ms before the forwarder observes channel
+        // closure; the service-level shutdown timeout is much larger than that.
         // Parallel to `batch` by index, so a batch response entry maps back to the request that
         // produced it. Collected once up front because both are read on every retry attempt.
         let tx_hashes: Vec<Option<TxHash>> = batch.iter().map(ForwardRequest::tx_hash).collect();
@@ -498,7 +507,17 @@ mod tests {
         config: Arc<ForwarderConfig>,
     ) -> DestinationForwarder<R> {
         let client = HttpClientBuilder::default().build(url.as_str()).unwrap();
-        DestinationForwarder::new(url, client, receiver, config, 16)
+        DestinationForwarder::new(url, client, receiver, config)
+    }
+
+    #[test]
+    fn unlimited_batch_size_uses_a_bounded_internal_buffer() {
+        let (_sender, receiver) = mpsc::channel::<InsertValidatedTransaction>(16);
+        let url = url::Url::parse("http://builder.test").unwrap();
+        let forwarder = forwarder(url, receiver, config(1, 0));
+
+        assert_eq!(forwarder.buffer_limit, UNLIMITED_BATCH_BUFFER_LIMIT);
+        assert_eq!(forwarder.buffer.capacity(), UNLIMITED_BATCH_BUFFER_LIMIT);
     }
 
     #[test]

@@ -118,7 +118,6 @@ impl TxForwardingService {
                 client,
                 receiver,
                 Arc::clone(&forwarder_config),
-                consumer_config.channel_capacity,
             );
 
             consumer_tasks.push(executor.spawn_blocking_task(Box::pin(async move {
@@ -152,7 +151,6 @@ impl TxForwardingService {
         executor: &TaskExecutor,
     ) -> Result<TxForwardingHandle, ForwardingSetupError> {
         let forwarder_config = Arc::new(self.config.forwarder_config());
-        let queue_capacity = self.config.consumer_config().channel_capacity;
         let mut forwarder_tasks = Vec::with_capacity(destinations.len());
 
         for (url, receiver) in destinations {
@@ -169,7 +167,6 @@ impl TxForwardingService {
                 client,
                 receiver,
                 Arc::clone(&forwarder_config),
-                queue_capacity,
             );
             forwarder_tasks.push(executor.spawn_task(Box::pin(async move {
                 forwarder.run().await;

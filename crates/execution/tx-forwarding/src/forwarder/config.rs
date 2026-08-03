@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use crate::config::{DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS};
+
 /// Configuration for transaction forwarders.
 ///
 /// Each forwarder receives from its own queue and forwards transactions via
@@ -24,8 +26,8 @@ pub(crate) struct ForwarderConfig {
 impl Default for ForwarderConfig {
     fn default() -> Self {
         Self {
-            max_rps: 200,
-            max_batch_size: 500,
+            max_rps: DEFAULT_MAX_RPS,
+            max_batch_size: DEFAULT_MAX_BATCH_SIZE,
             max_retries: 3,
             retry_backoff: Duration::from_millis(100),
             request_timeout: Duration::from_secs(1),
@@ -40,8 +42,8 @@ mod tests {
     #[test]
     fn defaults() {
         let config = ForwarderConfig::default();
-        assert_eq!(config.max_rps, 200);
-        assert_eq!(config.max_batch_size, 500);
+        assert_eq!(config.max_rps, DEFAULT_MAX_RPS);
+        assert_eq!(config.max_batch_size, DEFAULT_MAX_BATCH_SIZE);
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_backoff, Duration::from_millis(100));
         assert_eq!(config.request_timeout, Duration::from_secs(1));

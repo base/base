@@ -74,6 +74,7 @@ where
 
             let best_txs = self.pool.best_transactions();
 
+            let mut queue_full = false;
             for tx in best_txs {
                 if self.cancel.is_cancelled() {
                     info!("consumer cancelled during iteration");
@@ -89,12 +90,18 @@ where
                     continue;
                 }
 
-                if !self.enqueue(tx) {
-                    return;
+                match self.try_enqueue(&tx) {
+                    Ok(()) => {
+                        self.recently_sent.mark_sent(hash);
+                        txs_sent += 1;
+                        self.emit_builder_consumed_event(hash, iterator_index);
+                    }
+                    Err(mpsc::error::TrySendError::Full(())) => {
+                        queue_full = true;
+                        break;
+                    }
+                    Err(mpsc::error::TrySendError::Closed(())) => return,
                 }
-                self.recently_sent.mark_sent(hash);
-                txs_sent += 1;
-                self.emit_builder_consumed_event(hash, iterator_index);
             }
 
             Metrics::iterations(Arc::clone(&self.url_label)).increment(1);
@@ -116,7 +123,7 @@ where
                 );
             }
 
-            if txs_sent == 0 {
+            if queue_full || txs_sent == 0 {
                 std::thread::sleep(self.config.poll_interval);
             }
         }
@@ -124,22 +131,14 @@ where
         info!("consumer cancelled, shutting down");
     }
 
-    /// Waits for this destination's queue to accept the exact transaction.
-    fn enqueue(&self, transaction: Arc<ValidPoolTransaction<P::Transaction>>) -> bool {
-        let mut pending = Self::to_wire(&transaction);
-        loop {
-            match self.sender.try_send(pending) {
-                Ok(()) => return true,
-                Err(mpsc::error::TrySendError::Full(tx)) => {
-                    if self.cancel.is_cancelled() {
-                        return false;
-                    }
-                    pending = tx;
-                    std::thread::sleep(self.config.poll_interval);
-                }
-                Err(mpsc::error::TrySendError::Closed(_)) => return false,
-            }
-        }
+    /// Attempts to queue the transaction without waiting on a stale pool snapshot.
+    fn try_enqueue(
+        &self,
+        transaction: &Arc<ValidPoolTransaction<P::Transaction>>,
+    ) -> Result<(), mpsc::error::TrySendError<()>> {
+        let permit = self.sender.try_reserve()?;
+        permit.send(Self::to_wire(transaction));
+        Ok(())
     }
 
     /// Converts a pooled transaction into the request the forwarder relays.
@@ -271,35 +270,30 @@ mod tests {
         assert!(!converted.transaction.raw.is_empty(), "the envelope must be encoded");
     }
 
-    #[tokio::test]
-    async fn full_queue_retries_the_exact_transaction() {
+    #[test]
+    fn full_queue_leaves_the_transaction_for_a_fresh_snapshot() {
         let (sender, mut receiver) = mpsc::channel(1);
         sender.try_send(wire(0)).unwrap();
         let expected = transaction(1);
-        let expected_hash = *expected.hash();
         let consumer = consumer(sender, CancellationToken::new());
-        let enqueue = tokio::task::spawn_blocking(move || consumer.enqueue(expected));
 
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        assert!(!enqueue.is_finished());
-        assert_eq!(receiver.recv().await.unwrap().tx_hash, wire(0).tx_hash);
-        assert!(enqueue.await.unwrap());
-        assert_eq!(receiver.recv().await.unwrap().tx_hash, expected_hash);
+        assert!(matches!(
+            consumer.try_enqueue(&expected),
+            Err(mpsc::error::TrySendError::Full(()))
+        ));
+        assert_eq!(receiver.try_recv().unwrap().tx_hash, wire(0).tx_hash);
+        assert!(receiver.try_recv().is_err());
     }
 
-    #[tokio::test]
-    async fn cancellation_stops_a_full_queue_retry() {
-        let (sender, mut receiver) = mpsc::channel(1);
-        sender.try_send(wire(0)).unwrap();
-        let cancel = CancellationToken::new();
-        let consumer = consumer(sender, cancel.child_token());
-        let enqueue = tokio::task::spawn_blocking(move || consumer.enqueue(transaction(1)));
+    #[test]
+    fn closed_queue_stops_the_consumer() {
+        let (sender, receiver) = mpsc::channel(1);
+        drop(receiver);
+        let consumer = consumer(sender, CancellationToken::new());
 
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        cancel.cancel();
-
-        assert!(!enqueue.await.unwrap());
-        assert_eq!(receiver.recv().await.unwrap().tx_hash, wire(0).tx_hash);
-        assert!(receiver.try_recv().is_err());
+        assert!(matches!(
+            consumer.try_enqueue(&transaction(1)),
+            Err(mpsc::error::TrySendError::Closed(()))
+        ));
     }
 }
