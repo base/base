@@ -200,6 +200,7 @@ L2_BASE_BERYL_BLOCK=21
 L2_BASE_COBALT_BLOCK=22
 # Optional: set to a non-negative block number to schedule Base Zenith in devnet.
 # Leave unset to avoid setting base.zenith during genesis generation.
+# L2_BASE_ZENITH_BLOCK=23
 
 # Metering Resource Limits
 # Whole-block budgets for gas and DA.
