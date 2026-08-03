@@ -2033,7 +2033,14 @@ fn zenith_check_result(check: ZenithCheck) -> CheckResult {
         if value.starts_with("0x") { truncate_hex(value, 14) } else { value }
     };
     let expected = shorten(check.expected);
-    let observed = shorten(check.observed);
+    let observed = match (check.name.as_str(), check.observed.as_str()) {
+        ("implementation", "LinkedInitial") => "canonical initial implementation".to_string(),
+        ("implementation", "LinkedOther") => "governance-selected implementation".to_string(),
+        ("implementation", "Dormant") => "implementation not linked".to_string(),
+        ("implementation", "Missing") => "implementation missing".to_string(),
+        ("implementation", "Inconsistent") => "inconsistent implementation".to_string(),
+        _ => shorten(check.observed),
+    };
     CheckResult {
         passed,
         detail: match check.status {
@@ -2883,6 +2890,22 @@ mod tests {
         assert!(!result.detail.contains("http://el"));
         assert!(!result.detail.contains("block 42"));
         assert!(!panel.running);
+    }
+
+    #[test]
+    fn zenith_initial_implementation_has_operator_friendly_detail() {
+        let result = zenith_check_result(ZenithCheck {
+            name: "implementation".to_string(),
+            status: ZenithCheckStatus::Pass,
+            endpoint: "http://el".to_string(),
+            block_number: 42,
+            block_hash: B256::repeat_byte(0x44),
+            expected: "a linked implementation with deployed code".to_string(),
+            observed: "LinkedInitial".to_string(),
+            remediation: "link a valid BaseTime implementation".to_string(),
+        });
+
+        assert_eq!(result.detail, "canonical initial implementation");
     }
 
     fn rendered_checks_panel(mode: CheckMode) -> String {
