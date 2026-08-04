@@ -1,10 +1,10 @@
 //! Worker heartbeat configuration and delivery loop.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::HeartbeatRequest;
-use tokio::time::{sleep, timeout};
+use tokio::time::{Instant, sleep, timeout};
 use tracing::warn;
 
 use crate::{ClaimedProofJobMetadata, ProofSubmitter};
@@ -100,7 +100,7 @@ impl WorkerHeartbeat {
         let max_consecutive_failures = config.normalized_max_consecutive_failures();
         let lock_duration = config.effective_lock_duration();
         let mut consecutive_failures = 0;
-        // ponytail: approximate claim time; generation starts right after claim.
+        // Approximate claim time; generation starts right after claim.
         let mut last_success = Instant::now();
 
         loop {
@@ -147,9 +147,7 @@ impl WorkerHeartbeat {
                 Err(error) if error.is_retryable() => {
                     consecutive_failures += 1;
 
-                    if consecutive_failures >= max_consecutive_failures
-                        || last_success.elapsed() >= lock_duration
-                    {
+                    if consecutive_failures >= max_consecutive_failures {
                         warn!(
                             session_id = %claim.session_id,
                             lock_id = %claim.lock_id,
@@ -169,9 +167,9 @@ impl WorkerHeartbeat {
     }
 
     fn lease_budget_exceeded_error() -> ProverServiceClientError {
-        ProverServiceClientError::WorkerLeaseRejected {
-            message: "heartbeat budget exceeded claimed lock duration".to_owned(),
-        }
+        ProverServiceClientError::Timeout(
+            "heartbeat budget exceeded claimed lock duration".to_owned(),
+        )
     }
 }
 
@@ -262,7 +260,7 @@ mod tests {
         tokio::task::yield_now().await;
 
         let error = failure.await.expect("heartbeat task should finish");
-        assert!(matches!(error, ProverServiceClientError::WorkerLeaseRejected { .. }));
+        assert!(matches!(error, ProverServiceClientError::Timeout(_)));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

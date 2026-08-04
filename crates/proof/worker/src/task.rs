@@ -63,6 +63,9 @@ impl ProofTaskController {
     }
 
     /// Joins all retained submission tasks.
+    ///
+    /// Not safe to call concurrently from multiple controller clones; shutdown
+    /// should drain once.
     pub async fn drain_submissions(&self) {
         let mut submissions = std::mem::take(
             &mut *self.submissions.lock().expect("submission join set lock should not be poisoned"),
