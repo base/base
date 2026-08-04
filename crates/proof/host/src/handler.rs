@@ -975,7 +975,7 @@ async fn handle_hint_inner(
                 .get_block_by_hash(hash)
                 .full()
                 .await?
-                .ok_or(HostError::BlockNotFound)?;
+                .ok_or(HostError::BlockNotFound(hash))?;
             let encoded_transactions = transactions
                 .into_transactions()
                 .map(|tx| tx.inner.encoded_2718())
@@ -1094,7 +1094,7 @@ async fn handle_hint_inner(
                 .get_block_by_hash(hash)
                 .full()
                 .await?
-                .ok_or(HostError::BlockNotFound)?;
+                .ok_or(HostError::BlockNotFound(hash))?;
 
             let encoded_transactions = transactions
                 .into_transactions()
