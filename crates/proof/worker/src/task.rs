@@ -1,11 +1,11 @@
 //! Worker proof submission task metadata and cancellation control.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use base_prover_service_client::ProverWorkerProvider;
 use base_prover_service_protocol::{WorkerSubmitProofRequest, WorkerSubmitProofResponse};
 use tokio::{
-    sync::{OwnedSemaphorePermit, Semaphore},
+    sync::{Mutex, OwnedSemaphorePermit, Semaphore},
     task::JoinSet,
     time::{Duration, timeout},
 };
@@ -86,7 +86,7 @@ impl ProofTaskController {
 
     /// Returns the number of retained submission tasks that have not been drained.
     pub fn pending_submissions(&self) -> usize {
-        self.submissions.lock().expect("submission join set lock should not be poisoned").len()
+        self.submissions.try_lock().map(|submissions| submissions.len()).unwrap_or(0)
     }
 
     /// Cancels spawned submission tasks. Later spawns see an already-cancelled token.
@@ -96,20 +96,19 @@ impl ProofTaskController {
 
     /// Joins retained submission tasks, aborting any still running after the grace period.
     ///
-    /// Not safe to call concurrently from multiple controller clones; shutdown
-    /// should drain once.
+    /// Concurrent callers serialize on the submission lock: the first drain joins (or aborts)
+    /// current tasks, and later callers wait then observe an empty set.
     pub async fn drain_submissions(&self) {
-        let mut submissions = std::mem::take(
-            &mut *self.submissions.lock().expect("submission join set lock should not be poisoned"),
-        );
+        let mut submissions = self.submissions.lock().await;
 
-        let drain = async {
+        if timeout(self.shutdown_grace, async {
             while let Some(result) = submissions.join_next().await {
                 Self::log_submission_join_result(result);
             }
-        };
-
-        if timeout(self.shutdown_grace, drain).await.is_err() {
+        })
+        .await
+        .is_err()
+        {
             warn!(
                 grace_ms = self.shutdown_grace.as_millis(),
                 pending = submissions.len(),
@@ -146,8 +145,7 @@ impl ProofTaskController {
         let submitter = submitter.clone();
         let permit = self.acquire_submission_permit().await;
 
-        let mut submissions =
-            self.submissions.lock().expect("submission join set lock should not be poisoned");
+        let mut submissions = self.submissions.lock().await;
         Self::drain_finished_submissions(&mut submissions);
         submissions.spawn(async move {
             let _permit = permit;
