@@ -63,4 +63,8 @@ impl SequencerEngineClient for ActionSequencerEngineClient {
     async fn get_unsafe_head(&self) -> Result<L2BlockInfo, base_consensus_node::EngineClientError> {
         self.inner.get_unsafe_head().await
     }
+
+    async fn el_sync_finished(&self) -> Result<bool, base_consensus_node::EngineClientError> {
+        self.inner.el_sync_finished().await
+    }
 }
