@@ -109,6 +109,17 @@ impl WorkerHeartbeat {
             .unwrap_or_else(|| Instant::now() + config.effective_lock_duration());
 
         loop {
+            // Check before sleeping so an already-expired claim aborts immediately.
+            if deadline.checked_duration_since(Instant::now()).is_none() {
+                warn!(
+                    session_id = %claim.session_id,
+                    lock_id = %claim.lock_id,
+                    worker_id = %claim.worker_id,
+                    "proof job heartbeat budget exceeded claimed lock expiry"
+                );
+                return Self::lease_budget_exceeded_error();
+            }
+
             sleep(config.normalized_interval()).await;
 
             let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
