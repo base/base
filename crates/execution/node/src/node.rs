@@ -879,8 +879,6 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub guard_limits: GuardLimits,
     /// Additional trusted EIP-7702 delegation targets for locked payers.
     pub additional_trusted_delegation_targets: AddressSet,
-    /// Marker for the pooled transaction type.
-    _pd: core::marker::PhantomData<T>,
 }
 
 impl<T> Default for BasePoolBuilder<T> {
@@ -891,7 +889,6 @@ impl<T> Default for BasePoolBuilder<T> {
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
-            _pd: Default::default(),
         }
     }
 }
@@ -906,7 +903,6 @@ impl<T> Clone for BasePoolBuilder<T> {
             additional_trusted_delegation_targets: self
                 .additional_trusted_delegation_targets
                 .clone(),
-            _pd: core::marker::PhantomData,
         }
     }
 }
