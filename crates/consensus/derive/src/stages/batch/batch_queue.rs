@@ -180,6 +180,8 @@ where
                 }
                 BatchValidity::Past => {
                     if !is_holocene_active {
+                        // Preserve the complete pre-call queue on this critical error, matching
+                        // the previous borrowed-iteration behavior; pipeline reset handles it.
                         error!(target: "batch_queue", "BatchValidity::Past is not allowed pre-holocene");
                         return Err(PipelineError::InvalidBatchValidity.crit());
                     }
