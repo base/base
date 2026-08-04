@@ -14,7 +14,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
     CheckpointWriter, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
-    NoopCheckpointWriter, actors::engine::CanonicalReconciliationInputs,
+    NoopCheckpointWriter, actors::sequencer::CanonicalReconciliationInputs,
 };
 
 /// Requires that the implementor handles engine requests via the provided channel.

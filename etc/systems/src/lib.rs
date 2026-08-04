@@ -58,7 +58,7 @@ mod network;
 pub use network::{ensure_network_exists, ensure_network_exists_with_name, network_name};
 
 mod rpc;
-pub use rpc::SystemTestRpcClient;
+pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};
 
 mod setup;
 pub use setup::{
