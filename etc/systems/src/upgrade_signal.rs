@@ -6,12 +6,13 @@
 use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_execution_cli::ExecutionUpgradeSignalConfig;
 use base_test_utils::MockProtocolVersions;
-use base_upgrade_signal::{UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMode};
+use base_upgrade_signal::{
+    UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMode,
+};
 use eyre::{Result, WrapErr};
 use url::Url;
 
@@ -118,7 +119,7 @@ impl UpgradeSignalStackOptions {
         UpgradeSignalConfig {
             contract_address,
             mode,
-            l1_block_tag: BlockNumberOrTag::Latest,
+            l1_block_tag: UpgradeSignalBlockTag::Latest,
             node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
         }
     }

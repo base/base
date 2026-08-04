@@ -16,16 +16,17 @@ pub struct UpgradeSignalArgs {
         long = "upgrade-signal.mode",
         env = "BASE_NODE_UPGRADE_SIGNAL_MODE",
         value_enum,
-        default_value_t = UpgradeSignalMode::MetricsOnly
+        default_value_t = UpgradeSignalMode::default()
     )]
     pub mode: UpgradeSignalMode,
 
-    /// L1 block tag used to read the upgrade signal contract.
+    /// L1 block tag used to read the upgrade signal contract. Also selects the interval between
+    /// live contract reads: 15m for finalized, 6m24s for safe, 12s for latest.
     #[arg(
         long = "upgrade-signal.l1-block-tag",
         env = "BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG",
         value_enum,
-        default_value_t = UpgradeSignalBlockTag::Finalized
+        default_value_t = UpgradeSignalBlockTag::default()
     )]
     pub l1_block_tag: UpgradeSignalBlockTag,
 }
@@ -38,7 +39,7 @@ impl UpgradeSignalArgs {
         Some(UpgradeSignalConfig {
             contract_address,
             mode: self.mode,
-            l1_block_tag: self.l1_block_tag.block_number_or_tag(),
+            l1_block_tag: self.l1_block_tag,
             node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
         })
     }
@@ -148,7 +149,6 @@ impl UpgradeSignalL1RpcArgs {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use alloy_rpc_types_eth::BlockNumberOrTag;
 
     use super::*;
 
@@ -179,7 +179,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(args.config().unwrap().l1_block_tag, BlockNumberOrTag::Latest);
+        assert_eq!(args.config().unwrap().l1_block_tag, UpgradeSignalBlockTag::Latest);
     }
 
     #[test]

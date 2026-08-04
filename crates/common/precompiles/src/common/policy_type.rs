@@ -12,6 +12,8 @@ const MINT_RECEIVER_POLICY: B256 =
     b256!("a0d5ae037e66a09119acf080a1d807abb9b6d03b6b9130eb19f7c1e6bdb8ffc8");
 const SEIZE_HOLDER_POLICY: B256 =
     b256!("1497ab2b67ebb0a75dd9cdd6aec9f0e64620e6b87e911af7a088ac12e58d9ef2");
+const SEIZE_RECEIVER_POLICY: B256 =
+    b256!("bf15b19caf5c77422c038bc25f26b8b815c3a14f6d04c6616076b81bcfe07b3d");
 
 /// Built-in B-20 policy slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +29,10 @@ pub enum B20PolicyType {
     /// Policy slot consulted against `from` by the seize operations. A `from` is seizable only when
     /// it is NOT authorized by this policy (mirroring the `burnBlocked` "blocked" semantics).
     SeizeHolder,
+    /// Policy slot consulted against `to` by the seize operations. Mirrors [`Self::MintReceiver`]:
+    /// the destination must be authorized by this policy. An unset scope reads as always-allow, so
+    /// seize may send anywhere until an issuer configures it.
+    SeizeReceiver,
 }
 
 impl B20PolicyType {
@@ -42,6 +48,8 @@ impl B20PolicyType {
             Some(Self::MintReceiver)
         } else if id == SEIZE_HOLDER_POLICY {
             Some(Self::SeizeHolder)
+        } else if id == SEIZE_RECEIVER_POLICY {
+            Some(Self::SeizeReceiver)
         } else {
             None
         }
@@ -55,6 +63,7 @@ impl B20PolicyType {
             Self::TransferExecutor => TRANSFER_EXECUTOR_POLICY,
             Self::MintReceiver => MINT_RECEIVER_POLICY,
             Self::SeizeHolder => SEIZE_HOLDER_POLICY,
+            Self::SeizeReceiver => SEIZE_RECEIVER_POLICY,
         }
     }
 }
@@ -74,14 +83,19 @@ mod tests {
         assert_eq!(B20PolicyType::TransferExecutor.id(), keccak256("TRANSFER_EXECUTOR_POLICY"));
         assert_eq!(B20PolicyType::MintReceiver.id(), keccak256("MINT_RECEIVER_POLICY"));
         assert_eq!(B20PolicyType::SeizeHolder.id(), keccak256("SEIZE_HOLDER_POLICY"));
+        assert_eq!(B20PolicyType::SeizeReceiver.id(), keccak256("SEIZE_RECEIVER_POLICY"));
     }
 
-    /// `from_id` is the inverse of `id`, including for the seizable scope.
+    /// `from_id` is the inverse of `id`, including for the seize scopes.
     #[test]
     fn seizable_scope_round_trips() {
         assert_eq!(
             B20PolicyType::from_id(B20PolicyType::SeizeHolder.id()),
             Some(B20PolicyType::SeizeHolder)
+        );
+        assert_eq!(
+            B20PolicyType::from_id(B20PolicyType::SeizeReceiver.id()),
+            Some(B20PolicyType::SeizeReceiver)
         );
     }
 }

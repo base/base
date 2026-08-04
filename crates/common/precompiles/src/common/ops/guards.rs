@@ -71,6 +71,28 @@ impl B20Guards {
         }
     }
 
+    /// Ensures `account` is authorized by `policy_scope` using a pre-read `policy_id`.
+    ///
+    /// Identical to [`Self::ensure_policy`] except the caller supplies the id (already loaded, e.g.
+    /// via [`TokenAccounting::transfer_policy_ids`](crate::TokenAccounting::transfer_policy_ids)),
+    /// so a batch of checks against ids from the same slot pays a single SLOAD. Reverts the same
+    /// `PolicyForbids { policyScope, policyId }` as `ensure_policy`.
+    pub fn ensure_authorized_by_id<T: Token + ?Sized>(
+        token: &T,
+        policy_scope: B256,
+        policy_id: u64,
+        account: Address,
+    ) -> Result<()> {
+        if token.policy().is_authorized(token.policy_storage(), policy_id, account)? {
+            Ok(())
+        } else {
+            Err(BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: policy_scope,
+                policyId: policy_id,
+            }))
+        }
+    }
+
     /// Ensures `account` is blocked by the current transfer-sender policy.
     ///
     /// Accounts are blocked when the configured registry policy does not authorize them.

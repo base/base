@@ -84,6 +84,17 @@ impl NonceValidator {
             storage.get_nonce(account, tx.nonce_key)?
         };
 
+        Self::validate_sequence(tx, channel, mode)
+    }
+
+    /// Validates a transaction against an already-loaded `channel`.
+    ///
+    /// Use [`Self::validate`] when the channel has not been loaded.
+    pub fn validate_sequence(
+        tx: &TxEip8130,
+        channel: u64,
+        mode: NonceMode,
+    ) -> Result<NonceStatus, NonceError> {
         match tx.nonce_sequence.cmp(&channel) {
             Ordering::Less => Err(NonceError::TooLow { channel, got: tx.nonce_sequence }),
             Ordering::Equal => Ok(NonceStatus::Ready),
@@ -186,6 +197,29 @@ mod tests {
         );
         assert_eq!(
             check(&tx_with(key, 5), 999, NonceMode::Inclusion, 0, seed),
+            Err(NonceError::TooHigh { channel: 3, got: 5 })
+        );
+    }
+
+    #[test]
+    fn preloaded_channel_nonce_can_be_validated_directly() {
+        let ready = tx_with(U256::from(7), 3);
+        assert_eq!(
+            NonceValidator::validate_sequence(&ready, 3, NonceMode::Inclusion),
+            Ok(NonceStatus::Ready)
+        );
+        let stale = tx_with(U256::from(7), 2);
+        assert_eq!(
+            NonceValidator::validate_sequence(&stale, 3, NonceMode::Pool),
+            Err(NonceError::TooLow { channel: 3, got: 2 })
+        );
+        let future = tx_with(U256::from(7), 5);
+        assert_eq!(
+            NonceValidator::validate_sequence(&future, 3, NonceMode::Pool),
+            Ok(NonceStatus::Buffered { gap: 2 })
+        );
+        assert_eq!(
+            NonceValidator::validate_sequence(&future, 3, NonceMode::Inclusion),
             Err(NonceError::TooHigh { channel: 3, got: 5 })
         );
     }

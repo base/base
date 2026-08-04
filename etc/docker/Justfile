@@ -11,12 +11,12 @@ default:
     @just --justfile {{source_file()}} --list
 
 # Stops devnet, deletes data, and starts fresh (3-node HA conductor cluster)
-up zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "ha" {{ quote(zk) }}
+up mode='default' zk='dry-run':
+    just --justfile {{ source_file() }} _up-devnet "ha" {{ quote(mode) }} {{ quote(zk) }}
 
 # Stops devnet, deletes data, and starts fresh with a single sequencer (no conductor)
-up-single zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "base" {{ quote(zk) }}
+up-single mode='default' zk='dry-run':
+    just --justfile {{ source_file() }} _up-devnet "base" {{ quote(mode) }} {{ quote(zk) }}
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
 profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
@@ -179,12 +179,28 @@ _build-rust-images group profile='dev':
     PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
-_up-devnet compose_profile zk:
+_up-devnet compose_profile mode zk:
     #!/usr/bin/env bash
     set -euo pipefail
     compose_profile={{ quote(compose_profile) }}
+    devnet_mode={{ quote(mode) }}
     zk_mode={{ quote(zk) }}
     zk_mode="${zk_mode#zk=}"
+
+    # Preserve existing `just devnet up zk=cluster` usage.
+    if [[ "$devnet_mode" == zk=* || "$devnet_mode" == "dry-run" || "$devnet_mode" == "cluster" ]]; then
+      zk_mode="${devnet_mode#zk=}"
+      devnet_mode=default
+    fi
+
+    case "$devnet_mode" in
+      default) ;;
+      zenith) export L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-23}" ;;
+      *)
+        echo "ERROR: mode must be 'default' or 'zenith' (got '${devnet_mode}')" >&2
+        exit 1
+        ;;
+    esac
 
     case "$compose_profile" in
       ha) compose_files=({{ _ha }}) ;;

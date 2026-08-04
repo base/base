@@ -90,6 +90,7 @@ sol! {
         function TRANSFER_EXECUTOR_POLICY() external view returns (bytes32);
         function MINT_RECEIVER_POLICY() external view returns (bytes32);
         function SEIZE_HOLDER_POLICY() external view returns (bytes32);
+        function SEIZE_RECEIVER_POLICY() external view returns (bytes32);
 
         // ERC-20
         function name() external view returns (string);
@@ -181,6 +182,7 @@ impl IB20::IB20Calls {
             Self::TRANSFER_EXECUTOR_POLICY(_) => "precompile-b20-TRANSFER_EXECUTOR_POLICY",
             Self::MINT_RECEIVER_POLICY(_) => "precompile-b20-MINT_RECEIVER_POLICY",
             Self::SEIZE_HOLDER_POLICY(_) => "precompile-b20-SEIZE_HOLDER_POLICY",
+            Self::SEIZE_RECEIVER_POLICY(_) => "precompile-b20-SEIZE_RECEIVER_POLICY",
             Self::hasRole(_) => "precompile-b20-hasRole",
             Self::getRoleAdmin(_) => "precompile-b20-getRoleAdmin",
             Self::pausedFeatures(_) => "precompile-b20-pausedFeatures",
@@ -236,10 +238,10 @@ mod tests {
         b256!("106ef4b7c288c9344d6906ba7ef99a740bd9621cdaed89d06b35abd313c13449");
 
     /// Absolute wire fingerprint for Cobalt's (canonical) surface. Diverges from V1: Cobalt adds
-    /// the seize surface (`seizeWithMemo`, the `SEIZE_ROLE`/`SEIZE_HOLDER_POLICY` getters, the
-    /// `Seized` event, the `AccountNotSeizable` error, and the `SEIZE` pause feature).
+    /// the seize surface (`seizeWithMemo`, the `SEIZE_ROLE`/`SEIZE_HOLDER_POLICY`/`SEIZE_RECEIVER_POLICY`
+    /// getters, the `Seized` event, the `AccountNotSeizable` error, and the `SEIZE` pause feature).
     const V2_ABI_FINGERPRINT: B256 =
-        b256!("ff1784b934ecfc840872a07cf0a7716f1818bed4ad1e57dda75ec2a919417be1");
+        b256!("ad267d8b4250d41910b7f6cbcea4dcb1ba9273cf75cd27ae97a3e4ba9d9aded8");
 
     fn v1_abi_fingerprint() -> B256 {
         AbiFingerprint::compute(

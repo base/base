@@ -87,6 +87,10 @@ impl PolicyAbi {
     }
 
     /// Decodes `calldata` into a routable call via alloy's `abi_decode`, gated on this wire surface.
+    ///
+    /// Where the frozen surface differs from canonical (`V1`), the calldata is validated against the
+    /// frozen surface first so a rejection carries that version's consensus error bytes, then
+    /// re-decoded into the canonical enum for routing.
     pub fn decode(self, calldata: &[u8]) -> Result<IPolicyRegistry::IPolicyRegistryCalls> {
         let Some(selector) = calldata.first_chunk::<4>().copied() else {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
@@ -94,7 +98,10 @@ impl PolicyAbi {
         if !self.valid_selector(selector) {
             return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }
-        self.abi_decode_validate(calldata, selector)?;
+        match self {
+            Self::V1 => self.abi_decode_validate(calldata, selector)?,
+            Self::V2 => {}
+        }
 
         IPolicyRegistry::IPolicyRegistryCalls::abi_decode_validate(calldata).map_err(|error| {
             BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }

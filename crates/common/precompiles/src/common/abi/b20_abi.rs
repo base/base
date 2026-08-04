@@ -52,7 +52,10 @@ impl B20Abi {
         if !self.valid_selector(selector) {
             return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }
-        self.abi_decode_validate(calldata, selector)?;
+        match self {
+            Self::V1 => self.abi_decode_validate(calldata, selector)?,
+            Self::V2 => {}
+        }
 
         IB20::IB20Calls::abi_decode_validate(calldata).map_err(|error| {
             BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
