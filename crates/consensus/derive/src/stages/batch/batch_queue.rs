@@ -124,67 +124,79 @@ where
         // Find the first-seen batch that matches all validity conditions.
         // We may not have sufficient information to proceed filtering, and then we stop.
         // There may be none: in that case we force-create an empty batch
-        let mut next_batch = None;
-        let next_timestamp = parent.block_info.timestamp + self.cfg.block_time;
+        let next_timestamp = self.cfg.l2_block_timestamp(parent.block_info.number + 1);
 
         let origin = self.origin.ok_or(PipelineError::MissingOrigin.crit())?;
 
         // Go over all batches, in order of inclusion, and find the first batch we can accept.
-        // Filter in-place by only remembering the batches that may be processed in the future, or
-        // any undecided ones.
-        let mut remaining = Vec::new();
-        for i in 0..self.batches.len() {
-            let batch = &self.batches[i];
-            let validity =
-                batch.check_batch(&self.cfg, &self.l1_blocks, parent, &mut self.fetcher).await;
+        // Keep the queue intact while validation is pending so cancelling this future does not
+        // discard batches. Apply completed retention decisions synchronously after validation.
+        let is_holocene_active = self.cfg.is_holocene_active(origin.timestamp);
+        let mut retention = Vec::with_capacity(self.batches.len());
+        while retention.len() < self.batches.len() {
+            let index = retention.len();
+            let validity = self.batches[index]
+                .check_batch(&self.cfg, &self.l1_blocks, parent, &mut self.fetcher)
+                .await;
             match validity {
                 BatchValidity::Future => {
                     // Drop Future batches post-holocene.
                     //
                     // See: <https://specs.base.org/upgrades/holocene/derivation#batch_queue>
-                    if !self.cfg.is_holocene_active(origin.timestamp) {
-                        remaining.push(batch.clone());
+                    if !is_holocene_active {
+                        retention.push(true);
                     } else {
+                        retention.push(false);
                         self.prev.flush();
                         warn!(target: "batch_queue", parent_block_num = parent.block_info.number, "[HOLOCENE] Dropping future batch");
                     }
                 }
                 BatchValidity::Drop(reason) => {
+                    retention.push(false);
                     // If we drop a batch, flush previous batches buffered in the BatchStream
                     // stage.
                     self.prev.flush();
                     warn!(target: "batch_queue", parent_block = %parent.block_info, reason = %reason, "Dropping batch");
-                    continue;
                 }
                 BatchValidity::Accept => {
-                    next_batch = Some(batch.clone());
-                    // Don't keep the current batch in the remaining items since we are processing
-                    // it now, but retain every batch we didn't get to yet.
-                    remaining.extend_from_slice(&self.batches[i + 1..]);
-                    break;
+                    let next_batch = self.batches.remove(index);
+                    let mut retained_index = 0;
+                    self.batches.retain(|_| {
+                        let keep = retention.get(retained_index).copied().unwrap_or(true);
+                        retained_index += 1;
+                        keep
+                    });
+                    info!(target: "batch_queue", timestamp = next_batch.batch.timestamp(), "Next batch found");
+                    return Ok(next_batch.batch);
                 }
                 BatchValidity::Undecided => {
-                    remaining.extend_from_slice(&self.batches[i..]);
-                    self.batches = remaining;
+                    let mut index = 0;
+                    self.batches.retain(|_| {
+                        let keep = retention.get(index).copied().unwrap_or(true);
+                        index += 1;
+                        keep
+                    });
                     return Err(PipelineError::Eof.temp());
                 }
                 BatchValidity::Past => {
-                    if !self.cfg.is_holocene_active(origin.timestamp) {
+                    if !is_holocene_active {
+                        // Preserve the complete pre-call queue on this critical error, matching
+                        // the previous borrowed-iteration behavior; pipeline reset handles it.
                         error!(target: "batch_queue", "BatchValidity::Past is not allowed pre-holocene");
                         return Err(PipelineError::InvalidBatchValidity.crit());
                     }
 
+                    retention.push(false);
                     warn!(target: "batch_queue", parent_block_num = parent.block_info.number, "[HOLOCENE] Dropping outdated batch");
-                    continue;
                 }
             }
         }
-        self.batches = remaining;
-
-        if let Some(nb) = next_batch {
-            info!(target: "batch_queue", timestamp = nb.batch.timestamp(), "Next batch found");
-            return Ok(nb.batch);
-        }
+        let mut index = 0;
+        self.batches.retain(|_| {
+            let keep = retention[index];
+            index += 1;
+            keep
+        });
 
         // If the current epoch is too old compared to the L1 block we are at,
         // i.e. if the sequence window expired, we create empty batches for the current epoch
@@ -291,7 +303,7 @@ where
             // There are cached singular batches derived from the span batch.
             // Check if the next cached batch matches the given parent block.
             if self.next_spans.front().expect("checked non-empty").timestamp
-                == parent.block_info.timestamp + self.cfg.block_time
+                == self.cfg.l2_block_timestamp(parent.block_info.number + 1)
             {
                 return self.pop_next_batch(parent).ok_or(PipelineError::BatchQueueEmpty.crit());
             }
@@ -481,21 +493,56 @@ where
 #[cfg(test)]
 mod tests {
     use alloc::vec;
+    use core::{
+        future::pending,
+        sync::atomic::{AtomicBool, Ordering},
+        time::Duration,
+    };
 
-    use alloy_consensus::Header;
-    use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
-    use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256};
-    use alloy_rlp::{BytesMut, Encodable};
-    use base_common_consensus::{BaseBlock, BaseTxEnvelope, OpTxType, TxDeposit};
+    use alloy_eips::BlockNumHash;
+    use alloy_primitives::{B256, address, b256};
+    use base_common_consensus::BaseBlock;
     use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig};
-    use base_protocol::{BatchReader, L1BlockInfoBedrock, L1BlockInfoTx};
+    use base_protocol::{BatchReader, BatchValidationProvider, SpanBatch, SpanBatchElement};
     use tracing::Level;
 
     use super::*;
     use crate::{
         StageReset,
-        test_utils::{TestL2ChainProvider, TestNextBatchProvider},
+        test_utils::{TestL2ChainProvider, TestNextBatchProvider, TestProviderError},
     };
+
+    #[derive(Debug)]
+    struct PendingL2ChainProvider {
+        entered: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl BatchValidationProvider for PendingL2ChainProvider {
+        type Error = TestProviderError;
+
+        async fn l2_block_info_by_number(&mut self, _: u64) -> Result<L2BlockInfo, Self::Error> {
+            self.entered.store(true, Ordering::SeqCst);
+            pending().await
+        }
+
+        async fn block_by_number(&mut self, _: u64) -> Result<BaseBlock, Self::Error> {
+            unreachable!()
+        }
+    }
+
+    #[async_trait]
+    impl L2ChainProvider for PendingL2ChainProvider {
+        type Error = TestProviderError;
+
+        async fn system_config_by_number(
+            &mut self,
+            _: u64,
+            _: Arc<RollupConfig>,
+        ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error> {
+            unreachable!()
+        }
+    }
 
     fn new_batch_reader() -> BatchReader {
         let file_contents =
@@ -581,6 +628,7 @@ mod tests {
         // Construct a future single batch.
         let cfg = Arc::new(RollupConfig {
             max_sequencer_drift: 700,
+            genesis: ChainGenesis { l2_time: 100, ..Default::default() },
             upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         });
@@ -651,7 +699,10 @@ mod tests {
     #[tokio::test]
     async fn test_add_batch_drop() {
         // Construct a single batch that will be dropped (BatchValidity::Drop).
-        let cfg = Arc::new(RollupConfig::default());
+        let cfg = Arc::new(RollupConfig {
+            genesis: ChainGenesis { l2_time: 101, ..Default::default() },
+            ..Default::default()
+        });
         assert!(!cfg.is_holocene_active(0));
         let batch = SingleBatch {
             parent_hash: B256::default(),
@@ -882,6 +933,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_derive_next_batch_cancellation_preserves_queue() {
+        let cfg = Arc::new(RollupConfig {
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
+            block_time: 2,
+            genesis: ChainGenesis { l2_time: 0, ..Default::default() },
+            ..Default::default()
+        });
+        let mock = TestNextBatchProvider::new(vec![]);
+        let entered = Arc::new(AtomicBool::new(false));
+        let fetcher = PendingL2ChainProvider { entered: Arc::clone(&entered) };
+        let mut bq = BatchQueue::new(cfg, mock, fetcher);
+        bq.origin = Some(BlockInfo::default());
+        bq.l1_blocks.push(BlockInfo::default());
+        bq.batches.push(BatchWithInclusionBlock {
+            inclusion_block: BlockInfo::default(),
+            batch: Batch::Single(SingleBatch { timestamp: 8, ..Default::default() }),
+        });
+        bq.batches.push(BatchWithInclusionBlock {
+            inclusion_block: BlockInfo::default(),
+            batch: Batch::Single(SingleBatch {
+                parent_hash: B256::repeat_byte(1),
+                timestamp: 6,
+                ..Default::default()
+            }),
+        });
+        bq.batches.push(BatchWithInclusionBlock {
+            inclusion_block: BlockInfo::default(),
+            batch: Batch::Span(SpanBatch {
+                batches: vec![
+                    SpanBatchElement { epoch_num: 0, timestamp: 2, transactions: Vec::new() },
+                    SpanBatchElement { epoch_num: 0, timestamp: 6, transactions: Vec::new() },
+                ],
+                ..Default::default()
+            }),
+        });
+        bq.batches.push(BatchWithInclusionBlock {
+            inclusion_block: BlockInfo::default(),
+            batch: Batch::Single(SingleBatch { timestamp: 10, ..Default::default() }),
+        });
+        let expected = bq.batches.clone();
+        let parent = L2BlockInfo {
+            block_info: BlockInfo { number: 2, timestamp: 4, ..Default::default() },
+            ..Default::default()
+        };
+
+        let result =
+            tokio::time::timeout(Duration::from_millis(10), bq.derive_next_batch(false, parent))
+                .await;
+
+        assert!(result.is_err(), "{result:?}");
+        assert!(entered.load(Ordering::SeqCst));
+        assert_eq!(bq.batches, expected);
+    }
+
+    #[tokio::test]
     async fn test_holocene_derive_next_batch_future() {
         let (trace_store, _guard) = base_protocol::capture_traces!();
 
@@ -1008,12 +1114,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_next_batch_missing_origin() {
+    async fn test_next_batch_drops_stale_span_batch() {
         let (trace_store, _guard) = base_protocol::capture_traces!();
 
-        let mut reader = new_batch_reader();
         let payload_block_hash =
             b256!("4444444444444444444444444444444444444444444444444444444444444444");
+        let origin_hash = b256!("8527cdb6f601acf9b483817abd1da92790c92b19000000000000000000000000");
+
         let cfg = Arc::new(RollupConfig {
             upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 100,
@@ -1021,132 +1128,61 @@ mod tests {
             seq_window_size: 10000000,
             genesis: ChainGenesis {
                 l2: BlockNumHash { number: 8, hash: payload_block_hash },
-                l1: BlockNumHash { number: 16988980031808077784, ..Default::default() },
+                l2_time: 1_000,
                 ..Default::default()
             },
             batch_inbox_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
             ..Default::default()
         });
-        let mut batch_vec: Vec<PipelineResult<Batch>> = vec![];
-        let mut batch_txs: Vec<Bytes> = vec![];
-        let mut second_batch_txs: Vec<Bytes> = vec![];
-        while let Some(batch) = reader.next_batch(cfg.as_ref()) {
-            if let Batch::Span(span) = &batch {
-                batch_txs.extend(span.batches[0].transactions.clone());
-                second_batch_txs.extend(span.batches[1].transactions.clone());
-            }
-            batch_vec.push(Ok(batch));
-        }
-        // Insert a deposit transaction in the front of the second batch txs
-        let expected = L1BlockInfoBedrock::new(
-            16988980031808077784,
-            1697121143,
-            10419034451,
-            b256!("392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc"),
-            4,
-            address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-            U256::from(0xbc),
-            U256::from(0xa6fe0),
-        );
-        let deposit_tx_calldata: Bytes = L1BlockInfoTx::Bedrock(expected).encode_calldata();
-        let tx = TxDeposit {
-            source_hash: B256::left_padding_from(&[0xde, 0xad]),
-            from: Address::left_padding_from(&[0xbe, 0xef]),
-            mint: 1,
-            gas_limit: 2,
-            to: TxKind::Call(Address::left_padding_from(&[3])),
-            value: U256::from(4_u64),
-            input: deposit_tx_calldata,
-            is_system_transaction: false,
-        };
-        let mut buf = BytesMut::new();
-        tx.encode(&mut buf);
-        let prefixed = [&[OpTxType::Deposit as u8], &buf[..]].concat();
-        second_batch_txs.insert(0, Bytes::copy_from_slice(&prefixed));
-        let mut mock = TestNextBatchProvider::new(batch_vec);
-        let origin_check =
-            b256!("8527cdb6f601acf9b483817abd1da92790c92b19000000000000000000000000");
-        mock.origin = Some(BlockInfo {
-            number: 16988980031808077784,
-            timestamp: 1639845845,
-            parent_hash: Default::default(),
-            hash: origin_check,
-        });
-        let _origin = mock.origin;
 
-        let parent_check =
-            b256!("01ddf682e2f8a6f10c2207e02322897e65317196000000000000000000000000");
-        let block_nine = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 9,
-                timestamp: 1639845645,
-                parent_hash: parent_check,
-                hash: origin_check,
-            },
+        // Self-consistent parent timestamp derived from the genesis schedule
+        // (1_000 + (9 - 8) * 100 = 1_100).
+        let parent_timestamp = cfg.l2_block_timestamp(9);
+        let origin_number = 20;
+
+        // A span batch whose only block shares the safe head's own timestamp: it contains
+        // no new blocks after the safe head, and must be dropped.
+        let span = SpanBatch {
+            batches: vec![SpanBatchElement {
+                epoch_num: origin_number,
+                timestamp: parent_timestamp,
+                transactions: Vec::new(),
+            }],
             ..Default::default()
         };
-        let block_seven = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 7,
-                timestamp: 1639845745,
-                parent_hash: parent_check,
-                hash: origin_check,
-            },
+
+        let mut mock = TestNextBatchProvider::new(vec![Ok(Batch::Span(span))]);
+        mock.origin = Some(BlockInfo {
+            number: origin_number,
+            timestamp: 0,
+            hash: origin_hash,
             ..Default::default()
-        };
-        let batch_txs = batch_txs
-            .into_iter()
-            .map(|tx| BaseTxEnvelope::decode_2718(&mut &tx[..]).unwrap())
-            .collect();
-        let second_batch_txs = second_batch_txs
-            .into_iter()
-            .map(|tx| BaseTxEnvelope::decode_2718(&mut &tx[..]).unwrap())
-            .collect();
-        let block = BaseBlock {
-            header: Header { number: 8, ..Default::default() },
-            body: alloy_consensus::BlockBody {
-                transactions: batch_txs,
-                ommers: Vec::new(),
-                withdrawals: None,
-            },
-        };
-        let second = BaseBlock {
-            header: Header { number: 9, ..Default::default() },
-            body: alloy_consensus::BlockBody {
-                transactions: second_batch_txs,
-                ommers: Vec::new(),
-                withdrawals: None,
-            },
-        };
-        let fetcher = TestL2ChainProvider {
-            blocks: vec![block_nine, block_seven],
-            base_blocks: vec![block, second],
-            ..Default::default()
-        };
+        });
+        let fetcher = TestL2ChainProvider::default();
         let mut bq = BatchQueue::new(cfg, mock, fetcher);
         let parent = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 9,
-                timestamp: 1639845745,
-                parent_hash: parent_check,
-                hash: origin_check,
-            },
-            l1_origin: BlockNumHash { number: 16988980031808077784, hash: origin_check },
+            block_info: BlockInfo { number: 9, timestamp: parent_timestamp, ..Default::default() },
+            l1_origin: BlockNumHash { number: origin_number, hash: origin_hash },
             ..Default::default()
         };
+
         let res = bq.next_batch(parent).await.unwrap_err();
+
         let logs = trace_store.get_by_level(Level::INFO);
         assert_eq!(logs.len(), 2);
         assert!(logs[0].contains("Advancing batch queue origin") && logs[0].contains("origin"));
         assert!(
             logs[1].contains("Deriving next batch for epoch")
                 && logs[1].contains("epoch_number")
-                && logs[1].contains("16988980031808077784")
+                && logs[1].contains("20")
         );
         let warns = trace_store.get_by_level(Level::WARN);
         assert_eq!(warns.len(), 1);
         assert!(warns[0].contains("span batch has no new blocks after safe head"));
         assert_eq!(res, PipelineError::NotEnoughData.temp());
+        // The stale span batch was dropped rather than retained for a future safe head.
+        assert!(bq.batches.is_empty());
+        assert!(bq.prev.flushed);
     }
 
     #[tokio::test]

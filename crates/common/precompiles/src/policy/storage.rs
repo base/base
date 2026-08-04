@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use alloy_primitives::{Address, LogData, U256, address};
 use base_precompile_macros::contract;
 use base_precompile_storage::{Handler, Mapping, Result};
@@ -68,6 +70,10 @@ pub struct PolicyRegistryStorage {
     /// discriminator is encoded in the top byte, so both types draw from the
     /// same 56-bit space without collision.
     pub next_counter: u64, // slot 3
+    /// Child policy IDs for composite (UNION/INTERSECT) policies; empty for simple policies.
+    /// Introduced with the V2 logic. Full-set replacement on create/update; capped at 4 entries,
+    /// which fit in a single Solidity dynamic-array element slot.
+    pub children: Mapping<u64, Vec<u64>>, // slot 4
 }
 
 impl PolicyRegistryStorage<'_> {
@@ -143,11 +149,19 @@ impl PolicyAccounting for PolicyRegistryStorage<'_> {
     fn mark_initialized(&mut self) -> Result<()> {
         self.__initialize()
     }
+
+    fn read_children(&self, policy_id: u64) -> Result<Vec<u64>> {
+        self.children.at(&policy_id).read()
+    }
+
+    fn write_children(&mut self, policy_id: u64, child_policy_ids: &[u64]) -> Result<()> {
+        self.children.at_mut(&policy_id).write(child_policy_ids.to_vec())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, Bytes, U256, address, uint};
+    use alloy_primitives::{Address, Bytes, U256, address, keccak256, uint};
     use base_precompile_storage::{
         BasePrecompileError, HashMapStorageProvider, PrecompileStorageProvider, StorageCtx,
         StorageKey,
@@ -156,7 +170,7 @@ mod tests {
 
     use crate::{
         IPolicyRegistry::PolicyType,
-        PolicyRegistryLogic, PolicyRegistryV1,
+        PolicyAccounting, PolicyRegistryLogic, PolicyRegistryV1,
         policy::storage::{PackedPolicy, PolicyRegistryStorage, slots},
     };
 
@@ -257,6 +271,28 @@ mod tests {
         assert_eq!(slots::MEMBERS, POLICY_REGISTRY_ROOT + U256::from(1));
         assert_eq!(slots::PENDING_ADMINS, POLICY_REGISTRY_ROOT + U256::from(2));
         assert_eq!(slots::NEXT_COUNTER, POLICY_REGISTRY_ROOT + U256::from(3));
+        assert_eq!(slots::CHILDREN, POLICY_REGISTRY_ROOT + U256::from(4));
+    }
+
+    #[test]
+    fn children_roundtrip_and_match_base_std_layout() {
+        let mut s = seeded_storage();
+        let children = alloc::vec![7u64, 9u64, 11u64];
+        StorageCtx::enter(&mut s, |ctx| {
+            let mut storage = PolicyRegistryStorage::new(ctx);
+            storage.write_children(2, &children).unwrap();
+            assert_eq!(storage.read_children(2).unwrap(), children);
+        });
+        StorageCtx::enter(&mut s, |ctx| {
+            // base-std `childrenSlot(id)` = keccak256(abi.encode(id, childrenBaseSlot)) holds the
+            // dynamic-array length; elements pack 4x uint64 per slot at keccak256(that), low first.
+            let len_slot = 2u64.mapping_slot(slots::CHILDREN);
+            assert_eq!(ctx.sload(PolicyRegistryStorage::ADDRESS, len_slot).unwrap(), U256::from(3));
+            let data_slot = U256::from_be_bytes(keccak256(len_slot.to_be_bytes::<32>()).0);
+            let packed = ctx.sload(PolicyRegistryStorage::ADDRESS, data_slot).unwrap();
+            let expected = U256::from(7u64) | (U256::from(9u64) << 64) | (U256::from(11u64) << 128);
+            assert_eq!(packed, expected, "uint64[] elements must pack low-element-first");
+        });
     }
 
     #[test]

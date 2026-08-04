@@ -1,14 +1,51 @@
 # base-tx-forwarding
 
-Transaction forwarding extension for Base node. Forwards transactions from the mempool to builder RPC endpoints.
+Transaction forwarding service and node extension for Base. Forwards transactions from the mempool to builder RPC endpoints.
 
 ## Overview
 
 This crate provides:
 
-- **Transaction Consumer**: Subscribes to pool events and broadcasts transactions to forwarders
-- **Transaction Forwarder**: Batches and forwards transactions to builder RPC endpoints
-- **Resend Logic**: Automatically resends transactions that haven't been included after a configurable window
+- **`TxForwardingService`**: Starts one reader and forwarder pipeline per destination
+- **`TxForwardingHandle`**: Gracefully stops readers and drains destination queues
+- **Per-destination delivery**: Each builder has an independent bounded queue and deduplication cache
+- **Resend logic**: Automatically resends transactions that haven't been included after a configurable window
+
+A slow builder backpressures only its own reader. Transactions are marked as recently sent only
+after that builder's queue accepts them, so another destination cannot suppress their delivery.
+
+## Forwarding without the pool
+
+`TxForwardingService::spawn_requests` starts the same transport — batching, rate limiting, retries,
+metrics and shutdown — driven by queues the caller owns rather than by draining a `TransactionPool`.
+Use it when requests arrive by push, or when a producer needs its own overflow policy.
+
+A request is anything implementing `ForwardRequest`, which supplies a per-call method name and
+params. Because the method is chosen per request, one destination queue may carry several kinds of
+call, and a batch preserves submission order between them:
+
+```rust,ignore
+enum Message {
+    Insert(Box<ValidatedTransaction<MyExtensions>>),
+    Remove(TxHash),
+}
+
+impl ForwardRequest for Message {
+    fn method(&self) -> &'static str {
+        match self {
+            Self::Insert(_) => "base_insertValidatedTransaction",
+            Self::Remove(_) => "my_removeTransaction",
+        }
+    }
+    // ...
+}
+
+let (sender, receiver) = tokio::sync::mpsc::channel(1024);
+let handle = TxForwardingService::new(config).spawn_requests(vec![(url, receiver)], &executor)?;
+```
+
+Unlike `spawn`, an endpoint that cannot be turned into a client is a `ForwardingSetupError` rather
+than a logged skip, so a caller never silently forwards to fewer destinations than it asked for.
 
 ## CLI Flags
 

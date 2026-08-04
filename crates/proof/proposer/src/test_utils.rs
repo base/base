@@ -22,10 +22,11 @@ use base_proof_rpc::{
 };
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
-    DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestIdCollisionMessage,
-    ProofRequestKind as ApiProofRequestKind, ProofResult as ApiProofResult, ProofStatus,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
+    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
+    ListProofsRequest, ListProofsResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE,
+    ProofRequestIdCollisionMessage, ProofRequestKind as ApiProofRequestKind,
+    ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    TeeKind, TeeProofResult,
 };
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
@@ -393,6 +394,8 @@ pub struct MockProofRequester {
     pub requests: Mutex<HashMap<String, ProveBlockRangeRequest>>,
     /// Sessions that should return a terminal failed status from `get_proof`.
     pub failed_sessions: Mutex<HashMap<String, String>>,
+    /// TEE signers passed to batch deletion.
+    pub deleted_tee_signers: Mutex<Vec<Address>>,
     /// Reject every `prove_block_range` call with an L1 head conflict.
     pub reject_l1_head_conflict: bool,
     /// Return a mismatched session id from `prove_block_range`.
@@ -476,6 +479,7 @@ impl ProofRequesterProvider for MockProofRequester {
                 aggregate_proposal,
                 proposals,
                 tee_kind: TeeKind::AwsNitro,
+                tee_signer: Address::repeat_byte(0x11),
             })),
         })
     }
@@ -491,6 +495,19 @@ impl ProofRequesterProvider for MockProofRequester {
         self.requests.lock().unwrap().remove(&request.session_id);
         self.failed_sessions.lock().unwrap().remove(&request.session_id);
         Ok(())
+    }
+
+    async fn delete_proofs_by_tee_signer(
+        &self,
+        request: DeleteProofsByTeeSignerRequest,
+    ) -> Result<u64, ProverServiceClientError> {
+        if self.reject_delete {
+            return Err(ProverServiceClientError::Timeout("simulated delete failure".into()));
+        }
+
+        self.deleted_tee_signers.lock().unwrap().push(request.tee_signer);
+        let deleted_count = self.requests.lock().unwrap().drain().count() as u64;
+        Ok(deleted_count)
     }
 
     async fn list_proofs(

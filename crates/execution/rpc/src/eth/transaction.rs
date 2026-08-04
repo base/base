@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::{BlockHeader, Typed2718, transaction::TxHashRef};
+use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
 use base_common_chains::Upgrades;
@@ -16,7 +16,7 @@ use base_common_consensus::{
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::ChainSpecProvider;
-use reth_primitives_traits::{Recovered, SignedTransaction, SignerRecoverable, WithEncoded};
+use reth_primitives_traits::{SignedTransaction, SignerRecoverable, WithEncoded};
 use reth_rpc_eth_api::{
     EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore, RpcReceipt,
     TxInfoMapper,
@@ -27,7 +27,7 @@ use reth_storage_api::{
     BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider, errors::ProviderError,
 };
 use reth_transaction_pool::{
-    AddedTransactionOutcome, PoolPooledTx, PoolTransaction, TransactionOrigin, TransactionPool,
+    AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
 };
 use tracing::{debug, instrument, warn};
 
@@ -48,22 +48,26 @@ where
         self.inner.eth_api.send_raw_transaction_sync_timeout()
     }
 
-    #[instrument(skip_all, fields(tx_hash = %tx.tx_hash()))]
-    async fn send_transaction(
+    // Reth decodes and recovers raw RPC transactions into the pool's concrete transaction type
+    // before invoking this hook. The original bytes remain available for broadcasting and
+    // sequencer forwarding. `eth_sendRawTransaction` supplies a `Local` origin, so preserving
+    // `origin` here intentionally applies the configured local-transaction pool policy.
+    #[instrument(skip_all, fields(tx_hash = %tx.1.hash()))]
+    async fn send_pool_transaction(
         &self,
         origin: TransactionOrigin,
-        tx: WithEncoded<Recovered<PoolPooledTx<Self::Pool>>>,
+        tx: WithEncoded<<Self::Pool as TransactionPool>::Transaction>,
     ) -> Result<B256, Self::Error> {
-        let (tx, recovered) = tx.split();
+        let (tx, pool_transaction) = tx.split();
 
-        if recovered.ty() == EIP8130_TX_TYPE_ID && !self.is_cobalt_active_at_latest()? {
+        if pool_transaction.consensus_ref().ty() == EIP8130_TX_TYPE_ID
+            && !self.is_cobalt_active_at_latest()?
+        {
             return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
         }
 
         // broadcast raw transaction to subscribers if there is any.
         self.eth_api().broadcast_raw_transaction(tx.clone());
-
-        let pool_transaction = <Self::Pool as TransactionPool>::Transaction::from_pooled(recovered);
 
         // On Base, transactions are forwarded directly to the sequencer to be included in
         // blocks that it builds.
@@ -97,10 +101,20 @@ where
     fn send_raw_transaction_sync(
         &self,
         tx: Bytes,
+        timeout_ms: Option<u64>,
     ) -> impl Future<Output = Result<RpcReceipt<Self::NetworkTypes>, Self::Error>> + Send {
         let this = self.clone();
-        let timeout_duration = self.send_raw_transaction_sync_timeout();
+        let configured_timeout = self.send_raw_transaction_sync_timeout();
+        // A positive per-request timeout may shorten, but never extend, the configured maximum.
+        // Zero or no timeout uses the configured value. This only bounds the wait for canonical
+        // inclusion after submission; timing out does not cancel or remove the transaction.
+        let timeout_duration = timeout_ms
+            .filter(|timeout_ms| *timeout_ms > 0)
+            .map(Duration::from_millis)
+            .map(|timeout| timeout.min(configured_timeout))
+            .unwrap_or(configured_timeout);
         async move {
+            // Subscribe before submission so immediate inclusion cannot race the receipt listener.
             let mut canonical_stream = this.provider().canonical_state_stream();
             let hash = EthTransactions::send_raw_transaction(&this, tx).await?;
 

@@ -19,6 +19,8 @@ producer-specific prefix:
 | `enabled` | boolean | Enables transaction event journal writes. |
 | `file_path` | string | Dedicated JSONL file path tailed by Vector. |
 | `queue_capacity` | integer | Bounded in-process event queue size. Producers drop on backpressure instead of blocking transaction serving paths. |
+| `max_file_bytes` | integer | Maximum size of the active JSONL segment before it is renamed and a new segment is opened. |
+| `max_files` | integer | Maximum number of JSONL segments retained, including the active segment. |
 | `required` | boolean | If true, fail service initialization when the file writer cannot open. Runtime write failures remain observable and non-fatal. |
 | `producer` | string | One of the producer identities below. |
 | `network` | string | Network label, for example `base-mainnet` or `base-sepolia`. |
@@ -30,6 +32,8 @@ For Go/proxyd, mirror the same names in TOML:
 enabled = true
 file_path = "/var/log/base/transaction-events.jsonl"
 queue_capacity = 16384
+max_file_bytes = 134217728
+max_files = 8
 required = false
 producer = "base-routing/proxyd"
 network = "base-mainnet"
@@ -94,8 +98,11 @@ and `privateKey` before ingest.
 
 ## Local Devnet Verification
 
-The ingress devnet stack runs a local Postgres, Vector shipper, and
-Postgres-backed `audit-archiver` ingest path:
+Core devnet (`just devnet up` / `just devnet up-single`) enables durable
+transaction event journals on `base-client` and `base-builder`, writing JSONL
+under `.devnet/transaction-events/`. The ingress overlay adds the collection
+pipeline (Vector, Postgres, `audit-archiver`) plus ingress/proxyd producers; it
+does not own node journal config.
 
 ```bash
 just devnet ingress

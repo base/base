@@ -12,14 +12,52 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# ethereum
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
+
+# reth
+reth-tasks.workspace = true
+reth-transaction-pool.workspace = true
+
 # workspace
+base-metrics.workspace = true
 base-node-runner.workspace = true
 base-execution-txpool.workspace = true
+base-observability-events.workspace = true
 
 # misc
 url.workspace = true
-tracing = { workspace = true, features = ["std"] }
+serde.workspace = true
+futures.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
+tokio-util.workspace = true
+metrics = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["sync", "rt", "time"] }
+jsonrpsee = { workspace = true, features = ["http-client"] }
 
 [dev-dependencies]
+# ethereum
+alloy-signer.workspace = true
+alloy-network.workspace = true
+alloy-provider.workspace = true
+alloy-consensus.workspace = true
+
 # workspace
+base-test-utils.workspace = true
+base-common-consensus.workspace = true
+base-common-rpc-types.workspace = true
+base-execution-chainspec.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
+
+# misc
+eyre.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+jsonrpsee = { workspace = true, features = ["server"] }
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

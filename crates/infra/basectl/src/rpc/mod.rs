@@ -8,10 +8,10 @@ pub use admin::{
 
 mod conductor;
 pub use conductor::{
-    ConductorClusterSnapshot, ConductorControl, ConductorFanoutReport, ConductorNodeFailure,
-    ConductorNodeStatus, ConductorPollUpdate, PausedPeers, conductor_pause_all_nodes,
-    conductor_pause_node, conductor_resume_all_nodes, conductor_resume_node,
-    restart_conductor_node, run_conductor_poller, transfer_conductor_leader,
+    ConductorClusterSnapshot, ConductorControl, ConductorFanoutAction, ConductorFanoutReport,
+    ConductorNodeFailure, ConductorNodeStatus, ConductorPollUpdate, PausedPeers,
+    conductor_pause_all_nodes, conductor_pause_node, conductor_resume_all_nodes,
+    conductor_resume_node, restart_conductor_node, run_conductor_poller, transfer_conductor_leader,
 };
 
 mod el;
@@ -34,10 +34,10 @@ pub use l1::{
 mod p2p;
 pub use p2p::{
     ClInfoReport, ClNodeIdentity, DiscoveryInfo, ElInfoReport, ElNodeIdentity, NodeEndpoint,
-    NodeInfoReport, PeerListReport, PeerStatsReport, PeerSummary, RawInfoReport, RawPeerCounts,
-    RawPeersReport, add_peer, ban_peer, connect_peer, disconnect_peer, fetch_cl_info,
-    fetch_connected_peers, fetch_el_info, fetch_info, fetch_raw_info, fetch_raw_peers,
-    list_banned_peers, remove_peer, unban_peer,
+    NodeInfoReport, PeerDirection, PeerListReport, PeerStatsReport, PeerSummary, RawInfoReport,
+    RawPeerCounts, RawPeersReport, add_peer, ban_el_peer, ban_peer, connect_peer, disconnect_peer,
+    el_peer_is_trusted, fetch_cl_info, fetch_connected_peers, fetch_el_info, fetch_info,
+    fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_el_peer, unban_peer,
 };
 
 mod pods;

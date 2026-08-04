@@ -7,6 +7,7 @@ pub mod transaction;
 mod block;
 mod call;
 mod pending_block;
+mod pubsub;
 
 use std::{
     fmt::{self, Formatter},

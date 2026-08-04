@@ -510,6 +510,7 @@ impl ActionEngineClient {
                 withdrawals: Some(vec![]),
                 parent_beacon_block_root: None,
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: Some(payload.transactions.clone()),
             no_tx_pool: Some(true),
@@ -984,5 +985,10 @@ impl SequencerEngineClient for ActionEngineClient {
     async fn get_unsafe_head(&self) -> Result<L2BlockInfo, NodeEngineClientError> {
         let guard = self.inner.lock().expect("action engine inner lock poisoned");
         Ok(guard.canonical_head)
+    }
+
+    async fn el_sync_finished(&self) -> Result<bool, NodeEngineClientError> {
+        // The action engine executes synchronously and does not model background EL sync.
+        Ok(true)
     }
 }

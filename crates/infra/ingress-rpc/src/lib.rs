@@ -25,8 +25,8 @@ use alloy_provider::{Provider, RootProvider};
 use base_bundles::MeterBundleResponse;
 use base_common_network::Base;
 use base_observability_events::{
-    DEFAULT_QUEUE_CAPACITY, TransactionEventProducer, TransactionEventType,
-    TransactionEventWriterConfig, transaction_event,
+    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
+    TransactionEventType, TransactionEventWriterConfig, transaction_event,
 };
 use clap::Args;
 use serde_json::{Map, json};
@@ -156,6 +156,22 @@ pub struct Config {
     )]
     pub transaction_events_queue_capacity: usize,
 
+    /// Maximum size of an active transaction event JSONL segment.
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_TRANSACTION_EVENTS_MAX_FILE_BYTES",
+        default_value_t = DEFAULT_MAX_FILE_BYTES
+    )]
+    pub transaction_events_max_file_bytes: u64,
+
+    /// Maximum number of transaction event JSONL segments to retain, including the active file.
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_TRANSACTION_EVENTS_MAX_FILES",
+        default_value_t = DEFAULT_MAX_FILES
+    )]
+    pub transaction_events_max_files: usize,
+
     /// Fail service initialization if the journal file cannot be opened.
     #[arg(long, env = "TIPS_INGRESS_TRANSACTION_EVENTS_REQUIRED", default_value = "false")]
     pub transaction_events_required: bool,
@@ -172,6 +188,8 @@ impl Config {
             enabled: self.transaction_events_enabled,
             file_path: self.transaction_events_file_path.clone(),
             queue_capacity: self.transaction_events_queue_capacity,
+            max_file_bytes: self.transaction_events_max_file_bytes,
+            max_files: self.transaction_events_max_files,
             required: self.transaction_events_required,
             producer: TransactionEventProducer::IngressRpc,
             network: self.transaction_events_network.clone(),

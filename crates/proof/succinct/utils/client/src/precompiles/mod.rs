@@ -461,7 +461,7 @@ mod tests {
             (BaseUpgrade::Azul, false),
             (BaseUpgrade::Beryl, true),
             (BaseUpgrade::Cobalt, true),
-            (BaseUpgrade::Zombie, true),
+            (BaseUpgrade::Zenith, true),
         ] {
             let spec = BaseSpecId::new(upgrade);
             let base_precompiles = BasePrecompiles::new_with_spec(spec).install();

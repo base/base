@@ -35,12 +35,12 @@ futures.workspace = true
 libp2p-stream.workspace = true
 ipnet = { workspace = true, features = ["serde"] }
 discv5 = { workspace = true, features = ["libp2p"] }
-openssl = { workspace = true, features = ["vendored"] }
 libp2p-identity = { workspace = true, features = ["secp256k1"] }
 libp2p = { workspace = true, features = ["macros", "tokio", "tcp", "dns", "noise", "gossipsub", "ping", "yamux", "identify"] }
 
 # Misc
 lru.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 serde_repr.workspace = true
 serde = { workspace = true, features = ["std"] }

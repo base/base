@@ -7,6 +7,7 @@ use base_prover_service_protocol::{
     SnarkPlonkProofRequest, TeeKind, TeeProofRequest,
 };
 use eyre::{Result, WrapErr, bail};
+use sp1_sdk::SP1ProofWithPublicValues;
 
 /// Conversion helpers for challenger proof requests and dispute proof bytes.
 #[derive(Debug)]
@@ -68,7 +69,7 @@ impl ChallengerProofAdapter {
 
     /// Converts a prover-service SNARK result into bytes accepted by `submit_dispute`.
     pub fn snark_plonk_dispute_proof_bytes(result: ProofResult) -> Result<Bytes> {
-        let proof = match result {
+        let receipt_bytes = match result {
             ProofResult::SnarkPlonk(result) => result.proof.proof,
             ProofResult::Compressed(_) => {
                 bail!("expected SNARK_PLONK proof result, got Compressed")
@@ -78,7 +79,10 @@ impl ChallengerProofAdapter {
             }
         };
 
-        Ok(ProofEncoder::encode_zk_dispute_proof_bytes(proof))
+        let (receipt, _): (SP1ProofWithPublicValues, _) =
+            bincode::serde::decode_from_slice(&receipt_bytes, bincode::config::standard())
+                .wrap_err("failed to decode SNARK proof as SP1ProofWithPublicValues")?;
+        Ok(ProofEncoder::encode_zk_dispute_proof_bytes(Bytes::from(receipt.bytes())))
     }
 
     /// Converts a prover-service TEE result into bytes accepted by `submit_dispute`.
@@ -108,11 +112,12 @@ impl ChallengerProofAdapter {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes};
-    use base_proof_primitives::{PROOF_TYPE_TEE, ProofRequest, Proposal};
+    use base_proof_primitives::{PROOF_TYPE_TEE, PROOF_TYPE_ZK, ProofRequest, Proposal};
     use base_prover_service_protocol::{
         ProofRequestKind, ProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult, TeeKind,
         TeeProofRequest, TeeProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
+    use sp1_sdk::{SP1Proof, SP1ProofWithPublicValues, SP1PublicValues};
 
     use super::ChallengerProofAdapter;
 
@@ -221,18 +226,33 @@ mod tests {
     }
 
     #[test]
-    fn snark_plonk_dispute_proof_bytes_prefixes_zk_type() {
+    fn snark_plonk_dispute_proof_bytes_decodes_receipt_to_onchain_seal() {
+        let mut plonk_vkey_hash = [0u8; 32];
+        plonk_vkey_hash[..4].copy_from_slice(&[0x5a, 0x09, 0x3a, 0x2f]);
+        let mut receipt = SP1ProofWithPublicValues {
+            proof: SP1Proof::Plonk(Default::default()),
+            public_values: SP1PublicValues::new(),
+            sp1_version: "test".to_owned(),
+            tee_proof: None,
+        };
+        let SP1Proof::Plonk(plonk) = &mut receipt.proof else {
+            unreachable!();
+        };
+        plonk.encoded_proof = "abcd".to_owned();
+        plonk.plonk_vkey_hash = plonk_vkey_hash;
+
+        let encoded =
+            bincode::serde::encode_to_vec(&receipt, bincode::config::standard()).expect("bincode");
         let result = ProofResult::SnarkPlonk(SnarkPlonkProofResult {
             proof: ZkProofResult {
                 zk_vm: ZkVm::Sp1,
-                proof: Bytes::from_static(&[0xab, 0xcd]),
+                proof: Bytes::from(encoded),
                 execution_stats: None,
             },
         });
 
         let proof_bytes = ChallengerProofAdapter::snark_plonk_dispute_proof_bytes(result).unwrap();
-
-        assert_eq!(proof_bytes.as_ref(), &[1, 0xab, 0xcd]);
+        assert_eq!(proof_bytes.as_ref(), &[PROOF_TYPE_ZK, 0x5a, 0x09, 0x3a, 0x2f, 0xab, 0xcd]);
     }
 
     #[test]
@@ -242,6 +262,7 @@ mod tests {
             aggregate_proposal: test_proposal(root),
             proposals: Vec::new(),
             tee_kind: TeeKind::AwsNitro,
+            tee_signer: Address::repeat_byte(0x11),
         });
 
         let proof_bytes = ChallengerProofAdapter::tee_dispute_proof_bytes(result, root).unwrap();
@@ -256,6 +277,7 @@ mod tests {
             aggregate_proposal: test_proposal(B256::repeat_byte(0xaa)),
             proposals: Vec::new(),
             tee_kind: TeeKind::AwsNitro,
+            tee_signer: Address::repeat_byte(0x11),
         });
 
         let err = ChallengerProofAdapter::tee_dispute_proof_bytes(result, B256::repeat_byte(0xbb))

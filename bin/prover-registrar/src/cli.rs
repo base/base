@@ -6,8 +6,7 @@ use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::{BoundlessProver, BoundlessProverConfig};
 use base_proof_tee_registrar::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, INSTANCE_CACHE_TTL_CYCLES, RegistrarConfig,
-    RegistrarError,
+    INSTANCE_CACHE_TTL_CYCLES, RegistrarConfig, RegistrarError,
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use boundless_market::{
@@ -201,14 +200,6 @@ pub(crate) struct Cli {
     )]
     tx_retry_delay: u64,
 
-    /// Grace period for registering newly launched unhealthy instances.
-    #[arg(
-        long = "unhealthy-registration-window-secs",
-        env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"),
-        default_value_t = DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS
-    )]
-    unhealthy_registration_window: u64,
-
     /// `NitroEnclaveVerifier` contract address for CRL checks. Providing this enables CRL checks.
     #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
     crl_nitro_verifier_address: Option<Address>,
@@ -277,7 +268,6 @@ impl Cli {
             instance_cache_ttl_cycles: self.instance_cache_ttl_cycles,
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay),
-            unhealthy_registration_window: Duration::from_secs(self.unhealthy_registration_window),
             crl_nitro_verifier_address: self.crl_nitro_verifier_address,
             health_addr: self.health.socket_addr(),
             log_config: self.log.into(),
@@ -390,8 +380,6 @@ mod tests {
             "2",
             "--instance-cache-ttl-cycles",
             "3",
-            "--unhealthy-registration-window-secs",
-            "600",
         ]);
 
         assert!(Cli::try_parse_from(args).is_ok());

@@ -14,11 +14,14 @@ workspace = true
 [dependencies]
 # workspace
 base-runtime.workspace = true
+base-test-utils = { workspace = true, optional = true }
 base-txpool-rpc.workspace = true
 base-tx-manager.workspace = true
 base-flashblocks.workspace = true
 base-tx-forwarding.workspace = true
+base-execution-cli.workspace = true
 base-txpool-tracing.workspace = true
+base-upgrade-signal.workspace = true
 base-batcher-service.workspace = true
 base-bundle-extension.workspace = true
 base-flashblocks-node.workspace = true
@@ -90,9 +93,21 @@ serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 
+[features]
+default = [ "upgrade-signal" ]
+# The upgrade-signal stack deploys a mock ProtocolVersions contract via base-test-utils, whose
+# contract bindings embed Foundry `out/` artifacts through `sol!(..., concat!(...))` at compile
+# time. Those artifacts are gitignored, so base-test-utils cannot compile when pulled over a git
+# dependency. External consumers that only need the core L1+L2 stack disable this feature
+# (`default-features = false`); it stays on by default for in-tree use where the artifacts exist.
+upgrade-signal = [ "base-test-utils/contracts", "dep:base-test-utils" ]
+
 [dev-dependencies]
 # cli
 clap = { workspace = true, features = ["derive"] }
+
+# load testing
+base-load-tests.workspace = true
 
 # consensus
 base-consensus-derive.workspace = true

@@ -666,7 +666,7 @@ mod tests {
     use crate::{
         B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinToken, B20TokenRole, IB20, PackedPolicy,
         PermitArgs, PolicyAccounting, PolicyRegistryStorage, PolicyVersion, Stablecoin,
-        StablecoinAccounting, StablecoinV1, Token, TokenAccounting,
+        StablecoinAccounting, StablecoinV1, Token, TokenAccounting, TransferPolicyIds,
     };
 
     // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
@@ -829,6 +829,10 @@ mod tests {
             self.policy_ids.insert(policy_scope, policy_id);
             Ok(())
         }
+
+        fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
+            TransferPolicyIds::read_individually(self)
+        }
         fn emit_event(&mut self, log: LogData) -> Result<()> {
             self.events.push(log);
             Ok(())
@@ -929,6 +933,15 @@ mod tests {
         }
         fn mark_initialized(&mut self) -> Result<()> {
             self.initialized = true;
+            Ok(())
+        }
+
+        // This fake does not exercise composite policies.
+        fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
+            Ok(Vec::new())
+        }
+
+        fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
             Ok(())
         }
     }
@@ -1404,5 +1417,16 @@ mod tests {
             LOGIC.domain_separator(&tok, 1).unwrap(),
             LOGIC.domain_separator(&tok, 2).unwrap()
         );
+    }
+
+    /// Pins this version's frozen EIP-712 domain typehash to the exact type string it must hash.
+    /// The constant is duplicated per version so each fork's wire surface stays independently
+    /// frozen; without this check a typo in one copy would silently change that version's digest.
+    #[test]
+    fn domain_typehash_matches_eip712_domain_type() {
+        let domain_type =
+            b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
+        assert_eq!(super::DOMAIN_TYPEHASH, keccak256(domain_type));
+        assert_eq!(super::VERSION, b"1");
     }
 }

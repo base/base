@@ -69,7 +69,6 @@ where
         &mut self,
         l2_parent: L2BlockInfo,
         epoch: BlockNumHash,
-        timestamp_millis_part: Option<u16>,
     ) -> PipelineResult<BasePayloadAttributes> {
         let l1_header;
         let deposit_transactions: Vec<Bytes>;
@@ -130,7 +129,9 @@ where
 
         // Sanity check the L1 origin was correctly selected to maintain the time invariant
         // between L1 and L2.
-        let next_l2_time = l2_parent.block_info.timestamp + self.rollup_cfg.block_time;
+        let next_l2_block_number = l2_parent.block_info.number + 1;
+        let (next_l2_time, next_l2_timestamp_millis_part) =
+            self.rollup_cfg.l2_block_timestamp_parts(next_l2_block_number);
         if next_l2_time < l1_header.timestamp {
             return Err(PipelineErrorKind::Reset(
                 BuilderError::BrokenTimeInvariant(
@@ -147,22 +148,22 @@ where
         if self.rollup_cfg.is_ecotone_active(next_l2_time)
             && !self.rollup_cfg.is_ecotone_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions = Upgrades::ECOTONE.txs().collect();
+            upgrade_transactions.extend(Upgrades::ECOTONE.txs());
         }
         if self.rollup_cfg.is_fjord_active(next_l2_time)
             && !self.rollup_cfg.is_fjord_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions.append(&mut Upgrades::FJORD.txs().collect());
+            upgrade_transactions.extend(Upgrades::FJORD.txs());
         }
         if self.rollup_cfg.is_isthmus_active(next_l2_time)
             && !self.rollup_cfg.is_isthmus_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions.append(&mut Upgrades::ISTHMUS.txs().collect());
+            upgrade_transactions.extend(Upgrades::ISTHMUS.txs());
         }
         if self.rollup_cfg.is_jovian_active(next_l2_time)
             && !self.rollup_cfg.is_jovian_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions.append(&mut Upgrades::JOVIAN.txs().collect());
+            upgrade_transactions.extend(Upgrades::JOVIAN.txs());
         }
 
         // Build and encode the L1 info transaction for the current payload.
@@ -181,7 +182,7 @@ where
         let mut encoded_l1_info_tx = Vec::with_capacity(l1_info_tx_envelope.length());
         l1_info_tx_envelope.encode_2718(&mut encoded_l1_info_tx);
 
-        let base_time_active = self.rollup_cfg.is_zombie_active(next_l2_time);
+        let base_time_active = self.rollup_cfg.is_zenith_active(next_l2_time);
         let mut txs = Vec::with_capacity(
             1 + usize::from(base_time_active)
                 + deposit_transactions.len()
@@ -190,18 +191,14 @@ where
         txs.push(encoded_l1_info_tx.into());
 
         let payload_timestamp_millis_part = if base_time_active {
-            let timestamp_millis_part = timestamp_millis_part.ok_or_else(|| {
-                PipelineError::AttributesBuilder(BuilderError::MissingBaseTimeTimestampMillisPart)
-                    .crit()
-            })?;
-            let base_time = BaseTimeUpdateTx::new(timestamp_millis_part).map_err(|e| {
+            let base_time = BaseTimeUpdateTx::new(next_l2_timestamp_millis_part).map_err(|e| {
                 PipelineError::AttributesBuilder(BuilderError::BaseTimeUpdate(e)).crit()
             })?;
-            let envelope = base_time.into_deposit_tx(l2_parent.block_info.number + 1);
+            let envelope = base_time.into_deposit_tx(next_l2_block_number);
             let mut encoded = Vec::with_capacity(envelope.length());
             envelope.encode_2718(&mut encoded);
             txs.push(encoded.into());
-            Some(timestamp_millis_part)
+            Some(next_l2_timestamp_millis_part)
         } else {
             None
         };
@@ -228,6 +225,7 @@ where
                 parent_beacon_block_root: parent_beacon_root,
                 withdrawals,
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: Some(txs),
             no_tx_pool: Some(true),
@@ -290,8 +288,8 @@ mod tests {
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
     use base_common_chains::Sepolia;
     use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
-    use base_common_genesis::{SystemConfig, SystemConfigUpdate, UpgradeConfig};
-    use base_protocol::{BaseTimeUpdateError, BlockInfo, DepositDecodeError};
+    use base_common_genesis::{ChainGenesis, SystemConfig, SystemConfigUpdate, UpgradeConfig};
+    use base_protocol::{BlockInfo, DepositDecodeError};
 
     use super::*;
     use crate::{
@@ -408,7 +406,8 @@ mod tests {
         let header = Header::default();
         let hash = header.hash_slow();
         provider.insert_header(hash, header);
-        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let mut builder =
+            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo { hash: B256::ZERO, number: l2_number, ..Default::default() },
@@ -419,7 +418,7 @@ mod tests {
         // hash. Here we use the default header whose hash will not equal the custom `l2_hash`.
         let expected =
             BuilderError::BlockMismatchEpochReset(epoch, l2_parent.l1_origin, B256::default());
-        let err = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap_err();
+        let err = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap_err();
         assert_eq!(err, PipelineErrorKind::Reset(expected.into()));
     }
 
@@ -434,7 +433,8 @@ mod tests {
         let header = Header::default();
         let hash = header.hash_slow();
         provider.insert_header(hash, header);
-        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let mut builder =
+            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo { hash: B256::ZERO, number: l2_number, ..Default::default() },
@@ -444,14 +444,14 @@ mod tests {
         // This should error because the l2 parent's l1_origin.hash should equal the epoch hash
         // Here the default header is used whose hash will not equal the custom `l2_hash` above.
         let expected = BuilderError::BlockMismatch(epoch, l2_parent.l1_origin);
-        let err = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap_err();
+        let err = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap_err();
         assert_eq!(err, PipelineErrorKind::Reset(ResetError::AttributesBuilder(expected)));
     }
 
     #[tokio::test]
     async fn test_prepare_payload_broken_time_invariant() {
-        let block_time = 10;
-        let timestamp = 100;
+        let block_time = 10_u64;
+        let timestamp = 100_u64;
         let cfg = Arc::new(RollupConfig { block_time, ..Default::default() });
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
@@ -461,14 +461,15 @@ mod tests {
         let header = Header { timestamp, ..Default::default() };
         let hash = header.hash_slow();
         provider.insert_header(hash, header);
-        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let mut builder =
+            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo { hash: B256::ZERO, number: l2_number, ..Default::default() },
             l1_origin: BlockNumHash { hash, number: l2_number },
             seq_num: 0,
         };
-        let next_l2_time = l2_parent.block_info.timestamp + block_time;
+        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
         let block_id = BlockNumHash { hash, number: 0 };
         let expected = BuilderError::BrokenTimeInvariant(
             l2_parent.l1_origin,
@@ -476,15 +477,22 @@ mod tests {
             block_id,
             timestamp,
         );
-        let err = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap_err();
+        let err = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap_err();
         assert_eq!(err, PipelineErrorKind::Reset(ResetError::AttributesBuilder(expected)));
     }
 
     #[tokio::test]
     async fn test_prepare_payload_without_forks() {
-        let block_time = 10;
-        let timestamp = 100;
-        let cfg = Arc::new(RollupConfig { block_time, ..Default::default() });
+        let block_time = 10_u64;
+        let timestamp = 100_u64;
+        let cfg = Arc::new(RollupConfig {
+            block_time,
+            genesis: ChainGenesis {
+                l2_time: timestamp.saturating_sub(block_time),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
         let l1_cfg = Arc::new(Sepolia::l1_config());
         let l2_number = 1;
         let mut fetcher = TestSystemConfigL2Fetcher::default();
@@ -494,7 +502,8 @@ mod tests {
         let prev_randao = header.mix_hash;
         let hash = header.hash_slow();
         provider.insert_header(hash, header);
-        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let mut builder =
+            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
@@ -506,9 +515,8 @@ mod tests {
             l1_origin: BlockNumHash { hash, number: l2_number },
             seq_num: 0,
         };
-        let next_l2_time = l2_parent.block_info.timestamp + block_time;
-        let payload =
-            builder.prepare_payload_attributes(l2_parent, epoch, Some(400)).await.unwrap();
+        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
         let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
@@ -517,6 +525,7 @@ mod tests {
                 parent_beacon_block_root: None,
                 withdrawals: None,
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
@@ -533,13 +542,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_payload_inserts_base_time_update_at_tx_one() {
-        let block_time = 2;
-        let timestamp = 100;
+        let block_time = 2_u64;
+        let timestamp = 100_u64;
         let chain_id = 9_100_004;
         let _activation =
-            base_common_genesis::RuntimeUpgradeRegistry::activate_zombie_for_testing(chain_id, 102);
+            base_common_genesis::RuntimeUpgradeRegistry::activate_zenith_for_testing(chain_id, 102);
         let cfg = Arc::new(RollupConfig {
             block_time,
+            genesis: ChainGenesis {
+                l2_time: timestamp.saturating_sub(block_time),
+                ..Default::default()
+            },
             l2_chain_id: chain_id.into(),
             upgrades: UpgradeConfig { ecotone_time: Some(102), ..Default::default() },
             ..Default::default()
@@ -552,7 +565,8 @@ mod tests {
         let header = Header { timestamp, ..Default::default() };
         let hash = header.hash_slow();
         provider.insert_header(hash, header);
-        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let mut builder =
+            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
@@ -565,9 +579,14 @@ mod tests {
             seq_num: 0,
         };
 
-        let payload =
-            builder.prepare_payload_attributes(l2_parent, epoch, Some(400)).await.unwrap();
-        assert_eq!(payload.timestamp_millis_part, Some(400));
+        let next_l2_block_number = l2_parent.block_info.number + 1;
+        let (_, expected_millis_part) = cfg.l2_block_timestamp_parts(next_l2_block_number);
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        assert_eq!(
+            payload.payload_attributes.timestamp,
+            cfg.l2_block_timestamp(next_l2_block_number)
+        );
+        assert_eq!(payload.timestamp_millis_part, Some(expected_millis_part));
         let transactions = payload.transactions.unwrap();
         assert_eq!(transactions.len(), 8);
         let envelope = BaseTxEnvelope::decode_2718_exact(&transactions[1]).unwrap();
@@ -576,32 +595,78 @@ mod tests {
         assert_eq!(deposit.to, alloy_primitives::TxKind::Call(Predeploys::BASE_TIME));
         assert_eq!(
             BaseTimeUpdateTx::decode_calldata(&deposit.input).unwrap().timestamp_millis_part(),
-            400
+            expected_millis_part
         );
+    }
 
-        let missing = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap_err();
+    #[tokio::test]
+    async fn test_prepare_payload_uses_zenith_formula_for_subsequent_block() {
+        let block_time = 2_u64;
+        let timestamp = 100_u64;
+        let chain_id = 9_100_005;
+        let _activation =
+            base_common_genesis::RuntimeUpgradeRegistry::activate_zenith_for_testing(chain_id, 102);
+        let cfg = Arc::new(RollupConfig {
+            block_time,
+            genesis: ChainGenesis {
+                l2_time: timestamp.saturating_sub(block_time),
+                ..Default::default()
+            },
+            l2_chain_id: chain_id.into(),
+            upgrades: UpgradeConfig { ecotone_time: Some(102), ..Default::default() },
+            ..Default::default()
+        });
+        let l1_cfg = Arc::new(Sepolia::l1_config());
+        let l2_number = 2;
+        let mut fetcher = TestSystemConfigL2Fetcher::default();
+        fetcher.insert(l2_number, SystemConfig::default());
+        let mut provider = TestChainProvider::default();
+        let header = Header { timestamp, ..Default::default() };
+        let hash = header.hash_slow();
+        provider.insert_header(hash, header);
+        let mut builder =
+            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
+        let epoch = BlockNumHash { hash, number: l2_number };
+        let l2_parent = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::ZERO,
+                number: l2_number,
+                timestamp: 102,
+                parent_hash: hash,
+            },
+            l1_origin: BlockNumHash { hash, number: l2_number },
+            seq_num: 0,
+        };
+
+        let next_l2_block_number = l2_parent.block_info.number + 1;
+        let (expected_timestamp, expected_millis_part) =
+            cfg.l2_block_timestamp_parts(next_l2_block_number);
+        assert_eq!(expected_millis_part, 200);
+
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
+        assert_eq!(payload.payload_attributes.timestamp, expected_timestamp);
+        assert_eq!(payload.timestamp_millis_part, Some(expected_millis_part));
+
+        let transactions = payload.transactions.unwrap();
+        assert_eq!(transactions.len(), 2);
+        let envelope = BaseTxEnvelope::decode_2718_exact(&transactions[1]).unwrap();
+        let deposit = envelope.as_deposit().unwrap();
         assert_eq!(
-            missing,
-            PipelineErrorKind::Critical(PipelineError::AttributesBuilder(
-                BuilderError::MissingBaseTimeTimestampMillisPart
-            ))
-        );
-        let invalid =
-            builder.prepare_payload_attributes(l2_parent, epoch, Some(100)).await.unwrap_err();
-        assert_eq!(
-            invalid,
-            PipelineErrorKind::Critical(PipelineError::AttributesBuilder(
-                BuilderError::BaseTimeUpdate(BaseTimeUpdateError::InvalidTimestampMillisPart(100))
-            ))
+            BaseTimeUpdateTx::decode_calldata(&deposit.input).unwrap().timestamp_millis_part(),
+            expected_millis_part
         );
     }
 
     #[tokio::test]
     async fn test_prepare_payload_with_canyon() {
-        let block_time = 10;
-        let timestamp = 100;
+        let block_time = 10_u64;
+        let timestamp = 100_u64;
         let cfg = Arc::new(RollupConfig {
             block_time,
+            genesis: ChainGenesis {
+                l2_time: timestamp.saturating_sub(block_time),
+                ..Default::default()
+            },
             upgrades: UpgradeConfig { canyon_time: Some(0), ..Default::default() },
             ..Default::default()
         });
@@ -614,7 +679,8 @@ mod tests {
         let prev_randao = header.mix_hash;
         let hash = header.hash_slow();
         provider.insert_header(hash, header);
-        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let mut builder =
+            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
@@ -626,8 +692,8 @@ mod tests {
             l1_origin: BlockNumHash { hash, number: l2_number },
             seq_num: 0,
         };
-        let next_l2_time = l2_parent.block_info.timestamp + block_time;
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap();
+        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
         let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
@@ -636,6 +702,7 @@ mod tests {
                 parent_beacon_block_root: None,
                 withdrawals: Some(Vec::default()),
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
@@ -652,10 +719,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_payload_with_ecotone() {
-        let block_time = 2;
-        let timestamp = 100;
+        let block_time = 2_u64;
+        let timestamp = 100_u64;
         let cfg = Arc::new(RollupConfig {
             block_time,
+            genesis: ChainGenesis {
+                l2_time: timestamp.saturating_sub(block_time),
+                ..Default::default()
+            },
             upgrades: UpgradeConfig { ecotone_time: Some(102), ..Default::default() },
             ..Default::default()
         });
@@ -669,7 +740,8 @@ mod tests {
         let prev_randao = header.mix_hash;
         let hash = header.hash_slow();
         provider.insert_header(hash, header);
-        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let mut builder =
+            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
@@ -681,8 +753,8 @@ mod tests {
             l1_origin: BlockNumHash { hash, number: l2_number },
             seq_num: 0,
         };
-        let next_l2_time = l2_parent.block_info.timestamp + block_time;
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap();
+        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
         let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
@@ -691,6 +763,7 @@ mod tests {
                 parent_beacon_block_root,
                 withdrawals: Some(vec![]),
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
@@ -707,10 +780,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_payload_with_fjord() {
-        let block_time = 2;
-        let timestamp = 100;
+        let block_time = 2_u64;
+        let timestamp = 100_u64;
         let cfg = Arc::new(RollupConfig {
             block_time,
+            genesis: ChainGenesis {
+                l2_time: timestamp.saturating_sub(block_time),
+                ..Default::default()
+            },
             upgrades: UpgradeConfig { fjord_time: Some(102), ..Default::default() },
             ..Default::default()
         });
@@ -723,7 +800,8 @@ mod tests {
         let prev_randao = header.mix_hash;
         let hash = header.hash_slow();
         provider.insert_header(hash, header);
-        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let mut builder =
+            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash, number: l2_number };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo {
@@ -735,8 +813,8 @@ mod tests {
             l1_origin: BlockNumHash { hash, number: l2_number },
             seq_num: 0,
         };
-        let next_l2_time = l2_parent.block_info.timestamp + block_time;
-        let payload = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap();
+        let next_l2_time = cfg.l2_block_timestamp(l2_parent.block_info.number + 1);
+        let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
         let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
@@ -745,6 +823,7 @@ mod tests {
                 parent_beacon_block_root: Some(B256::ZERO),
                 withdrawals: Some(vec![]),
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
@@ -794,7 +873,8 @@ mod tests {
         provider.insert_header(epoch_hash, header);
         provider.insert_receipts(epoch_hash, vec![bad_receipt]);
 
-        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let mut builder =
+            StatefulAttributesBuilder::new(Arc::clone(&cfg), l1_cfg, fetcher, provider);
         let epoch = BlockNumHash { hash: epoch_hash, number: l2_number + 1 };
         let l2_parent = L2BlockInfo {
             block_info: BlockInfo { hash: B256::ZERO, number: l2_number, ..Default::default() },
@@ -803,6 +883,6 @@ mod tests {
         };
 
         // Should succeed despite the malformed system config receipt.
-        assert!(builder.prepare_payload_attributes(l2_parent, epoch, None).await.is_ok());
+        assert!(builder.prepare_payload_attributes(l2_parent, epoch).await.is_ok());
     }
 }

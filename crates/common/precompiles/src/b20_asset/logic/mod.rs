@@ -15,6 +15,9 @@ pub use interface::Asset;
 mod v1;
 pub use v1::AssetV1;
 
+mod v2;
+pub use v2::AssetV2;
+
 /// Storage + policy binding the asset logic operates on.
 ///
 /// A minimal `(accounting, policy, policy_version)` holder implementing [`Token`];

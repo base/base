@@ -15,6 +15,9 @@ pub use interface::Stablecoin;
 mod v1;
 pub use v1::StablecoinV1;
 
+mod v2;
+pub use v2::StablecoinV2;
+
 /// Storage + policy binding the stablecoin logic operates on.
 ///
 /// A minimal `(accounting, policy, policy_version)` holder implementing [`Token`];

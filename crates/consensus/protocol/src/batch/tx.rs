@@ -29,13 +29,12 @@ impl BatchTransaction {
 
     /// Returns the [`BatchTransaction`] as a [`Bytes`].
     pub fn to_bytes(&self) -> Bytes {
-        self.frames
-            .iter()
-            .fold(Vec::new(), |mut acc, frame| {
-                acc.append(&mut frame.encode());
-                acc
-            })
-            .into()
+        let capacity = self.frames.iter().map(Frame::encoded_len).sum();
+        let mut encoded = Vec::with_capacity(capacity);
+        for frame in &self.frames {
+            frame.encode_into(&mut encoded);
+        }
+        encoded.into()
     }
 }
 

@@ -27,11 +27,8 @@ fn main() {
 
     cli.run(|builder, builder_args| async move {
         let rollup_args = builder_args.rollup_args.clone();
-        let builder = StandardBaseRethNode::apply_initial_upgrade_signal_from_rollup_args(
-            builder,
-            &rollup_args,
-        )
-        .await?;
+        let builder =
+            StandardBaseRethNode::apply_initial_upgrade_signal(builder, &builder_args).await?;
 
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder_args.build_metering_store());
@@ -51,7 +48,7 @@ fn main() {
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .with_manifest_precheck_enabled(manifest_precheck_enabled)
-            .with_service_builder(FlashblocksServiceBuilder(builder_config));
+            .with_service_builder(FlashblocksServiceBuilder::new(builder_config));
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
         runner.install_ext::<BuilderApiExtension>(());

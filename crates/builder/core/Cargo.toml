@@ -91,6 +91,7 @@ base-common-rpc-types.workspace = true
 base-common-rpc-types-engine.workspace = true
 base-common-evm = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
+base-execution-eip8130.workspace = true
 
 # tokio
 tokio.workspace = true
@@ -135,12 +136,12 @@ dirs-next.workspace = true
 secp256k1.workspace = true
 serde_with.workspace = true
 parking_lot.workspace = true
-derive_more.workspace = true
 tar = { workspace = true, optional = true }
 ctor = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["debug"] }
 serde = { workspace = true, features = ["std"] }
 hyper-util = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
@@ -180,6 +181,7 @@ criterion = { workspace = true, features = ["html_reports"] }
 ctor.workspace = true
 hyper.workspace = true
 rlimit.workspace = true
+rstest.workspace = true
 nanoid.workspace = true
 tempfile.workspace = true
 hyper-util.workspace = true

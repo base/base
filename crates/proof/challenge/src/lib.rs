@@ -34,7 +34,7 @@ mod metrics;
 pub use metrics::ChallengerMetrics;
 
 mod scanner;
-pub use scanner::{CandidateGame, GameCategory, GameEvaluation, GameScanner};
+pub use scanner::{CandidateGame, GameCategory, GameScanner};
 
 mod service;
 pub use service::ChallengerService;
@@ -46,9 +46,6 @@ mod validator;
 pub use validator::{
     IntermediateValidationParams, OutputValidator, ValidationResult, ValidatorError,
 };
-
-mod verify;
-pub use verify::{AccountProofError, AccountProofVerifier};
 
 mod bond;
 pub use bond::{BondManager, BondManagerConfig};

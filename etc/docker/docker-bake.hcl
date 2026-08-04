@@ -3,7 +3,7 @@ variable "PROFILE" {
 }
 
 variable "RUST_VERSION" {
-  default = "1.94.1"
+  default = "1.95.0"
 }
 
 variable "BASE_SUCCINCT_ELF_REQUIRE" {
@@ -26,8 +26,8 @@ variable "DEVNET_TARGETS" {
   default = ["base", "batcher", "prover-service", "zk-host"]
 }
 
-variable "INGRESS_EXTRA_TARGETS" {
-  default = ["ingress-rpc", "audit-archiver"]
+variable "INGRESS_TARGETS" {
+  default = ["base", "batcher", "ingress-rpc", "audit-archiver"]
 }
 
 group "default" {
@@ -58,7 +58,7 @@ group "devnet" {
 }
 
 group "ingress" {
-  targets = concat(DEVNET_TARGETS, INGRESS_EXTRA_TARGETS)
+  targets = INGRESS_TARGETS
 }
 
 target "_rust-service-common" {

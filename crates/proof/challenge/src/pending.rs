@@ -345,3 +345,186 @@ pub enum ProofUpdate {
     /// The proof is still in progress.
     Pending,
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    use alloy_primitives::{Address, B256};
+    use base_prover_service_protocol::{ZkBackend, ZkProofRequest, ZkVm};
+
+    use super::*;
+    use crate::test_utils::{MockZkProofProvider, MockZkProofState, addr};
+
+    const fn minimal_prove_request() -> SnarkPlonkProofRequest {
+        SnarkPlonkProofRequest {
+            proof: ZkProofRequest {
+                start_block_number: 0,
+                number_of_blocks_to_prove: 1,
+                sequence_window: None,
+                l1_head: None,
+                intermediate_root_interval: None,
+                zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
+            },
+            prover_address: Address::ZERO,
+        }
+    }
+
+    fn awaiting_proof(session_id: &str) -> PendingProof {
+        PendingProof::awaiting(
+            session_id.to_owned(),
+            0,
+            B256::ZERO,
+            minimal_prove_request(),
+            DisputeIntent::Challenge,
+        )
+    }
+
+    #[tokio::test]
+    async fn poll_transitions() {
+        for (status, max_proof_duration, expected_retry_count) in [
+            (ProofStatus::Failed, Duration::from_secs(3600), 1),
+            (ProofStatus::Running, Duration::from_secs(3600), 0),
+            (ProofStatus::Running, Duration::ZERO, 1),
+        ] {
+            let zk = Arc::new(MockZkProofProvider {
+                state: Mutex::new(MockZkProofState { proof_status: status, ..Default::default() }),
+            });
+            let mut proofs = PendingProofs::new();
+            proofs.insert(addr(0), awaiting_proof("session"));
+
+            let update = proofs.poll(addr(0), &*zk, max_proof_duration).await.unwrap();
+            let should_retry = expected_retry_count != 0;
+
+            let entry = proofs.get(&addr(0)).unwrap();
+            assert_eq!(entry.retry_count, expected_retry_count);
+            if should_retry {
+                assert!(matches!(update, Some(ProofUpdate::NeedsRetry)));
+                assert!(matches!(entry.phase, ProofPhase::NeedsRetry));
+            } else {
+                assert!(matches!(update, Some(ProofUpdate::Pending)));
+                assert!(matches!(entry.phase, ProofPhase::AwaitingProof { .. }));
+            }
+        }
+    }
+
+    #[cfg(feature = "metrics")]
+    mod metrics_emission {
+        use alloy_primitives::Bytes;
+        use base_proof_primitives::Proposal;
+        use base_prover_service_protocol::{
+            ProofResult as ApiProofResult, TeeKind, TeeProofResult,
+        };
+        use metrics_util::{
+            MetricKind,
+            debugging::{DebugValue, DebuggingRecorder},
+        };
+
+        use super::*;
+        use crate::ChallengerMetrics;
+
+        fn assert_failure_metric(
+            proof: PendingProof,
+            state: MockZkProofState,
+            max_proof_duration: Duration,
+            expected_reason: &str,
+        ) {
+            let recorder = DebuggingRecorder::new();
+            let snapshotter = recorder.snapshotter();
+            metrics::with_local_recorder(&recorder, || {
+                let runtime =
+                    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                runtime.block_on(async {
+                    let zk = MockZkProofProvider { state: Mutex::new(state) };
+                    let mut proofs = PendingProofs::new();
+                    proofs.insert(addr(0), proof);
+                    proofs.poll(addr(0), &zk, max_proof_duration).await.unwrap();
+                });
+
+                let snapshot = snapshotter.snapshot().into_vec();
+                let count = snapshot.iter().find_map(|(key, _, _, value)| {
+                    if key.kind() != MetricKind::Counter
+                        || key.key().name() != "base_challenger.proof_session_failures_total"
+                        || !key.key().labels().any(|label| {
+                            label.key() == "reason" && label.value() == expected_reason
+                        })
+                    {
+                        return None;
+                    }
+                    match value {
+                        DebugValue::Counter(value) => Some(*value),
+                        _ => None,
+                    }
+                });
+
+                assert_eq!(count, Some(1));
+            });
+        }
+
+        #[test]
+        fn poll_emits_failure_metrics() {
+            let expected_root = B256::repeat_byte(0xaa);
+            let bad_proposal = Proposal {
+                output_root: B256::repeat_byte(0xbb),
+                signature: Bytes::from_static(&[0; 65]),
+                l1_origin_hash: B256::ZERO,
+                l1_origin_number: 0,
+                l2_block_number: 0,
+                prev_output_root: B256::ZERO,
+                config_hash: B256::ZERO,
+                schedule_id: B256::ZERO,
+            };
+
+            for (proof, state, max_proof_duration, expected_reason) in [
+                (
+                    awaiting_proof("stuck-session"),
+                    MockZkProofState { proof_status: ProofStatus::Running, ..Default::default() },
+                    Duration::ZERO,
+                    ChallengerMetrics::PROOF_FAILURE_TIMEOUT,
+                ),
+                (
+                    awaiting_proof("failed-session"),
+                    MockZkProofState { proof_status: ProofStatus::Failed, ..Default::default() },
+                    Duration::from_secs(3600),
+                    ChallengerMetrics::PROOF_FAILURE_FAILED,
+                ),
+                (
+                    awaiting_proof("malformed-session"),
+                    MockZkProofState {
+                        proof_status: ProofStatus::Succeeded,
+                        omit_result_on_success: true,
+                        ..Default::default()
+                    },
+                    Duration::from_secs(3600),
+                    ChallengerMetrics::PROOF_FAILURE_MALFORMED,
+                ),
+                (
+                    PendingProof::awaiting_tee(
+                        "tee-bad-root-session".to_owned(),
+                        0,
+                        expected_root,
+                        Some((minimal_prove_request(), DisputeIntent::Challenge)),
+                    ),
+                    MockZkProofState {
+                        proof_status: ProofStatus::Succeeded,
+                        result: Some(ApiProofResult::Tee(TeeProofResult {
+                            aggregate_proposal: bad_proposal,
+                            proposals: Vec::new(),
+                            tee_kind: TeeKind::AwsNitro,
+                            tee_signer: Address::repeat_byte(0x11),
+                        })),
+                        ..Default::default()
+                    },
+                    Duration::from_secs(3600),
+                    ChallengerMetrics::PROOF_FAILURE_TEE_VALIDATION,
+                ),
+            ] {
+                assert_failure_metric(proof, state, max_proof_duration, expected_reason);
+            }
+        }
+    }
+}

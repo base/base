@@ -113,16 +113,9 @@ where
             return Err(ResetError::BadParentHash(batch.parent_hash, parent.block_info.hash).into());
         }
 
-        // Sanity check timestamp
-        let actual = parent.block_info.timestamp + self.cfg.block_time;
-        if actual != batch.timestamp {
-            return Err(ResetError::BadTimestamp(batch.timestamp, actual).into());
-        }
-
         // Prepare the payload attributes
         let tx_count = batch.transactions.len();
-        let mut attributes =
-            self.builder.prepare_payload_attributes(parent, batch.epoch(), None).await?;
+        let mut attributes = self.builder.prepare_payload_attributes(parent, batch.epoch()).await?;
         attributes.no_tx_pool = Some(true);
         match attributes.transactions {
             Some(ref mut txs) => txs.extend(batch.transactions),
@@ -235,6 +228,7 @@ mod tests {
                 withdrawals: None,
                 parent_beacon_block_root: None,
                 slot_number: None,
+                target_gas_limit: None,
             },
             no_tx_pool: Some(false),
             transactions: None,
@@ -312,40 +306,6 @@ mod tests {
             result,
             PipelineErrorKind::Reset(ResetError::BadParentHash(Default::default(), bad_hash))
         );
-    }
-
-    #[tokio::test]
-    async fn test_create_next_attributes_bad_timestamp() {
-        let mut attributes_queue = new_attributes_queue(None, None, vec![], vec![]);
-        let parent = L2BlockInfo::default();
-        let batch = SingleBatch { timestamp: 1, ..Default::default() };
-        let result = attributes_queue.create_next_attributes(batch, parent).await.unwrap_err();
-        assert_eq!(result, PipelineErrorKind::Reset(ResetError::BadTimestamp(1, 0)));
-    }
-
-    #[tokio::test]
-    async fn test_create_next_attributes_bad_parent_timestamp() {
-        let mut attributes_queue = new_attributes_queue(None, None, vec![], vec![]);
-        let parent = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 2, ..Default::default() },
-            ..Default::default()
-        };
-        let batch = SingleBatch { timestamp: 1, ..Default::default() };
-        let result = attributes_queue.create_next_attributes(batch, parent).await.unwrap_err();
-        assert_eq!(result, PipelineErrorKind::Reset(ResetError::BadTimestamp(1, 2)));
-    }
-
-    #[tokio::test]
-    async fn test_create_next_attributes_bad_config_timestamp() {
-        let cfg = RollupConfig { block_time: 1, ..Default::default() };
-        let mut attributes_queue = new_attributes_queue(Some(cfg), None, vec![], vec![]);
-        let parent = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 1, ..Default::default() },
-            ..Default::default()
-        };
-        let batch = SingleBatch { timestamp: 1, ..Default::default() };
-        let result = attributes_queue.create_next_attributes(batch, parent).await.unwrap_err();
-        assert_eq!(result, PipelineErrorKind::Reset(ResetError::BadTimestamp(1, 2)));
     }
 
     #[tokio::test]

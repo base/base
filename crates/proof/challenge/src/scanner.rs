@@ -33,8 +33,7 @@
 //! provers zero) are skipped.
 
 use std::{
-    collections::{BTreeMap, HashMap},
-    mem,
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
@@ -122,36 +121,12 @@ impl CandidateGame {
     }
 }
 
-/// Outcome of a single [`GameScanner::evaluate_game`] call.
-///
-/// The scanner uses these variants to decide whether to keep an index in
-/// its persistent tracking map.
-#[derive(Debug)]
-pub enum GameEvaluation {
-    /// `IN_PROGRESS` and matches a [`GameCategory`] — the driver should act.
-    Actionable(CandidateGame),
-
-    /// `IN_PROGRESS` but currently in an unexpected/unactionable state
-    /// (e.g. TEE-only with non-zero `countered_index`). A later on-chain
-    /// transition could make it actionable, so it stays tracked.
-    InProgressNotActionable,
-
-    /// Resolved (`status != IN_PROGRESS`) or fully nullified (both provers
-    /// zero). No future transition can make it actionable.
-    Terminal,
-}
-
 /// Scans the `DisputeGameFactory` for dispute games that need validation.
 ///
 /// On every tick the scanner locates the current anchor game in the factory
 /// index list, then evaluates every later factory index. This avoids an
 /// arbitrary lookback cap while still skipping historical games at or before
 /// the accepted anchor.
-///
-/// Indices are removed from the tracking set as soon as their game reaches
-/// a terminal state (resolved or fully nullified), bounding memory use to
-/// the number of currently-live post-anchor games rather than the total
-/// factory size.
 pub struct GameScanner {
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
@@ -162,10 +137,6 @@ pub struct GameScanner {
     interval_cache: Mutex<HashMap<Address, u64>>,
     /// Cached `(anchor_game, factory_index)` for the current anchor game.
     anchor_index: Option<(Address, u64)>,
-    /// Tracked factory indices keyed to their consecutive scan-failure
-    /// count (`0` for healthy entries). An index is present iff the game was
-    /// observed `IN_PROGRESS` on a previous tick.
-    tracking: BTreeMap<u64, u64>,
 }
 
 impl std::fmt::Debug for GameScanner {
@@ -181,9 +152,6 @@ impl GameScanner {
     /// Maximum number of factory indices to inspect in one anchor lookup batch.
     pub const ANCHOR_SEARCH_BATCH_SIZE: u64 = 1024;
 
-    /// Consecutive per-index scan failures before logs escalate to `error!`.
-    pub const PERSISTENT_SCAN_ERROR_LOG_THRESHOLD: u64 = 3;
-
     /// Creates a new game scanner.
     pub fn new(
         factory_client: Arc<dyn DisputeGameFactoryClient>,
@@ -196,14 +164,7 @@ impl GameScanner {
             anchor_registry_client,
             interval_cache: Mutex::new(HashMap::new()),
             anchor_index: None,
-            tracking: BTreeMap::new(),
         }
-    }
-
-    /// Returns the number of game indices currently retained in the
-    /// in-progress tracking map.
-    pub fn tracked_indices_len(&self) -> usize {
-        self.tracking.len()
     }
 
     /// Scans for candidate games that need validation.
@@ -217,82 +178,43 @@ impl GameScanner {
     /// Games are filtered out cheaply via a single `status()` RPC call when
     /// they are no longer `IN_PROGRESS`. Individual game query failures are
     /// logged and skipped so that a transient RPC error on one game does not
-    /// abort the entire scan; previously-tracked failing indices are retained
-    /// so repeated failures can be surfaced with escalating logs. After
-    /// evaluation, the
-    /// `base_challenger_games_scanned_total` counter,
-    /// `base_challenger_scan_tracked_in_progress` gauge, and
+    /// abort the entire scan. A later scan retries the whole post-anchor range.
+    /// After evaluation, the `base_challenger_games_scanned_total` counter and
     /// `base_challenger_scan_head` gauge are updated.
     pub async fn scan(&mut self) -> Result<Vec<CandidateGame>> {
         let game_count = self.factory_client.game_count().await?;
 
         if game_count == 0 {
             debug!("factory has no games");
-            // A factory with zero games invalidates any tracking we accumulated
-            // (e.g. the factory address was reconfigured at runtime).
-            self.tracking.clear();
-            ChallengerMetrics::scan_tracked_in_progress().set(0.0);
             return Ok(vec![]);
         }
 
         let end = game_count - 1;
         let scan_start = self.scan_start_index(game_count).await;
 
-        let previous_tracking = mem::take(&mut self.tracking);
-        let pruned_tracking = previous_tracking.keys().filter(|&&i| i < scan_start).count();
-        if pruned_tracking > 0 {
-            info!(
-                pruned_tracking = pruned_tracking,
-                scan_start = scan_start,
-                "pruned tracked indices behind anchor"
-            );
-        }
         let games_to_scan = game_count.saturating_sub(scan_start);
 
         let scanner = &*self;
-        let results: Vec<(u64, Result<GameEvaluation>)> = stream::iter(scan_start..game_count)
-            .map(|i| async move { (i, scanner.evaluate_game(i).await) })
-            .buffer_unordered(Self::SCAN_CONCURRENCY)
-            .collect()
-            .await;
+        let results: Vec<(u64, Result<Option<CandidateGame>>)> =
+            stream::iter(scan_start..game_count)
+                .map(|i| async move { (i, scanner.evaluate_game(i).await) })
+                .buffer_unordered(Self::SCAN_CONCURRENCY)
+                .collect()
+                .await;
 
         let mut candidates = Vec::new();
-        let mut next_tracking: BTreeMap<u64, u64> = BTreeMap::new();
 
         for (i, result) in results {
             match result {
-                Ok(GameEvaluation::Actionable(candidate)) => {
-                    next_tracking.insert(i, 0);
-                    candidates.push(candidate);
-                }
-                Ok(GameEvaluation::InProgressNotActionable) => {
-                    next_tracking.insert(i, 0);
-                }
-                Ok(GameEvaluation::Terminal) => {}
-                Err(e) => {
-                    let consecutive_failures =
-                        previous_tracking.get(&i).copied().unwrap_or_default() + 1;
-                    if consecutive_failures >= Self::PERSISTENT_SCAN_ERROR_LOG_THRESHOLD {
-                        error!(error = %e, index = i, consecutive_failures, "game query failed");
-                    } else {
-                        warn!(error = %e, index = i, consecutive_failures, "game query failed");
-                    }
-                    if previous_tracking.contains_key(&i) {
-                        // Keep previously-tracked indices so repeated failures are
-                        // visible in metrics and logs.
-                        next_tracking.insert(i, consecutive_failures);
-                    }
-                }
+                Ok(Some(candidate)) => candidates.push(candidate),
+                Ok(None) => {}
+                Err(e) => warn!(error = %e, index = i, "game query failed"),
             }
         }
 
         candidates.sort_unstable_by_key(|c| c.index);
 
-        let tracked_len = next_tracking.len();
-        self.tracking = next_tracking;
-
         ChallengerMetrics::games_scanned_total().increment(games_to_scan);
-        ChallengerMetrics::scan_tracked_in_progress().set(tracked_len as f64);
         ChallengerMetrics::scan_head().set(end as f64);
 
         info!(
@@ -300,7 +222,6 @@ impl GameScanner {
             scan_start,
             scan_head = end,
             games_scanned = games_to_scan,
-            tracked_in_progress = tracked_len,
             "scan complete"
         );
 
@@ -443,17 +364,14 @@ impl GameScanner {
 
     /// Evaluates a single game at the given factory index.
     ///
-    /// Returns a [`GameEvaluation`] describing whether the game is
-    /// actionable, still live but not currently actionable, or terminal.
-    /// The scanner uses these variants to decide whether to keep the index
-    /// in its persistent tracking set.
-    pub async fn evaluate_game(&self, index: u64) -> Result<GameEvaluation> {
+    /// Returns a candidate when the game is actionable, otherwise `None`.
+    pub async fn evaluate_game(&self, index: u64) -> Result<Option<CandidateGame>> {
         let factory = self.factory_client.game_at_index(index).await?;
 
         let status = self.verifier_client.status(factory.proxy).await?;
         if status != GameStatus::InProgress {
             debug!(index = index, status = %status, "game has resolved");
-            return Ok(GameEvaluation::Terminal);
+            return Ok(None);
         }
 
         let (zk_prover, tee_prover, countered_index) = tokio::try_join!(
@@ -466,12 +384,12 @@ impl GameScanner {
         // future on-chain transition can make it actionable.
         if tee_prover == Address::ZERO && zk_prover == Address::ZERO {
             debug!(index = index, "game fully nullified (both provers zeroed)");
-            return Ok(GameEvaluation::Terminal);
+            return Ok(None);
         }
 
         let category = match Self::classify(index, tee_prover, zk_prover, countered_index) {
             Some(c) => c,
-            None => return Ok(GameEvaluation::InProgressNotActionable),
+            None => return Ok(None),
         };
 
         // Fetch remaining fields only for actionable games.
@@ -487,7 +405,7 @@ impl GameScanner {
             self.resolve_intermediate_block_interval(factory.game_type),
         )?;
 
-        Ok(GameEvaluation::Actionable(CandidateGame {
+        Ok(Some(CandidateGame {
             index,
             factory,
             info,
@@ -500,8 +418,7 @@ impl GameScanner {
     }
 
     /// Classifies a game into a [`GameCategory`] based on its prover state,
-    /// or returns `None` if the game is in an unexpected state and should
-    /// be left as `InProgressNotActionable`.
+    /// or returns `None` if the game is in an unexpected state.
     ///
     /// Callers should filter fully-nullified games before classification so
     /// they can be treated as terminal instead of unexpectedly in-progress.
@@ -902,38 +819,6 @@ mod tests {
         assert_eq!(cached.iter().map(|c| c.index).collect::<Vec<_>>(), vec![3, 4]);
     }
 
-    /// When the anchor advances, tracked indices behind it are pruned from the
-    /// in-progress tracking map.
-    #[tokio::test]
-    async fn test_scan_prunes_tracking_when_anchor_advances() {
-        let mut games = Vec::new();
-        let mut verifier_games = HashMap::new();
-
-        for i in 0..5u64 {
-            games.push(factory_game(i, 1));
-            verifier_games
-                .insert(addr(i), mock_state(GameStatus::InProgress, Address::ZERO, i * 10));
-        }
-
-        let factory = Arc::new(MockDisputeGameFactory::new(games));
-        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut scanner = GameScanner::new(
-            factory,
-            verifier,
-            Arc::clone(&anchor_registry) as Arc<dyn AnchorStateRegistryClient>,
-        );
-
-        scanner.scan().await.unwrap();
-        assert_eq!(scanner.tracked_indices_len(), 5);
-
-        anchor_registry.set_anchor_game(addr(2));
-        let candidates = scanner.scan().await.unwrap();
-
-        assert_eq!(candidates.iter().map(|c| c.index).collect::<Vec<_>>(), vec![3, 4]);
-        assert_eq!(scanner.tracked_indices_len(), 2);
-    }
-
     /// Error resilience: a per-game error is logged and skipped, other games still returned.
     /// Errored games are naturally retried on the next scan since the full post-anchor
     /// range is always evaluated.
@@ -960,11 +845,6 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].index, 0);
         assert_eq!(candidates[1].index, 2);
-        assert_eq!(
-            scanner.tracked_indices_len(),
-            2,
-            "tail-only errors should not inflate in-progress tracking"
-        );
     }
 
     /// Games with a non-zero TEE prover but zero ZK prover are still candidates.
@@ -1018,11 +898,6 @@ mod tests {
 
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].index, 1);
-        assert_eq!(
-            scanner.tracked_indices_len(),
-            1,
-            "tail-only errors should not inflate in-progress tracking"
-        );
     }
 
     /// A challenged game (TEE + ZK provers non-zero, `countered_index` > 0) is
@@ -1195,7 +1070,6 @@ mod tests {
         let initial = scanner.scan().await.unwrap();
         assert_eq!(initial.len(), 3, "all three initial games are actionable");
         assert!(initial.iter().any(|c| c.index == 0));
-        assert_eq!(scanner.tracked_indices_len(), 3);
 
         // Simulate a late ZK challenge against game 0 while it remains
         // IN_PROGRESS, then push three new games into the factory.
@@ -1212,7 +1086,7 @@ mod tests {
             );
         }
 
-        // Second tick: game 0 is still post-anchor, so it must be returned by scan().
+        // Second tick on the same scanner: game 0 is still post-anchor and must be returned.
         let late = scanner.scan().await.unwrap();
         let game_zero = late
             .iter()
@@ -1223,95 +1097,5 @@ mod tests {
             GameCategory::FraudulentZkChallenge { challenged_index: 1 },
             "old game should now classify under its late state transition"
         );
-    }
-
-    /// Resolved games are dropped from the persistent tracking set so that
-    /// memory use does not grow unbounded with the total factory size.
-    #[tokio::test]
-    async fn test_scan_drops_resolved_games_from_tracking() {
-        let tee_addr = Address::repeat_byte(0xEE);
-
-        let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]));
-
-        let mut verifier_games = HashMap::new();
-        verifier_games.insert(
-            addr(0),
-            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 100),
-        );
-        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-
-        let mut scanner = GameScanner::new(
-            Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
-            Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            mock_anchor_registry(Address::ZERO),
-        );
-
-        // First tick: game 0 is in progress and gets tracked.
-        let initial = scanner.scan().await.unwrap();
-        assert_eq!(initial.len(), 1);
-        assert_eq!(scanner.tracked_indices_len(), 1);
-
-        // Resolve game 0 and add newer games.
-        let mut resolved =
-            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 100);
-        resolved.status = GameStatus::ChallengerWins;
-        verifier.update_game(addr(0), resolved);
-        for i in 1..4u64 {
-            factory.push(factory_game(i, 1));
-            verifier.update_game(
-                addr(i),
-                mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, i * 100),
-            );
-        }
-
-        let _ = scanner.scan().await.unwrap();
-
-        // Tracking should hold only the three new IN_PROGRESS games — the
-        // resolved game must be dropped.
-        assert_eq!(scanner.tracked_indices_len(), 3);
-    }
-
-    /// Fully nullified games (both provers zero) are dropped from the
-    /// persistent tracking set even while they remain `IN_PROGRESS`,
-    /// because no on-chain transition can make them actionable again.
-    #[tokio::test]
-    async fn test_scan_drops_fully_nullified_games_from_tracking() {
-        let tee_addr = Address::repeat_byte(0xEE);
-
-        let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]));
-
-        let mut verifier_games = HashMap::new();
-        verifier_games.insert(
-            addr(0),
-            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 100),
-        );
-        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-
-        let mut scanner = GameScanner::new(
-            Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
-            Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            mock_anchor_registry(Address::ZERO),
-        );
-
-        scanner.scan().await.unwrap();
-        assert_eq!(scanner.tracked_indices_len(), 1);
-
-        // Fully nullify the game (both provers zero) while keeping it IN_PROGRESS.
-        verifier.update_game(
-            addr(0),
-            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, Address::ZERO, 100),
-        );
-        for i in 1..4u64 {
-            factory.push(factory_game(i, 1));
-            verifier.update_game(
-                addr(i),
-                mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, i * 100),
-            );
-        }
-
-        scanner.scan().await.unwrap();
-
-        // Only the three new live games remain tracked.
-        assert_eq!(scanner.tracked_indices_len(), 3);
     }
 }

@@ -8,6 +8,9 @@ base_metrics::define_metrics! {
     derivation_l1_origin: counter,
     #[describe("Critical errors in the derivation pipeline")]
     derivation_critical_errors: counter,
+    #[describe("Advisory follow-mode L1 origin check failures by reason")]
+    #[label(name = "reason", default = ["unavailable", "fetch_failed", "not_canonical"])]
+    follow_l1_origin_check_failures_total: counter,
     #[describe("Wall-clock duration of a single derivation pipeline step() call")]
     derivation_pipeline_step_duration_seconds: histogram,
     #[describe("Wall-clock duration the derivation actor waits for an inbound request")]

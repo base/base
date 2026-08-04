@@ -1,0 +1,18 @@
+[package]
+name = "base-trusted-proxy"
+description = "Client IP resolution through trusted forwarding proxies"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+http.workspace = true
+ipnet.workspace = true
+tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }

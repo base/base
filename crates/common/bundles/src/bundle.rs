@@ -10,9 +10,28 @@ pub struct Bundle {
     /// The raw transaction bytes in the bundle.
     pub txs: Vec<Bytes>,
 
-    /// The target block number for inclusion.
-    #[serde(with = "alloy_serde::quantity")]
-    pub block_number: u64,
+    /// Deprecated single target block number.
+    ///
+    /// Retained for mixed-version compatibility with older bundle RPC servers.
+    /// Prefer [`Self::min_block_number`] / [`Self::max_block_number`].
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub block_number: Option<u64>,
+
+    /// Minimum block number for inclusion.
+    #[serde(
+        default,
+        deserialize_with = "alloy_serde::quantity::opt::deserialize",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub min_block_number: Option<u64>,
+
+    /// Maximum block number for inclusion.
+    #[serde(
+        default,
+        deserialize_with = "alloy_serde::quantity::opt::deserialize",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_block_number: Option<u64>,
 
     /// Minimum flashblock number for inclusion.
     #[serde(
@@ -67,7 +86,9 @@ mod tests {
     fn test_bundle_default() {
         let bundle = Bundle::default();
         assert!(bundle.txs.is_empty());
-        assert_eq!(bundle.block_number, 0);
+        assert!(bundle.block_number.is_none());
+        assert!(bundle.min_block_number.is_none());
+        assert!(bundle.max_block_number.is_none());
         assert!(bundle.flashblock_number_min.is_none());
         assert!(bundle.flashblock_number_max.is_none());
         assert!(bundle.min_timestamp.is_none());
@@ -81,7 +102,9 @@ mod tests {
     fn test_bundle_serialization() {
         let bundle = Bundle {
             txs: vec![],
-            block_number: 12345,
+            block_number: Some(12345),
+            min_block_number: Some(12345),
+            max_block_number: Some(12350),
             flashblock_number_min: Some(1),
             flashblock_number_max: Some(5),
             min_timestamp: Some(1000),
@@ -93,6 +116,8 @@ mod tests {
 
         let json = serde_json::to_string(&bundle).unwrap();
         assert!(json.contains("\"blockNumber\":\"0x3039\""));
+        assert!(json.contains("\"minBlockNumber\":12345"));
+        assert!(json.contains("\"maxBlockNumber\":12350"));
         // Optional fields serialize as integers, not hex
         assert!(json.contains("\"flashblockNumberMin\":1"));
         assert!(json.contains("\"flashblockNumberMax\":5"));
@@ -103,14 +128,28 @@ mod tests {
     }
 
     #[test]
+    fn test_bundle_serialization_omits_legacy_block_number_when_unset() {
+        let bundle =
+            Bundle { txs: vec![], max_timestamp: Some(1_700_000_000), ..Default::default() };
+
+        let json = serde_json::to_string(&bundle).unwrap();
+        assert!(!json.contains("blockNumber"));
+        assert!(!json.contains("minBlockNumber"));
+        assert!(!json.contains("maxBlockNumber"));
+    }
+
+    #[test]
     fn test_bundle_deserialization_minimal() {
         let json = r#"{
             "txs": [],
-            "blockNumber": "0x1"
+            "minBlockNumber": "0x1",
+            "maxBlockNumber": "0x2"
         }"#;
 
         let bundle: Bundle = serde_json::from_str(json).unwrap();
-        assert_eq!(bundle.block_number, 1);
+        assert!(bundle.block_number.is_none());
+        assert_eq!(bundle.min_block_number, Some(1));
+        assert_eq!(bundle.max_block_number, Some(2));
         assert!(bundle.flashblock_number_min.is_none());
         assert!(bundle.flashblock_number_max.is_none());
         assert!(bundle.min_timestamp.is_none());
@@ -118,8 +157,26 @@ mod tests {
     }
 
     #[test]
+    fn test_bundle_deserialization_legacy_block_number() {
+        let json = r#"{
+            "txs": [],
+            "blockNumber": "0x64"
+        }"#;
+
+        let bundle: Bundle = serde_json::from_str(json).unwrap();
+        assert_eq!(bundle.block_number, Some(100));
+        assert!(bundle.min_block_number.is_none());
+        assert!(bundle.max_block_number.is_none());
+    }
+
+    #[test]
     fn test_bundle_clone_and_eq() {
-        let bundle = Bundle { txs: vec![], block_number: 100, ..Default::default() };
+        let bundle = Bundle {
+            txs: vec![],
+            min_block_number: Some(100),
+            max_block_number: Some(100),
+            ..Default::default()
+        };
 
         let cloned = bundle.clone();
         assert_eq!(bundle, cloned);

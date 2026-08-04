@@ -3,6 +3,10 @@
 use std::time::Duration;
 
 use alloy_primitives::B256;
+use alloy_transport::TransportError;
+use alloy_transport_http::reqwest;
+use base_prover_service_client::{ProverServiceClientBuildError, ProverServiceClientError};
+use jsonrpsee::core::client::Error as JsonRpcClientError;
 use thiserror::Error;
 
 /// Error returned when a CLI block reference cannot be parsed.
@@ -32,6 +36,10 @@ pub enum BlockRefParseError {
 }
 
 /// Error returned when shared conductor source or node lookup fails.
+///
+/// Messages are deliberately subject-less fragments; callers wrap this in
+/// [`ConductorCommandError`] or [`SequencerCommandError`], which prepend the
+/// command group so operators see which one failed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum NodeLookupError {
@@ -82,11 +90,11 @@ pub enum P2pTargetError {
         /// The target supplied by the caller.
         target: String,
     },
-    /// `remove-peer` does not accept ENR targets.
+    /// Peer removal, ban, and unban actions do not accept ENR targets.
     #[error(
-        "remove-peer needs a bare libp2p peer ID for CL targets; ENR records are only accepted by add-peer"
+        "peer removal, ban, and unban actions need a bare libp2p peer ID for CL targets; ENR records are only accepted by add-peer"
     )]
-    RemoveEnrTarget {
+    PeerActionEnrTarget {
         /// The target supplied by the caller.
         target: String,
     },
@@ -96,44 +104,11 @@ pub enum P2pTargetError {
         /// The target supplied by the caller.
         target: String,
     },
-    /// A remove-peer EL target parsed to something other than an enode.
-    #[error("remove-peer EL targets must be `enode://` records")]
-    RemoveElTargetNotEnode {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// A remove-peer CL target was URL-like or multiaddr-like instead of a bare peer ID.
-    #[error("remove-peer needs a bare libp2p peer ID for CL targets, not a URL or multiaddr")]
-    RemoveClTargetNotBarePeerId {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// The CL peer ID was empty after trimming whitespace.
-    #[error("CL peer ID cannot be empty")]
-    EmptyClPeerId,
-    /// A CL peer action was given an enode record.
-    #[error("CL peer actions need a bare libp2p peer ID, not an enode record")]
-    ClPeerIdIsEnode {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// A CL peer action was given an ENR record.
+    /// A CL peer-action target was URL-like or multiaddr-like instead of a bare peer ID.
     #[error(
-        "CL peer actions need a bare libp2p peer ID; ENR records are only accepted by add-peer"
+        "peer removal, ban, and unban actions need a bare libp2p peer ID for CL targets, not a URL or multiaddr"
     )]
-    ClPeerIdIsEnr {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// The CL peer ID contained whitespace.
-    #[error("CL peer ID must not contain whitespace")]
-    ClPeerIdContainsWhitespace {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// The CL peer ID was URL-like or multiaddr-like instead of a bare peer ID.
-    #[error("CL peer actions need a bare libp2p peer ID, not a URL or multiaddr")]
-    ClPeerIdNotBare {
+    PeerActionClTargetNotBarePeerId {
         /// The target supplied by the caller.
         target: String,
     },
@@ -153,34 +128,16 @@ pub enum P2pTargetError {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum P2pCommandError {
-    /// The command could not resolve a consensus-node RPC URL from flags or config.
-    #[error(
-        "{command_name} needs a consensus-node RPC URL.\n\
-         The '{config_name}' config does not set `consensus_node_rpc`.\n\
-         Override with `--cl-rpc <url>` or set `consensus_node_rpc` in your YAML config."
-    )]
-    MissingConsensusRpc {
-        /// The config name selected for the command.
-        config_name: String,
-        /// The command that needed a consensus RPC URL.
-        command_name: String,
-    },
-    /// Some peers failed during `unban-all`.
-    #[error("failed to unban {failed} CL peer(s)")]
-    UnbanAllPartialFailure {
-        /// The number of failed peer unban attempts.
-        failed: usize,
-    },
-    /// The pretty-printer received a peer action shape it does not support.
-    #[error("unsupported p2p pretty output action {action}")]
-    UnsupportedPrettyAction {
-        /// The unsupported action name.
-        action: String,
+    /// The EL ban target is a trusted peer, which the node silently refuses to ban.
+    #[error("cannot ban peer {target}: it is in the trusted set")]
+    TrustedElPeerBan {
+        /// The enode target supplied by the caller.
+        target: String,
     },
 }
 
 /// Error returned by the `proofs` command group.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ProofsCommandError {
     /// The command could not resolve a prover-service RPC URL from flags or config.
@@ -195,22 +152,24 @@ pub enum ProofsCommandError {
         config_name: String,
     },
     /// The prover-service HTTP client could not be built.
-    #[error("failed to build prover-service client for {endpoint}: {message}")]
+    #[error("failed to build prover-service client for {endpoint}")]
     BuildClient {
         /// The prover-service RPC URL selected for the command.
         endpoint: String,
-        /// The client construction error message.
-        message: String,
+        /// The underlying client construction error.
+        #[source]
+        source: ProverServiceClientBuildError,
     },
     /// A prover-service JSON-RPC request failed.
-    #[error("prover-service request `{method}` failed against {endpoint}: {message}")]
+    #[error("prover-service request `{method}` failed against {endpoint}")]
     Rpc {
         /// The prover-service RPC URL selected for the command.
         endpoint: String,
         /// The prover-service JSON-RPC method that failed.
         method: &'static str,
-        /// The underlying client error message.
-        message: String,
+        /// The underlying client error.
+        #[source]
+        source: ProverServiceClientError,
     },
     /// The proof did not reach a terminal status within the wait window.
     #[error(
@@ -227,41 +186,42 @@ pub enum ProofsCommandError {
     },
 }
 
-/// Error returned by the `sync-status` command.
+/// Error returned when a command cannot resolve a consensus-node RPC URL from flags or config.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
-pub enum SyncStatusCommandError {
-    /// The command could not resolve a consensus-node RPC URL from flags or config.
-    #[error(
-        "sync-status needs a consensus-node RPC URL.\n\
-         The '{config_name}' config does not set `consensus_node_rpc`.\n\
-         Override with `--cl-rpc <url>` or set `consensus_node_rpc` in your YAML config."
-    )]
-    MissingConsensusRpc {
-        /// The config name selected for the command.
-        config_name: String,
-    },
+#[error(
+    "{command_name} needs a consensus-node RPC URL.\n\
+     The '{config_name}' config does not set `consensus_node_rpc`.\n\
+     Override with `--cl-rpc <url>` or set `consensus_node_rpc` in your YAML config."
+)]
+pub struct MissingConsensusRpcError {
+    /// The command that needed a consensus RPC URL.
+    pub command_name: &'static str,
+    /// The config name selected for the command.
+    pub config_name: String,
 }
 
 /// Error returned by txpool RPC helpers and command execution.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum TxpoolCommandError {
     /// The txpool HTTP client could not be built.
-    #[error("failed to build txpool HTTP client for {rpc}: {message}")]
+    #[error("failed to build txpool HTTP client for {rpc}")]
     BuildHttpClient {
         /// The execution-layer RPC URL selected for the command.
         rpc: String,
-        /// The client construction error message.
-        message: String,
+        /// The underlying client construction error.
+        #[source]
+        source: reqwest::Error,
     },
     /// The txpool admin client could not be built.
-    #[error("failed to build txpool admin client for {rpc}: {message}")]
+    #[error("failed to build txpool admin client for {rpc}")]
     BuildAdminClient {
         /// The execution-layer RPC URL selected for the command.
         rpc: String,
-        /// The client construction error message.
-        message: String,
+        /// The underlying client construction error.
+        #[source]
+        source: JsonRpcClientError,
     },
     /// The selected RPC does not expose the requested txpool namespace method.
     #[error("txpool RPC method `{method}` is not exposed by {rpc}")]
@@ -280,24 +240,26 @@ pub enum TxpoolCommandError {
         method: &'static str,
     },
     /// A txpool namespace RPC call failed for a reason other than method availability.
-    #[error("txpool RPC method `{method}` failed on {rpc}: {message}")]
+    #[error("txpool RPC method `{method}` failed on {rpc}")]
     TxpoolRpc {
         /// The execution-layer RPC URL selected for the command.
         rpc: String,
         /// The txpool RPC method that failed.
         method: &'static str,
-        /// The RPC error message.
-        message: String,
+        /// The underlying RPC error.
+        #[source]
+        source: TransportError,
     },
     /// An admin namespace RPC call failed for a reason other than method availability.
-    #[error("admin RPC method `{method}` failed on {rpc}: {message}")]
+    #[error("admin RPC method `{method}` failed on {rpc}")]
     AdminRpc {
         /// The execution-layer RPC URL selected for the command.
         rpc: String,
         /// The admin RPC method that failed.
         method: &'static str,
-        /// The RPC error message.
-        message: String,
+        /// The underlying RPC error.
+        #[source]
+        source: JsonRpcClientError,
     },
 }
 
@@ -305,55 +267,18 @@ pub enum TxpoolCommandError {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum ConductorCommandError {
-    /// The command could not resolve a conductor source from config or flags.
-    #[error(
-        "conductor commands need conductor config or a bootstrap RPC URL for '{config_name}'. Set `conductors` or `discovery.bootstrap_rpc` in config, or pass `--conductor-rpc <url>`."
-    )]
-    MissingSource {
-        /// The config name selected for the command.
-        config_name: String,
-    },
-    /// The requested conductor node name was not found.
-    #[error("conductor node {requested_node} not found. Available nodes: {}", available_nodes.join(", "))]
-    MissingNode {
-        /// The node name requested by the caller.
-        requested_node: String,
-        /// The node names available to the command.
-        available_nodes: Vec<String>,
-    },
-}
-
-impl From<NodeLookupError> for ConductorCommandError {
-    fn from(error: NodeLookupError) -> Self {
-        match error {
-            NodeLookupError::MissingSource { config_name } => Self::MissingSource { config_name },
-            NodeLookupError::MissingNode { requested_node, available_nodes } => {
-                Self::MissingNode { requested_node, available_nodes }
-            }
-        }
-    }
+    /// The shared conductor source or node lookup failed.
+    #[error("conductor {0}")]
+    NodeLookup(#[from] NodeLookupError),
 }
 
 /// Error returned by sequencer command validation and preflight checks.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum SequencerCommandError {
-    /// The command could not resolve a conductor source from config or flags.
-    #[error(
-        "sequencer commands need conductor config or a bootstrap RPC URL for '{config_name}'. Set `conductors` or `discovery.bootstrap_rpc` in config, or pass `--conductor-rpc <url>`."
-    )]
-    MissingSource {
-        /// The config name selected for the command.
-        config_name: String,
-    },
-    /// The requested sequencer node name was not found.
-    #[error("sequencer node {requested_node} not found. Available nodes: {}", available_nodes.join(", "))]
-    MissingNode {
-        /// The node name requested by the caller.
-        requested_node: String,
-        /// The node names available to the command.
-        available_nodes: Vec<String>,
-    },
+    /// The shared conductor source or node lookup failed.
+    #[error("sequencer {0}")]
+    NodeLookup(#[from] NodeLookupError),
     /// The command could not infer an unsafe head hash from the target node.
     #[error(
         "could not determine unsafe head for {node}; pass an explicit 32-byte hash or restore CL reachability"
@@ -384,7 +309,7 @@ pub enum SequencerCommandError {
         /// The node currently observed as conductor leader.
         current_leader: String,
         /// The sequencer action being validated.
-        action: String,
+        action: &'static str,
     },
     /// The command targeted a follower while no current leader name was available.
     #[error(
@@ -394,7 +319,7 @@ pub enum SequencerCommandError {
         /// The node name requested by the caller.
         requested_node: String,
         /// The sequencer action being validated.
-        action: String,
+        action: &'static str,
     },
     /// The observed unsafe head is zero, so no safe prestate exists for start.
     #[error("no prestate: engine unsafe head is uninitialized, cannot safely start sequencer")]
@@ -455,17 +380,6 @@ pub struct StateConvergenceTimeoutError {
     pub last_error: Option<String>,
 }
 
-impl From<NodeLookupError> for SequencerCommandError {
-    fn from(error: NodeLookupError) -> Self {
-        match error {
-            NodeLookupError::MissingSource { config_name } => Self::MissingSource { config_name },
-            NodeLookupError::MissingNode { requested_node, available_nodes } => {
-                Self::MissingNode { requested_node, available_nodes }
-            }
-        }
-    }
-}
-
 /// Error returned by doctor argument validation.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
@@ -486,4 +400,71 @@ pub enum DoctorArgsError {
         /// The configured failure threshold.
         fail_blocks: u64,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::*;
+
+    #[test]
+    fn rpc_error_variants_preserve_source_chain() {
+        let proofs = ProofsCommandError::Rpc {
+            endpoint: "http://prover:8080/".to_string(),
+            method: "prover_getProof",
+            source: ProverServiceClientError::ProofFailure {
+                message: "witness generation failed".to_string(),
+            },
+        };
+        assert_eq!(
+            proofs.to_string(),
+            "prover-service request `prover_getProof` failed against http://prover:8080/"
+        );
+        assert_eq!(
+            proofs.source().expect("chained source").to_string(),
+            "proof failed: witness generation failed"
+        );
+
+        let txpool = TxpoolCommandError::AdminRpc {
+            rpc: "http://el:8545/".to_string(),
+            method: "admin_dropTransaction",
+            source: JsonRpcClientError::Custom("connection refused".to_string()),
+        };
+        assert_eq!(
+            txpool.to_string(),
+            "admin RPC method `admin_dropTransaction` failed on http://el:8545/"
+        );
+        assert!(
+            txpool.source().expect("chained source").to_string().contains("connection refused")
+        );
+    }
+
+    #[test]
+    fn node_lookup_errors_name_the_failing_command_group() {
+        let missing_source = NodeLookupError::MissingSource { config_name: "devnet".to_string() };
+        let missing_node = NodeLookupError::MissingNode {
+            requested_node: "op-conductor-1".to_string(),
+            available_nodes: vec!["op-conductor-0".to_string()],
+        };
+
+        assert!(
+            ConductorCommandError::from(missing_source.clone())
+                .to_string()
+                .starts_with("conductor commands need conductor config")
+        );
+        assert!(
+            SequencerCommandError::from(missing_source)
+                .to_string()
+                .starts_with("sequencer commands need conductor config")
+        );
+        assert_eq!(
+            ConductorCommandError::from(missing_node.clone()).to_string(),
+            "conductor node op-conductor-1 not found. Available nodes: op-conductor-0"
+        );
+        assert_eq!(
+            SequencerCommandError::from(missing_node).to_string(),
+            "sequencer node op-conductor-1 not found. Available nodes: op-conductor-0"
+        );
+    }
 }

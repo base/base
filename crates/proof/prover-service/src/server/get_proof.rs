@@ -87,7 +87,6 @@ impl ProverServiceServer {
             .map_err(|e| internal(format!("Database error: {e}")))?
             .ok_or_else(|| not_found(PROOF_REQUEST_NOT_FOUND_MESSAGE))?;
         let proof_request_id = proof_req.id;
-
         info!(
             proof_request_id = %proof_request_id,
             session_id = %proof_req.session_id,

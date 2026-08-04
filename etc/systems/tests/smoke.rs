@@ -24,6 +24,30 @@ const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 static SMOKE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
+async fn zenith_activation_matches_el_and_cl_configs() -> Result<()> {
+    const ZENITH_ACTIVATION_BLOCK: u64 = 23;
+
+    let _guard = SMOKE_TEST_LOCK.lock().await;
+    let system = SystemTestStackBuilder::new()
+        .with_l1_chain_id(L1_CHAIN_ID)
+        .with_l2_chain_id(L2_CHAIN_ID)
+        .with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK)
+        .build()
+        .await?;
+
+    let genesis: serde_json::Value = serde_json::from_str(&system.l2_deployment().read_genesis()?)?;
+    let rollup: serde_json::Value =
+        serde_json::from_str(&system.l2_deployment().read_rollup_config()?)?;
+    let expected = rollup["genesis"]["l2_time"].as_u64().unwrap()
+        + rollup["block_time"].as_u64().unwrap() * ZENITH_ACTIVATION_BLOCK;
+
+    assert_eq!(rollup["base"]["zenith"].as_u64(), Some(expected));
+    assert_eq!(genesis["config"]["base"]["zenith"].as_u64(), Some(expected));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn smoke_test_system_block_production_and_transactions() -> Result<()> {
     let _guard = SMOKE_TEST_LOCK.lock().await;
     let system = SystemTestStackBuilder::new()

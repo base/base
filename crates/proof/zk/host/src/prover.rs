@@ -126,33 +126,6 @@ pub trait ZkProver: Send + Sync + std::fmt::Debug {
     ) -> Result<ProofResult, ZkProverError>;
 }
 
-/// Placeholder [`ZkProver`] that always reports proving as unimplemented.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct UnimplementedZkProver;
-
-#[async_trait]
-impl ZkProver for UnimplementedZkProver {
-    async fn submit(
-        &self,
-        _request: &ZkProofRequest,
-        _request_session_id: &str,
-    ) -> Result<String, ZkProverError> {
-        Err(ZkProverError::Unimplemented)
-    }
-
-    async fn poll(&self, _backend_session_id: &str) -> Result<ZkSessionState, ZkProverError> {
-        Err(ZkProverError::Unimplemented)
-    }
-
-    async fn download(
-        &self,
-        _session_type: SessionType,
-        _backend_session_id: &str,
-    ) -> Result<ProofResult, ZkProverError> {
-        Err(ZkProverError::Unimplemented)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use base_prover_service_protocol::{ZkBackend, ZkVm};
@@ -183,16 +156,5 @@ mod tests {
         });
         assert_eq!(snark.start_block_number(), 100);
         assert_eq!(snark.number_of_blocks_to_prove(), 5);
-    }
-
-    #[tokio::test]
-    async fn unimplemented_prover_reports_unimplemented() {
-        let prover = UnimplementedZkProver;
-        let error = prover
-            .submit(&zk_request(), "session-1")
-            .await
-            .expect_err("stub prover should not produce a proof");
-
-        assert!(matches!(error, ZkProverError::Unimplemented));
     }
 }
