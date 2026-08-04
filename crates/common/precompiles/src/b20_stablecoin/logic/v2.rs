@@ -209,10 +209,12 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        // One SLOAD fetches all transfer policy ids; skipped entirely on the privileged path.
-        let policies =
-            if privileged { None } else { Some(token.accounting().transfer_policy_ids()?) };
-        self.transfer_inner(token, caller, to, amount, policies.as_ref())
+        if privileged {
+            return self.transfer_inner(token, caller, to, amount, None);
+        }
+        // One SLOAD fetches all transfer policy ids for the sender/receiver checks.
+        let policies = token.accounting().transfer_policy_ids()?;
+        self.transfer_inner(token, caller, to, amount, Some(&policies))
     }
 
     fn transfer_from(
@@ -240,21 +242,22 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
                 needed: amount,
             }));
         }
-        // One SLOAD fetches all transfer policy ids; reused for the executor and sender/receiver
-        // checks, and skipped entirely on the privileged path.
-        let policies =
-            if privileged { None } else { Some(token.accounting().transfer_policy_ids()?) };
-        if let Some(policies) = &policies
-            && caller != from
-        {
-            B20Guards::ensure_authorized_by_id(
-                token,
-                B20PolicyType::TransferExecutor.id(),
-                policies.executor,
-                caller,
-            )?;
+        if privileged {
+            self.transfer_inner(token, from, to, amount, None)?;
+        } else {
+            // One SLOAD fetches all transfer policy ids, reused for the executor and
+            // sender/receiver checks.
+            let policies = token.accounting().transfer_policy_ids()?;
+            if caller != from {
+                B20Guards::ensure_authorized_by_id(
+                    token,
+                    B20PolicyType::TransferExecutor.id(),
+                    policies.executor,
+                    caller,
+                )?;
+            }
+            self.transfer_inner(token, from, to, amount, Some(&policies))?;
         }
-        self.transfer_inner(token, from, to, amount, policies.as_ref())?;
         if is_infinite {
             return Ok(());
         }
