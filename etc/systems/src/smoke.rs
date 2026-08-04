@@ -285,6 +285,7 @@ pub struct SystemTestStackBuilder {
     shadow_sequencer_count: usize,
     shadow_blocks_per_cycle: Option<NonZeroU64>,
     shadow_start_block: Option<u64>,
+    tmpfs_datadirs: bool,
     extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
     extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
     #[cfg(feature = "upgrade-signal")]
@@ -362,6 +363,18 @@ impl SystemTestStackBuilder {
     /// the `base_insertValidatedTransaction` RPC endpoint.
     pub fn with_tx_forwarding(mut self, config: TxForwardingConfig) -> Self {
         self.tx_forwarding_config = Some(config);
+        self
+    }
+
+    /// Backs the L1 container datadirs (reth, lighthouse) with tmpfs.
+    ///
+    /// reth's mdbx and lighthouse's database need a writable `MAP_SHARED` mmap, which some
+    /// container storage backends reject — notably overlayfs on docker-in-docker CI runners, where
+    /// reth exits at startup with "failed to open the database: Remote I/O error (121)". tmpfs
+    /// supports mmap. Enable this to run the stack on such runners; it is a no-op where the storage
+    /// already supports mmap.
+    pub const fn with_tmpfs_datadirs(mut self) -> Self {
+        self.tmpfs_datadirs = true;
         self
     }
 
@@ -502,6 +515,7 @@ impl SystemTestStackBuilder {
                     engine_port: Some(config.ports.l1_auth),
                     beacon_http_port: Some(config.ports.l1_cl_http),
                     beacon_p2p_port: Some(config.ports.l1_cl_p2p),
+                    tmpfs_datadir: self.tmpfs_datadirs,
                 };
                 let l2_config = L2ContainerConfig {
                     use_stable_names: true,
@@ -524,6 +538,12 @@ impl SystemTestStackBuilder {
                 };
                 (Some(l1_config), Some(l2_config))
             });
+
+        // Ensure the tmpfs-datadir request reaches the L1 containers even without a stable config.
+        let l1_container_config = l1_container_config.or_else(|| {
+            self.tmpfs_datadirs
+                .then(|| L1ContainerConfig { tmpfs_datadir: true, ..Default::default() })
+        });
 
         let l1_config = L1StackConfig {
             el_genesis_json,

@@ -69,6 +69,12 @@ impl LighthouseBeaconContainer {
             .with_mount(Mount::bind_mount(path_for_mount(jwt_path.as_ref()), LIGHTHOUSE_JWT_PATH))
             .with_cmd(command);
 
+        if config.tmpfs_datadir {
+            // Back the beacon datadir with tmpfs so its mmap-backed database works on hosts where
+            // the container's overlayfs upper layer rejects writable mmap (e.g. docker-in-docker CI).
+            container_builder = container_builder.with_mount(Mount::tmpfs_mount("/data"));
+        }
+
         if let Some(port) = config.beacon_http_port {
             container_builder =
                 container_builder.with_mapped_port(port, LIGHTHOUSE_HTTP_PORT.tcp());
