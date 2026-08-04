@@ -2141,6 +2141,85 @@ fn golden_gas_footprints() {
                 .abi_encode(),
             ),
         ),
+        (
+            "transfer_with_memo",
+            gas(
+                |t| fund(t, ALICE, u(100)),
+                ALICE,
+                FakePolicyAccounting::new(),
+                IB20::transferWithMemoCall { to: BOB, amount: u(30), memo: MEMO }.abi_encode(),
+            ),
+        ),
+        (
+            "transfer_from_with_memo",
+            gas(
+                |t| {
+                    fund(t, ALICE, u(100));
+                    t.set_allowance(ALICE, BOB, u(40)).unwrap();
+                },
+                BOB,
+                FakePolicyAccounting::new(),
+                IB20::transferFromWithMemoCall { from: ALICE, to: BOB, amount: u(30), memo: MEMO }
+                    .abi_encode(),
+            ),
+        ),
+        (
+            "mint_with_memo",
+            gas(
+                |_t| {},
+                ADMIN,
+                allow0(BOB),
+                IB20::mintWithMemoCall { to: BOB, amount: u(100), memo: MEMO }.abi_encode(),
+            ),
+        ),
+        (
+            "burn_with_memo",
+            gas(
+                |t| {
+                    fund(t, ALICE, u(100));
+                    give_role(t, B20TokenRole::Burn.id(), ALICE);
+                },
+                ALICE,
+                FakePolicyAccounting::new(),
+                IB20::burnWithMemoCall { amount: u(40), memo: MEMO }.abi_encode(),
+            ),
+        ),
+        (
+            "renounce_role",
+            gas(
+                |t| give_role(t, B20TokenRole::Mint.id(), ALICE),
+                ALICE,
+                FakePolicyAccounting::new(),
+                IB20::renounceRoleCall { role: B20TokenRole::Mint.id(), callerConfirmation: ALICE }
+                    .abi_encode(),
+            ),
+        ),
+        (
+            "renounce_last_admin",
+            gas(
+                |t| give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN),
+                ADMIN,
+                FakePolicyAccounting::new(),
+                IB20::renounceLastAdminCall {}.abi_encode(),
+            ),
+        ),
+        (
+            "permit",
+            gas(
+                |_t| {},
+                anvil_owner(),
+                FakePolicyAccounting::new(),
+                signed_permit(
+                    domain_separator(&mut fresh()),
+                    U256::ZERO,
+                    anvil_owner(),
+                    BOB,
+                    u(500),
+                    U256::MAX,
+                )
+                .abi_encode(),
+            ),
+        ),
     ];
 
     let expected: &[(&str, (u64, u64, u64))] = &[
@@ -2161,9 +2240,99 @@ fn golden_gas_footprints() {
         ("revoke_role", (1, 1, 0)),
         ("set_role_admin", (1, 1, 0)),
         ("update_policy", (2, 1, 0)),
+        ("transfer_with_memo", (3, 2, 0)),
+        ("transfer_from_with_memo", (4, 3, 0)),
+        ("mint_with_memo", (5, 2, 0)),
+        ("burn_with_memo", (4, 2, 0)),
+        ("renounce_role", (1, 1, 0)),
+        ("renounce_last_admin", (4, 2, 0)),
+        ("permit", (3, 2, 0)),
     ];
 
     bless_or_assert_gas(&actual, expected);
+}
+
+/// `emit_memo` only pushes a `Memo` event — no SLOAD/SSTORE/KECCAK256 — so every `*WithMemo` op's
+/// storage-access footprint must exactly match its base op's. Checked as a live relationship
+/// (not just two pinned tuples that happen to agree): a future change that makes `emit_memo`
+/// storage-touching would fail this even if both `golden_gas_footprints` pins were updated
+/// consistently but incorrectly.
+#[test]
+fn golden_gas_footprint_memo_variants_add_no_storage_cost() {
+    let transfer = gas(
+        |t| fund(t, ALICE, u(100)),
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::transferCall { to: BOB, amount: u(30) }.abi_encode(),
+    );
+    let transfer_with_memo = gas(
+        |t| fund(t, ALICE, u(100)),
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::transferWithMemoCall { to: BOB, amount: u(30), memo: MEMO }.abi_encode(),
+    );
+    assert_eq!(transfer, transfer_with_memo, "transferWithMemo must cost exactly transfer");
+
+    let mint_setup = |_t: &mut B20StablecoinStorage<'_>| {};
+    let mint = gas(
+        mint_setup,
+        ADMIN,
+        allow0(BOB),
+        IB20::mintCall { to: BOB, amount: u(100) }.abi_encode(),
+    );
+    let mint_with_memo = gas(
+        mint_setup,
+        ADMIN,
+        allow0(BOB),
+        IB20::mintWithMemoCall { to: BOB, amount: u(100), memo: MEMO }.abi_encode(),
+    );
+    assert_eq!(mint, mint_with_memo, "mintWithMemo must cost exactly mint");
+
+    let burn_setup = |t: &mut B20StablecoinStorage<'_>| {
+        fund(t, ALICE, u(100));
+        give_role(t, B20TokenRole::Burn.id(), ALICE);
+    };
+    let burn = gas(
+        burn_setup,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::burnCall { amount: u(40) }.abi_encode(),
+    );
+    let burn_with_memo = gas(
+        burn_setup,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::burnWithMemoCall { amount: u(40), memo: MEMO }.abi_encode(),
+    );
+    assert_eq!(burn, burn_with_memo, "burnWithMemo must cost exactly burn");
+}
+
+/// `seize_with_memo` shares `move_balance` with `transfer` — both write exactly the two balance
+/// slots and nothing else — so their SSTORE counts must match even though `seize` performs
+/// strictly more SLOADs (role + seizable + receiver-policy guards on top of the balance reads).
+/// A future change that made seize write anything beyond the balance move (e.g. an extra
+/// per-account counter) would silently escape `golden_gas_footprints`' independent pins but
+/// fail this relationship.
+#[test]
+fn golden_gas_footprint_seize_writes_no_more_than_transfer() {
+    let transfer = gas(
+        |t| fund(t, ALICE, u(100)),
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::transferCall { to: BOB, amount: u(30) }.abi_encode(),
+    );
+    let seize = gas(
+        |t| {
+            fund(t, ALICE, u(100));
+            give_role(t, B20TokenRole::Seize.id(), ADMIN);
+            make_seizable(t);
+        },
+        ADMIN,
+        seize_receiver_policy(BOB),
+        IB20::seizeWithMemoCall { from: ALICE, to: BOB, amount: u(30), memo: MEMO }.abi_encode(),
+    );
+    assert_eq!(seize.1, transfer.1, "seize and transfer must write the same number of slots");
+    assert!(seize.0 >= transfer.0, "seize must read at least as much as transfer (extra guards)");
 }
 
 // ============================================================================
