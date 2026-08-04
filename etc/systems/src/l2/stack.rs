@@ -14,6 +14,7 @@ use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::NodeMode;
 use base_execution_cli::ExecutionUpgradeSignalConfig;
+use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
 use base_upgrade_signal::UpgradeSignalConfig;
 use eyre::{Result, WrapErr};
@@ -38,7 +39,7 @@ pub enum L2ClientConsensusMode {
 }
 
 /// Configuration for the L2 stack.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct L2StackConfig {
     /// L2 genesis JSON content.
     pub l2_genesis: Vec<u8>,
@@ -74,6 +75,10 @@ pub struct L2StackConfig {
     pub execution_upgrade_signal: Option<ExecutionUpgradeSignalConfig>,
     /// Shadow sequencer configuration. When [`None`], no shadow sequencers are started.
     pub shadow_sequencers: Option<ShadowSequencersConfig>,
+    /// Additional node extensions installed on the builder, after its built-in RPC wiring.
+    pub extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
+    /// Additional node extensions installed on the client, after its built-in extensions.
+    pub extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
 }
 
 /// Configuration for the shadow sequencers running alongside the active sequencer.
@@ -176,6 +181,7 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.builder_auth_port),
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
             flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
+            extra_extensions: config.extra_builder_extensions,
         };
         let builder = InProcessBuilder::start(builder_config)
             .await
@@ -245,6 +251,7 @@ impl L2Stack {
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             tx_forwarding_config,
             upgrade_signal: config.execution_upgrade_signal.clone(),
+            extra_extensions: config.extra_client_extensions,
         };
         let client = InProcessClient::start(client_config)
             .await

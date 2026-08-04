@@ -33,7 +33,7 @@ use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use url::Url;
 
 /// Configuration for starting an in-process client node.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InProcessClientConfig {
     /// L2 genesis JSON content.
     pub genesis_json: Vec<u8>,
@@ -63,6 +63,11 @@ pub struct InProcessClientConfig {
     /// extension is installed for live polling (and, in runtime-admin mode, automatic
     /// re-application of observed L1 changes).
     pub upgrade_signal: Option<ExecutionUpgradeSignalConfig>,
+    /// Additional node extensions installed after Base's built-in client extensions.
+    ///
+    /// Lets downstream consumers layer their own [`BaseNodeExtension`] — such as a custom RPC
+    /// method — onto the standard in-process client wiring without forking this crate.
+    pub extra_extensions: Vec<Box<dyn BaseNodeExtension>>,
 }
 
 /// In-process Base client node that syncs from a builder.
@@ -191,7 +196,8 @@ impl InProcessClient {
             .with_add_ons(base_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        let extensions: Vec<Box<dyn BaseNodeExtension>> = Self::build_extensions(&config)?;
+        let mut extensions: Vec<Box<dyn BaseNodeExtension>> = Self::build_extensions(&config)?;
+        extensions.extend(config.extra_extensions);
         let NodeHandle { node: node_handle, node_exit_future } = extensions
             .into_iter()
             .fold(NodeHooks::new(), |b, ext| ext.apply(b))
