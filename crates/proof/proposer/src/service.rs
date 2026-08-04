@@ -25,7 +25,6 @@ use base_prover_service_client::{
 };
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use eyre::{Result, WrapErr};
-use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -61,7 +60,6 @@ impl ProposerService {
         info!(version = env!("CARGO_PKG_VERSION"), "Proposer starting");
         info!(
             dry_run = config.dry_run,
-            direct_prover_rpc = config.direct_prover_rpc,
             allow_non_finalized = config.allow_non_finalized,
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
@@ -100,17 +98,7 @@ impl ProposerService {
         let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
-        let proof_requester: Arc<dyn ProofRequesterProvider> = if config.direct_prover_rpc {
-            let client = HttpClientBuilder::default()
-                .request_timeout(config.prover_timeout)
-                .build(config.prover_rpc.as_str())
-                .wrap_err("failed to create direct prover HTTP client")?;
-            info!(
-                endpoint = %config.prover_rpc,
-                "Direct prover RPC client initialized (bypassing prover-service)"
-            );
-            Arc::new(ProofRequesterClient::new(client))
-        } else {
+        let proof_requester: Arc<dyn ProofRequesterProvider> = {
             let prover_service_config = ProverServiceClientConfig::new(config.prover_rpc.to_string())
                 .with_max_wait(config.prover_timeout);
             let proof_requester = ProofRequesterClient::connect(&prover_service_config)

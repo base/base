@@ -57,11 +57,6 @@ pub struct ProposerConfig {
     pub tx_manager: Option<base_tx_manager::TxManagerConfig>,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
-    /// Talk directly to a prover RPC endpoint (e.g. `nitro-local`) instead of
-    /// the prover-service. Both paths build a [`ProofRequesterProvider`]; the
-    /// direct path connects a raw HTTP client rather than going through the
-    /// prover-service client configuration.
-    pub direct_prover_rpc: bool,
 }
 
 impl ProposerConfig {
@@ -149,7 +144,6 @@ impl ProposerConfig {
             signing,
             tx_manager,
             recovery_scan_concurrency: proposer.recovery_scan_concurrency.get(),
-            direct_prover_rpc: proposer.direct_prover_rpc,
         })
     }
 }
