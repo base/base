@@ -14,11 +14,14 @@ use alloy_sol_types::sol;
 /// Advertised by `AssetV2` (ERC-8056 requires ERC-165); not itself an ERC-8056 id.
 pub const ERC165_INTERFACE_ID: FixedBytes<4> = FixedBytes::new([0x01, 0xff, 0xc9, 0xa7]);
 
-/// The ERC-8056 interface IDs advertised by `supportsInterface` from `AssetV2`.
-pub const ERC8056_INTERFACE_IDS: [FixedBytes<4>; 3] = [
+/// The ERC-8056 interface IDs advertised by `supportsInterface` from `AssetV2`:
+/// `IScaledUIAmount`, `IScaledUIAmountNewUIMultiplier`, `IScaledUIAmountBalances`, and (added by the
+/// interface review) the `IScaledUIAmountConversion` extension `0x57854fc3`.
+pub const ERC8056_INTERFACE_IDS: [FixedBytes<4>; 4] = [
     FixedBytes::new([0xa6, 0x0b, 0xf1, 0x3d]),
     FixedBytes::new([0x4b, 0xd2, 0x76, 0x48]),
     FixedBytes::new([0xd8, 0x90, 0xfd, 0x71]),
+    FixedBytes::new([0x57, 0x85, 0x4f, 0xc3]),
 ];
 
 sol! {
@@ -123,10 +126,21 @@ sol! {
         function effectiveAt() external view returns (uint256);
 
         /// Converts a raw balance to its scaled view: `rawBalance * multiplier / WAD_PRECISION`.
+        /// Retained (dialable) but deprecated in favor of the ERC-8056 `toUIAmount`; no longer
+        /// advertised in base-std's `IB20Asset` interface.
         function toScaledBalance(uint256 rawBalance) external view returns (uint256);
 
         /// Converts a scaled balance back to its raw representation.
+        /// Retained (dialable) but deprecated in favor of the ERC-8056 `fromUIAmount`; no longer
+        /// advertised in base-std's `IB20Asset` interface.
         function toRawBalance(uint256 scaledBalance) external view returns (uint256 rawBalance);
+
+        /// [V2] ERC-8056 Conversion extension: raw -> UI amount, using the effective (lazily
+        /// flipped) multiplier. Behaves identically to `toScaledBalance`.
+        function toUIAmount(uint256 rawAmount) external view returns (uint256);
+
+        /// [V2] ERC-8056 Conversion extension: UI -> raw amount. Behaves identically to `toRawBalance`.
+        function fromUIAmount(uint256 uiAmount) external view returns (uint256);
 
         /// Convenience: `toScaledBalance(balanceOf(account))`.
         function scaledBalanceOf(address account) external view returns (uint256);
@@ -190,6 +204,8 @@ impl IB20Asset::IB20AssetCalls {
             Self::effectiveAt(_) => "precompile-b20-asset-effectiveAt",
             Self::toScaledBalance(_) => "precompile-b20-asset-toScaledBalance",
             Self::toRawBalance(_) => "precompile-b20-asset-toRawBalance",
+            Self::toUIAmount(_) => "precompile-b20-asset-toUIAmount",
+            Self::fromUIAmount(_) => "precompile-b20-asset-fromUIAmount",
             Self::scaledBalanceOf(_) => "precompile-b20-asset-scaledBalanceOf",
             Self::balanceOfUI(_) => "precompile-b20-asset-balanceOfUI",
             Self::totalSupplyUI(_) => "precompile-b20-asset-totalSupplyUI",
@@ -220,7 +236,7 @@ mod tests {
 
     /// Absolute wire fingerprint for Cobalt's (canonical) surface.
     const V2_ABI_FINGERPRINT: B256 =
-        b256!("f035a3bf86021eea48a528ce2f89c0a65f77c9c03d700552cf52a0a2a6dbc6a3");
+        b256!("1e74ff9f9154700f8c200997837979d330168cf1c4c7fc692d1d426a58ce0115");
 
     /// `IB20Asset` declares no enum, so this surface passes `0` for the count and no ordinals to
     /// [`AbiFingerprint`] — there is no discriminant here that escapes the ABI the way the
@@ -331,12 +347,18 @@ mod tests {
             ERC8056_INTERFACE_IDS[2],
             xor(&[IB20Asset::balanceOfUICall::SELECTOR, IB20Asset::totalSupplyUICall::SELECTOR,])
         );
+        // IScaledUIAmountConversion = toUIAmount(uint256) ^ fromUIAmount(uint256).
+        assert_eq!(
+            ERC8056_INTERFACE_IDS[3],
+            xor(&[IB20Asset::toUIAmountCall::SELECTOR, IB20Asset::fromUIAmountCall::SELECTOR,])
+        );
     }
 
-    /// The Conversion extension id (`0x57854fc3`) must NOT be advertised.
+    /// The Conversion extension id (`0x57854fc3`) is advertised: the interface review reversed the
+    /// prior opt-out so `toUIAmount` / `fromUIAmount` are exposed alongside the legacy conversions.
     #[test]
-    fn erc8056_conversion_extension_not_claimed() {
-        assert!(!ERC8056_INTERFACE_IDS.contains(&FixedBytes::new([0x57, 0x85, 0x4f, 0xc3])));
+    fn erc8056_conversion_extension_is_claimed() {
+        assert!(ERC8056_INTERFACE_IDS.contains(&FixedBytes::new([0x57, 0x85, 0x4f, 0xc3])));
     }
 
     #[test]
@@ -376,8 +398,9 @@ mod tests {
     }
 
     /// The exact selector set dialable at Cobalt (the 12 Beryl selectors plus the 8 ERC-8056
-    /// scheduled-multiplier selectors, plus the `updateUIMultiplier` alias added by the interface
-    /// review). Adding or removing one changes which calls historical blocks could make.
+    /// scheduled-multiplier selectors, plus the `updateUIMultiplier` alias and the ERC-8056
+    /// Conversion-extension `toUIAmount` / `fromUIAmount` aliases added by the interface review).
+    /// Adding or removing one changes which calls historical blocks could make.
     #[test]
     fn selector_set_is_frozen() {
         let mut selectors: Vec<[u8; 4]> = IB20Asset::IB20AssetCalls::selectors().collect();
@@ -391,6 +414,8 @@ mod tests {
             IB20Asset::multiplierCall::SELECTOR,
             IB20Asset::toScaledBalanceCall::SELECTOR,
             IB20Asset::toRawBalanceCall::SELECTOR,
+            IB20Asset::toUIAmountCall::SELECTOR,
+            IB20Asset::fromUIAmountCall::SELECTOR,
             IB20Asset::scaledBalanceOfCall::SELECTOR,
             IB20Asset::updateMultiplierCall::SELECTOR,
             IB20Asset::updateUIMultiplierCall::SELECTOR,
@@ -408,7 +433,7 @@ mod tests {
         ];
         expected.sort_unstable();
 
-        assert_eq!(selectors.len(), 21);
+        assert_eq!(selectors.len(), 23);
         assert_eq!(selectors, expected);
     }
 }

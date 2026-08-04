@@ -264,6 +264,8 @@ fn golden_v2_selectors_unknown_at_v1() {
         IB20Asset::setUIMultiplierCall { newMultiplier: u(2), effectiveAt: u(1) }.abi_encode(),
         IB20Asset::cancelScheduledMultiplierCall {}.abi_encode(),
         IB20Asset::updateUIMultiplierCall { newMultiplier: u(2) }.abi_encode(),
+        IB20Asset::toUIAmountCall { rawAmount: u(100) }.abi_encode(),
+        IB20Asset::fromUIAmountCall { uiAmount: u(200) }.abi_encode(),
         IB20Asset::supportsInterfaceCall {
             interfaceId: alloy_primitives::FixedBytes::new([0x01, 0xff, 0xc9, 0xa7]),
         }
@@ -2835,6 +2837,8 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         | SC::setUIMultiplier(_)
         | SC::cancelScheduledMultiplier(_)
         | SC::updateUIMultiplier(_)
+        | SC::toUIAmount(_)
+        | SC::fromUIAmount(_)
         | SC::supportsInterface(_) => covered(&[golden_v2_selectors_unknown_at_v1]),
     }
 }

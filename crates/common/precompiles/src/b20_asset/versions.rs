@@ -273,8 +273,8 @@ mod tests {
 
     /// The dispatcher re-decodes against the canonical surface after a frozen surface accepts, so
     /// every frozen selector must exist on canonical. The difference is the 8 ERC-8056
-    /// scheduled-multiplier selectors Cobalt introduced plus the `updateUIMultiplier` alias added
-    /// by the interface review (9 total).
+    /// scheduled-multiplier selectors Cobalt introduced plus the `updateUIMultiplier`,
+    /// `toUIAmount`, and `fromUIAmount` aliases added by the interface review (11 total).
     #[test]
     fn v1_selectors_are_a_subset_of_v2() {
         let v1: Vec<[u8; 4]> = IB20AssetV1::IB20AssetCalls::selectors().collect();
@@ -288,7 +288,7 @@ mod tests {
         let added: Vec<[u8; 4]> = IB20AssetV2::IB20AssetCalls::selectors()
             .filter(|selector| !AssetAbi::V1.valid_selector(*selector))
             .collect();
-        assert_eq!(added.len(), 9);
+        assert_eq!(added.len(), 11);
         for selector in [
             IB20Asset::uiMultiplierCall::SELECTOR,
             IB20Asset::newUIMultiplierCall::SELECTOR,
@@ -299,6 +299,8 @@ mod tests {
             IB20Asset::cancelScheduledMultiplierCall::SELECTOR,
             IB20Asset::supportsInterfaceCall::SELECTOR,
             IB20Asset::updateUIMultiplierCall::SELECTOR,
+            IB20Asset::toUIAmountCall::SELECTOR,
+            IB20Asset::fromUIAmountCall::SELECTOR,
         ] {
             assert!(
                 added.contains(&selector),

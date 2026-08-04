@@ -2342,12 +2342,14 @@ mod tests {
 
     #[test]
     fn supports_interface_advertises_claimed_ids_only() {
-        // IERC165, IScaledUIAmount, IScaledUIAmountNewUIMultiplier, IScaledUIAmountBalances.
+        // IERC165, IScaledUIAmount, IScaledUIAmountNewUIMultiplier, IScaledUIAmountBalances, and the
+        // IScaledUIAmountConversion extension (0x57854fc3), claimed by the interface review.
         for id in [
             [0x01, 0xff, 0xc9, 0xa7],
             [0xa6, 0x0b, 0xf1, 0x3d],
             [0x4b, 0xd2, 0x76, 0x48],
             [0xd8, 0x90, 0xfd, 0x71],
+            [0x57, 0x85, 0x4f, 0xc3],
         ] {
             assert!(
                 <AssetV2 as Asset<FakeAccounting, FakePolicyAccounting>>::supports_interface(
@@ -2357,8 +2359,8 @@ mod tests {
                 .unwrap()
             );
         }
-        // Conversion extension is NOT claimed; nor is an arbitrary id.
-        for id in [[0x57, 0x85, 0x4f, 0xc3], [0xde, 0xad, 0xbe, 0xef], [0xff, 0xff, 0xff, 0xff]] {
+        // An arbitrary id is not advertised.
+        for id in [[0xde, 0xad, 0xbe, 0xef], [0xff, 0xff, 0xff, 0xff]] {
             assert!(
                 !<AssetV2 as Asset<FakeAccounting, FakePolicyAccounting>>::supports_interface(
                     &LOGIC,
