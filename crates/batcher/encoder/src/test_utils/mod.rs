@@ -59,8 +59,9 @@ impl BatchPipeline for MockBatchPipeline {
         self.l1_heads.push(l1_block);
     }
 
-    fn prune_safe(&mut self, safe_l2_number: u64) {
-        self.safe_l2_numbers_pruned.push(safe_l2_number);
+    fn prune_safe(&mut self, safe_l2: base_protocol::BlockInfo) -> bool {
+        self.safe_l2_numbers_pruned.push(safe_l2.number);
+        true
     }
 
     fn reset(&mut self) {

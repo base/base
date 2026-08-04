@@ -214,12 +214,12 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "no-throttle", env = "BATCHER_NO_THROTTLE")]
     pub no_throttle: bool,
 
-    /// Number of recent L1 blocks to scan on startup for already-submitted batcher frames.
+    /// Number of recent L1 blocks to inspect for a confirmed batcher transaction.
     ///
-    /// When set to a nonzero value N, the batcher walks back N L1 blocks from the
-    /// current head on startup, decodes any calldata batcher frames it finds, and
-    /// advances the L2 block cursor past data already pending on L1. This avoids
-    /// re-submitting frames after an unclean shutdown. Maximum value is 128.
+    /// With `--wait-node-sync`, recent nonce activity selects the L1 synchronization
+    /// target within this window.
+    /// It does not decode batches or change the L2 backfill cursor. A non-zero
+    /// value requires `--wait-node-sync`.
     ///
     /// A value of 0 (default) disables the scan. Matches the reference batcher's
     /// `--check-recent-txs-depth` flag.
@@ -261,11 +261,10 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "stopped", env = "BATCHER_STOPPED")]
     pub stopped: bool,
 
-    /// Block startup until the rollup node reports a non-zero sync status.
+    /// Block startup until the rollup node has processed the selected L1 target.
     ///
-    /// Polls `optimism_syncStatus` on the poll interval until both `current_l1`
-    /// and `unsafe_l2` heads are non-zero. Useful when the batcher is started
-    /// alongside a fresh node so it does not race the node's initial sync.
+    /// By default the target is the current L1 head. `--check-recent-txs-depth`
+    /// may select an earlier target from the configured window.
     /// Matches the reference batcher's `--wait-node-sync`.
     #[arg(long = "wait-node-sync", env = "BATCHER_WAIT_NODE_SYNC")]
     pub wait_node_sync: bool,

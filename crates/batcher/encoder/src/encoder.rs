@@ -13,7 +13,7 @@ use base_common_genesis::RollupConfig;
 use base_comp::{
     BatchComposer, ChannelOut, CompressionAlgo, CompressorType, Config, ShadowCompressor,
 };
-use base_protocol::{Batch, BatchType, ChannelId, Frame, SingleBatch, SpanBatch};
+use base_protocol::{Batch, BatchType, BlockInfo, ChannelId, Frame, SingleBatch, SpanBatch};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
 
@@ -953,26 +953,39 @@ impl BatchPipeline for BatchEncoder {
         BatcherMetrics::pending_frames().set(0.0);
     }
 
-    fn prune_safe(&mut self, safe_l2_number: u64) {
-        // Count how many leading blocks are both safe (number <= safe_l2_number) and
+    fn prune_safe(&mut self, safe_l2: BlockInfo) -> bool {
+        let Some(block) = self.blocks.iter().find(|block| block.header.number == safe_l2.number)
+        else {
+            return false;
+        };
+        if block.header.hash_slow() != safe_l2.hash {
+            return false;
+        }
+
+        // Count how many leading blocks are both safe (number <= safe head) and
         // already past the encoding cursor (index < block_cursor). We must not prune
         // blocks that haven't been fed into a channel yet or we'd silently skip them.
         let prune_count = self
             .blocks
             .iter()
             .take(self.block_cursor)
-            .take_while(|b| b.header.number <= safe_l2_number)
+            .take_while(|b| b.header.number <= safe_l2.number)
             .count();
 
         if prune_count == 0 {
-            return;
+            return true;
         }
 
-        debug!(prune_count, safe_l2_number, "pruning safe blocks from input queue");
+        debug!(
+            prune_count,
+            safe_l2_number = safe_l2.number,
+            "pruning safe blocks from input queue"
+        );
 
         self.blocks.drain(..prune_count);
         self.rebase_after_block_prune(prune_count);
         BatcherMetrics::pending_blocks().decrement(prune_count as f64);
+        true
     }
 
     fn da_backlog_bytes(&self) -> u64 {
@@ -2252,7 +2265,7 @@ mod tests {
         assert_eq!(encoder.block_cursor, 3);
 
         // Prune blocks 1 and 2 (safe head = 2).
-        encoder.prune_safe(2);
+        assert!(encoder.prune_safe(BlockInfo { hash: b2_hash, number: 2, ..Default::default() }));
 
         assert_eq!(encoder.blocks.len(), 1, "only block 3 should remain");
         assert_eq!(encoder.blocks[0].header.number, 3);
@@ -2269,7 +2282,8 @@ mod tests {
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
 
-        encoder.prune_safe(0);
+        let safe_l2 = BlockInfo::from(&encoder.blocks[0]);
+        assert!(encoder.prune_safe(safe_l2));
 
         let open = encoder.current_channel.as_ref().unwrap();
         assert_eq!(open.block_start, 0);
@@ -2294,42 +2308,36 @@ mod tests {
         encoder.add_block(b1).unwrap();
 
         let b2 = make_numbered_block(b1_hash, 2);
+        let b2_hash = b2.header.hash_slow();
         encoder.add_block(b2).unwrap();
 
         // Encode only block 1 (cursor = 1).
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
         assert_eq!(encoder.block_cursor, 1);
 
-        // Prune with safe_l2_number = 5 — block 2 is below safe head but not encoded.
-        encoder.prune_safe(5);
+        // Block 2 is safe but not encoded.
+        assert!(encoder.prune_safe(BlockInfo { hash: b2_hash, number: 2, ..Default::default() }));
 
         assert_eq!(encoder.blocks.len(), 1, "block 2 must not be pruned (not yet encoded)");
         assert_eq!(encoder.blocks[0].header.number, 2);
         assert_eq!(encoder.block_cursor, 0, "cursor adjusted after pruning block 1");
     }
 
-    /// `prune_safe` with a safe head below all block numbers is a no-op.
     #[test]
-    fn test_prune_safe_noop_when_below_all_blocks() {
+    fn test_prune_safe_rejects_inconsistent_chain() {
         let mut encoder = default_encoder();
+        assert!(!encoder.prune_safe(BlockInfo { number: 1, ..Default::default() }));
 
-        let b1 = make_numbered_block(B256::ZERO, 10);
-        encoder.add_block(b1).unwrap();
+        encoder.add_block(make_numbered_block(B256::ZERO, 1)).unwrap();
         encoder.step().unwrap();
 
-        encoder.prune_safe(5);
-
-        assert_eq!(encoder.blocks.len(), 1, "no blocks should be pruned");
-        assert_eq!(encoder.block_cursor, 1, "cursor must be unchanged");
-    }
-
-    /// `prune_safe` on an empty encoder is a no-op.
-    #[test]
-    fn test_prune_safe_noop_when_empty() {
-        let mut encoder = default_encoder();
-        encoder.prune_safe(100);
-        assert!(encoder.blocks.is_empty());
-        assert_eq!(encoder.block_cursor, 0);
+        assert!(!encoder.prune_safe(BlockInfo {
+            hash: B256::repeat_byte(1),
+            number: 1,
+            ..Default::default()
+        }));
+        assert!(!encoder.prune_safe(BlockInfo { number: 2, ..Default::default() }));
+        assert_eq!(encoder.blocks.len(), 1);
     }
 
     /// `prune_safe` must adjust `block_range.end` on ready channels so that
@@ -2356,7 +2364,7 @@ mod tests {
         assert_eq!(encoder.ready_channels[0].block_range.end, 2);
 
         // Prune block 1 (safe head = 1).
-        encoder.prune_safe(1);
+        assert!(encoder.prune_safe(BlockInfo { hash: b1_hash, number: 1, ..Default::default() }));
         assert_eq!(encoder.blocks.len(), 1);
         assert_eq!(encoder.block_cursor, 1);
 

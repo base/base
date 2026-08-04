@@ -7,6 +7,7 @@ use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
 use base_common_consensus::BaseBlock;
+use base_protocol::BlockInfo;
 use base_runtime::Runtime;
 use base_tx_manager::TxManager;
 use tokio::sync::mpsc;
@@ -50,8 +51,10 @@ where
     /// Set to `None` after the source returns [`SourceError::Exhausted`] or
     /// [`SourceError::Closed`], causing the driver to park that select arm forever.
     l1_head_source: Option<L>,
-    /// Optional external L2 safe head feed for pruning confirmed blocks.
-    safe_head_rx: Option<tokio::sync::watch::Receiver<u64>>,
+    /// Last trusted L2 safe head.
+    safe_head: Option<BlockInfo>,
+    /// Ordered safe-head updates.
+    safe_head_rx: Option<mpsc::Receiver<BlockInfo>>,
     /// Maximum wall-clock time to wait for in-flight submissions to settle
     /// when draining on cancellation or source exhaustion.
     drain_timeout: Duration,
@@ -100,6 +103,7 @@ where
             ),
             throttle,
             l1_head_source: Some(l1_head_source),
+            safe_head: None,
             safe_head_rx: None,
             drain_timeout: config.drain_timeout,
             stopped: false,
@@ -108,12 +112,12 @@ where
         }
     }
 
-    /// Attach an external L2 safe head watch channel.
+    /// Attach an ordered safe-head update channel.
     ///
-    /// When the receiver fires, the pipeline's [`prune_safe`](BatchPipeline::prune_safe)
-    /// is called with the new safe L2 block number, allowing the encoder to
-    /// free blocks that are confirmed safe on L2.
-    pub fn with_safe_head_rx(mut self, rx: tokio::sync::watch::Receiver<u64>) -> Self {
+    /// Advances validate and prune confirmed blocks. Regressions or hash
+    /// conflicts reset the pipeline and restart the source above the safe head.
+    pub fn with_safe_head_rx(mut self, initial: BlockInfo, rx: mpsc::Receiver<BlockInfo>) -> Self {
+        self.safe_head = Some(initial);
         self.safe_head_rx = Some(rx);
         self
     }
@@ -187,18 +191,9 @@ where
                     self.pipeline.force_close_channel();
                     debug!("flush signal received, force-closed channel");
                 }
-                DriverEvent::Reorg(head) => {
-                    let safe_head = self.safe_head_rx.as_ref().map(|rx| *rx.borrow()).unwrap_or(0);
-                    let catchup_from = safe_head + 1;
-                    warn!(
-                        reorg_head = %head.block_info.number,
-                        safe_head = %safe_head,
-                        catchup_from = %catchup_from,
-                        "L2 reorg detected, resetting pipeline and catching up from safe head"
-                    );
-                    self.submissions.discard();
-                    self.pipeline.reset();
-                    self.source.reset_catchup(catchup_from);
+                DriverEvent::Reorg => {
+                    warn!("L2 reorg detected, resetting pipeline and catching up from safe head");
+                    self.reset_to_safe_head();
                 }
                 DriverEvent::Receipt(ids, o) => {
                     self.submissions.handle_outcome(&mut self.pipeline, ids, o);
@@ -207,9 +202,8 @@ where
                     self.pipeline.advance_l1_head(n);
                     debug!(l1_head = %n, "L1 head advanced via source");
                 }
-                DriverEvent::SafeHead(n) => {
-                    self.pipeline.prune_safe(n);
-                    debug!(safe_l2_number = %n, "pruned safe blocks via watch");
+                DriverEvent::SafeHead(head) => {
+                    self.on_safe_head(head);
                 }
                 DriverEvent::L1SourceClosed => {
                     debug!("L1 head source closed, disabling arm");
@@ -250,6 +244,37 @@ where
         Ok(())
     }
 
+    fn reset_to_safe_head(&mut self) {
+        self.submissions.discard();
+        self.pipeline.reset();
+        if let Some(safe_head) = self.safe_head {
+            self.source.reset_catchup(safe_head);
+        }
+    }
+
+    fn on_safe_head(&mut self, head: BlockInfo) {
+        let previous = self.safe_head.replace(head);
+        if let Some(previous) = previous.filter(|previous| {
+            head.number < previous.number
+                || (head.number == previous.number && head.hash != previous.hash)
+        }) {
+            warn!(
+                previous_safe_l2 = %previous.number,
+                safe_l2 = %head.number,
+                "safe L2 head changed chain, resetting pipeline"
+            );
+            self.reset_to_safe_head();
+        } else if !self.pipeline.prune_safe(head) {
+            warn!(
+                safe_l2 = %head.number,
+                "safe L2 head does not match buffered chain, resetting pipeline"
+            );
+            self.reset_to_safe_head();
+        } else {
+            debug!(safe_l2_number = %head.number, "pruned safe L2 blocks");
+        }
+    }
+
     /// Ingest a new L2 block into the pipeline.
     ///
     /// If the pipeline signals a reorg via `add_block` (parent-hash mismatch),
@@ -258,23 +283,20 @@ where
     /// re-delivered by the sequential poller.
     fn on_block(&mut self, block: Box<BaseBlock>) {
         let number = block.header.number;
+        if self.safe_head.is_some_and(|safe_head| number <= safe_head.number) {
+            return;
+        }
         match self.pipeline.add_block(*block) {
             Ok(()) => {
                 debug!(block = %number, "added unsafe block to pipeline");
             }
             Err((e, _block)) => {
-                let safe_head = self.safe_head_rx.as_ref().map(|rx| *rx.borrow()).unwrap_or(0);
-                let catchup_from = safe_head + 1;
                 warn!(
                     block = %number,
-                    safe_head = %safe_head,
-                    catchup_from = %catchup_from,
                     error = %e,
                     "reorg detected during block ingestion, resetting pipeline and catching up from safe head"
                 );
-                self.submissions.discard();
-                self.pipeline.reset();
-                self.source.reset_catchup(catchup_from);
+                self.reset_to_safe_head();
             }
         }
     }
@@ -285,6 +307,8 @@ where
     /// are returned to the caller. Admin commands are placed before the source
     /// arm so control-plane operations (pause, resume, flush) are never starved
     /// by sustained block throughput.
+    /// Safe-head changes are also handled before unsafe blocks so reorg
+    /// recovery cannot be starved by sequential catchup.
     ///
     /// [`AdminCommand::Pause`] immediately discards in-flight submissions and
     /// resets the pipeline, then drops `Block` and `Flush` source events until
@@ -311,13 +335,11 @@ where
                             info!(stopped = true, "batcher paused via admin");
                         }
                         AdminCommand::Resume => {
-                            let safe_head =
-                                self.safe_head_rx.as_ref().map(|rx| *rx.borrow());
-                            if let Some(n) = safe_head {
-                                self.source.reset_catchup(n + 1);
+                            if let Some(safe_head) = self.safe_head {
+                                self.source.reset_catchup(safe_head);
                                 info!(
                                     stopped = false,
-                                    catchup_from = %(n + 1),
+                                    safe_l2 = %safe_head.number,
                                     "batcher resumed via admin, catching up from safe head"
                                 );
                             } else {
@@ -352,13 +374,26 @@ where
                     continue;
                 }
 
+                safe_head = async {
+                    if let Some(ref mut rx) = self.safe_head_rx {
+                        rx.recv().await
+                    } else {
+                        std::future::pending::<Option<BlockInfo>>().await
+                    }
+                } => {
+                    match safe_head {
+                        Some(head) => DriverEvent::SafeHead(head),
+                        None => return Err(BatchDriverError::SafeHeadSourceClosed),
+                    }
+                }
+
                 event = self.source.next() => match event {
                     Ok(L2BlockEvent::Block(_) | L2BlockEvent::Flush) if self.stopped => {
                         continue;
                     }
                     Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
                     Ok(L2BlockEvent::Flush) => DriverEvent::Flush,
-                    Ok(L2BlockEvent::Reorg { new_safe_head }) => DriverEvent::Reorg(new_safe_head),
+                    Ok(L2BlockEvent::Reorg) => DriverEvent::Reorg,
                     Err(SourceError::Exhausted) => DriverEvent::Shutdown,
                     Err(e) => return Err(e.into()),
                 },
@@ -378,28 +413,6 @@ where
                     Err(SourceError::Exhausted | SourceError::Closed) => DriverEvent::L1SourceClosed,
                     Err(e) => {
                         warn!(error = %e, "L1 head source error");
-                        continue;
-                    }
-                },
-
-                _ = async {
-                    if let Some(ref mut rx) = self.safe_head_rx {
-                        rx.changed().await.ok();
-                    } else {
-                        std::future::pending::<()>().await;
-                    }
-                } => {
-                    if let Some(rx) = &mut self.safe_head_rx {
-                        if rx.has_changed().is_err() {
-                            // Sender dropped; safe-head poller has exited. Disable this
-                            // arm permanently and warn so operators know pruning stopped.
-                            warn!("safe-head watch sender dropped; safe-head pruning disabled");
-                            self.safe_head_rx = None;
-                            continue;
-                        }
-                        let n = *rx.borrow();
-                        DriverEvent::SafeHead(n)
-                    } else {
                         continue;
                     }
                 }
@@ -442,13 +455,13 @@ mod tests {
         L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
     };
     use base_blobs::{BlobDecoder, BlobEncoder};
-    use base_protocol::{ChannelId, Frame};
+    use base_protocol::{BlockInfo, ChannelId, Frame};
     use base_runtime::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
     };
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
-    use tokio::sync::{mpsc, oneshot, watch};
+    use tokio::sync::{mpsc, oneshot};
 
     use crate::{
         AdminCommand, BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient,
@@ -480,7 +493,11 @@ mod tests {
             }
         }
 
-        fn reset_catchup(&mut self, _: u64) {}
+        fn reset_catchup(&mut self, _: BlockInfo) {}
+    }
+
+    fn safe_head(number: u64) -> BlockInfo {
+        BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
     }
 
     #[derive(Debug)]
@@ -710,14 +727,14 @@ mod tests {
     #[test]
     fn next_event_prioritizes_source_before_receipts_and_heads() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (_safe_tx, safe_rx) = watch::channel(0);
+            let (_safe_tx, safe_rx) = mpsc::channel(1);
             let mut driver = driver_for_next_event(
                 ctx,
                 [Ok(L2BlockEvent::Flush)],
                 [Ok(L1HeadEvent::NewHead(9))],
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
-            .with_safe_head_rx(safe_rx);
+            .with_safe_head_rx(safe_head(0), safe_rx);
             driver.pipeline.submissions.push_back(SubmissionStub::stub());
             driver.submissions.submit_pending(&mut driver.pipeline).await;
 
@@ -727,31 +744,31 @@ mod tests {
     }
 
     #[test]
-    fn next_event_prioritizes_receipts_before_l1_head_and_safe_head() {
+    fn next_event_prioritizes_safe_head_before_source_and_receipts() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (safe_tx, safe_rx) = watch::channel(0);
-            safe_tx.send(5).expect("safe-head receiver should be open");
+            let (safe_tx, safe_rx) = mpsc::channel(1);
+            safe_tx.send(safe_head(5)).await.expect("safe-head receiver should be open");
 
             let mut driver = driver_for_next_event(
                 ctx,
-                [],
+                [Ok(L2BlockEvent::Flush)],
                 [Ok(L1HeadEvent::NewHead(9))],
                 ImmediateConfirmTxManager { l1_block: 42 },
             )
-            .with_safe_head_rx(safe_rx);
+            .with_safe_head_rx(safe_head(0), safe_rx);
             driver.pipeline.submissions.push_back(SubmissionStub::stub());
             driver.submissions.submit_pending(&mut driver.pipeline).await;
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::Receipt(_, _)));
+            assert!(matches!(event, DriverEvent::SafeHead(head) if head.number == 5));
         });
     }
 
     #[test]
-    fn next_event_prioritizes_l1_head_before_safe_head() {
+    fn next_event_prioritizes_safe_head_before_l1_head() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (safe_tx, safe_rx) = watch::channel(0);
-            safe_tx.send(5).expect("safe-head receiver should be open");
+            let (safe_tx, safe_rx) = mpsc::channel(1);
+            safe_tx.send(safe_head(5)).await.expect("safe-head receiver should be open");
 
             let mut driver = driver_for_next_event(
                 ctx,
@@ -759,25 +776,25 @@ mod tests {
                 [Ok(L1HeadEvent::NewHead(9))],
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
-            .with_safe_head_rx(safe_rx);
+            .with_safe_head_rx(safe_head(0), safe_rx);
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::L1Head(9)));
+            assert!(matches!(event, DriverEvent::SafeHead(head) if head.number == 5));
         });
     }
 
     #[test]
     fn next_event_returns_safe_head_when_only_safe_head_is_ready() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (safe_tx, safe_rx) = watch::channel(0);
-            safe_tx.send(7).expect("safe-head receiver should be open");
+            let (safe_tx, safe_rx) = mpsc::channel(1);
+            safe_tx.send(safe_head(7)).await.expect("safe-head receiver should be open");
 
             let mut driver =
                 driver_for_next_event(ctx, [], [], ImmediateConfirmTxManager { l1_block: 1 })
-                    .with_safe_head_rx(safe_rx);
+                    .with_safe_head_rx(safe_head(0), safe_rx);
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::SafeHead(7)));
+            assert!(matches!(event, DriverEvent::SafeHead(head) if head.number == 7));
         });
     }
 

@@ -8,30 +8,12 @@
 //! The core invariant: **the batcher always submits blocks starting from
 //! `safe_head + 1`**, regardless of what it was previously posting.
 
-use alloy_eips::BlockNumHash;
-use alloy_primitives::B256;
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_protocol::{BlockInfo, L2BlockInfo};
-
-/// Helper to construct a minimal [`L2BlockInfo`] for [`Batcher::signal_reorg`].
-///
-/// The driver only uses the `block_info.number` field from the reorg event
-/// (for logging), so the other fields can be zeroed.
-struct DummyL2Info;
-
-impl DummyL2Info {
-    fn at_number(number: u64) -> L2BlockInfo {
-        L2BlockInfo {
-            block_info: BlockInfo::new(B256::ZERO, number, B256::ZERO, 0),
-            l1_origin: BlockNumHash::default(),
-            seq_num: 0,
-        }
-    }
-}
+use base_protocol::BlockInfo;
 
 // ---------------------------------------------------------------------------
 // A. Gap-filling with a single persistent batcher (reorg signal path)
@@ -107,7 +89,7 @@ async fn batcher_gap_fill_single_instance_reorg_signal() {
     // ----- Phase 2: repoint to node B (safe head 7), post blocks 8-10 -----
     // signal_reorg clears the encoder, modelling the batcher detecting that
     // its block source has switched to a different chain position.
-    batcher.signal_reorg(DummyL2Info::at_number(7)).await;
+    batcher.signal_reorg().await;
 
     for block in &blocks[7..10] {
         batcher.push_block(block.clone());
@@ -128,7 +110,7 @@ async fn batcher_gap_fill_single_instance_reorg_signal() {
     // ----- Phase 3: repoint back to node A (safe head 5), fill the gap -----
     // In production, the batcher queries safe_head = 5 and loads blocks
     // [6, unsafe_head]. signal_reorg clears the encoder so we start fresh.
-    batcher.signal_reorg(DummyL2Info::at_number(5)).await;
+    batcher.signal_reorg().await;
 
     // Post blocks 6-10: fills the gap (6-7) and re-posts 8-10.
     for block in &blocks[5..10] {
@@ -143,20 +125,12 @@ async fn batcher_gap_fill_single_instance_reorg_signal() {
 }
 
 // ---------------------------------------------------------------------------
-// B. Gap-filling with safe head tracking (production-like path)
+// B. Driver reset with safe-head tracking
 // ---------------------------------------------------------------------------
 
-/// Same gap-filling scenario as above, but with a [`safe_head_rx`] watch
-/// channel wired into the [`BatchDriver`]. This exercises the production
-/// code path where `catchup_from = safe_head + 1` is computed from the
-/// live safe-head feed.
-///
-/// The safe head watch also triggers [`prune_safe`] inside the encoder,
-/// removing blocks that are confirmed safe and freeing encoder resources.
-///
-/// [`safe_head_rx`]: Batcher::with_safe_head_rx
-/// [`prune_safe`]: base_batcher_encoder::BatchPipeline::prune_safe
-/// [`BatchDriver`]: base_batcher_core::BatchDriver
+/// Exercises driver and encoder recovery with a safe-head feed. This harness
+/// replays missing blocks explicitly; numbered polling is tested in the source
+/// crate.
 #[tokio::test]
 async fn batcher_gap_fill_with_safe_head_tracking() {
     let batcher_cfg = BatcherConfig {
@@ -179,12 +153,13 @@ async fn batcher_gap_fill_with_safe_head_tracking() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    // Wire a safe-head watch channel into the batcher.
-    let (safe_head_tx, safe_head_rx) = tokio::sync::watch::channel(0u64);
+    // Wire a safe-head event channel into the batcher.
+    let (safe_head_tx, safe_head_rx) = tokio::sync::mpsc::channel(1);
     let mut batcher = Batcher::with_safe_head_rx(
         ActionL2Source::new(),
         &h.rollup_config,
         batcher_cfg.clone(),
+        BlockInfo::default(),
         safe_head_rx,
     );
 
@@ -201,12 +176,12 @@ async fn batcher_gap_fill_with_safe_head_tracking() {
     assert_eq!(node.l2_safe_number(), 5, "Phase 1: safe head must be 5");
 
     // Update the batcher's safe head to match the verifier.
-    safe_head_tx.send(5).expect("watch channel open");
+    safe_head_tx.send(BlockInfo::from(&blocks[4])).await.expect("safe-head channel open");
     // Yield to let the driver process the safe-head update (prune_safe).
     tokio::task::yield_now().await;
 
     // ----- Phase 2: repoint to node B, post gap blocks 8-10 -----
-    batcher.signal_reorg(DummyL2Info::at_number(7)).await;
+    batcher.signal_reorg().await;
 
     for block in &blocks[7..10] {
         batcher.push_block(block.clone());
@@ -219,9 +194,8 @@ async fn batcher_gap_fill_with_safe_head_tracking() {
     assert_eq!(derived, 0, "Phase 2: no blocks derived (gap)");
 
     // ----- Phase 3: repoint back, fill the gap from safe_head + 1 = 6 -----
-    // The batcher's safe_head_rx still reads 5, so the driver's
-    // catchup_from = 5 + 1 = 6 — exactly the gap start.
-    batcher.signal_reorg(DummyL2Info::at_number(5)).await;
+    // The batcher's safe head remains 5, so catchup starts at 6.
+    batcher.signal_reorg().await;
 
     for block in &blocks[5..10] {
         batcher.push_block(block.clone());

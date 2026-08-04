@@ -2,7 +2,7 @@
 
 use base_batcher_encoder::SubmissionId;
 use base_common_consensus::BaseBlock;
-use base_protocol::L2BlockInfo;
+use base_protocol::BlockInfo;
 
 use crate::TxOutcome;
 
@@ -15,14 +15,14 @@ pub enum DriverEvent {
     Block(Box<BaseBlock>),
     /// Source requested a force-flush of the current channel.
     Flush,
-    /// L2 reorganisation; new safe head provided.
-    Reorg(L2BlockInfo),
+    /// L2 reorganisation detected.
+    Reorg,
     /// An in-flight L1 transaction settled, carrying one or more submissions.
     Receipt(Vec<SubmissionId>, TxOutcome),
     /// L1 chain head advanced.
     L1Head(u64),
-    /// Safe L2 head advanced (from watch channel).
-    SafeHead(u64),
+    /// Safe L2 head changed.
+    SafeHead(BlockInfo),
     /// L1 head source permanently closed (Exhausted or Closed error).
     L1SourceClosed,
 }

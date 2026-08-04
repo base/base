@@ -1,6 +1,7 @@
 //! The batcher pipeline trait.
 
 use base_common_consensus::BaseBlock;
+use base_protocol::BlockInfo;
 
 use crate::{BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
 
@@ -71,13 +72,16 @@ pub trait BatchPipeline: Send {
     /// in-flight submissions to settle (confirm or requeue) before calling reset.
     fn reset(&mut self);
 
-    /// Prune blocks confirmed safe on L2 to prevent unbounded queue growth.
+    /// Validate and prune blocks confirmed safe on L2.
     ///
-    /// Drains blocks from the front of the input queue whose block number is
-    /// `<= safe_l2_number` **and** that have already been fed into a channel
+    /// Returns `false` without pruning when the reported safe block is not
+    /// buffered or has a different hash.
+    ///
+    /// Otherwise, drains blocks from the front of the input queue whose number is
+    /// `<= safe_l2.number` **and** that have already been fed into a channel
     /// (i.e. are before the encoding cursor). Blocks that have not yet been
     /// encoded are never pruned, even if their number is below the safe head.
-    fn prune_safe(&mut self, safe_l2_number: u64);
+    fn prune_safe(&mut self, safe_l2: BlockInfo) -> bool;
 
     /// Returns the estimated DA backlog in bytes.
     ///

@@ -3,13 +3,13 @@
 L2 unsafe block source for the Base batcher.
 
 Provides the `UnsafeBlockSource` trait and `HybridBlockSource` implementation
-that combines WebSocket subscription and HTTP polling with built-in
-deduplication and reorg detection.
+that combines WebSocket subscription and HTTP polling with deduplication,
+sequential gap recovery, and reorg detection.
 
 ## Components
 
 - **`UnsafeBlockSource`** — async trait for streaming L2 block events
 - **`L2BlockEvent`** — new block or reorg signal
-- **`HybridBlockSource`** — races a subscription stream against an interval-based poller
-- **`PollingSource`** — trait for fetching the current unsafe head block
+- **`HybridBlockSource`** — merges live updates with ordered polling
+- **`PollingSource`** — trait for fetching an L2 block by number
 - **`InMemoryBlockSource`** (`test_utils`) — in-memory source for action tests

@@ -10,7 +10,7 @@ use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
-use base_protocol::{BatchType, L2BlockInfo};
+use base_protocol::{BatchType, BlockInfo};
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio_util::sync::CancellationToken;
@@ -130,16 +130,13 @@ impl<S: L2BlockProvider> Batcher<S> {
         Self::build(l2_source, rollup_config, config, None)
     }
 
-    /// Create a new [`Batcher`] with an external L2 safe head watch channel.
+    /// Create a new [`Batcher`] with an ordered L2 safe-head feed.
     ///
     /// When the receiver fires, the [`BatchDriver`] prunes confirmed blocks
     /// from the encoder and uses the safe head value to determine the
     /// catchup position after a reorg or [`signal_reorg`] call.
     ///
-    /// Without this, the driver defaults to `safe_head = 0` when computing
-    /// `catchup_from = safe_head + 1`, which is correct for fresh starts
-    /// but does not model the production batcher's awareness of the current
-    /// safe head.
+    /// Without this, the test driver does not reposition its source after a reorg.
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     /// [`signal_reorg`]: Batcher::signal_reorg
@@ -147,9 +144,10 @@ impl<S: L2BlockProvider> Batcher<S> {
         l2_source: S,
         rollup_config: &RollupConfig,
         config: BatcherConfig,
-        safe_head_rx: tokio::sync::watch::Receiver<u64>,
+        initial_safe_head: BlockInfo,
+        safe_head_rx: tokio::sync::mpsc::Receiver<BlockInfo>,
     ) -> Self {
-        Self::build(l2_source, rollup_config, config, Some(safe_head_rx))
+        Self::build(l2_source, rollup_config, config, Some((initial_safe_head, safe_head_rx)))
     }
 
     /// Shared constructor. Builds and spawns the [`BatchDriver`] task.
@@ -157,7 +155,7 @@ impl<S: L2BlockProvider> Batcher<S> {
         l2_source: S,
         rollup_config: &RollupConfig,
         config: BatcherConfig,
-        safe_head_rx: Option<tokio::sync::watch::Receiver<u64>>,
+        safe_head_rx: Option<(BlockInfo, tokio::sync::mpsc::Receiver<BlockInfo>)>,
     ) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
         let rollup_config = Arc::new(rollup_config.clone());
@@ -199,8 +197,8 @@ impl<S: L2BlockProvider> Batcher<S> {
             l1_source,
         );
 
-        if let Some(rx) = safe_head_rx {
-            driver = driver.with_safe_head_rx(rx);
+        if let Some((initial, rx)) = safe_head_rx {
+            driver = driver.with_safe_head_rx(initial, rx);
         }
 
         let driver_task = tokio::spawn(async move { driver.run().await });
@@ -435,9 +433,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// different sequencer node). The batcher achieves the same effect by
     /// starting fresh and clearing the channel manager state.
     ///
-    /// The `new_safe_head` is forwarded to the driver for logging. The
-    /// actual catchup position is determined by the [`safe_head_rx`] watch
-    /// channel (if wired via [`with_safe_head_rx`]).
+    /// `block_number` is forwarded to the driver for logging. The actual
+    /// catchup position is determined by the safe-head feed, when configured.
     ///
     /// # Panics
     ///
@@ -446,10 +443,9 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     /// [`BatchPipeline::reset`]: base_batcher_encoder::BatchPipeline::reset
     /// [`UnsafeBlockSource::reset_catchup`]: base_batcher_source::UnsafeBlockSource::reset_catchup
-    /// [`safe_head_rx`]: Batcher::with_safe_head_rx
     /// [`with_safe_head_rx`]: Batcher::with_safe_head_rx
-    pub async fn signal_reorg(&self, new_safe_head: L2BlockInfo) {
-        self.block_tx.send(L2BlockEvent::Reorg { new_safe_head }).expect("driver task alive");
+    pub async fn signal_reorg(&self) {
+        self.block_tx.send(L2BlockEvent::Reorg).expect("driver task alive");
         tokio::task::yield_now().await;
     }
 

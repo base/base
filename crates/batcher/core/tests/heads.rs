@@ -1,24 +1,30 @@
-//! Integration tests for L1 head source and safe head watch behaviour in [`BatchDriver`].
+//! Integration tests for L1 and safe L2 head handling in [`BatchDriver`].
 
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient, ThrottleController,
+    BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
+    ThrottleController,
     test_utils::{
         DriverFixture, ImmediateConfirmTxManager, PendingSource, Recorded, SubmissionStub,
         TrackingPipeline,
     },
 };
 use base_batcher_source::{ChannelL1HeadSource, L1HeadEvent};
+use base_protocol::BlockInfo;
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
-use tokio::sync::watch;
+use tokio::sync::mpsc;
+
+fn safe_head(number: u64) -> BlockInfo {
+    BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
+}
 
 /// When the L1 head source delivers a new head, the driver must call
 /// `advance_l1_head` on the pipeline with the new value.
@@ -26,7 +32,7 @@ use tokio::sync::watch;
 fn test_l1_head_source_advances_pipeline() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_safe_head_match(false);
 
         let (l1_source, l1_tx) = ChannelL1HeadSource::new();
 
@@ -105,23 +111,23 @@ fn test_l1_source_exhausted_disables_arm_driver_continues() {
     });
 }
 
-/// When a safe head watch receiver fires, the driver must call
+/// When a safe-head update arrives, the driver must call
 /// `prune_safe` on the pipeline with the new value.
 #[test]
-fn test_safe_head_watch_prunes_pipeline() {
+fn test_safe_head_update_prunes_pipeline() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
 
-        let (safe_tx, safe_rx) = watch::channel(0u64);
+        let (safe_tx, safe_rx) = mpsc::channel(1);
 
         let driver =
             DriverFixture::build(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .with_safe_head_rx(safe_rx);
+                .with_safe_head_rx(safe_head(0), safe_rx);
         let handle = ctx.spawn(driver.run());
 
         // Send a new safe head.
-        safe_tx.send(100).unwrap();
+        safe_tx.send(safe_head(100)).await.unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 
@@ -129,53 +135,47 @@ fn test_safe_head_watch_prunes_pipeline() {
         let r = recorded.lock().unwrap();
         assert!(
             r.safe_numbers.contains(&100),
-            "prune_safe must be called with the watch value, got {:?}",
+            "prune_safe must be called with the safe-head value, got {:?}",
             r.safe_numbers
         );
     });
 }
 
-/// When the safe head sender is dropped while the driver is running, the watch
-/// arm must disable itself rather than spinning. The driver continues running
-/// and remains cancellable after the sender disappears.
 #[test]
-fn test_safe_head_sender_drop_does_not_busyloop() {
+fn test_safe_head_regression_resets_pipeline() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-
-        let (safe_tx, safe_rx) = watch::channel(0u64);
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_safe_head_match(false);
+        let (safe_tx, safe_rx) = mpsc::channel(1);
 
         let driver =
             DriverFixture::build(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .with_safe_head_rx(safe_rx);
+                .with_safe_head_rx(safe_head(10), safe_rx);
         let handle = ctx.spawn(driver.run());
 
-        // Send one value, then drop the sender while the driver is still running.
-        safe_tx.send(50).unwrap();
-        ctx.sleep(Duration::from_millis(20)).await;
+        safe_tx.send(safe_head(5)).await.unwrap();
+        safe_tx.send(safe_head(10)).await.unwrap();
+        ctx.sleep(Duration::from_millis(50)).await;
+        ctx.cancel();
+
+        assert!(handle.await.unwrap().is_ok());
+        let recorded = recorded.lock().unwrap();
+        assert_eq!(recorded.resets, 2);
+        assert!(recorded.safe_numbers.contains(&10));
+    });
+}
+
+#[test]
+fn test_safe_head_sender_drop_is_fatal() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        let (safe_tx, safe_rx) = mpsc::channel(1);
+        let driver = DriverFixture::build(ctx, pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+            .with_safe_head_rx(safe_head(0), safe_rx);
         drop(safe_tx);
 
-        // Give the driver time to process the drop. If the arm busy-loops,
-        // prune_safe would be called many additional times here.
-        ctx.sleep(Duration::from_millis(50)).await;
-        let prune_count_after_drop = recorded.lock().unwrap().safe_numbers.len();
-
-        // Cancel and wait — driver must exit cleanly, not hang.
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok(), "driver must exit cleanly after sender drop");
-
-        let r = recorded.lock().unwrap();
-        assert!(
-            r.safe_numbers.contains(&50),
-            "prune_safe must have been called with the sent value"
-        );
-        // After the sender drops, prune_safe must not be called again.
-        assert_eq!(
-            r.safe_numbers.len(),
-            prune_count_after_drop,
-            "prune_safe must not be called after sender drop (arm must be disabled)"
-        );
+        assert!(matches!(driver.run().await, Err(BatchDriverError::SafeHeadSourceClosed)));
     });
 }
 
