@@ -39,16 +39,16 @@ pub enum EngineClientError {
     #[error("An error occurred performing the reset: {0}.")]
     ResetForkchoiceError(String),
 
-    /// The EL is still syncing; the reset cannot proceed yet. Retry after a delay.
-    #[error("EL sync in progress; reset deferred")]
+    /// EL sync or canonical catch-up is incomplete; the reset cannot proceed yet.
+    #[error("EL sync or canonical catch-up in progress; reset deferred")]
     ELSyncing,
 
     /// Shadow reconciliation is unavailable in this mode.
     #[error("shadow reconciliation is disabled")]
     ShadowReconciliationDisabled,
 
-    /// The shadow payload buffer can no longer be reconciled safely.
-    #[error("shadow reconciliation payload buffer is faulted")]
+    /// The canonical reconciliation payload buffer can no longer be reconciled safely.
+    #[error("canonical reconciliation payload buffer is faulted")]
     ShadowBufferFaulted,
 
     /// The requested shadow reconciliation range or payload chain is invalid.
@@ -112,16 +112,26 @@ pub struct BuildRequest {
     pub otel_cx: Context,
 }
 
-/// A request to reset the engine forkchoice.
+/// A request to reset engine forkchoice or complete coordinated shadow activation.
 /// Optionally contains a channel to send back the response if the caller would like to know that
 /// the request was successfully processed.
 #[derive(Debug)]
 pub struct ResetRequest {
     /// response will be sent to this channel, if `Some`.
     pub result_tx: mpsc::Sender<EngineClientResult<()>>,
-    /// Whether the caller coordinates rebuilding its shadow-cycle state around this reset.
-    /// Uncoordinated successful resets terminate an active shadow handler after responding.
-    pub shadow_cycle_coordinated: bool,
+    /// The subsystem and coordination path that requested the reset.
+    pub origin: ResetOrigin,
+}
+
+/// Identifies the state owner coordinating an engine reset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResetOrigin {
+    /// Derivation requested pipeline recovery.
+    Derivation,
+    /// The sequencer requested its ordinary startup or recovery reset.
+    Sequencer,
+    /// The shadow sequencer coordinated initial activation or its private-cycle reset.
+    ShadowCycleCoordinated,
 }
 
 /// A request to insert a local unsafe payload.

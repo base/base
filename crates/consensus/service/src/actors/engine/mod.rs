@@ -15,19 +15,22 @@ pub use error::EngineError;
 mod request;
 pub use request::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineClientResult, EngineRpcRequest,
-    GetPayloadRequest, InsertUnsafePayloadRequest, ReconcileShadowRequest, ResetRequest,
+    GetPayloadRequest, InsertUnsafePayloadRequest, ReconcileShadowRequest, ResetOrigin,
+    ResetRequest,
 };
 
 mod engine_request_processor;
 #[cfg(test)]
 pub use client::MockEngineDerivationClient;
-pub use engine_request_processor::{
-    BootstrapRole, EngineProcessor, EngineProcessorOptions, EngineRequestHandler,
-    EngineRequestReceiver,
-};
+pub use engine_request_processor::{EngineProcessor, EngineRequestReceiver, ResetOutcome};
 
-mod shadow_reconciliation_gate;
-pub use shadow_reconciliation_gate::{CanonicalReconciliationInputs, ShadowReconciliationGate};
+mod validator_engine_request_handler;
+pub use validator_engine_request_handler::ValidatorEngineRequestHandler;
+
+pub use super::sequencer::{
+    CanonicalReconciliationInputs, CanonicalUnsafeCatchup, SequencerEngineState,
+    ShadowReconciliationGate,
+};
 
 mod rpc_request_processor;
 pub use rpc_request_processor::EngineRpcProcessor;

@@ -29,17 +29,35 @@ use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
     Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
     DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
-    EngineConfig, EngineProcessor, EngineProcessorOptions, EngineRequestHandler,
-    EngineRpcProcessor, L1OriginSelector, L1WatcherActor, L1WatcherQueryProcessor, NetworkActor,
-    NetworkBuilder, NetworkConfig, NodeActor, NodeMode, PayloadBuilder,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
-    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
-    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
-    SequencerConfig, ShadowReconciliationGate, UpgradeSignalNodeConfig,
+    EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector,
+    L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
+    NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
+    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
+    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
+    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
+    SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
+
+#[derive(Debug)]
+enum ConfiguredEngineReceiver<E: EngineClient + 'static> {
+    Validator(ValidatorEngineRequestHandler<E, QueuedEngineDerivationClient>),
+    Sequencer(SequencerEngineRequestCoordinator<E, QueuedEngineDerivationClient>),
+}
+
+impl<E: EngineClient + 'static> EngineRequestReceiver for ConfiguredEngineReceiver<E> {
+    fn start(
+        self,
+        request_channel: mpsc::Receiver<EngineActorRequest>,
+    ) -> tokio::task::JoinHandle<Result<(), crate::EngineError>> {
+        match self {
+            Self::Validator(receiver) => receiver.start(request_channel),
+            Self::Sequencer(receiver) => receiver.start(request_channel),
+        }
+    }
+}
 /// Poll interval in seconds for the head block stream.
 pub const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
 
@@ -248,7 +266,7 @@ impl RollupNode {
         conductor: Option<Arc<dyn Conductor>>,
         checkpoint_client: CheckpointClient,
     ) -> (
-        EngineActor<EngineRequestHandler<E, QueuedEngineDerivationClient>>,
+        EngineActor<ConfiguredEngineReceiver<E>>,
         EngineRpcProcessor<E>,
         watch::Receiver<EngineState>,
     ) {
@@ -263,19 +281,11 @@ impl RollupNode {
             Arc::new(checkpoint_client.clone());
         let checkpoint_writer: Arc<dyn CheckpointWriter> = Arc::new(checkpoint_client);
         let shadow_sequencer = mode.is_sequencer() && self.sequencer_config.is_shadow_sequencer();
-        let shadow_gate = shadow_sequencer
-            .then(|| ShadowReconciliationGate::new(engine.state().sync_state.unsafe_head()));
         let engine_processor = EngineProcessor::new_with_checkpoint(
             Arc::clone(&engine_client),
             Arc::clone(&self.config),
             derivation_client,
             engine,
-            EngineProcessorOptions {
-                node_mode: mode,
-                unsafe_head_tx: if mode.is_sequencer() { Some(unsafe_head_tx) } else { None },
-                conductor,
-                sequencer_stopped: self.sequencer_config.sequencer_stopped,
-            },
             checkpoint_reader,
             checkpoint_writer,
         );
@@ -287,7 +297,19 @@ impl RollupNode {
             engine_queue_length_rx,
         );
 
-        let engine_handler = EngineRequestHandler::new(engine_processor, shadow_gate);
+        let engine_handler = if mode.is_validator() {
+            ConfiguredEngineReceiver::Validator(ValidatorEngineRequestHandler::new(
+                engine_processor,
+            ))
+        } else {
+            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
+                engine_processor,
+                shadow_sequencer,
+                conductor,
+                self.sequencer_config.sequencer_stopped,
+                unsafe_head_tx,
+            ))
+        };
         let engine_actor = EngineActor::new(cancellation_token, engine_request_rx, engine_handler);
 
         (engine_actor, engine_rpc_processor, sequencer_engine_state_rx)
