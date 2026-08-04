@@ -96,6 +96,10 @@ sol! {
         /// Fixed-point precision for `multiplier`: `1e18` (one WAD).
         function WAD_PRECISION() external view returns (uint256);
 
+        /// [V2] The maximum UI multiplier the setters accept (`type(uint128).max`), the overflow
+        /// guard. Exposed so callers can read the bound without triggering the revert path.
+        function MAX_UI_MULTIPLIER() external view returns (uint256);
+
 
         // ── Announcements ────────────────────────────────────────────────────
 
@@ -196,6 +200,7 @@ impl IB20Asset::IB20AssetCalls {
         match self {
             Self::OPERATOR_ROLE(_) => "precompile-b20-asset-OPERATOR_ROLE",
             Self::WAD_PRECISION(_) => "precompile-b20-asset-WAD_PRECISION",
+            Self::MAX_UI_MULTIPLIER(_) => "precompile-b20-asset-MAX_UI_MULTIPLIER",
             Self::announce(_) => "precompile-b20-asset-announce",
             Self::isAnnouncementIdUsed(_) => "precompile-b20-asset-isAnnouncementIdUsed",
             Self::multiplier(_) => "precompile-b20-asset-multiplier",
@@ -236,7 +241,7 @@ mod tests {
 
     /// Absolute wire fingerprint for Cobalt's (canonical) surface.
     const V2_ABI_FINGERPRINT: B256 =
-        b256!("1e74ff9f9154700f8c200997837979d330168cf1c4c7fc692d1d426a58ce0115");
+        b256!("3da5383f3f700dede9e8918d25ec29f0b1451beab17d13d4e2aff78c5a52727d");
 
     /// `IB20Asset` declares no enum, so this surface passes `0` for the count and no ordinals to
     /// [`AbiFingerprint`] — there is no discriminant here that escapes the ABI the way the
@@ -398,9 +403,10 @@ mod tests {
     }
 
     /// The exact selector set dialable at Cobalt (the 12 Beryl selectors plus the 8 ERC-8056
-    /// scheduled-multiplier selectors, plus the `updateUIMultiplier` alias and the ERC-8056
-    /// Conversion-extension `toUIAmount` / `fromUIAmount` aliases added by the interface review).
-    /// Adding or removing one changes which calls historical blocks could make.
+    /// scheduled-multiplier selectors, plus the `updateUIMultiplier` alias, the ERC-8056
+    /// Conversion-extension `toUIAmount` / `fromUIAmount` aliases, and the `MAX_UI_MULTIPLIER`
+    /// getter added by the interface review). Adding or removing one changes which calls historical
+    /// blocks could make.
     #[test]
     fn selector_set_is_frozen() {
         let mut selectors: Vec<[u8; 4]> = IB20Asset::IB20AssetCalls::selectors().collect();
@@ -409,6 +415,7 @@ mod tests {
         let mut expected: Vec<[u8; 4]> = alloc::vec![
             IB20Asset::OPERATOR_ROLECall::SELECTOR,
             IB20Asset::WAD_PRECISIONCall::SELECTOR,
+            IB20Asset::MAX_UI_MULTIPLIERCall::SELECTOR,
             IB20Asset::announceCall::SELECTOR,
             IB20Asset::isAnnouncementIdUsedCall::SELECTOR,
             IB20Asset::multiplierCall::SELECTOR,
@@ -433,7 +440,7 @@ mod tests {
         ];
         expected.sort_unstable();
 
-        assert_eq!(selectors.len(), 23);
+        assert_eq!(selectors.len(), 24);
         assert_eq!(selectors, expected);
     }
 }

@@ -45,6 +45,12 @@ impl AssetV2 {
     pub(crate) const OPERATOR_ROLE: B256 =
         b256!("97667070c54ef182b0f5858b034beac1b6f3089aa2d3188bb1e8929f4fa9b929");
 
+    /// Upper bound the multiplier setters accept: `type(uint128).max`. With supply capped at
+    /// `type(uint128).max`, a `uint128` multiplier keeps `balance * multiplier` inside `uint256`,
+    /// so balance-derived reads never overflow. Single source of truth for the setter guards and
+    /// the `MAX_UI_MULTIPLIER()` getter.
+    pub const MAX_UI_MULTIPLIER: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
+
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
     fn transfer_inner<S: AssetAccounting, A: PolicyAccounting>(
         &self,
@@ -670,7 +676,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
     ) -> Result<()> {
         let now = token.accounting().timestamp()?;
         self.ensure_operator_role(token, caller, privileged)?;
-        if new_multiplier.is_zero() || new_multiplier > U256::from(u128::MAX) {
+        if new_multiplier.is_zero() || new_multiplier > Self::MAX_UI_MULTIPLIER {
             return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
         }
         let pending_multiplier = U256::from(token.accounting().pending_multiplier()?);
@@ -911,7 +917,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
     ) -> Result<()> {
         let now = token.accounting().timestamp()?;
         self.ensure_operator_role(token, caller, privileged)?;
-        if new_multiplier.is_zero() || new_multiplier > U256::from(u128::MAX) {
+        if new_multiplier.is_zero() || new_multiplier > Self::MAX_UI_MULTIPLIER {
             return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
         }
         if effective_at <= now {
@@ -980,6 +986,10 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
     fn supports_interface(&self, interface_id: FixedBytes<4>) -> Result<bool> {
         Ok(interface_id == crate::ERC165_INTERFACE_ID
             || crate::ERC8056_INTERFACE_IDS.contains(&interface_id))
+    }
+
+    fn max_ui_multiplier(&self) -> Result<U256> {
+        Ok(Self::MAX_UI_MULTIPLIER)
     }
 }
 
@@ -2369,6 +2379,17 @@ mod tests {
                 .unwrap()
             );
         }
+    }
+
+    #[test]
+    fn max_ui_multiplier_getter_returns_uint128_max() {
+        // Pins the const definition (the U256 limbs must equal type(uint128).max, the value the
+        // setter guards enforce) and the getter that exposes it.
+        assert_eq!(AssetV2::MAX_UI_MULTIPLIER, U256::from(u128::MAX));
+        let value =
+            <AssetV2 as Asset<FakeAccounting, FakePolicyAccounting>>::max_ui_multiplier(&LOGIC)
+                .unwrap();
+        assert_eq!(value, U256::from(u128::MAX));
     }
 
     /// Pins this version's frozen EIP-712 domain typehash to the exact type string it must hash.
