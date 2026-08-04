@@ -659,7 +659,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
     // --- Asset-specific mutations ---
 
     /// Instantaneous failsafe. Writes the current multiplier immediately, clearing any pending
-    /// update and (for a still-live schedule) emitting `MultiplierUpdateCancelled`. Emits the
+    /// update and (for a still-live schedule) emitting `UIMultiplierUpdateCancelled`. Emits the
     /// ERC-8056 `UIMultiplierUpdated` event rather than V1's `MultiplierUpdated`.
     fn update_multiplier(
         &self,
@@ -684,7 +684,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         }
         if live_pending {
             token.accounting_mut().emit_event(
-                IB20Asset::MultiplierUpdateCancelled {
+                IB20Asset::UIMultiplierUpdateCancelled {
                     cancelledMultiplier: pending_multiplier,
                     cancelledEffectiveAt: pending_effective_at,
                 }
@@ -928,7 +928,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         let pending_effective_at = token.accounting().pending_effective_at()?;
         // A live pending blocks a new schedule.
         if U256::from(pending_effective_at) > now {
-            return Err(BasePrecompileError::revert(IB20Asset::ScheduleOverlap {
+            return Err(BasePrecompileError::revert(IB20Asset::PendingUpdateExists {
                 pendingEffectiveAt: U256::from(pending_effective_at),
             }));
         }
@@ -965,11 +965,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         let pending_effective_at = U256::from(token.accounting().pending_effective_at()?);
         // A pending maturing at exactly `now` has already taken effect and is not cancellable.
         if pending_effective_at <= now {
-            return Err(BasePrecompileError::revert(IB20Asset::NoScheduledMultiplier {}));
+            return Err(BasePrecompileError::revert(IB20Asset::NoScheduledUIMultiplier {}));
         }
         token.accounting_mut().clear_pending_multiplier_and_effective_at()?;
         token.accounting_mut().emit_event(
-            IB20Asset::MultiplierUpdateCancelled {
+            IB20Asset::UIMultiplierUpdateCancelled {
                 cancelledMultiplier: pending_multiplier,
                 cancelledEffectiveAt: pending_effective_at,
             }
@@ -2124,7 +2124,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             err,
-            BasePrecompileError::revert(IB20Asset::ScheduleOverlap {
+            BasePrecompileError::revert(IB20Asset::PendingUpdateExists {
                 pendingEffectiveAt: first_effective_at,
             })
         );
@@ -2176,7 +2176,7 @@ mod tests {
 
         assert_eq!(
             last_event(&tok),
-            IB20Asset::MultiplierUpdateCancelled {
+            IB20Asset::UIMultiplierUpdateCancelled {
                 cancelledMultiplier: target,
                 cancelledEffectiveAt: effective_at,
             }
@@ -2192,7 +2192,7 @@ mod tests {
         let mut tok = token();
         set_now(&mut tok, U256::from(1u64));
         let none = LOGIC.cancel_scheduled_multiplier(&mut tok, ALICE, true).unwrap_err();
-        assert_eq!(none, BasePrecompileError::revert(IB20Asset::NoScheduledMultiplier {}));
+        assert_eq!(none, BasePrecompileError::revert(IB20Asset::NoScheduledUIMultiplier {}));
 
         // A matured pending is no longer "live", so cancel still reverts.
         LOGIC
@@ -2200,7 +2200,7 @@ mod tests {
             .unwrap();
         set_now(&mut tok, U256::from(100u64));
         let matured = LOGIC.cancel_scheduled_multiplier(&mut tok, ALICE, true).unwrap_err();
-        assert_eq!(matured, BasePrecompileError::revert(IB20Asset::NoScheduledMultiplier {}));
+        assert_eq!(matured, BasePrecompileError::revert(IB20Asset::NoScheduledUIMultiplier {}));
     }
 
     #[test]
@@ -2238,7 +2238,7 @@ mod tests {
         let events = &tok.accounting().events;
         assert_eq!(
             events[events.len() - 2],
-            IB20Asset::MultiplierUpdateCancelled {
+            IB20Asset::UIMultiplierUpdateCancelled {
                 cancelledMultiplier: pending,
                 cancelledEffectiveAt: pending_effective_at,
             }
@@ -2280,7 +2280,7 @@ mod tests {
             }
             .encode_log_data()
         );
-        let cancelled_sig = IB20Asset::MultiplierUpdateCancelled::SIGNATURE_HASH;
+        let cancelled_sig = IB20Asset::UIMultiplierUpdateCancelled::SIGNATURE_HASH;
         assert!(
             !tok.accounting().events.iter().any(|log| log.topics()[0] == cancelled_sig),
             "no cancellation event for a matured pending"

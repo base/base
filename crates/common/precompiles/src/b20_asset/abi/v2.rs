@@ -43,10 +43,10 @@ sol! {
         error EffectiveAtTooFar(uint256 effectiveAt);
 
         /// [V2] `setUIMultiplier` was called while a live pending update already exists.
-        error ScheduleOverlap(uint256 pendingEffectiveAt);
+        error PendingUpdateExists(uint256 pendingEffectiveAt);
 
         /// [V2] `cancelScheduledMultiplier` was called when there is no live pending update.
-        error NoScheduledMultiplier();
+        error NoScheduledUIMultiplier();
 
         /// A batched function was called with parallel arrays of differing lengths.
         error LengthMismatch(uint256 leftLen, uint256 rightLen);
@@ -74,7 +74,7 @@ sol! {
 
         /// [V2] Emitted by `cancelScheduledMultiplier`, and by `updateMultiplier` when it clears
         /// a live pending update.
-        event MultiplierUpdateCancelled(uint256 cancelledMultiplier, uint256 cancelledEffectiveAt);
+        event UIMultiplierUpdateCancelled(uint256 cancelledMultiplier, uint256 cancelledEffectiveAt);
 
         /// Emitted by `updateExtraMetadata`. Empty `value` indicates removal.
         event ExtraMetadataUpdated(string key, string value);
@@ -212,7 +212,7 @@ mod tests {
 
     /// Absolute wire fingerprint for Cobalt's (canonical) surface.
     const V2_ABI_FINGERPRINT: B256 =
-        b256!("93c921285631a963f969f6c6541689d116fc1046050ea82f889d6a5d833e8026");
+        b256!("37a40f2412989bab19c1ba8f60453336842427e16bdb58707f6c8d540c1840c0");
 
     /// `IB20Asset` declares no enum, so this surface passes `0` for the count and no ordinals to
     /// [`AbiFingerprint`] — there is no discriminant here that escapes the ABI the way the
