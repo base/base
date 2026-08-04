@@ -77,6 +77,10 @@ impl ChainProvider for ConfDepthProvider {
         self.inner.receipts_by_hash(hash).await
     }
 
+    fn hint_block(&mut self, number: u64) {
+        self.inner.hint_block(number);
+    }
+
     async fn block_info_and_transactions_by_hash(
         &mut self,
         hash: B256,

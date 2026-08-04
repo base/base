@@ -97,6 +97,10 @@ where
             }
             let receipts =
                 self.receipts_fetcher.receipts_by_hash(epoch.hash).await.map_err(Into::into)?;
+            // This is the first block of a new epoch, so the next epoch's
+            // origin will be needed in roughly one L1 slot. Hint it so the
+            // provider can warm its caches off the critical path.
+            self.receipts_fetcher.hint_block(header.number + 1);
             let deposits =
                 derive_deposits(epoch.hash, &receipts, self.rollup_cfg.deposit_contract_address)
                     .await

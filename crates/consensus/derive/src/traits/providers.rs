@@ -33,6 +33,12 @@ pub trait ChainProvider {
         &mut self,
         hash: B256,
     ) -> Result<(BlockInfo, Vec<TxEnvelope>), Self::Error>;
+
+    /// Hints that the block at `number` is expected to be fetched soon.
+    ///
+    /// Implementations may use this to warm caches in the background. The hint
+    /// is advisory and must not block. The default implementation does nothing.
+    fn hint_block(&mut self, _number: u64) {}
 }
 
 /// Describes the functionality of a data source that fetches safe blocks.
