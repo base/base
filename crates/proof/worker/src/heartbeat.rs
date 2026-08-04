@@ -254,13 +254,23 @@ mod tests {
             async move { WorkerHeartbeat::until_failure(&submitter, &claim, config).await }
         });
 
+        // Let the spawned task park on its interval sleep before advancing time.
+        for _ in 0..5 {
+            tokio::task::yield_now().await;
+        }
         advance(Duration::from_secs(1)).await;
-        tokio::task::yield_now().await;
-        advance(Duration::from_secs(2)).await;
-        tokio::task::yield_now().await;
+        for _ in 0..5 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // Remaining lease after the interval is ~1s; advance past the attempt timeout.
+        advance(Duration::from_secs(1)).await;
+        for _ in 0..5 {
+            tokio::task::yield_now().await;
+        }
 
         let error = failure.await.expect("heartbeat task should finish");
         assert!(matches!(error, ProverServiceClientError::Timeout(_)));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
