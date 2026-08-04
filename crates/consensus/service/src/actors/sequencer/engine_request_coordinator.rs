@@ -405,7 +405,7 @@ where
                         // Attach for the synchronous enqueue call only — no await, no Send issue.
                         let _guard = otel_cx.attach();
                         if let Some(gate) = self.active_shadow_gate() {
-                            gate.buffer_local_payload(envelope.clone());
+                            gate.buffer_local_payload(&envelope);
                         }
                         self.processor.handle_local_unsafe_l2_block(envelope, result_tx);
                     }

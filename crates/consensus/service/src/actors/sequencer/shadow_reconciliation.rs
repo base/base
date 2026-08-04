@@ -176,7 +176,7 @@ impl ShadowReconciliationGate {
     }
 
     /// Retains a locally-built payload that may be identical to a suppressed canonical payload.
-    pub fn buffer_local_payload(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+    pub fn buffer_local_payload(&mut self, envelope: &BaseExecutionPayloadEnvelope) {
         let number = envelope.execution_payload.block_number();
         if number <= self.anchor.block_info.number || self.faulted {
             return;
@@ -185,7 +185,7 @@ impl ShadowReconciliationGate {
             self.faulted = true;
             return;
         }
-        self.local_payloads.entry(number).or_insert(envelope);
+        self.local_payloads.entry(number).or_insert_with(|| envelope.clone());
     }
 
     /// Buffers a deferred safe signal.
@@ -460,7 +460,7 @@ mod tests {
     fn canonical_child_proves_suppressed_identical_local_parent() {
         let anchor = head(10, B256::with_last_byte(10));
         let mut gate = ShadowReconciliationGate::new(anchor);
-        gate.buffer_local_payload(payload(11, anchor.block_info.hash, B256::with_last_byte(11)));
+        gate.buffer_local_payload(&payload(11, anchor.block_info.hash, B256::with_last_byte(11)));
         gate.buffer_payload(payload(12, B256::with_last_byte(11), B256::with_last_byte(12)));
 
         let prepared = gate.prepare(head(12, B256::with_last_byte(99))).unwrap().unwrap();
@@ -472,7 +472,7 @@ mod tests {
     fn unwitnessed_local_tail_cannot_be_used_for_reconciliation() {
         let anchor = head(10, B256::with_last_byte(10));
         let mut gate = ShadowReconciliationGate::new(anchor);
-        gate.buffer_local_payload(payload(11, anchor.block_info.hash, B256::with_last_byte(11)));
+        gate.buffer_local_payload(&payload(11, anchor.block_info.hash, B256::with_last_byte(11)));
 
         assert!(gate.prepare(head(11, B256::with_last_byte(11))).unwrap().is_none());
         assert_eq!(gate.local_payloads.len(), 1);
@@ -482,7 +482,7 @@ mod tests {
     fn divergent_local_payload_waits_for_canonical_replacement() {
         let anchor = head(10, B256::with_last_byte(10));
         let mut gate = ShadowReconciliationGate::new(anchor);
-        gate.buffer_local_payload(payload(11, anchor.block_info.hash, B256::with_last_byte(99)));
+        gate.buffer_local_payload(&payload(11, anchor.block_info.hash, B256::with_last_byte(99)));
         gate.buffer_payload(payload(12, B256::with_last_byte(11), B256::with_last_byte(12)));
 
         assert!(gate.prepare(head(12, B256::with_last_byte(12))).unwrap().is_none());
