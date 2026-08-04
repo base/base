@@ -32,8 +32,8 @@ sol! {
         /// `updateExtraMetadata` was called with an empty metadata key.
         error InvalidMetadataKey();
 
-        /// A multiplier setter (`setUIMultiplier` / `updateMultiplier`) was called with a
-        /// multiplier of zero or above the `type(uint128).max` overflow guard.
+        /// A multiplier setter (`setUIMultiplier` / `updateUIMultiplier` / `updateMultiplier`) was
+        /// called with a multiplier of zero or above the `type(uint128).max` overflow guard.
         error InvalidMultiplier();
 
         /// [V2] `setUIMultiplier` was called with an `effectiveAt` that is not in the future
@@ -145,8 +145,15 @@ sol! {
         function cancelScheduledMultiplier() external;
 
         /// Instant failsafe: sets the current multiplier immediately and clears any pending.
-        /// At `AssetV1` emits `MultiplierUpdated` which was replaced in `AssetV2` by `UIMultiplierUpdated`
+        /// At `AssetV1` emits `MultiplierUpdated` which was replaced in `AssetV2` by `UIMultiplierUpdated`.
+        /// Retained (dialable) but deprecated in favor of `updateUIMultiplier`; no longer advertised
+        /// in base-std's `IB20Asset` interface.
         function updateMultiplier(uint256 newMultiplier) external;
+
+        /// [V2] The instant failsafe under the canonical ERC-8056 "UI Multiplier" vocabulary.
+        /// Behaves identically to `updateMultiplier` (same logic, same events); the legacy name is
+        /// kept dialable for backwards compatibility but de-advertised from base-std's interface.
+        function updateUIMultiplier(uint256 newMultiplier) external;
 
         /// [V2] ERC-165 interface detection.
         function supportsInterface(bytes4 interfaceId) external view returns (bool);
@@ -189,6 +196,7 @@ impl IB20Asset::IB20AssetCalls {
             Self::setUIMultiplier(_) => "precompile-b20-asset-setUIMultiplier",
             Self::cancelScheduledMultiplier(_) => "precompile-b20-asset-cancelScheduledMultiplier",
             Self::updateMultiplier(_) => "precompile-b20-asset-updateMultiplier",
+            Self::updateUIMultiplier(_) => "precompile-b20-asset-updateUIMultiplier",
             Self::supportsInterface(_) => "precompile-b20-asset-supportsInterface",
             Self::batchMint(_) => "precompile-b20-asset-batchMint",
             Self::extraMetadata(_) => "precompile-b20-asset-extraMetadata",
@@ -212,7 +220,7 @@ mod tests {
 
     /// Absolute wire fingerprint for Cobalt's (canonical) surface.
     const V2_ABI_FINGERPRINT: B256 =
-        b256!("37a40f2412989bab19c1ba8f60453336842427e16bdb58707f6c8d540c1840c0");
+        b256!("f035a3bf86021eea48a528ce2f89c0a65f77c9c03d700552cf52a0a2a6dbc6a3");
 
     /// `IB20Asset` declares no enum, so this surface passes `0` for the count and no ordinals to
     /// [`AbiFingerprint`] — there is no discriminant here that escapes the ABI the way the
@@ -368,8 +376,8 @@ mod tests {
     }
 
     /// The exact selector set dialable at Cobalt (the 12 Beryl selectors plus the 8 ERC-8056
-    /// scheduled-multiplier selectors). Adding or removing one changes which calls historical
-    /// blocks could make.
+    /// scheduled-multiplier selectors, plus the `updateUIMultiplier` alias added by the interface
+    /// review). Adding or removing one changes which calls historical blocks could make.
     #[test]
     fn selector_set_is_frozen() {
         let mut selectors: Vec<[u8; 4]> = IB20Asset::IB20AssetCalls::selectors().collect();
@@ -385,6 +393,7 @@ mod tests {
             IB20Asset::toRawBalanceCall::SELECTOR,
             IB20Asset::scaledBalanceOfCall::SELECTOR,
             IB20Asset::updateMultiplierCall::SELECTOR,
+            IB20Asset::updateUIMultiplierCall::SELECTOR,
             IB20Asset::batchMintCall::SELECTOR,
             IB20Asset::extraMetadataCall::SELECTOR,
             IB20Asset::updateExtraMetadataCall::SELECTOR,
@@ -399,7 +408,7 @@ mod tests {
         ];
         expected.sort_unstable();
 
-        assert_eq!(selectors.len(), 20);
+        assert_eq!(selectors.len(), 21);
         assert_eq!(selectors, expected);
     }
 }

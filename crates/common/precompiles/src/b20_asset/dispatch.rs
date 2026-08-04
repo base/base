@@ -373,6 +373,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 logic.update_multiplier(self, caller, c.newMultiplier, privileged)?;
                 Bytes::new()
             }
+            // ERC-8056-vocabulary alias of `updateMultiplier`; identical behavior.
+            SC::updateUIMultiplier(c) => {
+                logic.update_multiplier(self, caller, c.newMultiplier, privileged)?;
+                Bytes::new()
+            }
             SC::setUIMultiplier(c) => {
                 logic.set_ui_multiplier(
                     self,

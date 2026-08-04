@@ -248,10 +248,10 @@ fn resolver_maps_forks_to_versions() {
     assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(AssetVersion::V2));
 }
 
-/// The 8 ERC-8056 scheduled-multiplier selectors were introduced at Cobalt (`AssetV2`). At V1
-/// (Beryl) they are absent from the frozen asset wire surface, so `route` falls through to the
-/// disjoint inherited `IB20` decode and rejects them as `UnknownFunctionSelector`, byte-identically
-/// to the deleted hand-written fork gate.
+/// The ERC-8056 scheduled-multiplier selectors (plus the `updateUIMultiplier` alias) were
+/// introduced at Cobalt (`AssetV2`). At V1 (Beryl) they are absent from the frozen asset wire
+/// surface, so `route` falls through to the disjoint inherited `IB20` decode and rejects them as
+/// `UnknownFunctionSelector`, byte-identically to the deleted hand-written fork gate.
 #[test]
 fn golden_v2_selectors_unknown_at_v1() {
     let mut s = fresh();
@@ -263,6 +263,7 @@ fn golden_v2_selectors_unknown_at_v1() {
         IB20Asset::totalSupplyUICall {}.abi_encode(),
         IB20Asset::setUIMultiplierCall { newMultiplier: u(2), effectiveAt: u(1) }.abi_encode(),
         IB20Asset::cancelScheduledMultiplierCall {}.abi_encode(),
+        IB20Asset::updateUIMultiplierCall { newMultiplier: u(2) }.abi_encode(),
         IB20Asset::supportsInterfaceCall {
             interfaceId: alloy_primitives::FixedBytes::new([0x01, 0xff, 0xc9, 0xa7]),
         }
@@ -2833,6 +2834,7 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         | SC::totalSupplyUI(_)
         | SC::setUIMultiplier(_)
         | SC::cancelScheduledMultiplier(_)
+        | SC::updateUIMultiplier(_)
         | SC::supportsInterface(_) => covered(&[golden_v2_selectors_unknown_at_v1]),
     }
 }
