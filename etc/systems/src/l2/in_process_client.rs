@@ -196,8 +196,12 @@ impl InProcessClient {
             .with_add_ons(base_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        let mut extensions: Vec<Box<dyn BaseNodeExtension>> = Self::build_extensions(&config)?;
+        let (mut extensions, flashblocks_config) = Self::build_extensions(&config)?;
         extensions.extend(config.extra_extensions);
+        // Flashblocks extension must be installed last: it uses `replace_configured`, which
+        // overwrites RPC methods (e.g. `eth_getTransactionCount`, `eth_subscribe`) that
+        // built-in and caller-supplied extensions alike may register.
+        extensions.push(Box::new(FlashblocksExtension::new(Some(flashblocks_config))));
         let NodeHandle { node: node_handle, node_exit_future } = extensions
             .into_iter()
             .fold(NodeHooks::new(), |b, ext| ext.apply(b))
@@ -274,8 +278,13 @@ impl InProcessClient {
         Ok((db, path))
     }
 
-    /// Builds the extensions for the client node.
-    fn build_extensions(config: &InProcessClientConfig) -> Result<Vec<Box<dyn BaseNodeExtension>>> {
+    /// Builds the client node's built-in extensions, excluding [`FlashblocksExtension`].
+    ///
+    /// [`FlashblocksExtension`] must be installed last (see [`Self::start`]), since it uses
+    /// `replace_configured` to overwrite RPC methods that other extensions may register.
+    fn build_extensions(
+        config: &InProcessClientConfig,
+    ) -> Result<(Vec<Box<dyn BaseNodeExtension>>, FlashblocksConfig)> {
         let mut extensions: Vec<Box<dyn BaseNodeExtension>> = Vec::new();
 
         // TxPool extension (tracing disabled for client)
@@ -315,9 +324,6 @@ impl InProcessClient {
             )));
         }
 
-        // Flashblocks extension (must be last - uses replace_configured)
-        extensions.push(Box::new(FlashblocksExtension::new(Some(flashblocks_config))));
-
-        Ok(extensions)
+        Ok((extensions, flashblocks_config))
     }
 }
