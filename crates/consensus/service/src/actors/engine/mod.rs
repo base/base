@@ -22,13 +22,12 @@ pub use request::{
 mod engine_request_processor;
 #[cfg(test)]
 pub use client::MockEngineDerivationClient;
-pub use engine_request_processor::{
-    BootstrapRole, EngineProcessor, EngineProcessorOptions, EngineRequestHandler,
-    EngineRequestReceiver,
-};
+pub use engine_request_processor::{EngineProcessor, EngineRequestReceiver, ResetOutcome};
 
-mod shadow_reconciliation_gate;
-pub use shadow_reconciliation_gate::{
+mod validator_engine_request_handler;
+pub use validator_engine_request_handler::ValidatorEngineRequestHandler;
+
+pub use super::sequencer::{
     CanonicalReconciliationInputs, CanonicalUnsafeCatchup, SequencerEngineState,
     ShadowReconciliationGate,
 };
