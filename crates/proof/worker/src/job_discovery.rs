@@ -359,6 +359,7 @@ where
         while let Some(result) = proof_tasks.join_next().await {
             Self::log_proof_task_join_result(result);
         }
+        self.proof_generator.join_shutdown().await;
 
         info!(
             worker_id = %self.config.worker_id,

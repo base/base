@@ -210,7 +210,7 @@ where
             source,
         })?;
 
-        let submit_handle = self.tasks.spawn_submission(&self.submitter, submit_request);
+        let submission = self.tasks.spawn_submission(&self.submitter, submit_request);
 
         info!(
             session_id = %request.claim.session_id,
@@ -219,7 +219,7 @@ where
             "zk proof generated; proof submitter task spawned"
         );
 
-        Ok(ProofSubmissionTask::new(request.claim, submit_handle))
+        Ok(submission)
     }
 
     async fn prove_to_completion(
@@ -493,12 +493,15 @@ where
     type Error = ProofGeneratorError;
 
     async fn handle_claimed_job(&self, job: ProofJob) -> Result<(), Self::Error> {
-        // Submission continues in the spawned task; shutdown cancels through the controller.
         Self::generate_and_submit(self, job).await.map(drop)
     }
 
     fn shutdown(&self) {
         self.tasks.cancel_submissions();
+    }
+
+    async fn join_shutdown(&self) {
+        self.tasks.drain_submissions().await;
     }
 }
 

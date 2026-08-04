@@ -28,4 +28,5 @@ tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 chrono.workspace = true
