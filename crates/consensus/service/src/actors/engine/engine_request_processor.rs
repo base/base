@@ -350,7 +350,7 @@ where
             block_number = envelope.execution_payload.block_number(),
             block_hash = %envelope.execution_payload.block_hash(),
             parent_hash = %envelope.execution_payload.parent_hash(),
-            "Validator enqueuing external unsafe payload"
+            "Enqueuing external unsafe payload"
         );
         self.enqueue_unsafe_payload_insert(envelope, None, true);
     }

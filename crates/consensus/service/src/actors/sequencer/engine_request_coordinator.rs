@@ -14,13 +14,12 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowReconciliationGate};
 use crate::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
     EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest,
     ReconcileShadowRequest, ResetOrigin, ResetRequest, actors::engine::ResetOutcome,
 };
-
-use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowReconciliationGate};
 
 const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
 
@@ -586,11 +585,10 @@ mod tests {
     use jsonrpsee::core::ClientError;
     use tokio::sync::watch;
 
+    use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
     use crate::{
         Conductor, ConductorError, EngineProcessor, MockConductor, MockEngineDerivationClient,
     };
-
-    use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
 
     fn coordinator(
         shadow: bool,

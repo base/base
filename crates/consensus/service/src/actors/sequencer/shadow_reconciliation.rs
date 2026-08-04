@@ -100,6 +100,8 @@ impl CanonicalUnsafeCatchup {
     }
 
     /// Returns whether the engine has reached or safely overtaken the latest observed payload.
+    /// Buffered payloads across a gap intentionally prevent completion until every observation is
+    /// either applied in order or overtaken by a fully safe-derived head.
     pub fn is_complete(&self, unsafe_head: L2BlockInfo, safe_head: L2BlockInfo) -> bool {
         self.highest_observed.is_some_and(|(number, hash)| {
             !self.faulted
