@@ -6,8 +6,8 @@ mainnet) using your own RPC endpoints and your own funded
 [Succinct Prover Network](https://docs.succinct.xyz/docs/protocol/spn/architecture)
 requester key.
 
-The stack is three containers managed by `just prover <network>`. The
-network label isolates each local control plane and its persisted jobs:
+The stack is three containers managed by `just prover up|down|logs <network>`.
+The network label isolates each local control plane and its persisted jobs:
 
 - `prover-service-postgres` — session storage (persisted under `.zk-prover/<network>/`)
 - `base-prover-service` — the JSON-RPC coordinator `basectl` talks to
@@ -16,27 +16,28 @@ network label isolates each local control plane and its persisted jobs:
 
 ## ZK backends
 
-`basectl proofs finalize` selects the proving backend with `--zk-backend`:
+`basectl proofs propose` selects any proving backend with `--zk-backend`.
+`basectl proofs finalize` accepts `network` or `cluster`; dry-run cannot
+finalize because it produces no proof bytes to submit on chain.
 
 | Backend | What it does | Cost | Requirements |
 |---------|--------------|------|--------------|
 | `dry-run` | Executes the range in the local SP1 executor and reports cycle statistics. No proof bytes are produced. | Free | The four RPC endpoints |
-| `cluster` (default) | Proves on a self-hosted SP1 GPU cluster. | Your infra | Cluster endpoint + S3 artifact bucket |
-| `network` | Buys the proof on the Succinct Prover Network marketplace. | Paid in PROVE | The four RPC endpoints + a funded requester key |
+| `cluster` | Proves on a separately deployed SP1 GPU cluster. | Your infra | Cluster endpoint + S3 artifact bucket |
+| `network` (default) | Buys the proof on the Succinct Prover Network marketplace. | Paid in PROVE | The four RPC endpoints + a funded requester key |
 
 The standalone stack described here supports `network` and `dry-run`:
 supplying all four RPC endpoints enables dry-run automatically, and the
 requester key enables network. Use `dry-run` to size a range before paying for
 it with `network`.
 
-## Range semantics
+## Game range semantics
 
-`basectl proofs finalize <START_BLOCK> <NUM_BLOCKS>` treats `START_BLOCK`
-as the first block to prove. Basectl maps it to the prover protocol's agreed
-pre-state block internally.
-
-For example, `basectl proofs finalize 100 10` proves blocks 100–109 on top of
-block 99's output root. Genesis cannot be the first proved block.
+`basectl proofs finalize <GAME_OR_TX>` accepts either a dispute game proxy
+address or the L1 transaction that directly created it through
+`DisputeGameFactory.createWithInitData`. Basectl reads the committed block
+range, L1 head, output roots, and checkpoint interval from the game instead of
+accepting an arbitrary range from the operator.
 
 ## Requester key setup
 
@@ -124,29 +125,44 @@ remote in either case.
    Use the same network label in basectl (`-c sepolia`) so session IDs and the
    network-scoped local database describe the same chain.
 
-4. Optionally dry-run the intended range first to check RPC coverage and get
-   cycle statistics for free:
+4. Find an in-progress dispute game whose ZK proof slot is empty:
 
    ```bash
-   basectl -c sepolia proofs finalize <START_BLOCK> <NUM_BLOCKS> \
-     --prover-rpc http://localhost:9000 --zk-backend dry-run --wait
+   basectl -c sepolia proofs games --missing-zk
    ```
 
-5. Submit the paid request:
+5. Optionally submit a dry-run request for that game to check RPC coverage and
+   collect cycle statistics without buying a proof. Use the L1 wallet that
+   would submit the real proof so the request matches the eventual flow:
 
    ```bash
-   basectl -c sepolia proofs finalize <START_BLOCK> <NUM_BLOCKS> \
-     --prover-rpc http://localhost:9000 --zk-backend network
+   basectl -c sepolia proofs propose <GAME_ADDRESS> \
+     --prover-address <YOUR_L1_WALLET> \
+     --prover-rpc http://localhost:9000 \
+     --zk-backend dry-run
    ```
 
-   The confirmation prompt states the exact block range, backend, and that the
-   request is paid. The command prints the session ID.
+   Track the printed session ID with `basectl proofs status <SESSION_ID>`.
+   Dry-run results contain execution statistics but no proof bytes and cannot
+   be submitted on chain.
 
-6. Track progress:
+6. Export the submitting wallet and run the paid, one-shot finalization. The
+   wallet must hold enough settlement-layer ETH for the final L1 transaction;
+   it is separate from the requester key whose deposited PROVE pays SP1:
 
    ```bash
-   basectl -c sepolia proofs status <SESSION_ID> --prover-rpc http://localhost:9000
+   export BASECTL_SUBMITTER_PRIVATE_KEY=0x...
+
+   basectl -c sepolia proofs finalize <GAME_ADDRESS_OR_CREATION_TX> \
+     --prover-rpc http://localhost:9000 \
+     --zk-backend network
    ```
+
+   The confirmation prompt states the exact game, block range, payment
+   backend, submitting wallet, and L1 endpoint. Finalize requests the proof,
+   waits up to 24 hours, and submits `verifyProposalProof` after completion.
+   Re-running the same command resumes the deterministic prover-service
+   session instead of intentionally creating another paid request.
 
 Stop the stack with `just prover down sepolia`; Postgres data under
 `.zk-prover/sepolia/` survives, so sessions and proof results persist across
@@ -157,11 +173,10 @@ The RPC port defaults to 9000 and can be overridden with
 
 ## Proving an existing dispute game
 
-Range proofs from `proofs finalize` stay in the local prover database. To
-accelerate finality on L1, generate a PLONK proposal proof matched to an
-existing `AggregateVerifier` dispute game and submit it on chain. A game with
-both a TEE proof (from Base's proposer) and a ZK proof resolves on the fast
-path.
+`proofs finalize` wraps proposal, polling, and L1 submission in one command.
+Use the split `propose` and `submit` commands instead when those phases need to
+run in separate processes. A game with both a TEE proof (from Base's proposer)
+and a ZK proof resolves on the fast path.
 
 1. Find an in-progress game whose ZK proof slot is still empty:
 
@@ -205,8 +220,12 @@ path.
    transaction to be mined. When run with the same wallet and defaults as
    `propose`, no session ID is needed — basectl derives the same deterministic
    session ID both times. Pass `--session-id` if you overrode it at propose
-   time, `--zk-backend` if you proposed on a non-default backend, and `--wait`
-   to poll the prover service until the proof is ready before submitting.
+   time, `--zk-backend` if you proposed on a non-default backend,
+   `--intermediate-root-interval` if you passed one at propose time, and
+   `--wait` to poll the prover service until the proof is ready before
+   submitting. Right before sending the transaction, basectl re-reads the
+   game and aborts without spending gas if it is no longer in progress or
+   already has a ZK proof.
 
    The submitter wallet needs Sepolia/mainnet ETH for gas. Note this L1
    signing key is separate from `NETWORK_PRIVATE_KEY`, which pays the Succinct
@@ -218,12 +237,12 @@ little.
 
 ## Sizing ranges
 
-Start with a one-block paid smoke test (`NUM_BLOCKS` = 1) to validate the full
-path — RPCs, requester balance, and proof delivery — at minimal cost. Then use
-`--zk-backend dry-run` on the range you actually want: the reported cycle
-count tells you whether the range fits within the SP1 range program's limits
-before you pay for it. There is no fixed Base-specific maximum range; it
-depends on the gas actually used by the blocks in the range.
+Use `proofs propose <GAME_ADDRESS> --zk-backend dry-run` to measure the exact
+range committed by a candidate game before paying for it. The reported cycle
+count tells you whether the range fits within the SP1 range program's limits.
+There is no fixed Base-specific maximum range; it depends on the gas actually
+used by the game's blocks. For a paid smoke test, choose the smallest eligible
+game available rather than inventing a range that is not committed on chain.
 
 ## Restart and duplicate-submission behavior
 

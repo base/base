@@ -528,14 +528,14 @@ mod tests {
 
     #[test]
     fn proofs_submit_parse() {
+        // The submitter key comes from a key file or the environment at
+        // runtime, never from a command-line value.
         assert!(
             try_parse([
                 "basectl",
                 "proofs",
                 "submit",
                 "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "--private-key",
-                "0x0000000000000000000000000000000000000000000000000000000000000001",
             ])
             .is_ok()
         );
@@ -545,8 +545,8 @@ mod tests {
                 "proofs",
                 "submit",
                 "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "--private-key",
-                "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "--private-key-file",
+                "/tmp/submitter.key",
                 "--session-id",
                 "custom-session",
                 "--zk-backend",
@@ -567,17 +567,8 @@ mod tests {
 
     #[test]
     fn proofs_submit_rejects_bad_inputs() {
-        // Game address and private key are both required.
+        // Game address is required.
         assert!(try_parse(["basectl", "proofs", "submit"]).is_err());
-        assert!(
-            try_parse([
-                "basectl",
-                "proofs",
-                "submit",
-                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            ])
-            .is_err()
-        );
         // JSON output requires --yes so scripts do not hang on the prompt.
         assert!(
             try_parse([
@@ -585,8 +576,6 @@ mod tests {
                 "proofs",
                 "submit",
                 "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "--private-key",
-                "0x0000000000000000000000000000000000000000000000000000000000000001",
                 "--json",
             ])
             .is_err()
@@ -595,14 +584,14 @@ mod tests {
 
     #[test]
     fn proofs_finalize_parse() {
+        // The submitter key comes from a key file or the environment at
+        // runtime, never from a command-line value.
         assert!(
             try_parse([
                 "basectl",
                 "proofs",
                 "finalize",
-                "0x9999999999999999999999999999999999999999999999999999999999999999",
-                "--private-key",
-                "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             ])
             .is_ok()
         );
@@ -612,8 +601,17 @@ mod tests {
                 "proofs",
                 "finalize",
                 "0x9999999999999999999999999999999999999999999999999999999999999999",
-                "--private-key",
-                "0x0000000000000000000000000000000000000000000000000000000000000001",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "0x9999999999999999999999999999999999999999999999999999999999999999",
+                "--private-key-file",
+                "/tmp/submitter.key",
                 "--zk-backend",
                 "cluster",
                 "--session-id",
@@ -635,29 +633,10 @@ mod tests {
 
     #[test]
     fn proofs_finalize_rejects_bad_inputs() {
-        // Transaction hash and private key are both required.
+        // Game/transaction target is required.
         assert!(try_parse(["basectl", "proofs", "finalize"]).is_err());
-        assert!(
-            try_parse([
-                "basectl",
-                "proofs",
-                "finalize",
-                "0x9999999999999999999999999999999999999999999999999999999999999999",
-            ])
-            .is_err()
-        );
-        // Transaction hash must be a 32-byte hex hash.
-        assert!(
-            try_parse([
-                "basectl",
-                "proofs",
-                "finalize",
-                "not-a-hash",
-                "--private-key",
-                "0x0000000000000000000000000000000000000000000000000000000000000001",
-            ])
-            .is_err()
-        );
+        // Target must be a 20-byte game address or 32-byte transaction hash.
+        assert!(try_parse(["basectl", "proofs", "finalize", "not-a-hash"]).is_err());
         // JSON output requires --yes so scripts do not hang on the prompt.
         assert!(
             try_parse([
@@ -665,8 +644,6 @@ mod tests {
                 "proofs",
                 "finalize",
                 "0x9999999999999999999999999999999999999999999999999999999999999999",
-                "--private-key",
-                "0x0000000000000000000000000000000000000000000000000000000000000001",
                 "--json",
             ])
             .is_err()
@@ -691,8 +668,6 @@ mod tests {
                     "proofs",
                     "finalize",
                     "0x9999999999999999999999999999999999999999999999999999999999999999",
-                    "--private-key",
-                    "0x0000000000000000000000000000000000000000000000000000000000000001",
                     "--zk-backend",
                     backend,
                 ])
@@ -706,8 +681,6 @@ mod tests {
                 "proofs",
                 "finalize",
                 "0x9999999999999999999999999999999999999999999999999999999999999999",
-                "--private-key",
-                "0x0000000000000000000000000000000000000000000000000000000000000001",
                 "--zk-backend",
                 "unknown",
             ])
@@ -722,8 +695,6 @@ mod tests {
             "proofs",
             "finalize",
             "0x9999999999999999999999999999999999999999999999999999999999999999",
-            "--private-key",
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
         ])
         .expect("finalize should parse");
         match cli.command {

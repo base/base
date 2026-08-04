@@ -2,12 +2,12 @@
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofEncoder, ProofRequest as PrimitiveProofRequest};
+use base_proof_submission::SnarkReceiptEncoder;
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest,
     SnarkPlonkProofRequest, TeeKind, TeeProofRequest,
 };
 use eyre::{Result, WrapErr, bail};
-use sp1_sdk::SP1ProofWithPublicValues;
 
 /// Conversion helpers for challenger proof requests and dispute proof bytes.
 #[derive(Debug)]
@@ -79,10 +79,8 @@ impl ChallengerProofAdapter {
             }
         };
 
-        let (receipt, _): (SP1ProofWithPublicValues, _) =
-            bincode::serde::decode_from_slice(&receipt_bytes, bincode::config::standard())
-                .wrap_err("failed to decode SNARK proof as SP1ProofWithPublicValues")?;
-        Ok(ProofEncoder::encode_zk_dispute_proof_bytes(Bytes::from(receipt.bytes())))
+        SnarkReceiptEncoder::encode_dispute_proof(&receipt_bytes)
+            .wrap_err("failed to encode SP1 PLONK receipt into dispute proof bytes")
     }
 
     /// Converts a prover-service TEE result into bytes accepted by `submit_dispute`.

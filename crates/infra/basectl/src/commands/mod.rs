@@ -32,9 +32,10 @@ pub use outcome::{CommandOutcome, OptionalValue};
 
 mod proofs;
 pub use proofs::{
-    ProofOutputStatus, ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand,
-    ProofsCommands, ProofsFinalizeArgs, ProofsFinalizeJson, ProofsGamesArgs, ProofsListArgs,
-    ProofsListJson, ProofsProposeArgs, ProofsStatusArgs, ProofsStatusJson, ProofsSubmitArgs,
+    FinalizeTarget, GameDetailsJson, GameSummaryJson, GamesListJson, ProofOutputStatus,
+    ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand, ProofsCommands,
+    ProofsFinalizeArgs, ProofsGamesArgs, ProofsListArgs, ProofsListJson, ProofsProposeArgs,
+    ProofsProposeJson, ProofsStatusArgs, ProofsStatusJson, ProofsSubmitArgs, ProofsSubmitJson,
     ZkBackendOption,
 };
 

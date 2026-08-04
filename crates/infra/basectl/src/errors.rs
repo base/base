@@ -5,8 +5,10 @@ use std::time::Duration;
 use alloy_primitives::B256;
 use alloy_transport::TransportError;
 use alloy_transport_http::reqwest;
+use base_proof_contracts::ContractError;
 use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::{ProverServiceClientBuildError, ProverServiceClientError};
+use base_tx_manager::TxManagerError;
 use jsonrpsee::core::client::Error as JsonRpcClientError;
 use thiserror::Error;
 
@@ -175,7 +177,7 @@ pub enum ProofsCommandError {
     /// The proof did not reach a terminal status within the wait window.
     #[error(
         "proof session {session_id} did not complete within {waited:?}; \
-         last observed status: {last_status}"
+         last observed status: {last_status}; re-run the same command to resume this session"
     )]
     WaitTimeout {
         /// The proof session identifier being waited on.
@@ -197,12 +199,13 @@ pub enum ProofsCommandError {
         config_name: String,
     },
     /// An L1 dispute-game contract read failed.
-    #[error("dispute game read failed against {endpoint}: {message}")]
+    #[error("dispute game read failed against {endpoint}")]
     L1Contract {
         /// The L1 RPC URL selected for the command.
         endpoint: String,
-        /// The underlying contract client error message.
-        message: String,
+        /// The underlying contract client error.
+        #[source]
+        source: ContractError,
     },
     /// The dispute game cannot accept a ZK proposal proof.
     #[error("game {game} cannot be proven: {reason}")]
@@ -225,6 +228,21 @@ pub enum ProofsCommandError {
     InvalidSubmitterKey {
         /// The parser error returned by the signer.
         message: String,
+    },
+    /// No submitter private key was found in the key file or environment.
+    #[error(
+        "no submitter private key found. Set `BASECTL_SUBMITTER_PRIVATE_KEY` \
+         or pass `--private-key-file <path>`."
+    )]
+    MissingSubmitterKey,
+    /// The submitter key file could not be read.
+    #[error("reading submitter key file {path}")]
+    ReadSubmitterKeyFile {
+        /// The key file path supplied by the caller.
+        path: String,
+        /// The underlying IO error.
+        #[source]
+        source: std::io::Error,
     },
     /// The proof session has not reached a terminal status yet.
     #[error(
@@ -253,21 +271,10 @@ pub enum ProofsCommandError {
     },
     /// The session's result is not a PLONK proposal proof.
     #[error(
-        "proof session {session_id} holds a {actual} proof, not a snark_plonk proposal proof; \
+        "proof session {session_id} does not hold a snark_plonk proposal proof; \
          request one with `basectl proofs propose`"
     )]
     NotAProposalProof {
-        /// The proof session identifier.
-        session_id: String,
-        /// The proof type actually stored in the session.
-        actual: &'static str,
-    },
-    /// The PLONK result carries no proof bytes.
-    #[error(
-        "proof session {session_id} returned empty proof bytes; \
-         dry-run backends produce no submittable proof"
-    )]
-    EmptyProofBytes {
         /// The proof session identifier.
         session_id: String,
     },
@@ -280,15 +287,16 @@ pub enum ProofsCommandError {
         message: String,
     },
     /// The L1 transaction manager could not be constructed.
-    #[error("failed to build L1 transaction manager for {endpoint}: {message}")]
+    #[error("failed to build L1 transaction manager for {endpoint}")]
     BuildTxManager {
         /// The L1 RPC URL selected for the command.
         endpoint: String,
-        /// The construction error message.
-        message: String,
+        /// The underlying transaction manager construction error.
+        #[source]
+        source: TxManagerError,
     },
     /// The `verifyProposalProof` submission failed.
-    #[error("verifyProposalProof submission to game {game} failed: {source}")]
+    #[error("verifyProposalProof submission to game {game} failed")]
     Submission {
         /// The dispute game proxy address.
         game: String,

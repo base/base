@@ -1,15 +1,15 @@
 //! On-chain proposal-proof submission client for `basectl proofs submit`.
 
-use std::{fmt, sync::Arc};
+use std::{env, fmt, fs, path::Path, sync::Arc};
 
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
-use base_proof_primitives::ProofEncoder;
-use base_proof_submission::AggregateProofSubmitter;
+use base_proof_submission::{AggregateProofSubmitter, SnarkReceiptEncoder};
 use base_prover_service_protocol::{GetProofResponse, ProofResult, ProofStatus};
-use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManager, TxManagerConfig};
-use sp1_sdk::SP1ProofWithPublicValues;
+use base_tx_manager::{
+    NoopTxMetrics, SignerConfig, SimpleTxManager, TxManager, TxManagerConfig, TxManagerError,
+};
 use url::Url;
 
 use crate::errors::ProofsCommandError;
@@ -31,6 +31,30 @@ impl fmt::Debug for SubmitterKey {
 }
 
 impl SubmitterKey {
+    /// Environment variable holding the raw hex submitter private key.
+    pub const PRIVATE_KEY_ENV: &'static str = "BASECTL_SUBMITTER_PRIVATE_KEY";
+
+    /// Loads the submitter key from a key file or the environment.
+    ///
+    /// Prefers `key_file` when given; otherwise reads
+    /// [`Self::PRIVATE_KEY_ENV`]. The key is deliberately never accepted as
+    /// a command-line argument, so it cannot leak through shell history or
+    /// the process list.
+    pub fn load(key_file: Option<&Path>) -> Result<Self, ProofsCommandError> {
+        if let Some(path) = key_file {
+            let raw = fs::read_to_string(path).map_err(|source| {
+                ProofsCommandError::ReadSubmitterKeyFile {
+                    path: path.display().to_string(),
+                    source,
+                }
+            })?;
+            return Self::parse(&raw);
+        }
+        let raw =
+            env::var(Self::PRIVATE_KEY_ENV).map_err(|_| ProofsCommandError::MissingSubmitterKey)?;
+        Self::parse(&raw)
+    }
+
     /// Parses a hex private key (with or without a `0x` prefix).
     pub fn parse(raw: &str) -> Result<Self, ProofsCommandError> {
         let signer = raw.trim().parse::<PrivateKeySigner>().map_err(|error| {
@@ -63,16 +87,10 @@ impl SnarkPlonkProofBytes {
         response: &GetProofResponse,
     ) -> Result<Self, ProofsCommandError> {
         match response.status {
-            ProofStatus::Queued => {
+            ProofStatus::Queued | ProofStatus::Running => {
                 return Err(ProofsCommandError::ProofNotReady {
                     session_id: session_id.to_string(),
-                    status: "queued".to_string(),
-                });
-            }
-            ProofStatus::Running => {
-                return Err(ProofsCommandError::ProofNotReady {
-                    session_id: session_id.to_string(),
-                    status: "running".to_string(),
+                    status: format!("{:?}", response.status).to_lowercase(),
                 });
             }
             ProofStatus::Failed => {
@@ -92,31 +110,20 @@ impl SnarkPlonkProofBytes {
         })?;
         let plonk = match result {
             ProofResult::SnarkPlonk(plonk) => plonk,
-            ProofResult::Compressed(_) => {
+            ProofResult::Compressed(_) | ProofResult::Tee(_) => {
                 return Err(ProofsCommandError::NotAProposalProof {
                     session_id: session_id.to_string(),
-                    actual: "compressed",
-                });
-            }
-            ProofResult::Tee(_) => {
-                return Err(ProofsCommandError::NotAProposalProof {
-                    session_id: session_id.to_string(),
-                    actual: "tee",
                 });
             }
         };
-        if plonk.proof.proof.is_empty() {
-            return Err(ProofsCommandError::EmptyProofBytes { session_id: session_id.to_string() });
-        }
-        let (receipt, _): (SP1ProofWithPublicValues, _) =
-            bincode::serde::decode_from_slice(&plonk.proof.proof, bincode::config::standard())
-                .map_err(|error| ProofsCommandError::InvalidProposalProof {
+        let proof =
+            SnarkReceiptEncoder::encode_dispute_proof(&plonk.proof.proof).map_err(|error| {
+                ProofsCommandError::InvalidProposalProof {
                     session_id: session_id.to_string(),
                     message: error.to_string(),
-                })?;
-        Ok(Self {
-            proof: ProofEncoder::encode_zk_dispute_proof_bytes(Bytes::from(receipt.bytes())),
-        })
+                }
+            })?;
+        Ok(Self { proof })
     }
 }
 
@@ -144,15 +151,12 @@ impl ProposalProofSubmitter {
     /// Fetches the chain ID from the endpoint and waits for one confirmation
     /// when sending, which is enough for a one-shot CLI submission.
     pub async fn connect(l1_rpc: &Url, key: SubmitterKey) -> Result<Self, ProofsCommandError> {
-        let build_error = |message: String| ProofsCommandError::BuildTxManager {
-            endpoint: l1_rpc.to_string(),
-            message,
-        };
         let provider = RootProvider::new_http(l1_rpc.clone());
-        let chain_id = provider
-            .get_chain_id()
-            .await
-            .map_err(|error| build_error(format!("fetching L1 chain ID: {error}")))?;
+        let chain_id =
+            provider.get_chain_id().await.map_err(|error| ProofsCommandError::BuildTxManager {
+                endpoint: l1_rpc.to_string(),
+                source: TxManagerError::Rpc(format!("fetching L1 chain ID: {error}")),
+            })?;
         let config = TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() };
         let tx_manager = SimpleTxManager::new(
             provider,
@@ -162,7 +166,10 @@ impl ProposalProofSubmitter {
             Arc::new(NoopTxMetrics),
         )
         .await
-        .map_err(|error| build_error(error.to_string()))?;
+        .map_err(|source| ProofsCommandError::BuildTxManager {
+            endpoint: l1_rpc.to_string(),
+            source,
+        })?;
         Ok(Self { tx_manager })
     }
 
@@ -245,6 +252,27 @@ mod tests {
     }
 
     #[test]
+    fn submitter_key_loads_from_file() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("submitter.key");
+        std::fs::write(&path, format!("{TEST_KEY}\n")).expect("write key file");
+
+        let key = SubmitterKey::load(Some(&path)).expect("key file loads");
+
+        assert_eq!(key.address(), address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"));
+    }
+
+    #[test]
+    fn submitter_key_load_reports_unreadable_file() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("missing.key");
+
+        let error = SubmitterKey::load(Some(&path)).expect_err("missing key file must fail");
+
+        assert!(matches!(error, ProofsCommandError::ReadSubmitterKeyFile { .. }));
+    }
+
+    #[test]
     fn submitter_key_debug_hides_key_material() {
         let key = SubmitterKey::parse(TEST_KEY).expect("key parses");
         let debug = format!("{key:?}");
@@ -309,18 +337,7 @@ mod tests {
         let error =
             SnarkPlonkProofBytes::from_response("session", &succeeded_response(Some(compressed)))
                 .expect_err("compressed result must fail");
-        assert!(matches!(
-            error,
-            ProofsCommandError::NotAProposalProof { actual: "compressed", .. }
-        ));
-    }
-
-    #[test]
-    fn from_response_rejects_empty_proof_bytes() {
-        let response = succeeded_response(Some(plonk_result(Bytes::new())));
-        let error = SnarkPlonkProofBytes::from_response("session", &response)
-            .expect_err("empty proof bytes must fail");
-        assert!(matches!(error, ProofsCommandError::EmptyProofBytes { .. }));
+        assert!(matches!(error, ProofsCommandError::NotAProposalProof { .. }));
     }
 
     #[test]

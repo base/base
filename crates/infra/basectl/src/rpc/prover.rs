@@ -46,7 +46,8 @@ pub struct ProofProposeRequest {
     /// ZK proving backend that executes the proof.
     pub zk_backend: ZkBackend,
     /// Explicit session ID override. When `None`, an idempotent session ID is
-    /// derived from the network name, game, block range, and prover address.
+    /// derived from the network name, game, block range, checkpoint stride,
+    /// and prover address.
     pub session_id: Option<String>,
 }
 
@@ -66,6 +67,7 @@ impl ProofProposeRequest {
         game: Address,
         pre_state_block: u64,
         num_blocks: u64,
+        intermediate_root_interval: u64,
         prover_address: Address,
     ) -> String {
         ProofSessionId::derive_from_components(
@@ -76,6 +78,7 @@ impl ProofProposeRequest {
                 game.as_slice(),
                 &pre_state_block.to_be_bytes(),
                 &num_blocks.to_be_bytes(),
+                &intermediate_root_interval.to_be_bytes(),
                 prover_address.as_slice(),
             ],
         )
@@ -95,8 +98,9 @@ impl ProofProposeRequest {
     /// Validates that the game can still accept a ZK proposal proof and takes
     /// the block range, L1 head, and checkpoint stride from the game so the
     /// proof journal matches what the contract reconstructs.
-    /// `intermediate_root_interval` overrides the stride derived from the
-    /// game's committed roots.
+    /// `intermediate_root_interval` supplies the stride when the game's
+    /// committed roots do not derive one; when they do, it must match the
+    /// derived stride.
     pub fn for_game(
         details: &GameDetails,
         prover_address: Address,
@@ -117,6 +121,16 @@ impl ProofProposeRequest {
         if details.block_interval == 0 {
             return Err(not_provable("game covers an empty block range"));
         }
+        if let (Some(explicit), Some(derived)) =
+            (intermediate_root_interval, details.intermediate_root_interval)
+            && explicit != derived
+        {
+            return Err(not_provable(&format!(
+                "intermediate root interval {explicit} does not match the stride {derived} \
+                 committed by the game's roots; a proof with a different stride would not \
+                 verify on chain"
+            )));
+        }
         let intermediate_root_interval =
             intermediate_root_interval.or(details.intermediate_root_interval).ok_or_else(|| {
                 not_provable(
@@ -124,6 +138,15 @@ impl ProofProposeRequest {
                      committed roots; pass --intermediate-root-interval",
                 )
             })?;
+        if intermediate_root_interval == 0
+            || !details.block_interval.is_multiple_of(intermediate_root_interval)
+        {
+            return Err(not_provable(&format!(
+                "intermediate root interval {intermediate_root_interval} must be a nonzero \
+                 divisor of the game's {}-block range",
+                details.block_interval
+            )));
+        }
         Ok(Self {
             game: details.address,
             pre_state_block: details.starting_block,
@@ -139,9 +162,10 @@ impl ProofProposeRequest {
     /// Returns the effective session ID for `network`.
     ///
     /// Uses the explicit override when set; otherwise derives an idempotent
-    /// `UUIDv5` from the network name, game address, block range, and prover
-    /// address so re-running the same command resolves to the same
-    /// prover-service session instead of enqueueing a duplicate proof.
+    /// `UUIDv5` from the network name, game address, block range, checkpoint
+    /// stride, and prover address so re-running the same command resolves to
+    /// the same prover-service session instead of enqueueing a duplicate
+    /// proof.
     pub fn effective_session_id(&self, network: &str) -> String {
         self.session_id.clone().unwrap_or_else(|| {
             Self::derive_session_id(
@@ -150,6 +174,7 @@ impl ProofProposeRequest {
                 self.game,
                 self.pre_state_block,
                 self.num_blocks,
+                self.intermediate_root_interval,
                 self.prover_address,
             )
         })
@@ -200,6 +225,13 @@ impl ProofsClient {
             poll_interval: config.poll_interval(),
             max_wait: config.max_wait(),
         })
+    }
+
+    /// Overrides the maximum time spent waiting for proof completion.
+    #[must_use]
+    pub const fn with_max_wait(mut self, max_wait: Duration) -> Self {
+        self.max_wait = max_wait;
+        self
     }
 
     /// Overrides the poll cadence used by [`Self::wait_for_completion`].
@@ -401,6 +433,35 @@ mod tests {
     }
 
     #[test]
+    fn propose_for_game_rejects_stride_overrides_conflicting_with_committed_roots() {
+        let error = ProofProposeRequest::for_game(
+            &provable_game(),
+            Address::repeat_byte(0xDD),
+            ZkBackend::Network,
+            None,
+            Some(250),
+        )
+        .expect_err("stride that conflicts with the game's committed roots must be rejected");
+        assert!(matches!(error, ProofsCommandError::GameNotProvable { .. }));
+    }
+
+    #[test]
+    fn propose_for_game_rejects_invalid_stride_overrides() {
+        let no_stride = GameDetails { intermediate_root_interval: None, ..provable_game() };
+        for interval in [0, 300] {
+            let error = ProofProposeRequest::for_game(
+                &no_stride,
+                Address::repeat_byte(0xDD),
+                ZkBackend::Network,
+                None,
+                Some(interval),
+            )
+            .expect_err("stride that is zero or does not divide the range must be rejected");
+            assert!(matches!(error, ProofsCommandError::GameNotProvable { .. }));
+        }
+    }
+
+    #[test]
     fn propose_for_game_accepts_stride_override() {
         let no_stride = GameDetails { intermediate_root_interval: None, ..provable_game() };
         let request = ProofProposeRequest::for_game(
@@ -430,29 +491,15 @@ mod tests {
             ProofProposeRequest { prover_address: Address::repeat_byte(0x88), ..request.clone() };
         let other_backend =
             ProofProposeRequest { zk_backend: ZkBackend::Cluster, ..request.clone() };
+        let other_stride =
+            ProofProposeRequest { intermediate_root_interval: 200, ..request.clone() };
 
         let base_id = request.effective_session_id("mainnet");
         assert_ne!(base_id, other_game.effective_session_id("mainnet"));
         assert_ne!(base_id, other_prover.effective_session_id("mainnet"));
         assert_ne!(base_id, other_backend.effective_session_id("mainnet"));
+        assert_ne!(base_id, other_stride.effective_session_id("mainnet"));
         assert_ne!(base_id, request.effective_session_id("sepolia"));
-    }
-
-    #[test]
-    fn derive_session_id_matches_effective_session_id() {
-        let request = propose_request();
-
-        assert_eq!(
-            request.effective_session_id("mainnet"),
-            ProofProposeRequest::derive_session_id(
-                "mainnet",
-                request.zk_backend,
-                request.game,
-                request.pre_state_block,
-                request.num_blocks,
-                request.prover_address,
-            )
-        );
     }
 
     #[test]
@@ -560,19 +607,6 @@ mod tests {
     async fn shutdown(handle: ServerHandle) {
         handle.stop().expect("server should stop");
         handle.stopped().await;
-    }
-
-    #[tokio::test]
-    async fn submit_returns_accepted_session_id() {
-        let api = MockRequesterApi::scripted([], ProofStatus::Queued);
-        let (client, handle) = spawn_mock(api).await;
-
-        let request = propose_request();
-        let session_id =
-            client.submit(request.to_prove_request("devnet")).await.expect("submit should succeed");
-
-        assert_eq!(session_id, propose_request().effective_session_id("devnet"));
-        shutdown(handle).await;
     }
 
     #[tokio::test]

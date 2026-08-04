@@ -12,6 +12,11 @@ pub use error::ProofSubmissionError;
 mod classifier;
 pub use classifier::KnownRevert;
 
+#[cfg(feature = "snark-receipt")]
+mod snark_receipt;
+#[cfg(feature = "snark-receipt")]
+pub use snark_receipt::{SnarkReceiptDecodeError, SnarkReceiptEncoder};
+
 mod submission;
 pub use submission::{ChallengeProofSubmission, NullifyProofSubmission};
 

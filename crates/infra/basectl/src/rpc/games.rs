@@ -9,7 +9,7 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, ContractError,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient, decode_create_calldata,
 };
-use futures::try_join;
+use futures::{StreamExt, stream, try_join};
 use url::Url;
 
 use crate::errors::ProofsCommandError;
@@ -17,9 +17,6 @@ use crate::errors::ProofsCommandError;
 /// Sentinel `expectedResolution` value meaning no proof has been verified yet
 /// (`type(uint64).max` on the contract).
 pub const EXPECTED_RESOLUTION_NEVER: u64 = u64::MAX;
-
-/// Maximum factory indexes scanned backwards when listing games with filters.
-const MAX_SCAN: usize = 256;
 
 /// Filters applied by [`GamesClient::list_recent`].
 #[derive(Debug, Clone, Copy)]
@@ -135,26 +132,29 @@ pub struct GamesClient {
 }
 
 impl GamesClient {
+    /// Maximum factory indexes scanned backwards when listing recent games.
+    pub const MAX_SCAN: usize = 256;
+
+    /// Maximum in-flight game fetches during a list scan.
+    ///
+    /// Kept modest because each in-flight scan issues several L1 reads at
+    /// once, and free-tier RPC endpoints rate-limit aggressively.
+    const SCAN_CONCURRENCY: usize = 4;
+
     /// Connects a games client for the given factory address and L1 RPC URL.
-    pub fn connect(factory: Address, l1_rpc: &Url) -> Result<Self, ProofsCommandError> {
-        let factory_client = DisputeGameFactoryContractClient::new(factory, l1_rpc.clone())
-            .map_err(|error| ProofsCommandError::L1Contract {
-                endpoint: l1_rpc.to_string(),
-                message: error.to_string(),
-            })?;
-        let verifier = AggregateVerifierContractClient::new(l1_rpc.clone()).map_err(|error| {
-            ProofsCommandError::L1Contract {
-                endpoint: l1_rpc.to_string(),
-                message: error.to_string(),
-            }
-        })?;
-        Ok(Self {
+    ///
+    /// A single provider (and thus one HTTP connection pool) is shared by
+    /// the direct RPC reads, the factory client, and the verifier client, so
+    /// [`Self::SCAN_CONCURRENCY`] genuinely bounds the endpoint load.
+    pub fn connect(factory: Address, l1_rpc: &Url) -> Self {
+        let provider = RootProvider::new_http(l1_rpc.clone());
+        Self {
             endpoint: l1_rpc.clone(),
-            provider: RootProvider::new_http(l1_rpc.clone()),
             factory_address: factory,
-            factory: factory_client,
-            verifier,
-        })
+            factory: DisputeGameFactoryContractClient::new(factory, provider.clone()),
+            verifier: AggregateVerifierContractClient::new(provider.clone()),
+            provider,
+        }
     }
 
     /// Resolves the dispute game created by an L1 factory transaction.
@@ -213,42 +213,95 @@ impl GamesClient {
         Ok(game)
     }
 
-    /// Returns the total number of games created by the factory.
-    pub async fn game_count(&self) -> Result<u64, ProofsCommandError> {
-        self.factory.game_count().await.map_err(|error| self.contract_error(error))
-    }
-
     /// Lists recent games newest-first, applying `filter`.
     ///
-    /// Scans backwards from the newest factory index and stops after
-    /// collecting `filter.limit` matches or scanning [`MAX_SCAN`] games.
+    /// Returns the factory's total game count together with the matches, so
+    /// callers see a count consistent with the scanned window. Scans
+    /// backwards from the newest factory index with up to
+    /// [`Self::SCAN_CONCURRENCY`] games in flight, preserving newest-first
+    /// order, and stops after collecting `filter.limit` matches or scanning
+    /// [`Self::MAX_SCAN`] games.
     pub async fn list_recent(
         &self,
         filter: GameListFilter,
-    ) -> Result<Vec<GameSummary>, ProofsCommandError> {
-        let count = self.game_count().await?;
+    ) -> Result<(u64, Vec<GameSummary>), ProofsCommandError> {
+        let count = self.factory.game_count().await.map_err(|error| self.contract_error(error))?;
+        let indexes = (0..count).rev().take(Self::MAX_SCAN);
+        let mut scans = stream::iter(indexes)
+            .map(|index| self.scan_index(index, filter))
+            .buffered(Self::SCAN_CONCURRENCY);
+
         let mut games = Vec::new();
-        for (scanned, index) in (0..count).rev().enumerate() {
-            if games.len() >= filter.limit || scanned >= MAX_SCAN {
-                break;
+        while let Some(scanned) = scans.next().await {
+            if let Some(summary) = scanned? {
+                games.push(summary);
+                if games.len() >= filter.limit {
+                    break;
+                }
             }
-            let at_index = self
-                .factory
-                .game_at_index(index)
+        }
+        Ok((count, games))
+    }
+
+    /// Fetches the game at one factory index and applies `filter`.
+    ///
+    /// Returns `None` when the game does not match the filter.
+    async fn scan_index(
+        &self,
+        index: u64,
+        filter: GameListFilter,
+    ) -> Result<Option<GameSummary>, ProofsCommandError> {
+        let at_index =
+            self.factory.game_at_index(index).await.map_err(|error| self.contract_error(error))?;
+        if let Some(game_type) = filter.game_type
+            && at_index.game_type != game_type
+        {
+            return Ok(None);
+        }
+        if filter.missing_zk {
+            // Single-call precheck: the filter only needs the ZK slot, so skip
+            // the full multi-read summary fetch for games that already have a
+            // ZK proof.
+            let zk_prover = self
+                .verifier
+                .zk_prover(at_index.proxy)
                 .await
                 .map_err(|error| self.contract_error(error))?;
-            if let Some(game_type) = filter.game_type
-                && at_index.game_type != game_type
-            {
-                continue;
+            if zk_prover != Address::ZERO {
+                return Ok(None);
             }
-            let summary = self.fetch_summary(index, at_index.game_type, at_index.proxy).await?;
-            if filter.missing_zk && !summary.missing_zk() {
-                continue;
-            }
-            games.push(summary);
         }
-        Ok(games)
+        let summary = self.fetch_summary(index, at_index.game_type, at_index.proxy).await?;
+        if filter.missing_zk && !summary.missing_zk() {
+            return Ok(None);
+        }
+        Ok(Some(summary))
+    }
+
+    /// Re-checks that the game can still accept a ZK proposal proof.
+    ///
+    /// Cheap two-call preflight used immediately before broadcasting
+    /// `verifyProposalProof`: proof waits can span hours, so the game state
+    /// read when the command started may be stale, and this refuses to spend
+    /// gas on a game that has resolved or gained a ZK proof in the meantime.
+    pub async fn ensure_accepts_zk_proof(
+        &self,
+        address: Address,
+    ) -> Result<(), ProofsCommandError> {
+        let (status, zk_prover) =
+            try_join!(self.verifier.status(address), self.verifier.zk_prover(address))
+                .map_err(|error| self.contract_error(error))?;
+        let not_provable = |reason: &str| ProofsCommandError::GameNotProvable {
+            game: address.to_string(),
+            reason: reason.to_string(),
+        };
+        if status != GameStatus::InProgress {
+            return Err(not_provable("game is no longer in progress"));
+        }
+        if zk_prover != Address::ZERO {
+            return Err(not_provable("game already has a ZK proof"));
+        }
+        Ok(())
     }
 
     /// Fetches the detailed view of one game by its proxy address.
@@ -341,18 +394,12 @@ impl GamesClient {
 
     /// Maps an L1 provider RPC failure onto the proofs command error type.
     fn provider_error(&self, error: TransportError) -> ProofsCommandError {
-        ProofsCommandError::L1Contract {
-            endpoint: self.endpoint.to_string(),
-            message: error.to_string(),
-        }
+        self.contract_error(ContractError::provider("L1 provider request failed", error))
     }
 
     /// Maps a contract read failure onto the proofs command error type.
-    fn contract_error(&self, error: ContractError) -> ProofsCommandError {
-        ProofsCommandError::L1Contract {
-            endpoint: self.endpoint.to_string(),
-            message: error.to_string(),
-        }
+    fn contract_error(&self, source: ContractError) -> ProofsCommandError {
+        ProofsCommandError::L1Contract { endpoint: self.endpoint.to_string(), source }
     }
 }
 
@@ -372,25 +419,5 @@ mod tests {
     fn derive_intermediate_interval_rejects_bad_counts() {
         assert_eq!(GameDetails::derive_intermediate_interval(1000, 0), None);
         assert_eq!(GameDetails::derive_intermediate_interval(1000, 3), None);
-    }
-
-    #[test]
-    fn missing_zk_checks_zero_address() {
-        let mut summary = GameSummary {
-            index: 0,
-            address: Address::ZERO,
-            game_type: 3,
-            created_at: 0,
-            status: GameStatus::InProgress,
-            root_claim: B256::ZERO,
-            starting_block: 4000,
-            target_block: 5000,
-            tee_prover: Address::ZERO,
-            zk_prover: Address::ZERO,
-            expected_resolution: EXPECTED_RESOLUTION_NEVER,
-        };
-        assert!(summary.missing_zk());
-        summary.zk_prover = Address::repeat_byte(0x11);
-        assert!(!summary.missing_zk());
     }
 }

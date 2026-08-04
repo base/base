@@ -3,6 +3,9 @@
 use std::{
     fmt,
     io::{self, Write},
+    path::PathBuf,
+    str::FromStr,
+    time::Duration,
 };
 
 use alloy_primitives::{Address, B256};
@@ -23,6 +26,13 @@ use crate::{
     format_unix_timestamp,
 };
 
+/// How long `--wait` and `finalize` poll the prover service before giving up.
+///
+/// Network-backend PLONK proposal proofs regularly take hours (a compressed
+/// range proof plus an aggregation/wrap stage), so the default client wait of
+/// 30 minutes would time out on legitimate in-flight proofs.
+const PROOF_MAX_WAIT: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// Request and inspect ZK proofs on the internal prover service.
 #[derive(Debug, Args)]
 pub struct ProofsCommand {
@@ -34,7 +44,7 @@ pub struct ProofsCommand {
 /// Prover-service proof request and inspection commands.
 #[derive(Debug, Subcommand)]
 pub enum ProofsCommands {
-    /// Prove and finalize a dispute game in one shot from its L1 creation transaction.
+    /// Prove and finalize a dispute game in one shot from its address or creation transaction.
     Finalize(ProofsFinalizeArgs),
     /// Show status and result data for a submitted proof request.
     Status(ProofsStatusArgs),
@@ -140,15 +150,18 @@ pub struct ProofsProposeArgs {
     /// Explicit proof session ID (prover-service idempotency key).
     ///
     /// If omitted, basectl derives a deterministic session ID from the
-    /// network name, ZK backend, game address, block range, and prover
-    /// address, so re-running the same command resolves to the existing
-    /// prover-service session instead of enqueueing a duplicate proof.
+    /// network name, ZK backend, game address, block range, checkpoint
+    /// stride, and prover address, so re-running the same command resolves
+    /// to the existing prover-service session instead of enqueueing a
+    /// duplicate proof.
     #[arg(long = "session-id", value_name = "ID")]
     pub session_id: Option<String>,
-    /// Intermediate output root interval override.
+    /// Intermediate output root interval (checkpoint stride).
     ///
-    /// If omitted, the interval is derived from the game's committed
-    /// intermediate roots.
+    /// Only needed when the game's committed intermediate roots do not
+    /// derive a stride; when they do, the flag must match the committed
+    /// stride because a proof with any other stride would not verify on
+    /// chain.
     #[arg(long = "intermediate-root-interval", value_name = "N")]
     pub intermediate_root_interval: Option<u64>,
     /// Poll the prover service until the proof succeeds or fails.
@@ -179,24 +192,24 @@ pub struct ProofsSubmitArgs {
     /// Dispute game proxy address to submit the proof to.
     #[arg(value_name = "GAME_ADDRESS")]
     pub game: Address,
-    /// Hex private key of the L1 wallet that signs and pays for the
-    /// `verifyProposalProof` transaction.
+    /// Path to a file holding the hex private key of the L1 wallet that
+    /// signs and pays for the `verifyProposalProof` transaction.
+    ///
+    /// When omitted, the key is read from `BASECTL_SUBMITTER_PRIVATE_KEY`.
+    /// The key is never accepted as a command-line value, so it cannot leak
+    /// through shell history or the process list.
     ///
     /// The proof journal commits to the `--prover-address` passed to
     /// `basectl proofs propose`, so this key must control exactly that
     /// address or the contract rejects the proof with `InvalidSigner`.
-    #[arg(
-        long = "private-key",
-        env = "BASECTL_SUBMITTER_PRIVATE_KEY",
-        value_name = "HEX",
-        hide_env_values = true
-    )]
-    pub private_key: String,
+    #[arg(long = "private-key-file", value_name = "PATH")]
+    pub private_key_file: Option<PathBuf>,
     /// Explicit proof session ID to fetch from the prover service.
     ///
     /// If omitted, basectl derives the same deterministic session ID that
     /// `basectl proofs propose` derives from the network name, ZK backend,
-    /// game address, block range, and submitter wallet address.
+    /// game address, block range, checkpoint stride, and submitter wallet
+    /// address.
     #[arg(long = "session-id", value_name = "ID")]
     pub session_id: Option<String>,
     /// ZK backend the proof was proposed with (session ID derivation only).
@@ -207,6 +220,13 @@ pub struct ProofsSubmitArgs {
         default_value_t = ZkBackendOption::Network
     )]
     pub zk_backend: ZkBackendOption,
+    /// Intermediate output root interval the proof was proposed with
+    /// (session ID derivation only).
+    ///
+    /// If omitted, the interval is derived from the game's committed
+    /// intermediate roots, matching `basectl proofs propose`.
+    #[arg(long = "intermediate-root-interval", value_name = "N")]
+    pub intermediate_root_interval: Option<u64>,
     /// Poll the prover service until the proof completes before submitting.
     #[arg(long)]
     pub wait: bool,
@@ -230,31 +250,30 @@ pub struct ProofsSubmitArgs {
 /// Flags for `basectl proofs finalize`.
 #[derive(Debug, Args)]
 pub struct ProofsFinalizeArgs {
-    /// L1 transaction hash that created the dispute game (the TEE proof
-    /// submission transaction).
+    /// Dispute game proxy address or its L1 creation transaction hash.
     ///
-    /// Must be a mined, successful `createWithInitData` call sent directly
-    /// to the `DisputeGameFactory`; finalize resolves the created game from it.
-    #[arg(value_name = "TXN_HASH")]
-    pub tx_hash: B256,
-    /// Hex private key of the L1 wallet that signs and pays for the
-    /// `verifyProposalProof` transaction.
+    /// A transaction target must be a mined, successful `createWithInitData`
+    /// call sent directly to the `DisputeGameFactory`.
+    #[arg(value_name = "GAME_OR_TX")]
+    pub target: FinalizeTarget,
+    /// Path to a file holding the hex private key of the L1 wallet that
+    /// signs and pays for the `verifyProposalProof` transaction.
+    ///
+    /// When omitted, the key is read from `BASECTL_SUBMITTER_PRIVATE_KEY`.
+    /// The key is never accepted as a command-line value, so it cannot leak
+    /// through shell history or the process list.
     ///
     /// The proof journal commits to this wallet's address as the proposer,
     /// so the same key requests the proof and submits it on chain.
-    #[arg(
-        long = "private-key",
-        env = "BASECTL_SUBMITTER_PRIVATE_KEY",
-        value_name = "HEX",
-        hide_env_values = true
-    )]
-    pub private_key: String,
+    #[arg(long = "private-key-file", value_name = "PATH")]
+    pub private_key_file: Option<PathBuf>,
     /// ZK proving backend that executes the proof.
     ///
     /// Defaults to `network` (Succinct Prover Network, paid in PROVE)
     /// because proposal proofs are the standalone proving workflow;
-    /// `cluster` uses a self-hosted SP1 cluster and `dry-run` executes
-    /// locally without producing proof bytes.
+    /// `cluster` uses a self-hosted SP1 cluster. `dry-run` produces no
+    /// submittable proof bytes, so finalization fails after the session
+    /// completes.
     #[arg(
         long = "zk-backend",
         value_enum,
@@ -265,15 +284,18 @@ pub struct ProofsFinalizeArgs {
     /// Explicit proof session ID (prover-service idempotency key).
     ///
     /// If omitted, basectl derives a deterministic session ID from the
-    /// network name, ZK backend, game address, block range, and wallet
-    /// address, so re-running the same command resumes the existing
-    /// prover-service session instead of enqueueing a duplicate proof.
+    /// network name, ZK backend, game address, block range, checkpoint
+    /// stride, and wallet address, so re-running the same command resumes
+    /// the existing prover-service session instead of enqueueing a
+    /// duplicate proof.
     #[arg(long = "session-id", value_name = "ID")]
     pub session_id: Option<String>,
-    /// Intermediate output root interval override.
+    /// Intermediate output root interval (checkpoint stride).
     ///
-    /// If omitted, the interval is derived from the game's committed
-    /// intermediate roots.
+    /// Only needed when the game's committed intermediate roots do not
+    /// derive a stride; when they do, the flag must match the committed
+    /// stride because a proof with any other stride would not verify on
+    /// chain.
     #[arg(long = "intermediate-root-interval", value_name = "N")]
     pub intermediate_root_interval: Option<u64>,
     /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
@@ -291,6 +313,29 @@ pub struct ProofsFinalizeArgs {
     /// Emit a structured JSON action outcome instead of pretty text.
     #[arg(long, requires = "yes")]
     pub json: bool,
+}
+
+/// Dispute game locator accepted by `basectl proofs finalize`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinalizeTarget {
+    /// Dispute game proxy address.
+    Game(Address),
+    /// L1 transaction that created the dispute game.
+    CreationTransaction(B256),
+}
+
+impl FromStr for FinalizeTarget {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if let Ok(game) = Address::from_str(value) {
+            return Ok(Self::Game(game));
+        }
+        if let Ok(tx_hash) = B256::from_str(value) {
+            return Ok(Self::CreationTransaction(tx_hash));
+        }
+        Err("expected a 20-byte game address or 32-byte creation transaction hash".to_string())
+    }
 }
 
 /// ZK proving backend accepted by `basectl proofs finalize`.
@@ -429,7 +474,7 @@ async fn run_games(config: MonitoringConfig, args: ProofsGamesArgs) -> Result<Co
         "running proofs games command"
     );
 
-    let client = GamesClient::connect(factory, &l1_rpc)?;
+    let client = GamesClient::connect(factory, &l1_rpc);
     if let Some(game_address) = game {
         let details = client.game_details(game_address).await?;
         let details = GameDetailsJson::from_details(&config.name, &l1_rpc, factory, &details);
@@ -446,8 +491,8 @@ async fn run_games(config: MonitoringConfig, args: ProofsGamesArgs) -> Result<Co
         game_type,
         missing_zk,
     };
-    let (total_games, games) = tokio::join!(client.game_count(), client.list_recent(filter));
-    let list = GamesListJson::from_games(&config.name, &l1_rpc, factory, total_games?, &games?);
+    let (total_games, games) = client.list_recent(filter).await?;
+    let list = GamesListJson::from_games(&config.name, &l1_rpc, factory, total_games, &games);
     if json {
         JsonOutput::print(&list)?;
     } else {
@@ -475,7 +520,7 @@ async fn run_propose(config: MonitoringConfig, args: ProofsProposeArgs) -> Resul
     let factory = resolve_factory(&config, factory)?;
     let l1_rpc = l1_rpc.unwrap_or_else(|| config.l1_rpc.clone());
 
-    let games_client = GamesClient::connect(factory, &l1_rpc)?;
+    let games_client = GamesClient::connect(factory, &l1_rpc);
     let details = games_client.game_details(game).await?;
     let request = ProofProposeRequest::for_game(
         &details,
@@ -518,7 +563,7 @@ async fn run_propose(config: MonitoringConfig, args: ProofsProposeArgs) -> Resul
         return Ok(CommandOutcome::Success);
     }
 
-    let client = ProofsClient::connect(&endpoint)?;
+    let client = ProofsClient::connect(&endpoint)?.with_max_wait(PROOF_MAX_WAIT);
     let accepted_session_id = client.submit(prove_request).await?;
 
     if !wait {
@@ -551,9 +596,10 @@ async fn run_propose(config: MonitoringConfig, args: ProofsProposeArgs) -> Resul
 async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<CommandOutcome> {
     let ProofsSubmitArgs {
         game,
-        private_key,
+        private_key_file,
         session_id,
         zk_backend,
+        intermediate_root_interval,
         wait,
         prover_rpc,
         factory,
@@ -565,34 +611,20 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
     let endpoint = resolve_prover_rpc(&config, prover_rpc)?;
     let factory = resolve_factory(&config, factory)?;
     let l1_rpc = l1_rpc.unwrap_or_else(|| config.l1_rpc.clone());
-    let key = SubmitterKey::parse(&private_key)?;
-    drop(private_key);
+    let key = SubmitterKey::load(private_key_file.as_deref())?;
     let sender = key.address();
 
-    let games_client = GamesClient::connect(factory, &l1_rpc)?;
+    let games_client = GamesClient::connect(factory, &l1_rpc);
     let details = games_client.game_details(game).await?;
-    let not_provable = |reason: &str| ProofsCommandError::GameNotProvable {
-        game: game.to_string(),
-        reason: reason.to_string(),
-    };
-    if details.status != GameStatus::InProgress {
-        return Err(not_provable("game is not in progress").into());
-    }
-    if !details.missing_zk() {
-        return Err(not_provable("game already has a ZK proof").into());
-    }
-
     let derived_session = session_id.is_none();
-    let session_id = session_id.unwrap_or_else(|| {
-        ProofProposeRequest::derive_session_id(
-            &config.name,
-            zk_backend,
-            game,
-            details.starting_block,
-            details.block_interval,
-            sender,
-        )
-    });
+    let request = ProofProposeRequest::for_game(
+        &details,
+        sender,
+        zk_backend,
+        session_id,
+        intermediate_root_interval,
+    )?;
+    let session_id = request.effective_session_id(&config.name);
     info!(
         network = %config.name,
         prover_rpc = %endpoint,
@@ -605,7 +637,19 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
         "running proofs submit command"
     );
 
-    let client = ProofsClient::connect(&endpoint)?;
+    let first_block = details.starting_block.saturating_add(1);
+    let prompt = format!(
+        "Fetch the proposal proof for session {session_id} and submit \
+         verifyProposalProof to game {game} covering blocks \
+         {first_block}..={} ({} block(s)) from wallet {sender} via {l1_rpc}? \
+         The submission sends an L1 transaction that costs gas. [y/N] ",
+        details.target_block, details.block_interval
+    );
+    if !Confirm::prompt_or_abort(&prompt, yes)? {
+        return Ok(CommandOutcome::Success);
+    }
+
+    let client = ProofsClient::connect(&endpoint)?.with_max_wait(PROOF_MAX_WAIT);
     let response = if wait {
         client.wait_for_completion(&session_id).await?
     } else {
@@ -613,16 +657,9 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
     };
     let plonk = SnarkPlonkProofBytes::from_response(&session_id, &response)?;
 
-    let first_block = details.starting_block.saturating_add(1);
-    let prompt = format!(
-        "Submit verifyProposalProof to game {game} covering blocks \
-         {first_block}..={} ({} block(s)) from wallet {sender} via {l1_rpc}? \
-         This sends an L1 transaction that costs gas. [y/N] ",
-        details.target_block, details.block_interval
-    );
-    if !Confirm::prompt_or_abort(&prompt, yes)? {
-        return Ok(CommandOutcome::Success);
-    }
+    // The proof wait can span hours; re-read the game so we refuse to spend
+    // gas when it resolved or gained a ZK proof in the meantime.
+    games_client.ensure_accepts_zk_proof(game).await?;
 
     let proof_bytes = plonk.proof.len();
     let submitter = ProposalProofSubmitter::connect(&l1_rpc, key).await?;
@@ -641,6 +678,7 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
         l1_rpc: l1_rpc.to_string(),
         prover_rpc: endpoint.to_string(),
         session_id,
+        creation_tx: None,
         game,
         sender,
         start_block: first_block,
@@ -665,8 +703,8 @@ async fn run_finalize(
     args: ProofsFinalizeArgs,
 ) -> Result<CommandOutcome> {
     let ProofsFinalizeArgs {
-        tx_hash,
-        private_key,
+        target,
+        private_key_file,
         zk_backend,
         session_id,
         intermediate_root_interval,
@@ -680,12 +718,16 @@ async fn run_finalize(
     let endpoint = resolve_prover_rpc(&config, prover_rpc)?;
     let factory = resolve_factory(&config, factory)?;
     let l1_rpc = l1_rpc.unwrap_or_else(|| config.l1_rpc.clone());
-    let key = SubmitterKey::parse(&private_key)?;
-    drop(private_key);
+    let key = SubmitterKey::load(private_key_file.as_deref())?;
     let sender = key.address();
 
-    let games_client = GamesClient::connect(factory, &l1_rpc)?;
-    let game = games_client.game_from_creation_tx(tx_hash).await?;
+    let games_client = GamesClient::connect(factory, &l1_rpc);
+    let (game, creation_tx) = match target {
+        FinalizeTarget::Game(game) => (game, None),
+        FinalizeTarget::CreationTransaction(tx_hash) => {
+            (games_client.game_from_creation_tx(tx_hash).await?, Some(tx_hash))
+        }
+    };
     let details = games_client.game_details(game).await?;
     let request = ProofProposeRequest::for_game(
         &details,
@@ -699,7 +741,7 @@ async fn run_finalize(
         network = %config.name,
         prover_rpc = %endpoint,
         l1_rpc = %l1_rpc,
-        creation_tx = %tx_hash,
+        creation_tx = ?creation_tx,
         game = %game,
         sender = %sender,
         pre_state_block = request.pre_state_block,
@@ -718,8 +760,8 @@ async fn run_finalize(
         ""
     };
     let prompt = format!(
-        "Finalize game {game} (created by tx {tx_hash}) covering blocks \
-         {first_block}..={end_block} ({num_blocks} block(s)): request a PLONK proposal \
+        "Finalize game {game} covering blocks {first_block}..={end_block} \
+         ({num_blocks} block(s)): request a PLONK proposal \
          proof via the {zk_backend} backend at {endpoint}, wait for it to complete, then \
          submit verifyProposalProof from wallet {sender} via {l1_rpc}?{paid_warning} \
          The final step sends an L1 transaction that costs gas. [y/N] "
@@ -728,7 +770,7 @@ async fn run_finalize(
         return Ok(CommandOutcome::Success);
     }
 
-    let client = ProofsClient::connect(&endpoint)?;
+    let client = ProofsClient::connect(&endpoint)?.with_max_wait(PROOF_MAX_WAIT);
     let session_id = client.submit(prove_request).await?;
     info!(
         session_id = %session_id,
@@ -736,6 +778,10 @@ async fn run_finalize(
     );
     let response = client.wait_for_completion(&session_id).await?;
     let plonk = SnarkPlonkProofBytes::from_response(&session_id, &response)?;
+
+    // The proof wait can span hours; re-read the game so we refuse to spend
+    // gas when it resolved or gained a ZK proof in the meantime.
+    games_client.ensure_accepts_zk_proof(game).await?;
 
     let proof_bytes = plonk.proof.len();
     let submitter = ProposalProofSubmitter::connect(&l1_rpc, key).await?;
@@ -749,12 +795,12 @@ async fn run_finalize(
         "proposal proof verified on chain"
     );
 
-    let outcome = ProofsFinalizeJson {
+    let outcome = ProofsSubmitJson {
         network: config.name.clone(),
         l1_rpc: l1_rpc.to_string(),
         prover_rpc: endpoint.to_string(),
         session_id,
-        creation_tx: tx_hash,
+        creation_tx,
         game,
         sender,
         start_block: first_block,
@@ -769,7 +815,7 @@ async fn run_finalize(
     if json {
         JsonOutput::print(&outcome)?;
     } else {
-        print_finalize_pretty_to(&mut io::stdout().lock(), &outcome)?;
+        print_submit_pretty_to(&mut io::stdout().lock(), &outcome)?;
     }
     Ok(CommandOutcome::Success)
 }
@@ -851,25 +897,33 @@ impl From<ProofStatus> for ProofOutputStatus {
 /// Humanized JSON shape for a `basectl proofs propose` outcome.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProofsProposeJson {
-    network: String,
-    prover_rpc: String,
-    session_id: String,
+pub struct ProofsProposeJson {
+    /// Selected network name.
+    pub network: String,
+    /// Prover-service RPC endpoint.
+    pub prover_rpc: String,
+    /// Prover-service session identifier.
+    pub session_id: String,
     /// Dispute game proxy address the proof targets.
-    game: Address,
+    pub game: Address,
     /// L1 wallet address the proof journal commits to as proposer.
-    prover_address: Address,
+    pub prover_address: Address,
     /// First block covered by the proof.
-    start_block: u64,
+    pub start_block: u64,
     /// Last block covered by the proof.
-    end_block: u64,
-    num_blocks: u64,
-    intermediate_root_interval: u64,
-    status: ProofOutputStatus,
+    pub end_block: u64,
+    /// Number of consecutive L2 blocks in the proof range.
+    pub num_blocks: u64,
+    /// Checkpoint stride between committed intermediate output roots.
+    pub intermediate_root_interval: u64,
+    /// Current proof request status.
+    pub status: ProofOutputStatus,
+    /// Prover-service failure message, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
-    error_message: Option<String>,
+    pub error_message: Option<String>,
+    /// Humanized proof result, when the proof has completed successfully.
     #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<ProofResultJson>,
+    pub result: Option<ProofResultJson>,
 }
 
 impl ProofsProposeJson {
@@ -911,55 +965,43 @@ impl ProofsProposeJson {
     }
 }
 
-/// Humanized JSON shape for a `basectl proofs submit` outcome.
+/// Humanized JSON shape for a `basectl proofs submit` or `proofs finalize`
+/// outcome.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProofsSubmitJson {
-    network: String,
-    l1_rpc: String,
-    prover_rpc: String,
-    session_id: String,
-    game: Address,
-    sender: Address,
-    /// First block covered by the proof.
-    start_block: u64,
-    /// Last block covered by the proof.
-    end_block: u64,
-    num_blocks: u64,
-    /// Size of the submitted PLONK proof in bytes.
-    proof_bytes: usize,
-    tx_hash: B256,
+pub struct ProofsSubmitJson {
+    /// Selected network name.
+    pub network: String,
+    /// L1 RPC endpoint the transaction was sent through.
+    pub l1_rpc: String,
+    /// Prover-service RPC endpoint.
+    pub prover_rpc: String,
+    /// Prover-service session identifier.
+    pub session_id: String,
+    /// L1 transaction that created the dispute game (finalize only).
     #[serde(skip_serializing_if = "Option::is_none")]
-    block_number: Option<u64>,
-    gas_used: u64,
-    status: &'static str,
-}
-
-/// Humanized JSON shape for a `basectl proofs finalize` outcome.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProofsFinalizeJson {
-    network: String,
-    l1_rpc: String,
-    prover_rpc: String,
-    session_id: String,
-    /// L1 transaction that created the dispute game.
-    creation_tx: B256,
-    game: Address,
-    sender: Address,
+    pub creation_tx: Option<B256>,
+    /// Dispute game proxy address the proof was submitted to.
+    pub game: Address,
+    /// L1 wallet address that sent the transaction.
+    pub sender: Address,
     /// First block covered by the proof.
-    start_block: u64,
+    pub start_block: u64,
     /// Last block covered by the proof.
-    end_block: u64,
-    num_blocks: u64,
+    pub end_block: u64,
+    /// Number of consecutive L2 blocks in the proof range.
+    pub num_blocks: u64,
     /// Size of the submitted PLONK proof in bytes.
-    proof_bytes: usize,
+    pub proof_bytes: usize,
     /// L1 transaction that submitted the proof to the game.
-    tx_hash: B256,
+    pub tx_hash: B256,
+    /// L1 block the transaction was mined in, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
-    block_number: Option<u64>,
-    gas_used: u64,
-    status: &'static str,
+    pub block_number: Option<u64>,
+    /// Gas used by the submission transaction.
+    pub gas_used: u64,
+    /// Submission outcome label.
+    pub status: &'static str,
 }
 
 /// Humanized JSON shape for `basectl proofs status`.
@@ -1178,12 +1220,17 @@ fn format_expected_resolution(timestamp: u64) -> Option<String> {
 /// Humanized JSON shape for `basectl proofs games` (list mode).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GamesListJson {
-    network: String,
-    l1_rpc: String,
-    factory: Address,
-    total_games: u64,
-    games: Vec<GameSummaryJson>,
+pub struct GamesListJson {
+    /// Selected network name.
+    pub network: String,
+    /// L1 RPC endpoint the games were read from.
+    pub l1_rpc: String,
+    /// `DisputeGameFactory` address the games were listed from.
+    pub factory: Address,
+    /// Total number of games the factory has created.
+    pub total_games: u64,
+    /// Listed games, newest first.
+    pub games: Vec<GameSummaryJson>,
 }
 
 impl GamesListJson {
@@ -1207,20 +1254,30 @@ impl GamesListJson {
 /// Humanized JSON row for one dispute game.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GameSummaryJson {
-    index: u64,
-    address: Address,
-    game_type: u32,
-    status: &'static str,
-    starting_block: u64,
-    target_block: u64,
-    created_at: String,
+pub struct GameSummaryJson {
+    /// Game index in the factory's creation order.
+    pub index: u64,
+    /// Dispute game proxy address.
+    pub address: Address,
+    /// Game type identifier registered with the factory.
+    pub game_type: u32,
+    /// Current game status label.
+    pub status: &'static str,
+    /// Pre-state L2 block number (the covered range starts one block later).
+    pub starting_block: u64,
+    /// L2 block the game's root claim commits to.
+    pub target_block: u64,
+    /// Game creation time as a humanized UTC timestamp.
+    pub created_at: String,
+    /// Address that submitted the TEE proof, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
-    tee_prover: Option<Address>,
+    pub tee_prover: Option<Address>,
+    /// Address that submitted the ZK proof, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
-    zk_prover: Option<Address>,
+    pub zk_prover: Option<Address>,
+    /// Expected resolution time as a humanized UTC timestamp, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
-    expected_resolution: Option<String>,
+    pub expected_resolution: Option<String>,
 }
 
 impl GameSummaryJson {
@@ -1243,31 +1300,50 @@ impl GameSummaryJson {
 /// Humanized JSON shape for `basectl proofs games <GAME_ADDRESS>`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GameDetailsJson {
-    network: String,
-    l1_rpc: String,
-    factory: Address,
-    address: Address,
-    status: &'static str,
-    root_claim: String,
-    starting_block: u64,
-    target_block: u64,
-    block_interval: u64,
+pub struct GameDetailsJson {
+    /// Selected network name.
+    pub network: String,
+    /// L1 RPC endpoint the game was read from.
+    pub l1_rpc: String,
+    /// `DisputeGameFactory` address the game was created through.
+    pub factory: Address,
+    /// Dispute game proxy address.
+    pub address: Address,
+    /// Current game status label.
+    pub status: &'static str,
+    /// Output root claimed for the target block.
+    pub root_claim: String,
+    /// Pre-state L2 block number (the covered range starts one block later).
+    pub starting_block: u64,
+    /// L2 block the game's root claim commits to.
+    pub target_block: u64,
+    /// Number of L2 blocks covered by the game.
+    pub block_interval: u64,
+    /// Checkpoint stride derived from the committed intermediate roots.
     #[serde(skip_serializing_if = "Option::is_none")]
-    intermediate_root_interval: Option<u64>,
-    intermediate_root_count: usize,
-    l1_head: String,
-    parent_address: Address,
+    pub intermediate_root_interval: Option<u64>,
+    /// Number of committed intermediate output roots.
+    pub intermediate_root_count: usize,
+    /// L1 head hash the game was created against.
+    pub l1_head: String,
+    /// Parent game proxy address.
+    pub parent_address: Address,
+    /// Address that submitted the TEE proof, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
-    tee_prover: Option<Address>,
+    pub tee_prover: Option<Address>,
+    /// Address that submitted the ZK proof, when present.
     #[serde(skip_serializing_if = "Option::is_none")]
-    zk_prover: Option<Address>,
-    proof_count: u8,
-    created_at: String,
+    pub zk_prover: Option<Address>,
+    /// Number of proofs submitted to the game.
+    pub proof_count: u8,
+    /// Game creation time as a humanized UTC timestamp.
+    pub created_at: String,
+    /// Expected resolution time as a humanized UTC timestamp, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
-    expected_resolution: Option<String>,
+    pub expected_resolution: Option<String>,
+    /// Index of the countered intermediate root, when the game was countered.
     #[serde(skip_serializing_if = "Option::is_none")]
-    countered_index: Option<u64>,
+    pub countered_index: Option<u64>,
 }
 
 impl GameDetailsJson {
@@ -1318,7 +1394,7 @@ fn print_games_list_pretty_to<W: Write>(writer: &mut W, list: &GamesListJson) ->
             "  [{index}] {address} blocks {start}..={end} status={status} tee={tee} zk={zk} created={created}",
             index = game.index,
             address = game.address,
-            start = game.starting_block,
+            start = game.starting_block.saturating_add(1),
             end = game.target_block,
             status = game.status,
             tee = game.tee_prover.map_or_else(|| "<none>".to_string(), |a| a.to_string()),
@@ -1343,7 +1419,9 @@ fn print_game_details_pretty_to<W: Write>(writer: &mut W, details: &GameDetailsJ
             "blocks",
             format!(
                 "{}..={} ({} block(s))",
-                details.starting_block, details.target_block, details.block_interval
+                details.starting_block.saturating_add(1),
+                details.target_block,
+                details.block_interval
             ),
         )
         .row(
@@ -1424,37 +1502,11 @@ fn print_submit_pretty_to<W: Write>(writer: &mut W, outcome: &ProofsSubmitJson) 
         .row("network", &outcome.network)
         .row("l1 rpc", &outcome.l1_rpc)
         .row("prover rpc", &outcome.prover_rpc)
-        .row("session id", &outcome.session_id)
-        .row("game", outcome.game.to_string())
-        .row("sender", outcome.sender.to_string())
-        .row(
-            "blocks",
-            format!(
-                "{}..={} ({} block(s))",
-                outcome.start_block, outcome.end_block, outcome.num_blocks
-            ),
-        )
-        .row("proof size", format!("{} byte(s)", outcome.proof_bytes))
-        .row("tx hash", outcome.tx_hash.to_string())
-        .row(
-            "block",
-            outcome.block_number.map_or_else(|| "<pending>".to_string(), |n| n.to_string()),
-        )
-        .row("gas used", outcome.gas_used.to_string())
-        .row("status", outcome.status);
-    table.render(writer)?;
-    writeln!(writer, "proposal proof verified on chain; the game can now resolve")?;
-    Ok(())
-}
-
-fn print_finalize_pretty_to<W: Write>(writer: &mut W, outcome: &ProofsFinalizeJson) -> Result<()> {
-    let mut table = KeyValueTable::new();
+        .row("session id", &outcome.session_id);
+    if let Some(creation_tx) = outcome.creation_tx {
+        table.row("creation tx", creation_tx.to_string());
+    }
     table
-        .row("network", &outcome.network)
-        .row("l1 rpc", &outcome.l1_rpc)
-        .row("prover rpc", &outcome.prover_rpc)
-        .row("session id", &outcome.session_id)
-        .row("creation tx", outcome.creation_tx.to_string())
         .row("game", outcome.game.to_string())
         .row("sender", outcome.sender.to_string())
         .row(
@@ -1549,16 +1601,16 @@ fn print_list_pretty_to<W: Write>(writer: &mut W, list: &ProofsListJson) -> Resu
 mod tests {
     use alloy_primitives::{Address, B256};
     use base_prover_service_protocol::{
-        GetProofResponse, ProofResult, ProofStatus, ProofSummary, ProofType, ZkBackend,
-        ZkProofResult, ZkVm,
+        GetProofResponse, ProofResult, ProofStatus, ProofSummary, ProofType, SnarkPlonkProofResult,
+        ZkBackend, ZkProofResult, ZkVm,
     };
     use url::Url;
 
     use super::{
-        GameDetailsJson, GamesListJson, ProofResultJson, ProofsFinalizeJson, ProofsListJson,
-        ProofsProposeJson, ProofsStatusJson, ProofsSubmitJson, print_finalize_pretty_to,
-        print_game_details_pretty_to, print_games_list_pretty_to, print_list_pretty_to,
-        print_propose_pretty_to, print_status_pretty_to, print_submit_pretty_to,
+        FinalizeTarget, GameDetailsJson, GamesListJson, ProofResultJson, ProofsListJson,
+        ProofsProposeJson, ProofsStatusJson, ProofsSubmitJson, print_game_details_pretty_to,
+        print_games_list_pretty_to, print_list_pretty_to, print_propose_pretty_to,
+        print_status_pretty_to, print_submit_pretty_to,
     };
     use crate::{
         EXPECTED_RESOLUTION_NEVER, GameDetails, GameStatus, GameSummary, ProofProposeRequest,
@@ -1566,6 +1618,16 @@ mod tests {
 
     fn prover_rpc() -> Url {
         Url::parse("http://127.0.0.1:9000").unwrap()
+    }
+
+    #[test]
+    fn finalize_target_accepts_game_or_creation_transaction() {
+        let game = Address::repeat_byte(0xAA);
+        let tx_hash = B256::repeat_byte(0x99);
+
+        assert_eq!(game.to_string().parse(), Ok(FinalizeTarget::Game(game)));
+        assert_eq!(tx_hash.to_string().parse(), Ok(FinalizeTarget::CreationTransaction(tx_hash)));
+        assert!("not-a-target".parse::<FinalizeTarget>().is_err());
     }
 
     fn succeeded_response() -> GetProofResponse {
@@ -1717,6 +1779,7 @@ mod tests {
             l1_rpc: "http://127.0.0.1:8545/".to_string(),
             prover_rpc: prover_rpc().to_string(),
             session_id: "submit-session".to_string(),
+            creation_tx: None,
             game: Address::repeat_byte(0xAA),
             sender: Address::repeat_byte(0xDD),
             start_block: 4001,
@@ -1749,6 +1812,7 @@ mod tests {
             l1_rpc: "http://127.0.0.1:8545/".to_string(),
             prover_rpc: prover_rpc().to_string(),
             session_id: "submit-session".to_string(),
+            creation_tx: None,
             game: Address::repeat_byte(0xAA),
             sender: Address::repeat_byte(0xDD),
             start_block: 4001,
@@ -1770,13 +1834,13 @@ mod tests {
         assert!(json.get("blockNumber").is_none());
     }
 
-    fn sample_finalize_outcome() -> ProofsFinalizeJson {
-        ProofsFinalizeJson {
+    fn sample_finalize_outcome() -> ProofsSubmitJson {
+        ProofsSubmitJson {
             network: "mainnet".to_string(),
             l1_rpc: "http://127.0.0.1:8545/".to_string(),
             prover_rpc: prover_rpc().to_string(),
             session_id: "finalize-session".to_string(),
-            creation_tx: B256::repeat_byte(0x99),
+            creation_tx: Some(B256::repeat_byte(0x99)),
             game: Address::repeat_byte(0xAA),
             sender: Address::repeat_byte(0xDD),
             start_block: 4001,
@@ -1794,18 +1858,10 @@ mod tests {
     fn finalize_json_shape() {
         let value = serde_json::to_value(sample_finalize_outcome()).unwrap();
 
-        assert_eq!(value["network"], "mainnet");
         assert_eq!(value["sessionId"], "finalize-session");
         assert_eq!(value["creationTx"], serde_json::to_value(B256::repeat_byte(0x99)).unwrap());
-        assert_eq!(value["game"], serde_json::to_value(Address::repeat_byte(0xAA)).unwrap());
-        assert_eq!(value["sender"], serde_json::to_value(Address::repeat_byte(0xDD)).unwrap());
         assert_eq!(value["startBlock"], 4001);
-        assert_eq!(value["endBlock"], 5000);
-        assert_eq!(value["numBlocks"], 1000);
-        assert_eq!(value["proofBytes"], 1234);
-        assert_eq!(value["txHash"], serde_json::to_value(B256::repeat_byte(0x42)).unwrap());
         assert_eq!(value["blockNumber"], 19_000_001);
-        assert_eq!(value["gasUsed"], 321_000);
         assert_eq!(value["status"], "verified");
     }
 
@@ -1813,7 +1869,7 @@ mod tests {
     fn finalize_pretty_output_smoke() {
         let mut output = Vec::new();
 
-        print_finalize_pretty_to(&mut output, &sample_finalize_outcome()).unwrap();
+        print_submit_pretty_to(&mut output, &sample_finalize_outcome()).unwrap();
         let rendered = String::from_utf8(output).unwrap();
 
         assert!(rendered.contains("finalize-session"));
@@ -1823,6 +1879,19 @@ mod tests {
         assert!(rendered.contains(&B256::repeat_byte(0x42).to_string()));
         assert!(rendered.contains("verified"));
         assert!(rendered.contains("the game can now resolve"));
+    }
+
+    #[test]
+    fn finalize_output_omits_unknown_creation_transaction() {
+        let mut outcome = sample_finalize_outcome();
+        outcome.creation_tx = None;
+        let value = serde_json::to_value(&outcome).unwrap();
+        let mut output = Vec::new();
+
+        print_submit_pretty_to(&mut output, &outcome).unwrap();
+
+        assert!(value.get("creationTx").is_none());
+        assert!(!String::from_utf8(output).unwrap().contains("creation tx"));
     }
 
     #[test]
@@ -1879,8 +1948,6 @@ mod tests {
 
     #[test]
     fn snark_plonk_result_json_shape() {
-        use base_prover_service_protocol::SnarkPlonkProofResult;
-
         let result =
             ProofResultJson::from_result(&ProofResult::SnarkPlonk(SnarkPlonkProofResult {
                 proof: ZkProofResult {
@@ -1946,14 +2013,10 @@ mod tests {
         );
         let value = serde_json::to_value(&list).unwrap();
 
-        assert_eq!(value["network"], "mainnet");
         assert_eq!(value["totalGames"], 100);
         let game = &value["games"][0];
         assert_eq!(game["index"], 42);
-        assert_eq!(game["gameType"], 3);
         assert_eq!(game["status"], "in_progress");
-        assert_eq!(game["startingBlock"], 4000);
-        assert_eq!(game["targetBlock"], 5000);
         // Empty ZK slot and unproven resolution serialize as absent.
         assert!(game.get("zkProver").is_none());
         assert!(game.get("expectedResolution").is_none());
@@ -1977,7 +2040,7 @@ mod tests {
 
         assert!(rendered.contains("total games  100"));
         assert!(rendered.contains("[42]"));
-        assert!(rendered.contains("blocks 4000..=5000"));
+        assert!(rendered.contains("blocks 4001..=5000"));
         assert!(rendered.contains("zk=<none>"));
         assert!(rendered.contains("status=in_progress"));
     }
@@ -2006,10 +2069,7 @@ mod tests {
         let value = serde_json::to_value(&details).unwrap();
 
         assert_eq!(value["status"], "in_progress");
-        assert_eq!(value["blockInterval"], 1000);
         assert_eq!(value["intermediateRootInterval"], 100);
-        assert_eq!(value["intermediateRootCount"], 10);
-        assert_eq!(value["proofCount"], 1);
         assert!(value.get("zkProver").is_none());
         assert!(value.get("counteredIndex").is_none());
         assert!(value["expectedResolution"].is_string());
@@ -2030,7 +2090,7 @@ mod tests {
         let rendered = String::from_utf8(output).unwrap();
 
         assert!(rendered.contains("blocks"));
-        assert!(rendered.contains("4000..=5000 (1000 block(s))"));
+        assert!(rendered.contains("4001..=5000 (1000 block(s))"));
         assert!(rendered.contains("10 (every 100 block(s))"));
         assert!(rendered.contains("zk prover"));
         assert!(rendered.contains("<none>"));

@@ -118,12 +118,11 @@ pub struct AnchorStateRegistryContractClient {
 }
 
 impl AnchorStateRegistryContractClient {
-    /// Creates a new client for the given contract address and L1 RPC URL.
-    pub fn new(address: Address, l1_rpc_url: url::Url) -> Result<Self, ContractError> {
-        let provider = RootProvider::new_http(l1_rpc_url);
+    /// Creates a new client for the given contract address and L1 provider.
+    pub fn new(address: Address, provider: RootProvider) -> Self {
         let contract =
             IAnchorStateRegistry::IAnchorStateRegistryInstance::new(address, provider.clone());
-        Ok(Self { provider, contract })
+        Self { provider, contract }
     }
 }
 
