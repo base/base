@@ -67,6 +67,33 @@ async fn builder_backed_sequencer_produces_block_through_actor() -> eyre::Result
     Ok(())
 }
 
+/// With Base Azul active at genesis, sealing a payload must use `engine_getPayloadV5` (still
+/// importing via `newPayloadV4`) rather than unconditionally calling `getPayloadV4`. Regression
+/// test for a version mismatch that made builder-backed Azul/Beryl/Cobalt tests fail.
+#[tokio::test(flavor = "multi_thread")]
+async fn builder_backed_sequencer_produces_block_with_azul_active() -> eyre::Result<()> {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .through_isthmus()
+        .with_jovian_at(0)
+        .with_azul_at(0)
+        .build();
+    let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer_with_builder(l1_chain).await?;
+
+    let block = sequencer.build_empty_block().await;
+
+    assert_eq!(block.header.number, 1, "actor + real builder must produce block 1 under Azul");
+    assert_eq!(sequencer.head().block_info.number, 1, "unsafe head must advance to block 1");
+
+    Ok(())
+}
+
 /// A harness-supplied user transaction is routed through the real mempool (not force-included) and
 /// selected by the production builder into the block — exercising real pool-based tx selection.
 ///

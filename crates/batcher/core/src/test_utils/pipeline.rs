@@ -67,6 +67,10 @@ impl BatchPipeline for TrackingPipeline {
         Some(sub)
     }
 
+    fn has_ready_submission(&self) -> bool {
+        !self.submissions.is_empty()
+    }
+
     fn confirm(&mut self, _: SubmissionId, _: u64) {}
 
     fn requeue(&mut self, id: SubmissionId) {
@@ -127,6 +131,10 @@ impl BatchPipeline for ReorgPipeline {
         None
     }
 
+    fn has_ready_submission(&self) -> bool {
+        false
+    }
+
     fn confirm(&mut self, _: SubmissionId, _: u64) {}
     fn requeue(&mut self, _: SubmissionId) {}
     fn force_close_channel(&mut self) {}
@@ -182,6 +190,10 @@ impl BatchPipeline for OneReorgPipeline {
 
     fn next_submission(&mut self) -> Option<BatchSubmission> {
         None
+    }
+
+    fn has_ready_submission(&self) -> bool {
+        false
     }
 
     fn confirm(&mut self, _: SubmissionId, _: u64) {}

@@ -149,6 +149,9 @@ fn test_paused_drops_block_and_flush_events() {
             fn next_submission(&mut self) -> Option<BatchSubmission> {
                 self.inner.next_submission()
             }
+            fn has_ready_submission(&self) -> bool {
+                self.inner.has_ready_submission()
+            }
             fn confirm(&mut self, id: SubmissionId, n: u64) {
                 self.inner.confirm(id, n);
             }
