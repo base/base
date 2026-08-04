@@ -275,12 +275,12 @@ where
             runtime.block_on(async {
                 tokio::select! {
                     biased;
-                    () = cancel.cancelled() => None,
                     source = WorkerHeartbeat::until_failure(
                         &submitter,
                         &request.claim,
                         heartbeat_config,
                     ) => Some(source),
+                    () = cancel.cancelled() => None,
                 }
             })
         })
