@@ -30,7 +30,12 @@ pub struct ServerConfig {
     #[arg(long, env = "BASE_TELEMETRY_LISTEN_ADDR", default_value = "0.0.0.0:8080")]
     pub listen_addr: SocketAddr,
     /// Comma-separated CIDRs of proxies trusted to supply the `X-Forwarded-For` client IP.
-    #[arg(long, env = "BASE_TELEMETRY_TRUSTED_PROXY_CIDRS", value_delimiter = ',')]
+    #[arg(
+        long,
+        env = "BASE_TELEMETRY_TRUSTED_PROXY_CIDRS",
+        value_delimiter = ',',
+        value_parser = TrustedProxyConfig::parse_cidr
+    )]
     pub trusted_proxy_cidrs: Vec<IpNet>,
     /// P2P reachability probe requests allowed per minute for each client IP.
     #[arg(
