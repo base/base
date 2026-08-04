@@ -22,5 +22,8 @@ pub use context::{
 
 mod payload;
 
+mod prewarmer;
+pub use prewarmer::PrewarmingExecutionContext;
+
 mod service;
 pub use service::FlashblocksServiceBuilder;
