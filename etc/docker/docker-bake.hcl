@@ -56,7 +56,7 @@ group "rust-services" {
 }
 
 group "devnet" {
-  targets = concat(DEVNET_TARGETS, ["da-server"])
+  targets = DEVNET_TARGETS
 }
 
 group "ingress" {

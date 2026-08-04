@@ -39,12 +39,11 @@ services:
       - L1_DATA_DIR=/data
     entrypoint: ["/usr/local/bin/setup-l1.sh"]
 
-  # --- L1 parent chain: Ethereum (reth + lighthouse), eth-l1 profile ---------------------
+  # --- L1 parent chain: Ethereum (reth + lighthouse) -------------------------------------
 
   l1-el:
     image: ghcr.io/paradigmxyz/reth:v1.11.4
     container_name: l1-el
-    profiles: ["eth-l1"]
     depends_on:
       setup-l1:
         condition: service_completed_successfully
@@ -89,7 +88,6 @@ services:
   l1-cl:
     image: sigp/lighthouse:v8.0.1
     container_name: l1-cl
-    profiles: ["eth-l1"]
     depends_on:
       setup-l1:
         condition: service_completed_successfully
@@ -135,7 +133,6 @@ services:
   l1-vc:
     image: sigp/lighthouse:v8.0.1
     container_name: l1-vc
-    profiles: ["eth-l1"]
     depends_on:
       l1-cl:
         condition: service_healthy

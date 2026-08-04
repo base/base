@@ -5,8 +5,7 @@ _ha := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ha.yml"
 _base := "-f etc/docker/docker-compose.yml"
 _env := "--env-file etc/docker/devnet-env"
 _yaml_to_env := "etc/scripts/yaml-to-compose-env.py"
-_eth := "--profile eth-l1"
-_all_profiles := "--profile eth-l1 --profile profiling"
+_all_profiles := "--profile profiling"
 
 # Show devnet commands
 default:
@@ -22,7 +21,7 @@ up-single zk='dry-run':
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
 profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
-    docker compose {{ _env }} {{ _ha }} {{ _eth }} --profile profiling up -d --no-build
+    docker compose {{ _env }} {{ _ha }} --profile profiling up -d --no-build
 
 # Stops devnet and deletes all data
 down:
@@ -90,9 +89,9 @@ transfer-leader to='':
 conductor:
     cargo run --quiet -p basectl -- -c devnet monitor conductor
 
-# Stops devnet+ingress, deletes data, and starts fresh with full ingress stack (eth-l1)
+# Stops devnet+ingress, deletes data, and starts fresh with full ingress stack
 ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")
-    docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml {{ _eth }} up -d --no-build
+    docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml up -d --no-build
 
 # Stops devnet+ingress and deletes all data
 ingress-down:
@@ -193,14 +192,12 @@ _up-devnet compose_profile zk:
     esac
 
     env_files=({{ _env }})
-    l1_profile=({{ _eth }})
-
     case "$zk_mode" in
       dry-run)
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        docker compose "${env_files[@]}" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build --remove-orphans
+        docker compose "${env_files[@]}" "${compose_files[@]}" up -d --no-build --remove-orphans
         ;;
       cluster)
         if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -247,7 +244,7 @@ _up-devnet compose_profile zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        docker compose "${env_files[@]}" --env-file "$cluster_env" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build --remove-orphans
+        docker compose "${env_files[@]}" --env-file "$cluster_env" "${compose_files[@]}" up -d --no-build --remove-orphans
         ;;
       *)
         echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2

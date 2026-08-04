@@ -59,10 +59,6 @@ pub struct ProposerConfig {
     pub tx_manager: Option<base_tx_manager::TxManagerConfig>,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
-    /// Use `ProverClient::prove` directly instead of the async dispatch+collect
-    /// pattern via `ProofRequesterProver`. Required when the prover endpoint is
-    /// `nitro-local` rather than prover-service.
-    pub direct_prover_rpc: bool,
 }
 
 impl ProposerConfig {
@@ -151,7 +147,6 @@ impl ProposerConfig {
             signing,
             tx_manager,
             recovery_scan_concurrency: proposer.recovery_scan_concurrency.get(),
-            direct_prover_rpc: proposer.direct_prover_rpc,
         })
     }
 }
@@ -214,7 +209,6 @@ mod tests {
         assert_eq!(config.admin_addr.unwrap().port(), 8545);
         assert!(matches!(config.signing, Some(base_tx_manager::SignerConfig::Local { .. })));
         assert!(config.tx_manager.is_some());
-        assert!(!config.direct_prover_rpc);
     }
 
     #[test]
