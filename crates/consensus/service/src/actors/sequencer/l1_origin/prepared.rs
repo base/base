@@ -46,9 +46,10 @@ impl PreparedL1Origin {
 pub struct LinkedOrigin(PreparedL1Origin);
 
 impl LinkedOrigin {
-    /// Returns `Some` iff `candidate` extends `parent` (its `parent_hash` equals `parent.hash`).
-    pub fn link(parent: &PreparedL1Origin, candidate: PreparedL1Origin) -> Option<Self> {
-        (candidate.header.parent_hash == parent.hash).then_some(Self(candidate))
+    /// Returns `Some` iff `candidate` extends the parent identified by `parent_hash` (i.e. its
+    /// `parent_hash` equals `parent_hash`).
+    pub fn link(parent_hash: B256, candidate: PreparedL1Origin) -> Option<Self> {
+        (candidate.header.parent_hash == parent_hash).then_some(Self(candidate))
     }
 
     /// Returns the underlying prepared origin.
@@ -99,7 +100,8 @@ mod tests {
     fn test_link_accepts_matching_parent() {
         let current = prepared(1, 0);
         let candidate = prepared(2, 1);
-        let linked = LinkedOrigin::link(&current, candidate).expect("candidate extends current");
+        let linked =
+            LinkedOrigin::link(current.hash, candidate).expect("candidate extends current");
         assert_eq!(linked.get().hash, B256::with_last_byte(2));
     }
 
@@ -108,6 +110,6 @@ mod tests {
         let current = prepared(1, 0);
         // Candidate's parent_hash (0xEE) does not link back to current's hash (0x01).
         let candidate = prepared(2, 0xEE);
-        assert!(LinkedOrigin::link(&current, candidate).is_none());
+        assert!(LinkedOrigin::link(current.hash, candidate).is_none());
     }
 }

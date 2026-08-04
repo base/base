@@ -1,7 +1,7 @@
 //! The [`PrefetchedChainProvider`] adapter that serves the attributes builder from the selected
 //! L1 origin published by the [`L1OriginSelector`](super::L1OriginSelector).
 
-use std::{future::Future, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use alloy_consensus::{Header, Receipt, TxEnvelope};
 use alloy_primitives::B256;
@@ -43,10 +43,24 @@ impl PrefetchedChainProvider {
         Self { origin, fallback, fallback_timeout }
     }
 
-    /// Returns the published origin if it matches `hash`, cloned so the [`watch`] borrow is not held
-    /// across an `await`.
-    fn prepared_if(&self, hash: B256) -> Option<PreparedL1Origin> {
-        self.origin.borrow().as_ref().filter(|prepared| prepared.hash == hash).cloned()
+    /// Returns the published origin's header if it matches `hash`, cloning only the header (not the
+    /// receipts `Arc`). The [`watch`] borrow is not held across an `await`.
+    fn header_if(&self, hash: B256) -> Option<Header> {
+        self.origin
+            .borrow()
+            .as_ref()
+            .filter(|prepared| prepared.hash == hash)
+            .map(|p| p.header.clone())
+    }
+
+    /// Returns the published origin's receipts if it matches `hash`, bumping the `Arc` only (not
+    /// cloning the header). The [`watch`] borrow is not held across an `await`.
+    fn receipts_if(&self, hash: B256) -> Option<Arc<Vec<Receipt>>> {
+        self.origin
+            .borrow()
+            .as_ref()
+            .filter(|prepared| prepared.hash == hash)
+            .map(|p| Arc::clone(&p.receipts))
     }
 
     /// Bounds a fallback lookup with `timeout_dur`, recording a timeout under `kind`.
@@ -70,9 +84,9 @@ impl ChainProvider for PrefetchedChainProvider {
     type Error = PrefetchedChainProviderError;
 
     async fn header_by_hash(&mut self, hash: B256) -> Result<Header, Self::Error> {
-        if let Some(prepared) = self.prepared_if(hash) {
+        if let Some(header) = self.header_if(hash) {
             Metrics::sequencer_l1_origin_buffer_hits_total("header").increment(1);
-            return Ok(prepared.header);
+            return Ok(header);
         }
         Metrics::sequencer_l1_origin_buffer_misses_total("header").increment(1);
         Self::bounded_fallback(self.fallback_timeout, "by_hash", self.fallback.header_by_hash(hash))
@@ -90,9 +104,9 @@ impl ChainProvider for PrefetchedChainProvider {
     }
 
     async fn receipts_by_hash(&mut self, hash: B256) -> Result<Vec<Receipt>, Self::Error> {
-        if let Some(prepared) = self.prepared_if(hash) {
+        if let Some(receipts) = self.receipts_if(hash) {
             Metrics::sequencer_l1_origin_buffer_hits_total("receipts").increment(1);
-            return Ok((*prepared.receipts).clone());
+            return Ok((*receipts).clone());
         }
         Metrics::sequencer_l1_origin_buffer_misses_total("receipts").increment(1);
         Self::bounded_fallback(

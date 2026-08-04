@@ -203,9 +203,11 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
             self.next = NextSlot::Idle;
         }
 
-        // Drive the next-origin state machine off the critical path.
-        if let Some(current) = self.current.clone() {
-            self.poll_next(&current).await;
+        // Drive the next-origin state machine off the critical path. Only the current origin's
+        // hash and number are needed, so copy them out rather than cloning the full origin (which
+        // includes the `Header`) on every tick.
+        if let Some((hash, number)) = self.current.as_ref().map(|c| (c.hash, c.header.number)) {
+            self.poll_next(hash, number).await;
         }
         Ok(())
     }
@@ -298,12 +300,12 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
     /// [`LinkedOrigin`] type enforces the check), so a mid-flight reorg cannot promote a stale
     /// successor. An in-flight fetch keyed to a superseded parent is dropped (aborting the task) and
     /// respawned.
-    async fn poll_next(&mut self, current: &PreparedL1Origin) {
+    async fn poll_next(&mut self, current_hash: B256, current_number: u64) {
         self.next = match std::mem::take(&mut self.next) {
             NextSlot::Ready(linked) => NextSlot::Ready(linked),
-            NextSlot::InFlight { parent_hash, .. } if parent_hash != current.hash => {
+            NextSlot::InFlight { parent_hash, .. } if parent_hash != current_hash => {
                 // `current` advanced under us; the handle drops here (aborting the task). Respawn.
-                self.spawn_next(current)
+                self.spawn_next(current_hash, current_number)
             }
             NextSlot::InFlight { handle, .. } if handle.is_finished() => {
                 // Adopt only if the result still links to the live `current`; otherwise (not
@@ -313,41 +315,51 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
                     .await
                     .ok()
                     .flatten()
-                    .and_then(|p| LinkedOrigin::link(current, p))
+                    .and_then(|p| LinkedOrigin::link(current_hash, p))
                     .map_or(NextSlot::Idle, |linked| NextSlot::Ready(Box::new(linked)))
             }
             // Still running, off the critical path: leave it in flight.
             in_flight @ NextSlot::InFlight { .. } => in_flight,
-            NextSlot::Idle => self.spawn_next(current),
+            NextSlot::Idle => self.spawn_next(current_hash, current_number),
         };
     }
 
-    /// Spawns a background fetch of the origin following `current`, bounded by
-    /// [`Self::next_fetch_timeout`]. The task resolves to the prepared next origin, or `None` if it
-    /// is not yet available, errored, or timed out.
-    fn spawn_next(&self, current: &PreparedL1Origin) -> NextSlot {
+    /// Spawns a background fetch of the origin following the current origin (identified by
+    /// `current_hash` / `current_number`), bounded by [`Self::next_fetch_timeout`]. The task
+    /// resolves to the prepared next origin, or `None` if it is not yet available, errored, or
+    /// timed out.
+    fn spawn_next(&self, current_hash: B256, current_number: u64) -> NextSlot {
         let l1 = Arc::clone(&self.l1);
-        let number = current.header.number.saturating_add(1);
-        let parent_hash = current.hash;
+        let number = current_number.saturating_add(1);
         let fetch_timeout = self.next_fetch_timeout;
         let handle = AbortOnDropHandle::new(tokio::spawn(async move {
             match timeout(fetch_timeout, l1.prepared_by_number(number)).await {
                 Ok(Ok(prepared)) => prepared,
-                Ok(Err(_)) => None,
+                Ok(Err(err)) => {
+                    // Surface non-timeout L1 errors (e.g. connection refused, receipts
+                    // unavailable) so operators can distinguish an erroring L1 from a slow one.
+                    warn!(
+                        target: "l1_origin_selector",
+                        error = %err,
+                        number,
+                        "Background next-origin fetch failed; retrying on next tick"
+                    );
+                    None
+                }
                 Err(_) => {
                     Metrics::sequencer_l1_origin_fetch_timeouts_total("by_number").increment(1);
                     None
                 }
             }
         }));
-        NextSlot::InFlight { parent_hash, handle }
+        NextSlot::InFlight { parent_hash: current_hash, handle }
     }
 
     /// Test-only: deterministically awaits the in-flight next fetch and adopts its result, so tests
     /// can observe the prepared `next` without racing the background task.
     #[cfg(test)]
     async fn settle_next(&mut self) {
-        let Some(current) = self.current.clone() else {
+        let Some(current_hash) = self.current.as_ref().map(|c| c.hash) else {
             return;
         };
         if let NextSlot::InFlight { handle, .. } = std::mem::take(&mut self.next) {
@@ -355,7 +367,7 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
                 .await
                 .ok()
                 .flatten()
-                .and_then(|p| LinkedOrigin::link(&current, p))
+                .and_then(|p| LinkedOrigin::link(current_hash, p))
                 .map_or(NextSlot::Idle, |linked| NextSlot::Ready(Box::new(linked)));
         }
     }
@@ -375,6 +387,11 @@ pub enum L1OriginSelectorError {
     /// The L1 origin block was not found by its hash, e.g. during an L1 reorg or sync lag.
     #[error("L1 origin block not found by hash: {0}")]
     OriginNotFound(B256),
+    /// The L1 origin header was found but its receipts are not yet available — a transient RPC
+    /// inconsistency. Treated as temporary so the build path retries rather than resetting the
+    /// engine (as it would for [`Self::OriginNotFound`]).
+    #[error("L1 origin receipts unavailable for block: {0}")]
+    ReceiptsUnavailable(B256),
     /// An L1 lookup exceeded the origin selector's per-request fetch deadline. Treated as a
     /// temporary error so the build path retries on the next tick instead of blocking the loop.
     #[error("timed out fetching L1 origin block")]

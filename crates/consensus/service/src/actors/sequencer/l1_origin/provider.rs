@@ -84,15 +84,20 @@ impl DelayedL1OriginSelectorProvider {
             .map(|block| block.header.into_consensus()))
     }
 
-    /// Fetches all receipts in the block with the given hash.
-    async fn receipts_by_hash(&self, hash: B256) -> Result<Vec<Receipt>, L1OriginSelectorError> {
-        let receipts = Provider::get_block_receipts(&self.inner, hash.into())
-            .await?
-            .ok_or(L1OriginSelectorError::OriginNotFound(hash))?;
+    /// Fetches all receipts in the block with the given hash, or `None` if the RPC has no receipts
+    /// for it yet.
+    async fn receipts_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<Vec<Receipt>>, L1OriginSelectorError> {
+        let Some(receipts) = Provider::get_block_receipts(&self.inner, hash.into()).await? else {
+            return Ok(None);
+        };
         receipts
             .into_iter()
             .map(|r| r.inner.into_primitives_receipt().as_receipt().cloned())
             .collect::<Option<Vec<_>>>()
+            .map(Some)
             .ok_or_else(|| {
                 L1OriginSelectorError::Provider(TransportErrorKind::custom_str(
                     "failed to convert RPC receipts",
@@ -124,7 +129,12 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
             );
             return Ok(None);
         }
-        let receipts = self.receipts_by_hash(hash).await?;
+        // The header is present and hash-verified, so the block exists; a missing-receipts
+        // response is a transient RPC inconsistency, surfaced as a temporary error (not
+        // `OriginNotFound`) so the build path retries rather than resetting the engine.
+        let Some(receipts) = self.receipts_by_hash(hash).await? else {
+            return Err(L1OriginSelectorError::ReceiptsUnavailable(hash));
+        };
         Ok(Some(PreparedL1Origin { hash, header, receipts: receipts.into() }))
     }
 
@@ -139,7 +149,10 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
             return Ok(None);
         };
         let hash = header.hash_slow();
-        let receipts = self.receipts_by_hash(hash).await?;
+        // See `prepared_by_hash`: a header without receipts is transient, not "not found".
+        let Some(receipts) = self.receipts_by_hash(hash).await? else {
+            return Err(L1OriginSelectorError::ReceiptsUnavailable(hash));
+        };
         Ok(Some(PreparedL1Origin { hash, header, receipts: receipts.into() }))
     }
 }

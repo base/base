@@ -605,11 +605,11 @@ impl RollupNode {
                 l1_head_updates_rx,
                 self.sequencer_config.l1_conf_delay,
             );
-            let delayed_origin_selector = L1OriginSelector::with_l1_fetch_timeout(
-                Arc::clone(&self.config),
-                delayed_l1_provider,
-                self.fallback_l1_timeout(),
-            );
+            // The inline current-origin resolution makes two sequential RPCs (header + receipts),
+            // so it uses the selector's default deadline (2s) rather than the tighter single-RPC
+            // `fallback_l1_timeout()`, which would be too aggressive on short block times.
+            let delayed_origin_selector =
+                L1OriginSelector::new(Arc::clone(&self.config), delayed_l1_provider);
             let attributes_builder =
                 self.create_attributes_builder(delayed_origin_selector.subscribe());
 
