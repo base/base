@@ -61,8 +61,9 @@ mod sequencer;
 pub use sequencer::{
     BuildPipelineState, CanonicalReconciliationInputs, CanonicalUnsafeCatchup, Conductor,
     ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
-    L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, PayloadBuilder, PayloadSealer,
-    PendingStopSender, PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard,
+    L1OriginSelectorError, L1OriginSelectorProvider, LinkedOrigin, OriginSelector, PayloadBuilder,
+    PayloadSealer, PendingStopSender, PoolActivation, PrefetchedChainProvider,
+    PrefetchedChainProviderError, PreparedL1Origin, QueuedSequencerEngineClient, RecoveryModeGuard,
     ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
     SequencerActorError, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
     SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle, ShadowReconciliationGate,

@@ -30,7 +30,7 @@ use crate::{
             build::{PayloadBuilder, UnsealedPayloadHandle},
             conductor::Conductor,
             error::SequencerActorError,
-            origin_selector::OriginSelector,
+            l1_origin::OriginSelector,
             recovery::RecoveryModeGuard,
             seal::{PayloadSealer, SealStepError, SealStepOutcome},
         },

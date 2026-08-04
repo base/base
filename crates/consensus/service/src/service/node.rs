@@ -31,11 +31,12 @@ use crate::{
     DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
     EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector,
     L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
-    NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
-    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
-    SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    NodeActor, NodeMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
+    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
+    SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
+    ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -202,14 +203,35 @@ impl RollupNode {
         self.rpc_builder.clone()
     }
 
-    /// Returns the sequencer builder for the node.
+    /// Per-lookup deadline for the sequencer's hot-path L1 fallback RPCs.
+    ///
+    /// Anchored to the block time (not the 15s L1 transport timeout) so a fallback lookup on a
+    /// buffer miss cannot burn a full slot: the origin selector and attributes builder run inline
+    /// in the build loop, so the deadline is a fraction of the slot budget. Clamped to a sane range
+    /// so it stays useful for both fast and slow block times.
+    fn fallback_l1_timeout(&self) -> Duration {
+        let quarter_slot_ms = self.config.block_time.saturating_mul(1000) / 4;
+        Duration::from_millis(quarter_slot_ms.clamp(100, 500))
+    }
+
+    /// Returns the sequencer attributes builder for the node.
+    ///
+    /// Reads L1 headers and receipts from the origin most recently selected by the
+    /// [`L1OriginSelector`] (published on `origin_rx`), falling back to a bounded direct RPC on a
+    /// miss, so steady-state block building issues no inline L1 I/O on the sequencer's hot path.
     fn create_attributes_builder(
         &self,
-    ) -> StatefulAttributesBuilder<AlloyChainProvider, AlloyL2ChainProvider> {
-        let l1_derivation_provider = AlloyChainProvider::new_with_trust(
+        origin_rx: watch::Receiver<Option<PreparedL1Origin>>,
+    ) -> StatefulAttributesBuilder<PrefetchedChainProvider, AlloyL2ChainProvider> {
+        let l1_fallback_provider = AlloyChainProvider::new_with_trust(
             self.l1_config.engine_provider.clone(),
             DERIVATION_PROVIDER_CACHE_SIZE,
             self.l1_config.trust_rpc,
+        );
+        let l1_derivation_provider = PrefetchedChainProvider::new(
+            origin_rx,
+            l1_fallback_provider,
+            self.fallback_l1_timeout(),
         );
         let l2_derivation_provider = AlloyL2ChainProvider::new_with_trust(
             self.l2_provider.clone(),
@@ -524,14 +546,6 @@ impl RollupNode {
         .map_err(|e| format!("Failed to start network actor: {e}"))?;
 
         let (l1_head_updates_tx, l1_head_updates_rx) = watch::channel(None);
-        let delayed_l1_provider = DelayedL1OriginSelectorProvider::new(
-            self.l1_config.engine_provider.clone(),
-            l1_head_updates_rx,
-            self.sequencer_config.l1_conf_delay,
-        );
-
-        let delayed_origin_selector =
-            L1OriginSelector::new(Arc::clone(&self.config), delayed_l1_provider);
 
         // Create the L1 Watcher actor
 
@@ -578,8 +592,27 @@ impl RollupNode {
             .as_ref()
             .map(|c| c.metrics_actor(upgrade_signal_refresher.clone(), cancellation.clone()));
         let node_mode = self.mode();
-        // Create the sequencer if needed
+        // Create the sequencer if needed. Its L1-origin components are only used by the sequencer,
+        // so they are constructed inside this branch rather than allocated and dropped on verifier
+        // nodes.
         let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
+            // The origin selector resolves the current origin inline and prepares the next one in
+            // the background (header + receipts), publishing the selected origin on a one-slot
+            // channel that the attributes builder reads. Both consumers therefore do no inline L1
+            // I/O on the sequencer's build critical path in steady state.
+            let delayed_l1_provider = DelayedL1OriginSelectorProvider::new(
+                self.l1_config.engine_provider.clone(),
+                l1_head_updates_rx,
+                self.sequencer_config.l1_conf_delay,
+            );
+            let delayed_origin_selector = L1OriginSelector::with_l1_fetch_timeout(
+                Arc::clone(&self.config),
+                delayed_l1_provider,
+                self.fallback_l1_timeout(),
+            );
+            let attributes_builder =
+                self.create_attributes_builder(delayed_origin_selector.subscribe());
+
             let sequencer_engine_client = QueuedSequencerEngineClient {
                 engine_actor_request_tx: engine_actor_request_tx.clone(),
                 unsafe_head_rx,
@@ -598,7 +631,7 @@ impl RollupNode {
                 Some(SequencerActor {
                     admin_api_rx: sequencer_admin_api_rx,
                     builder: PayloadBuilder {
-                        attributes_builder: self.create_attributes_builder(),
+                        attributes_builder,
                         engine_client: Arc::clone(&engine_client),
                         origin_selector: delayed_origin_selector,
                         recovery_mode: recovery_mode.clone(),

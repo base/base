@@ -60,7 +60,6 @@ backon.workspace = true
 libp2p.workspace = true
 futures.workspace = true
 http-body.workspace = true
-tokio-util.workspace = true
 opentelemetry.workspace = true
 async-trait.workspace = true
 async-stream.workspace = true
@@ -69,6 +68,7 @@ libp2p-stream.workspace = true
 http-body-util.workspace = true
 strum = { workspace = true, features = ["derive"] }
 tracing = { workspace = true, features = ["std"] }
+tokio-util = { workspace = true, features = ["rt"] }
 thiserror = { workspace = true, features = ["std"] }
 tower-http.workspace = true
 derive_more = { workspace = true, features = ["debug", "eq"] }

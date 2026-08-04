@@ -51,6 +51,15 @@ base_metrics::define_metrics! {
     sequencer_recovery_mode_blocks_total: counter,
     #[describe("Empty blocks produced due to sequencer drift threshold")]
     sequencer_drift_empty_blocks_total: counter,
+    #[describe("L1 origin lookups that exceeded the origin-selector fetch timeout, by lookup kind")]
+    #[label(name = "kind", default = ["by_hash", "by_number", "receipts"])]
+    sequencer_l1_origin_fetch_timeouts_total: counter,
+    #[describe("Hot-path L1 origin lookups served from the selected-origin slot, by lookup kind")]
+    #[label(name = "kind", default = ["header", "receipts"])]
+    sequencer_l1_origin_buffer_hits_total: counter,
+    #[describe("Hot-path L1 origin lookups that missed the slot and used the bounded fallback, by lookup kind")]
+    #[label(name = "kind", default = ["header", "receipts"])]
+    sequencer_l1_origin_buffer_misses_total: counter,
     #[describe("Pre-built payloads discarded because the unsafe head advanced past their parent")]
     sequencer_stale_build_discarded_total: counter,
     #[describe("Configured verifier L1 confirmation depth")]

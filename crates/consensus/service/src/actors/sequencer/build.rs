@@ -18,7 +18,7 @@ use crate::{
         SequencerEngineClient,
         sequencer::{
             error::SequencerActorError,
-            origin_selector::{L1OriginSelectorError, OriginSelector},
+            l1_origin::{L1OriginSelectorError, OriginSelector},
             recovery::RecoveryModeGuard,
         },
     },
