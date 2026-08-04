@@ -395,8 +395,13 @@ impl BootInfo {
                 schedule_block: schedule_l2_block_number,
             })?;
 
-        if rollup_config.upgrades.base.zenith.is_some() {
-            return Err(OracleProviderError::UncommittedZenithUpgrade);
+        // Zenith is not contract-backed, so reject it when active and remove it when future.
+        match rollup_config.upgrades.base.zenith {
+            Some(zenith_time) if zenith_time <= l2_schedule_timestamp => {
+                return Err(OracleProviderError::UncommittedZenithUpgrade);
+            }
+            Some(_) => rollup_config.upgrades.base.zenith = None,
+            None => {}
         }
 
         let schedule_id = ScheduleId::pin(&mut rollup_config, l2_schedule_timestamp);
@@ -756,7 +761,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_configured_zenith_upgrade() {
+    async fn rejects_active_zenith_upgrade() {
         let chain_config = BaseChainConfig::MAINNET;
 
         for zenith_timestamp in [0, 1_000] {
@@ -774,10 +779,42 @@ mod tests {
                 serde_json::to_vec(&rollup_config).expect("rollup config should serialize"),
             );
 
-            let err =
-                BootInfo::load(&oracle).await.expect_err("configured Zenith upgrade should fail");
+            let err = BootInfo::load(&oracle).await.expect_err("active Zenith upgrade should fail");
             assert!(matches!(err, OracleProviderError::UncommittedZenithUpgrade));
         }
+    }
+
+    #[tokio::test]
+    async fn clears_future_zenith_upgrade() {
+        const CLAIM_BLOCK: u64 = 100;
+
+        let chain_config = BaseChainConfig::MAINNET;
+        let mut rollup_config = chain_config.rollup_config();
+        let schedule_timestamp = rollup_config.genesis.l2_time
+            + (CLAIM_BLOCK - rollup_config.genesis.l2.number) * rollup_config.block_time;
+        rollup_config.upgrades.base.zenith = Some(schedule_timestamp + 1);
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, CLAIM_BLOCK.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, chain_config.chain_id.to_be_bytes().to_vec());
+        oracle.insert(
+            L2_ROLLUP_CONFIG_KEY,
+            serde_json::to_vec(&rollup_config).expect("rollup config should serialize"),
+        );
+
+        let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
+
+        assert_eq!(boot_info.rollup_config.upgrades.base.zenith, None);
+
+        let mut expected_config = rollup_config.clone();
+        expected_config.upgrades.base.zenith = None;
+        assert_eq!(
+            boot_info.schedule_id,
+            ScheduleId::pin(&mut expected_config, schedule_timestamp)
+        );
     }
 
     #[tokio::test]
