@@ -17,6 +17,7 @@ pub use base_proof_worker::{
 };
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{ProofJob, ProofRequestKind, TeeKind};
+use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -31,6 +32,8 @@ use crate::{
 pub struct ProofGeneratorRequest {
     /// Common worker claim metadata.
     pub claim: ClaimedProofJobMetadata,
+    /// Server-issued claim lease expiry from the claim / latest heartbeat.
+    pub lock_expires_at: Option<DateTime<Utc>>,
     /// Primitive Nitro proof request.
     pub proof: NitroProofRequest,
 }
@@ -41,13 +44,14 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
     fn try_from(job: ProofJob) -> Result<Self, Self::Error> {
         let claim = ClaimedProofJobMetadata::from_job(&job)?;
         let session_id = claim.session_id.clone();
+        let lock_expires_at = job.lock_expires_at;
 
         let ProofRequestKind::Tee(tee) = job.request.request else {
             return Err(ProofGeneratorError::UnsupportedProofRequest { session_id });
         };
         let TeeKind::AwsNitro = tee.tee_kind;
 
-        Ok(Self { claim, proof: tee.proof })
+        Ok(Self { claim, lock_expires_at, proof: tee.proof })
     }
 }
 
@@ -73,7 +77,16 @@ impl<Client> ProofGenerator<Client> {
     /// Use a caller-provided cancellation token for spawned submission tasks.
     #[must_use]
     pub fn with_submission_cancel(mut self, submission_cancel: CancellationToken) -> Self {
-        self.tasks = self.tasks.with_submission_cancel(submission_cancel);
+        let tasks = self.tasks;
+        self.tasks = tasks.with_submission_cancel(submission_cancel);
+        self
+    }
+
+    /// Limits how many proof submission tasks may run at once.
+    #[must_use]
+    pub fn with_max_pending_submissions(mut self, max_pending: usize) -> Self {
+        let tasks = self.tasks;
+        self.tasks = tasks.with_max_pending_submissions(max_pending);
         self
     }
 
@@ -172,7 +185,7 @@ where
             source,
         })?;
 
-        let submission = self.tasks.spawn_submission(&self.submitter, submit_request);
+        let submission = self.tasks.spawn_submission(&self.submitter, submit_request).await;
 
         info!(
             session_id = %request.claim.session_id,
@@ -279,6 +292,7 @@ where
                         &submitter,
                         &request.claim,
                         heartbeat_config,
+                        request.lock_expires_at,
                     ) => Some(source),
                     () = cancel.cancelled() => None,
                 }

@@ -5983,6 +5983,7 @@ dependencies = [
  "base-proof-worker",
  "base-prover-service-client",
  "base-prover-service-protocol",
+ "chrono",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",

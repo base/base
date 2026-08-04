@@ -19,6 +19,7 @@ use base_prover_service_protocol::{
     BackendSession, BackendSessionState, ProofJob, ProofRequestKind, ProofResult, SessionType,
     WorkerSubmitProofRequest, ZkBackend,
 };
+use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
@@ -44,6 +45,8 @@ pub const DEFAULT_PROOF_GENERATOR_HEARTBEAT_FAILURE_DRAIN_TIMEOUT: Duration =
 pub struct ProofGeneratorRequest {
     /// Common worker claim metadata.
     pub claim: ClaimedProofJobMetadata,
+    /// Server-issued claim lease expiry from the claim / latest heartbeat.
+    pub lock_expires_at: Option<DateTime<Utc>>,
     /// Concrete ZK proof request.
     pub request: ZkProofRequestKind,
 }
@@ -53,6 +56,7 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
 
     fn try_from(job: ProofJob) -> Result<Self, Self::Error> {
         let claim = ClaimedProofJobMetadata::from_job(&job)?;
+        let lock_expires_at = job.lock_expires_at;
 
         let request = match job.request.request {
             ProofRequestKind::Compressed(request) => ZkProofRequestKind::Compressed(request),
@@ -64,7 +68,7 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
             }
         };
 
-        Ok(Self { claim, request })
+        Ok(Self { claim, lock_expires_at, request })
     }
 }
 
@@ -97,7 +101,16 @@ impl<Client> ProofGenerator<Client> {
     /// Use a caller-provided cancellation token for spawned submission tasks.
     #[must_use]
     pub fn with_submission_cancel(mut self, submission_cancel: CancellationToken) -> Self {
-        self.tasks = self.tasks.with_submission_cancel(submission_cancel);
+        let tasks = self.tasks;
+        self.tasks = tasks.with_submission_cancel(submission_cancel);
+        self
+    }
+
+    /// Limits how many proof submission tasks may run at once.
+    #[must_use]
+    pub fn with_max_pending_submissions(mut self, max_pending: usize) -> Self {
+        let tasks = self.tasks;
+        self.tasks = tasks.with_max_pending_submissions(max_pending);
         self
     }
 
@@ -210,7 +223,7 @@ where
             source,
         })?;
 
-        let submission = self.tasks.spawn_submission(&self.submitter, submit_request);
+        let submission = self.tasks.spawn_submission(&self.submitter, submit_request).await;
 
         info!(
             session_id = %request.claim.session_id,
@@ -428,8 +441,12 @@ where
     where
         Generate: Future<Output = Result<Output, ZkProverError>>,
     {
-        let heartbeat =
-            WorkerHeartbeat::until_failure(&self.submitter, &request.claim, self.heartbeat);
+        let heartbeat = WorkerHeartbeat::until_failure(
+            &self.submitter,
+            &request.claim,
+            self.heartbeat,
+            request.lock_expires_at,
+        );
         tokio::pin!(generate);
         tokio::pin!(heartbeat);
 

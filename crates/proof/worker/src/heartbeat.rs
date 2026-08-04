@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::HeartbeatRequest;
+use chrono::{DateTime, Utc};
 use tokio::time::{Instant, sleep, timeout};
 use tracing::warn;
 
@@ -20,7 +21,7 @@ pub const DEFAULT_WORKER_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 /// A value of zero asks the prover service to use its server-side default.
 pub const DEFAULT_WORKER_HEARTBEAT_LOCK_DURATION_SECONDS: u32 = 0;
 
-/// Assumed server default lock when hosts request `0` (matches prover-service CLI).
+/// Assumed server default lock when hosts request `0` and no `lock_expires_at` is available.
 pub const ASSUMED_DEFAULT_WORKER_LOCK_DURATION_SECONDS: u32 = 300;
 
 /// Default maximum consecutive retryable heartbeat failures before aborting generation.
@@ -66,7 +67,7 @@ impl WorkerHeartbeatConfig {
         if self.max_consecutive_failures == 0 { 1 } else { self.max_consecutive_failures }
     }
 
-    /// Lock duration used for local heartbeat budget checks (`0` → assumed server default).
+    /// Fallback lock duration when the server did not provide `lock_expires_at`.
     pub const fn effective_lock_duration(&self) -> Duration {
         let seconds = if self.lock_duration_seconds == 0 {
             ASSUMED_DEFAULT_WORKER_LOCK_DURATION_SECONDS
@@ -89,34 +90,36 @@ pub struct WorkerHeartbeat;
 
 impl WorkerHeartbeat {
     /// Sends heartbeats until a non-recoverable failure or lease budget exhaustion.
+    ///
+    /// The lease budget is derived from `lock_expires_at` when present and refreshed from each
+    /// successful heartbeat response. When absent, falls back to
+    /// [`WorkerHeartbeatConfig::effective_lock_duration`].
     pub async fn until_failure<Client>(
         submitter: &ProofSubmitter<Client>,
         claim: &ClaimedProofJobMetadata,
         config: WorkerHeartbeatConfig,
+        lock_expires_at: Option<DateTime<Utc>>,
     ) -> ProverServiceClientError
     where
         Client: ProverWorkerProvider,
     {
         let max_consecutive_failures = config.normalized_max_consecutive_failures();
-        let lock_duration = config.effective_lock_duration();
         let mut consecutive_failures = 0;
-        // Approximate claim time; generation starts right after claim.
-        let mut last_success = Instant::now();
+        let mut deadline = Self::deadline_from_expiry(lock_expires_at)
+            .unwrap_or_else(|| Instant::now() + config.effective_lock_duration());
 
         loop {
             sleep(config.normalized_interval()).await;
 
-            let remaining = lock_duration.saturating_sub(last_success.elapsed());
-            if remaining.is_zero() {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
                 warn!(
                     session_id = %claim.session_id,
                     lock_id = %claim.lock_id,
                     worker_id = %claim.worker_id,
-                    lock_duration_seconds = lock_duration.as_secs(),
-                    "proof job heartbeat budget exceeded claimed lock duration"
+                    "proof job heartbeat budget exceeded claimed lock expiry"
                 );
                 return Self::lease_budget_exceeded_error();
-            }
+            };
 
             let heartbeat = HeartbeatRequest {
                 session_id: claim.session_id.clone(),
@@ -132,17 +135,20 @@ impl WorkerHeartbeat {
                         session_id = %claim.session_id,
                         lock_id = %claim.lock_id,
                         worker_id = %claim.worker_id,
-                        lock_duration_seconds = lock_duration.as_secs(),
-                        "proof job heartbeat attempt exceeded remaining lock duration"
+                        "proof job heartbeat attempt exceeded remaining lock expiry"
                     );
                     return Self::lease_budget_exceeded_error();
                 }
             };
 
             match result {
-                Ok(_) => {
+                Ok(response) => {
                     consecutive_failures = 0;
-                    last_success = Instant::now();
+                    if let Some(next_deadline) =
+                        Self::deadline_from_expiry(response.job.lock_expires_at)
+                    {
+                        deadline = next_deadline;
+                    }
                 }
                 Err(error) if error.is_retryable() => {
                     consecutive_failures += 1;
@@ -154,7 +160,6 @@ impl WorkerHeartbeat {
                             worker_id = %claim.worker_id,
                             consecutive_failures,
                             max_consecutive_failures,
-                            lock_duration_seconds = lock_duration.as_secs(),
                             error = %error,
                             "proof job heartbeat retryable failures exceeded limit"
                         );
@@ -166,9 +171,15 @@ impl WorkerHeartbeat {
         }
     }
 
+    fn deadline_from_expiry(lock_expires_at: Option<DateTime<Utc>>) -> Option<Instant> {
+        let expires_at = lock_expires_at?;
+        let remaining = (expires_at - Utc::now()).to_std().ok()?;
+        Some(Instant::now() + remaining)
+    }
+
     fn lease_budget_exceeded_error() -> ProverServiceClientError {
         ProverServiceClientError::Timeout(
-            "heartbeat budget exceeded claimed lock duration".to_owned(),
+            "heartbeat budget exceeded claimed lock expiry".to_owned(),
         )
     }
 }
@@ -251,10 +262,9 @@ mod tests {
         let failure = tokio::spawn({
             let submitter = submitter.clone();
             let claim = claim.clone();
-            async move { WorkerHeartbeat::until_failure(&submitter, &claim, config).await }
+            async move { WorkerHeartbeat::until_failure(&submitter, &claim, config, None).await }
         });
 
-        // Let the spawned task park on its interval sleep before advancing time.
         for _ in 0..5 {
             tokio::task::yield_now().await;
         }
@@ -264,7 +274,6 @@ mod tests {
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        // Remaining lease after the interval is ~1s; advance past the attempt timeout.
         advance(Duration::from_secs(1)).await;
         for _ in 0..5 {
             tokio::task::yield_now().await;
