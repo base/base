@@ -193,22 +193,21 @@ where
             //     enter an infinite reset loop. Instead we seed the watch channel from reth's
             //     current head directly; derivation will issue its own FCU once the first Reset
             //     task arrives.
-            let reth_head =
-                self.processor.client().l2_block_info_by_label(BlockNumberOrTag::Latest).await;
-            let at_genesis = match &reth_head {
-                Ok(Some(head)) => head.block_info.hash == self.processor.rollup().genesis.l2.hash,
-                Ok(None) => true,
-                Err(err) => {
-                    warn!(target: "engine", ?err, "Bootstrap: failed to query reth head; treating EL head as unknown");
-                    true
-                }
-            };
+            let opt_head = self
+                .processor
+                .client()
+                .l2_block_info_by_label(BlockNumberOrTag::Latest)
+                .await
+                .map_err(|err| {
+                    error!(target: "engine", ?err, "Bootstrap: failed to query reth head");
+                    EngineError::BootstrapHeadQuery(err.to_string())
+                })?;
+            let at_genesis = opt_head
+                .is_none_or(|head| head.block_info.hash == self.processor.rollup().genesis.l2.hash);
 
-            let catchup_required = reth_head.is_err() || !at_genesis;
-            let opt_head = reth_head.ok().flatten();
             let bootstrap_role = self.resolve_bootstrap_role().await;
             if bootstrap_role == BootstrapRole::ConductorFollower
-                && catchup_required
+                && !at_genesis
                 && matches!(self.sequencer_state, SequencerEngineState::Regular)
             {
                 self.sequencer_state = SequencerEngineState::CatchingUp {
