@@ -31,6 +31,7 @@ use base_observability_events::{GlobalTransactionEventWriter, TransactionEventTy
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
+use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::ChangedAccount;
 use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_payload_primitives::PayloadAttributes;
@@ -272,7 +273,13 @@ where
         payload_tx: &watch::Sender<Option<BaseBuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
-        let BuildArguments { mut cached_reads, config, cancel: block_cancel, publish_guard } = args;
+        let BuildArguments {
+            mut cached_reads,
+            execution_cache,
+            config,
+            cancel: block_cancel,
+            publish_guard,
+        } = args;
 
         // We log only every Nth block based on sampling ratio to reduce usage
         let block_number = config.parent_header.number + 1;
@@ -296,7 +303,14 @@ where
             )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
-        let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+        let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+        if let Some(execution_cache) = execution_cache {
+            state_provider = Box::new(CachedStateProvider::new(
+                state_provider,
+                execution_cache.cache().clone(),
+                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
+            ));
+        }
         let db = StateProviderDatabase::new(state_provider);
 
         // 1. execute the pre steps and seal an early block with that
@@ -387,6 +401,7 @@ where
         }
 
         if skip_flashblocks_building {
+            drop(state);
             payload_tx.send_replace(Some(payload));
             let total_block_building_time = block_build_start_time.elapsed();
             BuilderMetrics::total_block_built_duration().record(total_block_building_time);
@@ -477,7 +492,7 @@ where
         let mut executed_sender_nonces: HashMap<Address, u64> = HashMap::default();
 
         // Process flashblocks in a blocking loop
-        loop {
+        let final_payload = loop {
             let flashblock_index = ctx.flashblock_index();
             let fb_span = if span.is_none() {
                 tracing::Span::none()
@@ -499,8 +514,7 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
-                self.finalize_payload(&mut state, &ctx, &mut info, payload_tx)?;
-                return Ok(());
+                break self.finalize_payload(&mut state, &ctx, &mut info)?;
             }
 
             // build first flashblock immediately
@@ -526,8 +540,7 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
-                    self.finalize_payload(&mut state, &ctx, &mut info, payload_tx)?;
-                    return Ok(());
+                    break self.finalize_payload(&mut state, &ctx, &mut info)?;
                 }
                 Err(err) => {
                     error!(
@@ -553,11 +566,16 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
-                    self.finalize_payload(&mut state, &ctx, &mut info, payload_tx)?;
-                    return Ok(());
+                    break self.finalize_payload(&mut state, &ctx, &mut info)?;
                 }
             }
-        }
+        };
+
+        // Release the state provider's shared-cache handle before waking the payload resolver.
+        drop(state);
+        payload_tx.send_replace(Some(final_payload));
+
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -949,14 +967,13 @@ where
         span.record("flashblock_count", ctx.flashblock_index());
     }
 
-    /// Finalize the payload by computing the state root and publishing via the watch channel.
+    /// Finalize the payload by computing the state root.
     fn finalize_payload<DB, P>(
         &self,
         state: &mut State<DB>,
         ctx: &BasePayloadBuilderCtx,
         info: &mut ExecutionInfo,
-        payload_tx: &watch::Sender<Option<BaseBuiltPayload>>,
-    ) -> Result<(), PayloadBuilderError>
+    ) -> Result<BaseBuiltPayload, PayloadBuilderError>
     where
         DB: Database<Error = ProviderError> + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
@@ -978,9 +995,7 @@ where
             "Finalized payload with state root"
         );
 
-        payload_tx.send_replace(Some(final_payload));
-
-        Ok(())
+        Ok(final_payload)
     }
 
     fn emit_final_inclusion_events(
@@ -1386,8 +1401,9 @@ mod tests {
     use base_common_flashblocks::{FlashblockId, Metadata};
     use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::ChainSpec;
+    use reth_execution_cache::{CachedStateProvider, CachedStatus, ExecutionCache, SavedCache};
     use reth_primitives_traits::SealedHeader;
-    use reth_provider::noop::NoopProvider;
+    use reth_provider::{StateProviderBox, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
 
     use super::{FlashblocksMetadata, build_block};
@@ -1417,6 +1433,40 @@ mod tests {
     fn genesis_header() -> Arc<SealedHeader> {
         let header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
         Arc::new(SealedHeader::seal_slow(header))
+    }
+
+    #[test]
+    fn canonical_state_provider_uses_shared_cache_without_filling_misses() {
+        let address = Address::random();
+        let cached_key = B256::random();
+        let uncached_key = B256::random();
+        let cached_value = U256::from(1);
+        let uncached_value = U256::from(2);
+        let cache = SavedCache::new(B256::ZERO, ExecutionCache::new(1_000));
+        cache.cache().insert_storage(address, cached_key, Some(cached_value));
+
+        let state_provider = Box::new(CachedStateProvider::new(
+            Box::new(NoopProvider::default()) as StateProviderBox,
+            cache.cache().clone(),
+            None,
+        )) as StateProviderBox;
+
+        assert!(!cache.is_available(), "provider must hold the shared cache while in use");
+        assert_eq!(state_provider.storage(address, cached_key).unwrap(), Some(cached_value));
+        assert_eq!(state_provider.storage(address, uncached_key).unwrap(), None);
+        assert_eq!(
+            cache
+                .cache()
+                .get_or_try_insert_storage_with(address, uncached_key, || Ok::<_, ()>(
+                    uncached_value
+                ))
+                .unwrap(),
+            CachedStatus::NotCached(uncached_value),
+            "lookup-only canonical reads must not fill cache misses"
+        );
+
+        drop(state_provider);
+        assert!(cache.is_available(), "provider must release the shared cache when dropped");
     }
 
     /// Verify that [`build_block`] produces a valid empty block when called
