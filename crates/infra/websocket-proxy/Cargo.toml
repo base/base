@@ -16,11 +16,11 @@ workspace = true
 
 [dependencies]
 http.workspace = true
-ipnet.workspace = true
 futures.workspace = true
 backoff.workspace = true
 tokio-util.workspace = true
 tokio-tungstenite.workspace = true
+base-trusted-proxy.workspace = true
 metrics = { workspace = true, optional = true }
 brotli = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["full"] }

@@ -141,6 +141,13 @@ pub struct DeleteProofRequest {
     pub session_id: String,
 }
 
+/// Request to delete completed TEE proofs produced by one signer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteProofsByTeeSignerRequest {
+    /// TEE signer whose completed proof requests should be deleted.
+    pub tee_signer: Address,
+}
+
 /// Submitted proof request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProofRequest {
@@ -260,6 +267,9 @@ pub struct TeeProofResult {
     pub proposals: Vec<Proposal>,
     /// Trusted execution environment implementation that produced the proof.
     pub tee_kind: TeeKind,
+    /// Signer that produced the proof, recovered host-side from the proof
+    /// signature.
+    pub tee_signer: Address,
 }
 
 /// Request to fetch proof status and result data.
@@ -512,7 +522,7 @@ pub struct RecordProofSessionResponse {
 mod tests {
     use std::collections::HashMap;
 
-    use alloy_primitives::{Bytes, address};
+    use alloy_primitives::{Address, Bytes, address};
     use serde_json::json;
 
     use super::*;
@@ -699,6 +709,7 @@ mod tests {
             aggregate_proposal: aggregate_proposal.clone(),
             proposals: vec![proposal.clone()],
             tee_kind: TeeKind::AwsNitro,
+            tee_signer: Address::repeat_byte(0x11),
         });
 
         let value = serde_json::to_value(result).expect("tee result should serialize");
@@ -820,6 +831,7 @@ mod tests {
             aggregate_proposal: aggregate_proposal.clone(),
             proposals: vec![proposal.clone()],
             tee_kind: TeeKind::AwsNitro,
+            tee_signer: Address::repeat_byte(0x11),
         };
 
         let value = serde_json::to_value(result).expect("tee result payload should serialize");

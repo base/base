@@ -46,6 +46,8 @@ where
     pub prev: P,
     /// The data availability provider to use for the L1 retrieval stage.
     pub provider: DAP,
+    /// Optional batcher sender used only to filter L1 data-availability transactions.
+    pub da_batcher_sender_override: Option<Address>,
     /// The current block ref.
     pub next: Option<BlockInfo>,
 }
@@ -60,7 +62,17 @@ where
     ///
     /// [`PollingTraversal`]: crate::PollingTraversal
     pub const fn new(prev: P, provider: DAP) -> Self {
-        Self { prev, provider, next: None }
+        Self { prev, provider, da_batcher_sender_override: None, next: None }
+    }
+
+    /// Overrides the batcher sender used to filter L1 data-availability transactions.
+    ///
+    /// This does not modify the [`SystemConfig`] used to derive L2 payload attributes.
+    pub fn with_da_batcher_sender_override(
+        self,
+        da_batcher_sender_override: Option<Address>,
+    ) -> Self {
+        Self { da_batcher_sender_override, ..self }
     }
 }
 
@@ -94,10 +106,12 @@ where
         }
         // SAFETY: The above check ensures that `next` is not None.
         let next = self.next.as_ref().expect("infallible");
+        let batcher_address =
+            self.da_batcher_sender_override.unwrap_or_else(|| self.prev.batcher_addr());
 
         let provider_result =
             base_metrics::time!(Metrics::pipeline_l1_retrieval_provider_next_duration_seconds(), {
-                self.provider.next(next, self.prev.batcher_addr()).await
+                self.provider.next(next, batcher_address).await
             });
         match provider_result {
             Ok(data) => Ok(data),
@@ -156,11 +170,32 @@ mod tests {
     use alloc::vec;
 
     use alloy_eips::BlockNumHash;
-    use alloy_primitives::Bytes;
+    use alloy_primitives::{Bytes, address};
     use base_common_genesis::SystemConfig;
 
     use super::*;
     use crate::test_utils::{TestDAP, TraversalTestHelper};
+
+    #[derive(Debug)]
+    struct ExpectedBatcherDAP {
+        expected: Address,
+    }
+
+    #[async_trait]
+    impl DataAvailabilityProvider for ExpectedBatcherDAP {
+        type Item = Bytes;
+
+        async fn next(
+            &mut self,
+            _block_ref: &BlockInfo,
+            batcher_address: Address,
+        ) -> PipelineResult<Self::Item> {
+            assert_eq!(batcher_address, self.expected);
+            Ok(Bytes::default())
+        }
+
+        fn clear(&mut self) {}
+    }
 
     #[tokio::test]
     async fn test_l1_retrieval_flush_channel() {
@@ -263,6 +298,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_l1_retrieval_uses_system_config_batcher_address_by_default() {
+        let canonical_batcher = address!("1111111111111111111111111111111111111111");
+        let mut traversal = TraversalTestHelper::new_populated();
+        traversal.system_config.batcher_address = canonical_batcher;
+        let dap = ExpectedBatcherDAP { expected: canonical_batcher };
+        let mut retrieval = L1Retrieval::new(traversal, dap);
+
+        retrieval.next_data().await.unwrap();
+
+        assert_eq!(retrieval.prev.system_config.batcher_address, canonical_batcher);
+    }
+
+    #[tokio::test]
+    async fn test_l1_retrieval_da_batcher_sender_override_only_affects_da_filter() {
+        let canonical_batcher = address!("1111111111111111111111111111111111111111");
+        let shadow_batcher = address!("2222222222222222222222222222222222222222");
+        let mut traversal = TraversalTestHelper::new_populated();
+        traversal.system_config.batcher_address = canonical_batcher;
+        let dap = ExpectedBatcherDAP { expected: shadow_batcher };
+        let mut retrieval =
+            L1Retrieval::new(traversal, dap).with_da_batcher_sender_override(Some(shadow_batcher));
+
+        retrieval.next_data().await.unwrap();
+
+        assert_eq!(retrieval.prev.system_config.batcher_address, canonical_batcher);
+    }
+
+    #[tokio::test]
     async fn test_l1_retrieval_next_data_respect_next() {
         let mut traversal = TraversalTestHelper::new_populated();
         traversal.done = true;
@@ -294,8 +357,12 @@ mod tests {
     async fn test_l1_retrieval_existing_data_errors() {
         let traversal = TraversalTestHelper::new_populated();
         let dap = TestDAP { results: vec![Err(PipelineError::Eof.temp())] };
-        let mut retrieval =
-            L1Retrieval { prev: traversal, provider: dap, next: Some(BlockInfo::default()) };
+        let mut retrieval = L1Retrieval {
+            prev: traversal,
+            provider: dap,
+            da_batcher_sender_override: None,
+            next: Some(BlockInfo::default()),
+        };
         let data = retrieval.next_data().await.unwrap_err();
         assert_eq!(data, PipelineError::Eof.temp());
         assert!(retrieval.next.is_none());

@@ -673,12 +673,23 @@ mod tests {
         max_priority_fee_per_gas: u128,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
+        signed_tx(signer, nonce_key, nonce_sequence, 0, max_priority_fee_per_gas, max_fee_per_gas)
+    }
+
+    fn signed_tx(
+        signer: &PrivateKeySigner,
+        nonce_key: U256,
+        nonce_sequence: u64,
+        expiry: u64,
+        max_priority_fee_per_gas: u128,
+        max_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
         let tx = TxEip8130 {
             chain_id: test_chain_id(),
             sender: None,
             nonce_key,
             nonce_sequence,
-            expiry: 0,
+            expiry,
             max_priority_fee_per_gas,
             max_fee_per_gas,
             gas_limit: 50_000,
@@ -700,27 +711,14 @@ mod tests {
         max_priority_fee_per_gas: u128,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
-        let tx = TxEip8130 {
-            chain_id: test_chain_id(),
-            sender: None,
-            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
-            nonce_sequence: 0,
+        signed_tx(
+            signer,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
             expiry,
             max_priority_fee_per_gas,
             max_fee_per_gas,
-            gas_limit: 50_000,
-            account_changes: Vec::new(),
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer: None,
-        };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let signed =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        BasePooledTransaction::from_pooled(Recovered::new_unchecked(
-            ConsensusPooledTransaction::Eip8130(signed),
-            signer.address(),
-        ))
+        )
     }
 
     fn valid_pool_transaction(

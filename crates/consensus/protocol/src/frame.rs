@@ -166,6 +166,10 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Number of metadata bytes in an encoded frame: 16-byte channel ID, 2-byte frame number,
+    /// 4-byte payload length, and 1-byte final-frame flag.
+    pub const ENCODED_OVERHEAD: usize = 16 + 2 + 4 + 1;
+
     /// Overhead estimation for frame metadata and tagging information.
     ///
     /// This constant provides an estimate of the additional bytes required
@@ -193,20 +197,28 @@ impl Frame {
 
     /// Encode the frame into a byte vector.
     pub fn encode(&self) -> Vec<u8> {
-        let mut encoded = Vec::with_capacity(16 + 2 + 4 + self.data.len() + 1);
+        let mut encoded = Vec::with_capacity(self.encoded_len());
+        self.encode_into(&mut encoded);
+        encoded
+    }
+
+    /// Returns the encoded length of the frame.
+    pub const fn encoded_len(&self) -> usize {
+        Self::ENCODED_OVERHEAD + self.data.len()
+    }
+
+    /// Appends the encoded frame to an existing byte vector.
+    pub fn encode_into(&self, encoded: &mut Vec<u8>) {
         encoded.extend_from_slice(&self.id);
         encoded.extend_from_slice(&self.number.to_be_bytes());
         encoded.extend_from_slice(&(self.data.len() as u32).to_be_bytes());
         encoded.extend_from_slice(&self.data);
         encoded.push(self.is_last as u8);
-        encoded
     }
 
     /// Decode a frame from a byte vector.
     pub fn decode(encoded: &[u8]) -> Result<(usize, Self), FrameDecodingError> {
-        const BASE_FRAME_LEN: usize = 16 + 2 + 4 + 1;
-
-        if encoded.len() < BASE_FRAME_LEN {
+        if encoded.len() < Self::ENCODED_OVERHEAD {
             return Err(FrameDecodingError::DataTooShort(encoded.len()));
         }
 
@@ -218,13 +230,13 @@ impl Frame {
             encoded[18..22].try_into().map_err(|_| FrameDecodingError::InvalidDataLength)?,
         ) as usize;
 
-        if data_len > Self::MAX_LEN || data_len >= encoded.len() - (BASE_FRAME_LEN - 1) {
+        if data_len > Self::MAX_LEN || data_len >= encoded.len() - (Self::ENCODED_OVERHEAD - 1) {
             return Err(FrameDecodingError::DataTooLarge(data_len));
         }
 
         let data = encoded[22..22 + data_len].to_vec();
         let is_last = encoded[22 + data_len] == 1;
-        Ok((BASE_FRAME_LEN + data_len, Self { id, number, data, is_last }))
+        Ok((Self::ENCODED_OVERHEAD + data_len, Self { id, number, data, is_last }))
     }
 
     /// Parses a single frame from the given data at the given starting position,

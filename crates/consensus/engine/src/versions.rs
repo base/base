@@ -119,7 +119,12 @@ mod tests {
             upgrades: UpgradeConfig {
                 ecotone_time: Some(20),
                 jovian_time: Some(30),
-                base: BaseUpgradeConfig { azul: Some(40), beryl: Some(50), cobalt: Some(60) },
+                base: BaseUpgradeConfig {
+                    azul: Some(40),
+                    beryl: Some(50),
+                    cobalt: Some(60),
+                    zenith: None,
+                },
                 ..Default::default()
             },
             ..Default::default()

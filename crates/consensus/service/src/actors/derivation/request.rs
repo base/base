@@ -33,4 +33,7 @@ pub enum DerivationActorRequest {
     ProcessFinalizedL1Block(Box<BlockInfo>),
     /// Request to process the provided L1 head block update.
     ProcessL1HeadUpdateRequest(Box<BlockInfo>),
+    /// Request for the current derivation-state-machine state.
+    #[cfg(test)]
+    CurrentStateRequest(tokio::sync::oneshot::Sender<crate::DerivationState>),
 }

@@ -18,6 +18,7 @@ crossterm = { workspace = true }
 serde_yaml = { workspace = true }
 alloy-contract = { workspace = true }
 alloy-transport = { workspace = true }
+base-common-evm = { workspace = true }
 alloy-rpc-client = { workspace = true }
 base-common-chains = { workspace = true }
 base-common-network = { workspace = true }
@@ -29,12 +30,13 @@ base-common-precompiles = { workspace = true }
 base-common-flashblocks = { workspace = true }
 base-prover-service-client = { workspace = true }
 base-prover-service-protocol = { workspace = true }
+clap = { workspace = true, features = ["derive", "env"] }
 toml = { workspace = true, features = ["parse", "serde"] }
 url = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["net", "process", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "process", "time"] }
 alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["std"] }

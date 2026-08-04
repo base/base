@@ -5,8 +5,8 @@ use alloy_primitives::{Address, B256, Keccak256, b256, keccak256};
 use base_common_consensus::ConfigChange;
 
 use crate::{
-    AccountConfigurationStorage, ActorAuthorizer, AuthorizeError, Operation, ResolvedActor,
-    TxAuthError,
+    AccountConfigurationStorage, AccountState, ActorAuthorizer, AuthorizeError, Operation,
+    ResolvedActor, TxAuthError,
 };
 
 /// Precomputed `keccak256` typehash of the `SignedActorChanges` EIP-712-style
@@ -58,10 +58,8 @@ impl ConfigChangeAuthorizer {
         // The contract reads the sequence from state and the signer signs over
         // the value that will be used; the entry must match the account's
         // current channel sequence so the reconstructed digest is the signed one.
-        let (multichain_seq, local_seq) =
-            storage.get_change_sequences(account).map_err(AuthorizeError::Storage)?;
-        let expected = if change.chain_id == 0 { multichain_seq } else { local_seq };
-        Self::authorize_at_sequence(storage, account, local_chain_id, change, expected, now)
+        let state = storage.get_account_state(account).map_err(AuthorizeError::Storage)?;
+        Self::authorize_with_account_state(storage, account, local_chain_id, change, now, &state)
     }
 
     /// Authorize a single [`ConfigChange`] against an explicitly-supplied
@@ -87,8 +85,54 @@ impl ConfigChangeAuthorizer {
         expected_sequence: u64,
         now: u64,
     ) -> Result<ResolvedActor, TxAuthError> {
+        let state = storage.get_account_state(account).map_err(AuthorizeError::Storage)?;
+        Self::authorize_at_sequence_with_account_state(
+            storage,
+            account,
+            local_chain_id,
+            change,
+            expected_sequence,
+            now,
+            &state,
+        )
+    }
+
+    /// Authorizes a change using an already-loaded packed account state for its
+    /// lock, selected sequence channel, and inline-self authentication.
+    pub fn authorize_with_account_state(
+        storage: &AccountConfigurationStorage<'_>,
+        account: Address,
+        local_chain_id: u64,
+        change: &ConfigChange,
+        now: u64,
+        state: &AccountState,
+    ) -> Result<ResolvedActor, TxAuthError> {
+        let expected =
+            if change.chain_id == 0 { state.multichain_sequence } else { state.local_sequence };
+        Self::authorize_at_sequence_with_account_state(
+            storage,
+            account,
+            local_chain_id,
+            change,
+            expected,
+            now,
+            state,
+        )
+    }
+
+    /// Authorizes against `expected_sequence` while reusing `state` for all
+    /// account-state-dependent checks.
+    pub fn authorize_at_sequence_with_account_state(
+        storage: &AccountConfigurationStorage<'_>,
+        account: Address,
+        local_chain_id: u64,
+        change: &ConfigChange,
+        expected_sequence: u64,
+        now: u64,
+        state: &AccountState,
+    ) -> Result<ResolvedActor, TxAuthError> {
         // Locked accounts reject all config changes (`onlyUnlocked`).
-        if storage.is_locked(account, now).map_err(AuthorizeError::Storage)? {
+        if state.is_locked(now) {
             return Err(TxAuthError::AccountLocked);
         }
 
@@ -109,8 +153,14 @@ impl ConfigChangeAuthorizer {
 
         // Reconstruct the digest, authorize the entry's auth, and require admin scope.
         let digest = Self::signed_actor_changes_digest(account, change);
-        let resolved =
-            ActorAuthorizer::authenticate_actor(storage, account, digest, &change.auth, now)?;
+        let resolved = ActorAuthorizer::authenticate_actor_with_account_state(
+            storage,
+            account,
+            digest,
+            &change.auth,
+            now,
+            Some(state),
+        )?;
         if !Operation::Config.is_granted(&resolved) {
             return Err(TxAuthError::Scope { operation: Operation::Config, scope: resolved.scope });
         }

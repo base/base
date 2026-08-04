@@ -1,10 +1,10 @@
 //! Adapters between proposer proof types and the shared prover-service protocol.
 
 use alloy_primitives::B256;
-use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
+use base_proof_primitives::ProofRequest as PrimitiveProofRequest;
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest, TeeKind,
-    TeeProofRequest,
+    TeeProofRequest, TeeProofResult,
 };
 
 use crate::ProposerError;
@@ -46,9 +46,7 @@ impl ProposerProofAdapter {
     }
 
     /// Converts a prover-service TEE proof result into proposal parts.
-    pub fn tee_proof_result(
-        result: ProofResult,
-    ) -> Result<(Proposal, Vec<Proposal>), ProposerError> {
+    pub fn tee_proof_result(result: ProofResult) -> Result<TeeProofResult, ProposerError> {
         let result = match result {
             ProofResult::Tee(result) => result,
             ProofResult::Compressed(_) => {
@@ -69,7 +67,7 @@ impl ProposerProofAdapter {
             )));
         }
 
-        Ok((result.aggregate_proposal, result.proposals))
+        Ok(result)
     }
 }
 
@@ -124,11 +122,14 @@ mod tests {
             aggregate_proposal: aggregate.clone(),
             proposals: vec![proposal.clone()],
             tee_kind: TeeKind::AwsNitro,
+            tee_signer: Address::repeat_byte(0x11),
         });
 
         let converted = ProposerProofAdapter::tee_proof_result(result).unwrap();
 
-        assert_eq!(converted, (aggregate, vec![proposal]));
+        assert_eq!(converted.aggregate_proposal, aggregate);
+        assert_eq!(converted.proposals, vec![proposal]);
+        assert_eq!(converted.tee_signer, Address::repeat_byte(0x11));
     }
 
     #[test]

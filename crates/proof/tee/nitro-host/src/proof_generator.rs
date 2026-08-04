@@ -217,6 +217,8 @@ where
             request.lock_id.clone(),
             request.worker_id.clone(),
             proof,
+            request.proof.proposer,
+            request.proof.image_hash,
         )
         .map_err(|source| ProofGeneratorError::BuildSubmission {
             session_id: request.session_id.clone(),

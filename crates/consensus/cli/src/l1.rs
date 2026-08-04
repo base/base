@@ -1,5 +1,6 @@
 //! L1 Client CLI arguments.
 
+use alloy_primitives::Address;
 use url::Url;
 
 const DEFAULT_L1_TRUST_RPC: bool = true;
@@ -33,6 +34,13 @@ pub struct L1ClientArgs {
         env = "BASE_NODE_L1_SLOT_DURATION_OVERRIDE"
     )]
     pub l1_slot_duration_override: Option<u64>,
+    /// Dangerous validator-only override for the sender accepted by the L1 data-availability
+    /// pipeline. This does not modify the protocol `SystemConfig` or L1 info transactions.
+    #[arg(
+        long = "l1.dangerously-override-da-batcher-sender",
+        env = "BASE_NODE_L1_DANGEROUSLY_OVERRIDE_DA_BATCHER_SENDER"
+    )]
+    pub l1_da_batcher_sender_override: Option<Address>,
     /// Number of L1 blocks to keep distance from the L1 head for the verifier (derivation
     /// pipeline). Controlled via `BASE_NODE_VERIFIER_L1_CONFS`. Defaults to 0, meaning
     /// the verifier derives from the latest L1 head with no confirmation delay.
@@ -47,6 +55,7 @@ impl Default for L1ClientArgs {
             l1_trust_rpc: DEFAULT_L1_TRUST_RPC,
             l1_beacon: Url::parse("http://localhost:5052").unwrap(),
             l1_slot_duration_override: None,
+            l1_da_batcher_sender_override: None,
             l1_verifier_confs: 0,
         }
     }

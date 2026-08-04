@@ -3,6 +3,8 @@
 //! This module provides common logic for computing slot and offset assignments
 //! used by both the `#[derive(Storable)]` and `#[contract]` macros.
 
+use std::collections::BTreeMap;
+
 use alloy_primitives::U256;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -39,6 +41,26 @@ impl PackingConstants {
 
 pub(crate) fn const_name(name: &Ident) -> String {
     name.to_string().to_uppercase()
+}
+
+pub(crate) fn validate_constant_names(fields: &[FieldInfo]) -> syn::Result<()> {
+    let mut generated_names = BTreeMap::new();
+
+    for field in fields {
+        let generated_name = const_name(&field.name);
+        if let Some(previous_name) = generated_names.get(&generated_name) {
+            return Err(syn::Error::new_spanned(
+                &field.name,
+                format!(
+                    "field `{}` generates storage constant `{generated_name}`, which conflicts with field `{previous_name}` after case normalization",
+                    field.name
+                ),
+            ));
+        }
+        generated_names.insert(generated_name, &field.name);
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +104,8 @@ pub(crate) fn allocate_slots_from(
     initial_base_slot: U256,
     allow_type_namespaces: bool,
 ) -> syn::Result<Vec<LayoutField<'_>>> {
+    validate_constant_names(fields)?;
+
     let mut result = Vec::with_capacity(fields.len());
     let mut current_base_slot = initial_base_slot;
 
@@ -433,4 +457,64 @@ pub(crate) fn gen_collision_check_fn(
     };
 
     (check_fn_name, check_fn)
+}
+
+#[cfg(test)]
+mod tests {
+    use syn::parse_quote;
+
+    use super::{allocate_slots, validate_constant_names};
+    use crate::FieldInfo;
+
+    #[test]
+    fn rejects_case_normalized_constant_name_collisions() {
+        let fields = [
+            FieldInfo {
+                name: parse_quote!(foo),
+                ty: parse_quote!(u8),
+                slot: None,
+                base_slot: None,
+                namespace: None,
+            },
+            FieldInfo {
+                name: parse_quote!(FOO),
+                ty: parse_quote!(u8),
+                slot: None,
+                base_slot: None,
+                namespace: None,
+            },
+        ];
+
+        let error = validate_constant_names(&fields).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "field `FOO` generates storage constant `FOO`, which conflicts with field `foo` after case normalization"
+        );
+    }
+
+    #[test]
+    fn preserves_valid_field_order() {
+        let fields = [
+            FieldInfo {
+                name: parse_quote!(first),
+                ty: parse_quote!(u8),
+                slot: None,
+                base_slot: None,
+                namespace: None,
+            },
+            FieldInfo {
+                name: parse_quote!(second),
+                ty: parse_quote!(u16),
+                slot: None,
+                base_slot: None,
+                namespace: None,
+            },
+        ];
+
+        let allocated = allocate_slots(&fields).unwrap();
+
+        assert_eq!(allocated[0].name, "first");
+        assert_eq!(allocated[1].name, "second");
+    }
 }

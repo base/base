@@ -7,6 +7,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), allow(unused_crate_dependencies))]
 
+mod candidate_source;
+pub use candidate_source::{BoxedBestTransactions, CandidateSource, DefaultCandidateSource};
+
 mod config;
 pub use config::BuilderConfig;
 
@@ -43,7 +46,7 @@ mod flashblocks;
 pub use flashblocks::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockPayloadJob, BlockPayloadJobGenerator,
     BuildArguments, FlashblockDiagnostics, FlashblockSelectionOutcome, FlashblocksExtraCtx,
-    FlashblocksServiceBuilder, PayloadBuilder, PayloadHandler, ResolvePayload,
+    FlashblocksServiceBuilder, PayloadBuilder, PayloadHandler, PayloadJobDeadline, ResolvePayload,
 };
 
 mod extension;

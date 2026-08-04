@@ -12,9 +12,11 @@ pub fn parse_fulfillment_strategy(value: String) -> Result<FulfillmentStrategy> 
         "reserved" => Ok(FulfillmentStrategy::Reserved),
         "hosted" => Ok(FulfillmentStrategy::Hosted),
         "auction" => Ok(FulfillmentStrategy::Auction),
-        _ => bail!(
-            "Invalid fulfillment strategy '{value}': must be 'reserved', 'hosted', or 'auction'"
-        ),
+        _ => {
+            bail!(
+                "Invalid fulfillment strategy '{value}': must be 'reserved', 'hosted', or 'auction'"
+            )
+        }
     }
 }
 
@@ -82,7 +84,9 @@ pub async fn build_network_prover_from_env(strategy: FulfillmentStrategy) -> Res
     let network_mode = match strategy {
         FulfillmentStrategy::Auction => NetworkMode::Mainnet,
         FulfillmentStrategy::Hosted | FulfillmentStrategy::Reserved => NetworkMode::Reserved,
-        _ => bail!("Fulfillment strategy must be 'reserved', 'hosted', or 'auction'"),
+        _ => {
+            bail!("Fulfillment strategy must be 'reserved', 'hosted', or 'auction'")
+        }
     };
 
     let prover =

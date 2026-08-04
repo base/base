@@ -141,6 +141,11 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         Ok(self.internals.tload(address, key))
     }
 
+    fn tload_unmetered(&mut self, address: Address, key: U256) -> Result<U256> {
+        // Gas-free journal view: the raw read is already unmetered.
+        Ok(self.internals.tload(address, key))
+    }
+
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         // Writing only mutates the storage trie; it deliberately does not touch
         // nonce/balance/code. Code-less enshrined system accounts that hold
@@ -215,7 +220,7 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         self.internals.checkpoint()
     }
 
-    fn checkpoint_commit(&mut self) {
+    fn commit_latest_checkpoint(&mut self) {
         self.internals.checkpoint_commit();
     }
 
@@ -255,6 +260,22 @@ mod tests {
         assert_eq!(provider.gas_used(), 0, "the gas-free provider must never charge gas");
         assert_eq!(provider.gas_limit(), u64::MAX);
         assert_eq!(provider.gas_refunded(), 0);
+    }
+
+    /// EIP-8130 context publication uses transient writes through this provider;
+    /// neither the write nor its backing read may expose opcode gas.
+    #[test]
+    fn tstore_then_tload_roundtrips_without_gas() {
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider =
+            JournalStorageProvider::new(EvmInternals::from_context(&mut ctx), Address::ZERO);
+        let key = U256::from(7);
+        let value = U256::from(99);
+
+        provider.tstore(ADDR, key, value).unwrap();
+
+        assert_eq!(provider.tload_unmetered(ADDR, key).unwrap(), value);
+        assert_eq!(provider.gas_used(), 0);
     }
 
     /// `set_code` persists and is reflected in the account's code hash, gas-free.

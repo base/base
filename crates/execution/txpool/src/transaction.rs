@@ -65,8 +65,10 @@ pub struct BasePooledTransaction<
     encoded_2718: OnceLock<Bytes>,
     /// Timestamp (millis since Unix epoch) when this transaction was received.
     received_at: u128,
-    /// Optional target block number from bundle submission.
-    target_block_number: Option<u64>,
+    /// Optional minimum block number from bundle submission.
+    min_block_number: Option<u64>,
+    /// Optional maximum block number from bundle submission.
+    max_block_number: Option<u64>,
     /// Optional minimum timestamp (millis since Unix epoch) from bundle submission.
     /// The transaction should not be included before this time.
     min_timestamp: Option<u64>,
@@ -91,19 +93,7 @@ pub struct BasePooledTransaction<
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Create new instance of [Self].
     pub fn new(transaction: Recovered<Cons>, encoded_length: usize) -> Self {
-        Self {
-            inner: EthPooledTransaction::new(transaction, encoded_length),
-            estimated_tx_compressed_size: Default::default(),
-            _pd: core::marker::PhantomData,
-            encoded_2718: Default::default(),
-            received_at: unix_time_millis(),
-            target_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            watch_set: OnceLock::new(),
-            limit_class: OnceLock::new(),
-            watch_manifest: OnceLock::new(),
-        }
+        Self::new_with_received_at(transaction, encoded_length, unix_time_millis())
     }
 
     /// Create new instance with an explicit `received_at` timestamp (millis since Unix epoch).
@@ -120,7 +110,8 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
             received_at,
-            target_block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             watch_set: OnceLock::new(),
@@ -132,11 +123,13 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Sets bundle metadata on this transaction, returning the modified instance.
     pub const fn with_bundle_metadata(
         mut self,
-        target_block_number: Option<u64>,
+        min_block_number: Option<u64>,
+        max_block_number: Option<u64>,
         min_timestamp: Option<u64>,
         max_timestamp: Option<u64>,
     ) -> Self {
-        self.target_block_number = target_block_number;
+        self.min_block_number = min_block_number;
+        self.max_block_number = max_block_number;
         self.min_timestamp = min_timestamp;
         self.max_timestamp = max_timestamp;
         self
@@ -155,11 +148,6 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.
     pub fn encoded_2718(&self) -> &Bytes {
         self.encoded_2718.get_or_init(|| self.inner.transaction().encoded_2718().into())
-    }
-
-    /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
-    const fn inner_received_at(&self) -> u128 {
-        self.received_at
     }
 }
 
@@ -243,7 +231,7 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
         self.inner.size()
             + core::mem::size_of::<u128>()
-            + core::mem::size_of::<Option<u64>>() * 3
+            + core::mem::size_of::<Option<u64>>() * 4
             + core::mem::size_of::<OnceLock<crate::WatchSet>>()
             + watch_keys_size
             + core::mem::size_of::<OnceLock<crate::LimitClass>>()
@@ -498,7 +486,7 @@ where
     Pooled: Send + Sync + 'static,
 {
     fn received_at(&self) -> u128 {
-        self.inner_received_at()
+        self.received_at
     }
 }
 
@@ -507,8 +495,11 @@ where
 /// All timestamp values are in milliseconds since Unix epoch. Block-timestamp
 /// arguments (which arrive in seconds) are converted internally.
 pub trait BundleTransaction {
-    /// Returns the target block number, if set.
-    fn target_block_number(&self) -> Option<u64>;
+    /// Returns the minimum block number, if set.
+    fn min_block_number(&self) -> Option<u64>;
+
+    /// Returns the maximum block number, if set.
+    fn max_block_number(&self) -> Option<u64>;
 
     /// Returns the minimum timestamp in milliseconds.
     fn min_timestamp_millis(&self) -> Option<u64>;
@@ -527,8 +518,8 @@ pub trait BundleTransaction {
             return true;
         }
 
-        if let Some(target) = self.target_block_number()
-            && block_number > target
+        if let Some(max_block) = self.max_block_number()
+            && block_number > max_block
         {
             return true;
         }
@@ -536,9 +527,15 @@ pub trait BundleTransaction {
         false
     }
 
-    /// Returns `true` if this transaction's `min_timestamp` has not yet been
-    /// reached. `block_timestamp_secs` is the block timestamp in seconds.
-    fn is_bundle_not_yet_valid(&self, block_timestamp_secs: u64) -> bool {
+    /// Returns `true` if this transaction's bundle validity window has not yet
+    /// started. `block_timestamp_secs` is the block timestamp in seconds.
+    fn is_bundle_not_yet_valid(&self, block_number: u64, block_timestamp_secs: u64) -> bool {
+        if let Some(min_block) = self.min_block_number()
+            && block_number < min_block
+        {
+            return true;
+        }
+
         let block_timestamp_millis = block_timestamp_secs.saturating_mul(1000);
 
         if let Some(min_ts) = self.min_timestamp_millis()
@@ -556,8 +553,12 @@ where
     Cons: Send + Sync,
     Pooled: Send + Sync + 'static,
 {
-    fn target_block_number(&self) -> Option<u64> {
-        self.target_block_number
+    fn min_block_number(&self) -> Option<u64> {
+        self.min_block_number
+    }
+
+    fn max_block_number(&self) -> Option<u64> {
+        self.max_block_number
     }
 
     fn min_timestamp_millis(&self) -> Option<u64> {

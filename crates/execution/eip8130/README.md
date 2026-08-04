@@ -78,9 +78,9 @@ intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + bytecode_cost
 | `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the caller-supplied EIP-2718 serialization of the signed transaction |
 | `nonce_key` | nonce-free `13,000`; otherwise first-use `22,100` / existing `5,000` (a cold SLOAD plus an SSTORE set or reset) |
 | `bytecode` | per create entry: `32,000 + 200 · code_len` |
-| `account_changes` | per create entry: one fresh `actor_config` slot write per initial actor (unrestricted owner, no policy slots); per config-change entry: its `auth` cost plus each mutated actor slot (`actor_config`, plus `policy_commitment`/`policy_manager` when the authorize carries a policy), plus a worst-case dual-home bump (`22,100`) for a change targeting the account's own self-actor (whose config is inline in the account-state slot and is mutually exclusive with `actor_config(self)`); per delegation entry: the `4,600` indicator deposit |
+| `account_changes` | per create entry: one fresh packed `account_state` write plus one fresh `actor_config` slot write per initial actor; policy actors set `policy_commitment`/`policy_manager`, while ungated actors pay the cold zero-to-zero touches that preserve access warming; per config-change entry: a packed `account_state` write covering the sequence advance and lock read — the first access to that slot in the transaction (create bootstrap or first config change) is a cold zero-to-nonzero write, later same-account bumps are only a warm SLOAD + dirty SSTORE (`200`, the slot was already modified earlier in the transaction) — its `auth` cost, and each mutated actor/policy slot; revokes conservatively price all three actor/policy resets, except each revoke slot execution resolves to be an empty zero-to-zero touch is discounted by the reset-vs-cold-noop delta (an inline secp256k1 self revoke discounts its always-empty `actor_config` slot plus each policy slot — `manager`/`commitment` — whose stored value is zero, so three empty slots when ungated and one to three when policy-gated, since the EIP permits a gated actor to carry a zero manager and/or commitment); a self-actor change adds no separate bump — its inline-self write is already covered by the config-change `account_state` cost and its `actor_config(self)` home by the per-change slot cost; per delegation entry: the `4,600` indicator deposit |
 | `auto_delegation` | `4,600` when a code-less `sender` EOA is auto-delegated to `DEFAULT_ACCOUNT` |
-| `sender_auth` / `payer_auth` | authenticator execution gas + one cold `authorize` SLOAD: a bare signature reads the account-state slot carrying the inline self config, and every resolved authenticator (explicit `K1_AUTHENTICATOR`, P-256, `WebAuthn`) reads one slot — the inline self-config model resolves any k1 self in a single read; `payer_auth` is `0` for self-pay |
+| `sender_auth` / `payer_auth` | authenticator execution gas + one cold config/state SLOAD, plus one cold `policy_manager` SLOAD when the resolved actor has `SCOPE_POLICY`; `payer_auth` is `0` for self-pay |
 
 `sender_intrinsic` excludes `payer_auth` (payer authentication is metered on top
 of `gas_limit`), so `execution_gas_available(gas_limit) = gas_limit -
@@ -114,7 +114,8 @@ charged on top of `gas_limit`. For self-pay the payer is the sender and
 
 The gas and fee layer is pure accounting: it reads no state and runs no EVM. The
 state-derived inputs (whether the nonce channel is first-use, whether the sender
-is auto-delegated) are supplied by the caller via `IntrinsicGasInput`. It does
+is auto-delegated, and whether sender/payer actors are policy-gated) are supplied
+by the caller via `IntrinsicGasInput`. It does
 not advance nonces, debit balances, or execute calls; cold/warm and set/reset
 refinements that depend on intra-transaction access order are finalized by the
 execution metering layer.

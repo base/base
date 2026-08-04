@@ -3,7 +3,9 @@
 use std::time::Duration;
 
 use alloy_primitives::B256;
-use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
+use base_prover_service_client::{
+    ProofRequesterClient, ProverServiceClientConfig, ProverServiceClientError,
+};
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequest,
     ProofRequestKind, ProofSessionId, ProofStatus, ProveBlockRangeRequest, ZkBackend,
@@ -93,11 +95,8 @@ impl ProofsClient {
     /// Connects a requester client to the prover-service `endpoint`.
     pub fn connect(endpoint: &Url) -> Result<Self, ProofsCommandError> {
         let config = ProverServiceClientConfig::new(endpoint.as_str());
-        let requester = ProofRequesterClient::connect(&config).map_err(|error| {
-            ProofsCommandError::BuildClient {
-                endpoint: endpoint.to_string(),
-                message: error.to_string(),
-            }
+        let requester = ProofRequesterClient::connect(&config).map_err(|source| {
+            ProofsCommandError::BuildClient { endpoint: endpoint.to_string(), source }
         })?;
         Ok(Self {
             endpoint: endpoint.clone(),
@@ -140,7 +139,7 @@ impl ProofsClient {
             .requester
             .prove_block_range(request)
             .await
-            .map_err(|error| self.rpc_error("prover_proveBlockRange", &error))?;
+            .map_err(|error| self.rpc_error("prover_proveBlockRange", error))?;
         info!(
             endpoint = %self.endpoint,
             session_id = %response.session_id,
@@ -157,7 +156,7 @@ impl ProofsClient {
         self.requester
             .get_proof(GetProofRequest { session_id: session_id.to_string() })
             .await
-            .map_err(|error| self.rpc_error("prover_getProof", &error))
+            .map_err(|error| self.rpc_error("prover_getProof", error))
     }
 
     /// Lists submitted proof requests.
@@ -168,7 +167,7 @@ impl ProofsClient {
         self.requester
             .list_proofs(request)
             .await
-            .map_err(|error| self.rpc_error("prover_listProofs", &error))
+            .map_err(|error| self.rpc_error("prover_listProofs", error))
     }
 
     /// Polls `session_id` until it reaches a terminal status or the wait
@@ -203,12 +202,12 @@ impl ProofsClient {
         }
     }
 
-    fn rpc_error(&self, method: &'static str, error: &dyn std::fmt::Display) -> ProofsCommandError {
-        ProofsCommandError::Rpc {
-            endpoint: self.endpoint.to_string(),
-            method,
-            message: error.to_string(),
-        }
+    fn rpc_error(
+        &self,
+        method: &'static str,
+        source: ProverServiceClientError,
+    ) -> ProofsCommandError {
+        ProofsCommandError::Rpc { endpoint: self.endpoint.to_string(), method, source }
     }
 }
 
@@ -222,9 +221,9 @@ mod tests {
     };
 
     use base_prover_service_protocol::{
-        DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest,
-        ListProofsResponse, ProofRequestKind, ProofStatus, ProveBlockRangeRequest,
-        ProveBlockRangeResponse, ProverRequesterApiServer, ZkVm,
+        DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
+        ListProofsRequest, ListProofsResponse, ProofRequestKind, ProofStatus,
+        ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkVm,
     };
     use jsonrpsee::{
         core::{RpcResult, async_trait},
@@ -341,6 +340,17 @@ mod tests {
         }
 
         async fn delete_proof_request(&self, _request: DeleteProofRequest) -> RpcResult<()> {
+            Err(ErrorObjectOwned::owned(
+                ErrorCode::MethodNotFound.code(),
+                "not used by tests",
+                None::<()>,
+            ))
+        }
+
+        async fn delete_proofs_by_tee_signer(
+            &self,
+            _request: DeleteProofsByTeeSignerRequest,
+        ) -> RpcResult<u64> {
             Err(ErrorObjectOwned::owned(
                 ErrorCode::MethodNotFound.code(),
                 "not used by tests",

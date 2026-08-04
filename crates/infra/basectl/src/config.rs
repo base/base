@@ -130,6 +130,16 @@ pub struct ConductorNodeConfig {
 }
 
 impl ConductorNodeConfig {
+    /// Finds a conductor node by name or returns a typed lookup error.
+    pub fn find<'a>(nodes: &'a [Self], name: &str) -> Result<&'a Self, crate::NodeLookupError> {
+        nodes.iter().find(|node| node.name == name).ok_or_else(|| {
+            crate::NodeLookupError::MissingNode {
+                requested_node: name.to_string(),
+                available_nodes: nodes.iter().map(|node| node.name.clone()).collect(),
+            }
+        })
+    }
+
     /// Sorts conductor nodes by server id, then display name.
     pub fn sort_by_server_id(nodes: &mut [Self]) {
         nodes.sort_by(Self::cmp_by_server_id);
@@ -336,8 +346,14 @@ fn peer_url(bootstrap: &Url, host: &str, port: u16) -> Url {
 pub struct MonitoringConfig {
     /// Human-readable chain name (e.g. "mainnet", "sepolia").
     pub name: String,
-    /// L2 JSON-RPC endpoint URL.
+    /// Local L2 execution-layer JSON-RPC endpoint URL.
     pub rpc: Url,
+    /// Optional standard execution-layer WebSocket JSON-RPC endpoint URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub el_ws_rpc: Option<Url>,
+    /// Optional public L2 JSON-RPC endpoint used for network-reference reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_rpc: Option<Url>,
     /// Flashblocks WebSocket endpoint URL.
     pub flashblocks_ws: Url,
     /// L1 Ethereum JSON-RPC endpoint URL.
@@ -345,6 +361,13 @@ pub struct MonitoringConfig {
     /// Optional Base consensus node JSON-RPC endpoint URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consensus_node_rpc: Option<Url>,
+    /// Expected L2 chain ID for this config, when known.
+    ///
+    /// Fixed for public presets (`mainnet`/`sepolia`/`zeronet`). For `-c
+    /// devnet`, populated from the live `optimism_rollupConfig` so doctor
+    /// compares against whatever chain ID that stack was started with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<u64>,
     /// Optional internal prover-service requester JSON-RPC endpoint URL.
     ///
     /// Used by the `basectl proofs` command group. The built-in presets leave
@@ -388,6 +411,30 @@ pub struct MonitoringConfig {
 }
 
 impl MonitoringConfig {
+    /// Resolves the conductor source or returns a typed error when none is configured.
+    pub fn resolve_conductor_source(
+        &self,
+        conductor_rpc: Option<Url>,
+    ) -> Result<ConductorSource, crate::NodeLookupError> {
+        self.conductor_source(conductor_rpc)
+            .ok_or_else(|| crate::NodeLookupError::MissingSource { config_name: self.name.clone() })
+    }
+
+    /// Resolves the consensus-node RPC URL from the flag override or this config.
+    pub fn resolve_cl_rpc(
+        &self,
+        override_url: Option<&Url>,
+        command_name: &'static str,
+    ) -> Result<Url, crate::MissingConsensusRpcError> {
+        if let Some(url) = override_url {
+            return Ok(url.clone());
+        }
+        self.consensus_node_rpc.clone().ok_or_else(|| crate::MissingConsensusRpcError {
+            command_name,
+            config_name: self.name.clone(),
+        })
+    }
+
     /// Returns the block explorer base URL for this chain, if known.
     pub fn explorer_base_url(&self) -> Option<&'static str> {
         match self.name.as_str() {
@@ -475,9 +522,12 @@ const fn default_blob_target() -> u64 {
 struct MonitoringConfigOverride {
     name: Option<String>,
     rpc: Option<Url>,
+    el_ws_rpc: Option<Url>,
+    public_rpc: Option<Url>,
     flashblocks_ws: Option<Url>,
     l1_rpc: Option<Url>,
     consensus_node_rpc: Option<Url>,
+    chain_id: Option<u64>,
     prover_rpc: Option<Url>,
     #[serde(alias = "hardforks")]
     upgrades: Option<UpgradeConfig>,
@@ -523,10 +573,13 @@ impl MonitoringConfig {
         let rollup = rollup_config!(ChainConfig::MAINNET);
         Self {
             name: "mainnet".to_string(),
-            rpc: Url::parse("https://mainnet.base.org").unwrap(),
+            rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
+            el_ws_rpc: None,
+            public_rpc: Some(Url::parse("https://mainnet.base.org").unwrap()),
             flashblocks_ws: Url::parse("wss://mainnet.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-rpc.publicnode.com").unwrap(),
-            consensus_node_rpc: None,
+            consensus_node_rpc: Some(Url::parse("http://127.0.0.1:9545").unwrap()),
+            chain_id: Some(8453),
             prover_rpc: None,
             upgrades: Some(rollup.upgrades),
             system_config: rollup.l1_system_config_address,
@@ -548,10 +601,13 @@ impl MonitoringConfig {
         let rollup = rollup_config!(ChainConfig::SEPOLIA);
         Self {
             name: "sepolia".to_string(),
-            rpc: Url::parse("https://sepolia.base.org").unwrap(),
+            rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
+            el_ws_rpc: None,
+            public_rpc: Some(Url::parse("https://sepolia.base.org").unwrap()),
             flashblocks_ws: Url::parse("wss://sepolia.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-sepolia-rpc.publicnode.com").unwrap(),
-            consensus_node_rpc: None,
+            consensus_node_rpc: Some(Url::parse("http://127.0.0.1:9545").unwrap()),
+            chain_id: Some(84532),
             prover_rpc: None,
             upgrades: Some(rollup.upgrades),
             system_config: rollup.l1_system_config_address,
@@ -580,9 +636,13 @@ impl MonitoringConfig {
         Self {
             name: "devnet".to_string(),
             rpc: Url::parse("http://localhost:7545").unwrap(),
+            el_ws_rpc: Some(Url::parse("ws://localhost:7546").unwrap()),
+            public_rpc: None,
             flashblocks_ws: Url::parse("ws://localhost:7111").unwrap(),
             l1_rpc: Url::parse("http://localhost:4545").unwrap(),
             consensus_node_rpc: Some(Url::parse("http://localhost:7549").unwrap()),
+            // Populated from optimism_rollupConfig in load_devnet.
+            chain_id: None,
             prover_rpc: None,
             upgrades: None,
             // These will be populated by fetch_rollup_config
@@ -731,6 +791,7 @@ impl MonitoringConfig {
         config.system_config = rollup_config.l1_system_config_address;
         config.batcher_address = rollup_config.genesis.system_config.map(|sc| sc.batcher_address);
         config.upgrades = Some(rollup_config.upgrades);
+        config.chain_id = Some(rollup_config.l2_chain_id.id());
 
         Ok(config)
     }
@@ -755,9 +816,12 @@ impl MonitoringConfig {
         Ok(Self {
             name: overrides.name.unwrap_or(base.name),
             rpc: overrides.rpc.unwrap_or(base.rpc),
+            el_ws_rpc: overrides.el_ws_rpc.or(base.el_ws_rpc),
+            public_rpc: overrides.public_rpc.or(base.public_rpc),
             flashblocks_ws: overrides.flashblocks_ws.unwrap_or(base.flashblocks_ws),
             l1_rpc: overrides.l1_rpc.unwrap_or(base.l1_rpc),
             consensus_node_rpc: overrides.consensus_node_rpc.or(base.consensus_node_rpc),
+            chain_id: overrides.chain_id.or(base.chain_id),
             prover_rpc: overrides.prover_rpc.or(base.prover_rpc),
             upgrades: overrides.upgrades.or(base.upgrades),
             system_config: overrides.system_config.unwrap_or(base.system_config),
@@ -796,15 +860,59 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_builtin_configs() {
-        let mainnet = MonitoringConfig::load("mainnet").await.unwrap();
-        assert_eq!(mainnet.name, "mainnet");
-        assert!(mainnet.rpc.as_str().contains("mainnet"));
+    #[test]
+    fn resolve_cl_rpc_prefers_flag_override() {
+        let config = MonitoringConfig::mainnet();
+        let override_url = Url::parse("http://127.0.0.1:9545").unwrap();
 
-        let sepolia = MonitoringConfig::load("sepolia").await.unwrap();
+        assert_eq!(config.resolve_cl_rpc(Some(&override_url), "p2p info").unwrap(), override_url);
+    }
+
+    #[test]
+    fn resolve_cl_rpc_falls_back_to_config() {
+        let config = MonitoringConfig::mainnet();
+        let expected = config.consensus_node_rpc.clone().expect("mainnet sets consensus_node_rpc");
+
+        assert_eq!(config.resolve_cl_rpc(None, "p2p info").unwrap(), expected);
+    }
+
+    #[test]
+    fn resolve_cl_rpc_errors_without_config() {
+        let mut config = MonitoringConfig::mainnet();
+        config.consensus_node_rpc = None;
+
+        let error = config.resolve_cl_rpc(None, "sync-status").unwrap_err();
+
+        assert_eq!(error.command_name, "sync-status");
+        assert_eq!(error.config_name, "mainnet");
+    }
+
+    #[test]
+    fn test_builtin_configs() {
+        let mainnet = MonitoringConfig::mainnet();
+        assert_eq!(mainnet.name, "mainnet");
+        assert_eq!(mainnet.rpc.as_str(), "http://127.0.0.1:8545/");
+        assert!(mainnet.el_ws_rpc.is_none());
+        assert_eq!(mainnet.public_rpc.as_ref().unwrap().as_str(), "https://mainnet.base.org/");
+        assert_eq!(mainnet.consensus_node_rpc.as_ref().unwrap().as_str(), "http://127.0.0.1:9545/");
+
+        let sepolia = MonitoringConfig::sepolia();
         assert_eq!(sepolia.name, "sepolia");
-        assert!(sepolia.rpc.as_str().contains("sepolia"));
+        assert_eq!(sepolia.rpc.as_str(), "http://127.0.0.1:8545/");
+        assert!(sepolia.el_ws_rpc.is_none());
+        assert_eq!(sepolia.public_rpc.as_ref().unwrap().as_str(), "https://sepolia.base.org/");
+        assert_eq!(sepolia.consensus_node_rpc.as_ref().unwrap().as_str(), "http://127.0.0.1:9545/");
+    }
+
+    #[test]
+    fn el_ws_rpc_deserializes_and_skips_none_when_serializing() {
+        let mainnet = MonitoringConfig::mainnet();
+        let yaml = serde_yaml::to_string(&mainnet).unwrap();
+        assert!(!yaml.contains("el_ws_rpc"));
+
+        let custom: MonitoringConfig =
+            serde_yaml::from_str(&format!("{yaml}el_ws_rpc: ws://localhost:9546\n")).unwrap();
+        assert_eq!(custom.el_ws_rpc.unwrap().as_str(), "ws://localhost:9546/");
     }
 
     #[test]
@@ -812,12 +920,13 @@ mod tests {
         // Test the base devnet config structure (without RPC call)
         let devnet = MonitoringConfig::devnet_base();
         assert_eq!(devnet.name, "devnet");
-        assert!(devnet.rpc.as_str().contains("localhost"));
         assert_eq!(devnet.rpc.as_str(), "http://localhost:7545/");
+        assert_eq!(devnet.el_ws_rpc.unwrap().as_str(), "ws://localhost:7546/");
+        assert!(devnet.public_rpc.is_none());
         assert_eq!(devnet.flashblocks_ws.as_str(), "ws://localhost:7111/");
         assert_eq!(devnet.l1_rpc.as_str(), "http://localhost:4545/");
-        assert!(devnet.consensus_node_rpc.is_some());
         assert_eq!(devnet.consensus_node_rpc.unwrap().as_str(), "http://localhost:7549/");
+        assert_eq!(devnet.chain_id, None);
         let validators = devnet.validators.expect("devnet should include validator/RPC node");
         assert_eq!(validators.len(), 2);
         assert_eq!(validators[0].name, "base-client");

@@ -3381,7 +3381,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let task_storage = Arc::clone(&storage);
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             let result = task_storage
                 .store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default())
                 .map(|_| ());
@@ -3390,6 +3390,8 @@ mod tests {
 
         assert_completes(rx);
         assert_eq!(storage.get_latest_block_number().unwrap(), Some((1, B256::repeat_byte(1))));
+        // Join before the temp dir drops so the worker releases its storage handle first.
+        handle.join().unwrap();
     }
 
     #[test]
@@ -3401,7 +3403,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let task_storage = Arc::clone(&storage);
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             let result = task_storage
                 .store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default())
                 .map(|_| ());
@@ -3411,6 +3413,8 @@ mod tests {
         assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
         drop(history_guard);
         assert_completes(rx);
+        // Join before the temp dir drops so the worker releases its storage handle first.
+        handle.join().unwrap();
     }
 
     #[test]
@@ -3422,7 +3426,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let task_storage = Arc::clone(&storage);
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             let result = task_storage
                 .store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default())
                 .map(|_| ());
@@ -3432,6 +3436,8 @@ mod tests {
         assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
         drop(append_guard);
         assert_completes(rx);
+        // Join before the temp dir drops so the worker releases its storage handle first.
+        handle.join().unwrap();
     }
 
     #[test]
@@ -3444,7 +3450,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let task_storage = Arc::clone(&storage);
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             let result = task_storage.replace_updates(BlockNumHash::new(0, B256::ZERO), vec![]);
             tx.send(result).unwrap();
         });
@@ -3452,6 +3458,8 @@ mod tests {
         assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
         drop(history_guard);
         assert_completes(rx);
+        // Join before the temp dir drops so the worker releases its storage handle first.
+        handle.join().unwrap();
     }
 
     #[test]

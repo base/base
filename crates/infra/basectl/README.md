@@ -1,13 +1,16 @@
 # `basectl-cli`
 
-TUI-based CLI tool for Base infrastructure monitoring.
+CLI parser, command implementations, and interactive monitor for Base infrastructure.
 
 ## Overview
 
-Provides an interactive terminal UI for monitoring Base infrastructure: block production rates,
-node sync status, flashblock throughput, and system metrics. `run_app` launches the full TUI
-with configurable views. Also supports `run_flashblocks_json` for non-interactive JSON output,
-suitable for piping into other tools.
+Owns the `basectl` clap parser and all command behavior, including block, sync,
+txpool, peer, proof, conductor, sequencer, and diagnostic workflows. `Cli::run`
+dispatches parsed commands and returns a process outcome.
+
+The crate also provides the interactive terminal monitor for block production,
+node sync status, flashblock throughput, and system metrics, plus the
+non-interactive `basectl flashblocks` JSON-lines stream.
 
 ## Pods View
 
@@ -35,10 +38,12 @@ basectl-cli = { workspace = true }
 ```
 
 ```rust,ignore
-use basectl_cli::{run_app, MonitoringConfig};
+use basectl_cli::Cli;
+use clap::Parser;
 
-let config = MonitoringConfig::from_cli(args);
-run_app(config).await?;
+if Cli::parse().run().await?.has_failures() {
+    std::process::exit(1);
+}
 ```
 
 ## License

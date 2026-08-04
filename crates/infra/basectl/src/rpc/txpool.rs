@@ -373,9 +373,9 @@ impl TxpoolClient {
         let http_client = alloy_transport_http::reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
-            .map_err(|error| TxpoolCommandError::BuildHttpClient {
+            .map_err(|source| TxpoolCommandError::BuildHttpClient {
                 rpc: rpc.to_string(),
-                message: error.to_string(),
+                source,
             })?;
         let transport = Http::with_client(http_client, rpc.clone());
         Ok(ProviderBuilder::new()
@@ -390,10 +390,7 @@ impl TxpoolClient {
         HttpClientBuilder::default()
             .request_timeout(Duration::from_secs(30))
             .build(rpc.as_str())
-            .map_err(|error| TxpoolCommandError::BuildAdminClient {
-                rpc: rpc.to_string(),
-                message: error.to_string(),
-            })
+            .map_err(|source| TxpoolCommandError::BuildAdminClient { rpc: rpc.to_string(), source })
     }
 
     fn txpool_transport_error(
@@ -404,11 +401,7 @@ impl TxpoolClient {
         if Self::is_transport_method_not_found(&error) {
             TxpoolCommandError::TxpoolMethodUnavailable { rpc: rpc.to_string(), method }
         } else {
-            TxpoolCommandError::TxpoolRpc {
-                rpc: rpc.to_string(),
-                method,
-                message: error.to_string(),
-            }
+            TxpoolCommandError::TxpoolRpc { rpc: rpc.to_string(), method, source: error }
         }
     }
 
@@ -420,11 +413,7 @@ impl TxpoolClient {
         if Self::is_jsonrpc_method_not_found(&error) {
             TxpoolCommandError::AdminMethodUnavailable { rpc: rpc.to_string(), method }
         } else {
-            TxpoolCommandError::AdminRpc {
-                rpc: rpc.to_string(),
-                method,
-                message: error.to_string(),
-            }
+            TxpoolCommandError::AdminRpc { rpc: rpc.to_string(), method, source: error }
         }
     }
 

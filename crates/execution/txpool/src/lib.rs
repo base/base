@@ -37,12 +37,6 @@ pub use transaction::{
 mod ordering;
 pub use ordering::{BaseOrdering, TimestampOrdering};
 
-mod consumer;
-pub use consumer::{Consumer, ConsumerConfig, ConsumerMetrics, RecentlySent, SpawnedConsumer};
-
-mod forwarder;
-pub use forwarder::{Forwarder, ForwarderConfig, ForwarderMetrics, SpawnedForwarder};
-
 mod pool;
 pub use pool::{AccountStateDiff, BaseTransactionPool};
 
@@ -64,7 +58,9 @@ pub use bundle::{
 };
 
 mod wire;
-pub use wire::ValidatedTransaction;
+pub use wire::{
+    ExtensionError, NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions,
+};
 
 mod two_d_nonce_pool;
 

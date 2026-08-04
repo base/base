@@ -887,4 +887,54 @@ mod tests {
 
         assert_zk_fallback_requested(&manager, &proof_requester);
     }
+
+    #[cfg(feature = "metrics")]
+    mod metrics_emission {
+        use metrics_util::{
+            MetricKind,
+            debugging::{DebugValue, DebuggingRecorder},
+        };
+
+        use super::*;
+
+        #[test]
+        fn proof_exhaustion_emits_metric() {
+            let recorder = DebuggingRecorder::new();
+            let snapshotter = recorder.snapshotter();
+            metrics::with_local_recorder(&recorder, || {
+                let runtime =
+                    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                runtime.block_on(async {
+                    let (mut manager, _, _) = manager_with_tx_manager(MockTxManager::new(Ok(
+                        receipt_with_status(true, B256::ZERO),
+                    )));
+                    insert_ready_proof(&mut manager);
+
+                    let entry = manager
+                        .pending_proofs
+                        .get_mut(&addr(0))
+                        .expect("entry should exist after insertion");
+                    entry.retry_count = TestManager::MAX_PROOF_RETRIES + 1;
+                    entry.phase = ProofPhase::NeedsRetry;
+
+                    manager.handle_proof_retry(addr(0)).await.unwrap();
+                });
+
+                let snapshot = snapshotter.snapshot().into_vec();
+                let count = snapshot.iter().find_map(|(key, _, _, value)| {
+                    if key.kind() != MetricKind::Counter
+                        || key.key().name() != "base_challenger.proof_retries_exhausted_total"
+                    {
+                        return None;
+                    }
+                    match value {
+                        DebugValue::Counter(value) => Some(*value),
+                        _ => None,
+                    }
+                });
+
+                assert_eq!(count, Some(1));
+            });
+        }
+    }
 }

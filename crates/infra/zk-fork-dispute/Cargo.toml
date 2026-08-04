@@ -1,0 +1,39 @@
+[package]
+name = "base-zk-fork-dispute"
+description = "Anvil fork dispute workflow for Base ZK challenge/nullify paths"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre.workspace = true
+url.workspace = true
+# Required by `base_cli_utils::define_log_args!` macro expansion (serde derives).
+serde.workspace = true
+tracing.workspace = true
+humantime.workspace = true
+alloy-rlp.workspace = true
+alloy-provider.workspace = true
+alloy-primitives.workspace = true
+alloy-signer-local.workspace = true
+alloy-trie = { workspace = true, features = ["std"] }
+base-protocol.workspace = true
+base-cli-utils.workspace = true
+base-proof-rpc.workspace = true
+base-challenger.workspace = true
+base-tx-manager.workspace = true
+base-proof-contracts.workspace = true
+base-common-consensus.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+base-prover-service-client = { workspace = true }
+base-prover-service-protocol = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+alloy-node-bindings.workspace = true

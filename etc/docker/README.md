@@ -33,6 +33,13 @@ just devnet logs   # Stream logs from all containers
 just devnet status # Check block numbers and sync status
 ```
 
+Zenith is disabled by default. To activate it at block 23 and switch the sequencer to its 200ms
+cadence, start with:
+
+```bash
+just devnet up zenith
+```
+
 `just devnet up` deploys a local L1 `MockProtocolVersions` contract, writes
 `.devnet/l2/configs/upgrade-signal.env`, and starts the normal L2 nodes in
 `runtime-admin` upgrade-signal mode. You can inspect or update the live schedule

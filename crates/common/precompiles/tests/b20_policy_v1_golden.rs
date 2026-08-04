@@ -25,11 +25,11 @@
 
 use IPolicyRegistry::PolicyType;
 use alloy_primitives::{Address, B256, Bytes, LogData, U256, b256, keccak256};
-use alloy_sol_types::{SolCall, SolError, SolEvent};
+use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
-    PolicyRegistryStorage, PolicyVersion, PolicyVersions,
+    IPolicyRegistryV1, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
@@ -173,7 +173,7 @@ fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
 fn resolver_maps_forks_to_versions() {
     assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Azul), None);
     assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Beryl), Some(PolicyVersion::V1));
-    assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(PolicyVersion::V1));
+    assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(PolicyVersion::V2));
 }
 
 #[test]
@@ -335,6 +335,146 @@ fn golden_create_reverts_zero_admin() {
     );
     assert!(rev);
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::ZeroAddress {}.abi_encode()));
+}
+
+// ============================================================================
+// composite policies (V2 ABI; unknown to V1)
+// ============================================================================
+
+#[test]
+fn golden_create_composite_selector_unknown_in_v1() {
+    // Composite policies are a V2 feature. The ABI is shared, but V1 predates these selectors,
+    // so it must keep reverting with UnknownFunctionSelector (raw 4-byte selector) — the old
+    // behavior — rather than routing them.
+    let mut s = fresh();
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::createCompositePolicyCall {
+            admin: ADMIN,
+            policyType: PolicyType::UNION,
+            childPolicyIds: vec![BLOCKLIST_ID, ALLOWLIST_ID],
+        }
+        .abi_encode(),
+    );
+    assert!(rev);
+    assert_eq!(bytes, Bytes::from(IPolicyRegistry::createCompositePolicyCall::SELECTOR.as_ref()));
+}
+
+#[test]
+fn golden_update_composite_selector_unknown_in_v1() {
+    let mut s = fresh();
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::updateCompositeCall {
+            policyId: BLOCKLIST_ID,
+            childPolicyIds: vec![BLOCKLIST_ID, ALLOWLIST_ID],
+        }
+        .abi_encode(),
+    );
+    assert!(rev);
+    assert_eq!(bytes, Bytes::from(IPolicyRegistry::updateCompositeCall::SELECTOR.as_ref()));
+}
+
+#[test]
+fn golden_composite_child_ids_selector_unknown_in_v1() {
+    // Views bypass the activation gate but NOT the wire gate: the selector is absent from the
+    // frozen V1 surface, so Beryl must reject it as unknown rather than answering the read.
+    let mut s = fresh();
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::compositePolicyChildIdsCall { policyId: BLOCKLIST_ID }.abi_encode(),
+    );
+    assert!(rev);
+    assert_eq!(bytes, Bytes::from(IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR.as_ref()));
+}
+
+fn frozen_v1_abi_decode_failure(calldata: &[u8]) -> Bytes {
+    let selector = calldata.first_chunk::<4>().copied().expect("calldata must carry a selector");
+    let Err(error) = IPolicyRegistryV1::IPolicyRegistryCalls::abi_decode_validate(calldata) else {
+        panic!("pre-Cobalt PolicyType must reject composite discriminants");
+    };
+
+    let mut bytes = selector.to_vec();
+    bytes.extend_from_slice(error.to_string().as_bytes());
+    bytes.into()
+}
+
+fn expected_v1_decode_error(signature: &str, discriminant: u8, args_hex: &str) -> String {
+    format!("type check failed for {signature:?} with data: {args_hex}{discriminant:064x}")
+}
+
+/// ABI-encoded `admin` word shared by both create calls, using [`ADMIN`].
+const ADMIN_WORD: &str = "000000000000000000000000adadadadadadadadadadadadadadadadadadadad";
+
+#[test]
+fn golden_create_policy_composite_type_is_abi_decode_failure_in_v1() {
+    for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
+        let calldata = IPolicyRegistry::createPolicyCall { admin: ADMIN, policyType: policy_type }
+            .abi_encode();
+
+        let mut s = fresh();
+        let (rev, bytes) = call_policy(&mut s, ADMIN, calldata.clone());
+
+        assert!(rev);
+        assert_eq!(
+            bytes,
+            frozen_v1_abi_decode_failure(&calldata),
+            "createPolicy with PolicyType discriminant {} must still fail ABI decoding under V1",
+            policy_type as u8
+        );
+        assert_eq!(
+            String::from_utf8(bytes[4..].to_vec()).unwrap(),
+            expected_v1_decode_error("(address,uint8)", policy_type as u8, ADMIN_WORD),
+        );
+        assert_eq!(bytes[..4], IPolicyRegistry::createPolicyCall::SELECTOR);
+    }
+}
+
+#[test]
+fn golden_create_policy_with_accounts_composite_type_is_abi_decode_failure_in_v1() {
+    for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
+        let calldata = IPolicyRegistry::createPolicyWithAccountsCall {
+            admin: ADMIN,
+            policyType: policy_type,
+            accounts: vec![ALICE, BOB],
+        }
+        .abi_encode();
+
+        let mut s = fresh();
+        let (rev, bytes) = call_policy(&mut s, ADMIN, calldata.clone());
+
+        assert!(rev);
+        assert_eq!(
+            bytes,
+            frozen_v1_abi_decode_failure(&calldata),
+            "createPolicyWithAccounts with PolicyType discriminant {} must still fail ABI decoding \
+             under V1",
+            policy_type as u8
+        );
+        // head offset, admin, [discriminant], accounts offset, len, ALICE, BOB
+        let args_hex = format!(
+            "{:064x}{ADMIN_WORD}",
+            0x20, // outer 1-tuple indirection: the inner tuple is dynamic
+        );
+        let tail_hex = format!(
+            "{:064x}{:064x}{:064x}{:064x}",
+            0x60, // accounts offset, past the 3-word inner head
+            2,    // accounts.len()
+            alloy_primitives::U256::from_be_slice(ALICE.as_slice()),
+            alloy_primitives::U256::from_be_slice(BOB.as_slice()),
+        );
+        assert_eq!(
+            String::from_utf8(bytes[4..].to_vec()).unwrap(),
+            format!(
+                "{}{tail_hex}",
+                expected_v1_decode_error("(address,uint8,address[])", policy_type as u8, &args_hex)
+            ),
+        );
+        assert_eq!(bytes[..4], IPolicyRegistry::createPolicyWithAccountsCall::SELECTOR);
+    }
 }
 
 #[test]
@@ -877,5 +1017,11 @@ fn v1_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
             golden_reads_for_nonexistent_and_builtins,
             golden_stage_and_finalize_update_admin,
         ]),
+        // V2 ABI; unknown to V1. Goldens pin the UnknownFunctionSelector (old error) behavior.
+        C::createCompositePolicy(_) => covered(&[golden_create_composite_selector_unknown_in_v1]),
+        C::updateComposite(_) => covered(&[golden_update_composite_selector_unknown_in_v1]),
+        C::compositePolicyChildIds(_) => {
+            covered(&[golden_composite_child_ids_selector_unknown_in_v1])
+        }
     }
 }

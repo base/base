@@ -10,19 +10,16 @@
 //!
 //! After a signer deregistration or image rotation the health latch stays set
 //! while the proving guard rejects every request.  The prover will continue
-//! receiving traffic from the load balancer (because `/healthz` returns 200)
-//! but respond with `-32001` errors.  This is intentional: the ASG must not
-//! terminate the instance on a transient L1 blip, and proof-request callers
-//! already retry on other nodes.  If `/healthz` is ever the **sole** LB
-//! signal with no retry layer, switch to a bounded latch (e.g. stay healthy
-//! for N minutes after the last successful validation).
+//! returning 200 from `/healthz` but respond with `-32001` errors. The
+//! registrar probes `/readyz` (not registration-gated) so bootstrap stays
+//! independent of this latch. If another deployment uses `/healthz` as its
+//! **sole** load-balancer signal with no retry layer, switch to a bounded latch
+//! (e.g. stay healthy for N minutes after the last successful validation).
 
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
-use alloy_signer::utils::public_key_to_address;
 use base_proof_contracts::{TEEProverRegistryClient, TEEProverRegistryContractClient};
-use k256::ecdsa::VerifyingKey;
 use thiserror::Error;
 use tokio::sync::OnceCell;
 use tracing::warn;
@@ -131,13 +128,10 @@ impl RegistrationChecker {
     }
 
     async fn signer_address(transport: &NitroTransport) -> Result<Address, RegistrationError> {
-        let public_key = transport
-            .signer_public_key()
+        transport
+            .signer_address()
             .await
-            .map_err(|e| RegistrationError::Setup(format!("signer public key: {e}")))?;
-        let verifying_key = VerifyingKey::from_sec1_bytes(&public_key)
-            .map_err(|e| RegistrationError::Setup(format!("invalid public key: {e}")))?;
-        Ok(public_key_to_address(&verifying_key))
+            .map_err(|e| RegistrationError::Setup(format!("signer public key: {e}")))
     }
 
     async fn is_valid_signer(&self, signer: Address) -> Result<bool, RegistrationError> {
@@ -302,9 +296,7 @@ mod tests {
     }
 
     async fn transport_signer_address(transport: &NitroTransport) -> Address {
-        let pk = transport.signer_public_key().await.unwrap();
-        let vk = VerifyingKey::from_sec1_bytes(&pk).unwrap();
-        public_key_to_address(&vk)
+        transport.signer_address().await.unwrap()
     }
 
     async fn two_transport_signers(checker: &RegistrationChecker) -> (Address, Address) {

@@ -20,11 +20,22 @@ Global options:
 | `-c, --config <CONFIG>` | `mainnet` | Chain config: `mainnet`, `sepolia`, `devnet`, or a path to a config file                                                                                                                                                                                                    |
 | `--conductor-rpc <URL>` |           | Bootstrap conductor JSON-RPC URL for runtime cluster discovery when the chain config has no hardcoded conductor list. Used by `basectl conductor` and `basectl sequencer`. If omitted, basectl uses `discovery.bootstrap_rpc` from config. Set via `BASECTL_CONDUCTOR_RPC`. |
 
+The built-in mainnet and Sepolia configs target a local node at
+`http://127.0.0.1:8545` (EL) and `http://127.0.0.1:9545` (CL). Their
+`public_rpc` values retain the hosted endpoints for network-reference reads,
+including tip comparisons and upgrade monitoring. Local-node commands do not
+silently fall back when the local node is unavailable. Use the command-specific
+RPC flags or a config override to target different endpoints.
+
 ## Commands
 
 ### `basectl monitor`
 
 Opens the interactive TUI. With no subcommand, opens the Home view.
+The top-right badge shows the active EL and CL endpoints. Press `e` from any
+non-input view to switch the EL between the configured `rpc` and `public_rpc`;
+the CL endpoint is unchanged. Switching rebuilds the active monitors so their
+background requests reconnect to the selected EL endpoint.
 
 | Command                  | Alias | Description                                      |
 | ------------------------ | ----- | ------------------------------------------------ |
@@ -94,8 +105,8 @@ is one of `caught_up` (within ±N blocks of the reference, where N is the
 
 | Flag                       | Description                                                                                                                                                                                                                                                                                           |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--el-rpc <URL>`           | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field.                                                                                                                                                                                                                     |
-| `--cl-rpc <URL>`           | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config).                                                                                                                |
+| `--el-rpc <URL>`           | Override the execution-layer RPC URL. Defaults to the chain config's local `rpc` field.                                                                                                                                                                                                              |
+| `--cl-rpc <URL>`           | Override the consensus-node RPC URL. Defaults to the chain config's `consensus_node_rpc` field.                                                                                                                                                                                                       |
 | `--tip-tolerance <BLOCKS>` | Block tolerance for the tip-reference `caught_up` classification. Within ±this many blocks of the public reference, the local node is reported as `caught_up`; otherwise `behind` or `ahead`. Default `5` ≈ ~10s at Base's 2s block time. Use `0` for strict alerting, larger values to dampen noise. |
 | `--json`                   | Emit humanized JSON (decoded numeric values, ISO + local timestamps, precomputed `safeLag*`, `tipReference` object, `elSyncInfo` with `processedBlocks` / `remainingBlocks`) instead of the key-value table.                                                                                          |
 | `--raw`                    | With `--json`, emit the alloy-typed `optimism_syncStatus` wire format instead of the humanized form. Errors at parse time if used without `--json`.                                                                                                                                                   |
@@ -117,25 +128,22 @@ consensus layers.
 - `basectl p2p remove-peer <TARGET>` disconnects one peer. `enode://...` routes
   to the execution layer; any other non-empty target is treated as a bare
   consensus libp2p peer ID. ENR records and multiaddrs are rejected for removal.
-- `basectl p2p ban <PEER_ID>` bans one consensus-layer peer and then attempts
-  to disconnect it so the ban takes effect immediately.
-- `basectl p2p unban <PEER_ID>` unbans one consensus-layer peer. It does not
+- `basectl p2p ban <TARGET>` bans one peer. `enode://...` routes to the execution
+  layer; a bare libp2p peer ID routes to the consensus layer. ENR records and
+  multiaddrs are rejected. CL bans also attempt to disconnect the peer
+  immediately.
+- `basectl p2p unban <TARGET>` unbans one execution or consensus peer using the
+  same target routing, with the same ENR and multiaddr rejection. It does not
   reconnect the peer.
 - `basectl p2p unban-all` unbans every peer currently banned by the consensus
   layer RPC.
 
-Read-only p2p commands and `add-peer` / `remove-peer` support:
+Read-only p2p commands and single-peer actions support:
 
 | Flag             | Description                                                                                                                                                                            |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field.                                                                                                      |
-| `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
-
-CL-only ban/unban commands support:
-
-| Flag             | Description                                                                                                                                                                            |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
+| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's local `rpc` field.             |
+| `--cl-rpc <URL>` | Override the consensus-node RPC URL. Defaults to the chain config's `consensus_node_rpc` field.    |
 
 Read-only p2p commands also support:
 
@@ -144,11 +152,12 @@ Read-only p2p commands also support:
 | `--json` | Emit humanized JSON instead of the pretty table output.                                                                      |
 | `--raw`  | With `--json`, emit raw nested RPC payloads instead of the humanized summary. Errors at parse time if used without `--json`. |
 
-`p2p reachability` requires `--telemetry-url <URL>` or
-`BASECTL_TELEMETRY_URL` and supports `--json`. It accepts an explicit enode and
-does not require EL or CL JSON-RPC access. It exits non-zero when the probe
-completes with any outcome other than `reachable`, so scripts can rely on the
-exit code.
+`p2p reachability` uses the selected config's L2 RPC to detect the live chain,
+then routes the request to the hosted Base mainnet or Base Sepolia telemetry
+service. The default config remains mainnet. Unsupported chains and failed
+network detection return an error. The command supports `--json` and exits
+non-zero when the probe completes with any outcome other than `reachable`, so
+scripts can rely on the exit code.
 
 The returned `stage` shows where the check stopped:
 
@@ -168,9 +177,16 @@ Important EL RPC note:
 - EL peer count comes from `net_peerCount`, so it works on many restricted or public-style EL RPCs.
 - EL advertised endpoint data (`admin_nodeInfo`) and EL peer listings (`admin_peers`) require an admin-enabled EL RPC.
 - If the EL RPC does not expose those admin methods, `basectl p2p` degrades gracefully: EL peer count still appears, but EL endpoint fields or EL peer listings show as unavailable / `null`.
+- EL ban/unban uses `admin_banPeer` and `admin_unbanPeer`, which require an EL
+  implementation that exposes those admin methods. Reth trusted peers must be
+  removed from the trusted set before they can be banned; because reth silently
+  ignores a ban on a trusted peer, `basectl p2p ban` first checks `admin_peers`
+  and fails fast when the target is a currently-connected trusted peer (a
+  trusted peer with no live session is not detectable this way).
 - CL data comes from `opp2p_self`, `opp2p_peerStats`, and `opp2p_peers(true)` on the consensus RPC.
 - When exposed by the node, `opp2p_peerStats` also additively reports `maxPeerCount`, the configured CL max peer count.
-- CL ban/unban commands use `opp2p_blockPeer`, `opp2p_unblockPeer`, and `opp2p_listBlockedPeers` underneath, but the basectl command surface uses ban/unban terminology so it can stay consistent when EL ban support is added later.
+- CL ban/unban commands use `opp2p_blockPeer`, `opp2p_unblockPeer`, and `opp2p_listBlockedPeers` underneath.
+- `unban-all` remains CL-only because the EL admin API does not expose a banned-peer listing.
 
 ### `basectl txpool`
 
@@ -306,22 +322,22 @@ Doctor reads the selected config the same way as the other non-TUI commands:
 built-in preset, optional YAML override, or explicit config path through global
 `-c/--config`. By default it uses the config's `rpc`, `l1_rpc`, and
 `consensus_node_rpc` values. Pass `--el-rpc` and `--cl-rpc` to point at a
-specific node when the config points at shared/public endpoints.
+different node.
 
 Checks include declared network vs. live chain ID, p2p endpoint context,
-canonical bootnode config context, advertised endpoint sanity, optional
+canonical bootnode config context, advertised endpoint sanity,
 telemetry-backed external EL reachability, EL/CL peer counts, EL head vs. public
 tip, safe-head recency, optional `reth.toml` headers/bodies limits,
 consensus-node RPC presence, and L1 RPC reachability. Doctor does not mutate
-node state. Without `--telemetry-url`, advertised endpoint checks remain limited
-to local config and exposed RPC metadata.
+node state. The effective `--el-rpc` chain ID selects the hosted Base mainnet or
+Base Sepolia telemetry service; the check is skipped when detection fails or
+the chain is unsupported.
 
 | Flag                                  | Description                                                                                                                                      |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `--el-rpc <URL>`                      | Override the execution-layer RPC URL used for local-node checks. Defaults to the selected config's `rpc` field.                                  |
 | `--cl-rpc <URL>`                      | Override the consensus-node RPC URL. If omitted and the selected config has no `consensus_node_rpc`, CL-dependent checks are skipped with hints. |
 | `--reth-config <PATH>`                | Path to the local `reth.toml` file. If omitted, the reth limits check is skipped.                                                                |
-| `--telemetry-url <URL>`               | Base telemetry service used to probe the enode returned by `admin_nodeInfo`. May also be set with `BASECTL_TELEMETRY_URL`.                       |
 | `--peer-warn-threshold <COUNT>`       | Connected peer count below which EL/CL peer checks warn. Default `5`.                                                                            |
 | `--head-lag-warn-blocks <BLOCKS>`     | EL head lag behind the public tip above which doctor warns. Default `10`.                                                                        |
 | `--head-lag-fail-blocks <BLOCKS>`     | EL head lag behind the public tip above which doctor fails. Default `20`.                                                                        |
@@ -435,24 +451,24 @@ basectl -c mainnet block --json --raw finalized | jq '{number, gasUsed, baseFeeP
 # Sync status against a devnet (consensus_node_rpc is set in the devnet preset)
 basectl -c devnet sync-status
 
-# Sync status against a public chain — requires explicit --cl-rpc since mainnet/sepolia presets ship without one
-basectl -c sepolia sync-status --cl-rpc https://your-rollup-node.example/
+# Sync status against a local Sepolia node
+basectl -c sepolia sync-status
 
 # Humanized JSON shows precomputed safe-head lag for downstream tooling
-basectl -c sepolia sync-status --cl-rpc https://your-rollup-node.example/ --json | jq '{safeLagSeconds, safeLagBlocks, elActivelySyncing}'
+basectl -c sepolia sync-status --json | jq '{safeLagSeconds, safeLagBlocks, elActivelySyncing}'
 ```
 
 ### `basectl p2p`
 
 ```sh
 # P2P endpoint summary for a node
-basectl -c sepolia p2p info --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/
+basectl -c sepolia p2p info
 
 # P2P peers as JSON
-basectl -c sepolia p2p peers --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/ --json | jq '{el: .el | length, cl: .cl | length}'
+basectl -c sepolia p2p peers --json | jq '{el: .el | length, cl: .cl | length}'
 
 # Probe an explicit EL enode from the telemetry service's network
-basectl p2p reachability enode://<node-id>@203.0.113.10:30303 --telemetry-url http://127.0.0.1:8080 --json
+basectl -c sepolia p2p reachability enode://<node-id>@203.0.113.10:30303 --json
 
 # Add an execution-layer peer after confirmation
 basectl -c sepolia p2p add-peer enode://<node-id>@203.0.113.10:30303 --el-rpc https://your-el.example/
@@ -465,6 +481,12 @@ basectl -c sepolia p2p add-peer /ip4/203.0.113.10/tcp/9000/p2p/16Uiu2HAm... --cl
 
 # Remove a consensus peer by bare libp2p peer ID
 basectl -c sepolia p2p remove-peer 16Uiu2HAm... --cl-rpc https://your-cl.example/
+
+# Ban an execution peer through an admin-enabled EL RPC
+basectl -c sepolia p2p ban enode://<node-id>@203.0.113.10:30303 --el-rpc https://your-el.example/
+
+# Unban an execution peer non-interactively and emit JSON
+basectl -c sepolia p2p unban enode://<node-id>@203.0.113.10:30303 --el-rpc https://your-el.example/ --yes --json | jq .
 
 # Ban a consensus peer and best-effort disconnect it immediately
 basectl -c sepolia p2p ban 16Uiu2HAm... --cl-rpc https://your-cl.example/
@@ -529,7 +551,7 @@ basectl -c mainnet doctor
 basectl -c mainnet doctor --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/
 
 # Include an external EL reachability probe
-basectl -c mainnet doctor --el-rpc https://your-el.example/ --telemetry-url http://127.0.0.1:8080
+basectl -c mainnet doctor --el-rpc https://your-el.example/
 
 # Include local reth headers/bodies limit validation and JSON output
 basectl -c mainnet doctor --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/ --reth-config /etc/reth/reth.toml --json

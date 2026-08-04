@@ -73,8 +73,7 @@ impl NitroProverServer {
         Self { pool, registration_health: None }
     }
 
-    /// Enables registration-gated health checks. When set, `/healthz` verifies
-    /// the enclave signer is registered in the `TEEProverRegistry` on L1.
+    /// Enables registration-gated health checks.
     pub fn with_registration_health(mut self, config: RegistrationHealthConfig) -> Self {
         self.registration_health = Some(config);
         self
@@ -137,12 +136,13 @@ impl NitroProverServer {
         // SECURITY: This unauthenticated RPC server is an internal control-plane endpoint.
         // Deployments must restrict it to trusted components on a private network.
         let middleware = tower::ServiceBuilder::new()
-            .layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?);
+            .layer(ProxyGetRequestLayer::new([("/healthz", "healthz"), ("/readyz", "readyz")])?);
         let server = Server::builder().set_http_middleware(middleware).build(addr).await?;
         let addr = server.local_addr()?;
         info!(addr = %addr, "nitro registrar rpc server started");
 
         let mut module = RpcModule::new(());
+        module.register_method("readyz", |_, _, _| RpcResult::Ok(()))?;
         match registration_checker {
             Some(checker) => {
                 module.merge(
@@ -264,6 +264,10 @@ mod tests {
     use super::*;
     use crate::test_utils::MockRegistry;
 
+    async fn http_status(addr: std::net::SocketAddr, path: &str) -> u16 {
+        reqwest::get(format!("http://{addr}{path}")).await.unwrap().status().as_u16()
+    }
+
     #[tokio::test]
     async fn signer_public_key_routed_to_transport() {
         let server = Arc::new(EnclaveServer::new_local().unwrap());
@@ -335,6 +339,35 @@ mod tests {
         let result: base_health::HealthzResponse =
             client.request("healthz", jsonrpsee::rpc_params![]).await.unwrap();
         assert_eq!(result.version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(call_count.load(Ordering::Relaxed), 1);
+        handle.stop().unwrap();
+    }
+
+    #[tokio::test]
+    async fn registrar_rpc_server_readyz_bypasses_registration() {
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(server));
+        let registry = MockRegistry::new(false);
+        let call_count = Arc::clone(&registry.call_count);
+        let checker =
+            Arc::new(RegistrationChecker::new(vec![Arc::clone(&transport)], registry).unwrap());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let handle =
+            NitroProverServer::run_registrar_rpc_server(addr, vec![transport], Some(checker))
+                .await
+                .unwrap();
+
+        let client = jsonrpsee::http_client::HttpClientBuilder::default()
+            .build(format!("http://{addr}"))
+            .unwrap();
+        client.request::<(), _>("readyz", jsonrpsee::rpc_params![]).await.unwrap();
+        assert_eq!(call_count.load(Ordering::Relaxed), 0);
+        assert_eq!(http_status(addr, "/readyz").await, 200);
+        assert_eq!(call_count.load(Ordering::Relaxed), 0);
+        assert_eq!(http_status(addr, "/healthz").await, 500);
         assert_eq!(call_count.load(Ordering::Relaxed), 1);
         handle.stop().unwrap();
     }

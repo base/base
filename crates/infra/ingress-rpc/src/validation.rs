@@ -218,7 +218,8 @@ mod tests {
 
         let bundle = Bundle {
             txs: encoded_txs,
-            block_number: 0,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: vec![],
@@ -269,7 +270,8 @@ mod tests {
 
         let bundle = Bundle {
             txs: encoded_txs,
-            block_number: 0,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: vec![],
@@ -331,7 +333,8 @@ mod tests {
 
         let bundle = Bundle {
             txs: encoded_txs,
-            block_number: 0,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
             reverting_tx_hashes: tx_hashes[..2].to_vec(),

@@ -68,10 +68,17 @@ pub use setup::{
 };
 
 mod smoke;
+#[cfg(feature = "upgrade-signal")]
+pub use smoke::RuntimeUpgradeSignalGuard;
 pub use smoke::{SystemTestStack, SystemTestStackBuilder};
 
 mod system_config;
 pub use system_config::{StableSystemTestConfig, SystemTestPorts};
+
+#[cfg(feature = "upgrade-signal")]
+mod upgrade_signal;
+#[cfg(feature = "upgrade-signal")]
+pub use upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 
 mod urls;
 pub use urls::SystemTestUrls;

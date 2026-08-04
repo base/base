@@ -52,7 +52,7 @@ mod tests {
         let upgrades = UpgradeConfig {
             regolith_time: Some(10),
             canyon_time: Some(20),
-            base: BaseUpgradeConfig { azul: Some(30), beryl: None, cobalt: None },
+            base: BaseUpgradeConfig { azul: Some(30), beryl: None, cobalt: None, zenith: None },
             ..Default::default()
         };
         assert_eq!(
@@ -66,13 +66,13 @@ mod tests {
         let a = UpgradeConfig {
             regolith_time: Some(1),
             canyon_time: Some(2),
-            base: BaseUpgradeConfig { azul: Some(3), beryl: None, cobalt: None },
+            base: BaseUpgradeConfig { azul: Some(3), beryl: None, cobalt: None, zenith: None },
             ..Default::default()
         };
         let b = UpgradeConfig {
             regolith_time: Some(1),
             canyon_time: Some(4),
-            base: BaseUpgradeConfig { azul: Some(3), beryl: None, cobalt: None },
+            base: BaseUpgradeConfig { azul: Some(3), beryl: None, cobalt: None, zenith: None },
             ..Default::default()
         };
 
