@@ -21,9 +21,6 @@ permissions:
 jobs:
   fork-tests:
     name: Base Std Interface Tests (${{ matrix.fork }})
-    # Skip for external contributor PRs (forks) — we don't have permission to
-    # comment on forked PRs.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on:
       group: BasePerfRunnerGroup
     timeout-minutes: 120
@@ -200,9 +197,7 @@ jobs:
 
   aggregate:
     name: Base Std Interface Tests
-    # Skip for external contributor PRs (forks) — we don't have permission to
-    # comment on forked PRs.
-    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always()
     needs: fork-tests
     runs-on: ubuntu-latest
     steps:
@@ -267,8 +262,12 @@ jobs:
           cat "$body" >> "$GITHUB_STEP_SUMMARY"
           echo "overall=$overall" >> "$GITHUB_OUTPUT"
 
+      # Skip commenting on forked PRs — we don't have permission to comment on them.
       - name: Comment fork-test results on PR
-        if: github.event_name == 'pull_request' && steps.aggregate.outcome == 'success'
+        if: >
+          github.event_name == 'pull_request' &&
+          steps.aggregate.outcome == 'success' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
