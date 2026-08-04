@@ -37,6 +37,7 @@ impl Hoodi {
             prague_time: alloy_hardforks::EthereumHardfork::Prague.hoodi_activation_timestamp(),
             osaka_time: alloy_hardforks::EthereumHardfork::Osaka.hoodi_activation_timestamp(),
             amsterdam_time: None,
+            bogota_time: None,
             bpo1_time: alloy_hardforks::EthereumHardfork::Bpo1.hoodi_activation_timestamp(),
             bpo2_time: alloy_hardforks::EthereumHardfork::Bpo2.hoodi_activation_timestamp(),
             bpo3_time: alloy_hardforks::EthereumHardfork::Bpo3.hoodi_activation_timestamp(),

@@ -154,7 +154,7 @@ impl PrecompileCallOutcome {
         Self {
             status,
             gas_used: output.gas_used,
-            state_gas_used: output.state_gas_used,
+            state_gas_used: output.state_gas_used as u64,
             gas_refunded: output.gas_refunded,
             duration_seconds,
             error,

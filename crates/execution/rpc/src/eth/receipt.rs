@@ -19,7 +19,7 @@ use reth_rpc_eth_api::{
     helpers::LoadReceipt,
     transaction::{ConvertReceiptInput, ReceiptConverter},
 };
-use reth_rpc_eth_types::{EthApiError, receipt::build_receipt};
+use reth_rpc_eth_types::receipt::build_receipt;
 use reth_storage_api::BlockReader;
 
 use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
@@ -51,25 +51,19 @@ where
         BlockReader<Block = N::Block> + ChainSpecProvider<ChainSpec: Upgrades> + Debug + 'static,
 {
     type RpcReceipt = BaseTransactionReceipt;
+    type RpcLog = Log;
     type Error = BaseEthApiError;
 
-    fn convert_receipts(
+    fn convert_log(
         &self,
-        inputs: Vec<ConvertReceiptInput<'_, N>>,
-    ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
-        let Some(block_number) = inputs.first().map(|r| r.meta.block_number) else {
-            return Ok(Vec::new());
-        };
-
-        let block = self
-            .provider
-            .block_by_number(block_number)?
-            .ok_or(EthApiError::HeaderNotFound(block_number.into()))?;
-
-        self.convert_receipts_with_block(inputs, &SealedBlock::new_unhashed(block))
+        log: Log,
+        _receipt: &N::Receipt,
+        _header: &reth_primitives_traits::SealedHeaderFor<N>,
+    ) -> Result<Self::RpcLog, Self::Error> {
+        Ok(log)
     }
 
-    fn convert_receipts_with_block(
+    fn convert_receipts(
         &self,
         inputs: Vec<ConvertReceiptInput<'_, N>>,
         block: &SealedBlock<N::Block>,

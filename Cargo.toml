@@ -264,10 +264,10 @@ base-metrics = { path = "crates/utilities/metrics", default-features = false }
 base-runtime = { path = "crates/utilities/runtime", default-features = false }
 
 # revm
-revm = { version = "41.0.0", default-features = false }
-revm-bytecode = { version = "41.0.0", default-features = false }
-revm-database = { version = "41.0.0", default-features = false }
-revm-precompile = { version = "41.0.0", default-features = false }
+revm = { version = "42.0.1", default-features = false }
+revm-bytecode = { version = "42.0.0", default-features = false }
+revm-database = { version = "42.0.0", default-features = false }
+revm-precompile = { version = "42.0.1", default-features = false }
 
 # alloy
 alloy-signer = "2.0.5"
@@ -289,7 +289,7 @@ alloy-rpc-types-beacon = "2.0.5"
 alloy-rlp = { version = "0.3.13", default-features = false }
 alloy-trie = { version = "0.9.4", default-features = false }
 alloy-eips = { version = "2.0.5", default-features = false }
-alloy-evm = { version = "0.37.0", default-features = false }
+alloy-evm = { version = "0.38.0", default-features = false }
 alloy-serde = { version = "2.0.5", default-features = false }
 alloy-chains = { version = "0.2.33", default-features = false }
 alloy-genesis = { version = "2.0.5", default-features = false }
@@ -303,9 +303,9 @@ alloy-rpc-types-engine = { version = "2.0.5", default-features = false }
 alloy-network-primitives = { version = "2.0.5", default-features = false }
 
 # reth
-reth-zstd-compressors = { version = "0.5.0", default-features = false }
-reth-primitives-traits = { version = "0.5.0", default-features = false }
-reth-codecs = { version = "0.5.0", default-features = false, features = ["alloy"] }
+reth-zstd-compressors = { version = "0.6.0", default-features = false }
+reth-primitives-traits = { version = "0.6.0", default-features = false }
+reth-codecs = { version = "0.6.0", default-features = false, features = ["alloy"] }
 reth-db = { git = "https://github.com/paradigmxyz/reth", rev = "c3a82245564fdfbf63d0c1cb65c65293e17e4d0f" }
 reth-cli = { git = "https://github.com/paradigmxyz/reth", rev = "c3a82245564fdfbf63d0c1cb65c65293e17e4d0f" }
 reth-ipc = { git = "https://github.com/paradigmxyz/reth", rev = "c3a82245564fdfbf63d0c1cb65c65293e17e4d0f" }

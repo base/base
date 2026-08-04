@@ -133,7 +133,9 @@ impl BasePrecompileError {
                 bytes.into()
             }
         };
-        Ok(PrecompileOutput::revert(gas, bytes, state_gas))
+        let mut out = PrecompileOutput::revert(gas, bytes, 0);
+        out.state_gas_used = state_gas as i64;
+        Ok(out)
     }
 }
 
@@ -170,7 +172,8 @@ impl<T> IntoPrecompileResult<T> for Result<T> {
     ) -> PrecompileResult {
         match self {
             Ok(res) => {
-                let mut out = PrecompileOutput::new(gas, encode_ok(res), state_gas);
+                let mut out = PrecompileOutput::new(gas, encode_ok(res), 0);
+                out.state_gas_used = state_gas as i64;
                 out.gas_refunded = gas_refunded;
                 Ok(out)
             }

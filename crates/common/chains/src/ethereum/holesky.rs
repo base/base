@@ -37,6 +37,7 @@ impl Holesky {
             prague_time: alloy_hardforks::EthereumHardfork::Prague.holesky_activation_timestamp(),
             osaka_time: alloy_hardforks::EthereumHardfork::Osaka.holesky_activation_timestamp(),
             amsterdam_time: None,
+            bogota_time: None,
             bpo1_time: alloy_hardforks::EthereumHardfork::Bpo1.holesky_activation_timestamp(),
             bpo2_time: alloy_hardforks::EthereumHardfork::Bpo2.holesky_activation_timestamp(),
             bpo3_time: alloy_hardforks::EthereumHardfork::Bpo3.holesky_activation_timestamp(),
