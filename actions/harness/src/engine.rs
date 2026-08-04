@@ -759,6 +759,10 @@ impl EngineClient for ActionEngineClient {
         };
         Ok(info)
     }
+
+    async fn el_syncing(&self) -> Result<bool, EngineClientError> {
+        Ok(false)
+    }
 }
 
 #[async_trait]
