@@ -986,4 +986,9 @@ impl SequencerEngineClient for ActionEngineClient {
         let guard = self.inner.lock().expect("action engine inner lock poisoned");
         Ok(guard.canonical_head)
     }
+
+    async fn el_sync_finished(&self) -> Result<bool, NodeEngineClientError> {
+        // The action engine executes synchronously and does not model background EL sync.
+        Ok(true)
+    }
 }
