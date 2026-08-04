@@ -626,10 +626,8 @@ impl BatchPipeline for BatchEncoder {
                     self.span_opened_at_l1 = Some(self.l1_head);
                 }
 
-                // Estimate the compressed size of the accumulated span batch and close
-                // the channel when it would exceed the configured size budget. This mirrors
-                // the reference batcher's `SpanChannelOut`, which triggers closure based on estimated
-                // compressed size rather than waiting for a timeout.
+                // Close the channel when the accumulated span batch is estimated
+                // to exceed the configured compressed-size budget.
                 //
                 // Each block contributes fixed-field overhead plus its raw transaction bytes.
                 // The compressed estimate uses the same ratio as the ShadowCompressor so that

@@ -104,8 +104,6 @@ pub struct BatcherConfig {
     pub admin_addr: Option<SocketAddr>,
     /// If `true`, start in a stopped state and defer batch submission until
     /// `admin_startBatcher` is called via the admin API.
-    ///
-    /// Matches the reference batcher's `--stopped` behavior (env: `BATCHER_STOPPED`).
     pub stopped: bool,
     /// If `true`, block startup until the rollup node has processed the selected
     /// L1 synchronization target.
@@ -113,7 +111,6 @@ pub struct BatcherConfig {
     /// Useful when the batcher is started before the node has finished its
     /// initial sync — without this gate the initial backfill would race the
     /// node's derivation pipeline and could submit redundant data.
-    /// Matches the reference batcher's `--wait-node-sync` flag.
     pub wait_node_sync: bool,
     /// Maximum time to wait for the rollup node to report sync when
     /// [`wait_node_sync`](Self::wait_node_sync) is set.

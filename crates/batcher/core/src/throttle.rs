@@ -2,8 +2,7 @@
 
 /// Configuration for the throttle controller.
 ///
-/// Defaults match the reference batcher implementation:
-/// 1 MB threshold, full intensity, linear strategy.
+/// Defaults to a 1 MB threshold, full intensity, and linear strategy.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThrottleConfig {
     /// Backlog threshold in bytes at which throttling activates.
@@ -28,7 +27,6 @@ pub struct ThrottleConfig {
 
 impl Default for ThrottleConfig {
     fn default() -> Self {
-        // Match the reference batcher defaults.
         Self {
             threshold_bytes: 1_000_000,
             max_intensity: 1.0,

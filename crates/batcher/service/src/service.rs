@@ -562,8 +562,8 @@ impl BatcherService {
             })
             .await?;
 
-        // Match the reference batcher: recent transactions only choose an L1
-        // synchronization target. They never advance the L2 backfill cursor.
+        // Recent transactions only choose an L1 synchronization target.
+        // They never advance the L2 backfill cursor.
         if self.config.wait_node_sync {
             let target_l1 = if self.config.check_recent_txs_depth > 0 {
                 recent_tx_sync_target(

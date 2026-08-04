@@ -6,14 +6,11 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use tracing::{info, warn};
 
 /// Maximum depth allowed for the recent-transaction startup scan.
-///
-/// Matches the limit used by the reference batcher's `--check-recent-txs-depth` flag.
 pub const MAX_CHECK_RECENT_TXS_DEPTH: u64 = 128;
 
 /// Returns an L1 synchronization target based on recent batcher transactions.
 ///
-/// This mirrors the reference batcher's `CheckRecentTxs`: the result is only
-/// an L1 synchronization target and never changes the L2 backfill cursor.
+/// The result never changes the L2 backfill cursor.
 pub async fn recent_tx_sync_target(
     l1_provider: &RootProvider,
     batcher_address: Address,
