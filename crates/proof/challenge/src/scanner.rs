@@ -102,6 +102,8 @@ pub struct CandidateGame {
     pub intermediate_block_interval: u64,
     /// The L1 head block hash stored at game creation time.
     pub l1_head: B256,
+    /// Whether this game's proof journal includes a pinned upgrade schedule.
+    pub uses_schedule_pinning: bool,
     /// Address of the TEE prover for this game (`Address::ZERO` if none registered).
     pub tee_prover: Address,
     /// Classification of this candidate and the action the driver should take.
@@ -393,12 +395,16 @@ impl GameScanner {
         };
 
         // Fetch remaining fields only for actionable games.
-        let ((info, starting_block_number, l1_head), intermediate_block_interval) = tokio::try_join!(
+        let (
+            (info, starting_block_number, l1_head, uses_schedule_pinning),
+            intermediate_block_interval,
+        ) = tokio::try_join!(
             async {
                 tokio::try_join!(
                     self.verifier_client.game_info(factory.proxy),
                     self.verifier_client.starting_block_number(factory.proxy),
                     self.verifier_client.l1_head(factory.proxy),
+                    self.verifier_client.uses_schedule_pinning(factory.proxy),
                 )
                 .map_err(Into::into)
             },
@@ -412,6 +418,7 @@ impl GameScanner {
             starting_block_number,
             intermediate_block_interval,
             l1_head,
+            uses_schedule_pinning,
             tee_prover,
             category,
         }))
@@ -877,6 +884,20 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].index, 0);
         assert_eq!(candidates[1].index, 1);
+    }
+
+    #[tokio::test]
+    async fn test_scan_preserves_legacy_game_protocol() {
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]));
+        let mut state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
+        state.uses_schedule_pinning = false;
+        let verifier = Arc::new(MockAggregateVerifier::new(HashMap::from([(addr(0), state)])));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+
+        let candidates = scanner.scan().await.unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert!(!candidates[0].uses_schedule_pinning);
     }
 
     /// Error at the first index (0) skips that game, rest still returned.

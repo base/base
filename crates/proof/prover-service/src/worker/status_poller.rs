@@ -1,6 +1,7 @@
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use base_prover_service_db::{FailExpiredProofJobs, ProofJob, ProofRequestRepo, RetryOutcome};
+use base_prover_service_protocol::ProofRequest;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
@@ -137,8 +138,31 @@ impl StatusPoller {
         }
 
         self.reap_expired_claims().await;
+        self.record_pending_jobs().await;
 
         Ok(())
+    }
+
+    /// Publish the pending-jobs gauge, grouped by required prover protocol version.
+    ///
+    /// Known versions are zero-filled so a drained version's gauge drops back to `0`
+    /// instead of freezing at its last value.
+    async fn record_pending_jobs(&self) {
+        let counts = match self.repo.count_pending_jobs_by_protocol_version().await {
+            Ok(counts) => counts,
+            Err(e) => {
+                error!(error = %e, "Failed to count pending jobs by protocol version");
+                return;
+            }
+        };
+
+        let mut by_version: HashMap<i64, i64> =
+            (0..=i64::from(ProofRequest::CURRENT_PROTOCOL_VERSION)).map(|v| (v, 0)).collect();
+        by_version.extend(counts);
+
+        for (protocol_version, count) in by_version {
+            metrics::set_pending_jobs(protocol_version, count);
+        }
     }
 
     /// Fail claimed jobs whose lock expired after exhausting the reclaim budget.

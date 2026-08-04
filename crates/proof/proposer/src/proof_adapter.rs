@@ -37,6 +37,7 @@ impl ProposerProofAdapter {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id,
+                protocol_version: ProofRequest::CURRENT_PROTOCOL_VERSION,
                 request: ProofRequestKind::Tee(TeeProofRequest {
                     proof: request,
                     tee_kind: TeeKind::AwsNitro,

@@ -49,6 +49,8 @@ pub struct MockGameState {
     pub starting_block_number: u64,
     /// L1 head block hash stored at game creation time.
     pub l1_head: B256,
+    /// Whether this game commits proofs to a pinned upgrade schedule.
+    pub uses_schedule_pinning: bool,
     /// Intermediate output roots for this game.
     pub intermediate_output_roots: Vec<B256>,
     /// 1-based index of the challenged intermediate root (`0` = unchallenged).
@@ -86,6 +88,7 @@ impl Default for MockGameState {
             },
             starting_block_number: 0,
             l1_head: B256::ZERO,
+            uses_schedule_pinning: true,
             intermediate_output_roots: vec![],
             countered_index: 0,
             game_over: false,
@@ -307,6 +310,10 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError> {
         self.status_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.status)
+    }
+
+    async fn uses_schedule_pinning(&self, game_address: Address) -> Result<bool, ContractError> {
+        self.get(game_address, |s| s.uses_schedule_pinning)
     }
 
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {

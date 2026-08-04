@@ -70,6 +70,7 @@ impl ProofFinalizeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: self.effective_session_id(network),
+                protocol_version: ProofRequest::CURRENT_PROTOCOL_VERSION,
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: self.start_block,
                     number_of_blocks_to_prove: self.num_blocks,

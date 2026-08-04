@@ -4,7 +4,7 @@
 //! backend is determined by the binary (e.g. Prometheus, `DogStatsD`).
 
 use base_prover_service_db::{ApiProofType, ProofJob, ProofType};
-use metrics::{counter, describe_counter, describe_histogram, histogram};
+use metrics::{counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram};
 
 // ---------------------------------------------------------------------------
 // Metric name constants
@@ -26,6 +26,9 @@ pub const STUCK_REQUESTS: &str = "prover_service.stuck_requests";
 pub const RETRIED_REQUESTS: &str = "prover_service.retried_requests";
 /// Worker jobs terminally failed by a background reaper. Tags: `reason`, `proof_type`
 pub const WORKER_JOBS_FAILED: &str = "prover_service.worker_jobs_failed";
+/// Queued (unclaimed) worker jobs. Tags: `protocol_version`. Sustained non-zero at a
+/// version no active worker announces means those jobs are stranded.
+pub const PENDING_JOBS: &str = "prover_service.pending_jobs";
 
 /// Terminal success status label.
 pub const PROOF_STATUS_SUCCEEDED: &str = "succeeded";
@@ -57,6 +60,7 @@ impl ProverMetrics {
             WORKER_JOBS_FAILED,
             "Worker jobs terminally failed by a background reaper"
         );
+        describe_gauge!(PENDING_JOBS, "Queued worker jobs awaiting claim, by protocol version");
     }
 }
 
@@ -121,6 +125,11 @@ pub fn inc_stuck_requests(proof_type: &str) {
 /// Increment retried requests counter.
 pub fn inc_retried_requests(proof_type: &str) {
     counter!(RETRIED_REQUESTS, "proof_type" => proof_type.to_string()).increment(1);
+}
+
+/// Set the pending-jobs gauge for one prover protocol version.
+pub fn set_pending_jobs(protocol_version: i64, count: i64) {
+    gauge!(PENDING_JOBS, "protocol_version" => protocol_version.to_string()).set(count as f64);
 }
 
 /// Increment the worker-jobs-failed counter for a reaper outcome.

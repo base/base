@@ -208,6 +208,7 @@ impl SnarkE2e {
             .prove_block_range(ProveBlockRangeRequest {
                 proof: ProofRequest {
                     session_id: session_id.clone(),
+                    protocol_version: ProofRequest::CURRENT_PROTOCOL_VERSION,
                     request: ProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
                         proof: ZkProofRequest {
                             start_block_number: safe_head,

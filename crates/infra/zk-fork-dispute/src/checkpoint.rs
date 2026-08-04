@@ -168,6 +168,7 @@ impl Checkpoint {
             .prove_block_range(ProveBlockRangeRequest {
                 proof: ProofRequest {
                     session_id: session_id.clone(),
+                    protocol_version: ProofRequest::CURRENT_PROTOCOL_VERSION,
                     request: ProofRequestKind::SnarkPlonk(snark_request),
                 },
             })

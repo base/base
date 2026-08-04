@@ -999,6 +999,8 @@ pub struct UpdateReceipt {
 pub struct ClaimProofJob {
     /// Worker identifier acquiring the claim.
     pub worker_id: String,
+    /// Prover protocol implemented by this worker.
+    pub protocol_version: u32,
     /// Protocol proof type this worker can execute.
     pub api_proof_type: ApiProofType,
     /// TEE implementations this worker can execute (matched for TEE proofs).
@@ -1247,6 +1249,7 @@ mod tests {
     fn compressed_protocol_request(session_id: impl Into<String>) -> ProtocolProofRequest {
         ProtocolProofRequest {
             session_id: session_id.into(),
+            protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
             request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 100,
                 number_of_blocks_to_prove: 5,
