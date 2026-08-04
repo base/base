@@ -21,6 +21,21 @@ pub struct TransferPolicyIds {
     pub executor: u64,
 }
 
+impl TransferPolicyIds {
+    /// Reads each id with a separate [`TokenAccounting::policy_id`] call.
+    ///
+    /// The fallback for adapters that have no packed-slot fast path (e.g. in-memory test doubles);
+    /// EVM-backed adapters implement [`TokenAccounting::transfer_policy_ids`] with a single SLOAD
+    /// instead. Depends only on the port interface, so it never touches EVM storage directly.
+    pub fn read_individually<T: TokenAccounting + ?Sized>(accounting: &T) -> Result<Self> {
+        Ok(Self {
+            sender: accounting.policy_id(crate::B20PolicyType::TransferSender.id())?,
+            receiver: accounting.policy_id(crate::B20PolicyType::TransferReceiver.id())?,
+            executor: accounting.policy_id(crate::B20PolicyType::TransferExecutor.id())?,
+        })
+    }
+}
+
 /// Outbound port: all data reads and writes the core business logic requires.
 ///
 /// Each token variant's `#[contract]` storage struct implements this trait.
@@ -116,16 +131,11 @@ pub trait TokenAccounting {
 
     /// Returns the sender/receiver/executor transfer policy ids together.
     ///
-    /// The three ids share one storage word, so an EVM-backed adapter overrides this with a single
-    /// SLOAD (see the `TokenAccounting` derive). The default reads each id separately and exists for
-    /// in-memory test adapters where SLOAD count is irrelevant; it is behaviorally identical.
-    fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
-        Ok(TransferPolicyIds {
-            sender: self.policy_id(crate::B20PolicyType::TransferSender.id())?,
-            receiver: self.policy_id(crate::B20PolicyType::TransferReceiver.id())?,
-            executor: self.policy_id(crate::B20PolicyType::TransferExecutor.id())?,
-        })
-    }
+    /// The three ids share one storage word, so EVM-backed adapters implement this as a single
+    /// SLOAD (see the `TokenAccounting` derive). Adapters without a packed-slot fast path (e.g.
+    /// in-memory test doubles) delegate to [`TransferPolicyIds::read_individually`], which is
+    /// behaviorally identical.
+    fn transfer_policy_ids(&self) -> Result<TransferPolicyIds>;
 
     // --- Event emission ---
 

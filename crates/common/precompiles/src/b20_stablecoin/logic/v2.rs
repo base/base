@@ -738,7 +738,7 @@ mod tests {
     use crate::{
         B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinToken, B20TokenRole, IB20, PackedPolicy,
         PermitArgs, PolicyAccounting, PolicyRegistryStorage, PolicyVersion, Stablecoin,
-        StablecoinAccounting, StablecoinV2, Token, TokenAccounting,
+        StablecoinAccounting, StablecoinV2, Token, TokenAccounting, TransferPolicyIds,
     };
 
     // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
@@ -901,6 +901,10 @@ mod tests {
         fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
             self.policy_ids.insert(policy_scope, policy_id);
             Ok(())
+        }
+
+        fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
+            TransferPolicyIds::read_individually(self)
         }
         fn emit_event(&mut self, log: LogData) -> Result<()> {
             self.events.push(log);
