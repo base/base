@@ -135,7 +135,7 @@ impl ProofDispatcher {
                     sync_status.finalized_l2.number
                 )));
             } else if target_block <= sync_status.safe_l2.number {
-                ("safe", sync_status.safe_l1, sync_status.safe_l2)
+                ("current-for-safe", sync_status.current_l1, sync_status.safe_l2)
             } else {
                 return Err(ProposerError::Internal(format!(
                     "target block {target_block} is above rollup safe head {}",
@@ -276,53 +276,73 @@ mod tests {
         sync_status.finalized_l1.hash = B256::repeat_byte(0xf1);
         sync_status.safe_l1 = test_l1_block_ref(20);
         sync_status.safe_l1.hash = B256::repeat_byte(0x5a);
+        sync_status.current_l1 = test_l1_block_ref(30);
+        sync_status.current_l1.hash = B256::repeat_byte(0xc1);
         sync_status.finalized_l2 = test_l2_block_ref(finalized_l2_number, B256::repeat_byte(0xf2));
         sync_status.finalized_l2.l1origin.number = sync_status.finalized_l1.number;
-        sync_status.safe_l2.l1origin.number = sync_status.safe_l1.number;
+        sync_status.safe_l2.l1origin.number = 25;
         sync_status
     }
 
     fn headers_for_sync_status(
         sync_status: &SyncStatus,
     ) -> HashMap<B256, alloy_rpc_types_eth::Header> {
-        [sync_status.finalized_l1, sync_status.safe_l1]
+        [sync_status.finalized_l1, sync_status.safe_l1, sync_status.current_l1]
             .into_iter()
             .map(|l1_head| (l1_head.hash, test_l1_header(l1_head.hash, l1_head.number)))
             .collect()
     }
 
     #[test]
-    fn select_l1_head_selects_expected_head_or_rejects_target() {
+    fn select_l1_head_uses_current_l1_for_safe_target_when_safe_l1_lags() {
+        let sync_status = sync_status_with_distinct_heads(300, 600);
+
+        let (source, current_l1) =
+            ProofDispatcher::select_l1_head_for_target(400, &sync_status, true).unwrap();
+        assert_eq!(source, "current-for-safe");
+        assert_eq!(current_l1, sync_status.current_l1);
+        assert!(sync_status.safe_l1.number < sync_status.safe_l2.l1origin.number);
+        assert!(current_l1.number >= sync_status.safe_l2.l1origin.number);
+    }
+
+    #[test]
+    fn select_l1_head_rejects_safe_target_when_current_l1_is_insufficient() {
+        let mut sync_status = sync_status_with_distinct_heads(300, 600);
+        sync_status.current_l1.number = sync_status.safe_l2.l1origin.number - 1;
+
+        let err = ProofDispatcher::select_l1_head_for_target(400, &sync_status, true)
+            .expect_err("current L1 must cover the selected safe L2 origin");
+
+        assert!(err.to_string().contains("below current-for-safe L2 origin"));
+    }
+
+    #[test]
+    fn select_l1_head_keeps_finalized_l1_for_finalized_target() {
         let sync_status = sync_status_with_distinct_heads(300, 600);
 
         let (source, finalized_l1) =
             ProofDispatcher::select_l1_head_for_target(200, &sync_status, true).unwrap();
+
         assert_eq!(source, "finalized");
-        assert_eq!(finalized_l1.hash, B256::repeat_byte(0xf1));
-        assert_eq!(finalized_l1.number, 10);
+        assert_eq!(finalized_l1, sync_status.finalized_l1);
+    }
 
-        let (source, safe_l1) =
-            ProofDispatcher::select_l1_head_for_target(400, &sync_status, true).unwrap();
-        assert_eq!(source, "safe");
-        assert_eq!(safe_l1.hash, B256::repeat_byte(0x5a));
-        assert_eq!(safe_l1.number, 20);
-
-        let err = ProofDispatcher::select_l1_head_for_target(700, &sync_status, true).unwrap_err();
-        assert!(err.to_string().contains("above rollup safe head"));
+    #[test]
+    fn select_l1_head_rejects_non_finalized_target_when_disabled() {
+        let sync_status = sync_status_with_distinct_heads(300, 600);
 
         let err = ProofDispatcher::select_l1_head_for_target(400, &sync_status, false).unwrap_err();
+
         assert!(err.to_string().contains("above rollup finalized head"));
     }
 
     #[test]
-    fn select_l1_head_rejects_l2_coverage_beyond_selected_l1_head() {
-        let mut sync_status = sync_status_with_distinct_heads(300, 600);
-        sync_status.safe_l2.l1origin.number = sync_status.safe_l1.number + 1;
+    fn select_l1_head_rejects_target_above_safe_l2() {
+        let sync_status = sync_status_with_distinct_heads(300, 600);
 
-        let err = ProofDispatcher::select_l1_head_for_target(400, &sync_status, true)
-            .expect_err("safe L1 must cover selected safe L2 origin");
+        let err = ProofDispatcher::select_l1_head_for_target(700, &sync_status, true).unwrap_err();
 
-        assert!(err.to_string().contains("below safe L2 origin"));
+        assert!(err.to_string().contains("above rollup safe head"));
     }
 
     #[tokio::test]
