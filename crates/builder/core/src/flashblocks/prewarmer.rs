@@ -1,5 +1,14 @@
 //! Speculative transaction execution for warming the shared execution cache.
 
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
+    },
+};
+
 use alloy_primitives::B256;
 use base_common_consensus::BaseTransactionSigned;
 use base_common_evm::BaseSpecId;
@@ -8,8 +17,130 @@ use reth_evm::{ConfigureEvm, Evm, EvmEnv};
 use reth_execution_cache::{CachedStateProvider, ExecutionCache};
 use reth_provider::StateProviderFactory;
 use reth_revm::database::StateProviderDatabase;
-use reth_transaction_pool::PoolTransaction;
+use reth_tasks::TaskExecutor;
+use reth_transaction_pool::{BestTransactions, PoolTransaction};
 use tracing::trace;
+
+const WORK_AHEAD_PER_WORKER: usize = 2;
+
+/// Handle for a bounded, cancellable transaction-prewarming job.
+///
+/// The job owns and drains an independent [`BestTransactions`] iterator on a blocking coordinator
+/// thread. Candidate transactions execute concurrently on [`TaskExecutor::prewarming_pool`] with at
+/// most twice the pool's worker count retained in flight. The callback normally invokes
+/// [`PrewarmingExecutionContext::prewarm_transactions`].
+///
+/// Starting a job does not wait for speculative execution. Call [`Self::stop_and_wait`] before
+/// publishing a payload to ensure all speculative workers and their execution-cache handles have
+/// been released. Dropping the handle is a safe fallback that also cancels and waits for cleanup.
+#[derive(Debug)]
+pub struct TransactionPrewarmer {
+    stop: Arc<AtomicBool>,
+    completion: Option<Receiver<()>>,
+}
+
+impl TransactionPrewarmer {
+    /// Starts draining `transactions` and prewarming candidates with `prewarm`.
+    ///
+    /// The iterator must be independent from the canonical build iterator. `prewarm` may run
+    /// concurrently; the job discards its return value because prewarming is only an optimization.
+    pub fn start<Txs, F, R>(executor: &TaskExecutor, transactions: Txs, prewarm: F) -> Self
+    where
+        Txs: BestTransactions + 'static,
+        Txs::Item: Send,
+        F: Fn(&Txs::Item) -> R + Send + Sync + 'static,
+    {
+        let stop = Arc::new(AtomicBool::new(false));
+        let coordinator_stop = Arc::clone(&stop);
+        let (completion_tx, completion) = mpsc::channel();
+        let coordinator_executor = executor.clone();
+
+        executor.spawn_blocking(move || {
+            let run = move || {
+                let pool = coordinator_executor.prewarming_pool();
+                let max_in_flight =
+                    pool.current_num_threads().saturating_mul(WORK_AHEAD_PER_WORKER).max(1);
+                let mut transactions = transactions;
+
+                pool.in_place_scope(|scope| {
+                    let (worker_tx, worker_rx) = mpsc::channel();
+                    let mut exhausted = false;
+                    let mut in_flight = 0;
+
+                    loop {
+                        while !exhausted
+                            && in_flight < max_in_flight
+                            && !coordinator_stop.load(Ordering::Acquire)
+                        {
+                            let Some(transaction) = transactions.next() else {
+                                exhausted = true;
+                                break;
+                            };
+                            let worker_tx = worker_tx.clone();
+                            let prewarm = &prewarm;
+                            scope.spawn(move |_| {
+                                let result = catch_unwind(AssertUnwindSafe(|| {
+                                    drop(prewarm(&transaction));
+                                }));
+                                let _ = worker_tx.send(());
+                                if result.is_err() {
+                                    trace!(
+                                        target: "payload_builder",
+                                        "transaction prewarming worker panicked",
+                                    );
+                                }
+                            });
+                            in_flight += 1;
+                        }
+
+                        if in_flight == 0 {
+                            break;
+                        }
+                        if worker_rx.recv().is_err() {
+                            break;
+                        }
+                        in_flight -= 1;
+                    }
+                });
+            };
+
+            let _ = catch_unwind(AssertUnwindSafe(run));
+            let _ = completion_tx.send(());
+        });
+
+        Self { stop, completion: Some(completion) }
+    }
+
+    /// Cooperatively stops fetching and scheduling new candidates without waiting for workers.
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::Release);
+    }
+
+    /// Waits for iterator exhaustion and releases all job-owned resources.
+    ///
+    /// An iterator receiving continuous pool updates may not exhaust; use [`Self::stop_and_wait`]
+    /// when bounded cleanup is required.
+    pub fn wait(mut self) {
+        if let Some(completion) = self.completion.take() {
+            let _ = completion.recv();
+        }
+    }
+
+    /// Stops scheduling new candidates and waits for already scheduled work to finish.
+    pub fn stop_and_wait(self) {
+        self.stop();
+        self.wait();
+    }
+}
+
+impl Drop for TransactionPrewarmer {
+    fn drop(&mut self) {
+        self.stop();
+        if let Some(completion) = self.completion.take() {
+            let _ = completion.recv();
+        }
+    }
+}
 
 /// Context for speculatively executing transactions against parent state.
 ///
@@ -113,7 +244,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        sync::{
+            Arc, Condvar, Mutex,
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        },
+        thread,
+        time::{Duration, Instant},
+    };
 
     use alloy_consensus::{Header, SignableTransaction, TxEip1559};
     use alloy_eips::{Encodable2718, eip1559::MIN_PROTOCOL_BASE_FEE};
@@ -132,13 +271,75 @@ mod tests {
         AccountReader,
         test_utils::{ExtendedAccount, MockEthProvider},
     };
+    use reth_tasks::TaskExecutor;
+    use reth_transaction_pool::{BestTransactions, error::InvalidPoolTransactionError};
 
-    use super::PrewarmingExecutionContext;
+    use super::{PrewarmingExecutionContext, TransactionPrewarmer, WORK_AHEAD_PER_WORKER};
 
     const CHAIN_ID: u64 = 901;
     const CONTRACT_STORAGE_VALUE: u64 = 42;
+    const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
     type TestClient = MockEthProvider<base_common_consensus::BasePrimitives>;
+
+    #[derive(Debug)]
+    struct TestBestTransactions {
+        transactions: std::vec::IntoIter<usize>,
+        fetched: Arc<AtomicUsize>,
+    }
+
+    impl TestBestTransactions {
+        fn new(count: usize) -> (Self, Arc<AtomicUsize>) {
+            let fetched = Arc::new(AtomicUsize::new(0));
+            (
+                Self {
+                    transactions: (0..count).collect::<Vec<_>>().into_iter(),
+                    fetched: Arc::clone(&fetched),
+                },
+                fetched,
+            )
+        }
+    }
+
+    impl Iterator for TestBestTransactions {
+        type Item = usize;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let transaction = self.transactions.next();
+            if transaction.is_some() {
+                self.fetched.fetch_add(1, Ordering::Relaxed);
+            }
+            transaction
+        }
+    }
+
+    impl BestTransactions for TestBestTransactions {
+        fn mark_invalid(&mut self, _transaction: &Self::Item, _kind: InvalidPoolTransactionError) {}
+
+        fn no_updates(&mut self) {}
+
+        fn set_skip_blobs(&mut self, _skip_blobs: bool) {}
+    }
+
+    #[derive(Debug, Default)]
+    struct Gate {
+        open: Mutex<bool>,
+        changed: Condvar,
+    }
+
+    impl Gate {
+        fn wait(&self) {
+            let mut open = self.open.lock().expect("lock gate");
+            while !*open {
+                open = self.changed.wait(open).expect("wait for gate");
+            }
+        }
+
+        fn open(&self) {
+            *self.open.lock().expect("lock gate") = true;
+            self.changed.notify_all();
+        }
+    }
 
     struct Fixture {
         context: PrewarmingExecutionContext<TestClient>,
@@ -232,6 +433,136 @@ mod tests {
 
             Self { context, client, cache, transaction, sender, contract, code_hash }
         }
+    }
+
+    #[test]
+    fn job_starts_without_waiting_and_executes_concurrently() {
+        let executor = TaskExecutor::test();
+        let (transactions, _) = TestBestTransactions::new(4);
+        let gate = Arc::new(Gate::default());
+        let callback_gate = Arc::clone(&gate);
+        let (started_tx, started_rx) = mpsc::channel();
+
+        let job = TransactionPrewarmer::start(&executor, transactions, move |_| {
+            started_tx.send(()).expect("report started worker");
+            callback_gate.wait();
+        });
+
+        let first_started = started_rx.recv_timeout(TEST_TIMEOUT);
+        let second_started = started_rx.recv_timeout(TEST_TIMEOUT);
+        gate.open();
+        job.wait();
+        first_started.expect("first worker should start");
+        second_started.expect("second worker should start concurrently");
+    }
+
+    #[test]
+    fn job_bounds_lookahead_and_cancellation_stops_fetching() {
+        let executor = TaskExecutor::test();
+        let worker_count = executor.prewarming_pool().current_num_threads();
+        let (transactions, fetched) = TestBestTransactions::new(20);
+        let gate = Arc::new(Gate::default());
+        let callback_gate = Arc::clone(&gate);
+        let (started_tx, started_rx) = mpsc::channel();
+
+        let job = TransactionPrewarmer::start(&executor, transactions, move |_| {
+            started_tx.send(()).expect("report started worker");
+            callback_gate.wait();
+        });
+
+        let workers_started =
+            (0..worker_count).all(|_| started_rx.recv_timeout(TEST_TIMEOUT).is_ok());
+        let lookahead = worker_count * WORK_AHEAD_PER_WORKER;
+        let deadline = Instant::now() + TEST_TIMEOUT;
+        while fetched.load(Ordering::Relaxed) < lookahead && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        let fetched_before_stop = fetched.load(Ordering::Relaxed);
+
+        job.stop();
+        gate.open();
+        job.wait();
+        assert!(workers_started, "every prewarming worker should start");
+        assert_eq!(fetched_before_stop, lookahead, "coordinator should fill its bounded lookahead");
+        assert_eq!(
+            fetched.load(Ordering::Relaxed),
+            fetched_before_stop,
+            "cancellation must not fetch another candidate as workers finish"
+        );
+    }
+
+    #[test]
+    fn job_exhaustion_processes_every_candidate() {
+        let executor = TaskExecutor::test();
+        let (transactions, _) = TestBestTransactions::new(8);
+        let processed = Arc::new(Mutex::new(Vec::new()));
+        let callback_processed = Arc::clone(&processed);
+
+        TransactionPrewarmer::start(&executor, transactions, move |transaction| {
+            callback_processed.lock().expect("lock processed transactions").push(*transaction);
+        })
+        .wait();
+
+        let mut processed = processed.lock().expect("lock processed transactions").clone();
+        processed.sort_unstable();
+        assert_eq!(processed, (0..8).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn worker_panic_does_not_stop_later_candidates() {
+        let executor = TaskExecutor::test();
+        let (transactions, _) = TestBestTransactions::new(8);
+        let processed = Arc::new(Mutex::new(Vec::new()));
+        let callback_processed = Arc::clone(&processed);
+
+        TransactionPrewarmer::start(&executor, transactions, move |transaction| {
+            if *transaction == 1 {
+                panic!("simulated speculative execution failure");
+            }
+            callback_processed.lock().expect("lock processed transactions").push(*transaction);
+        })
+        .wait();
+
+        let mut processed = processed.lock().expect("lock processed transactions").clone();
+        processed.sort_unstable();
+        assert_eq!(processed, vec![0, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn dropping_job_waits_for_workers_and_releases_callback_resources() {
+        let executor = TaskExecutor::test();
+        let (transactions, _) = TestBestTransactions::new(1);
+        let gate = Arc::new(Gate::default());
+        let callback_gate = Arc::clone(&gate);
+        let retained = Arc::new(());
+        let callback_retained = Arc::clone(&retained);
+        let (started_tx, started_rx) = mpsc::channel();
+
+        let job = TransactionPrewarmer::start(&executor, transactions, move |_| {
+            let _ = &callback_retained;
+            started_tx.send(()).expect("report started worker");
+            callback_gate.wait();
+        });
+        if started_rx.recv_timeout(TEST_TIMEOUT).is_err() {
+            gate.open();
+            drop(job);
+            panic!("worker should start");
+        }
+
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        let drop_thread = thread::spawn(move || {
+            drop(job);
+            dropped_tx.send(()).expect("report job dropped");
+        });
+        let dropped_early = dropped_rx.recv_timeout(Duration::from_millis(50)).is_ok();
+
+        gate.open();
+        if !dropped_early {
+            dropped_rx.recv_timeout(TEST_TIMEOUT).expect("job should finish dropping");
+        }
+        drop_thread.join().expect("join job drop thread");
+        assert!(!dropped_early, "drop must wait for an in-flight worker");
+        assert_eq!(Arc::strong_count(&retained), 1, "callback resources must be released");
     }
 
     #[test]

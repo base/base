@@ -25,7 +25,6 @@ reth-cli.workspace = true
 reth-evm.workspace = true
 reth-trie.workspace = true
 reth-revm.workspace = true
-reth-tasks.workspace = true
 base-metrics.workspace = true
 reth-rpc-api.workspace = true
 reth-provider.workspace = true
@@ -58,6 +57,7 @@ reth-basic-payload-builder.workspace = true
 base-execution-payload-builder.workspace = true
 reth-ipc = { workspace = true, optional = true }
 reth-payload-builder-primitives.workspace = true
+reth-tasks = { workspace = true, features = ["rayon"] }
 reth-node-core = { workspace = true, features = ["otlp"] }
 base-execution-rpc = { workspace = true, features = ["client"] }
 

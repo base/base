@@ -23,7 +23,7 @@ pub use context::{
 mod payload;
 
 mod prewarmer;
-pub use prewarmer::PrewarmingExecutionContext;
+pub use prewarmer::{PrewarmingExecutionContext, TransactionPrewarmer};
 
 mod service;
 pub use service::FlashblocksServiceBuilder;
