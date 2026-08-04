@@ -173,12 +173,12 @@ impl WorkerHeartbeat {
 
     fn deadline_from_expiry(lock_expires_at: Option<DateTime<Utc>>) -> Option<Instant> {
         let expires_at = lock_expires_at?;
-        let remaining = (expires_at - Utc::now()).to_std().ok()?;
+        let remaining = (expires_at - Utc::now()).to_std().unwrap_or_default();
         Some(Instant::now() + remaining)
     }
 
     fn lease_budget_exceeded_error() -> ProverServiceClientError {
-        ProverServiceClientError::Timeout(
+        ProverServiceClientError::LeaseBudgetExceeded(
             "heartbeat budget exceeded claimed lock expiry".to_owned(),
         )
     }
@@ -280,6 +280,6 @@ mod tests {
         }
 
         let error = failure.await.expect("heartbeat task should finish");
-        assert!(matches!(error, ProverServiceClientError::Timeout(_)));
+        assert!(matches!(error, ProverServiceClientError::LeaseBudgetExceeded(_)));
     }
 }
