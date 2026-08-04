@@ -794,6 +794,10 @@ impl BatchPipeline for BatchEncoder {
         None
     }
 
+    fn has_ready_submission(&self) -> bool {
+        self.ready_channels.iter().any(|channel| channel.cursor < channel.frames.len())
+    }
+
     fn confirm(&mut self, id: SubmissionId, l1_block: u64) {
         let Some(pending_ref) = self.pending.remove(&id) else {
             warn!(id = ?id, "confirm called for unknown submission id");

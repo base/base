@@ -453,7 +453,12 @@ pub fn default_node_config_with_azul() -> NodeConfig<BaseChainSpec> {
     node_config_with_chain_spec(chain_spec_with_azul())
 }
 
-fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChainSpec> {
+/// Builds a [`LocalInstance`]-style Reth node configuration for the given chain spec.
+///
+/// Uses the same IPC-only RPC setup, disabled discovery, unused ports, and temporary data
+/// directories as [`default_node_config`], but with a caller-supplied chain spec — so an in-process
+/// builder node can be launched against a custom genesis (e.g. one derived from a rollup config).
+pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChainSpec> {
     let tempdir = std::env::temp_dir();
     let random_id = nanoid!();
 

@@ -35,7 +35,7 @@ use base_batcher_encoder::{DaType, EncoderConfig};
 ///    batcher's non-empty batch and generates deposit-only default blocks
 #[tokio::test]
 async fn sequencer_drift_produces_deposit_only_blocks() {
-    let l1_cfg = L1MinerConfig { block_time: 4 };
+    let l1_cfg = L1MinerConfig { block_time: 4, ..Default::default() };
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
@@ -148,7 +148,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
 /// generates deposit-only default blocks for those slots.
 #[tokio::test]
 async fn sequencer_drift_forced_empty_blocks_accepted() {
-    let l1_cfg = L1MinerConfig { block_time: 4 };
+    let l1_cfg = L1MinerConfig { block_time: 4, ..Default::default() };
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()

@@ -85,18 +85,25 @@ impl<TM: TxManager> SubmissionQueue<TM> {
     /// submissions map each frame to one blob, matching op-batcher's blob-tx shape.
     /// Loops until the semaphore is exhausted, the pipeline has no ready submissions,
     /// or the txpool is blocked.
-    pub async fn submit_pending<P: BatchPipeline>(&mut self, pipeline: &mut P) {
+    ///
+    /// Returns `true` if the pipeline reported no further ready submissions (fully
+    /// drained), or `false` if it stopped early because the semaphore is exhausted, the
+    /// txpool is blocked, or a blob-encoding failure required a requeue.
+    pub async fn submit_pending<P: BatchPipeline>(&mut self, pipeline: &mut P) -> bool {
         loop {
             if self.txpool_blocked {
-                break;
+                return false;
             }
             let Ok(permit) = Arc::clone(&self.semaphore).try_acquire_owned() else {
-                break;
+                // Semaphore is exhausted. This is only real backpressure if the pipeline
+                // still has work waiting -- if it's actually empty, the caller should see
+                // this as fully drained rather than blocked (see `has_ready_submission`).
+                return !pipeline.has_ready_submission();
             };
 
             let Some(sub) = pipeline.next_submission() else {
                 drop(permit);
-                break;
+                return true;
             };
             debug_assert!(!sub.frames.is_empty(), "batch submissions must contain frames");
             if sub.frames.is_empty() {
@@ -122,7 +129,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                             warn!(error = %e, "failed to encode frames to blob, requeueing");
                             pipeline.requeue(sub.id);
                             drop(permit);
-                            break;
+                            return false;
                         }
                     }
                 }
@@ -324,5 +331,56 @@ impl<TM: TxManager> SubmissionQueue<TM> {
     /// Returns the number of currently in-flight submissions.
     pub fn in_flight_count(&self) -> usize {
         self.in_flight.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use alloy_primitives::Address;
+
+    use super::*;
+    use crate::test_utils::{NeverConfirmTxManager, Recorded, SubmissionStub, TrackingPipeline};
+
+    /// Regression test: if exactly `max_pending` submissions are ready, all permits are
+    /// handed out and held by in-flight (unconfirmed) transactions. The pipeline itself
+    /// is now empty, so `submit_pending` must report "fully drained" -- not backpressured
+    /// -- otherwise a caller waiting for drain-and-flush-ack (e.g. `BatchDriver::run`)
+    /// would wait forever for capacity that was never coming back this cycle.
+    #[tokio::test]
+    async fn submit_pending_reports_drained_when_ready_work_exactly_fills_permits() {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        pipeline.submissions.push_back(SubmissionStub::with_id(0));
+        pipeline.submissions.push_back(SubmissionStub::with_id(1));
+
+        let mut queue = SubmissionQueue::new(NeverConfirmTxManager, Address::ZERO, 2);
+
+        let drained = queue.submit_pending(&mut pipeline).await;
+
+        assert!(
+            drained,
+            "pipeline has no more ready work even though all permits are held by \
+             unconfirmed in-flight submissions"
+        );
+        assert_eq!(recorded.lock().unwrap().dequeued.len(), 2, "both submissions must be sent");
+    }
+
+    /// Companion case: with a ready submission still queued behind exhausted permits,
+    /// `submit_pending` must report backpressure rather than falsely claiming drained.
+    #[tokio::test]
+    async fn submit_pending_reports_backpressure_when_ready_work_remains() {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        pipeline.submissions.push_back(SubmissionStub::with_id(0));
+        pipeline.submissions.push_back(SubmissionStub::with_id(1));
+
+        let mut queue = SubmissionQueue::new(NeverConfirmTxManager, Address::ZERO, 1);
+
+        let drained = queue.submit_pending(&mut pipeline).await;
+
+        assert!(!drained, "a ready submission is still waiting on semaphore capacity");
+        assert_eq!(recorded.lock().unwrap().dequeued.len(), 1, "only the single permit is used");
     }
 }

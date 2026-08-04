@@ -45,7 +45,13 @@ pub enum AdminCommand {
     /// Pause block ingestion without stopping the driver task.
     Pause,
     /// Force-close the current encoding channel (equivalent to a flush event).
-    Flush,
+    Flush {
+        /// Fired once the driver's encoding and submission are both fully drained (not just
+        /// after the first frame) — see [`AdminHandle::flush_and_wait`] for the precise
+        /// "whole pipeline idle, not just this flush" caveat.
+        #[debug(skip)]
+        ack: Option<oneshot::Sender<()>>,
+    },
     /// Replace the throttle strategy and configuration.
     SetThrottle {
         /// The new throttle strategy to apply.
@@ -100,8 +106,32 @@ impl AdminHandle {
     }
 
     /// Force-close the current encoding channel, submitting any buffered frames.
+    ///
+    /// Returns once the command is queued — use
+    /// [`flush_and_wait`](Self::flush_and_wait) if the caller needs to know when the
+    /// resulting frames have actually been handed to the tx manager.
     pub async fn flush(&self) -> AdminResult<()> {
-        self.send(AdminCommand::Flush).await
+        self.send(AdminCommand::Flush { ack: None }).await
+    }
+
+    /// Force-close the current encoding channel and wait until every resulting frame has
+    /// been encoded and handed to the tx manager.
+    ///
+    /// Unlike [`flush`](Self::flush), which only guarantees the command was queued, this
+    /// waits for the driver to report that encoding and submission are both fully drained —
+    /// a deterministic signal that every frame from this flush (not just the first) has been
+    /// submitted.
+    ///
+    /// The wait is for the *whole pipeline* going idle, not specifically for this flush's own
+    /// frames: if new blocks keep arriving and producing fresh encoding/submission work while
+    /// this call is outstanding, the ack is delayed until that work drains too, and under
+    /// sustained continuous ingestion it may not fire at all. This call therefore gives a
+    /// precise, meaningful guarantee only when the source is otherwise quiesced (as in the
+    /// action-test harness, which never calls this while blocks are still streaming in).
+    pub async fn flush_and_wait(&self) -> AdminResult<()> {
+        let (tx, rx) = oneshot::channel();
+        self.send(AdminCommand::Flush { ack: Some(tx) }).await?;
+        rx.await.map_err(|_| AdminError::ChannelClosed)
     }
 
     /// Replace the throttle strategy and configuration.

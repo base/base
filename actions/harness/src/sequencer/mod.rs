@@ -3,6 +3,12 @@
 mod attributes;
 pub use attributes::ActionSequencerAttributesBuilder;
 
+mod backend;
+pub use backend::SequencerEngineBackend;
+
+mod builder_backend;
+pub use builder_backend::BuilderBackedEngineClient;
+
 mod conductor;
 pub use conductor::ActionConductor;
 
