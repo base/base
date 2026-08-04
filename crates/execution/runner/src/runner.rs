@@ -1,8 +1,7 @@
 //! Contains the [`BaseNodeRunner`], which is responsible for configuring and launching a Base node.
 
-use std::fmt;
-
 use core::marker::PhantomData;
+use std::fmt;
 
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_node_core::args::RollupArgs;

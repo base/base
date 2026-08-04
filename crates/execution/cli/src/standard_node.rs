@@ -355,7 +355,9 @@ impl StandardBaseRethNode {
     }
 
     /// Builds a runner with the standard Base execution-node extensions installed.
-    pub fn runner<E>(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner<DefaultPayloadServiceBuilder, E>>
+    pub fn runner<E>(
+        args: StandardNodeArgs,
+    ) -> eyre::Result<BaseNodeRunner<DefaultPayloadServiceBuilder, E>>
     where
         E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
     {

@@ -51,7 +51,9 @@ where
 {
     type ComponentsBuilder = ComponentsBuilder<
         BaseNodeTypes<E>,
-        BasePoolBuilder<BasePooledTransaction<BaseTransactionSigned, ConsensusPooledTransaction, E>>,
+        BasePoolBuilder<
+            BasePooledTransaction<BaseTransactionSigned, ConsensusPooledTransaction, E>,
+        >,
         BasicPayloadServiceBuilder<BasePayloadBuilder>,
         BaseNetworkBuilder,
         BaseExecutorBuilder,

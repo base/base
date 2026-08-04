@@ -283,10 +283,12 @@ impl InProcessClient {
         // TxPool RPC extension (management + status APIs)
         let txpool_rpc_config =
             TxPoolRpcConfig { sequencer_rpc: Some(config.builder_rpc_url.clone()) };
-        extensions.push(Box::new(TxPoolRpcExtension::from_config(txpool_rpc_config)));
+        extensions.push(Box::new(<TxPoolRpcExtension as FromExtensionConfig>::from_config(
+            txpool_rpc_config,
+        )));
 
         // Bundle extension (eth_sendBundle RPC + maintenance task)
-        extensions.push(Box::new(BundleExtension::from_config(())));
+        extensions.push(Box::new(<BundleExtension as FromExtensionConfig>::from_config(())));
 
         // TxPool tracing extension (tracing disabled for client)
         let txpool_config = TxpoolConfig {
@@ -299,14 +301,18 @@ impl InProcessClient {
 
         // TxForwarding extension (optional - forwards txs to builder RPC)
         if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
-            extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
+            extensions.push(Box::new(<TxForwardingExtension as FromExtensionConfig>::from_config(
+                tx_fwd_config.clone(),
+            )));
         }
 
         // Upgrade signal runtime extension (optional - live L1 schedule polling)
         if let Some(ref signal_config) = config.upgrade_signal {
-            extensions.push(Box::new(ExecutionUpgradeSignalRuntimeExtension::from_config(
-                signal_config.clone(),
-            )));
+            extensions.push(Box::new(
+                <ExecutionUpgradeSignalRuntimeExtension as FromExtensionConfig>::from_config(
+                    signal_config.clone(),
+                ),
+            ));
         }
 
         // Flashblocks extension (must be last - uses replace_configured)

@@ -24,7 +24,7 @@ use reth_node_builder::{
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::eth::RpcTypes;
 
-use crate::{BaseAddOns, BaseAddOnsBuilder};
+use crate::{BaseAddOns, BaseAddOnsBuilder, BaseNodeComponentsBuilder};
 
 /// Type configuration for a regular Base node.
 #[derive(Debug, Clone)]
@@ -87,18 +87,7 @@ impl<E> BaseNode<E> {
     }
 
     /// Returns the components for the given [`RollupArgs`].
-    pub fn components<Node>(
-        &self,
-    ) -> ComponentsBuilder<
-        Node,
-        BasePoolBuilder<
-            BasePooledTransaction<BaseTransactionSigned, ConsensusPooledTransaction, E>,
-        >,
-        BasicPayloadServiceBuilder<BasePayloadBuilder>,
-        BaseNetworkBuilder,
-        BaseExecutorBuilder,
-        BaseConsensusBuilder,
-    >
+    pub fn components<Node>(&self) -> BaseNodeComponentsBuilder<Node, E>
     where
         Node: FullNodeTypes<Types: BaseNodeTypes>,
         E: core::fmt::Debug + Clone + Send + Sync + Unpin + 'static,
@@ -118,14 +107,14 @@ impl<E> BaseNode<E> {
                 BasePoolBuilder::<
                     BasePooledTransaction<BaseTransactionSigned, ConsensusPooledTransaction, E>,
                 >::default()
-                    .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
-                    .with_guard_limits(GuardLimits {
-                        signature_limit: mempool_sender_limit,
-                        payment_limit: mempool_payer_limit,
-                    })
-                    .with_additional_trusted_delegation_targets(
-                        self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    ),
+                .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
+                .with_guard_limits(GuardLimits {
+                    signature_limit: mempool_sender_limit,
+                    payment_limit: mempool_payer_limit,
+                })
+                .with_additional_trusted_delegation_targets(
+                    self.args.mempool_trusted_delegation_targets.iter().copied(),
+                ),
             )
             .executor(BaseExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(
