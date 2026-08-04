@@ -46,6 +46,7 @@ impl KeyValueStore for BootKeyValueStore {
             }
             L1_HEAD_NUMBER_KEY => Some(self.cfg.request.l1_head_number.to_be_bytes().to_vec()),
             L2_SCHEDULE_BLOCK_NUMBER_KEY => {
+                // SAFETY: `0` is unset; boot resolves it to the claim before validating genesis.
                 Some(self.cfg.request.schedule_l2_block_number.unwrap_or(0).to_be_bytes().to_vec())
             }
             _ => None,

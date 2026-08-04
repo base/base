@@ -141,6 +141,12 @@ pub enum OracleProviderError {
     #[error("L2 block time must be non-zero")]
     InvalidL2BlockTime,
     /// The rollup config has a zero L2 genesis timestamp.
+    ///
+    /// Genesis-active upgrades are stored locally as `Some(0)` and normalized to the genesis
+    /// timestamp before hashing, while unscheduled entries inside the pinned prefix hash as 0.
+    /// Those two cases are only distinguishable while the genesis timestamp is non-zero — with a
+    /// zero genesis, `{regolith: None, canyon: Some(0)}` and `{regolith: Some(0), canyon: Some(0)}`
+    /// collide onto one schedule ID. Rejecting here keeps the schedule ID injective.
     #[error("L2 genesis timestamp must be non-zero")]
     InvalidL2GenesisTimestamp,
     /// The schedule block precedes the claimed L2 block.
