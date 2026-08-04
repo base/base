@@ -1,7 +1,7 @@
 use std::{
     fs,
     io::ErrorKind,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     thread,
     time::{Duration, Instant},
@@ -124,17 +124,23 @@ impl SetupImage {
     }
 
     /// Finds the repository root that contains the setup Dockerfile.
+    ///
+    /// Resolved from this crate's `CARGO_MANIFEST_DIR` (fixed at compile time) rather than the
+    /// process's current directory, so this still finds the Dockerfile when `base-system-tests`
+    /// is compiled as a vendored git dependency from another workspace — where the process's
+    /// current directory is the consuming repo, not this one.
     pub fn find_repo_root() -> Result<PathBuf> {
-        let mut path = std::env::current_dir()?;
-        loop {
-            if path.join("Cargo.toml").exists() && path.join(SETUP_DOCKERFILE_PATH).exists() {
-                return Ok(path);
-            }
-            if !path.pop() {
-                break;
-            }
-        }
-        Err(eyre::eyre!("Could not find repository root with {SETUP_DOCKERFILE_PATH}"))
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| eyre::eyre!("CARGO_MANIFEST_DIR has no grandparent directory"))?
+            .to_path_buf();
+        ensure!(
+            repo_root.join(SETUP_DOCKERFILE_PATH).exists(),
+            "{SETUP_DOCKERFILE_PATH} not found under {}",
+            repo_root.display()
+        );
+        Ok(repo_root)
     }
 }
 

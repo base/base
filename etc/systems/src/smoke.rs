@@ -17,6 +17,7 @@ use alloy_signer_local::PrivateKeySigner;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::Base;
+use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
 #[cfg(feature = "upgrade-signal")]
 use eyre::ensure;
@@ -283,6 +284,8 @@ pub struct SystemTestStackBuilder {
     client_consensus_mode: L2ClientConsensusMode,
     shadow_sequencer_count: usize,
     shadow_blocks_per_cycle: Option<NonZeroU64>,
+    extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
+    extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
     #[cfg(feature = "upgrade-signal")]
     upgrade_signal: Option<UpgradeSignalStackOptions>,
 }
@@ -388,6 +391,26 @@ impl SystemTestStackBuilder {
     /// reconciliation cycle. Defaults to [`DEFAULT_SHADOW_BLOCKS_PER_CYCLE`].
     pub const fn with_shadow_blocks_per_cycle(mut self, blocks: NonZeroU64) -> Self {
         self.shadow_blocks_per_cycle = Some(blocks);
+        self
+    }
+
+    /// Registers an additional node extension on the L2 builder, installed after its built-in
+    /// RPC wiring.
+    ///
+    /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard builder
+    /// wiring without forking this crate.
+    pub fn with_builder_extension(mut self, extension: Box<dyn BaseNodeExtension>) -> Self {
+        self.extra_builder_extensions.push(extension);
+        self
+    }
+
+    /// Registers an additional node extension on the L2 client, installed after its built-in
+    /// extensions.
+    ///
+    /// Lets downstream consumers layer their own [`BaseNodeExtension`] — such as a custom RPC
+    /// method — onto the standard client wiring without forking this crate.
+    pub fn with_client_extension(mut self, extension: Box<dyn BaseNodeExtension>) -> Self {
+        self.extra_client_extensions.push(extension);
         self
     }
 
@@ -584,6 +607,8 @@ impl SystemTestStackBuilder {
             upgrade_signal: l2_upgrade_signal,
             execution_upgrade_signal: l2_execution_upgrade_signal,
             shadow_sequencers,
+            extra_builder_extensions: self.extra_builder_extensions,
+            extra_client_extensions: self.extra_client_extensions,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;

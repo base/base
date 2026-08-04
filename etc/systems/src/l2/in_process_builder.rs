@@ -13,7 +13,7 @@ use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::ge
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{BasePooledTransaction, BuilderApiImpl, BuilderApiServer};
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
-use base_node_runner::BaseNode;
+use base_node_runner::{BaseNode, BaseNodeExtension, NodeHooks};
 use eyre::{Result, WrapErr, eyre};
 use nanoid::nanoid;
 use reth_db::{
@@ -33,7 +33,7 @@ use url::Url;
 use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
 
 /// Configuration for starting an in-process builder.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InProcessBuilderConfig {
     /// L2 genesis JSON content.
     pub genesis_json: Vec<u8>,
@@ -49,6 +49,11 @@ pub struct InProcessBuilderConfig {
     pub p2p_port: Option<u16>,
     /// Optional fixed Flashblocks port (uses random if None).
     pub flashblocks_port: Option<u16>,
+    /// Additional node extensions installed after the builder's built-in RPC wiring.
+    ///
+    /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
+    /// in-process builder wiring without forking this crate.
+    pub extra_extensions: Vec<Box<dyn BaseNodeExtension>>,
 }
 
 /// An in-process builder node that replaces Docker-based `BuilderContainer`.
@@ -157,8 +162,14 @@ impl InProcessBuilder {
                 Ok(())
             });
 
-        let NodeHandle { node: node_handle, node_exit_future } =
-            node_builder.launch().await.wrap_err("Failed to launch builder node")?;
+        let NodeHandle { node: node_handle, node_exit_future } = config
+            .extra_extensions
+            .into_iter()
+            .fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks))
+            .apply_to(node_builder)
+            .launch()
+            .await
+            .wrap_err("Failed to launch builder node")?;
 
         let http_api_addr = node_handle
             .rpc_server_handle()
