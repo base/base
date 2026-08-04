@@ -443,6 +443,7 @@ pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static s
         TxnExecutionError::EvmError => "evm_error",
         TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
         TxnExecutionError::MeteringDataPending => "metering_data_pending",
+        TxnExecutionError::PolicyRejected => "policy_rejected",
     }
 }
 

@@ -10,6 +10,9 @@
 mod candidate_source;
 pub use candidate_source::{BoxedBestTransactions, CandidateSource, DefaultCandidateSource};
 
+mod inclusion_policy;
+pub use inclusion_policy::{BoxedInclusionPolicy, DefaultInclusionPolicy, InclusionPolicy};
+
 mod config;
 pub use config::BuilderConfig;
 

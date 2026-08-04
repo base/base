@@ -53,8 +53,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, CandidateSource, DefaultCandidateSource, ExecutionInfo,
-    PayloadBuilder, ResourceLimits,
+    BuilderConfig, BuilderMetrics, CandidateSource, DefaultCandidateSource, DefaultInclusionPolicy,
+    ExecutionInfo, InclusionPolicy, PayloadBuilder, ResourceLimits,
     flashblocks::{
         FlashblocksExtraCtx, best_txs::BestFlashblocksTxs, context::BasePayloadBuilderCtx,
         generator::BuildArguments,
@@ -119,7 +119,12 @@ pub(super) struct BuilderOutputs {
 
 /// Base payload builder
 #[derive(Debug, Clone)]
-pub(super) struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource> {
+pub(super) struct BasePayloadBuilder<
+    Pool,
+    Client,
+    S = DefaultCandidateSource,
+    P = DefaultInclusionPolicy,
+> {
     /// The type responsible for creating the evm.
     pub evm_config: BaseEvmConfig,
     /// The transaction pool
@@ -135,9 +140,11 @@ pub(super) struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource> {
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
     /// Transforms the candidate transaction stream drained by the build loop.
     candidate_source: S,
+    /// Decides whether executed candidate transactions should be included.
+    inclusion_policy: P,
 }
 
-impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
+impl<Pool, Client, S, P> BasePayloadBuilder<Pool, Client, S, P> {
     /// `BasePayloadBuilder` constructor.
     pub(super) fn new(
         evm_config: BaseEvmConfig,
@@ -146,6 +153,7 @@ impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
         config: BuilderConfig,
         outputs: BuilderOutputs,
         candidate_source: S,
+        inclusion_policy: P,
     ) -> Self {
         Self {
             evm_config,
@@ -155,6 +163,7 @@ impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
             outputs,
             last_emitted_flashblock_id: Arc::default(),
             candidate_source,
+            inclusion_policy,
         }
     }
 
@@ -167,12 +176,13 @@ impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
     }
 }
 
-impl<Pool, Client, S> reth_basic_payload_builder::PayloadBuilder
-    for BasePayloadBuilder<Pool, Client, S>
+impl<Pool, Client, S, P> reth_basic_payload_builder::PayloadBuilder
+    for BasePayloadBuilder<Pool, Client, S, P>
 where
     Pool: Clone + Send + Sync,
     Client: Clone + Send + Sync,
     S: Clone + Send + Sync,
+    P: Clone + Send + Sync,
 {
     type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;
@@ -199,11 +209,12 @@ where
     }
 }
 
-impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S>
+impl<Pool, Client, S, P> BasePayloadBuilder<Pool, Client, S, P>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
     S: CandidateSource<Pool::Transaction>,
+    P: InclusionPolicy<Pool::Transaction>,
 {
     fn get_base_payload_builder_ctx(
         &self,
@@ -562,8 +573,8 @@ where
 
     #[allow(clippy::too_many_arguments)]
     async fn build_next_flashblock<
-        DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P> + revm::Database,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+        DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<Provider> + revm::Database,
+        Provider: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
         &self,
         ctx: &BasePayloadBuilderCtx,
@@ -655,7 +666,7 @@ where
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
         };
         let diag = ctx
-            .execute_best_transactions(info, state, best_txs, &limits)
+            .execute_best_transactions(info, state, best_txs, &limits, &self.inclusion_policy)
             .wrap_err("failed to execute best transactions")?;
 
         // Evict permanently rejected transactions from the iterator and pool.
@@ -950,7 +961,7 @@ where
     }
 
     /// Finalize the payload by computing the state root and publishing via the watch channel.
-    fn finalize_payload<DB, P>(
+    fn finalize_payload<DB, Provider>(
         &self,
         state: &mut State<DB>,
         ctx: &BasePayloadBuilderCtx,
@@ -958,8 +969,8 @@ where
         payload_tx: &watch::Sender<Option<BaseBuiltPayload>>,
     ) -> Result<(), PayloadBuilderError>
     where
-        DB: Database<Error = ProviderError> + AsRef<P>,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+        DB: Database<Error = ProviderError> + AsRef<Provider>,
+        Provider: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     {
         let start_time = Instant::now();
 
@@ -1077,11 +1088,12 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Pool, Client, S> PayloadBuilder for BasePayloadBuilder<Pool, Client, S>
+impl<Pool, Client, S, P> PayloadBuilder for BasePayloadBuilder<Pool, Client, S, P>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
     S: CandidateSource<Pool::Transaction> + Clone + Unpin + 'static,
+    P: InclusionPolicy<Pool::Transaction> + Clone + Unpin + 'static,
 {
     type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;

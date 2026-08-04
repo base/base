@@ -44,8 +44,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
-    ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
+    BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, InclusionPolicy,
+    PayloadTxsBounds, ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
     transaction_events::{
         BuilderAcceptedEventData, BuilderConsideredEventData, BuilderRejectedEventData,
         BuilderTransactionEventContext, emit_builder_transaction_event, rejection_reason_code,
@@ -182,7 +182,8 @@ impl FlashblockDiagnostics {
             | TxnExecutionError::NonceTooLow
             | TxnExecutionError::InternalError(_)
             | TxnExecutionError::EvmError
-            | TxnExecutionError::MaxGasUsageExceeded => {
+            | TxnExecutionError::MaxGasUsageExceeded
+            | TxnExecutionError::PolicyRejected => {
                 self.txs_rejected_other += 1;
             }
         }
@@ -645,13 +646,18 @@ impl BasePayloadBuilderCtx {
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns diagnostics summarizing transaction selection for the flashblock.
-    pub(super) fn execute_best_transactions(
+    pub(super) fn execute_best_transactions<Txs, P>(
         &self,
         info: &mut ExecutionInfo,
         db: &mut State<impl Database>,
-        best_txs: &mut impl PayloadTxsBounds,
+        best_txs: &mut Txs,
         limits: &ResourceLimits,
-    ) -> Result<FlashblockDiagnostics, PayloadBuilderError> {
+        inclusion_policy: &P,
+    ) -> Result<FlashblockDiagnostics, PayloadBuilderError>
+    where
+        Txs: PayloadTxsBounds,
+        P: InclusionPolicy<Txs::Transaction>,
+    {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
         let mut num_txs_simulated = 0;
@@ -845,7 +851,8 @@ impl BasePayloadBuilderCtx {
                 None => 0,
             };
 
-            let tx = tx.into_consensus();
+            let pooled_tx = tx;
+            let tx = pooled_tx.clone_into_consensus();
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
 
@@ -1183,6 +1190,33 @@ impl BasePayloadBuilderCtx {
                 num_txs_simulated_fail += 1;
                 reverted_gas_used += gas_used;
                 BuilderMetrics::reverted_tx_gas_used().record(gas_used as f64);
+            }
+
+            if !inclusion_policy.should_include(&pooled_tx, is_success) {
+                let err = TxnExecutionError::PolicyRejected;
+                diag.record_rejection(&err);
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                record_rejected_tx_priority_fee(&err, priority_fee);
+                if err.is_permanent() {
+                    diag.permanently_rejected_txs.push(tx_hash);
+                }
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderRejectedEventData::from_error(
+                            &err,
+                            info,
+                            limits,
+                            Some(&tx_resources),
+                        )
+                    },
+                );
+                log_txn(Err(err));
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
             }
 
             // add gas used by the transaction to cumulative gas used, before creating the
