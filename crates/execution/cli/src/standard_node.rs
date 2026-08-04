@@ -1,6 +1,6 @@
 //! Standard Base execution-node arguments and runner wiring.
 
-use std::{env, path::PathBuf, sync::Arc, time::Duration};
+use std::{env, fmt, path::PathBuf, sync::Arc, time::Duration};
 
 use base_bundle_extension::BundleExtension;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
@@ -8,7 +8,10 @@ use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
 use base_node_core::{HasRollupArgs, RollupArgs};
-use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
+use base_node_runner::{
+    BaseNodeBuilder, BaseNodeRunner, DefaultPayloadServiceBuilder, LaunchedBaseNode,
+    PayloadServiceBuilder,
+};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
@@ -299,10 +302,14 @@ impl StandardBaseRethNode {
     }
 
     /// Installs the upgrade signal runtime extension when execution-side live reads are configured.
-    pub fn install_upgrade_signal_runtime_extension<SB: PayloadServiceBuilder>(
-        runner: &mut BaseNodeRunner<SB>,
+    pub fn install_upgrade_signal_runtime_extension<SB, E>(
+        runner: &mut BaseNodeRunner<SB, E>,
         rollup_args: &RollupArgs,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<()>
+    where
+        SB: PayloadServiceBuilder<E>,
+        E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+    {
         let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
             return Ok(());
         };
@@ -348,7 +355,10 @@ impl StandardBaseRethNode {
     }
 
     /// Builds a runner with the standard Base execution-node extensions installed.
-    pub fn runner(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner> {
+    pub fn runner<E>(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner<DefaultPayloadServiceBuilder, E>>
+    where
+        E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+    {
         let rollup_args = args.rpc.rollup_args.clone();
         // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
         Self::validate_upgrade_signal_args(&rollup_args)?;
@@ -438,8 +448,13 @@ impl StandardBaseRethNode {
     }
 
     /// Builds a standard runner with process version metrics registered on startup.
-    pub fn runner_with_version_metrics(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner> {
-        let mut runner = Self::runner(args)?;
+    pub fn runner_with_version_metrics<E>(
+        args: StandardNodeArgs,
+    ) -> eyre::Result<BaseNodeRunner<DefaultPayloadServiceBuilder, E>>
+    where
+        E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+    {
+        let mut runner = Self::runner::<E>(args)?;
         runner.add_started_callback(|| {
             base_cli_utils::register_version_metrics!();
             Ok(())
@@ -451,7 +466,7 @@ impl StandardBaseRethNode {
     pub async fn run(builder: BaseNodeBuilder, args: StandardNodeArgs) -> eyre::Result<()> {
         let builder = Self::apply_initial_upgrade_signal(builder, &args).await?;
 
-        Self::runner_with_version_metrics(args)?.run(builder).await
+        Self::runner_with_version_metrics::<()>(args)?.run(builder).await
     }
 
     /// Launches the node and returns immediately with a handle.
@@ -480,7 +495,7 @@ impl StandardBaseRethNode {
         )
         .await?;
 
-        Self::runner_with_version_metrics(args)?.launch(builder).await
+        Self::runner_with_version_metrics::<()>(args)?.launch(builder).await
     }
 }
 

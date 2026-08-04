@@ -1,7 +1,7 @@
 //! Contains the [`FlashblocksExtension`] which wires up the flashblocks feature
 //! (canonical block subscription and RPC surface) on the Base node builder.
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
@@ -26,9 +26,12 @@ impl FlashblocksExtension {
     }
 }
 
-impl BaseNodeExtension for FlashblocksExtension {
+impl<E> BaseNodeExtension<E> for FlashblocksExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     /// Applies the extension to the supplied hooks.
-    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
+    fn apply(self: Box<Self>, hooks: NodeHooks<E>) -> NodeHooks<E> {
         let Some(cfg) = self.config else {
             info!(message = "flashblocks integration is disabled");
             return hooks;
@@ -91,7 +94,10 @@ impl BaseNodeExtension for FlashblocksExtension {
     }
 }
 
-impl FromExtensionConfig for FlashblocksExtension {
+impl<E> FromExtensionConfig<E> for FlashblocksExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     type Config = Option<FlashblocksConfig>;
 
     fn from_config(config: Self::Config) -> Self {

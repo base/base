@@ -1,5 +1,7 @@
 //! Execution-node upgrade signal schedule application.
 
+use std::fmt;
+
 use alloy_provider::RootProvider;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
@@ -86,10 +88,13 @@ impl ExecutionUpgradeSignal {
     }
 
     /// Registers the execution admin RPC method for runtime upgrade signal refreshes.
-    pub fn register_runtime_refresh_rpc(
-        ctx: &mut BaseRpcContext<'_>,
+    pub fn register_runtime_refresh_rpc<E>(
+        ctx: &mut BaseRpcContext<'_, E>,
         config: ExecutionUpgradeSignalConfig,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<()>
+    where
+        E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+    {
         if !config.signal_config.mode.allows_runtime_admin() {
             return Ok(());
         }
@@ -127,13 +132,16 @@ impl ExecutionUpgradeSignalRuntimeExtension {
     }
 }
 
-impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
-    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
+impl<E> BaseNodeExtension<E> for ExecutionUpgradeSignalRuntimeExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
+    fn apply(self: Box<Self>, hooks: NodeHooks<E>) -> NodeHooks<E> {
         let config = self.config;
 
         let hooks = if config.signal_config.mode.allows_runtime_admin() {
             let rpc_config = config.clone();
-            hooks.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
+            hooks.add_rpc_module(move |ctx: &mut BaseRpcContext<'_, E>| {
                 ExecutionUpgradeSignal::register_runtime_refresh_rpc(ctx, rpc_config)
             })
         } else {
@@ -193,7 +201,10 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
     }
 }
 
-impl FromExtensionConfig for ExecutionUpgradeSignalRuntimeExtension {
+impl<E> FromExtensionConfig<E> for ExecutionUpgradeSignalRuntimeExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     type Config = ExecutionUpgradeSignalConfig;
 
     fn from_config(config: Self::Config) -> Self {

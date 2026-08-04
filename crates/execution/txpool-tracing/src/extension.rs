@@ -1,7 +1,7 @@
 //! Contains the [`TxPoolExtension`] which wires up the transaction pool tracing
 //! subscription on the Base node builder.
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
@@ -38,9 +38,12 @@ impl TxPoolExtension {
     }
 }
 
-impl BaseNodeExtension for TxPoolExtension {
+impl<E> BaseNodeExtension<E> for TxPoolExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
+    fn apply(self: Box<Self>, builder: NodeHooks<E>) -> NodeHooks<E> {
         let config = self.config;
 
         let tracing_enabled = config.tracing_enabled;
@@ -73,7 +76,10 @@ impl BaseNodeExtension for TxPoolExtension {
     }
 }
 
-impl FromExtensionConfig for TxPoolExtension {
+impl<E> FromExtensionConfig<E> for TxPoolExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     type Config = TxpoolConfig;
 
     fn from_config(config: Self::Config) -> Self {

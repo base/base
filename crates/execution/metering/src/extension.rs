@@ -1,7 +1,7 @@
 //! Contains the [`MeteringExtension`] which wires up the metering RPC surface
 //! on the Base node builder.
 
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{fmt, num::NonZeroUsize, sync::Arc};
 
 use alloy_primitives::U256;
 use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState};
@@ -163,9 +163,12 @@ impl MeteringExtension {
     }
 }
 
-impl BaseNodeExtension for MeteringExtension {
+impl<E> BaseNodeExtension<E> for MeteringExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     /// Applies the extension to the supplied hooks.
-    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
+    fn apply(self: Box<Self>, hooks: NodeHooks<E>) -> NodeHooks<E> {
         if !self.enabled {
             return hooks;
         }
@@ -343,7 +346,10 @@ impl MeteringConfig {
     }
 }
 
-impl FromExtensionConfig for MeteringExtension {
+impl<E> FromExtensionConfig<E> for MeteringExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     type Config = MeteringConfig;
 
     fn from_config(config: Self::Config) -> Self {

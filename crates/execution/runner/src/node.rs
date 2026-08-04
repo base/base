@@ -1,14 +1,17 @@
 //! Base Node types config.
 
-use base_common_consensus::BasePrimitives;
+use core::marker::PhantomData;
+
+use base_common_consensus::{
+    BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, BaseTransactionSigned,
+};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_rpc::eth::BaseEthApiBuilder;
-use base_execution_txpool::GuardLimits;
+use base_execution_txpool::{BasePooledTransaction, GuardLimits};
 use base_node_core::{
     BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes, BaseExecutorBuilder,
-    BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
-    BaseStorage,
+    BaseNetworkBuilder, BaseNodeTypes, BasePayloadValidatorBuilder, BaseStorage,
     args::RollupArgs,
     node::{BasePayloadBuilder, BasePoolBuilder},
 };
@@ -26,7 +29,7 @@ use crate::{BaseAddOns, BaseAddOnsBuilder};
 /// Type configuration for a regular Base node.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct BaseNode {
+pub struct BaseNode<E = ()> {
     /// Additional Base args
     pub args: RollupArgs,
     /// Data availability configuration for the payload builder.
@@ -43,15 +46,17 @@ pub struct BaseNode {
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
+    /// Marker for the pool transaction extension type.
+    _pd: PhantomData<E>,
 }
 
-impl Default for BaseNode {
+impl<E> Default for BaseNode<E> {
     fn default() -> Self {
         Self::new(RollupArgs::default())
     }
 }
 
-impl BaseNode {
+impl<E> BaseNode<E> {
     /// Creates a new instance of the Base node type.
     pub fn new(args: RollupArgs) -> Self {
         Self {
@@ -59,6 +64,7 @@ impl BaseNode {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
+            _pd: PhantomData,
         }
     }
 
@@ -81,9 +87,21 @@ impl BaseNode {
     }
 
     /// Returns the components for the given [`RollupArgs`].
-    pub fn components<Node>(&self) -> BaseNodeComponentBuilder<Node>
+    pub fn components<Node>(
+        &self,
+    ) -> ComponentsBuilder<
+        Node,
+        BasePoolBuilder<
+            BasePooledTransaction<BaseTransactionSigned, ConsensusPooledTransaction, E>,
+        >,
+        BasicPayloadServiceBuilder<BasePayloadBuilder>,
+        BaseNetworkBuilder,
+        BaseExecutorBuilder,
+        BaseConsensusBuilder,
+    >
     where
         Node: FullNodeTypes<Types: BaseNodeTypes>,
+        E: core::fmt::Debug + Clone + Send + Sync + Unpin + 'static,
     {
         let RollupArgs {
             disable_txpool_gossip,
@@ -97,7 +115,9 @@ impl BaseNode {
         ComponentsBuilder::default()
             .node_types::<Node>()
             .pool(
-                BasePoolBuilder::default()
+                BasePoolBuilder::<
+                    BasePooledTransaction<BaseTransactionSigned, ConsensusPooledTransaction, E>,
+                >::default()
                     .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
                     .with_guard_limits(GuardLimits {
                         signature_limit: mempool_sender_limit,
@@ -179,13 +199,16 @@ impl BaseNode {
     }
 }
 
-impl<N> Node<N> for BaseNode
+impl<N, E> Node<N> for BaseNode<E>
 where
     N: FullNodeTypes<Types: BaseNodeTypes>,
+    E: core::fmt::Debug + Clone + Send + Sync + Unpin + 'static,
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,
-        BasePoolBuilder,
+        BasePoolBuilder<
+            BasePooledTransaction<BaseTransactionSigned, ConsensusPooledTransaction, E>,
+        >,
         BasicPayloadServiceBuilder<BasePayloadBuilder>,
         BaseNetworkBuilder,
         BaseExecutorBuilder,
@@ -209,7 +232,10 @@ where
     }
 }
 
-impl NodeTypes for BaseNode {
+impl<E> NodeTypes for BaseNode<E>
+where
+    E: core::fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     type Primitives = BasePrimitives;
     type ChainSpec = BaseChainSpec;
     type Storage = BaseStorage;

@@ -1,6 +1,8 @@
 //! Contains the [`TxForwardingExtension`] which wires up the transaction
 //! forwarding pipeline on the Base node builder.
 
+use std::fmt;
+
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use tracing::info;
 
@@ -20,9 +22,12 @@ impl TxForwardingExtension {
     }
 }
 
-impl BaseNodeExtension for TxForwardingExtension {
+impl<E> BaseNodeExtension<E> for TxForwardingExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     /// Applies the extension to the supplied hooks.
-    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
+    fn apply(self: Box<Self>, hooks: NodeHooks<E>) -> NodeHooks<E> {
         if !self.config.enabled || self.config.builder_urls.is_empty() {
             return hooks;
         }
@@ -55,7 +60,10 @@ impl BaseNodeExtension for TxForwardingExtension {
     }
 }
 
-impl FromExtensionConfig for TxForwardingExtension {
+impl<E> FromExtensionConfig<E> for TxForwardingExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     type Config = TxForwardingConfig;
 
     fn from_config(config: Self::Config) -> Self {

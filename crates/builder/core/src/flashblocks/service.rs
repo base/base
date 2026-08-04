@@ -138,7 +138,7 @@ where
 {
     type ComponentsBuilder = ComponentsBuilder<
         BaseNodeTypes,
-        BasePoolBuilder,
+        BasePoolBuilder<BasePooledTransaction>,
         Self,
         BaseNetworkBuilder,
         BaseExecutorBuilder,

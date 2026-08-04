@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use core::marker::PhantomData;
+
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_node_core::args::RollupArgs;
 use eyre::Result;
@@ -19,17 +21,27 @@ type StartedCallback = Box<dyn FnOnce() -> Result<()> + Send + 'static>;
 
 /// Handle to a launched Base execution node.
 #[derive(Debug)]
-pub struct LaunchedBaseNode {
+pub struct LaunchedBaseNode<E = ()>
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     /// The underlying reth node handle.
-    pub handle: NodeHandleFor<BaseNode>,
+    pub handle: NodeHandleFor<BaseNode<E>>,
 }
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
-pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuilder> {
+///
+/// Generic over the payload service builder `SB` and the pool extension `E`,
+/// the latter defaulting to `()` (no extension).
+pub struct BaseNodeRunner<SB = DefaultPayloadServiceBuilder, E = ()>
+where
+    SB: PayloadServiceBuilder<E>,
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     /// Rollup-specific arguments forwarded to the Base node implementation.
     rollup_args: RollupArgs,
     /// Registered builder extensions.
-    extensions: Vec<Box<dyn BaseNodeExtension>>,
+    extensions: Vec<Box<dyn BaseNodeExtension<E>>>,
     /// Payload service builder.
     service_builder: SB,
     /// Shared DA configuration for the node and payload builder.
@@ -41,9 +53,14 @@ pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuild
     manifest_precheck_enabled: bool,
     /// Binary-owned callbacks to run after the node has started.
     started_callbacks: Vec<StartedCallback>,
+    /// Marker for the pool extension type.
+    _pd: PhantomData<E>,
 }
 
-impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
+impl<E> BaseNodeRunner<DefaultPayloadServiceBuilder, E>
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     /// Creates a new launcher using the provided rollup arguments.
     pub fn new(rollup_args: RollupArgs) -> Self {
         Self {
@@ -54,11 +71,16 @@ impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
             gas_limit_config: None,
             manifest_precheck_enabled: true,
             started_callbacks: Vec::new(),
+            _pd: PhantomData,
         }
     }
 }
 
-impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
+impl<SB, E> fmt::Debug for BaseNodeRunner<SB, E>
+where
+    SB: PayloadServiceBuilder<E>,
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BaseNodeRunner")
             .field("rollup_args", &self.rollup_args)
@@ -71,7 +93,11 @@ impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
     }
 }
 
-impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
+impl<SB, E> BaseNodeRunner<SB, E>
+where
+    SB: PayloadServiceBuilder<E>,
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     /// Sets the shared DA configuration.
     pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
         self.da_config = Some(da_config);
@@ -91,7 +117,10 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     }
 
     /// Swap the payload service builder.
-    pub fn with_service_builder<SB2: PayloadServiceBuilder>(self, sb: SB2) -> BaseNodeRunner<SB2> {
+    pub fn with_service_builder<SB2: PayloadServiceBuilder<E>>(
+        self,
+        sb: SB2,
+    ) -> BaseNodeRunner<SB2, E> {
         BaseNodeRunner {
             rollup_args: self.rollup_args,
             extensions: self.extensions,
@@ -100,11 +129,12 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             gas_limit_config: self.gas_limit_config,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
             started_callbacks: self.started_callbacks,
+            _pd: PhantomData,
         }
     }
 
     /// Registers a new builder extension.
-    pub fn install_ext<T: FromExtensionConfig + 'static>(&mut self, config: T::Config) {
+    pub fn install_ext<T: FromExtensionConfig<E> + 'static>(&mut self, config: T::Config) {
         self.extensions.push(Box::new(T::from_config(config)));
     }
 
@@ -127,12 +157,12 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
 
     /// Applies all Base-specific wiring to the supplied builder and returns a launched node
     /// handle without waiting for shutdown.
-    pub async fn launch(self, builder: BaseNodeBuilder) -> Result<LaunchedBaseNode> {
+    pub async fn launch(self, builder: BaseNodeBuilder) -> Result<LaunchedBaseNode<E>> {
         let handle = self.launch_node(builder).await?;
         Ok(LaunchedBaseNode { handle })
     }
 
-    async fn launch_node(self, builder: BaseNodeBuilder) -> Result<NodeHandleFor<BaseNode>> {
+    async fn launch_node(self, builder: BaseNodeBuilder) -> Result<NodeHandleFor<BaseNode<E>>> {
         info!(target: "base-runner", "starting custom Base node");
 
         let Self {
@@ -143,8 +173,9 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             gas_limit_config,
             manifest_precheck_enabled,
             started_callbacks,
+            _pd,
         } = self;
-        let mut base_node = BaseNode::new(rollup_args);
+        let mut base_node = BaseNode::<E>::new(rollup_args);
         if let Some(da_config) = da_config {
             base_node = base_node.with_da_config(da_config);
         }
@@ -155,12 +186,13 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         let components = service_builder.build_components(&base_node);
 
         let builder = builder
-            .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
+            .with_types_and_provider::<BaseNode<E>, BlockchainProvider<_>>()
             .with_components(components)
             .with_add_ons(base_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
+        let hooks =
+            extensions.into_iter().fold(NodeHooks::<E>::new(), |hooks, ext| ext.apply(hooks));
         let hooks = started_callbacks
             .into_iter()
             .fold(hooks, |hooks, callback| hooks.add_node_started_hook(move |_| callback()));

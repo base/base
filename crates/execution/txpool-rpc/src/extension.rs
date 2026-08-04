@@ -1,5 +1,7 @@
 //! `TxPool` RPC extension for registering transaction pool management APIs.
 
+use std::fmt;
+
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use reth_rpc_server_types::RethRpcModule;
 
@@ -21,11 +23,14 @@ pub struct TxPoolRpcExtension {
     config: TxPoolRpcConfig,
 }
 
-impl BaseNodeExtension for TxPoolRpcExtension {
-    fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
+impl<E> BaseNodeExtension<E> for TxPoolRpcExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
+    fn apply(self: Box<Self>, builder: NodeHooks<E>) -> NodeHooks<E> {
         let sequencer_rpc = self.config.sequencer_rpc;
 
-        builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
+        builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_, E>| {
             // Register TransactionStatusApi
             let status_api = TransactionStatusApiImpl::new(sequencer_rpc, ctx.pool().clone())
                 .expect("Failed to create transaction status API");
@@ -41,7 +46,10 @@ impl BaseNodeExtension for TxPoolRpcExtension {
     }
 }
 
-impl FromExtensionConfig for TxPoolRpcExtension {
+impl<E> FromExtensionConfig<E> for TxPoolRpcExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     type Config = TxPoolRpcConfig;
 
     fn from_config(config: Self::Config) -> Self {

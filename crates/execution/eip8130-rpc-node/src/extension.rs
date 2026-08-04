@@ -1,6 +1,8 @@
 //! `BaseNodeExtension` that registers the standalone EIP-8130
 //! `eth_getTransactionCount` override when flashblocks is not.
 
+use std::fmt;
+
 use base_execution_eip8130_rpc::{Eip8130EthApiExt, Eip8130EthApiOverrideServer};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use tracing::info;
@@ -38,8 +40,11 @@ impl Eip8130RpcExtension {
     }
 }
 
-impl BaseNodeExtension for Eip8130RpcExtension {
-    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
+impl<E> BaseNodeExtension<E> for Eip8130RpcExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
+    fn apply(self: Box<Self>, hooks: NodeHooks<E>) -> NodeHooks<E> {
         match self.mode {
             Eip8130RpcMode::Defer => {
                 info!(message = "EIP-8130 RPC override deferred to flashblocks");
@@ -55,7 +60,10 @@ impl BaseNodeExtension for Eip8130RpcExtension {
     }
 }
 
-impl FromExtensionConfig for Eip8130RpcExtension {
+impl<E> FromExtensionConfig<E> for Eip8130RpcExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     type Config = Eip8130RpcMode;
 
     fn from_config(mode: Eip8130RpcMode) -> Self {

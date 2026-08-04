@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use base_execution_exex::BaseProofsExEx;
 use base_execution_rpc::{
@@ -33,9 +33,12 @@ impl ProofsHistoryExtension {
     }
 }
 
-impl BaseNodeExtension for ProofsHistoryExtension {
+impl<E> BaseNodeExtension<E> for ProofsHistoryExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     /// Applies the extension to the supplied hooks.
-    fn apply(self: Box<Self>, mut hooks: NodeHooks) -> NodeHooks {
+    fn apply(self: Box<Self>, mut hooks: NodeHooks<E>) -> NodeHooks<E> {
         // TODO: if NodeHooks exposes the underlying Builder, we can call launch_node_with_proof_history
         let args = self.config;
         let proofs_history_enabled = args.proofs_history;
@@ -123,7 +126,10 @@ impl BaseNodeExtension for ProofsHistoryExtension {
     }
 }
 
-impl FromExtensionConfig for ProofsHistoryExtension {
+impl<E> FromExtensionConfig<E> for ProofsHistoryExtension
+where
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
+{
     type Config = ProofsHistoryConfig;
 
     fn from_config(config: Self::Config) -> Self {
@@ -131,15 +137,16 @@ impl FromExtensionConfig for ProofsHistoryExtension {
     }
 }
 
-fn install_proofs_history<S>(
-    mut hooks: NodeHooks,
+fn install_proofs_history<S, E>(
+    mut hooks: NodeHooks<E>,
     storage_backend: Arc<S>,
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
     proofs_history_verification_interval: u64,
-) -> NodeHooks
+) -> NodeHooks<E>
 where
     S: BaseProofsBatchStore + DatabaseMetrics + Send + Sync + 'static,
+    E: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
 {
     let storage: BaseProofsStorage<Arc<S>> = Arc::clone(&storage_backend).into();
     let storage_exec = storage.clone();
