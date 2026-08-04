@@ -212,7 +212,6 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         if privileged {
             return self.transfer_inner(token, caller, to, amount, None);
         }
-        // One SLOAD fetches all transfer policy ids for the sender/receiver checks.
         let policies = token.accounting().transfer_policy_ids()?;
         self.transfer_inner(token, caller, to, amount, Some(&policies))
     }
