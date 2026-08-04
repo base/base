@@ -151,8 +151,8 @@ pub enum OracleProviderError {
         /// The claimed L2 block number.
         claim_block: u64,
     },
-    /// The rollup config enables Zenith, which is not committed by the proof schedule ID.
-    #[error("Configured Zenith upgrade is not committed by the proof schedule ID")]
+    /// An active Zenith upgrade is not committed by the proof schedule ID.
+    #[error("Active Zenith upgrade is not committed by the proof schedule ID")]
     UncommittedZenithUpgrade,
     /// A Beryl-enabled chain is missing a trusted activation registry admin address.
     ///
