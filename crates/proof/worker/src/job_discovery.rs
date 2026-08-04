@@ -112,6 +112,7 @@ impl JobClaimFilter {
                     tee_kinds: tee_kinds.clone(),
                     zk_vms: Vec::new(),
                     zk_backends: Vec::new(),
+                    protocol_version: GetNextProofRequest::CURRENT_PROTOCOL_VERSION,
                     lock_duration_seconds,
                 }),
                 None,
@@ -133,6 +134,7 @@ impl JobClaimFilter {
                         tee_kinds: Vec::new(),
                         zk_vms: zk_vms.clone(),
                         zk_backends: zk_backends.clone(),
+                        protocol_version: GetNextProofRequest::CURRENT_PROTOCOL_VERSION,
                         lock_duration_seconds,
                     }),
                     Some(GetNextProofRequest {
@@ -141,6 +143,7 @@ impl JobClaimFilter {
                         tee_kinds: Vec::new(),
                         zk_vms,
                         zk_backends,
+                        protocol_version: GetNextProofRequest::CURRENT_PROTOCOL_VERSION,
                         lock_duration_seconds,
                     }),
                 ]
@@ -635,7 +638,11 @@ mod tests {
         ProofJob {
             session_id: session_id.clone(),
             status: ProofJobStatus::Claimed,
-            request: ProofRequest { session_id, request },
+            request: ProofRequest {
+                session_id,
+                protocol_version: ProofRequest::CURRENT_PROTOCOL_VERSION,
+                request,
+            },
             attempt: 1,
             lock_id: Some("lock-1".to_string()),
             worker_id: Some("worker-1".to_string()),

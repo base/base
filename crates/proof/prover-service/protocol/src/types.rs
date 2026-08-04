@@ -153,8 +153,21 @@ pub struct DeleteProofsByTeeSignerRequest {
 pub struct ProofRequest {
     /// Client-provided idempotency key.
     pub session_id: String,
+    /// Prover protocol required to fulfill this request. Omission defaults to legacy version `0`.
+    #[serde(default)]
+    pub protocol_version: u32,
     /// Proof request details.
     pub request: ProofRequestKind,
+}
+
+impl ProofRequest {
+    /// Current prover protocol version, which supports schedule pinning.
+    ///
+    /// This version tags the journal semantics a job requires and is matched *exactly*
+    /// against the version workers announce when claiming. Bump it only when the proof
+    /// journal or witness semantics change incompatibly — never for RPC-surface changes.
+    /// A bump strands every queued job at the old version until a matching worker claims it.
+    pub const CURRENT_PROTOCOL_VERSION: u32 = 1;
 }
 
 /// Concrete proof request variant.
@@ -391,8 +404,17 @@ pub struct GetNextProofRequest {
     /// ZK proving backends this worker can execute for ZK proofs.
     #[serde(default)]
     pub zk_backends: Vec<ZkBackend>,
+    /// Worker protocol version used to gate incompatible jobs. Omission defaults to `0`.
+    #[serde(default)]
+    pub protocol_version: u32,
     /// Requested lock duration in seconds. Zero uses the server default.
     pub lock_duration_seconds: u32,
+}
+
+impl GetNextProofRequest {
+    /// Protocol version spoken by workers built from this revision. Tracks
+    /// [`ProofRequest::CURRENT_PROTOCOL_VERSION`], which documents the bump rules.
+    pub const CURRENT_PROTOCOL_VERSION: u32 = ProofRequest::CURRENT_PROTOCOL_VERSION;
 }
 
 /// Response returned when a worker claims the next proof job.
@@ -535,6 +557,7 @@ mod tests {
         let request = ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: "proof-session".to_owned(),
+                protocol_version: ProofRequest::CURRENT_PROTOCOL_VERSION,
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: 10,
                     number_of_blocks_to_prove: 20,
@@ -548,13 +571,14 @@ mod tests {
             },
         };
 
-        let value = serde_json::to_value(request).expect("proof request should serialize");
+        let value = serde_json::to_value(&request).expect("proof request should serialize");
 
         assert_eq!(
             value,
             json!({
                 "proof": {
                     "session_id": "proof-session",
+                    "protocol_version": ProofRequest::CURRENT_PROTOCOL_VERSION,
                     "request": {
                         "proof_type": "compressed",
                         "payload": {
@@ -569,6 +593,13 @@ mod tests {
                 }
             })
         );
+
+        // A legacy producer omits the field entirely, which must read back as version 0.
+        let mut legacy = value;
+        legacy["proof"].as_object_mut().unwrap().remove("protocol_version");
+        let deserialized: ProveBlockRangeRequest =
+            serde_json::from_value(legacy).expect("legacy proof request should deserialize");
+        assert_eq!(deserialized.proof.protocol_version, 0);
     }
 
     #[test]
@@ -935,6 +966,7 @@ mod tests {
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
             zk_backends: vec![ZkBackend::Cluster, ZkBackend::DryRun],
+            protocol_version: GetNextProofRequest::CURRENT_PROTOCOL_VERSION,
             lock_duration_seconds: 30,
         };
 
@@ -948,6 +980,7 @@ mod tests {
                 "tee_kinds": [],
                 "zk_vms": ["sp1"],
                 "zk_backends": ["cluster", "dry_run"],
+                "protocol_version": 1,
                 "lock_duration_seconds": 30
             })
         );
@@ -965,6 +998,7 @@ mod tests {
         assert_eq!(request.tee_kinds, Vec::new());
         assert_eq!(request.zk_vms, Vec::new());
         assert_eq!(request.zk_backends, Vec::new());
+        assert_eq!(request.protocol_version, 0);
     }
 
     #[test]

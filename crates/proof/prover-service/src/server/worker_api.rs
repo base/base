@@ -67,8 +67,9 @@ impl ProverServiceServer {
         request: GetNextProofRequest,
     ) -> RpcResult<GetNextProofResponse> {
         let start = std::time::Instant::now();
+        let worker_id = request.worker_id.clone();
         let result = self.get_next_proof_inner(request).await;
-        record_rpc_result("GetNextProof", start, &result);
+        record_worker_rpc_result("GetNextProof", start, &result, &worker_id);
 
         result
     }
@@ -79,6 +80,7 @@ impl ProverServiceServer {
     ) -> RpcResult<GetNextProofResponse> {
         let claim = ClaimProofJob {
             worker_id: request.worker_id,
+            protocol_version: request.protocol_version,
             api_proof_type: request.proof_type.into(),
             tee_kinds: request.tee_kinds.into_iter().map(Into::into).collect(),
             zk_vms: request.zk_vms.into_iter().map(Into::into).collect(),

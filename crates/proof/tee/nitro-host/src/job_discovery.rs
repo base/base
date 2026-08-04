@@ -96,6 +96,7 @@ impl JobDiscoveryConfig {
             tee_kinds: vec![TeeKind::AwsNitro],
             zk_vms: Vec::new(),
             zk_backends: Vec::new(),
+            protocol_version: GetNextProofRequest::CURRENT_PROTOCOL_VERSION,
             lock_duration_seconds: self.lock_duration_seconds,
         }
     }
@@ -472,6 +473,7 @@ mod tests {
             status: ProofJobStatus::Claimed,
             request: ProofRequest {
                 session_id,
+                protocol_version: ProofRequest::CURRENT_PROTOCOL_VERSION,
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: 1,
                     number_of_blocks_to_prove: 1,

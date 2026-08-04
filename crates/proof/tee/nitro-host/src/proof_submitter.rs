@@ -342,6 +342,7 @@ mod tests {
             status: ProofJobStatus::Succeeded,
             request: ProofRequest {
                 session_id: request.session_id.clone(),
+                protocol_version: ProofRequest::CURRENT_PROTOCOL_VERSION,
                 request: ProofRequestKind::Tee(TeeProofRequest {
                     proof: PrimitiveProofRequest::default(),
                     tee_kind: TeeKind::AwsNitro,

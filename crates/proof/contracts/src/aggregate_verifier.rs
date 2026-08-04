@@ -45,6 +45,11 @@ sol! {
         /// Returns the current game status. See [`GameStatus`] for values.
         function status() external view returns (uint8);
 
+        /// Returns the upgrade schedule commitment pinned by this game.
+        ///
+        /// Legacy verifier implementations do not expose this getter.
+        function scheduleId() external view returns (bytes32);
+
         /// Returns the address that provided a TEE proof.
         function teeProver() external view returns (address);
 
@@ -215,6 +220,9 @@ pub trait AggregateVerifierClient: Send + Sync {
     /// Returns the current game status.
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError>;
 
+    /// Returns whether the game commits proofs to a pinned upgrade schedule.
+    async fn uses_schedule_pinning(&self, game_address: Address) -> Result<bool, ContractError>;
+
     /// Returns the address that provided a ZK proof for the given game.
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError>;
 
@@ -375,6 +383,27 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
                 "game {game_address} returned unrecognized status {unknown}"
             ))
         })
+    }
+
+    async fn uses_schedule_pinning(&self, game_address: Address) -> Result<bool, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        match contract.scheduleId().call().await {
+            Ok(_) => Ok(true),
+            Err(error @ alloy_contract::Error::ZeroData(_, _)) => {
+                Err(ContractError::call("scheduleId failed", error))
+            }
+            Err(alloy_contract::Error::TransportError(error))
+                if error.as_error_resp().is_some_and(|payload| {
+                    payload.message.to_ascii_lowercase().contains("execution reverted")
+                        && payload.as_revert_data().is_none_or(|data| data.is_empty())
+                }) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(ContractError::call("scheduleId failed", error)),
+        }
     }
 
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {

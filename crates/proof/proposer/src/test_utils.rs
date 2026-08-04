@@ -253,6 +253,9 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn status(&self, _: Address) -> Result<GameStatus, ContractError> {
         unimplemented!("unused in proposer tests")
     }
+    async fn uses_schedule_pinning(&self, _: Address) -> Result<bool, ContractError> {
+        unimplemented!("unused in proposer tests")
+    }
     async fn zk_prover(&self, _: Address) -> Result<Address, ContractError> {
         unimplemented!("unused in proposer tests")
     }

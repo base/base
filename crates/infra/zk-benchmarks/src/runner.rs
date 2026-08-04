@@ -148,6 +148,7 @@ impl ZkBenchRunner {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id,
+                protocol_version: ProofRequest::CURRENT_PROTOCOL_VERSION,
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number,
                     number_of_blocks_to_prove: 1,
