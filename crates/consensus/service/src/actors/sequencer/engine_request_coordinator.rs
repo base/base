@@ -378,11 +378,29 @@ where
                                 if block_gap.is_some_and(|gap| {
                                     gap > 0 && gap <= MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP
                                 }) {
-                                    info!(target: "engine", block_number, block_hash = %envelope.execution_payload.block_hash(), parent_hash = %envelope.execution_payload.parent_hash(), block_gap = ?block_gap, max_external_unsafe_gap = MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP, "Sequencer enqueuing external unsafe payload within gap limit");
+                                    info!(
+                                        target: "engine",
+                                        block_number,
+                                        block_hash = %envelope.execution_payload.block_hash(),
+                                        parent_hash = %envelope.execution_payload.parent_hash(),
+                                        block_gap = ?block_gap,
+                                        max_external_unsafe_gap = MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
+                                        "Sequencer enqueuing external unsafe payload within gap limit"
+                                    );
                                     self.processor
                                         .enqueue_unsafe_payload_insert(*envelope, None, false);
                                 } else {
-                                    info!(target: "engine", block_number, block_hash = %envelope.execution_payload.block_hash(), parent_hash = %envelope.execution_payload.parent_hash(), block_gap = ?block_gap, max_external_unsafe_gap = MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP, unsafe_head_number = unsafe_head.block_info.number, unsafe_head_hash = %unsafe_head.block_info.hash, "Sequencer dropped external unsafe payload outside gap limit");
+                                    info!(
+                                        target: "engine",
+                                        block_number,
+                                        block_hash = %envelope.execution_payload.block_hash(),
+                                        parent_hash = %envelope.execution_payload.parent_hash(),
+                                        block_gap = ?block_gap,
+                                        max_external_unsafe_gap = MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
+                                        unsafe_head_number = unsafe_head.block_info.number,
+                                        unsafe_head_hash = %unsafe_head.block_info.hash,
+                                        "Sequencer dropped external unsafe payload outside gap limit"
+                                    );
                                 }
                             }
                         }

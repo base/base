@@ -89,6 +89,7 @@ eyre.workspace = true
 nanoid.workspace = true
 reqwest.workspace = true
 tempfile.workspace = true
+async-trait.workspace = true
 tracing = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
@@ -128,7 +129,6 @@ base-prover-service-protocol.workspace = true
 
 # misc
 indicatif.workspace = true
-async-trait.workspace = true
 
 [[bench]]
 name = "b20_zk_proving"

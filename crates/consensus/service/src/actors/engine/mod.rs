@@ -27,10 +27,5 @@ pub use engine_request_processor::{EngineProcessor, EngineRequestReceiver, Reset
 mod validator_engine_request_handler;
 pub use validator_engine_request_handler::ValidatorEngineRequestHandler;
 
-pub use super::sequencer::{
-    CanonicalReconciliationInputs, CanonicalUnsafeCatchup, SequencerEngineState,
-    ShadowReconciliationGate,
-};
-
 mod rpc_request_processor;
 pub use rpc_request_processor::EngineRpcProcessor;
