@@ -301,6 +301,12 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
     async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo> {
         Ok(*self.head.lock().expect("head lock"))
     }
+
+    async fn el_sync_finished(&self) -> EngineClientResult<bool> {
+        // The in-process builder node is launched fresh against the harness genesis for each
+        // test and never performs background execution-layer sync.
+        Ok(true)
+    }
 }
 
 #[async_trait]
