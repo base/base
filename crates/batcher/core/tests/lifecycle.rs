@@ -83,7 +83,7 @@ fn test_flush_event_calls_force_close_channel() {
         );
         let handle = ctx.spawn(driver.run());
 
-        source_tx.send(L2BlockEvent::Flush).unwrap();
+        source_tx.send(L2BlockEvent::Flush { ack: None }).unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 

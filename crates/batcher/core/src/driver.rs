@@ -9,7 +9,7 @@ use base_batcher_source::{
 use base_common_consensus::BaseBlock;
 use base_runtime::Runtime;
 use base_tx_manager::TxManager;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -63,6 +63,9 @@ where
     /// whenever DA-backlog throttling activates. Lifted from
     /// [`BatchDriverConfig::force_blobs_when_throttling`].
     force_blobs_when_throttling: bool,
+    /// Acknowledgements for in-progress flushes, fired once encoding and submission both
+    /// report no further ready work for the current channel (see [`Self::run`]).
+    pending_flush_acks: Vec<oneshot::Sender<()>>,
 }
 
 impl<R, P, S, TM, TC, L> BatchDriver<R, P, S, TM, TC, L>
@@ -105,6 +108,7 @@ where
             stopped: false,
             admin_rx: None,
             force_blobs_when_throttling: config.force_blobs_when_throttling,
+            pending_flush_acks: Vec::new(),
         }
     }
 
@@ -147,6 +151,18 @@ where
     ///
     /// When draining (after cancellation or source exhaustion), the I/O phase is
     /// replaced by a bounded drain of all in-flight receipts.
+    ///
+    /// If a [`DriverEvent::Flush`] carried an acknowledgement, it fires as soon as a later
+    /// CPU phase reports both encoding and submission fully drained (i.e. the flush's frames
+    /// have all been handed to the tx manager) — see the `pending_flush_acks` field.
+    ///
+    /// This "fully drained" check is global, not scoped to the triggering flush: it's the
+    /// weakest condition that's still always *sufficient* (the flush's own frames can never be
+    /// dequeued before this fires) but not *tight* — if further `Block` events keep arriving
+    /// and producing fresh encoding/submission work while the ack is outstanding, it's delayed
+    /// until that work drains too, and under sustained continuous ingestion may not fire at
+    /// all. Callers that need a precise, always-terminating signal must ensure the source is
+    /// otherwise quiesced before flushing (as the action-test harness does).
     pub async fn run(mut self) -> Result<(), BatchDriverError> {
         if self.stopped {
             info!(
@@ -156,13 +172,23 @@ where
         }
         let mut draining = false;
         loop {
-            self.drain_encoding()?;
+            let encoding_drained = self.drain_encoding()?;
             let is_throttling = self.throttle.apply(self.pipeline.da_backlog_bytes()).await;
             if self.force_blobs_when_throttling {
                 self.pipeline.set_blob_override(is_throttling);
             }
             self.submissions.recover_txpool().await;
-            self.submissions.submit_pending(&mut self.pipeline).await;
+            let submissions_drained = self.submissions.submit_pending(&mut self.pipeline).await;
+
+            if encoding_drained && submissions_drained && !self.pending_flush_acks.is_empty() {
+                debug!(
+                    acks = %self.pending_flush_acks.len(),
+                    "flush settled: encoding and submission fully drained"
+                );
+                for ack in self.pending_flush_acks.drain(..) {
+                    let _ = ack.send(());
+                }
+            }
 
             if draining {
                 self.submissions
@@ -183,8 +209,11 @@ where
                 DriverEvent::Block(b) => {
                     self.on_block(b);
                 }
-                DriverEvent::Flush => {
+                DriverEvent::Flush(ack) => {
                     self.pipeline.force_close_channel();
+                    if let Some(ack) = ack {
+                        self.pending_flush_acks.push(ack);
+                    }
                     debug!("flush signal received, force-closed channel");
                 }
                 DriverEvent::Reorg(head) => {
@@ -199,6 +228,7 @@ where
                     self.submissions.discard();
                     self.pipeline.reset();
                     self.source.reset_catchup(catchup_from);
+                    self.discard_pending_flush_acks();
                 }
                 DriverEvent::Receipt(ids, o) => {
                     self.submissions.handle_outcome(&mut self.pipeline, ids, o);
@@ -221,13 +251,15 @@ where
 
     /// Drain encoding steps synchronously up to [`Self::STEP_BUDGET`].
     ///
-    /// Returns `Err` on a fatal [`StepError`](base_batcher_encoder::StepError).
-    fn drain_encoding(&mut self) -> Result<(), BatchDriverError> {
+    /// Returns `Ok(true)` if the pipeline reached [`StepResult::Idle`] (nothing left to
+    /// encode), or `Ok(false)` if the step budget ran out first. Returns `Err` on a fatal
+    /// [`StepError`](base_batcher_encoder::StepError).
+    fn drain_encoding(&mut self) -> Result<bool, BatchDriverError> {
         let mut budget = Self::STEP_BUDGET;
         let mut steps = 0usize;
-        loop {
+        let idle = loop {
             match self.pipeline.step() {
-                Ok(StepResult::Idle) => break,
+                Ok(StepResult::Idle) => break true,
                 Ok(
                     StepResult::BlockEncoded | StepResult::SpanFlushed | StepResult::ChannelClosed,
                 ) => {
@@ -235,7 +267,7 @@ where
                     budget -= 1;
                     if budget == 0 {
                         debug!(steps = %steps, "encoding step budget exhausted, yielding");
-                        break;
+                        break false;
                     }
                 }
                 Err(e) => {
@@ -243,11 +275,11 @@ where
                     return Err(e.into());
                 }
             }
-        }
+        };
         if steps > 0 {
             debug!(steps = %steps, "completed encoding drain");
         }
-        Ok(())
+        Ok(idle)
     }
 
     /// Ingest a new L2 block into the pipeline.
@@ -275,8 +307,18 @@ where
                 self.submissions.discard();
                 self.pipeline.reset();
                 self.source.reset_catchup(catchup_from);
+                self.discard_pending_flush_acks();
             }
         }
+    }
+
+    /// Drop any outstanding flush acknowledgements without firing them.
+    ///
+    /// Called when a reorg discards the in-flight submissions and resets the pipeline: the
+    /// blocks a pending flush was waiting on no longer exist, so firing the ack would falsely
+    /// report settlement. Dropping the sender surfaces as a closed-channel error to the waiter.
+    fn discard_pending_flush_acks(&mut self) {
+        self.pending_flush_acks.clear();
     }
 
     /// Block on the next external event using a biased `tokio::select!`.
@@ -303,11 +345,12 @@ where
 
                 cmd = Self::next_admin_cmd(&mut self.admin_rx) => {
                     match cmd {
-                        AdminCommand::Flush => return Ok(DriverEvent::Flush),
+                        AdminCommand::Flush { ack } => return Ok(DriverEvent::Flush(ack)),
                         AdminCommand::Pause => {
                             self.submissions.discard();
                             self.pipeline.reset();
                             self.stopped = true;
+                            self.discard_pending_flush_acks();
                             info!(stopped = true, "batcher paused via admin");
                         }
                         AdminCommand::Resume => {
@@ -353,11 +396,21 @@ where
                 }
 
                 event = self.source.next() => match event {
-                    Ok(L2BlockEvent::Block(_) | L2BlockEvent::Flush) if self.stopped => {
+                    Ok(L2BlockEvent::Block(_)) if self.stopped => {
+                        continue;
+                    }
+                    Ok(L2BlockEvent::Flush { ack }) if self.stopped => {
+                        // Drop (rather than fire) any ack: the batcher is paused, so this
+                        // flush produces no frames and firing would falsely report
+                        // settlement. The waiter observes a closed-channel error instead of
+                        // a silent, indefinite-looking drop.
+                        if ack.is_some() {
+                            debug!("flush ack dropped: batcher is stopped, flush produces no frames");
+                        }
                         continue;
                     }
                     Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
-                    Ok(L2BlockEvent::Flush) => DriverEvent::Flush,
+                    Ok(L2BlockEvent::Flush { ack }) => DriverEvent::Flush(ack),
                     Ok(L2BlockEvent::Reorg { new_safe_head }) => DriverEvent::Reorg(new_safe_head),
                     Err(SourceError::Exhausted) => DriverEvent::Shutdown,
                     Err(e) => return Err(e.into()),
@@ -671,11 +724,14 @@ mod tests {
     fn next_event_prioritizes_cancellation_over_ready_admin() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let (admin_tx, admin_rx) = mpsc::channel(1);
-            admin_tx.send(AdminCommand::Flush).await.expect("admin receiver should be open");
+            admin_tx
+                .send(AdminCommand::Flush { ack: None })
+                .await
+                .expect("admin receiver should be open");
 
             let mut driver = driver_for_next_event(
                 ctx.clone(),
-                [Ok(L2BlockEvent::Flush)],
+                [Ok(L2BlockEvent::Flush { ack: None })],
                 [Ok(L1HeadEvent::NewHead(9))],
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
@@ -692,7 +748,10 @@ mod tests {
     fn next_event_prioritizes_admin_before_source() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let (admin_tx, admin_rx) = mpsc::channel(1);
-            admin_tx.send(AdminCommand::Flush).await.expect("admin receiver should be open");
+            admin_tx
+                .send(AdminCommand::Flush { ack: None })
+                .await
+                .expect("admin receiver should be open");
 
             let mut driver = driver_for_next_event(
                 ctx,
@@ -703,7 +762,7 @@ mod tests {
             .with_admin_rx(admin_rx);
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::Flush));
+            assert!(matches!(event, DriverEvent::Flush(_)));
         });
     }
 
@@ -713,7 +772,7 @@ mod tests {
             let (_safe_tx, safe_rx) = watch::channel(0);
             let mut driver = driver_for_next_event(
                 ctx,
-                [Ok(L2BlockEvent::Flush)],
+                [Ok(L2BlockEvent::Flush { ack: None })],
                 [Ok(L1HeadEvent::NewHead(9))],
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
@@ -722,7 +781,7 @@ mod tests {
             driver.submissions.submit_pending(&mut driver.pipeline).await;
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::Flush));
+            assert!(matches!(event, DriverEvent::Flush(_)));
         });
     }
 
@@ -1074,6 +1133,93 @@ mod tests {
                 1,
                 "driver must attempt txpool recovery with cancel_tx"
             );
+        });
+    }
+
+    /// A flush acknowledgement must not fire until every ready submission has been dequeued
+    /// and handed to the tx manager — not just the first. Regression test for a race where a
+    /// caller could observe the ack after only the first frame of a multi-frame flush was
+    /// queued, then mine an L1 block missing the later frames.
+    #[test]
+    fn test_flush_ack_waits_for_all_ready_submissions() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(SubmissionStub::with_id(0));
+            pipeline.submissions.push_back(SubmissionStub::with_id(1));
+
+            let (admin_tx, admin_rx) = mpsc::channel(1);
+            let (ack_tx, ack_rx) = oneshot::channel();
+            admin_tx
+                .send(AdminCommand::Flush { ack: Some(ack_tx) })
+                .await
+                .expect("admin receiver should be open");
+
+            let handle = ctx.spawn(
+                DriverFixture::build_with_max_pending(
+                    ctx.clone(),
+                    pipeline,
+                    ImmediateConfirmTxManager { l1_block: 1 },
+                    2,
+                )
+                .with_admin_rx(admin_rx)
+                .run(),
+            );
+
+            ack_rx.await.expect("flush ack must fire");
+            assert_eq!(
+                recorded.lock().unwrap().dequeued.len(),
+                2,
+                "ack must not fire until both ready submissions are dequeued"
+            );
+
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+        });
+    }
+
+    /// If a ready submission can't fit within semaphore capacity, the flush ack must not
+    /// fire — firing early would let a caller believe the flush fully settled before every
+    /// frame was actually handed to the tx manager.
+    #[test]
+    fn test_flush_ack_does_not_fire_while_backpressured() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(SubmissionStub::with_id(0));
+            pipeline.submissions.push_back(SubmissionStub::with_id(1));
+
+            let (admin_tx, admin_rx) = mpsc::channel(1);
+            let (ack_tx, mut ack_rx) = oneshot::channel();
+            admin_tx
+                .send(AdminCommand::Flush { ack: Some(ack_tx) })
+                .await
+                .expect("admin receiver should be open");
+
+            let handle = ctx.spawn(
+                DriverFixture::build_with_max_pending(
+                    ctx.clone(),
+                    pipeline,
+                    NeverConfirmTxManager,
+                    1,
+                )
+                .with_admin_rx(admin_rx)
+                .run(),
+            );
+
+            ctx.sleep(Duration::from_millis(50)).await;
+            assert!(
+                ack_rx.try_recv().is_err(),
+                "ack must not fire while a ready submission is still waiting on semaphore capacity"
+            );
+            assert_eq!(
+                recorded.lock().unwrap().dequeued.len(),
+                1,
+                "only the single available permit should have been used"
+            );
+
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
         });
     }
 }

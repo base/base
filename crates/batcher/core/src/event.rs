@@ -3,6 +3,7 @@
 use base_batcher_encoder::SubmissionId;
 use base_common_consensus::BaseBlock;
 use base_protocol::L2BlockInfo;
+use tokio::sync::oneshot;
 
 use crate::TxOutcome;
 
@@ -13,8 +14,11 @@ pub enum DriverEvent {
     Shutdown,
     /// New L2 unsafe block from the source.
     Block(Box<BaseBlock>),
-    /// Source requested a force-flush of the current channel.
-    Flush,
+    /// Source (or admin) requested a force-flush of the current channel.
+    ///
+    /// If the ack is set, it fires once every frame resulting from this flush has been
+    /// encoded and handed to the tx manager.
+    Flush(Option<oneshot::Sender<()>>),
     /// L2 reorganisation; new safe head provided.
     Reorg(L2BlockInfo),
     /// An in-flight L1 transaction settled, carrying one or more submissions.

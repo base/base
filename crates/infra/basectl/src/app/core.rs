@@ -52,6 +52,8 @@ pub struct App {
     /// Bootstrap conductor RPC URL from `--conductor-rpc`. Forwarded to background
     /// services on every network switch so discovery survives the rebuild.
     conductor_rpc: Option<Url>,
+    /// Whether the active EL endpoint is the configured public RPC.
+    using_public_rpc: bool,
 }
 
 impl fmt::Debug for App {
@@ -63,6 +65,7 @@ impl fmt::Debug for App {
             .field("view_cache", &format_args!("({} views)", self.view_cache.len()))
             .field("network_picker", &self.network_picker.as_ref().map(|_| ".."))
             .field("pending_network", &self.pending_network.is_some())
+            .field("using_public_rpc", &self.using_public_rpc)
             .finish()
     }
 }
@@ -78,6 +81,7 @@ impl App {
             network_picker: None,
             pending_network: None,
             conductor_rpc,
+            using_public_rpc: false,
         }
     }
 
@@ -131,19 +135,17 @@ impl App {
                 break;
             }
 
-            // Show `[…]` in the badge while a network switch is in progress.
-            // Use ASCII "..." so badge.len() == display width (avoids multi-byte
-            // width miscalculation from the 3-byte U+2026 HORIZONTAL ELLIPSIS).
-            let badge_name = if self.pending_network.is_some() {
-                "...".to_string()
-            } else {
-                self.resources.chain_name().to_string()
-            };
-
             terminal.draw(|frame| {
                 let layout = AppFrame::split_layout(frame.area(), self.show_help);
                 current_view.render(frame, layout.content, &self.resources);
-                AppFrame::render(frame, &layout, &badge_name, current_view.keybindings());
+                AppFrame::render(
+                    frame,
+                    &layout,
+                    &self.resources.config,
+                    self.using_public_rpc,
+                    self.pending_network.is_some(),
+                    current_view.keybindings(),
+                );
                 // Network picker overlays the entire frame, above the view.
                 if let Some(ref picker) = self.network_picker {
                     render_network_picker(frame, frame.area(), picker, self.resources.chain_name());
@@ -176,6 +178,13 @@ impl App {
                         {
                             self.show_help = false;
                             self.network_picker = Some(NetworkPicker::new());
+                            Action::None
+                        }
+                        KeyCode::Char('e')
+                            if self.pending_network.is_none()
+                                && !current_view.captures_char_input() =>
+                        {
+                            self.toggle_rpc(&mut current_view, view_factory);
                             Action::None
                         }
                         KeyCode::Char('q') => {
@@ -309,8 +318,8 @@ impl App {
         F: FnMut(ViewId) -> Box<dyn View>,
     {
         let name = new_config.name.clone();
-        // Replace resources entirely — dropping old receivers causes background
-        // tasks from the previous network to exit naturally on their next send.
+        self.using_public_rpc = false;
+        // Replacing resources aborts the previous network's background tasks.
         self.resources = Resources::new(new_config.clone());
         start_background_services(&new_config, &mut self.resources, self.conductor_rpc.clone());
         // Discard all cached view state so views re-initialise for the new network.
@@ -318,6 +327,35 @@ impl App {
         self.router = Router::new(ViewId::Home);
         *current_view = view_factory(ViewId::Home);
         self.resources.toasts.push(Toast::info(format!("Connected to {name}")));
+    }
+
+    fn toggle_rpc<F>(&mut self, current_view: &mut Box<dyn View>, view_factory: &mut F)
+    where
+        F: FnMut(ViewId) -> Box<dyn View>,
+    {
+        let (rpc, using_public_rpc, label) = if self.using_public_rpc {
+            (self.resources.configured_rpc.clone(), false, "configured")
+        } else {
+            let Some(rpc) = self.resources.config.public_rpc.clone() else {
+                self.resources
+                    .toasts
+                    .push(Toast::warning("No public EL RPC configured".to_string()));
+                return;
+            };
+            (rpc, true, "public")
+        };
+        let configured_rpc = self.resources.configured_rpc.clone();
+        let mut config = self.resources.config.clone();
+        config.rpc = rpc.clone();
+        self.resources = Resources::new(config.clone());
+        self.resources.configured_rpc = configured_rpc;
+        start_background_services(&config, &mut self.resources, self.conductor_rpc.clone());
+        self.view_cache.clear();
+        *current_view = view_factory(self.router.current());
+        self.using_public_rpc = using_public_rpc;
+        self.resources
+            .toasts
+            .push(Toast::info(format!("Using {label} EL RPC: {}", AppFrame::endpoint_label(&rpc))));
     }
 
     // -----------------------------------------------------------------------
@@ -416,4 +454,25 @@ fn render_network_picker(
     lines.push(Line::from(vec![Span::styled("  ↑/↓ move  Enter confirm  Esc cancel", hint_style)]));
 
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::views::create_view;
+
+    #[tokio::test]
+    async fn rpc_toggle_switches_between_public_and_configured_endpoints() {
+        let resources = Resources::new(MonitoringConfig::mainnet());
+        let mut app = App::new(resources, ViewId::Home, None);
+        let mut current_view = create_view(ViewId::Home);
+        let mut view_factory = create_view;
+
+        app.toggle_rpc(&mut current_view, &mut view_factory);
+        assert_eq!(app.resources.config.rpc.as_str(), "https://mainnet.base.org/");
+        assert_eq!(app.resources.configured_rpc.as_str(), "http://127.0.0.1:8545/");
+
+        app.toggle_rpc(&mut current_view, &mut view_factory);
+        assert_eq!(app.resources.config.rpc.as_str(), "http://127.0.0.1:8545/");
+    }
 }

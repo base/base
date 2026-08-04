@@ -3270,6 +3270,7 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-source",
  "base-blobs",
+ "base-builder-core",
  "base-common-chains",
  "base-common-consensus",
  "base-common-genesis",
@@ -3292,6 +3293,7 @@ dependencies = [
  "base-runtime",
  "base-test-utils",
  "base-tx-manager",
+ "eyre",
  "reth-basic-payload-builder",
  "reth-db",
  "reth-db-common",
@@ -6226,6 +6228,7 @@ version = "0.0.0"
 dependencies = [
  "reth-cli-commands",
  "reth-node-core",
+ "reth-prune-types",
 ]
 
 [[package]]
@@ -6382,6 +6385,7 @@ dependencies = [
  "alloy-signer-local 2.2.0",
  "alloy-sol-types",
  "async-trait",
+ "base-batcher-encoder",
  "base-batcher-service",
  "base-builder-core",
  "base-bundle-extension",
@@ -6833,6 +6837,7 @@ dependencies = [
  "axum 0.8.9",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-evm",
  "base-common-flashblocks",
  "base-common-genesis",
  "base-common-network",

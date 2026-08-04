@@ -4,9 +4,8 @@ use alloy_provider::RootProvider;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
-    UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults,
-    UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
-    UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
+    UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalMonitor,
+    UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
 use reth_chainspec::EthChainSpec;
@@ -142,6 +141,7 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
 
         hooks.add_node_started_hook(move |ctx| {
             let l1_provider = RootProvider::new_http(config.l1_rpc.clone());
+            let poll_interval = config.signal_config.l1_block_tag.poll_interval();
             let reader = config.signal_config.reader(l1_provider.clone());
             // Live updates are re-applied automatically, matching the manual
             // `admin_refreshUpgradeSignal` path.
@@ -158,7 +158,7 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
 
             executor.spawn_with_graceful_shutdown_signal(|signal| {
                 Box::pin(async move {
-                    let mut interval = tokio::time::interval(UpgradeSignalDefaults::POLL_INTERVAL);
+                    let mut interval = tokio::time::interval(poll_interval);
                     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                     let mut signal = Box::pin(signal);
 
@@ -205,6 +205,7 @@ impl FromExtensionConfig for ExecutionUpgradeSignalRuntimeExtension {
 mod tests {
     use alloy_primitives::Address;
     use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
+    use base_upgrade_signal::UpgradeSignalDefaults;
     use reth_chainspec::{ChainSpec, EthereumHardfork, ForkCondition};
 
     use super::*;

@@ -149,6 +149,9 @@ fn test_paused_drops_block_and_flush_events() {
             fn next_submission(&mut self) -> Option<BatchSubmission> {
                 self.inner.next_submission()
             }
+            fn has_ready_submission(&self) -> bool {
+                self.inner.has_ready_submission()
+            }
             fn confirm(&mut self, id: SubmissionId, n: u64) {
                 self.inner.confirm(id, n);
             }
@@ -199,6 +202,17 @@ fn test_paused_drops_block_and_flush_events() {
         ctx.sleep(Duration::from_millis(10)).await;
         source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
+
+        // A flush's ack must also be dropped (not silently leaked/hung) while paused, so a
+        // waiter sees an immediate closed-channel error rather than an indefinite wait.
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        source_tx.send(L2BlockEvent::Flush { ack: Some(ack_tx) }).unwrap();
+        ctx.sleep(Duration::from_millis(10)).await;
+        assert!(
+            ack_rx.await.is_err(),
+            "flush ack must be dropped (not fired) while the batcher is paused"
+        );
+
         ctx.cancel();
 
         assert!(handle.await.unwrap().is_ok());

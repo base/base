@@ -21,7 +21,7 @@ use base_precompile_storage::{BasePrecompileError, Result};
 use crate::{
     Asset, AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken, B20Guards,
     B20PausableFeature, B20PolicyType, B20TokenRole, Eip712Domain, IB20, IB20Asset, PermitArgs,
-    PolicyAccounting, Token,
+    PolicyAccounting, Token, TransferPolicyIds,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -52,13 +52,16 @@ impl AssetV2 {
     pub const MAX_UI_MULTIPLIER: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
 
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
+    ///
+    /// `policies` carries the sender/receiver ids pre-read from their shared slot by the caller;
+    /// `Some` enforces both (unprivileged path), `None` skips them (factory-privileged path).
     fn transfer_inner<S: AssetAccounting, A: PolicyAccounting>(
         &self,
         token: &mut B20AssetToken<S, A>,
         from: Address,
         to: Address,
         amount: U256,
-        privileged: bool,
+        policies: Option<&TransferPolicyIds>,
     ) -> Result<()> {
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
@@ -66,9 +69,19 @@ impl AssetV2 {
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
-        if !privileged {
-            B20Guards::ensure_policy_type(token, B20PolicyType::TransferSender, from)?;
-            B20Guards::ensure_policy_type(token, B20PolicyType::TransferReceiver, to)?;
+        if let Some(policies) = policies {
+            B20Guards::ensure_authorized_by_id(
+                token,
+                B20PolicyType::TransferSender.id(),
+                policies.sender,
+                from,
+            )?;
+            B20Guards::ensure_authorized_by_id(
+                token,
+                B20PolicyType::TransferReceiver.id(),
+                policies.receiver,
+                to,
+            )?;
         }
         self.move_balance(token, from, to, amount)
     }
@@ -242,7 +255,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        self.transfer_inner(token, caller, to, amount, privileged)
+        if privileged {
+            return self.transfer_inner(token, caller, to, amount, None);
+        }
+        let policies = token.accounting().transfer_policy_ids()?;
+        self.transfer_inner(token, caller, to, amount, Some(&policies))
     }
 
     fn transfer_from(
@@ -270,10 +287,22 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
                 needed: amount,
             }));
         }
-        if !privileged && caller != from {
-            B20Guards::ensure_policy_type(token, B20PolicyType::TransferExecutor, caller)?;
+        if privileged {
+            self.transfer_inner(token, from, to, amount, None)?;
+        } else {
+            // One SLOAD fetches all transfer policy ids, reused for the executor and
+            // sender/receiver checks.
+            let policies = token.accounting().transfer_policy_ids()?;
+            if caller != from {
+                B20Guards::ensure_authorized_by_id(
+                    token,
+                    B20PolicyType::TransferExecutor.id(),
+                    policies.executor,
+                    caller,
+                )?;
+            }
+            self.transfer_inner(token, from, to, amount, Some(&policies))?;
         }
-        self.transfer_inner(token, from, to, amount, privileged)?;
         if is_infinite {
             return Ok(());
         }
@@ -386,6 +415,9 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
         B20Guards::ensure_seizable(token, from)?;
+        // Gate the destination like `mint` gates `MintReceiver`: an unset scope is always-allow, so a
+        // treasury need not be allowlisted by default.
+        B20Guards::ensure_policy_type(token, B20PolicyType::SeizeReceiver, to)?;
         self.move_balance(token, from, to, amount)?;
         // `Memo` must immediately follow the `Transfer` (from `move_balance`), before `Seized`.
         self.emit_memo(token, caller, memo)?;
@@ -1010,7 +1042,7 @@ mod tests {
     use crate::{
         Asset, AssetAccounting, AssetV2, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
         B20PolicyType, B20TokenRole, IB20, IB20Asset, PackedPolicy, PermitArgs, PolicyAccounting,
-        PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
+        PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting, TransferPolicyIds,
     };
 
     // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
@@ -1185,6 +1217,10 @@ mod tests {
         fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
             self.policy_ids.insert(policy_scope, policy_id);
             Ok(())
+        }
+
+        fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
+            TransferPolicyIds::read_individually(self)
         }
         fn emit_event(&mut self, log: LogData) -> Result<()> {
             self.events.push(log);
@@ -1631,6 +1667,95 @@ mod tests {
             .unwrap();
         LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn seize_reverts_when_receiver_policy_forbids() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(50u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizeReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+        let err =
+            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::SeizeReceiver.id(),
+                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            })
+        );
+    }
+
+    #[test]
+    fn seize_unset_receiver_policy_allows_any_destination() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(50u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        // SEIZE_RECEIVER_POLICY left unset => ALWAYS_ALLOW => any destination is allowed.
+        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn seize_succeeds_with_configured_receiver_policy_allow() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(50u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizeReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_ALLOW_ID,
+            )
+            .unwrap();
+        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn seize_holder_policy_beats_receiver_policy() {
+        let mut tok = token();
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        // SEIZE_HOLDER unset => ALICE not seizable; SEIZE_RECEIVER blocks BOB. Holder check fires first.
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizeReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+        let err =
+            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotSeizable { account: ALICE }));
+    }
+
+    #[test]
+    fn seize_receiver_policy_beats_balance() {
+        let mut tok = token();
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+        // ALICE is seizable and has zero balance, but the receiver policy forbids BOB first.
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::SeizeReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
+        let err =
+            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::SeizeReceiver.id(),
+                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            })
+        );
     }
 
     #[test]

@@ -157,13 +157,24 @@ impl EngineApi<Ipc> {
 }
 
 impl<P: Protocol> EngineApi<P> {
-    /// Fetches an execution payload by its identifier.
+    /// Fetches an execution payload by its identifier via `engine_getPayloadV4`.
     pub async fn get_payload(
         &self,
         payload_id: PayloadId,
     ) -> eyre::Result<<BaseEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
         debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload");
         Ok(BaseEngineApiClient::<BaseEngineTypes>::get_payload_v4(&self.client().await, payload_id)
+            .await?)
+    }
+
+    /// Fetches an execution payload by its identifier via `engine_getPayloadV5`, required from
+    /// Base Azul onward.
+    pub async fn get_payload_v5(
+        &self,
+        payload_id: PayloadId,
+    ) -> eyre::Result<<BaseEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV5> {
+        debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload (v5)");
+        Ok(BaseEngineApiClient::<BaseEngineTypes>::get_payload_v5(&self.client().await, payload_id)
             .await?)
     }
 

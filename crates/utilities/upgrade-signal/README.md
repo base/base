@@ -21,7 +21,7 @@ The shared CLI flags are:
 | ---- | ------- | ------- | ----------- |
 | `--upgrade-signal.contract <ADDRESS>` | `BASE_NODE_UPGRADE_SIGNAL_CONTRACT` | unset | Enables L1 schedule reads from the `ProtocolVersions` contract or proxy. The full contract-backed upgrade schedule is always read; application depends on the selected mode. |
 | `--upgrade-signal.mode <metrics-only\|startup-apply\|runtime-admin>` | `BASE_NODE_UPGRADE_SIGNAL_MODE` | `metrics-only` | Selects whether reads are observation-only, startup-applied, or runtime-applied. |
-| `--upgrade-signal.l1-block-tag <finalized\|safe\|latest>` | `BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG` | `finalized` | Selects the L1 block tag used for contract calls. |
+| `--upgrade-signal.l1-block-tag <finalized\|safe\|latest>` | `BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG` | `finalized` | Selects the L1 block tag used for contract calls. Also selects the interval between live contract reads: `finalized` 15m, `safe` 6m24s, `latest` 12s. |
 
 Execution-side readers also need `--upgrade-signal.l1-rpc` or
 `BASE_NODE_UPGRADE_SIGNAL_L1_RPC`. Integrated `base rpc` and `base sequencer` commands derive this
@@ -30,10 +30,11 @@ unless an explicit override is supplied.
 
 ## Runtime Behavior
 
-All modes with a configured contract start a live observer. The observer polls L1 every 12 seconds,
-records the latest schedule metrics, and records update counters when a contract-backed signal changes.
-Read failures are metrics-only failures: they are logged and counted, but they do not clear the last
-observed schedule or stop the node.
+All modes with a configured contract start a live observer. The observer polls L1 on an interval
+selected by the configured block tag (see the flag table above), matching how often that tag
+typically advances. It records the latest schedule metrics and update counters when a
+contract-backed signal changes. Read failures are metrics-only failures: they are logged and
+counted, but they do not clear the last observed schedule or stop the node.
 
 `startup-apply` reads and validates the L1 schedule before the node starts serving.
 Execution-side callers apply the schedule to the chain spec, consensus-side callers apply it to the

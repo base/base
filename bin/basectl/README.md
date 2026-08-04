@@ -20,11 +20,22 @@ Global options:
 | `-c, --config <CONFIG>` | `mainnet` | Chain config: `mainnet`, `sepolia`, `devnet`, or a path to a config file                                                                                                                                                                                                    |
 | `--conductor-rpc <URL>` |           | Bootstrap conductor JSON-RPC URL for runtime cluster discovery when the chain config has no hardcoded conductor list. Used by `basectl conductor` and `basectl sequencer`. If omitted, basectl uses `discovery.bootstrap_rpc` from config. Set via `BASECTL_CONDUCTOR_RPC`. |
 
+The built-in mainnet and Sepolia configs target a local node at
+`http://127.0.0.1:8545` (EL) and `http://127.0.0.1:9545` (CL). Their
+`public_rpc` values retain the hosted endpoints for network-reference reads,
+including tip comparisons and upgrade monitoring. Local-node commands do not
+silently fall back when the local node is unavailable. Use the command-specific
+RPC flags or a config override to target different endpoints.
+
 ## Commands
 
 ### `basectl monitor`
 
 Opens the interactive TUI. With no subcommand, opens the Home view.
+The top-right badge shows the active EL and CL endpoints. Press `e` from any
+non-input view to switch the EL between the configured `rpc` and `public_rpc`;
+the CL endpoint is unchanged. Switching rebuilds the active monitors so their
+background requests reconnect to the selected EL endpoint.
 
 | Command                  | Alias | Description                                      |
 | ------------------------ | ----- | ------------------------------------------------ |
@@ -94,8 +105,8 @@ is one of `caught_up` (within ±N blocks of the reference, where N is the
 
 | Flag                       | Description                                                                                                                                                                                                                                                                                           |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--el-rpc <URL>`           | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field.                                                                                                                                                                                                                     |
-| `--cl-rpc <URL>`           | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config).                                                                                                                |
+| `--el-rpc <URL>`           | Override the execution-layer RPC URL. Defaults to the chain config's local `rpc` field.                                                                                                                                                                                                              |
+| `--cl-rpc <URL>`           | Override the consensus-node RPC URL. Defaults to the chain config's `consensus_node_rpc` field.                                                                                                                                                                                                       |
 | `--tip-tolerance <BLOCKS>` | Block tolerance for the tip-reference `caught_up` classification. Within ±this many blocks of the public reference, the local node is reported as `caught_up`; otherwise `behind` or `ahead`. Default `5` ≈ ~10s at Base's 2s block time. Use `0` for strict alerting, larger values to dampen noise. |
 | `--json`                   | Emit humanized JSON (decoded numeric values, ISO + local timestamps, precomputed `safeLag*`, `tipReference` object, `elSyncInfo` with `processedBlocks` / `remainingBlocks`) instead of the key-value table.                                                                                          |
 | `--raw`                    | With `--json`, emit the alloy-typed `optimism_syncStatus` wire format instead of the humanized form. Errors at parse time if used without `--json`.                                                                                                                                                   |
@@ -131,8 +142,8 @@ Read-only p2p commands and single-peer actions support:
 
 | Flag             | Description                                                                                                                                                                            |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field.                                                                                                      |
-| `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
+| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's local `rpc` field.             |
+| `--cl-rpc <URL>` | Override the consensus-node RPC URL. Defaults to the chain config's `consensus_node_rpc` field.    |
 
 Read-only p2p commands also support:
 
@@ -311,7 +322,7 @@ Doctor reads the selected config the same way as the other non-TUI commands:
 built-in preset, optional YAML override, or explicit config path through global
 `-c/--config`. By default it uses the config's `rpc`, `l1_rpc`, and
 `consensus_node_rpc` values. Pass `--el-rpc` and `--cl-rpc` to point at a
-specific node when the config points at shared/public endpoints.
+different node.
 
 Checks include declared network vs. live chain ID, p2p endpoint context,
 canonical bootnode config context, advertised endpoint sanity,
@@ -440,21 +451,21 @@ basectl -c mainnet block --json --raw finalized | jq '{number, gasUsed, baseFeeP
 # Sync status against a devnet (consensus_node_rpc is set in the devnet preset)
 basectl -c devnet sync-status
 
-# Sync status against a public chain — requires explicit --cl-rpc since mainnet/sepolia presets ship without one
-basectl -c sepolia sync-status --cl-rpc https://your-rollup-node.example/
+# Sync status against a local Sepolia node
+basectl -c sepolia sync-status
 
 # Humanized JSON shows precomputed safe-head lag for downstream tooling
-basectl -c sepolia sync-status --cl-rpc https://your-rollup-node.example/ --json | jq '{safeLagSeconds, safeLagBlocks, elActivelySyncing}'
+basectl -c sepolia sync-status --json | jq '{safeLagSeconds, safeLagBlocks, elActivelySyncing}'
 ```
 
 ### `basectl p2p`
 
 ```sh
 # P2P endpoint summary for a node
-basectl -c sepolia p2p info --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/
+basectl -c sepolia p2p info
 
 # P2P peers as JSON
-basectl -c sepolia p2p peers --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/ --json | jq '{el: .el | length, cl: .cl | length}'
+basectl -c sepolia p2p peers --json | jq '{el: .el | length, cl: .cl | length}'
 
 # Probe an explicit EL enode from the telemetry service's network
 basectl -c sepolia p2p reachability enode://<node-id>@203.0.113.10:30303 --json

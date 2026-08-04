@@ -230,6 +230,10 @@ fn test_throttle_transitions_from_active_to_inactive() {
             None
         }
 
+        fn has_ready_submission(&self) -> bool {
+            false
+        }
+
         fn confirm(&mut self, _: SubmissionId, _: u64) {}
         fn requeue(&mut self, _: SubmissionId) {}
         fn force_close_channel(&mut self) {}

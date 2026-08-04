@@ -279,9 +279,9 @@ fn golden_v2_selectors_unknown_at_v1() {
     }
 }
 
-/// The seize common selectors (`seizeWithMemo` and the `SEIZE_ROLE` / `SEIZE_HOLDER_POLICY`
-/// getters) were introduced at Cobalt (`AssetV2`). At V1 (Beryl) they are absent from the frozen
-/// common `IB20` surface, so `route` rejects them as `UnknownFunctionSelector`.
+/// The seize common selectors (`seizeWithMemo` and the `SEIZE_ROLE` / `SEIZE_HOLDER_POLICY` /
+/// `SEIZE_RECEIVER_POLICY` getters) were introduced at Cobalt (`AssetV2`). At V1 (Beryl) they are
+/// absent from the frozen common `IB20` surface, so `route` rejects them as `UnknownFunctionSelector`.
 #[test]
 fn golden_seize_selectors_unknown_at_v1() {
     let mut s = fresh();
@@ -289,6 +289,7 @@ fn golden_seize_selectors_unknown_at_v1() {
         IB20::seizeWithMemoCall { from: ALICE, to: BOB, amount: u(1), memo: MEMO }.abi_encode(),
         IB20::SEIZE_ROLECall {}.abi_encode(),
         IB20::SEIZE_HOLDER_POLICYCall {}.abi_encode(),
+        IB20::SEIZE_RECEIVER_POLICYCall {}.abi_encode(),
     ];
     for calldata in calls {
         let selector: [u8; 4] = calldata[..4].try_into().unwrap();
@@ -2686,9 +2687,10 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_burn_blocked_reverts_when_not_blocked,
             golden_burn_blocked_unprivileged_requires_role,
         ]),
-        C::seizeWithMemo(_) | C::SEIZE_ROLE(_) | C::SEIZE_HOLDER_POLICY(_) => {
-            covered(&[golden_seize_selectors_unknown_at_v1])
-        }
+        C::seizeWithMemo(_)
+        | C::SEIZE_ROLE(_)
+        | C::SEIZE_HOLDER_POLICY(_)
+        | C::SEIZE_RECEIVER_POLICY(_) => covered(&[golden_seize_selectors_unknown_at_v1]),
 
         // pause / config / roles / policy / permit
         C::pause(_) => covered(&[

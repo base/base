@@ -251,7 +251,10 @@ fn resubmit_after_reorg_lands_on_new_fork() {
 /// Configurable block time is respected.
 #[test]
 fn custom_block_time_is_respected() {
-    let mut h = ActionTestHarness::new(L1MinerConfig { block_time: 6 }, Default::default());
+    let mut h = ActionTestHarness::new(
+        L1MinerConfig { block_time: 6, ..Default::default() },
+        Default::default(),
+    );
     h.mine_l1_blocks(3);
     assert_eq!(h.l1.latest().timestamp(), 18); // 3 × 6s
 }
