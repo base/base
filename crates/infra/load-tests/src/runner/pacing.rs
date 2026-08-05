@@ -1374,6 +1374,11 @@ impl LoadRunner {
             return Ok(());
         }
 
+        // Always apply queued Released/Submitted events before reading outstanding.
+        // Otherwise a fast path that returns while `outstanding < target` can leave
+        // `queued_per_sender` inflated and permanently block later waits.
+        drain_state.drain_run_events();
+
         let mut last_outstanding = drain_state.total_outstanding();
         let mut last_progress = Instant::now();
         let mut last_wait_log = Instant::now()
@@ -1416,10 +1421,12 @@ impl LoadRunner {
             let current = drain_state.total_outstanding();
             let in_flight = drain_state.results_tracker.total_in_flight();
             let pending = drain_state.results_tracker.pending_count();
+            let queued = current.saturating_sub(in_flight);
             if last_wait_log.elapsed() >= Duration::from_secs(5) {
                 info!(
                     outstanding = current,
                     in_flight,
+                    queued,
                     pending,
                     target_in_flight,
                     confirmed = drain_state.collector.confirmed_count(),
@@ -1436,7 +1443,8 @@ impl LoadRunner {
                 return Err(BaselineError::Timeout {
                     operation: format!(
                         "open-loop outstanding headroom (stuck at {current} outstanding, \
-                         in_flight={in_flight}, pending={pending}, target {target_in_flight})"
+                         in_flight={in_flight}, queued={queued}, pending={pending}, \
+                         target {target_in_flight})"
                     ),
                     duration: HEADROOM_STALL_TIMEOUT,
                 });
@@ -1579,11 +1587,24 @@ impl LoadRunner {
             return Ok(true);
         }
 
+        // Cap each enqueue to remaining headroom so a 200-tx batch cannot jump from
+        // e.g. 400 → 600 when the target is 477. Prefill may still fill aggressively.
+        let max_batch_len = if limits.stop_when_accepted_target_reached {
+            usize::MAX
+        } else {
+            let available = progress
+                .headroom_target
+                .current_target_in_flight()
+                .saturating_sub(drain_state.total_outstanding())
+                .max(1);
+            usize::try_from(available).unwrap_or(usize::MAX)
+        };
+
         Ok(!Self::enqueue_signed_batch(
             submission_pipeline,
             next_submit_batch_id,
             pending_signed_batch,
-            usize::MAX,
+            max_batch_len,
             // Prefill (`stop_when_accepted_target_reached`) is warmup and must not enter
             // the measured cohort even if its submit events arrive after begin_measurement.
             !limits.stop_when_accepted_target_reached,
