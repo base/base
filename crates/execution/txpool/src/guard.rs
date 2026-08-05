@@ -87,6 +87,12 @@ pub struct LimitClass {
     pub sender_delegate_locked: bool,
     /// Whether the payer's owner config is locked (stable auth surface).
     pub payer_locked: bool,
+    /// The delegate account backing the sponsor's delegate authenticator, if a
+    /// distinct payer authenticated via one. Same foreign-config instability as
+    /// [`Self::sender_delegate`]; charged unless locked. `None` for self-pay.
+    pub payer_delegate: Option<Address>,
+    /// Whether the payer's delegate account is locked (stable auth surface).
+    pub payer_delegate_locked: bool,
     /// Whether the payer is balance-bounded (locked + trusted bytecode).
     pub payer_trusted: bool,
     /// The payer's state balance, used to seed a balance-bounded payer book.
@@ -118,6 +124,13 @@ pub struct Admission {
     /// Whether the payer's owner config is locked (stable auth surface ⇒ no
     /// sponsored-payer signature charge).
     pub payer_locked: bool,
+    /// The delegate account backing the sponsor's delegate authenticator, if a
+    /// distinct payer authenticated via one. Charged its own signature slot
+    /// unless [`Self::payer_delegate_locked`]. `None` for self-pay.
+    pub payer_delegate: Option<Address>,
+    /// Whether the payer's delegate account is locked (stable auth surface ⇒ no
+    /// delegate signature charge).
+    pub payer_delegate_locked: bool,
     /// Whether the payer is balance-bounded (locked + trusted bytecode ⇒ the
     /// payer dimension is limited by balance rather than a count).
     pub payer_trusted: bool,
@@ -146,6 +159,9 @@ pub struct AdmissionRecord {
     /// The sender's delegate account charged a signature slot, if any. Retained
     /// so removal releases exactly the account that was charged.
     pub sender_delegate_charged: Option<Address>,
+    /// The payer's delegate account charged a signature slot, if any. Retained
+    /// so removal releases exactly the account that was charged.
+    pub payer_delegate_charged: Option<Address>,
     /// Whether admission actually reserved aggregate balance instead of a
     /// payment count. This records the accounting path taken, not merely the
     /// incoming classification: forced insertion may conservatively fall back
@@ -240,6 +256,13 @@ impl MempoolGuard {
                 admission.sender_delegate.filter(|_| !admission.sender_delegate_locked),
                 "re-admission changed sender delegate classification"
             );
+            debug_assert_eq!(
+                record.payer_delegate_charged,
+                admission.payer_delegate.filter(|_| {
+                    admission.payer != admission.sender && !admission.payer_delegate_locked
+                }),
+                "re-admission changed payer delegate classification"
+            );
             // A forced replacement may conservatively fall back from trusted
             // aggregate accounting to count accounting, but never vice versa.
             debug_assert!(!record.payer_trusted || admission.payer_trusted);
@@ -287,6 +310,28 @@ impl MempoolGuard {
             return Err(LimitRejection::SenderLimit);
         }
 
+        // A sponsor's delegate authenticator has the same foreign-config
+        // instability as the sender's. Charge its delegate account too, exempt
+        // only when that account is itself locked. Self-pay has no sponsor
+        // signature, so this dimension is empty there.
+        let payer_delegate_charged = admission
+            .payer_delegate
+            .filter(|_| admission.payer != admission.sender && !admission.payer_delegate_locked);
+        if let Some(delegate) = payer_delegate_charged
+            && !self.signature_counts.try_increment(delegate, self.limits.signature_limit)
+        {
+            if sender_signature_charged {
+                self.signature_counts.decrement(admission.sender);
+            }
+            if payer_signature_charged {
+                self.signature_counts.decrement(admission.payer);
+            }
+            if let Some(delegate) = sender_delegate_charged {
+                self.signature_counts.decrement(delegate);
+            }
+            return Err(LimitRejection::PayerLimit);
+        }
+
         let payment_ok = if admission.payer_trusted {
             // Only the first admission seeds the book. Once it exists, canonical
             // balance updates own this value through `on_balance_changed`; a
@@ -312,6 +357,9 @@ impl MempoolGuard {
             if let Some(delegate) = sender_delegate_charged {
                 self.signature_counts.decrement(delegate);
             }
+            if let Some(delegate) = payer_delegate_charged {
+                self.signature_counts.decrement(delegate);
+            }
             // A freshly created, now-empty payer book is pruned to avoid leaking
             // an entry for a payer that never successfully reserved.
             if admission.payer_trusted
@@ -334,6 +382,7 @@ impl MempoolGuard {
                 sender_signature_charged,
                 payer_signature_charged,
                 sender_delegate_charged,
+                payer_delegate_charged,
                 payer_trusted: admission.payer_trusted,
                 max_cost: admission.max_cost,
             },
@@ -379,6 +428,13 @@ impl MempoolGuard {
                 admission.sender_delegate.filter(|_| !admission.sender_delegate_locked),
                 "forced re-admission changed sender delegate classification"
             );
+            debug_assert_eq!(
+                record.payer_delegate_charged,
+                admission.payer_delegate.filter(|_| {
+                    admission.payer != admission.sender && !admission.payer_delegate_locked
+                }),
+                "forced re-admission changed payer delegate classification"
+            );
             // A previous forced insertion may have fallen back from trusted
             // aggregate accounting to count accounting, but never vice versa.
             debug_assert!(!record.payer_trusted || admission.payer_trusted);
@@ -403,6 +459,13 @@ impl MempoolGuard {
         let sender_delegate_charged =
             admission.sender_delegate.filter(|_| !admission.sender_delegate_locked);
         if let Some(delegate) = sender_delegate_charged {
+            let delegate_ok = self.signature_counts.try_increment(delegate, u32::MAX);
+            debug_assert!(delegate_ok, "uncapped increment must always succeed");
+        }
+        let payer_delegate_charged = admission
+            .payer_delegate
+            .filter(|_| admission.payer != admission.sender && !admission.payer_delegate_locked);
+        if let Some(delegate) = payer_delegate_charged {
             let delegate_ok = self.signature_counts.try_increment(delegate, u32::MAX);
             debug_assert!(delegate_ok, "uncapped increment must always succeed");
         }
@@ -437,6 +500,7 @@ impl MempoolGuard {
                 sender_signature_charged,
                 payer_signature_charged,
                 sender_delegate_charged,
+                payer_delegate_charged,
                 payer_trusted,
                 max_cost: admission.max_cost,
             },
@@ -458,6 +522,9 @@ impl MempoolGuard {
             self.signature_counts.decrement(record.payer);
         }
         if let Some(delegate) = record.sender_delegate_charged {
+            self.signature_counts.decrement(delegate);
+        }
+        if let Some(delegate) = record.payer_delegate_charged {
             self.signature_counts.decrement(delegate);
         }
         if record.payer_trusted {
@@ -591,6 +658,8 @@ mod tests {
             payer: account,
             sender_delegate: None,
             sender_delegate_locked: false,
+            payer_delegate: None,
+            payer_delegate_locked: false,
             sender_locked: false,
             payer_locked: false,
             payer_trusted: false,
@@ -694,6 +763,97 @@ mod tests {
                 ..self_pay(150 + i, addr(50 + i), 10)
             };
             assert!(guard.try_admit(adm).is_ok(), "delegate slot {i} should be free");
+        }
+    }
+
+    /// A sponsored, unlocked-delegate payer charges its delegate account a
+    /// signature slot, bounding a sponsor whose foreign delegate config can be
+    /// revoked out from under the pool. Distinct payers keep the per-payer
+    /// payment count from masking the shared delegate signature dimension.
+    #[test]
+    fn sponsored_payer_with_unlocked_delegate_charges_delegate_dimension() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let delegate = addr(0xDD);
+        for i in 0..DEFAULT_SIGNATURE_LIMIT as u8 {
+            let adm = Admission {
+                payer: addr(100 + i),
+                payer_locked: true,
+                sender_locked: true,
+                payer_delegate: Some(delegate),
+                ..self_pay(i, addr(i + 1), 10)
+            };
+            assert!(guard.try_admit(adm).is_ok());
+        }
+        let over = Admission {
+            payer: addr(200),
+            payer_locked: true,
+            sender_locked: true,
+            payer_delegate: Some(delegate),
+            ..self_pay(100, addr(201), 10)
+        };
+        assert_eq!(guard.try_admit(over), Err(LimitRejection::PayerLimit));
+    }
+
+    /// A locked payer delegate is a stable surface, so a sponsored payer keeps the
+    /// unlimited sponsor-signature grant.
+    #[test]
+    fn sponsored_payer_with_locked_delegate_is_exempt() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let delegate = addr(0xDD);
+        for i in 0..(DEFAULT_SIGNATURE_LIMIT as u8 + 5) {
+            let adm = Admission {
+                payer: addr(100 + i),
+                payer_locked: true,
+                sender_locked: true,
+                payer_delegate: Some(delegate),
+                payer_delegate_locked: true,
+                ..self_pay(i, addr(i + 1), 10)
+            };
+            assert!(guard.try_admit(adm).is_ok(), "locked-delegate sponsor tx {i} must be exempt");
+        }
+    }
+
+    /// Releasing a sponsored transaction frees the payer delegate signature slot.
+    #[test]
+    fn releasing_frees_payer_delegate_signature_slot() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let delegate = addr(0xDD);
+        for i in 0..DEFAULT_SIGNATURE_LIMIT as u8 {
+            let adm = Admission {
+                payer: addr(100 + i),
+                payer_locked: true,
+                sender_locked: true,
+                payer_delegate: Some(delegate),
+                ..self_pay(i, addr(i + 1), 10)
+            };
+            assert!(guard.try_admit(adm).is_ok());
+        }
+        assert!(guard.release(&hash(0)));
+        let adm = Admission {
+            payer: addr(200),
+            payer_locked: true,
+            sender_locked: true,
+            payer_delegate: Some(delegate),
+            ..self_pay(200, addr(201), 10)
+        };
+        assert!(guard.try_admit(adm).is_ok());
+    }
+
+    /// A self-paying transaction never charges the payer delegate dimension: the
+    /// sender delegate dimension already covers it.
+    #[test]
+    fn self_pay_ignores_payer_delegate() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let delegate = addr(0xDD);
+        // payer == sender (distinct accounts avoid the per-account payment count),
+        // so `payer_delegate` is inert regardless of its value.
+        for i in 0..(DEFAULT_SIGNATURE_LIMIT as u8 + 3) {
+            let adm = Admission {
+                sender_locked: true,
+                payer_delegate: Some(delegate),
+                ..self_pay(i, addr(i + 1), 10)
+            };
+            assert!(guard.try_admit(adm).is_ok(), "self-pay tx {i} must ignore payer delegate");
         }
     }
 
