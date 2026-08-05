@@ -239,10 +239,6 @@ pub struct LoadConfig {
     /// Fraction of transactions that draw a fresh recipient address instead of cycling through
     /// the sender pool. Used to drive account-trie fan-out for account-create workloads.
     pub fresh_recipient_ratio: f64,
-    /// Number of transactions to batch together when funding/setup phases submit from a single
-    /// funder account. Kept below the target txpool's per-sender slot limit to avoid "txpool is
-    /// full" rejections.
-    pub funding_batch_size: usize,
 }
 
 impl LoadConfig {
@@ -269,7 +265,6 @@ impl LoadConfig {
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: "ws://localhost:7111".parse().expect("valid default flashblocks_ws"),
             fresh_recipient_ratio: 0.0,
-            funding_batch_size: 16,
         }
     }
 
@@ -399,12 +394,6 @@ impl LoadConfig {
     /// Sets the maximum in-flight transactions per sender.
     pub const fn with_max_in_flight_per_sender(mut self, max: u64) -> Self {
         self.max_in_flight_per_sender = max;
-        self
-    }
-
-    /// Sets the funding-phase batch size.
-    pub const fn with_funding_batch_size(mut self, size: usize) -> Self {
-        self.funding_batch_size = size;
         self
     }
 }

@@ -232,8 +232,6 @@ pub struct ConfigSummary {
     pub sender_offset: u32,
     /// Maximum in-flight transactions per sender.
     pub in_flight_per_sender: u32,
-    /// Number of transactions per RPC batch during funding/setup phases.
-    pub funding_batch_size: u32,
     /// Test duration.
     pub duration: Option<String>,
     /// Optional gas-per-second ceiling for adaptive pacing.

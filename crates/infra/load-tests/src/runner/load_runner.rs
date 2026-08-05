@@ -899,7 +899,7 @@ impl LoadRunner {
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
             let batch: Vec<_> =
-                txs_remaining.by_ref().take(self.config.funding_batch_size).collect();
+                txs_remaining.by_ref().take(self.config.max_in_flight_per_sender as usize).collect();
             let mut batch_pending: Vec<Address> = Vec::with_capacity(batch.len());
             let mut retries: Vec<(Address, U256, u64)> = Vec::new();
             let mut fatal_errors: Vec<String> = Vec::new();
@@ -913,7 +913,7 @@ impl LoadRunner {
             });
 
             let mut send_stream =
-                stream::iter(send_futs).buffer_unordered(self.config.funding_batch_size);
+                stream::iter(send_futs).buffer_unordered(self.config.max_in_flight_per_sender as usize);
 
             let mut nonce_refresh_needed: Vec<(Address, U256)> = Vec::new();
 
@@ -968,7 +968,7 @@ impl LoadRunner {
                 });
 
                 let mut retry_stream =
-                    stream::iter(retry_futs).buffer_unordered(self.config.funding_batch_size);
+                    stream::iter(retry_futs).buffer_unordered(self.config.max_in_flight_per_sender as usize);
 
                 while let Some((result, address, nonce)) = retry_stream.next().await {
                     match result {
@@ -1017,7 +1017,7 @@ impl LoadRunner {
                     });
 
                 let mut nonce_retry_stream =
-                    stream::iter(nonce_retry_futs).buffered(self.config.funding_batch_size);
+                    stream::iter(nonce_retry_futs).buffered(self.config.max_in_flight_per_sender as usize);
 
                 let mut nonce_retry_pending: Vec<Address> = Vec::new();
                 while let Some((result, address, retry_nonce)) = nonce_retry_stream.next().await {
@@ -1358,7 +1358,7 @@ impl LoadRunner {
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
             let batch: Vec<_> =
-                txs_remaining.by_ref().take(self.config.funding_batch_size).collect();
+                txs_remaining.by_ref().take(self.config.max_in_flight_per_sender as usize).collect();
             let mut pending_txs: Vec<(Address, Address)> = Vec::new();
 
             let send_futs = batch.into_iter().map(|(tx, token, sender)| {
@@ -1370,7 +1370,7 @@ impl LoadRunner {
             });
 
             let mut send_stream =
-                stream::iter(send_futs).buffer_unordered(self.config.funding_batch_size);
+                stream::iter(send_futs).buffer_unordered(self.config.max_in_flight_per_sender as usize);
 
             while let Some((result, token, sender)) = send_stream.next().await {
                 match result {
