@@ -270,8 +270,7 @@ where
     async fn build_payload(
         &self,
         args: BuildArguments<BasePayloadBuilderAttributes<BaseTransactionSigned>, BaseBuiltPayload>,
-        payload_tx: &watch::Sender<Option<BaseBuiltPayload>>,
-    ) -> Result<(), PayloadBuilderError> {
+    ) -> Result<BaseBuiltPayload, PayloadBuilderError> {
         let block_build_start_time = Instant::now();
         let BuildArguments {
             mut cached_reads,
@@ -401,13 +400,11 @@ where
         }
 
         if skip_flashblocks_building {
-            drop(state);
-            payload_tx.send_replace(Some(payload));
             let total_block_building_time = block_build_start_time.elapsed();
             BuilderMetrics::total_block_built_duration().record(total_block_building_time);
             BuilderMetrics::total_block_built_gauge().set(total_block_building_time);
 
-            return Ok(());
+            return Ok(payload);
         }
 
         info!(
@@ -492,7 +489,7 @@ where
         let mut executed_sender_nonces: HashMap<Address, u64> = HashMap::default();
 
         // Process flashblocks in a blocking loop
-        let final_payload = loop {
+        loop {
             let flashblock_index = ctx.flashblock_index();
             let fb_span = if span.is_none() {
                 tracing::Span::none()
@@ -514,7 +511,7 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
-                break self.finalize_payload(&mut state, &ctx, &mut info)?;
+                return self.finalize_payload(&mut state, &ctx, &mut info);
             }
 
             // build first flashblock immediately
@@ -540,7 +537,7 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
-                    break self.finalize_payload(&mut state, &ctx, &mut info)?;
+                    return self.finalize_payload(&mut state, &ctx, &mut info);
                 }
                 Err(err) => {
                     error!(
@@ -566,16 +563,10 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
-                    break self.finalize_payload(&mut state, &ctx, &mut info)?;
+                    return self.finalize_payload(&mut state, &ctx, &mut info);
                 }
             }
-        };
-
-        // Release the state provider's shared-cache handle before waking the payload resolver.
-        drop(state);
-        payload_tx.send_replace(Some(final_payload));
-
-        Ok(())
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1106,7 +1097,11 @@ where
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
         payload_tx: &watch::Sender<Option<Self::BuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
-        self.build_payload(args, payload_tx).await
+        // Keep construction behind this call boundary so its state provider, including any shared
+        // cache handle, is released before publishing wakes the payload resolver.
+        let payload = self.build_payload(args).await?;
+        payload_tx.send_replace(Some(payload));
+        Ok(())
     }
 }
 
@@ -1445,27 +1440,28 @@ mod tests {
         let cache = SavedCache::new(B256::ZERO, ExecutionCache::new(1_000));
         cache.cache().insert_storage(address, cached_key, Some(cached_value));
 
-        let state_provider = Box::new(CachedStateProvider::new(
-            Box::new(NoopProvider::default()) as StateProviderBox,
-            cache.cache().clone(),
-            None,
-        )) as StateProviderBox;
+        {
+            let state_provider = Box::new(CachedStateProvider::new(
+                Box::new(NoopProvider::default()) as StateProviderBox,
+                cache.cache().clone(),
+                None,
+            )) as StateProviderBox;
 
-        assert!(!cache.is_available(), "provider must hold the shared cache while in use");
-        assert_eq!(state_provider.storage(address, cached_key).unwrap(), Some(cached_value));
-        assert_eq!(state_provider.storage(address, uncached_key).unwrap(), None);
-        assert_eq!(
-            cache
-                .cache()
-                .get_or_try_insert_storage_with(address, uncached_key, || Ok::<_, ()>(
-                    uncached_value
-                ))
-                .unwrap(),
-            CachedStatus::NotCached(uncached_value),
-            "lookup-only canonical reads must not fill cache misses"
-        );
+            assert!(!cache.is_available(), "provider must hold the shared cache while in use");
+            assert_eq!(state_provider.storage(address, cached_key).unwrap(), Some(cached_value));
+            assert_eq!(state_provider.storage(address, uncached_key).unwrap(), None);
+            assert_eq!(
+                cache
+                    .cache()
+                    .get_or_try_insert_storage_with(address, uncached_key, || Ok::<_, ()>(
+                        uncached_value
+                    ))
+                    .unwrap(),
+                CachedStatus::NotCached(uncached_value),
+                "lookup-only canonical reads must not fill cache misses"
+            );
+        }
 
-        drop(state_provider);
         assert!(cache.is_available(), "provider must release the shared cache when dropped");
     }
 
