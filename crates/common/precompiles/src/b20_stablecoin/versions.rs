@@ -7,13 +7,10 @@
 //! execution path, and lets the dispatcher route calls without ever matching on
 //! the version itself.
 
-use alloy_primitives::{Address, B256, Bytes};
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    B20Abi, B20StablecoinToken, PolicyAccounting, Stablecoin, StablecoinAccounting, StablecoinV1,
-    StablecoinV2,
+    B20Abi, PolicyAccounting, Stablecoin, StablecoinAccounting, StablecoinV1, StablecoinV2,
 };
 
 /// An activated version of the stablecoin B-20 precompile logic.
@@ -73,37 +70,6 @@ impl StablecoinVersions {
             u if u >= BaseUpgrade::Cobalt => Some(StablecoinVersion::V2),
             u if u >= BaseUpgrade::Beryl => Some(StablecoinVersion::V1),
             _ => None,
-        }
-    }
-
-    /// Grants `role` to `account` without checking caller authorization, using the stablecoin
-    /// implementation active at `upgrade`.
-    ///
-    /// Parallel to [`Self::from_base_upgrade`] rather than built on it, since
-    /// `grant_role_unchecked` is deliberately not part of the `Stablecoin` trait (see
-    /// [`StablecoinV1::grant_role_unchecked`]) and so isn't reachable through
-    /// [`StablecoinVersion::implementation`].
-    pub fn grant_role_unchecked<S, A>(
-        upgrade: BaseUpgrade,
-        token: &mut B20StablecoinToken<S, A>,
-        role: B256,
-        account: Address,
-        sender: Address,
-    ) -> Result<()>
-    where
-        S: StablecoinAccounting,
-        A: PolicyAccounting,
-    {
-        match upgrade {
-            u if u >= BaseUpgrade::Cobalt => {
-                StablecoinV2.grant_role_unchecked(token, role, account, sender)
-            }
-            u if u >= BaseUpgrade::Beryl => {
-                StablecoinV1.grant_role_unchecked(token, role, account, sender)
-            }
-            // Unreachable in practice — the precompile is only installed from Beryl — but we
-            // revert defensively, mirroring `dispatch_with_observer`.
-            _ => Err(BasePrecompileError::Revert(Bytes::new())),
         }
     }
 }

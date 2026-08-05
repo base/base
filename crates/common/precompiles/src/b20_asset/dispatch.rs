@@ -83,7 +83,12 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         sender: alloy_primitives::Address,
         upgrade: BaseUpgrade,
     ) -> base_precompile_storage::Result<()> {
-        AssetVersions::grant_role_unchecked(upgrade, self, role, account, sender)
+        // `None` is unreachable in practice — the precompile is only installed from Beryl — but
+        // we revert defensively, mirroring `dispatch_with_observer`.
+        let Some(version) = AssetVersions::from_base_upgrade(upgrade) else {
+            return Err(BasePrecompileError::Revert(Bytes::new()));
+        };
+        version.implementation().grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
