@@ -2820,12 +2820,10 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         ]),
 
         // computed reads
-        C::isPaused(_) | C::pausedFeatures(_) => {
-            covered(&[
-                golden_read_is_paused_and_paused_features,
-                golden_seize_pause_feature_unknown_at_v1,
-            ])
-        }
+        C::isPaused(_) | C::pausedFeatures(_) => covered(&[
+            golden_read_is_paused_and_paused_features,
+            golden_seize_pause_feature_unknown_at_v1,
+        ]),
         C::policyId(_) => covered(&[
             golden_read_policy_id_and_unsupported_scope,
             golden_policy_id_rejects_seize_scopes_at_v1,
