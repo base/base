@@ -243,7 +243,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             // --- Seize ---
             C::seizeWithMemo(c) => {
                 logic.seize_with_memo(self, caller, c.from, c.to, c.amount, c.memo)?;
-                true.abi_encode().into()
+                Bytes::new()
             }
 
             // --- Pause ---

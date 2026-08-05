@@ -250,7 +250,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 C::seizeWithMemo(c) => {
                     let caller = ctx.caller();
                     logic.seize_with_memo(self, caller, c.from, c.to, c.amount, c.memo)?;
-                    true.abi_encode().into()
+                    Bytes::new()
                 }
 
                 C::pause(c) => {
