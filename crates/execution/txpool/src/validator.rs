@@ -93,6 +93,8 @@ struct Eip8130ValidationState {
     payer_auth: u64,
     watch_set: WatchSet,
     sender_locked: bool,
+    sender_delegate: Option<Address>,
+    sender_delegate_locked: bool,
     payer_locked: bool,
     payer_trusted: bool,
     payer_max_cost: U256,
@@ -934,6 +936,8 @@ where
                 payer: state.payer,
                 classification_generation: state.classification_generation,
                 sender_locked: state.sender_locked,
+                sender_delegate: state.sender_delegate,
+                sender_delegate_locked: state.sender_delegate_locked,
                 payer_locked: state.payer_locked,
                 payer_trusted: state.payer_trusted,
                 payer_balance: state.payer_balance,
@@ -1210,6 +1214,37 @@ where
                 }
             }
         }
+        // A sender that authenticates via the delegate authenticator depends on a
+        // *foreign* account's mutable config for validity. Locking the sender's own
+        // config does not freeze that surface, so the unlimited-signature grant a
+        // locked sender earns is only safe when the delegate account is *also*
+        // locked. Classify the delegate's lock (mirroring the sender/payer gate) so
+        // the guard can charge it an independent signature slot when it is not, and
+        // watch its account-state slot so an unlock drains txs admitted as exempt.
+        let sender_delegate = Self::delegate_account(signed.sender_auth());
+        let sender_delegate_locked = sender_delegate.is_some_and(|delegate| {
+            let status = self.account_lock(
+                &*state,
+                local_chain_id,
+                now,
+                delegate,
+                classification_generation,
+                Self::prefetched_account_state(&config_reads, delegate),
+            );
+            let unlocks_at = status.has_initiated_unlock.then_some(status.unlocks_at);
+            let locked = status.locked && unlocks_at.is_none_or(|at| at > lock_horizon);
+            if locked {
+                watch_set.push(InvalidationKey::Slot {
+                    address: AccountConfigurationStorage::ADDRESS,
+                    slot: Self::account_state_slot(delegate),
+                });
+                if let Some(at) = unlocks_at {
+                    watch_set.push(InvalidationKey::expiry_bucket(at));
+                }
+            }
+            locked
+        });
+
         // A high-rate (balance-bounded) payer must be *hard*-locked with an unlock
         // delay of at least `MIN_HIGH_RATE_PAYER_LOCK_SECS`. A pending unlock or an
         // unlocked account is never high-rate: once an unlock is initiated the
@@ -1271,11 +1306,26 @@ where
             payer_auth: intrinsic.payer_auth,
             watch_set,
             sender_locked,
+            sender_delegate,
+            sender_delegate_locked,
             payer_locked,
             payer_trusted,
             payer_max_cost,
             manifest,
         })
+    }
+
+    /// The delegate account backing a sender/payer delegate-authenticator blob,
+    /// if the actor authenticated via one. The auth blob layout is
+    /// `authenticator(20) || delegate_account(20) || nested_authenticator(20) || …`
+    /// (the same framing [`Self::classify_authenticator`] reads); any other
+    /// authenticator selector has no delegate account.
+    fn delegate_account(auth: &[u8]) -> Option<Address> {
+        let selector = auth.get(..20).map(Address::from_slice)?;
+        if selector != Eip8130Contracts::DELEGATE_AUTHENTICATOR {
+            return None;
+        }
+        auth.get(20..40).map(Address::from_slice)
     }
 
     const fn expiry_or_unbounded(expiry: u64) -> u64 {
