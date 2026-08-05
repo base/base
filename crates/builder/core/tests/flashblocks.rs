@@ -6,7 +6,7 @@ use alloy_primitives::{Address, B256, U256};
 use base_builder_core::{
     BuilderConfig,
     test_utils::{
-        TransactionBuilderExt, default_node_config_with_azul, funded_signer,
+        TransactionBuilderExt, default_node_config, default_node_config_with_azul, funded_signer,
         setup_test_instance_with_builder_config, setup_test_instance_with_node_config,
     },
 };
@@ -193,6 +193,25 @@ async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
     }
 
     flashblocks_listener.stop().await
+}
+
+#[tokio::test]
+async fn transaction_prewarming_builds_payload_with_shared_cache() -> eyre::Result<()> {
+    let config = BuilderConfig::for_tests().with_block_time_ms(2000);
+    let mut node_config = default_node_config();
+    node_config.engine.share_execution_cache_with_payload_builder = true;
+    let rbuilder = setup_test_instance_with_node_config(config, node_config).await?;
+    let driver = rbuilder.driver().await?;
+
+    for _ in 0..3 {
+        let _ = driver.create_transaction().random_valid_transfer().send().await?;
+    }
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    assert_eq!(block.transactions.len(), 4, "block should contain deposit and pool transactions");
+    assert_ne!(block.header.state_root, B256::ZERO, "final payload must have a valid state root");
+    Ok(())
 }
 
 #[tokio::test]

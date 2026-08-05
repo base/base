@@ -57,8 +57,8 @@ use crate::{
     BuilderConfig, BuilderMetrics, CandidateSource, DefaultCandidateSource, ExecutionInfo,
     PayloadBuilder, ResourceLimits,
     flashblocks::{
-        FlashblocksExtraCtx, best_txs::BestFlashblocksTxs, context::BasePayloadBuilderCtx,
-        generator::BuildArguments,
+        FlashblocksExtraCtx, PrewarmingExecutionContext, TransactionPrewarmer,
+        best_txs::BestFlashblocksTxs, context::BasePayloadBuilderCtx, generator::BuildArguments,
     },
     traits::{ClientBounds, PoolBounds},
     transaction_events::{
@@ -203,7 +203,7 @@ where
 impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S>
 where
     Pool: PoolBounds,
-    Client: ClientBounds,
+    Client: ClientBounds + 'static,
     S: CandidateSource<Pool::Transaction>,
 {
     fn get_base_payload_builder_ctx(
@@ -275,6 +275,7 @@ where
         let BuildArguments {
             mut cached_reads,
             execution_cache,
+            executor,
             config,
             cancel: block_cancel,
             publish_guard,
@@ -303,7 +304,7 @@ where
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        if let Some(execution_cache) = execution_cache {
+        if let Some(execution_cache) = execution_cache.as_ref() {
             state_provider = Box::new(CachedStateProvider::new(
                 state_provider,
                 execution_cache.cache().clone(),
@@ -327,6 +328,27 @@ where
             self.calculate_flashblocks(timestamp);
 
         let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
+        let mut prewarmer =
+            execution_cache.filter(|_| !skip_flashblocks_building).map(|execution_cache| {
+                let prewarming_context = PrewarmingExecutionContext::new(
+                    self.client.clone(),
+                    ctx.parent().hash(),
+                    ctx.evm_config.clone(),
+                    ctx.evm_env.clone(),
+                    execution_cache.cache().clone(),
+                );
+                let transactions =
+                    self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes());
+                TransactionPrewarmer::start(&executor, transactions, move |transaction| {
+                    prewarming_context
+                        .prewarm_transactions(std::iter::once(&transaction.transaction))
+                })
+            });
+        let mut release_prewarmer = || {
+            if let Some(prewarmer) = prewarmer.take() {
+                prewarmer.stop_and_wait();
+            }
+        };
 
         let prev_flashblock_id = self.previous_flashblock_id();
         let (payload, fb_payload, state_diff) = build_block(
@@ -511,6 +533,7 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
+                release_prewarmer();
                 return self.finalize_payload(&mut state, &ctx, &mut info);
             }
 
@@ -537,6 +560,7 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
+                    release_prewarmer();
                     return self.finalize_payload(&mut state, &ctx, &mut info);
                 }
                 Err(err) => {
@@ -547,6 +571,7 @@ where
                         ctx.block_number(),
                         err
                     );
+                    release_prewarmer();
                     return Err(PayloadBuilderError::Other(err.into()));
                 }
             };
@@ -563,6 +588,7 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
+                    release_prewarmer();
                     return self.finalize_payload(&mut state, &ctx, &mut info);
                 }
             }
@@ -1086,7 +1112,7 @@ where
 impl<Pool, Client, S> PayloadBuilder for BasePayloadBuilder<Pool, Client, S>
 where
     Pool: PoolBounds,
-    Client: ClientBounds,
+    Client: ClientBounds + 'static,
     S: CandidateSource<Pool::Transaction> + Clone + Unpin + 'static,
 {
     type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;

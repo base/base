@@ -274,6 +274,8 @@ pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub cached_reads: CachedReads,
     /// Optional execution cache shared with the engine.
     pub execution_cache: Option<SavedCache>,
+    /// Executor used for payload-scoped background work.
+    pub executor: Runtime,
     /// How to configure the payload.
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
@@ -301,10 +303,12 @@ where
         self.payload_rx = Some(watch_rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
         let execution_cache = self.execution_cache.take();
+        let executor = self.executor.clone();
         self.executor.spawn_blocking_task(Box::pin(async move {
             let args = BuildArguments {
                 cached_reads,
                 execution_cache,
+                executor,
                 config: payload_config,
                 cancel,
                 publish_guard,
