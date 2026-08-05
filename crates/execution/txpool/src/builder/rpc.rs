@@ -105,6 +105,9 @@ where
             tx.max_timestamp,
         );
 
+        // Read before `apply` consumes `tx.extensions` by value below.
+        let origin = tx.extensions.origin();
+
         // Attach any extension data carried on the wire. This is a no-op for
         // `NoExtensions`, the default payload.
         let pool_tx = tx.extensions.apply(pool_tx).map_err(|e| {
@@ -114,7 +117,7 @@ where
 
         // Insert into the pool
         let start = Instant::now();
-        let result = self.pool.add_external_transaction(pool_tx).await;
+        let result = self.pool.add_transaction(origin, pool_tx).await;
         BuilderApiMetrics::insert_duration().record(start.elapsed().as_secs_f64());
 
         match result {
