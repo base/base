@@ -63,6 +63,18 @@ impl ScheduledTicker {
         self.reset_at(SystemTime::now());
     }
 
+    /// Reschedules the ticker based on the outcome of a build attempt.
+    ///
+    /// If `target` is `Some`, schedules for that wall-clock time. If `None` (the build was
+    /// deferred or discarded), fires immediately so the next attempt refreshes state instead of
+    /// retrying a stale target.
+    pub fn schedule_after_build(&mut self, target: Option<SystemTime>) {
+        match target {
+            Some(target) => self.reset_at(target),
+            None => self.reset_immediately(),
+        }
+    }
+
     /// Awaits the next tick.
     ///
     /// On fire, records [`Metrics::sequencer_ticker_drift_seconds`] using the
@@ -83,5 +95,31 @@ impl ScheduledTicker {
     #[cfg(test)]
     pub const fn target(&self) -> Option<SystemTime> {
         self.target
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use super::ScheduledTicker;
+
+    #[tokio::test]
+    async fn schedule_after_build_uses_target_when_built() {
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+        let target = UNIX_EPOCH + Duration::from_millis(2_000_000_000);
+
+        ticker.schedule_after_build(Some(target));
+
+        assert_eq!(ticker.target(), Some(target));
+    }
+
+    #[tokio::test]
+    async fn schedule_after_build_fires_immediately_when_no_payload_was_built() {
+        let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+
+        ticker.schedule_after_build(None);
+
+        assert!(ticker.target().is_some_and(|target| target <= SystemTime::now()));
     }
 }
