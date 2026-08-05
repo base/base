@@ -308,20 +308,29 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
                 self.spawn_next(current_hash, current_number)
             }
             NextSlot::InFlight { handle, .. } if handle.is_finished() => {
-                // Adopt only if the result still links to the live `current`; otherwise (not
-                // produced yet, a reorg, or a parent mismatch) retry on the next tick. The handle is
-                // finished, so awaiting it resolves immediately.
-                handle
-                    .await
-                    .ok()
-                    .flatten()
-                    .and_then(|p| LinkedOrigin::link(current_hash, p))
-                    .map_or(NextSlot::Idle, |linked| NextSlot::Ready(Box::new(linked)))
+                // The handle is finished, so awaiting it resolves immediately. A non-linking result
+                // is expected to be rare in practice (it requires the confirmation depth behind the
+                // default `DelayedL1OriginSelectorProvider` to be insufficient to avoid reorgs), so
+                // respawn immediately rather than leaving the slot idle for a full tick.
+                match Self::adopt_next(current_hash, handle.await.ok().flatten()) {
+                    NextSlot::Idle => self.spawn_next(current_hash, current_number),
+                    adopted => adopted,
+                }
             }
             // Still running, off the critical path: leave it in flight.
             in_flight @ NextSlot::InFlight { .. } => in_flight,
             NextSlot::Idle => self.spawn_next(current_hash, current_number),
         };
+    }
+
+    /// Adopts a finished fetch result iff it still links to `current_hash`, otherwise discards it.
+    ///
+    /// Shared by [`Self::poll_next`] and the test-only [`Self::await_inflight`] so the linking check
+    /// has a single implementation.
+    fn adopt_next(current_hash: B256, fetched: Option<PreparedL1Origin>) -> NextSlot {
+        fetched
+            .and_then(|p| LinkedOrigin::link(current_hash, p))
+            .map_or(NextSlot::Idle, |linked| NextSlot::Ready(Box::new(linked)))
     }
 
     /// Spawns a background fetch of the origin following the current origin (identified by
@@ -355,20 +364,16 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
         NextSlot::InFlight { parent_hash: current_hash, handle }
     }
 
-    /// Test-only: deterministically awaits the in-flight next fetch and adopts its result, so tests
-    /// can observe the prepared `next` without racing the background task.
+    /// Test-only: deterministically awaits the in-flight next fetch and adopts its result via
+    /// [`Self::adopt_next`] (the same linking check [`Self::poll_next`] uses), so tests can observe
+    /// the prepared `next` without racing the background task.
     #[cfg(test)]
-    async fn settle_next(&mut self) {
+    async fn await_inflight(&mut self) {
         let Some(current_hash) = self.current.as_ref().map(|c| c.hash) else {
             return;
         };
         if let NextSlot::InFlight { handle, .. } = std::mem::take(&mut self.next) {
-            self.next = handle
-                .await
-                .ok()
-                .flatten()
-                .and_then(|p| LinkedOrigin::link(current_hash, p))
-                .map_or(NextSlot::Idle, |linked| NextSlot::Ready(Box::new(linked)));
+            self.next = Self::adopt_next(current_hash, handle.await.ok().flatten());
         }
     }
 }
@@ -524,7 +529,7 @@ mod tests {
             let next = selector.next_l1_origin(unsafe_head, false).await.unwrap();
             // Deterministically settle the background next-origin fetch so it is ready to be
             // selected on the epoch-crossing tick.
-            selector.settle_next().await;
+            selector.await_inflight().await;
 
             // The expected L1 origin block is the one corresponding to the epoch of the current L2
             // block.
@@ -619,7 +624,7 @@ mod tests {
         // The first call resolves `current` and kicks off the background next-origin fetch; settle
         // it so the second call observes the prepared `next`.
         selector.next_l1_origin(unsafe_head, false).await.unwrap();
-        selector.settle_next().await;
+        selector.await_inflight().await;
         let next = selector.next_l1_origin(unsafe_head, false).await.unwrap();
 
         // The expected L1 origin block is the one corresponding to the epoch of the current L2
@@ -661,45 +666,55 @@ mod tests {
         };
 
         let next = selector.next_l1_origin(unsafe_head, false).await.unwrap();
-        selector.settle_next().await;
+        selector.await_inflight().await;
 
         assert_eq!(next, current);
         assert_eq!(selector.current(), Some(current));
         assert_eq!(selector.next(), None);
     }
 
+    /// Recovery mode re-resolves `current` and drops any prepared `next` unconditionally, even when
+    /// the unsafe head is still in the same epoch as `current` — a case the non-recovery path treats
+    /// as a no-op that reuses the already-prepared `next`.
     #[tokio::test]
-    async fn test_recovery_mode_reuses_current_on_next_fetch_error_before_seq_drift() {
+    async fn test_recovery_mode_discards_prepared_next_and_reresolves_current() {
         const L2_BLOCK_TIME: u64 = 2;
-        const MAX_SEQUENCER_DRIFT: u64 = 30 * 60;
 
         let cfg = Arc::new(RollupConfig {
             block_time: L2_BLOCK_TIME,
-            max_sequencer_drift: MAX_SEQUENCER_DRIFT,
+            max_sequencer_drift: 600,
             ..Default::default()
         });
 
         let current =
             BlockInfo { parent_hash: B256::ZERO, hash: B256::ZERO, number: 0, timestamp: 0 };
+        let next_block = BlockInfo {
+            parent_hash: current.hash,
+            hash: B256::with_last_byte(1),
+            number: 1,
+            timestamp: L2_BLOCK_TIME,
+        };
         let mut provider = MockOriginSelectorProvider::default();
         provider.with_block(current);
-        provider.fail_block_number(current.number + 1);
+        provider.with_block(next_block);
 
         let mut selector = L1OriginSelector::new(Arc::clone(&cfg), provider);
         let unsafe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: (MAX_SEQUENCER_DRIFT - cfg.block_time) / cfg.block_time,
-                timestamp: MAX_SEQUENCER_DRIFT - cfg.block_time,
-                ..Default::default()
-            },
+            block_info: BlockInfo { number: 0, timestamp: 0, ..Default::default() },
             l1_origin: NumHash { number: current.number, hash: current.hash },
             seq_num: 0,
         };
 
-        let next = selector.next_l1_origin(unsafe_head, true).await.unwrap();
-        selector.settle_next().await;
+        // Establish `current` and let the background fetch prepare `next`.
+        selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        selector.await_inflight().await;
+        assert_eq!(selector.next(), Some(next_block));
 
-        assert_eq!(next, current);
+        // Recovery mode discards the already-prepared `next` and re-resolves `current` from
+        // scratch, even though the unsafe head's origin still matches `current`.
+        let resolved = selector.next_l1_origin(unsafe_head, true).await.unwrap();
+
+        assert_eq!(resolved, current);
         assert_eq!(selector.current(), Some(current));
         assert_eq!(selector.next(), None);
     }
@@ -735,7 +750,7 @@ mod tests {
         // The first call kicks off the (failing) next-origin fetch; settle it, then the second call
         // observes that no next origin is available past the drift.
         selector.next_l1_origin(unsafe_head, false).await.ok();
-        selector.settle_next().await;
+        selector.await_inflight().await;
         let err = selector.next_l1_origin(unsafe_head, false).await.unwrap_err();
 
         assert!(matches!(err, L1OriginSelectorError::NotEnoughData(block) if block == current));
@@ -805,7 +820,7 @@ mod tests {
         // Kick off and settle the background next-origin fetch, then observe the selection. The
         // first call may error (past drift, next not yet prepared); that is expected.
         selector.next_l1_origin(unsafe_head, false).await.ok();
-        selector.settle_next().await;
+        selector.await_inflight().await;
 
         if next_available {
             let next = selector.next_l1_origin(unsafe_head, false).await.unwrap();
@@ -870,7 +885,7 @@ mod tests {
         let next = selector.next_l1_origin(unsafe_head, false).await.unwrap();
         // Settling awaits the in-flight fetch, whose internal deadline (12s) fires before the 30s
         // mock delay, so no next origin is adopted.
-        selector.settle_next().await;
+        selector.await_inflight().await;
 
         assert_eq!(next, current);
         assert_eq!(selector.next(), None);
