@@ -13,8 +13,15 @@ use tracing::trace;
 
 /// Context for speculatively executing transactions against parent state.
 ///
-/// Each transaction receives a fresh state provider and EVM. State changes and execution results
-/// are discarded; only reads populated through the shared [`ExecutionCache`] are retained.
+/// Opening a state provider is the dominant cost of prewarming, so a single provider and EVM are
+/// built once and reused for every transaction in a batch, mirroring how reth's own prewarming
+/// (`reth_engine_tree`) amortizes EVM construction across a worker's transactions. Each
+/// transaction still executes independently through [`Evm::transact`], which never commits: state
+/// changes and execution results are discarded, and transactions are never chained together, so
+/// only reads populated through the shared [`ExecutionCache`] are retained. Deliberately not
+/// chaining keeps every transaction warming reads against the same real parent state that the
+/// actual sequential execution pass will observe, rather than a speculative intermediate state
+/// that pass may never produce.
 #[derive(Clone, Debug)]
 pub struct PrewarmingExecutionContext<Client> {
     client: Client,
@@ -39,19 +46,31 @@ where
         Self { client, parent_hash, evm_config, evm_env, execution_cache }
     }
 
-    /// Executes `transaction` against parent state to populate the shared execution cache.
+    /// Executes each of `transactions` against parent state to populate the shared execution
+    /// cache.
     ///
-    /// Nonce and balance checks are disabled so transactions that depend on earlier block state can
-    /// still warm useful reads. The execution result and all state changes are discarded.
+    /// The state provider and EVM are opened once and reused for every transaction in the batch
+    /// rather than per transaction, since opening a state provider dominates the per-transaction
+    /// cost. Nonce and balance checks are disabled so transactions that depend on earlier block
+    /// state can still warm useful reads. Every transaction executes independently against the
+    /// same parent state; execution results and state changes are always discarded, and
+    /// transactions are never chained.
     ///
-    /// Returns `true` when speculative execution completed and `false` when the provider could not
-    /// be opened or the EVM rejected execution. Failures are deliberately non-fatal because
-    /// prewarming is only an optimization.
-    #[must_use]
-    pub fn prewarm_transaction<T>(&self, transaction: &T) -> bool
+    /// Returns the number of transactions that executed successfully. Failing to open the parent
+    /// state, or a rejected transaction, is deliberately non-fatal because prewarming is only an
+    /// optimization.
+    pub fn prewarm_transactions<'a, T>(
+        &self,
+        transactions: impl IntoIterator<Item = &'a T>,
+    ) -> usize
     where
-        T: PoolTransaction<Consensus = BaseTransactionSigned>,
+        T: PoolTransaction<Consensus = BaseTransactionSigned> + 'a,
     {
+        let mut transactions = transactions.into_iter().peekable();
+        if transactions.peek().is_none() {
+            return 0;
+        }
+
         let state_provider = match self.client.state_by_block_hash(self.parent_hash) {
             Ok(provider) => provider,
             Err(error) => {
@@ -59,10 +78,9 @@ where
                     target: "payload_builder",
                     error = %error,
                     parent_hash = ?self.parent_hash,
-                    transaction_hash = ?transaction.hash(),
                     "failed to open parent state for transaction prewarming",
                 );
-                return false;
+                return 0;
             }
         };
         let state_provider =
@@ -73,20 +91,23 @@ where
         evm_env.cfg_env.disable_nonce_check = true;
         evm_env.cfg_env.disable_balance_check = true;
         let mut evm = self.evm_config.evm_with_env(database, evm_env);
-        let transaction = transaction.clone_into_consensus();
 
-        match evm.transact(&transaction) {
-            Ok(_) => true,
-            Err(error) => {
-                trace!(
-                    target: "payload_builder",
-                    error = %error,
-                    transaction_hash = ?transaction.tx_hash(),
-                    "failed to speculatively execute transaction for prewarming",
-                );
-                false
+        let mut warmed = 0;
+        for transaction in transactions {
+            let transaction = transaction.clone_into_consensus();
+            match evm.transact(&transaction) {
+                Ok(_) => warmed += 1,
+                Err(error) => {
+                    trace!(
+                        target: "payload_builder",
+                        error = %error,
+                        transaction_hash = ?transaction.tx_hash(),
+                        "failed to speculatively execute transaction for prewarming",
+                    );
+                }
             }
         }
+        warmed
     }
 }
 
@@ -217,7 +238,7 @@ mod tests {
     fn speculative_execution_warms_account_code_and_storage_reads() {
         let fixture = Fixture::new(0);
 
-        assert!(fixture.context.prewarm_transaction(&fixture.transaction));
+        assert_eq!(fixture.context.prewarm_transactions([&fixture.transaction]), 1);
 
         assert!(matches!(
             fixture
@@ -254,8 +275,9 @@ mod tests {
     fn speculative_execution_ignores_nonce_and_balance_checks() {
         let fixture = Fixture::new(7);
 
-        assert!(
-            fixture.context.prewarm_transaction(&fixture.transaction),
+        assert_eq!(
+            fixture.context.prewarm_transactions([&fixture.transaction]),
+            1,
             "an unfunded sender with a future nonce should still execute for cache warming"
         );
     }
@@ -264,8 +286,9 @@ mod tests {
     fn speculative_execution_reports_transaction_failure() {
         let fixture = Fixture::with_transaction_chain_id(0, CHAIN_ID + 1);
 
-        assert!(
-            !fixture.context.prewarm_transaction(&fixture.transaction),
+        assert_eq!(
+            fixture.context.prewarm_transactions([&fixture.transaction]),
+            0,
             "a transaction invalid for the configured chain should not report successful execution"
         );
     }
@@ -275,11 +298,36 @@ mod tests {
         let fixture = Fixture::new(0);
         let original = fixture.client.basic_account(&fixture.sender).expect("read sender account");
 
-        assert!(fixture.context.prewarm_transaction(&fixture.transaction));
+        assert_eq!(fixture.context.prewarm_transactions([&fixture.transaction]), 1);
         assert_eq!(
             fixture.client.basic_account(&fixture.sender).expect("read sender account"),
             original,
             "speculative sender nonce and balance changes must be discarded"
+        );
+    }
+
+    #[test]
+    fn prewarm_transactions_counts_each_transaction_independently() {
+        let fixture = Fixture::new(0);
+        let invalid_transaction = Fixture::with_transaction_chain_id(0, CHAIN_ID + 1).transaction;
+
+        assert_eq!(
+            fixture.context.prewarm_transactions([&fixture.transaction, &invalid_transaction]),
+            1,
+            "only the valid transaction in the batch should count as successfully warmed"
+        );
+    }
+
+    #[test]
+    fn prewarm_transactions_skips_opening_state_provider_for_empty_batch() {
+        let fixture = Fixture::new(0);
+        let empty: [&BasePooledTransaction; 0] = [];
+
+        assert_eq!(fixture.context.prewarm_transactions(empty), 0);
+        assert_eq!(
+            fixture.cache.usage_count(),
+            2,
+            "an empty batch must not open a state provider or touch the shared cache"
         );
     }
 
@@ -293,11 +341,11 @@ mod tests {
             2,
             "only the saved cache and context should remain"
         );
-        assert!(fixture.context.prewarm_transaction(&fixture.transaction));
+        assert_eq!(fixture.context.prewarm_transactions([&fixture.transaction]), 1);
         assert_eq!(
             fixture.cache.usage_count(),
             2,
-            "the per-transaction provider must release its cache handle after execution"
+            "the batch's provider must release its cache handle after execution"
         );
         drop(fixture.context);
         assert!(fixture.cache.is_available(), "dropping context must release the shared cache");
