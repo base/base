@@ -94,8 +94,8 @@ where
 
         let mut warmed = 0;
         for transaction in transactions {
-            let transaction = transaction.clone_into_consensus();
-            match evm.transact(&transaction) {
+            let transaction = transaction.consensus_ref();
+            match evm.transact(transaction) {
                 Ok(_) => warmed += 1,
                 Err(error) => {
                     trace!(
