@@ -587,7 +587,14 @@ impl SubmissionPipeline {
     /// e.g. an HTTP 429 status or a JSON-RPC-level "rate limit" rejection.
     fn is_rate_limited_message(msg: &str) -> bool {
         let lower = msg.to_ascii_lowercase();
-        lower.contains("429") || lower.contains("rate limit") || lower.contains("too many requests")
+        // Prefer phrase matches; only treat bare "429" as HTTP/RPC status tokens
+        // (e.g. "status 429", "error code 429", "-320429") rather than any digit run.
+        lower.contains("rate limit")
+            || lower.contains("too many requests")
+            || lower.contains("status 429")
+            || lower.contains("code 429")
+            || lower.contains(" http 429")
+            || lower.split(|c: char| !c.is_ascii_digit()).any(|token| token == "429")
     }
 
     /// Logs a warning the first time a rate-limited response is observed, so the
@@ -1349,5 +1356,14 @@ mod tests {
         assert_eq!(pipeline.pending_batches(), 0);
         assert!(matches!(submit_event_rx.try_recv(), Ok(SubmitEvent::Failed(_))));
         assert!(submit_event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn rate_limit_detection_matches_status_tokens_not_embedded_digits() {
+        assert!(SubmissionPipeline::is_rate_limited_message("HTTP 429 Too Many Requests"));
+        assert!(SubmissionPipeline::is_rate_limited_message("over rate limit"));
+        assert!(SubmissionPipeline::is_rate_limited_message("error code 429"));
+        assert!(!SubmissionPipeline::is_rate_limited_message("gas estimate 42900 exceeds limit"));
+        assert!(!SubmissionPipeline::is_rate_limited_message("nonce 429123"));
     }
 }

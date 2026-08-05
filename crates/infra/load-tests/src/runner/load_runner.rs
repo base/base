@@ -852,8 +852,11 @@ impl LoadRunner {
         txpool_endpoints.extend(self.config.txpool_nodes.iter().cloned());
         txpool_endpoints.sort();
         txpool_endpoints.dedup();
-        for endpoint in &txpool_endpoints {
-            let txpool_client = TxpoolAdminClient::new(endpoint.clone())?;
+        let txpool_clients = txpool_endpoints
+            .iter()
+            .map(|endpoint| TxpoolAdminClient::new(endpoint.clone()))
+            .collect::<Result<Vec<_>>>()?;
+        for (endpoint, txpool_client) in txpool_endpoints.iter().zip(&txpool_clients) {
             match txpool_client.drop_sender_transactions(funder_address).await {
                 Ok(removed) if !removed.is_empty() => {
                     info!(url = %endpoint, removed = removed.len(), "dropped stale exclusive-funder transactions");
@@ -884,15 +887,14 @@ impl LoadRunner {
         let mut highest_txpool_nonce = None;
         let mut txpool_content_available = false;
         let mut queued_funder_transactions = 0usize;
-        for endpoint in &txpool_endpoints {
-            let txpool_client = TxpoolAdminClient::new(endpoint.clone())?;
+        for (endpoint, txpool_client) in txpool_endpoints.iter().zip(&txpool_clients) {
             match txpool_client.sender_transaction_nonces(funder_address).await {
                 Ok((pending_nonces, queued_nonces)) => {
                     txpool_content_available = true;
                     queued_funder_transactions =
                         queued_funder_transactions.saturating_add(queued_nonces.len());
                     let nonces = pending_nonces.into_iter().chain(queued_nonces);
-                    if let Some(highest) = nonces.into_iter().max() {
+                    if let Some(highest) = nonces.max() {
                         highest_txpool_nonce = Some(
                             highest_txpool_nonce
                                 .map_or(highest, |current: u64| current.max(highest)),
@@ -953,10 +955,11 @@ impl LoadRunner {
                 BaselineError::Transaction("stale funder nonce range exceeds usize".into())
             })?);
         // Reth only classifies the full nonce chain as executable when the funder can afford every
-        // transaction's maximum declared L2 cost. Using an expected EIP-1559 price here can leave
-        // an affordable pending prefix followed by queued descendants.
+        // transaction's maximum declared L2 cost. Budget at the same max_fee the funding txs will
+        // declare, not bare base_fee, or later nonces can be queued despite this check passing.
         let base_fee = client.get_base_fee().await?;
-        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(base_fee));
+        let fees = GasPricer::new(max_gas_price).fees_for(base_fee);
+        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(fees.max_fee));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(funding_request_count));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
@@ -1022,7 +1025,9 @@ impl LoadRunner {
                 .collect();
             let reclaimed_nonce_target = batch
                 .iter()
-                .filter_map(|(_, _, nonce, _)| (*nonce < stale_end_nonce).then_some(*nonce + 1))
+                .filter_map(|(_, _, nonce, _)| {
+                    (*nonce < stale_end_nonce).then_some(nonce.saturating_add(1))
+                })
                 .max();
             // Prefer confirming by watching block tx hashes. Balance polling is only a
             // fallback when the RPC accepted an already-known tx without returning a hash.

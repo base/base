@@ -80,6 +80,7 @@ part of the portable YAML configuration.
 `in_flight_per_sender * sender_count`. Set `max_total_in_flight` to cap the aggregate independently
 of sender count, e.g. to protect a shared target node's mempool regardless of how many senders are
 configured.
+
 `in_flight_per_sender` and `max_total_in_flight` bound unconfirmed *transactions*, not outbound
 *requests*. If the submission RPC is rate-limiting you (e.g. `over rate limit` failures) rather than
 its mempool overflowing, set `max_concurrent_submit_requests` instead: it caps how many
@@ -87,6 +88,7 @@ its mempool overflowing, set `max_concurrent_submit_requests` instead: it caps h
 shrinking the in-flight inventory target. Concurrency is otherwise bounded only by the sender worker
 count (derived from the number of `transaction_submission_rpcs`), so `max_concurrent_submit_requests`
 is useful mainly to throttle *below* that.
+
 `flashblocks_ws` is required for builder flashblocks broadcast latency data.
 `transaction_submission_rpcs` accepts either a single URL string or a list; submit batches are
 distributed across the configured HTTP endpoints.
