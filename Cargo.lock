@@ -3587,6 +3587,7 @@ dependencies = [
  "reth-cli-util",
  "reth-db",
  "reth-evm",
+ "reth-execution-cache",
  "reth-execution-types",
  "reth-ipc",
  "reth-network-peers",
