@@ -172,11 +172,8 @@ impl FlashblockAssembler {
             let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
             let (excess_blob_gas, blob_gas_used) = ctx.blob_fields(info);
             let extra_data = ctx.extra_data()?;
-            let parent_beacon_block_root = ctx
-                .attributes()
-                .payload_attributes
-                .parent_beacon_block_root
-                .ok_or_else(|| {
+            let parent_beacon_block_root =
+                ctx.attributes().payload_attributes.parent_beacon_block_root.ok_or_else(|| {
                     PayloadBuilderError::Other(
                         eyre::eyre!("parent beacon block root not found").into(),
                     )
