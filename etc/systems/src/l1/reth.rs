@@ -1,7 +1,7 @@
 use eyre::{Result, WrapErr, eyre};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
-    core::{IntoContainerPort, WaitFor},
+    core::{IntoContainerPort, Mount, WaitFor},
     runners::AsyncRunner,
 };
 use url::Url;
@@ -63,6 +63,13 @@ impl RethContainer {
             .with_cmd(reth_args())
             .with_copy_to(GENESIS_PATH, genesis_json.as_ref().to_vec())
             .with_copy_to(JWT_PATH, jwt_secret_hex.as_ref().to_vec());
+
+        if config.tmpfs_datadir {
+            // reth's mdbx database needs a writable MAP_SHARED mmap, which the container's overlayfs
+            // upper layer rejects on some hosts (e.g. docker-in-docker CI) with "Remote I/O error
+            // (121)", crashing the node at startup. Back the datadir with tmpfs, which supports it.
+            container_builder = container_builder.with_mount(Mount::tmpfs_mount("/data"));
+        }
 
         if let Some(port) = config.http_port {
             container_builder = container_builder.with_mapped_port(port, HTTP_PORT.tcp());
