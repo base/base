@@ -1376,6 +1376,9 @@ impl LoadRunner {
 
         let mut last_outstanding = drain_state.total_outstanding();
         let mut last_progress = Instant::now();
+        let mut last_wait_log = Instant::now()
+            .checked_sub(Duration::from_secs(5))
+            .unwrap_or_else(Instant::now);
 
         while drain_state.total_outstanding() >= target_in_flight {
             if stop_flag.load(Ordering::SeqCst) {
@@ -1411,13 +1414,29 @@ impl LoadRunner {
             }
 
             let current = drain_state.total_outstanding();
+            let in_flight = drain_state.results_tracker.total_in_flight();
+            let pending = drain_state.results_tracker.pending_count();
+            if last_wait_log.elapsed() >= Duration::from_secs(5) {
+                info!(
+                    outstanding = current,
+                    in_flight,
+                    pending,
+                    target_in_flight,
+                    confirmed = drain_state.collector.confirmed_count(),
+                    wait_secs = last_progress.elapsed().as_secs(),
+                    prefill = stop_when_accepted_target_reached,
+                    "waiting for open-loop headroom (in-flight must drop before more submits)"
+                );
+                last_wait_log = Instant::now();
+            }
             if current < last_outstanding {
                 last_outstanding = current;
                 last_progress = Instant::now();
             } else if last_progress.elapsed() >= HEADROOM_STALL_TIMEOUT {
                 return Err(BaselineError::Timeout {
                     operation: format!(
-                        "open-loop outstanding headroom (stuck at {current} outstanding, target {target_in_flight})"
+                        "open-loop outstanding headroom (stuck at {current} outstanding, \
+                         in_flight={in_flight}, pending={pending}, target {target_in_flight})"
                     ),
                     duration: HEADROOM_STALL_TIMEOUT,
                 });
