@@ -132,9 +132,9 @@ const ROOT_GRANT_IDEMPOTENT: B256 =
 // announce's inner updateMultiplier call therefore emits a different event too).
 
 const ROOT_UPDATE_MULTIPLIER_V2: B256 =
-    b256!("cdca2ecf6bb16df905c24e19fe2a6134de85d14f78fada504f297a5b48f27d56");
+    b256!("fedb235aa7953b3224856747a42ef936f814559763791f14126249a05f5f9a6b");
 const ROOT_UPDATE_MULTIPLIER_CLEARS_PENDING: B256 =
-    b256!("b690cfd07315d9382062f430bff1a37c1ffaeab678cebb316072ed3c427144be");
+    b256!("1bcd7dd7a84d36e144d3f9a4547acda2eb80f6622ed7eec9a8cd6ad3a021f0ba");
 const ROOT_SET_UI_MULTIPLIER: B256 =
     b256!("f75ebc45a2ee2e3e1027ac80d1245ba8a4f594c69e4ab73be9a213f25a2f0a9f");
 const ROOT_SET_UI_MULTIPLIER_FOLDS_MATURED: B256 =
@@ -143,7 +143,7 @@ const ROOT_CANCEL_SCHEDULED_MULTIPLIER: B256 =
     b256!("63ac7df12f8dc4e2af852b1a6545c284a98a65fa604b6671c39293de9bcc967b");
 const ROOT_SEIZE: B256 = b256!("3b853f2d0f2ed769695b5577e4df3e8e8ecac537d4f26c29da283a724a426301");
 const ROOT_ANNOUNCE_V2: B256 =
-    b256!("95f6bf76e456a189578b72be4ddeeb03cabb2fca86b1c292195305d5e1a6d092");
+    b256!("5b3ea1fe17f441ce9e5d82f0764ce177f818fad8118cd1358fe74cbfafcde5e1");
 
 // --- harness ----------------------------------------------------------------
 
@@ -2307,12 +2307,16 @@ fn golden_update_multiplier_clears_live_pending_and_emits_cancellation() {
     });
     let events = s.get_events(TOKEN);
     assert_eq!(
-        events[events.len() - 2],
+        events[events.len() - 3],
         IB20Asset::UIMultiplierUpdateCancelled {
             cancelledMultiplier: B20AssetStorage::WAD * u(3),
             cancelledEffectiveAt: u(1_000),
         }
         .encode_log_data()
+    );
+    assert_eq!(
+        events[events.len() - 2],
+        IB20Asset::MultiplierUpdated { multiplier: B20AssetStorage::WAD * u(5) }.encode_log_data()
     );
     assert_eq!(
         events[events.len() - 1],
@@ -2936,9 +2940,10 @@ fn golden_announce_emits_and_runs_internal_calls() {
         assert_eq!(t.multiplier().unwrap(), B20AssetStorage::WAD * u(2));
     });
     let events = s.get_events(TOKEN);
-    // Announcement, UIMultiplierUpdated (internal call; V2's updateMultiplier event), EndAnnouncement.
+    // Announcement, then the inner updateMultiplier's MultiplierUpdated + UIMultiplierUpdated,
+    // then EndAnnouncement.
     assert_eq!(
-        events[events.len() - 3],
+        events[events.len() - 4],
         IB20Asset::Announcement {
             caller: ALICE,
             id: "2026-split".into(),
@@ -2947,6 +2952,7 @@ fn golden_announce_emits_and_runs_internal_calls() {
         }
         .encode_log_data()
     );
+    assert_eq!(events[events.len() - 3].topics()[0], IB20Asset::MultiplierUpdated::SIGNATURE_HASH);
     assert_eq!(
         events[events.len() - 2].topics()[0],
         IB20Asset::UIMultiplierUpdated::SIGNATURE_HASH

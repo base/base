@@ -697,8 +697,9 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
     // --- Asset-specific mutations ---
 
     /// Instantaneous failsafe. Writes the current multiplier immediately, clearing any pending
-    /// update and (for a still-live schedule) emitting `UIMultiplierUpdateCancelled`. Emits the
-    /// ERC-8056 `UIMultiplierUpdated` event rather than V1's `MultiplierUpdated`.
+    /// update and (for a still-live schedule) emitting `UIMultiplierUpdateCancelled`. Emits BOTH
+    /// the deprecated V1 `MultiplierUpdated` event (kept for backward compatibility with existing
+    /// indexers) and the ERC-8056 `UIMultiplierUpdated` event.
     fn update_multiplier(
         &self,
         token: &mut B20AssetToken<S, A>,
@@ -729,6 +730,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
                 .encode_log_data(),
             )?;
         }
+        // Emit the deprecated V1 event alongside the ERC-8056 event so indexers watching the legacy
+        // `MultiplierUpdated` topic keep working through the transition.
+        token.accounting_mut().emit_event(
+            IB20Asset::MultiplierUpdated { multiplier: new_multiplier }.encode_log_data(),
+        )?;
         token.accounting_mut().emit_event(
             IB20Asset::UIMultiplierUpdated {
                 oldMultiplier: old,
@@ -1944,7 +1950,13 @@ mod tests {
         let new_multiplier = B20AssetStorage::WAD * U256::from(3u64);
         LOGIC.update_multiplier(&mut tok, ADMIN, new_multiplier, true).unwrap();
         assert_eq!(tok.accounting().multiplier().unwrap(), new_multiplier);
-        // V2 emits the ERC-8056 `UIMultiplierUpdated` rather than V1's `MultiplierUpdated`.
+        // V2's instant setter emits the deprecated `MultiplierUpdated` (backward compat) then the
+        // ERC-8056 `UIMultiplierUpdated`.
+        let events = &tok.accounting().events;
+        assert_eq!(
+            events[events.len() - 2].topics()[0],
+            IB20Asset::MultiplierUpdated::SIGNATURE_HASH
+        );
         assert_eq!(last_event_sig(&tok), IB20Asset::UIMultiplierUpdated::SIGNATURE_HASH);
     }
 
@@ -2372,12 +2384,16 @@ mod tests {
 
         let events = &tok.accounting().events;
         assert_eq!(
-            events[events.len() - 2],
+            events[events.len() - 3],
             IB20Asset::UIMultiplierUpdateCancelled {
                 cancelledMultiplier: pending,
                 cancelledEffectiveAt: pending_effective_at,
             }
             .encode_log_data()
+        );
+        assert_eq!(
+            events[events.len() - 2],
+            IB20Asset::MultiplierUpdated { multiplier: instant }.encode_log_data()
         );
         assert_eq!(
             events[events.len() - 1],
@@ -2404,8 +2420,8 @@ mod tests {
         set_now(&mut tok, now);
         LOGIC.update_multiplier(&mut tok, ALICE, instant, true).unwrap();
 
-        // Only UIMultiplierUpdated is emitted (matured folds into `old` silently); `old` is the
-        // matured effective value.
+        // MultiplierUpdated + UIMultiplierUpdated are emitted (no cancellation for a matured
+        // pending, which folds into `old` silently); `old` is the matured effective value.
         assert_eq!(
             last_event(&tok),
             IB20Asset::UIMultiplierUpdated {

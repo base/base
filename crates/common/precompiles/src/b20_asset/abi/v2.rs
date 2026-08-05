@@ -68,8 +68,9 @@ sol! {
 
         // ── Events ───────────────────────────────────────────────────────────
 
-        /// Emitted by `updateMultiplier` (V1, Beryl). Retained for the `AssetV1` version; the
-        /// scheduled-multiplier version `AssetV2` emits `UIMultiplierUpdated` instead.
+        /// Deprecated V1 event. `AssetV2`'s instant setter (`updateMultiplier` / `updateUIMultiplier`)
+        /// emits this alongside `UIMultiplierUpdated` for backward compatibility with indexers on the
+        /// legacy topic; the scheduled `setUIMultiplier` emits only `UIMultiplierUpdated`.
         event MultiplierUpdated(uint256 multiplier);
 
         /// [V2] ERC-8056; emitted by `setUIMultiplier` and `updateMultiplier`.
