@@ -11,7 +11,7 @@ use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
     ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, JwtSecret, PayloadId, PayloadStatus,
 };
-use alloy_rpc_types_eth::EIP1186AccountProofResponse;
+use alloy_rpc_types_eth::{EIP1186AccountProofResponse, SyncStatus as EthSyncStatus};
 use alloy_transport::{RpcError, TransportErrorKind, TransportResult};
 use alloy_transport_http::{
     AuthLayer, Http, HyperClient,
@@ -79,6 +79,9 @@ pub trait EngineClient: BaseEngineApi + Send + Sync {
         &self,
         numtag: BlockNumberOrTag,
     ) -> Result<Option<L2BlockInfo>, EngineClientError>;
+
+    /// Returns whether the execution layer reports an active sync.
+    async fn el_syncing(&self) -> Result<bool, EngineClientError>;
 }
 
 /// An Engine API client that provides authenticated HTTP communication with an execution layer.
@@ -239,6 +242,10 @@ where
             &block.map_header(|header| header.into_inner()).into_consensus(),
             &self.cfg.genesis,
         )?))
+    }
+
+    async fn el_syncing(&self) -> Result<bool, EngineClientError> {
+        Ok(matches!(self.engine.syncing().await?, EthSyncStatus::Info(_)))
     }
 }
 
