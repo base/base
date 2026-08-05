@@ -131,13 +131,13 @@ sol! {
         function effectiveAt() external view returns (uint256);
 
         /// Converts a raw balance to its scaled view: `rawBalance * multiplier / WAD_PRECISION`.
-        /// Retained (dialable) but deprecated in favor of the ERC-8056 `toUIAmount`; no longer
-        /// advertised in base-std's `IB20Asset` interface.
+        /// Deprecated in favor of the ERC-8056 `toUIAmount`; retained (dialable) and kept in
+        /// base-std's `IB20Asset` interface as a deprecated alias.
         function toScaledBalance(uint256 rawBalance) external view returns (uint256);
 
         /// Converts a scaled balance back to its raw representation.
-        /// Retained (dialable) but deprecated in favor of the ERC-8056 `fromUIAmount`; no longer
-        /// advertised in base-std's `IB20Asset` interface.
+        /// Deprecated in favor of the ERC-8056 `fromUIAmount`; retained (dialable) and kept in
+        /// base-std's `IB20Asset` interface as a deprecated alias.
         function toRawBalance(uint256 scaledBalance) external view returns (uint256 rawBalance);
 
         /// [V2] ERC-8056 Conversion extension: raw -> UI amount, using the effective (lazily
@@ -164,14 +164,13 @@ sol! {
         function cancelScheduledMultiplier() external;
 
         /// Instant failsafe: sets the current multiplier immediately and clears any pending.
-        /// At `AssetV1` emits `MultiplierUpdated` which was replaced in `AssetV2` by `UIMultiplierUpdated`.
-        /// Retained (dialable) but deprecated in favor of `updateUIMultiplier`; no longer advertised
-        /// in base-std's `IB20Asset` interface.
+        /// At `AssetV1` emits only `MultiplierUpdated`; `AssetV2` emits both `MultiplierUpdated` and
+        /// `UIMultiplierUpdated`. Deprecated in favor of `updateUIMultiplier`; retained (dialable) and
+        /// kept in base-std's `IB20Asset` interface as a deprecated alias.
         function updateMultiplier(uint256 newMultiplier) external;
 
         /// [V2] The instant failsafe under the canonical ERC-8056 "UI Multiplier" vocabulary.
-        /// Behaves identically to `updateMultiplier` (same logic, same events); the legacy name is
-        /// kept dialable for backwards compatibility but de-advertised from base-std's interface.
+        /// Behaves identically to `updateMultiplier` (same logic, same events).
         function updateUIMultiplier(uint256 newMultiplier) external;
 
         /// [V2] ERC-165 interface detection.
