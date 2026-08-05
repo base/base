@@ -236,20 +236,18 @@ impl LoadTestExecutor {
         funding_key: &PrivateKeySigner,
         setup: &LoadTestSetupAmounts,
     ) -> Result<()> {
-        if let Some(real_token_setup) = setup.real_token_setup.as_ref() {
-            println!("Preparing real-token swap balances...");
-            runner.setup_real_tokens(real_token_setup).await?;
-            println!("Real-token swap balances prepared.");
-        } else if !runner.collect_swap_tokens().is_empty() {
+        if setup.real_token_setup.is_none() && !runner.collect_swap_tokens().is_empty() {
             println!("Distributing swap tokens...");
             runner.setup_swap_tokens(funding_key.clone(), setup.swap_token).await?;
             println!("Swap tokens distributed.");
         }
 
-        if runner.needs_b20_setup() {
-            println!("Setting up B-20 tokens...");
-            runner.setup_b20_tokens(setup.b20_mint).await?;
-            println!("B-20 tokens ready.");
+        if setup.real_token_setup.is_some() || runner.needs_b20_setup() {
+            println!("Preparing payload chain state...");
+            runner
+                .prepare_payloads(setup.b20_mint, setup.real_token_setup.as_ref())
+                .await?;
+            println!("Payload chain state ready.");
         }
 
         Ok(())
@@ -267,7 +265,7 @@ impl LoadTestExecutor {
         if runner.needs_b20_setup() {
             println!("Burning remaining B-20 tokens...");
             summary.b20_teardown_attempted = true;
-            match runner.teardown_b20_tokens().await {
+            match runner.teardown_payloads().await {
                 Ok(()) => println!("B-20 teardown complete."),
                 Err(error) => {
                     eprintln!("Warning: B-20 teardown failed: {error}");

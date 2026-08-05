@@ -3,6 +3,8 @@ use alloy_primitives::{Address, Bytes};
 use alloy_rpc_types::TransactionRequest;
 use revm::precompile::{PrecompileId, PrecompileSpecId};
 
+use async_trait::async_trait;
+
 use super::Payload;
 use crate::workload::SeededRng;
 
@@ -180,6 +182,7 @@ impl PrecompilePayload {
     }
 }
 
+#[async_trait]
 impl Payload for PrecompilePayload {
     fn name(&self) -> &'static str {
         "precompile"

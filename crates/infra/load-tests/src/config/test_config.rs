@@ -12,7 +12,8 @@ use super::{
 };
 use crate::{
     metrics::ConfigSummary,
-    runner::{RealTokenSetup, TxConfig, TxType},
+    runner::{TxConfig, TxType},
+    workload::RealTokenSetup,
     utils::{BaselineError, Result},
 };
 
