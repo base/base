@@ -187,7 +187,6 @@ impl StablecoinV2 {
         Ok(())
     }
 
-    /// Ensures `policy_scope` names a built-in B-20 policy slot.
     /// Ensures `policy_scope` names a built-in B-20 policy slot available on the V2 (Cobalt) common
     /// surface, which adds the seize scopes (`SEIZE_HOLDER_POLICY` / `SEIZE_RECEIVER_POLICY`) on top
     /// of V1.
