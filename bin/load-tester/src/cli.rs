@@ -9,9 +9,10 @@ use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use base_cli_utils::RuntimeManager;
 use base_load_tests::{
-    AccountPool, BaselineError, FundedAccount, LoadRunner, LoadTestDisplay, LoadTestDisplayConfig,
-    LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, QueryProvider, ReceiptCoverage,
-    Result as LoadResult, RpcProviders, RpcResultExt, TestConfig, create_wallet_provider,
+    AccountPool, BaselineError, DEFAULT_MAX_GAS_PRICE, FundedAccount, LoadRunner, LoadTestDisplay,
+    LoadTestDisplayConfig, LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, QueryProvider,
+    ReceiptCoverage, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig,
+    create_wallet_provider,
 };
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use eyre::{Result, bail};
@@ -27,9 +28,6 @@ const RESCUE_CONCURRENCY: usize = 32;
 
 /// Default number of accounts to scan during rescue.
 const DEFAULT_RESCUE_SCAN_COUNT: usize = 1000;
-
-/// Default maximum gas price (1000 gwei).
-const DEFAULT_MAX_GAS_PRICE: u128 = 1_000_000_000;
 
 /// The Base load tester CLI.
 #[derive(Parser, Clone, Debug)]
