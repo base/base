@@ -79,13 +79,16 @@ pub struct TestConfig {
     /// Test duration (e.g., "30s", "5m", "1h").
     pub duration: Option<String>,
 
-    /// Optional ceiling on gas/s throughput; the adaptive in-flight target is clamped so it
-    /// never implies exceeding this rate, even when the pool has headroom to send more. Omit for
-    /// fully adaptive/unbounded throughput, gated only by confirmed-transaction backpressure.
+    /// Optional gas/s ceiling used as the per-block gas unit for mempool inventory.
+    ///
+    /// When set, the runner keeps `mempool_target_blocks * target_gps` gas submitted but not
+    /// confirmed. Omit to size inventory from the chain block gas limit instead.
     #[serde(default)]
     pub target_gps: Option<u64>,
 
-    /// Number of blocks of gas kept outstanding during measurement.
+    /// Number of blocks of gas kept outstanding during measurement (submitted but not confirmed).
+    ///
+    /// Each block is `target_gps` gas when that ceiling is set, otherwise the block gas limit.
     #[serde(default = "default_mempool_target_blocks")]
     pub mempool_target_blocks: u64,
 

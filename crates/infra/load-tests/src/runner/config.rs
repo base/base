@@ -215,11 +215,16 @@ pub struct LoadConfig {
     pub sender_offset: usize,
     /// Transaction types with weights.
     pub transactions: Vec<TxConfig>,
-    /// Optional gas-per-second ceiling applied to adaptive pacing.
+    /// Optional gas-per-second ceiling used as the per-block gas unit for mempool inventory.
+    ///
+    /// When set, outstanding inventory is `mempool_target_blocks * target_gps` gas
+    /// (submitted but not confirmed). When omitted, the chain block gas limit is used instead.
     pub target_gps: Option<u64>,
-    /// Optional block gas limit override used to size the saturated mempool.
+    /// Optional block gas limit override used to size uncapped mempool inventory.
     pub block_gas_limit: Option<u64>,
-    /// Number of blocks of gas to keep outstanding.
+    /// Number of blocks of gas to keep outstanding (submitted but not confirmed).
+    ///
+    /// Each "block" is `target_gps` gas when capped, otherwise the block gas limit.
     pub mempool_target_blocks: u64,
     /// Benchmark-only control directory used to separate setup from measurement.
     pub separate_setup: Option<PathBuf>,

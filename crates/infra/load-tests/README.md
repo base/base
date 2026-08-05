@@ -65,8 +65,8 @@ txpool_nodes: []
 flashblocks_ws: "ws://localhost:7111"
 sender_count: 10
 target_gps: 2100000
-# When target_gps is omitted, keep three blocks of gas RPC-accepted (the default)
-# so an unbounded run starts and remains saturated.
+# Keep mempool_target_blocks * gas_cap gas submitted but unconfirmed.
+# gas_cap is target_gps when set, otherwise the chain block gas limit.
 mempool_target_blocks: 3
 duration: "30s"
 ```
@@ -239,7 +239,8 @@ real_token_setup:
 
 #### Running multiple load tests
 
-- You may need to tune `target_gps` (or omit it for unbounded adaptive pacing) and sender
+- You may need to tune `target_gps` / `mempool_target_blocks` (omit `target_gps` for
+  block-gas-limit inventory) and sender
   count appropriately.
 
 #### Account Create

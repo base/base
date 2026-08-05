@@ -81,18 +81,8 @@ const OPEN_LOOP_HEADROOM_RECHECK_INTERVAL: Duration = Duration::from_millis(100)
 const OPEN_LOOP_HEADROOM_STALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// How often the TUI / snapshot channel is refreshed during open-loop enqueue.
 const OPEN_LOOP_DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
-/// Adaptive open-loop target update cadence, matching closed-loop rate-limiter updates.
+/// How often fixed-gas inventory is recalibrated from the observed average gas/tx.
 const OPEN_LOOP_TARGET_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
-/// Multiplicative headroom above observed confirmed TPS when deriving open-loop depth.
-const OPEN_LOOP_TARGET_MARGIN_MULTIPLIER: f64 = 1.30;
-/// Conversion window from observed TPS into outstanding transaction depth.
-const OPEN_LOOP_TARGET_LOOKAHEAD_SECONDS: f64 = 1.5;
-/// EWMA alpha for smoothing confirmed-TPS samples and reducing target oscillation.
-const OPEN_LOOP_TARGET_TPS_EWMA_ALPHA: f64 = 0.35;
-/// Minimum open-loop depth, expressed in signed-batch units.
-const OPEN_LOOP_TARGET_MIN_BATCHES: u64 = 1;
-/// Bootstrap open-loop depth before enough confirmations exist to adapt.
-const OPEN_LOOP_TARGET_INITIAL_BATCHES: u64 = 2;
 const FUNDING_REPLACEMENT_FEE_MULTIPLIER: u128 = 3;
 const FUNDING_REPLACEMENT_MAX_ATTEMPTS: u32 = 8;
 const START_FILE_TIMEOUT: Duration = Duration::from_secs(300);
@@ -255,14 +245,14 @@ struct OpenLoopHeadroomTarget {
     current_target_in_flight: u64,
     min_target_in_flight: u64,
     max_target_in_flight: u64,
-    target_outstanding_gas: Option<u128>,
-    target_gps: Option<u64>,
+    /// Fixed outstanding-gas inventory (`mempool_target_blocks * gas_cap`).
+    ///
+    /// For capped runs `gas_cap` is `target_gps` (one second of gas at the ceiling).
+    /// For uncapped runs it is the block gas limit.
+    target_outstanding_gas: u128,
     initial_avg_gas: u64,
-    smoothed_confirmed_tps: f64,
     last_confirmed_sample_count: u64,
     last_confirmed_sample_at: Instant,
-    measurement_started_at: Option<Instant>,
-    measurement_deadline: Option<Instant>,
 }
 
 #[derive(Debug)]
@@ -275,67 +265,6 @@ struct OpenLoopHeadroomUpdate {
 }
 
 impl OpenLoopHeadroomTarget {
-    fn new(
-        max_target_in_flight: u64,
-        target_gps: Option<u64>,
-        initial_avg_gas: u64,
-        initial_confirmed_count: u64,
-        sampled_at: Instant,
-    ) -> Self {
-        if max_target_in_flight == 0 {
-            return Self {
-                current_target_in_flight: 0,
-                min_target_in_flight: 0,
-                max_target_in_flight: 0,
-                target_outstanding_gas: None,
-                target_gps,
-                initial_avg_gas,
-                smoothed_confirmed_tps: 0.0,
-                last_confirmed_sample_count: initial_confirmed_count,
-                last_confirmed_sample_at: sampled_at,
-                measurement_started_at: None,
-                measurement_deadline: None,
-            };
-        }
-
-        let min_target_in_flight = if target_gps.is_some() {
-            1
-        } else {
-            (OPEN_LOOP_SIGNED_BATCH_SIZE as u64)
-                .saturating_mul(OPEN_LOOP_TARGET_MIN_BATCHES)
-                .min(max_target_in_flight)
-        };
-        let initial_target_in_flight = target_gps.map_or_else(
-            || {
-                (OPEN_LOOP_SIGNED_BATCH_SIZE as u64)
-                    .saturating_mul(OPEN_LOOP_TARGET_INITIAL_BATCHES)
-            },
-            |gps| {
-                let lookahead = Duration::from_secs_f64(OPEN_LOOP_TARGET_LOOKAHEAD_SECONDS);
-                let target_gas =
-                    u128::from(gps).saturating_mul(lookahead.as_nanos()).div_ceil(1_000_000_000);
-                u64::try_from(target_gas.div_ceil(u128::from(initial_avg_gas.max(1))))
-                    .unwrap_or(u64::MAX)
-            },
-        );
-        let initial_target_in_flight =
-            initial_target_in_flight.clamp(min_target_in_flight, max_target_in_flight);
-
-        Self {
-            current_target_in_flight: initial_target_in_flight,
-            min_target_in_flight,
-            max_target_in_flight,
-            target_outstanding_gas: None,
-            target_gps,
-            initial_avg_gas,
-            smoothed_confirmed_tps: 0.0,
-            last_confirmed_sample_count: initial_confirmed_count,
-            last_confirmed_sample_at: sampled_at,
-            measurement_started_at: None,
-            measurement_deadline: None,
-        }
-    }
-
     const fn saturated(
         target_outstanding_gas: u128,
         target_in_flight: u64,
@@ -347,14 +276,10 @@ impl OpenLoopHeadroomTarget {
             current_target_in_flight: target_in_flight,
             min_target_in_flight: 1,
             max_target_in_flight,
-            target_outstanding_gas: Some(target_outstanding_gas),
-            target_gps: None,
+            target_outstanding_gas,
             initial_avg_gas,
-            smoothed_confirmed_tps: 0.0,
             last_confirmed_sample_count: 0,
             last_confirmed_sample_at: sampled_at,
-            measurement_started_at: None,
-            measurement_deadline: None,
         }
     }
 
@@ -366,141 +291,35 @@ impl OpenLoopHeadroomTarget {
         self.current_target_in_flight
     }
 
-    fn begin_measurement(
-        &mut self,
-        started_at: Instant,
-        deadline: Option<Instant>,
-        confirmed_count: u64,
-    ) {
-        self.measurement_started_at = Some(started_at);
-        self.measurement_deadline = deadline;
-        self.last_confirmed_sample_count = confirmed_count;
-        self.last_confirmed_sample_at = started_at;
-        self.smoothed_confirmed_tps = 0.0;
-        if let Some(target_gps) = self.target_gps {
-            let lookahead_end = started_at
-                .checked_add(Duration::from_secs_f64(OPEN_LOOP_TARGET_LOOKAHEAD_SECONDS))
-                .unwrap_or(started_at);
-            let horizon_end =
-                deadline.map_or(lookahead_end, |deadline| lookahead_end.min(deadline));
-            let horizon = horizon_end.saturating_duration_since(started_at);
-            let target_gas =
-                u128::from(target_gps).saturating_mul(horizon.as_nanos()).div_ceil(1_000_000_000);
-            self.current_target_in_flight = self.clamp_target_in_flight(
-                u64::try_from(target_gas.div_ceil(u128::from(self.initial_avg_gas.max(1))))
-                    .unwrap_or(u64::MAX),
-            );
-        }
-    }
-
     fn maybe_update(
         &mut self,
         now: Instant,
         confirmed_count: u64,
         avg_gas_per_tx: Option<u64>,
     ) -> Option<OpenLoopHeadroomUpdate> {
-        let update_interval = if self.target_gps.is_some() && self.measurement_started_at.is_some()
+        if now.saturating_duration_since(self.last_confirmed_sample_at)
+            < OPEN_LOOP_TARGET_UPDATE_INTERVAL
         {
-            OPEN_LOOP_HEADROOM_RECHECK_INTERVAL
-        } else {
-            OPEN_LOOP_TARGET_UPDATE_INTERVAL
-        };
-        if now.saturating_duration_since(self.last_confirmed_sample_at) < update_interval {
             return None;
         }
 
         let elapsed = now.saturating_duration_since(self.last_confirmed_sample_at).as_secs_f64();
         let confirmed_delta = confirmed_count.saturating_sub(self.last_confirmed_sample_count);
         let sample_tps = if elapsed > 0.0 { confirmed_delta as f64 / elapsed } else { 0.0 };
-
-        if let Some(target_gas) = self.target_outstanding_gas {
-            let average_gas = u128::from(avg_gas_per_tx.unwrap_or(self.initial_avg_gas).max(1));
-            let updated_target_in_flight = u64::try_from(target_gas.div_ceil(average_gas))
-                .unwrap_or(u64::MAX)
-                .clamp(self.min_target_in_flight, self.max_target_in_flight);
-            let previous_target_in_flight = self.current_target_in_flight;
-            self.current_target_in_flight = updated_target_in_flight;
-            self.last_confirmed_sample_count = confirmed_count;
-            self.last_confirmed_sample_at = now;
-            return Some(OpenLoopHeadroomUpdate {
-                previous_target_in_flight,
-                updated_target_in_flight,
-                confirmed_delta,
-                sample_tps,
-                smoothed_tps: sample_tps,
-            });
-        }
-
-        // Cumulative GPS pacing begins only after the measured run clock is started.
-        if self.target_gps.is_some() && self.measurement_started_at.is_none() {
-            self.last_confirmed_sample_count = confirmed_count;
-            self.last_confirmed_sample_at = now;
-            return None;
-        }
-
-        if let (Some(target_gps), Some(measurement_started_at)) =
-            (self.target_gps, self.measurement_started_at)
-        {
-            let average_gas = u128::from(avg_gas_per_tx.unwrap_or(self.initial_avg_gas).max(1));
-            let horizon_end = now
-                .checked_add(Duration::from_secs_f64(OPEN_LOOP_TARGET_LOOKAHEAD_SECONDS))
-                .unwrap_or(now);
-            let horizon_end =
-                self.measurement_deadline.map_or(horizon_end, |deadline| horizon_end.min(deadline));
-            let horizon = horizon_end.saturating_duration_since(measurement_started_at);
-            let cumulative_target_gas =
-                u128::from(target_gps).saturating_mul(horizon.as_nanos()).div_ceil(1_000_000_000);
-            let cumulative_confirmed_gas = u128::from(confirmed_count).saturating_mul(average_gas);
-            let outstanding_gas_target =
-                cumulative_target_gas.saturating_sub(cumulative_confirmed_gas);
-            let updated_target_in_flight = self.clamp_target_in_flight(
-                u64::try_from(outstanding_gas_target.div_ceil(average_gas)).unwrap_or(u64::MAX),
-            );
-            let previous_target_in_flight = self.current_target_in_flight;
-            self.current_target_in_flight = updated_target_in_flight;
-            self.last_confirmed_sample_count = confirmed_count;
-            self.last_confirmed_sample_at = now;
-            return Some(OpenLoopHeadroomUpdate {
-                previous_target_in_flight,
-                updated_target_in_flight,
-                confirmed_delta,
-                sample_tps,
-                smoothed_tps: sample_tps,
-            });
-        }
-
-        if self.smoothed_confirmed_tps == 0.0 {
-            self.smoothed_confirmed_tps = sample_tps;
-        } else {
-            self.smoothed_confirmed_tps = self.smoothed_confirmed_tps
-                * (1.0 - OPEN_LOOP_TARGET_TPS_EWMA_ALPHA)
-                + sample_tps * OPEN_LOOP_TARGET_TPS_EWMA_ALPHA;
-        }
-
-        let adaptive_target = (self.smoothed_confirmed_tps
-            * OPEN_LOOP_TARGET_MARGIN_MULTIPLIER
-            * OPEN_LOOP_TARGET_LOOKAHEAD_SECONDS)
-            .ceil();
-        let adaptive_target = if adaptive_target.is_finite() {
-            adaptive_target.clamp(0.0, self.max_target_in_flight as f64) as u64
-        } else {
-            self.max_target_in_flight
-        };
-        let target_with_batch_buffer =
-            adaptive_target.saturating_add(OPEN_LOOP_SIGNED_BATCH_SIZE as u64);
-        let updated_target_in_flight = self.clamp_target_in_flight(target_with_batch_buffer);
+        let average_gas = u128::from(avg_gas_per_tx.unwrap_or(self.initial_avg_gas).max(1));
+        let updated_target_in_flight = self.clamp_target_in_flight(
+            u64::try_from(self.target_outstanding_gas.div_ceil(average_gas)).unwrap_or(u64::MAX),
+        );
         let previous_target_in_flight = self.current_target_in_flight;
-
         self.current_target_in_flight = updated_target_in_flight;
         self.last_confirmed_sample_count = confirmed_count;
         self.last_confirmed_sample_at = now;
-
         Some(OpenLoopHeadroomUpdate {
             previous_target_in_flight,
             updated_target_in_flight,
             confirmed_delta,
             sample_tps,
-            smoothed_tps: self.smoothed_confirmed_tps,
+            smoothed_tps: sample_tps,
         })
     }
 }
@@ -2075,45 +1894,39 @@ impl LoadRunner {
                 "capping open-loop in-flight target with max_total_in_flight"
             );
         }
-        let open_loop_headroom_target = if self.config.target_gps.is_some() {
-            OpenLoopHeadroomTarget::new(
-                capacity as u64,
-                self.config.target_gps,
-                initial_avg_gas,
-                self.collector.confirmed_count() as u64,
-                Instant::now(),
-            )
+        // Inventory is always `mempool_target_blocks * gas_cap` of submitted-but-unconfirmed
+        // gas. Capped runs use `target_gps` as the per-block gas unit (one second at the
+        // ceiling); uncapped runs use the chain's block gas limit.
+        let gas_cap = if let Some(target_gps) = self.config.target_gps {
+            target_gps
+        } else if let Some(limit) = self.config.block_gas_limit {
+            limit
         } else {
-            let block_gas_limit = if let Some(limit) = self.config.block_gas_limit {
-                limit
-            } else {
-                self.client
-                    .get_block_by_number(BlockNumberOrTag::Latest)
-                    .hashes()
-                    .await
-                    .map_err(|e| {
-                        BaselineError::Rpc(format!("failed to read latest block gas limit: {e}"))
-                    })?
-                    .ok_or_else(|| BaselineError::Rpc("latest block is unavailable".into()))?
-                    .header
-                    .gas_limit
-            };
-            let target = Self::mempool_target_transactions(
-                block_gas_limit,
-                self.config.mempool_target_blocks,
-                initial_avg_gas,
-                capacity as u64,
-            )?;
-            let target_gas =
-                u128::from(block_gas_limit) * u128::from(self.config.mempool_target_blocks);
-            OpenLoopHeadroomTarget::saturated(
-                target_gas,
-                target,
-                capacity as u64,
-                initial_avg_gas,
-                Instant::now(),
-            )
+            self.client
+                .get_block_by_number(BlockNumberOrTag::Latest)
+                .hashes()
+                .await
+                .map_err(|e| {
+                    BaselineError::Rpc(format!("failed to read latest block gas limit: {e}"))
+                })?
+                .ok_or_else(|| BaselineError::Rpc("latest block is unavailable".into()))?
+                .header
+                .gas_limit
         };
+        let target = Self::mempool_target_transactions(
+            gas_cap,
+            self.config.mempool_target_blocks,
+            initial_avg_gas,
+            capacity as u64,
+        )?;
+        let target_gas = u128::from(gas_cap) * u128::from(self.config.mempool_target_blocks);
+        let open_loop_headroom_target = OpenLoopHeadroomTarget::saturated(
+            target_gas,
+            target,
+            capacity as u64,
+            initial_avg_gas,
+            Instant::now(),
+        );
         let initial_target_in_flight = open_loop_headroom_target.current_target_in_flight();
 
         let replacement_generator =
@@ -2182,6 +1995,8 @@ impl LoadRunner {
             sender_count,
             initial_target_in_flight,
             max_target_in_flight = capacity,
+            gas_cap,
+            target_outstanding_gas = target_gas,
             mempool_target_blocks = self.config.mempool_target_blocks,
             "started open-loop streaming pre-sign pipeline"
         );
@@ -2193,11 +2008,6 @@ impl LoadRunner {
         self.collector.reset();
         self.collector.set_estimated_gas(initial_avg_gas);
         start = Instant::now();
-        progress.headroom_target.begin_measurement(
-            start,
-            self.config.duration.map(|duration| start + duration),
-            0,
-        );
         let started_file = self.config.separate_setup.as_deref().map(|dir| dir.join("started"));
         Self::publish_handshake(started_file.as_deref())?;
 
@@ -3054,39 +2864,15 @@ impl LoadRunner {
             drain_state,
         )
         .await?;
-        if progress.headroom_target.target_gps.is_some() {
-            progress.headroom_target.maybe_update(
-                Instant::now(),
-                drain_state.collector.confirmed_count() as u64,
-                drain_state.results_tracker.observed_avg_gas(),
-            );
-            Self::wait_for_outstanding_headroom(
-                progress.headroom_target.current_target_in_flight(),
-                deadline,
-                stop_flag,
-                drain_state,
-            )
-            .await?;
-        }
         if deadline.is_some_and(|d| Instant::now() >= d) {
             return Ok(true);
         }
 
-        let available_headroom = progress
-            .headroom_target
-            .current_target_in_flight()
-            .saturating_sub(drain_state.total_outstanding())
-            .max(1);
-        let max_batch_len = if progress.headroom_target.target_gps.is_none() {
-            usize::MAX
-        } else {
-            usize::try_from(available_headroom).unwrap_or(usize::MAX)
-        };
         Ok(!Self::enqueue_open_loop_signed_batch(
             submission_pipeline,
             next_submit_batch_id,
             pending_signed_batch,
-            max_batch_len,
+            usize::MAX,
             drain_state,
         )
         .await)
@@ -3625,11 +3411,9 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::{
-        LoadConfig, LoadRunner, MetricsCollector, OPEN_LOOP_SIGNED_BATCH_SIZE,
-        OPEN_LOOP_TARGET_LOOKAHEAD_SECONDS, OPEN_LOOP_TARGET_MARGIN_MULTIPLIER,
-        OPEN_LOOP_TARGET_UPDATE_INTERVAL, OpenLoopDrainState, OpenLoopHeadroomTarget,
-        PipelineStartConfig, ResultsTracker, SignedBatch, SignedTransaction, SubmissionPipeline,
-        SubmitEvent,
+        LoadConfig, LoadRunner, MetricsCollector, OPEN_LOOP_TARGET_UPDATE_INTERVAL,
+        OpenLoopDrainState, OpenLoopHeadroomTarget, PipelineStartConfig, ResultsTracker,
+        SignedBatch, SignedTransaction, SubmissionPipeline, SubmitEvent,
     };
     use crate::runner::SUBMIT_BATCH_QUEUE_BUFFER;
 
@@ -3861,70 +3645,24 @@ mod tests {
     }
 
     #[test]
-    fn capped_headroom_tracks_cumulative_gas_deficit() {
+    fn capped_headroom_uses_mempool_target_blocks_times_gps() {
+        // target_gps=2_100_000, mempool_target_blocks=3 => 6_300_000 outstanding gas.
+        // At 21_000 gas/tx that is 300 transactions of submitted-but-unconfirmed inventory.
         let now = Instant::now();
-        let started_at = now - OPEN_LOOP_TARGET_UPDATE_INTERVAL;
-        let mut target =
-            OpenLoopHeadroomTarget::new(10_000, Some(2_100_000), 21_000, 0, started_at);
-        assert_eq!(
-            target.current_target_in_flight(),
-            150,
-            "initial inventory covers the 1.5-second lookahead"
+        let mut target = OpenLoopHeadroomTarget::saturated(
+            6_300_000,
+            300,
+            10_000,
+            21_000,
+            now - OPEN_LOOP_TARGET_UPDATE_INTERVAL,
         );
-        target.begin_measurement(started_at, None, 0);
+        assert_eq!(target.current_target_in_flight(), 300);
 
         let update = target
-            .maybe_update(now, 100, None)
-            .expect("elapsed update interval should produce a new target");
-
-        // At 100 tx/s, the 2-second run target is 200 confirmed transactions. Being 100
-        // transactions behind adds that deficit to the normal 150-transaction lookahead.
-        assert_eq!(update.updated_target_in_flight, 250);
-        assert_eq!(target.current_target_in_flight(), 250);
-    }
-
-    #[test]
-    fn capped_headroom_throttles_when_cumulative_gas_is_ahead() {
-        let now = Instant::now();
-        let started_at = now - OPEN_LOOP_TARGET_UPDATE_INTERVAL;
-        let mut target =
-            OpenLoopHeadroomTarget::new(10_000, Some(2_100_000), 21_000, 0, started_at);
-        target.begin_measurement(started_at, None, 0);
-
-        let update = target
-            .maybe_update(now, 400, None)
-            .expect("elapsed update interval should produce a new target");
-
-        // The cumulative target through the 1.5-second lookahead is 350 transactions.
-        // Confirming 400 means the run is ahead, so drain outstanding work before sending more.
-        assert_eq!(update.updated_target_in_flight, 1);
-        assert_eq!(target.current_target_in_flight(), 1);
-    }
-
-    #[test]
-    fn capped_headroom_does_not_budget_past_finite_deadline() {
-        let started_at = Instant::now();
-        let deadline = started_at + Duration::from_secs(3);
-        let mut target =
-            OpenLoopHeadroomTarget::new(10_000, Some(2_100_000), 21_000, 0, started_at);
-        target.begin_measurement(started_at, Some(deadline), 0);
-
-        let update = target
-            .maybe_update(started_at + Duration::from_secs(2), 100, None)
-            .expect("elapsed update interval should produce a new target");
-
-        // The 1.5-second lookahead would reach 3.5 seconds, but the finite run only
-        // budgets three seconds: 300 target transactions minus 100 already confirmed.
-        assert_eq!(update.updated_target_in_flight, 200);
-
-        let mut short_target =
-            OpenLoopHeadroomTarget::new(10_000, Some(2_100_000), 21_000, 0, started_at);
-        short_target.begin_measurement(started_at, Some(started_at + Duration::from_secs(1)), 0);
-        assert_eq!(
-            short_target.current_target_in_flight(),
-            100,
-            "initial inventory must also stay within a short finite run's total budget"
-        );
+            .maybe_update(now, 50, Some(21_000))
+            .expect("elapsed update interval should keep the fixed gas inventory");
+        assert_eq!(update.updated_target_in_flight, 300);
+        assert_eq!(target.current_target_in_flight(), 300);
     }
 
     #[test]
@@ -3944,25 +3682,6 @@ mod tests {
 
         assert_eq!(update.updated_target_in_flight, 5);
         assert_eq!(target.current_target_in_flight(), 5);
-    }
-
-    #[test]
-    fn open_loop_headroom_target_without_cap_matches_previous_formula() {
-        let now = Instant::now();
-        let sampled_at = now - OPEN_LOOP_TARGET_UPDATE_INTERVAL;
-        let mut target = OpenLoopHeadroomTarget::new(10_000, None, 21_000, 0, sampled_at);
-
-        let update = target
-            .maybe_update(now, 1_000, Some(21_000))
-            .expect("elapsed update interval should produce a new target");
-
-        let expected =
-            ((500.0 * OPEN_LOOP_TARGET_MARGIN_MULTIPLIER * OPEN_LOOP_TARGET_LOOKAHEAD_SECONDS)
-                .ceil() as u64)
-                .saturating_add(OPEN_LOOP_SIGNED_BATCH_SIZE as u64)
-                .clamp(OPEN_LOOP_SIGNED_BATCH_SIZE as u64, 10_000);
-        assert_eq!(update.updated_target_in_flight, expected);
-        assert_eq!(target.current_target_in_flight(), expected);
     }
 
     #[test]

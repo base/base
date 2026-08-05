@@ -240,9 +240,9 @@ pub struct ConfigSummary {
     pub max_concurrent_submit_requests: Option<u32>,
     /// Test duration.
     pub duration: Option<String>,
-    /// Optional gas-per-second ceiling for adaptive pacing.
+    /// Optional gas-per-second ceiling used as the per-block gas unit for inventory.
     pub target_gps: Option<u64>,
-    /// Number of blocks of gas targeted in the mempool.
+    /// Number of blocks of gas kept submitted but unconfirmed.
     pub mempool_target_blocks: u64,
     /// Deterministic account seed.
     pub seed: u64,
