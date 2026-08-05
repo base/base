@@ -28,9 +28,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
 
 use super::{
-    BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadRunner, PipelineStartConfig,
-    PreparedTransaction, QueuedSubmitFailures, ResultsTracker, SignedBatch, SignedTransaction,
-    SubmissionPipeline, SubmitEvent, TxType,
+    BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadRunner, LoadTestDisplay,
+    PipelineStartConfig, PreparedTransaction, QueuedSubmitFailures, ResultsTracker, SignedBatch,
+    SignedTransaction, SubmissionPipeline, SubmitEvent, TxType,
 };
 use crate::{
     BaselineError, Result,
@@ -44,6 +44,15 @@ const SUBMIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(200);
 const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(200);
+/// How long the post-run drain waits for progress (a confirmation or a shrinking
+/// pending count) before force-expiring whatever is left and returning early.
+///
+/// Without this, a straggler submitted near the end of the run effectively gets
+/// its own full `PENDING_CONFIRMATION_TIMEOUT` window measured from `drain_start`
+/// (not from when it was submitted), because `drain_expiry` only shrinks to zero
+/// at `drain_start + PENDING_CONFIRMATION_TIMEOUT`. Stuck inventory can therefore
+/// hold up the whole drain for ~200s even on a short test.
+const DRAIN_STALL_TIMEOUT: Duration = Duration::from_secs(20);
 const SIGNED_BATCH_SIZE: usize = 200;
 const PRESIGN_CHANNEL_BUFFER: usize = 2;
 const IDLE_SLEEP: Duration = Duration::from_millis(10);
@@ -52,6 +61,8 @@ const HEADROOM_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 const PREFILL_TIMEOUT: Duration = Duration::from_secs(300);
 /// Adaptive open-loop target update cadence, matching closed-loop rate-limiter updates.
 const TARGET_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
+/// TUI / snapshot refresh cadence while the enqueue loop owns the collector.
+const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 struct SenderJob {
@@ -96,11 +107,79 @@ struct EnqueueLimits {
     stop_when_accepted_target_reached: bool,
 }
 
+/// Live TUI / snapshot updates while the enqueue loop owns the collector.
+struct EnqueueProgressDisplay<'a> {
+    display: Option<&'a LoadTestDisplay>,
+    snapshot_tx: Option<&'a watch::Sender<DisplaySnapshot>>,
+    last_update: Instant,
+    start: Instant,
+    duration: Option<Duration>,
+    phase: Option<String>,
+    max_in_flight_per_sender: usize,
+    account_count: usize,
+    gas_price_gwei: f64,
+    total_eth: Option<String>,
+    min_eth: Option<String>,
+    funds_low: bool,
+    funder_address: Option<String>,
+    sender_addresses: Vec<String>,
+}
+
+impl EnqueueProgressDisplay<'_> {
+    fn maybe_refresh(
+        &mut self,
+        collector: &mut MetricsCollector,
+        results_tracker: &ResultsTracker,
+    ) {
+        if self.display.is_none() && self.snapshot_tx.is_none() {
+            return;
+        }
+        if self.last_update.elapsed() < DISPLAY_RENDER_INTERVAL {
+            return;
+        }
+        self.last_update = Instant::now();
+        collector.sample_throughput(self.start.elapsed());
+
+        let (p50, p99) = collector.rolling_p50_p99();
+        let (flashblocks_p50, flashblocks_p99) = collector.rolling_flashblocks_p50_p99();
+        let snap = DisplaySnapshot {
+            elapsed: self.start.elapsed(),
+            duration: self.duration,
+            phase: self.phase.clone(),
+            submitted: collector.submitted_count(),
+            confirmed: collector.confirmed_count(),
+            failed: collector.failed_count(),
+            in_flight: results_tracker.total_in_flight(),
+            senders_blocked: results_tracker.senders_at_limit(self.max_in_flight_per_sender as u64),
+            total_senders: self.account_count,
+            rolling_tps: collector.rolling_tps(),
+            rolling_gps: collector.rolling_gps(),
+            p50_latency: p50,
+            p99_latency: p99,
+            flashblocks_p50_latency: flashblocks_p50,
+            flashblocks_p99_latency: flashblocks_p99,
+            gas_price_gwei: self.gas_price_gwei,
+            total_eth: self.total_eth.clone(),
+            min_eth: self.min_eth.clone(),
+            funds_low: self.funds_low,
+            funder_address: self.funder_address.clone(),
+            sender_addresses: self.sender_addresses.clone(),
+        };
+        if let Some(display) = self.display {
+            display.update(&snap);
+        }
+        if let Some(tx) = self.snapshot_tx {
+            let _ = tx.send(snap);
+        }
+    }
+}
+
 struct EnqueueDrainState<'a> {
     submit_event_rx: &'a mut mpsc::Receiver<SubmitEvent>,
     queued_per_sender: &'a mut HashMap<Address, u64>,
     collector: &'a mut MetricsCollector,
     results_tracker: &'a ResultsTracker,
+    progress_display: Option<EnqueueProgressDisplay<'a>>,
 }
 
 impl EnqueueDrainState<'_> {
@@ -115,6 +194,9 @@ impl EnqueueDrainState<'_> {
             self.collector,
             self.results_tracker,
         );
+        if let Some(progress) = self.progress_display.as_mut() {
+            progress.maybe_refresh(self.collector, self.results_tracker);
+        }
     }
 
     /// Total outstanding work: submissions accepted by an RPC and awaiting canonical
@@ -345,7 +427,6 @@ impl LoadRunner {
         // test itself induces; a stale fee mints underwater (unincludable) txs.
         const BASE_FEE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
         const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
-        const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
 
         let use_live_display = self.display.as_ref().is_some_and(|d| d.is_active());
         let use_snapshot_tx = self.snapshot_tx.is_some();
@@ -472,6 +553,11 @@ impl LoadRunner {
             "started open-loop streaming pre-sign pipeline"
         );
 
+        if let Some(display) = self.display.as_ref() {
+            display.set_phase(&format!(
+                "prefill (target_in_flight={initial_target_in_flight})..."
+            ));
+        }
         let prefill_deadline = Instant::now() + PREFILL_TIMEOUT;
         let mut prefill_result = Self::enqueue_signed_transactions(
             &submission_pipeline,
@@ -488,6 +574,28 @@ impl LoadRunner {
                 queued_per_sender: &mut queued_per_sender,
                 collector: &mut self.collector,
                 results_tracker: &results_tracker,
+                progress_display: (use_live_display || use_snapshot_tx).then(|| {
+                    EnqueueProgressDisplay {
+                        display: self.display.as_ref(),
+                        snapshot_tx: self.snapshot_tx.as_ref(),
+                        last_update: Instant::now()
+                            .checked_sub(DISPLAY_RENDER_INTERVAL)
+                            .unwrap_or_else(Instant::now),
+                        start,
+                        duration: self.config.duration,
+                        phase: Some(format!(
+                            "prefill (target_in_flight={initial_target_in_flight})"
+                        )),
+                        max_in_flight_per_sender,
+                        account_count,
+                        gas_price_gwei: self.base_fee as f64 / 1e9,
+                        total_eth: self.last_total_eth.clone(),
+                        min_eth: self.last_min_eth.clone(),
+                        funds_low: self.last_funds_low,
+                        funder_address: self.funder_address.clone(),
+                        sender_addresses: self.sender_addresses.clone(),
+                    }
+                }),
             },
         )
         .await;
@@ -544,6 +652,16 @@ impl LoadRunner {
         let enqueue_result = if let Err(err) = prefill_result {
             Err(err)
         } else {
+            if let Some(display) = self.display.as_ref() {
+                display.set_phase(&format!(
+                    "submitting (target_in_flight={initial_target_in_flight})..."
+                ));
+            }
+            info!(
+                initial_target_in_flight,
+                duration_secs = ?self.config.duration.map(|d| d.as_secs()),
+                "starting open-loop measured enqueue"
+            );
             Self::enqueue_signed_transactions(
                 &submission_pipeline,
                 &next_submit_batch_id,
@@ -559,6 +677,26 @@ impl LoadRunner {
                     queued_per_sender: &mut queued_per_sender,
                     collector: &mut self.collector,
                     results_tracker: &results_tracker,
+                    progress_display: (use_live_display || use_snapshot_tx).then(|| {
+                        EnqueueProgressDisplay {
+                            display: self.display.as_ref(),
+                            snapshot_tx: self.snapshot_tx.as_ref(),
+                            last_update: Instant::now()
+                                .checked_sub(DISPLAY_RENDER_INTERVAL)
+                                .unwrap_or_else(Instant::now),
+                            start,
+                            duration: self.config.duration,
+                            phase: None,
+                            max_in_flight_per_sender,
+                            account_count,
+                            gas_price_gwei: self.base_fee as f64 / 1e9,
+                            total_eth: self.last_total_eth.clone(),
+                            min_eth: self.last_min_eth.clone(),
+                            funds_low: self.last_funds_low,
+                            funder_address: self.funder_address.clone(),
+                            sender_addresses: self.sender_addresses.clone(),
+                        }
+                    }),
                 },
             )
             .await
@@ -780,13 +918,16 @@ impl LoadRunner {
         };
         let results_poll_interval = Duration::from_millis(600);
         let mut last_confirmed_at = start.elapsed();
+        let mut last_pending_count = results_tracker.pending_count();
+        let mut last_drain_progress = Instant::now();
 
         while drain_start.elapsed() < confirmation_drain_timeout {
             for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
                 self.collector.record_flashblock_observed(latency, observed_at);
             }
             let metrics = results_tracker.drain_confirmed_metrics();
-            if !metrics.is_empty() {
+            let has_confirmed = !metrics.is_empty();
+            if has_confirmed {
                 last_confirmed_at = start.elapsed();
                 for metrics in metrics {
                     self.collector.record_confirmed(metrics);
@@ -801,7 +942,26 @@ impl LoadRunner {
                 self.collector.record_failures("expired without confirmation", expired);
             }
 
-            if results_tracker.pending_count() == 0 {
+            let pending_count = results_tracker.pending_count();
+            if pending_count == 0 {
+                break;
+            }
+            if pending_count < last_pending_count || has_confirmed {
+                last_pending_count = pending_count;
+                last_drain_progress = Instant::now();
+            } else if last_drain_progress.elapsed() >= DRAIN_STALL_TIMEOUT {
+                // No confirmations and no shrinkage for a while: the remainder is
+                // stuck (dropped, replaced, underwater, or never forwarded).
+                // Force-expire now instead of waiting out the full window.
+                let stalled = results_tracker.expire_pending(Duration::ZERO);
+                if stalled > 0 {
+                    self.collector.record_failures("expired without confirmation", stalled);
+                }
+                warn!(
+                    stalled,
+                    stall_secs = DRAIN_STALL_TIMEOUT.as_secs(),
+                    "confirmation drain stalled with no progress, force-expiring remainder"
+                );
                 break;
             }
 
@@ -1405,6 +1565,9 @@ impl LoadRunner {
             next_submit_batch_id,
             pending_signed_batch,
             usize::MAX,
+            // Prefill (`stop_when_accepted_target_reached`) is warmup and must not enter
+            // the measured cohort even if its submit events arrive after begin_measurement.
+            !limits.stop_when_accepted_target_reached,
             drain_state,
         )
         .await)
@@ -1415,6 +1578,7 @@ impl LoadRunner {
         next_submit_batch_id: &AtomicU64,
         pending_signed_batch: &mut Vec<SignedTransaction>,
         max_batch_len: usize,
+        measured: bool,
         drain_state: &mut EnqueueDrainState<'_>,
     ) -> bool {
         let batch_len = pending_signed_batch.len().min(max_batch_len);
@@ -1429,7 +1593,7 @@ impl LoadRunner {
                 .or_insert(1);
         }
 
-        let batch = SignedBatch { id: batch_id, attempt: 0, measured: true, txs: signed_txs };
+        let batch = SignedBatch { id: batch_id, attempt: 0, measured, txs: signed_txs };
         match Self::enqueue_signed_while_draining(submission_pipeline, batch, drain_state).await {
             Ok(()) => {
                 debug!(batch_id, batch_len, "queued open-loop signed batch");
@@ -1525,6 +1689,9 @@ impl LoadRunner {
         }
         for metrics in results_tracker.drain_confirmed_metrics() {
             collector.record_confirmed(metrics);
+        }
+        for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
+            collector.record_flashblock_observed(latency, observed_at);
         }
     }
 
@@ -1634,6 +1801,8 @@ mod tests {
                 queued_per_sender: &mut queued_per_sender,
                 collector: &mut collector,
                 results_tracker: &results_tracker,
+
+                progress_display: None,
             };
             let enqueue_attempt = LoadRunner::enqueue_signed_while_draining(
                 &submission_pipeline,
@@ -1686,6 +1855,8 @@ mod tests {
             queued_per_sender: &mut queued_per_sender,
             collector: &mut collector,
             results_tracker: &results_tracker,
+
+            progress_display: None,
         };
 
         let result = tokio::time::timeout(
@@ -1726,6 +1897,8 @@ mod tests {
             queued_per_sender: &mut queued_per_sender,
             collector: &mut collector,
             results_tracker: &results_tracker,
+
+            progress_display: None,
         };
 
         let result = tokio::time::timeout(
@@ -1766,6 +1939,8 @@ mod tests {
             queued_per_sender: &mut queued_per_sender,
             collector: &mut collector,
             results_tracker: &results_tracker,
+
+            progress_display: None,
         };
 
         let past_deadline = Some(Instant::now() - Duration::from_secs(1));

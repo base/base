@@ -949,9 +949,9 @@ impl LoadRunner {
         let base_fee = client.get_base_fee().await?;
         let fees = GasPricer::new(self.config.max_gas_price).funding_fees_for(base_fee);
         let drain_gas_limit = 21_000u128;
-        // L1 data fee on Base can be significant (0.0001-0.001 ETH depending on L1 gas prices).
-        // Use 0.001 ETH (1e15 wei) buffer to be safe. We may leave dust in accounts.
-        let l1_fee_buffer = 1_000_000_000_000_000u128;
+        // L1 data fee on Base is typically ~0.0001 ETH for a simple transfer; keep a modest
+        // buffer so post-load dust can still be swept instead of skipping every account.
+        let l1_fee_buffer = 100_000_000_000_000u128; // 0.0001 ETH
         let drain_gas_cost = U256::from(drain_gas_limit * fees.max_fee + l1_fee_buffer);
 
         let total_accounts = self.accounts.len();
