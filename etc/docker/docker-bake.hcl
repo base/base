@@ -23,7 +23,7 @@ variable "PLATFORM_PAIR" {
 }
 
 variable "DEVNET_TARGETS" {
-  default = ["base", "batcher", "prover-service", "zk-host"]
+  default = ["base", "batcher"]
 }
 
 variable "INGRESS_TARGETS" {
