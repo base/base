@@ -1,9 +1,4 @@
-//! B-20 precompile token lifecycle for load tests: per-sender token creation with self-mint
-//! during setup, and per-sender burning during teardown.
-//!
-//! Each sender creates and owns its own B-20 ASSET token (mirroring the parallel uniswap/aerodrome
-//! setup), so setup is fully parallel with each sender on its own nonce stream — there is no funder
-//! bottleneck and no admin-gated role grants routed through a single account.
+//! B-20 precompile token lifecycle: per-sender token creation during prepare, burns during teardown.
 
 use std::time::Duration;
 
@@ -16,11 +11,14 @@ use base_common_precompiles::{B20FactoryStorage, B20TokenRole, B20Variant, IB20,
 use futures::{StreamExt, stream};
 use tracing::{debug, info, warn};
 
-use super::{LoadRunner, SubmissionPipeline, TxType, load_runner::FUNDING_CONCURRENCY};
+use super::B20TransferPayload;
 use crate::{
     BaselineError, Result,
     rpc::{BaseFeeExt, RpcResultExt, WalletProvider, create_wallet_provider},
-    workload::{b20_salt_for, b20_token_for},
+    workload::{
+        b20_salt_for, b20_token_for,
+        chain_prep::{ChainPrepContext, encode_erc20_balance_of, prep_submission_max_fee},
+    },
 };
 
 /// Gas limit for a `createB20` tx (token creation plus the self-grant and self-mint init calls).
@@ -32,42 +30,38 @@ const B20_RECEIPT_TIMEOUT: Duration = Duration::from_secs(120);
 /// Fee multiplier applied when replacing a stuck pending tx (matches the funding-path bump).
 const REPLACEMENT_FEE_MULTIPLIER: u128 = 3;
 
-impl LoadRunner {
-    /// Returns `true` if any configured transaction type is [`TxType::B20`].
-    pub fn needs_b20_setup(&self) -> bool {
-        self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
-    }
-
-    /// Creates a per-sender B-20 ASSET token, with each sender minting its own supply.
-    ///
-    /// Every sender sends ONE `createB20` tx from its own account, in parallel. The token's
-    /// `initialAdmin` is the sender itself, and the create's privileged `initCalls` grant the
-    /// sender `BURN_ROLE` (so teardown can burn) and mint `amount_per_sender` to the sender.
-    /// Because each sender uses its own nonce stream, a stuck pending tx from a prior run at the
-    /// same nonce is replaced by a fee-bumped resend (see [`Self::submit_b20_create`]).
-    ///
-    /// A fresh per-run salt is generated and stored on the runner so the derived token addresses
-    /// differ from previous runs (avoiding `TokenAlreadyExists`) and so the load payload and
-    /// teardown can recompute the same addresses.
-    pub async fn setup_b20_tokens(&mut self, amount_per_sender: U256) -> Result<()> {
-        let chain_id = self.config.chain_id;
-        let max_gas_price = self.config.max_gas_price;
-        let base_fee = self.client.get_base_fee().await?;
+/// Creates a per-sender B-20 ASSET token, with each sender minting its own supply.
+///
+/// Every sender sends ONE `createB20` tx from its own account, in parallel. The token's
+/// `initialAdmin` is the sender itself, and the create's privileged `initCalls` grant the
+/// sender `BURN_ROLE` (so teardown can burn) and mint `amount_per_sender` to the sender.
+/// Because each sender uses its own nonce stream, a stuck pending tx from a prior run at the
+/// same nonce is replaced by a fee-bumped resend (see [`submit_b20_create`]).
+///
+/// A fresh per-run salt is generated and stored on the runner so the derived token addresses
+/// differ from previous runs (avoiding `TokenAlreadyExists`) and so the load payload and
+/// teardown can recompute the same addresses.
+pub(super) async fn prepare(payload: &B20TransferPayload, ctx: &mut ChainPrepContext<'_>) -> Result<()> {
+    let amount_per_sender = ctx.b20_mint;
+        let chain_id = ctx.chain_id;
+        let max_gas_price = ctx.max_gas_price;
+        let base_fee = ctx.client.get_base_fee().await?;
         let max_priority_fee = (base_fee / 10).max(1);
         let max_fee =
-            SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
+            prep_submission_max_fee(base_fee, max_priority_fee, max_gas_price);
         let replacement_max_fee = max_fee.saturating_mul(REPLACEMENT_FEE_MULTIPLIER);
         let replacement_priority_fee = max_priority_fee.saturating_mul(REPLACEMENT_FEE_MULTIPLIER);
 
         // A fresh random salt per run keeps each run's token addresses distinct, so re-running the
         // same sender set never collides with the previous run's tokens.
         let run_salt = B256::from(rand::random::<[u8; 32]>());
-        self.b20_run_salt = Some(run_salt);
+        payload.set_run_salt(run_salt)?;
+        ctx.outputs.b20_run_salt = Some(run_salt);
 
         let account_data: Vec<(Address, _)> =
-            self.accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect();
+            ctx.accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect();
         let total = account_data.len();
-        let rpc_url = self.config.primary_submission_rpc().clone();
+        let rpc_url = ctx.primary_submission_rpc.clone();
         let params_version = B20Variant::Asset.supported_version();
 
         info!(senders = total, amount = %amount_per_sender, "creating per-sender B-20 tokens");
@@ -75,7 +69,7 @@ impl LoadRunner {
         // Phase 1: submit every sender's create tx in parallel. Submission is fast (one RPC per
         // sender) and does not block on confirmation, so all creates land in the mempool quickly
         // instead of the stream stalling behind a slow receipt at the buffer head.
-        let pb_submit = self.progress_bar(total as u64, "Submitting per-sender B-20 creates");
+        let pb_submit = ctx.progress_bar(total as u64, "Submitting per-sender B-20 creates");
         let submit_futs = account_data.into_iter().map(|(sender, signer)| {
             let rpc_url = rpc_url.clone();
             let pb_submit = pb_submit.clone();
@@ -108,7 +102,7 @@ impl LoadRunner {
                 };
                 let input = Bytes::from(create_call.abi_encode());
 
-                let result = Self::submit_b20_create(
+                let result = submit_b20_create(
                     provider,
                     sender,
                     input,
@@ -126,12 +120,12 @@ impl LoadRunner {
         });
 
         let submit_results: Vec<_> =
-            stream::iter(submit_futs).buffer_unordered(FUNDING_CONCURRENCY).collect().await;
+            stream::iter(submit_futs).buffer_unordered(ctx.concurrency).collect().await;
         pb_submit.finish_and_clear();
 
         // Phase 2: collect all create receipts in parallel. Confirmation latency now overlaps
         // across senders instead of serializing at the submit stream's head.
-        let pb_confirm = self.progress_bar(total as u64, "Confirming per-sender B-20 creates");
+        let pb_confirm = ctx.progress_bar(total as u64, "Confirming per-sender B-20 creates");
         let mut failed = 0usize;
         let mut first_error: Option<String> = None;
         let mut receipt_futs = Vec::with_capacity(submit_results.len());
@@ -151,7 +145,7 @@ impl LoadRunner {
             }
         }
 
-        let mut receipt_stream = stream::iter(receipt_futs).buffer_unordered(FUNDING_CONCURRENCY);
+        let mut receipt_stream = stream::iter(receipt_futs).buffer_unordered(ctx.concurrency);
         while let Some((sender, result)) = receipt_stream.next().await {
             match result {
                 Ok(receipt) if receipt.status() => {
@@ -186,24 +180,19 @@ impl LoadRunner {
             )));
         }
 
-        // Rebuild the generator now that the per-run salt is known, so the B-20 payload derives the
-        // correct per-sender token addresses.
-        self.generator =
-            Self::create_generator(self.workload_config(), &self.config, Some(run_salt))?;
-
         info!(senders = total, amount = %amount_per_sender, "B-20 token setup complete");
         Ok(())
     }
 
-    /// Submits one `createB20` tx for a sender, replacing a stuck pending tx if necessary.
-    ///
-    /// Returns the pending tx so the caller can await its receipt in a separate phase, keeping
-    /// submission decoupled from confirmation. Mirrors the funding path's replacement handling: a
-    /// `replacement transaction underpriced` or `already known` rejection (a leftover pending tx
-    /// from a prior run at the same nonce) is retried at the same nonce with bumped fees, and a
-    /// `nonce too low` rejection refetches the pending nonce.
-    #[allow(clippy::too_many_arguments)]
-    async fn submit_b20_create(
+/// Submits one `createB20` tx for a sender, replacing a stuck pending tx if necessary.
+///
+/// Returns the pending tx so the caller can await its receipt in a separate phase, keeping
+/// submission decoupled from confirmation. Mirrors the funding path's replacement handling: a
+/// `replacement transaction underpriced` or `already known` rejection (a leftover pending tx
+/// from a prior run at the same nonce) is retried at the same nonce with bumped fees, and a
+/// `nonce too low` rejection refetches the pending nonce.
+#[allow(clippy::too_many_arguments)]
+async fn submit_b20_create(
         provider: WalletProvider,
         sender: Address,
         input: Bytes,
@@ -269,28 +258,28 @@ impl LoadRunner {
         }
     }
 
-    /// Burns each sender's remaining balance of its own B-20 token.
-    ///
-    /// No-op when no per-run salt is recorded (setup never ran). Each sender holds `BURN_ROLE` on
-    /// its own token (granted at creation), so the burn passes the role check. Each sender signs
-    /// its own single tx, so nonce streams are independent and a failed send strands nothing.
-    pub async fn teardown_b20_tokens(&self) -> Result<()> {
-        let Some(run_salt) = self.b20_run_salt else {
+/// Burns each sender's remaining balance of its own B-20 token.
+///
+/// No-op when no per-run salt is recorded (setup never ran). Each sender holds `BURN_ROLE` on
+/// its own token (granted at creation), so the burn passes the role check. Each sender signs
+/// its own single tx, so nonce streams are independent and a failed send strands nothing.
+pub(super) async fn teardown(payload: &B20TransferPayload, ctx: &ChainPrepContext<'_>) -> Result<()> {
+        let Some(run_salt) = payload.run_salt() else {
             return Ok(());
         };
 
-        let chain_id = self.config.chain_id;
-        let max_gas_price = self.config.max_gas_price;
-        let base_fee = self.client.get_base_fee().await?;
+        let chain_id = ctx.chain_id;
+        let max_gas_price = ctx.max_gas_price;
+        let base_fee = ctx.client.get_base_fee().await?;
         let max_priority_fee = (base_fee / 10).max(1);
         let max_fee =
-            SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
+            prep_submission_max_fee(base_fee, max_priority_fee, max_gas_price);
 
         let sender_addresses: Vec<Address> =
-            self.accounts.accounts().iter().map(|a| a.address).collect();
-        let signers = Self::build_signers(&self.accounts);
-        let client = &self.client;
-        let rpc_url = self.config.primary_submission_rpc().clone();
+            ctx.accounts.accounts().iter().map(|a| a.address).collect();
+        let signers: std::collections::HashMap<_, _> = ctx.accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect();
+        let client = ctx.client;
+        let rpc_url = ctx.primary_submission_rpc.clone();
 
         // Phase 1: Query each sender's balance of its own token in parallel.
         let balance_futs: Vec<_> = sender_addresses
@@ -298,7 +287,7 @@ impl LoadRunner {
             .map(|&sender| {
                 let client = client.clone();
                 let token = b20_token_for(sender, run_salt);
-                let call_data = Self::encode_erc20_balance_of(sender);
+                let call_data = encode_erc20_balance_of(sender);
                 async move {
                     let balance = client
                         .call(
@@ -317,7 +306,7 @@ impl LoadRunner {
             .collect();
 
         let balances: Vec<_> =
-            stream::iter(balance_futs).buffer_unordered(FUNDING_CONCURRENCY).collect().await;
+            stream::iter(balance_futs).buffer_unordered(ctx.concurrency).collect().await;
 
         let senders_with_balance: Vec<_> =
             balances.into_iter().filter(|(_, _, balance)| !balance.is_zero()).collect();
@@ -328,7 +317,7 @@ impl LoadRunner {
         }
 
         // Phase 2: Burn each sender's balance of its own token.
-        let pb = self.progress_bar(senders_with_balance.len() as u64, "Burning B-20 tokens");
+        let pb = ctx.progress_bar(senders_with_balance.len() as u64, "Burning B-20 tokens");
         let mut burn_failed = 0usize;
         let mut burn_count = 0usize;
 
@@ -366,7 +355,7 @@ impl LoadRunner {
             .collect();
 
         let submit_results: Vec<_> =
-            stream::iter(submit_futs).buffer_unordered(FUNDING_CONCURRENCY).collect().await;
+            stream::iter(submit_futs).buffer_unordered(ctx.concurrency).collect().await;
 
         let mut receipt_futs = Vec::with_capacity(submit_results.len());
         for result in submit_results {
@@ -388,7 +377,7 @@ impl LoadRunner {
             }
         }
 
-        let mut receipt_stream = stream::iter(receipt_futs).buffer_unordered(FUNDING_CONCURRENCY);
+        let mut receipt_stream = stream::iter(receipt_futs).buffer_unordered(ctx.concurrency);
         while let Some((sender, balance, result)) = receipt_stream.next().await {
             match result {
                 Ok(receipt) if receipt.status() => {
@@ -416,4 +405,3 @@ impl LoadRunner {
         info!(burned = burn_count, failed = burn_failed, "B-20 teardown complete");
         Ok(())
     }
-}
