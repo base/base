@@ -16,13 +16,14 @@
 
 use alloc::string::ToString;
 
+use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolInterface;
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    Asset, AssetAccounting, AssetV1, AssetV2, B20Abi, IB20, IB20Asset, IB20AssetV1, IB20AssetV2,
-    PolicyAccounting,
+    Asset, AssetAccounting, AssetV1, AssetV2, B20Abi, B20AssetToken, IB20, IB20Asset, IB20AssetV1,
+    IB20AssetV2, PolicyAccounting,
 };
 
 /// An activated version of the asset B-20 precompile logic.
@@ -49,6 +50,27 @@ impl AssetVersion {
         match self {
             Self::V1 => &V1,
             Self::V2 => &V2,
+        }
+    }
+
+    /// Grants `role` to `account` without checking caller authorization, using this version's
+    /// pinned implementation. Kept parallel to [`Self::implementation`] rather than reached
+    /// through it, since `grant_role_unchecked` is deliberately not part of the `Asset` trait
+    /// (see [`AssetV1::grant_role_unchecked`]).
+    pub fn grant_role_unchecked<S, A>(
+        self,
+        token: &mut B20AssetToken<S, A>,
+        role: B256,
+        account: Address,
+        sender: Address,
+    ) -> Result<()>
+    where
+        S: AssetAccounting,
+        A: PolicyAccounting,
+    {
+        match self {
+            Self::V1 => AssetV1.grant_role_unchecked(token, role, account, sender),
+            Self::V2 => AssetV2.grant_role_unchecked(token, role, account, sender),
         }
     }
 
