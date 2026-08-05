@@ -312,7 +312,7 @@ impl FlashblockAssembler {
                     withdrawals_root: withdrawals_root.unwrap_or_default(),
                     blob_gas_used,
                 },
-                metadata: serde_json::to_value(&metadata).unwrap_or_default(),
+                metadata: serde_json::to_value(&metadata).map_err(PayloadBuilderError::other)?,
             };
 
             // Advance the delta cursor only after every fallible operation above has succeeded, so an
