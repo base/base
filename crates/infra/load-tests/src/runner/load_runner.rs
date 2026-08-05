@@ -967,18 +967,13 @@ impl LoadRunner {
             // EIP-1559 still charges only base fee plus priority fee, not this full cap.
             let max_fee = max_gas_price;
             info!(base_fee, max_fee, max_priority_fee, "pricing funding transaction batch");
-<<<<<<< HEAD
-            let batch: Vec<_> =
-                txs_remaining.by_ref().take(self.config.max_in_flight_per_sender as usize).collect();
-=======
-            let batch: Vec<_> = (0..self.config.funding_batch_size)
+            let batch: Vec<_> = (0..self.config.max_in_flight_per_sender as usize)
                 .filter_map(|_| txs_remaining.pop_front())
                 .collect();
             let reclaimed_nonce_target = batch
                 .iter()
                 .filter_map(|(_, _, nonce, _)| (*nonce < stale_end_nonce).then_some(*nonce + 1))
                 .max();
->>>>>>> b776ce73a (fix(load-tests): reclaim stale funder transactions)
             let mut batch_pending: Vec<Address> = Vec::with_capacity(batch.len());
             let mut retries: Vec<(Address, U256, u64, bool)> = Vec::new();
             let mut consumed_funding_nonces: Vec<(Address, U256, u64)> = Vec::new();
@@ -1286,65 +1281,6 @@ impl LoadRunner {
             }
 
             Self::await_balances(&client, &mut batch_pending, amount_per_account, &pb_fund).await?;
-<<<<<<< HEAD
-
-            if !nonce_refresh_needed.is_empty() {
-                let fresh_nonce = funder_provider
-                    .get_transaction_count(funder_address)
-                    .pending()
-                    .await
-                    .rpc("get pending transaction count")?;
-
-                info!(
-                    count = nonce_refresh_needed.len(),
-                    fresh_nonce, "retrying funding txs with refreshed nonce"
-                );
-
-                let nonce_retry_futs =
-                    nonce_refresh_needed.into_iter().enumerate().map(|(i, (address, deficit))| {
-                        let provider = Arc::clone(&funder_provider);
-                        let retry_nonce = fresh_nonce + i as u64;
-                        async move {
-                            let tx = TransactionRequest::default()
-                                .with_to(address)
-                                .with_value(deficit)
-                                .with_nonce(retry_nonce)
-                                .with_chain_id(chain_id)
-                                .with_gas_limit(21_000)
-                                .with_max_fee_per_gas(max_fee)
-                                .with_max_priority_fee_per_gas(max_priority_fee);
-                            let result = provider.send_transaction(tx).await;
-                            (result, address, retry_nonce)
-                        }
-                    });
-
-                let mut nonce_retry_stream =
-                    stream::iter(nonce_retry_futs).buffered(self.config.max_in_flight_per_sender as usize);
-
-                let mut nonce_retry_pending: Vec<Address> = Vec::new();
-                while let Some((result, address, retry_nonce)) = nonce_retry_stream.next().await {
-                    match result {
-                        Ok(pending) => {
-                            let tx_hash = *pending.tx_hash();
-                            info!(to = %address, nonce = retry_nonce, tx_hash = %tx_hash, "nonce-refreshed funding tx sent");
-                            nonce_retry_pending.push(address);
-                        }
-                        Err(retry_err) => {
-                            warn!(to = %address, nonce = retry_nonce, error = %retry_err, "nonce-refreshed retry also failed, proceeding");
-                        }
-                    }
-                }
-
-                Self::await_balances(
-                    &client,
-                    &mut nonce_retry_pending,
-                    amount_per_account,
-                    &pb_fund,
-                )
-                .await?;
-            }
-=======
->>>>>>> b776ce73a (fix(load-tests): reclaim stale funder transactions)
         }
         pb_fund.finish_and_clear();
 
