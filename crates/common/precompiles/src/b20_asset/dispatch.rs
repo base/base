@@ -15,9 +15,8 @@ use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    AssetAccounting, AssetCall, AssetV1, AssetVersion, AssetVersions, B20AssetStorage,
-    B20AssetToken, B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder,
-    BerylMetricLabels,
+    AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
+    B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
@@ -72,19 +71,24 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         recorder.record_base_result(ctx, self.route(ctx, calldata, version, false, observer), |b| b)
     }
 
-    /// Grants `role` to `account` without checking caller authorization.
+    /// Grants `role` to `account` without checking caller authorization, using the token logic
+    /// implementation active at `upgrade`.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`Asset::grant_role`](crate::Asset) path is not yet reachable. Pinned to
-    /// [`AssetV1`], the token's introduction version.
-    // TODO: When the factory gains fork threading, remove this and pull versions into the factory.
+    /// authorized [`Asset::grant_role`](crate::Asset) path is not yet reachable.
     pub fn grant_role_unchecked(
         &mut self,
         role: alloy_primitives::B256,
         account: alloy_primitives::Address,
         sender: alloy_primitives::Address,
+        upgrade: BaseUpgrade,
     ) -> base_precompile_storage::Result<()> {
-        AssetV1.grant_role_unchecked(self, role, account, sender)
+        // `None` is unreachable in practice — the precompile is only installed from Beryl — but
+        // we revert defensively, mirroring `dispatch_with_observer`.
+        let Some(version) = AssetVersions::from_base_upgrade(upgrade) else {
+            return Err(BasePrecompileError::Revert(Bytes::new()));
+        };
+        version.implementation().grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional

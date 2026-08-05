@@ -77,6 +77,7 @@ impl FactoryV1 {
                 B20TokenRole::DefaultAdmin.id(),
                 common.initial_admin,
                 B20FactoryStorage::ADDRESS,
+                upgrade,
             )?;
         }
 
@@ -135,6 +136,7 @@ impl FactoryV1 {
                 B20TokenRole::DefaultAdmin.id(),
                 common.initial_admin,
                 B20FactoryStorage::ADDRESS,
+                upgrade,
             )?;
         }
 
