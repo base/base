@@ -73,8 +73,9 @@ impl FlashblockAssembler {
     /// Builds a cumulative payload and the delta since the previous assembly pass.
     ///
     /// Intermediate flashblocks may skip state-root calculation. Final payloads and no-pool
-    /// synchronization payloads must request it. The execution cursor is advanced after the delta
-    /// is captured, and the REVM transition state is restored on every exit path (including
+    /// synchronization payloads must request it. All fallible work runs before the bundle state
+    /// is consumed, so a failure can never leave `state` with a taken bundle or an advanced delta
+    /// cursor to reuse; the REVM transition state is restored on every exit path (including
     /// failures), so `state` is left safe to reuse. Execution information (`info`) is only mutated
     /// once assembly succeeds; on failure the delta cursor is left untouched.
     pub fn build<DB, P>(
@@ -171,6 +172,15 @@ impl FlashblockAssembler {
             let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
             let (excess_blob_gas, blob_gas_used) = ctx.blob_fields(info);
             let extra_data = ctx.extra_data()?;
+            let parent_beacon_block_root = ctx
+                .attributes()
+                .payload_attributes
+                .parent_beacon_block_root
+                .ok_or_else(|| {
+                    PayloadBuilderError::Other(
+                        eyre::eyre!("parent beacon block root not found").into(),
+                    )
+                })?;
 
             let header = Header {
                 parent_hash: ctx.parent().hash(),
@@ -189,11 +199,8 @@ impl FlashblockAssembler {
                 gas_limit: ctx.block_gas_limit(),
                 difficulty: U256::ZERO,
                 gas_used: info.cumulative_gas_used,
-                extra_data,
-                parent_beacon_block_root: ctx
-                    .attributes()
-                    .payload_attributes
-                    .parent_beacon_block_root,
+                extra_data: extra_data.clone(),
+                parent_beacon_block_root: Some(parent_beacon_block_root),
                 blob_gas_used,
                 excess_blob_gas,
                 requests_hash,
@@ -209,8 +216,12 @@ impl FlashblockAssembler {
                     withdrawals: ctx.withdrawals().cloned(),
                 },
             );
-            let recovered_block =
-                RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
+
+            // Seal once to get the hash, then hand it to the recovered block below so the
+            // latter never has to hash its (identical) header again on first access.
+            let sealed_block = Arc::new(block.clone().seal_slow());
+            let block_hash = sealed_block.hash();
+            debug!(target: "payload_builder", ?sealed_block, "sealed built block");
 
             // Read the invalidation diff before take_bundle() empties the bundle state.
             let state_diff = AccountStateDiff::collect_for_intra_block(&state.bundle_state);
@@ -227,26 +238,6 @@ impl FlashblockAssembler {
                     })
                     .collect::<HashMap<Address, U256>>()
             });
-
-            let executed = BuiltPayloadExecutedBlock {
-                recovered_block: Arc::new(recovered_block),
-                execution_output: Arc::new(BlockExecutionOutput {
-                    result: BlockExecutionResult {
-                        receipts: info.receipts.clone(),
-                        requests: vec![].into(),
-                        gas_used: info.cumulative_gas_used,
-                        blob_gas_used: 0,
-                    },
-                    state: state.take_bundle(),
-                }),
-                hashed_state: Arc::new(hashed_state),
-                trie_updates: Arc::new(trie_output),
-            };
-            debug!(target: "payload_builder", message = "Executed block created");
-
-            let sealed_block = Arc::new(block.seal_slow());
-            debug!(target: "payload_builder", ?sealed_block, "sealed built block");
-            let block_hash = sealed_block.hash();
 
             let delta_start = info.extra.last_flashblock_index;
             let new_transactions = &info.executed_transactions[delta_start..];
@@ -283,23 +274,15 @@ impl FlashblockAssembler {
                 payload_id: ctx.payload_id(),
                 index: 0,
                 base: Some(ExecutionPayloadBaseV1 {
-                    parent_beacon_block_root: ctx
-                        .attributes()
-                        .payload_attributes
-                        .parent_beacon_block_root
-                        .ok_or_else(|| {
-                            PayloadBuilderError::Other(
-                                eyre::eyre!("parent beacon block root not found").into(),
-                            )
-                        })?,
+                    parent_beacon_block_root,
                     parent_hash: ctx.parent().hash(),
                     fee_recipient: ctx.attributes().payload_attributes.suggested_fee_recipient,
                     prev_randao: ctx.attributes().payload_attributes.prev_randao,
                     block_number: ctx.parent().number + 1,
                     gas_limit: ctx.block_gas_limit(),
                     timestamp: ctx.attributes().payload_attributes.timestamp,
-                    extra_data: ctx.extra_data()?,
-                    base_fee_per_gas: ctx.base_fee().try_into().unwrap(),
+                    extra_data,
+                    base_fee_per_gas: U256::from(ctx.base_fee()),
                 }),
                 diff: ExecutionPayloadFlashblockDeltaV1 {
                     state_root,
@@ -315,8 +298,27 @@ impl FlashblockAssembler {
                 metadata: serde_json::to_value(&metadata).map_err(PayloadBuilderError::other)?,
             };
 
-            // Advance the delta cursor only after every fallible operation above has succeeded, so an
-            // early return never leaves `info` with an advanced cursor and no emitted flashblock.
+            // Every fallible operation above has now succeeded, so it's safe to consume the
+            // bundle state and advance the delta cursor: no later `?` can leave `state` or
+            // `info` half-updated.
+            let recovered_block =
+                RecoveredBlock::new(block, info.executed_senders.clone(), block_hash);
+            let executed = BuiltPayloadExecutedBlock {
+                recovered_block: Arc::new(recovered_block),
+                execution_output: Arc::new(BlockExecutionOutput {
+                    result: BlockExecutionResult {
+                        receipts: info.receipts.clone(),
+                        requests: vec![].into(),
+                        gas_used: info.cumulative_gas_used,
+                        blob_gas_used: 0,
+                    },
+                    state: state.take_bundle(),
+                }),
+                hashed_state: Arc::new(hashed_state),
+                trie_updates: Arc::new(trie_output),
+            };
+            debug!(target: "payload_builder", message = "Executed block created");
+
             info.extra.last_flashblock_index = info.executed_transactions.len();
 
             Ok(FlashblockAssembly {
