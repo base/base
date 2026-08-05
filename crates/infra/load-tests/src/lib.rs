@@ -33,7 +33,7 @@ pub use metrics::{
 
 mod workload;
 pub use workload::{
-    AccountPool, AerodromeClPayload, B20EvmTransferPayload, B20TransferPayload, CalldataPayload,
+    AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload,
     Erc20Payload, FundedAccount, KeyStream, OsakaPayload, Payload, PrecompileLooper,
     PrecompilePayload, SeededRng, StoragePayload, TransferPayload, UniswapV3Payload,
     WorkloadGenerator, parse_precompile_id,

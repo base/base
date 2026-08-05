@@ -58,11 +58,6 @@ pub enum TxType {
     /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
     /// per run during setup.
     B20,
-    /// B-20 EVM contract token transfer against a pre-deployed contract.
-    B20Evm {
-        /// EVM contract address.
-        contract: Address,
-    },
     /// Osaka (Base Azul) opcode or precompile transaction.
     Osaka {
         /// Target Osaka feature.

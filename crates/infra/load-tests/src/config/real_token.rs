@@ -155,7 +155,6 @@ fn validate_real_token_pair_matches_swaps(
             | TxTypeConfig::Calldata { .. }
             | TxTypeConfig::Erc20 { .. }
             | TxTypeConfig::B20
-            | TxTypeConfig::B20Evm { .. }
             | TxTypeConfig::Precompile { .. }
             | TxTypeConfig::Storage { .. }
             | TxTypeConfig::Osaka { .. } => continue,

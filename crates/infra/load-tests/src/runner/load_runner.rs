@@ -47,7 +47,7 @@ use crate::{
         create_wallet_provider,
     },
     workload::{
-        AccountPool, AerodromeClPayload, B20EvmTransferPayload, B20TransferPayload,
+        AccountPool, AerodromeClPayload, B20TransferPayload,
         CalldataPayload, Erc20Payload, KeyStream, OsakaPayload, PrecompilePayload, SeededRng,
         StoragePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator,
     },
@@ -566,12 +566,6 @@ impl LoadRunner {
                             weight_pct,
                         );
                     }
-                }
-                TxType::B20Evm { contract } => {
-                    generator = generator.with_payload(
-                        B20EvmTransferPayload::new(*contract, U256::from(1), U256::from(1)),
-                        weight_pct,
-                    );
                 }
                 TxType::Osaka { target } => {
                     generator =
@@ -1108,7 +1102,6 @@ impl LoadRunner {
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }
                 | TxType::B20
-                | TxType::B20Evm { .. }
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
             }
@@ -1129,7 +1122,6 @@ impl LoadRunner {
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }
                 | TxType::B20
-                | TxType::B20Evm { .. }
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
             }

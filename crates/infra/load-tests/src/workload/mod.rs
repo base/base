@@ -11,7 +11,7 @@ pub use key_stream::KeyStream;
 
 mod payloads;
 pub use payloads::{
-    AerodromeClPayload, B20EvmTransferPayload, B20TransferPayload, CalldataPayload, Erc20Payload,
+    AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload,
     OsakaPayload, Payload, PrecompileLooper, PrecompilePayload, StoragePayload, TransferPayload,
     UniswapV3Payload, parse_precompile_id,
 };

@@ -276,12 +276,6 @@ pub enum TxTypeConfig {
     /// per run during setup.
     B20,
 
-    /// B-20 EVM contract token transfer against a pre-deployed contract.
-    B20Evm {
-        /// EVM contract address.
-        contract: String,
-    },
-
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
         /// CL Router contract address.
@@ -648,9 +642,6 @@ impl TestConfig {
                 }
             }
             TxTypeConfig::B20 => TxType::B20,
-            TxTypeConfig::B20Evm { contract } => {
-                TxType::B20Evm { contract: parse_address(contract, "b20_evm contract")? }
-            }
             TxTypeConfig::Osaka { target } => TxType::Osaka { target: target.clone() },
             TxTypeConfig::UniswapV3 {
                 router,
