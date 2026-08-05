@@ -2,6 +2,7 @@ use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, TxHash};
+use base_bundles::SharedInlineMetering;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -91,6 +92,9 @@ pub struct Forwarder<T: PoolTransaction> {
     client: HttpClient,
     receiver: broadcast::Receiver<Arc<ValidPoolTransaction<T>>>,
     config: Arc<ForwarderConfig>,
+    /// Cached from config at construction so flushes do not re-clone the Arc.
+    inline_metering: Option<SharedInlineMetering>,
+    require_metering: bool,
     cancel: CancellationToken,
     limiter: RateLimiter,
     buffer: Vec<BufferedTransaction>,
@@ -118,7 +122,20 @@ where
         let initial_capacity = if config.max_batch_size == 0 { 256 } else { config.max_batch_size };
         let buffer = Vec::with_capacity(initial_capacity);
         let url_label: Arc<str> = builder_url.to_string().into();
-        Self { builder_url, url_label, client, receiver, config, cancel, limiter, buffer }
+        let inline_metering = config.inline_metering.clone();
+        let require_metering = config.require_metering;
+        Self {
+            builder_url,
+            url_label,
+            client,
+            receiver,
+            inline_metering,
+            require_metering,
+            config,
+            cancel,
+            limiter,
+            buffer,
+        }
     }
 
     /// Runs the forwarder loop until cancelled.
@@ -127,7 +144,7 @@ where
             builder_url = %self.builder_url,
             max_rps = self.config.max_rps,
             max_batch_size = self.config.max_batch_size,
-            require_metering = self.config.require_metering,
+            require_metering = self.require_metering,
             "starting transaction forwarder",
         );
 
@@ -157,13 +174,10 @@ where
                 _ => {}
             }
 
+            // Waiting metering txs are rechecked on the next recv wake (new pool
+            // traffic). Under sustained load that is near-continuous; no poll timer.
             let closed = tokio::select! {
                 _ = self.cancel.cancelled() => break,
-                // Retry metering gate while buffered txs are waiting on a response.
-                _ = time::sleep(std::time::Duration::from_millis(50)),
-                    if self.config.require_metering && !self.buffer.is_empty() => {
-                    false
-                }
                 result = self.receiver.recv() => {
                     self.handle_recv(result)
                 }
@@ -278,10 +292,10 @@ where
     /// Splits buffered txs into those with a meterBundle response and those still waiting.
     fn split_ready_for_forward(&mut self) -> (Vec<BufferedTransaction>, Vec<BufferedTransaction>) {
         let pending: Vec<BufferedTransaction> = self.buffer.drain(..).collect();
-        if !self.config.require_metering {
+        if !self.require_metering {
             return (pending, Vec::new());
         }
-        let Some(metering) = self.config.inline_metering.clone() else {
+        let Some(metering) = self.inline_metering.as_ref() else {
             return (pending, Vec::new());
         };
 
