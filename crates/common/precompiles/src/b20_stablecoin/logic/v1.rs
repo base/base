@@ -157,14 +157,24 @@ impl StablecoinV1 {
         Ok(())
     }
 
-    /// Ensures `policy_scope` names a built-in B-20 policy slot.
+    /// Ensures `policy_scope` names a built-in B-20 policy slot available on the frozen V1 (Beryl)
+    /// common surface.
+    ///
+    /// The seize scopes (`SEIZE_HOLDER_POLICY` / `SEIZE_RECEIVER_POLICY`) were introduced at Cobalt
+    /// (V2), so they are rejected here — matching the base-std `v1.0.0` reference. This is what keeps
+    /// the common `updatePolicy` / `policyId` selectors (dialable on V1) from reaching a V2-only
+    /// scope. The wildcard arm also freezes V1 against any scope added to `B20PolicyType` later.
     fn ensure_supported_policy_type(policy_scope: B256) -> Result<()> {
-        if B20PolicyType::from_id(policy_scope).is_some() {
-            Ok(())
-        } else {
-            Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
+        match B20PolicyType::from_id(policy_scope) {
+            Some(
+                B20PolicyType::TransferSender
+                | B20PolicyType::TransferReceiver
+                | B20PolicyType::TransferExecutor
+                | B20PolicyType::MintReceiver,
+            ) => Ok(()),
+            _ => Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
                 policyScope: policy_scope,
-            }))
+            })),
         }
     }
 }
