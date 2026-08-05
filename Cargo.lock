@@ -5094,6 +5094,7 @@ dependencies = [
  "alloy-signer 2.2.0",
  "alloy-signer-local 2.2.0",
  "alloy-sol-types",
+ "async-trait",
  "base-cli-utils",
  "base-common-flashblocks",
  "base-common-network",
