@@ -73,12 +73,18 @@ where
     }
 
     fn spawn_meter(&self, tx_hash: TxHash, raw: Bytes) {
-        if self.cache.contains_key(&tx_hash) {
+        // We never close this semaphore in normal operation. Bail before touching
+        // in_flight so a closed semaphore (runtime shutdown) cannot create a
+        // submit → spawn → acquire-fail → clear → resubmit loop.
+        if self.semaphore.is_closed() {
             return;
         }
+
         {
             let mut in_flight = self.in_flight.lock();
-            if !in_flight.insert(tx_hash) {
+            // Cache + in_flight under one lock so a concurrent completion cannot
+            // race a second spawn past a stale contains_key check.
+            if self.cache.contains_key(&tx_hash) || !in_flight.insert(tx_hash) {
                 return;
             }
         }
@@ -90,7 +96,8 @@ where
 
         tokio::spawn(async move {
             let Ok(_permit) = semaphore.acquire_owned().await else {
-                in_flight.lock().remove(&tx_hash);
+                // Closed between the pre-check and acquire (shutdown). Leave the
+                // hash in in_flight so submit() will not respawn.
                 return;
             };
 

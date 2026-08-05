@@ -265,26 +265,26 @@ impl BaseNodeExtension for MeteringExtension {
                 MeteringApiImpl::new(ctx.provider().clone(), fb_state, Arc::clone(&metered_opcodes))
             };
 
-            let metering_api_for_rpc = metering_api.clone();
-            let metering_api = Arc::new(metering_api);
-            let inline_service = Arc::new(InlineMeteringService::new(
-                Arc::clone(&metering_api),
-                inline_max_concurrent,
-            ));
-            let inline_handle: base_bundles::SharedInlineMetering =
-                Arc::clone(&inline_service) as _;
-
-            info!(
-                max_concurrent = inline_max_concurrent,
-                "inline mempool metering service started"
-            );
-
-            ctx.registry.eth_api().set_inline_metering(Arc::clone(&inline_handle));
+            // Only install inline metering when a slot was provided (mempool +
+            // tx-forwarding). Builders enable metering RPC without wanting
+            // eth_sendRawTransaction workers / cache / semaphore.
             if let Some(slot) = inline_metering_slot.as_ref() {
+                let metering_api = Arc::new(metering_api.clone());
+                let inline_service =
+                    Arc::new(InlineMeteringService::new(metering_api, inline_max_concurrent));
+                let inline_handle: base_bundles::SharedInlineMetering =
+                    Arc::clone(&inline_service) as _;
+
+                info!(
+                    max_concurrent = inline_max_concurrent,
+                    "inline mempool metering service started"
+                );
+
+                ctx.registry.eth_api().set_inline_metering(Arc::clone(&inline_handle));
                 let _ = slot.set(inline_handle);
             }
 
-            ctx.modules.merge_configured(metering_api_for_rpc.into_rpc())?;
+            ctx.modules.merge_configured(metering_api.into_rpc())?;
 
             Ok(())
         })

@@ -421,10 +421,12 @@ impl StandardBaseRethNode {
             gas_limit: args.metering.metering_gas_limit,
             da_bytes: args.metering.metering_da_bytes,
         };
-        let inline_metering_slot = args
-            .metering
-            .enable_metering
-            .then(|| Arc::new(std::sync::OnceLock::<SharedInlineMetering>::new()));
+        // Inline metering is only for mempool nodes that both meter and forward.
+        // Builders can enable metering RPC without allocating the inline service.
+        let inline_metering_slot = (args.metering.enable_metering
+            && args.enable_tx_forwarding
+            && !args.builder_rpc_urls.is_empty())
+        .then(|| Arc::new(std::sync::OnceLock::<SharedInlineMetering>::new()));
         let metering_config = if args.metering.enable_metering {
             let metered_opcodes = if args.metering.metering_metered_opcodes.is_empty() {
                 MeteredOpcodes::default()
