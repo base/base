@@ -69,11 +69,22 @@ pub enum StateRootMode {
     Compute,
 }
 
+/// Controls whether assembly populates the `base` field of the flashblock payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlashblockBaseMode {
+    /// Populate `base` for the first (fallback) flashblock of a block, which publishes it as-is.
+    Include,
+    /// Skip constructing `base` for intermediate flashblocks, whose callers discard it anyway.
+    Omit,
+}
+
 impl FlashblockAssembler {
     /// Builds a cumulative payload and the delta since the previous assembly pass.
     ///
     /// Intermediate flashblocks may skip state-root calculation. Final payloads and no-pool
-    /// synchronization payloads must request it. All fallible work runs before the bundle state
+    /// synchronization payloads must request it. Similarly, only the first (fallback) flashblock
+    /// of a block needs `flashblock.base` populated; later callers discard it immediately, so
+    /// `base_mode` lets them skip constructing it. All fallible work runs before the bundle state
     /// is consumed, so a failure can never leave `state` with a taken bundle or an advanced delta
     /// cursor to reuse; the REVM transition state is restored on every exit path (including
     /// failures), so `state` is left safe to reuse. Execution information (`info`) is only mutated
@@ -84,6 +95,7 @@ impl FlashblockAssembler {
         info: &mut ExecutionInfo,
         prev_flashblock_id: FlashblockId,
         state_root_mode: StateRootMode,
+        base_mode: FlashblockBaseMode,
     ) -> Result<FlashblockAssembly, PayloadBuilderError>
     where
         DB: revm::Database<Error = ProviderError> + AsRef<P>,
@@ -267,10 +279,8 @@ impl FlashblockAssembler {
                     }
                 };
 
-            let flashblock = FlashblocksPayloadV1 {
-                payload_id: ctx.payload_id(),
-                index: 0,
-                base: Some(ExecutionPayloadBaseV1 {
+            let base = match base_mode {
+                FlashblockBaseMode::Include => Some(ExecutionPayloadBaseV1 {
                     parent_beacon_block_root,
                     parent_hash: ctx.parent().hash(),
                     fee_recipient: ctx.attributes().payload_attributes.suggested_fee_recipient,
@@ -281,6 +291,13 @@ impl FlashblockAssembler {
                     extra_data,
                     base_fee_per_gas: U256::from(ctx.base_fee()),
                 }),
+                FlashblockBaseMode::Omit => None,
+            };
+
+            let flashblock = FlashblocksPayloadV1 {
+                payload_id: ctx.payload_id(),
+                index: 0,
+                base,
                 diff: ExecutionPayloadFlashblockDeltaV1 {
                     state_root,
                     receipts_root,
@@ -389,6 +406,7 @@ mod tests {
             &mut ExecutionInfo::default(),
             FlashblockId::default(),
             state_root_mode,
+            super::FlashblockBaseMode::Include,
         )
         .expect("assembly should succeed for an empty block")
     }
@@ -408,6 +426,29 @@ mod tests {
         assert_eq!(assembly.payload.block().state_root, B256::ZERO);
         assert_eq!(assembly.payload.block().number, 1);
         assert!(assembly.state_diff.is_empty());
+    }
+
+    #[test]
+    fn omits_base_when_requested() {
+        let ctx = BasePayloadBuilderCtx::for_test(minimal_chain_spec(), genesis_header());
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let assembly = FlashblockAssembler::build::<_, NoopProvider>(
+            &mut state,
+            &ctx,
+            &mut ExecutionInfo::default(),
+            FlashblockId::default(),
+            super::StateRootMode::Skip,
+            super::FlashblockBaseMode::Omit,
+        )
+        .expect("assembly should succeed for an empty block");
+        assert!(assembly.flashblock.base.is_none());
+    }
+
+    #[test]
+    fn includes_base_when_requested() {
+        let assembly = build(super::StateRootMode::Skip);
+        assert!(assembly.flashblock.base.is_some());
     }
 
     #[test]
@@ -450,6 +491,7 @@ mod tests {
                 &mut info,
                 FlashblockId::default(),
                 super::StateRootMode::Skip,
+                super::FlashblockBaseMode::Include,
             )
             .expect("assembly should succeed");
 
@@ -472,6 +514,7 @@ mod tests {
             &mut ExecutionInfo::default(),
             FlashblockId::default(),
             super::StateRootMode::Skip,
+            super::FlashblockBaseMode::Include,
         )
         .expect_err("assembly should reject a block number mismatch");
         assert!(error.to_string().contains("block number mismatch"));
@@ -489,6 +532,7 @@ mod tests {
             &mut ExecutionInfo::default(),
             FlashblockId::default(),
             super::StateRootMode::Skip,
+            super::FlashblockBaseMode::Include,
         )
         .expect_err("assembly should reject a missing beacon block root");
         assert!(error.to_string().contains("parent beacon block root not found"));

@@ -9,7 +9,7 @@ use std::{hint::black_box, sync::Arc};
 use alloy_consensus::{Header, Receipt, TxEip1559};
 use alloy_primitives::{TxKind, U256};
 use base_builder_core::{
-    BasePayloadBuilderCtx, ExecutionInfo, FlashblockAssembler, StateRootMode,
+    BasePayloadBuilderCtx, ExecutionInfo, FlashblockAssembler, FlashblockBaseMode, StateRootMode,
     test_utils::{generate_signer_from_seed, sign_base_tx},
 };
 use base_common_consensus::{BaseReceipt, BaseTypedTransaction};
@@ -106,6 +106,7 @@ fn assembly_benches(c: &mut Criterion) {
                 &mut info,
                 FlashblockId::default(),
                 StateRootMode::Skip,
+                FlashblockBaseMode::Omit,
             )
             .expect("prefix assembly should succeed");
         }
@@ -127,6 +128,7 @@ fn assembly_benches(c: &mut Criterion) {
                         &mut info,
                         FlashblockId::default(),
                         StateRootMode::Skip,
+                        FlashblockBaseMode::Omit,
                     )
                     .expect("assembly should succeed");
                     black_box(assembly.flashblock.diff.block_hash)

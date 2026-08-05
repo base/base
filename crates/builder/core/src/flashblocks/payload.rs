@@ -40,8 +40,8 @@ use crate::{
     BuilderConfig, BuilderMetrics, CandidateSource, DefaultCandidateSource, ExecutionInfo,
     PayloadBuilder, ResourceLimits,
     flashblocks::{
-        FlashblockAssembler, FlashblocksExtraCtx, StateRootMode, best_txs::BestFlashblocksTxs,
-        context::BasePayloadBuilderCtx, generator::BuildArguments,
+        FlashblockAssembler, FlashblockBaseMode, FlashblocksExtraCtx, StateRootMode,
+        best_txs::BestFlashblocksTxs, context::BasePayloadBuilderCtx, generator::BuildArguments,
     },
     traits::{ClientBounds, PoolBounds},
     transaction_events::{
@@ -298,6 +298,7 @@ where
             &mut info,
             prev_flashblock_id,
             if skip_flashblocks_building { StateRootMode::Compute } else { StateRootMode::Skip },
+            FlashblockBaseMode::Include,
         )?;
         let payload = assembly.payload;
         let fb_payload = assembly.flashblock;
@@ -712,6 +713,7 @@ where
             info,
             prev_flashblock_id,
             if ctx.attributes().no_tx_pool { StateRootMode::Compute } else { StateRootMode::Skip },
+            FlashblockBaseMode::Omit,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
         BuilderMetrics::total_block_built_duration().record(total_block_built_duration);
@@ -727,7 +729,6 @@ where
                 let mut fb_payload = assembly.flashblock;
                 let state_diff = assembly.state_diff;
                 fb_payload.index = flashblock_index;
-                fb_payload.base = None;
                 let serialized_flashblock = WebSocketPublisher::serialize(&fb_payload)
                     .wrap_err("failed to serialize flashblock for websocket publication")?;
 
@@ -954,6 +955,7 @@ where
             info,
             FlashblockId::default(),
             StateRootMode::Compute,
+            FlashblockBaseMode::Omit,
         )?
         .payload;
 
