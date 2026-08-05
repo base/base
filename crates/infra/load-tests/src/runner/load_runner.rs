@@ -117,6 +117,12 @@ struct OpenLoopEnqueueProgress {
     headroom_target: OpenLoopHeadroomTarget,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct OpenLoopEnqueueLimits {
+    deadline: Option<Instant>,
+    stop_when_accepted_target_reached: bool,
+}
+
 struct OpenLoopDrainState<'a> {
     submit_event_rx: &'a mut mpsc::Receiver<SubmitEvent>,
     queued_per_sender: &'a mut HashMap<Address, u64>,
@@ -220,7 +226,7 @@ impl OpenLoopHeadroomTarget {
         target
     }
 
-    fn saturated(
+    const fn saturated(
         target_outstanding_gas: u128,
         target_in_flight: u64,
         max_target_in_flight: u64,
@@ -1662,8 +1668,10 @@ impl LoadRunner {
             &next_submit_batch_id,
             &mut signed_chunk_rx,
             &mut progress,
-            Some(prefill_deadline),
-            true,
+            OpenLoopEnqueueLimits {
+                deadline: Some(prefill_deadline),
+                stop_when_accepted_target_reached: true,
+            },
             &self.stop_flag,
             &mut OpenLoopDrainState {
                 submit_event_rx: &mut submit_event_rx,
@@ -1731,8 +1739,10 @@ impl LoadRunner {
                 &next_submit_batch_id,
                 &mut signed_chunk_rx,
                 &mut progress,
-                enqueue_deadline,
-                false,
+                OpenLoopEnqueueLimits {
+                    deadline: enqueue_deadline,
+                    stop_when_accepted_target_reached: false,
+                },
                 &self.stop_flag,
                 &mut OpenLoopDrainState {
                     submit_event_rx: &mut submit_event_rx,
@@ -2441,8 +2451,7 @@ impl LoadRunner {
         next_submit_batch_id: &AtomicU64,
         signed_chunk_rx: &mut mpsc::Receiver<Vec<Vec<SignedTransaction>>>,
         progress: &mut OpenLoopEnqueueProgress,
-        deadline: Option<Instant>,
-        stop_when_accepted_target_reached: bool,
+        limits: OpenLoopEnqueueLimits,
         stop_flag: &AtomicBool,
         drain_state: &mut OpenLoopDrainState<'_>,
     ) -> Result<()> {
@@ -2454,7 +2463,7 @@ impl LoadRunner {
             if stop_flag.load(Ordering::SeqCst) {
                 return Err(BaselineError::Transaction("stopped during open-loop enqueue".into()));
             }
-            if stop_when_accepted_target_reached
+            if limits.stop_when_accepted_target_reached
                 && drain_state.results_tracker.total_in_flight()
                     >= progress.headroom_target.current_target_in_flight()
             {
@@ -2474,8 +2483,8 @@ impl LoadRunner {
                 }
                 return Ok(());
             }
-            if deadline.is_some_and(|d| Instant::now() >= d) {
-                if stop_when_accepted_target_reached {
+            if limits.deadline.is_some_and(|d| Instant::now() >= d) {
+                if limits.stop_when_accepted_target_reached {
                     return Err(BaselineError::Timeout {
                         operation: "open-loop mempool prefill".into(),
                         duration: OPEN_LOOP_PREFILL_TIMEOUT,
@@ -2530,19 +2539,19 @@ impl LoadRunner {
                                 }
                                 Self::wait_for_outstanding_headroom(
                                     progress.headroom_target.current_target_in_flight(),
-                                    deadline,
-                                    stop_when_accepted_target_reached,
+                                    limits.deadline,
+                                    limits.stop_when_accepted_target_reached,
                                     stop_flag,
                                     drain_state,
                                 )
                                 .await?;
-                                setup_target_reached = stop_when_accepted_target_reached
+                                setup_target_reached = limits.stop_when_accepted_target_reached
                                     && drain_state.results_tracker.total_in_flight()
                                         >= progress.headroom_target.current_target_in_flight();
                                 if !setup_target_reached
-                                    && deadline.is_some_and(|d| Instant::now() >= d)
+                                    && limits.deadline.is_some_and(|d| Instant::now() >= d)
                                 {
-                                    if stop_when_accepted_target_reached {
+                                    if limits.stop_when_accepted_target_reached {
                                         return Err(BaselineError::Timeout {
                                             operation: "open-loop mempool prefill".into(),
                                             duration: OPEN_LOOP_PREFILL_TIMEOUT,
@@ -2555,12 +2564,12 @@ impl LoadRunner {
                                 submission_pipeline,
                                 next_submit_batch_id,
                                 &mut pending_signed_batch,
-                                !stop_when_accepted_target_reached,
+                                !limits.stop_when_accepted_target_reached,
                                 drain_state,
                             )
                             .await
                             {
-                                if stop_when_accepted_target_reached {
+                                if limits.stop_when_accepted_target_reached {
                                     return Err(BaselineError::Transaction(
                                         "submit queue closed during setup prefill".into(),
                                     ));
@@ -2614,8 +2623,8 @@ impl LoadRunner {
             }
             Self::wait_for_outstanding_headroom(
                 progress.headroom_target.current_target_in_flight(),
-                deadline,
-                stop_when_accepted_target_reached,
+                limits.deadline,
+                limits.stop_when_accepted_target_reached,
                 stop_flag,
                 drain_state,
             )
@@ -2624,11 +2633,11 @@ impl LoadRunner {
                 submission_pipeline,
                 next_submit_batch_id,
                 &mut pending_signed_batch,
-                !stop_when_accepted_target_reached,
+                !limits.stop_when_accepted_target_reached,
                 drain_state,
             )
             .await;
-            if !enqueued && stop_when_accepted_target_reached {
+            if !enqueued && limits.stop_when_accepted_target_reached {
                 return Err(BaselineError::Transaction(
                     "submit queue closed while flushing setup nonce range".into(),
                 ));
