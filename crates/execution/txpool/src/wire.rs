@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 
 use alloy_primitives::{Address, Bytes};
-use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
+use reth_transaction_pool::{PoolTransaction, TransactionOrigin, ValidPoolTransaction};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Default extension payload for [`ValidatedTransaction`], contributing no
@@ -40,6 +40,17 @@ pub trait ValidatedTransactionExtensions<T: PoolTransaction>:
     /// Called by the builder RPC handler before the transaction is inserted
     /// into the pool.
     fn apply(self, tx: T) -> Result<T, ExtensionError>;
+
+    /// Pool origin the builder RPC handler should insert the transaction under.
+    ///
+    /// Defaults to [`TransactionOrigin::External`], matching the pool origin the
+    /// handler used before this method existed. An implementation may return a
+    /// different origin per instance (for example, only for the subset of
+    /// payloads that carry its extension data) to give those transactions a
+    /// distinct, queryable partition in the pool.
+    fn origin(&self) -> TransactionOrigin {
+        TransactionOrigin::External
+    }
 }
 
 impl<T: PoolTransaction> ValidatedTransactionExtensions<T> for NoExtensions {
@@ -113,6 +124,14 @@ mod tests {
     struct TestExtensions {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         extra: Option<u64>,
+    }
+
+    #[test]
+    fn no_extensions_origin_defaults_to_external() {
+        let origin = ValidatedTransactionExtensions::<crate::BasePooledTransaction>::origin(
+            &NoExtensions {},
+        );
+        assert_eq!(origin, TransactionOrigin::External);
     }
 
     fn sender() -> Address {
