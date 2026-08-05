@@ -110,7 +110,8 @@ impl WorkerHeartbeat {
 
         loop {
             // Check before sleeping so an already-expired claim aborts immediately.
-            if deadline.checked_duration_since(Instant::now()).is_none() {
+            let Some(remaining_before_sleep) = deadline.checked_duration_since(Instant::now())
+            else {
                 warn!(
                     session_id = %claim.session_id,
                     lock_id = %claim.lock_id,
@@ -118,9 +119,12 @@ impl WorkerHeartbeat {
                     "proof job heartbeat budget exceeded claimed lock expiry"
                 );
                 return Self::lease_budget_exceeded_error();
-            }
+            };
 
-            sleep(config.normalized_interval()).await;
+            let interval = config.normalized_interval();
+            if remaining_before_sleep > interval {
+                sleep(interval).await;
+            }
 
             let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
                 warn!(
