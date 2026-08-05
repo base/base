@@ -100,13 +100,13 @@ impl GasPricer {
         Fees { max_fee, priority_fee }
     }
 
-    /// Fees for funder/setup transfers: `2 * base_fee` max fee and zero priority fee.
+    /// Fees for funder/setup transfers: `2 * base_fee` max fee and a 1 wei tip.
     ///
-    /// Setup transfers are not competing for inclusion against measured load, so a tip is
-    /// unnecessary. Budgeting and sending use the same quote so affordability checks match
+    /// Setup transfers are not competing for inclusion against measured load, so a larger tip
+    /// is unnecessary. Budgeting and sending use the same quote so affordability checks match
     /// the transactions that will actually be broadcast.
     pub fn funding_fees_for(&self, base_fee: u128) -> Fees {
-        let priority_fee = 0;
+        let priority_fee = 1u128.min(self.max_gas_price);
         let max_fee = base_fee
             .saturating_mul(FUNDING_MAX_FEE_BASE_FEE_MULTIPLIER)
             .min(self.max_gas_price)
@@ -1260,14 +1260,14 @@ mod tests {
     }
 
     #[test]
-    fn gas_pricer_funding_fees_uses_two_x_base_fee_and_zero_priority() {
+    fn gas_pricer_funding_fees_uses_two_x_base_fee_and_one_wei_priority() {
         let pricer = GasPricer::new(1_000_000_000);
         let fees = pricer.funding_fees_for(100);
-        assert_eq!(fees.priority_fee, 0);
+        assert_eq!(fees.priority_fee, 1);
         assert_eq!(fees.max_fee, 200);
 
         let capped = GasPricer::new(150).funding_fees_for(100);
-        assert_eq!(capped, Fees { max_fee: 150, priority_fee: 0 });
+        assert_eq!(capped, Fees { max_fee: 150, priority_fee: 1 });
     }
 
     #[test]

@@ -197,7 +197,7 @@ impl LoadRunner {
             })?);
         // Reth only classifies the full nonce chain as executable when the funder can afford every
         // transaction's maximum declared L2 cost. Budget at the same `2 * base_fee` quote the
-        // funding txs will declare (zero tip) so affordability matches broadcast fees.
+        // funding txs will declare (1 wei tip) so affordability matches broadcast fees.
         let base_fee = client.get_base_fee().await?;
         let fees = pricer.funding_fees_for(base_fee);
         let mut gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(fees.max_fee));
