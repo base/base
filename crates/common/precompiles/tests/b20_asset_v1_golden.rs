@@ -1214,6 +1214,32 @@ fn golden_update_policy_reverts_missing_policy() {
     assert_eq!(err, BasePrecompileError::revert(IB20::PolicyNotFound { policyId: 99 }));
 }
 
+/// Consensus gas pin: on the `PolicyNotFound` revert path, asset `updatePolicy` must NOT read the
+/// old policy id, so the path performs zero SLOADs. This is the frozen asset ordering (`token.rs` at
+/// v1.1.0/v1.2.0: `ensure_supported` -> `policy_exists` -> read old only on success). Reading the
+/// old id before the existence check adds an SLOAD and changes gas — a consensus divergence that
+/// `golden_gas_footprints` (success path only) does not catch. Stablecoin intentionally reads before
+/// the check; its suite pins the opposite count.
+#[test]
+fn golden_update_policy_notfound_does_not_read_old_id() {
+    let mut s = fresh();
+    let before = s.counter_sload();
+    let err = op_privileged(
+        &mut s,
+        ADMIN,
+        FakePolicyAccounting::new(),
+        IB20::updatePolicyCall { policyScope: B20PolicyType::TransferSender.id(), newPolicyId: 99 }
+            .abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::PolicyNotFound { policyId: 99 }));
+    assert_eq!(
+        s.counter_sload() - before,
+        0,
+        "PolicyNotFound path must not read the old policy id (frozen asset ordering)"
+    );
+}
+
 // ============================================================================
 // permit
 // ============================================================================
@@ -2813,6 +2839,7 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_update_policy_reverts_missing_policy,
             golden_update_policy_unprivileged_requires_role,
             golden_update_policy_rejects_seize_scopes_at_v1,
+            golden_update_policy_notfound_does_not_read_old_id,
         ]),
         C::permit(_) => covered(&[
             golden_permit_sets_allowance_and_increments_nonce,

@@ -1166,6 +1166,30 @@ fn golden_update_policy_reverts_missing_policy() {
     assert_eq!(err, BasePrecompileError::revert(IB20::PolicyNotFound { policyId: 99 }));
 }
 
+/// Consensus gas pin: stablecoin `updatePolicy` reads the old policy id BEFORE the existence check,
+/// so the `PolicyNotFound` revert path performs exactly one SLOAD. This is the frozen stablecoin
+/// ordering (`token.rs` at v1.1.0/v1.2.0), and it intentionally differs from asset (which reads
+/// after the check, zero SLOADs). Pinned so the two variants are not accidentally unified.
+#[test]
+fn golden_update_policy_notfound_reads_old_id() {
+    let mut s = fresh();
+    let before = s.counter_sload();
+    let err = op_privileged(
+        &mut s,
+        ADMIN,
+        FakePolicyAccounting::new(),
+        IB20::updatePolicyCall { policyScope: B20PolicyType::TransferSender.id(), newPolicyId: 99 }
+            .abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::PolicyNotFound { policyId: 99 }));
+    assert_eq!(
+        s.counter_sload() - before,
+        1,
+        "frozen stablecoin ordering reads the old policy id before the existence check"
+    );
+}
+
 // ============================================================================
 // permit
 // ============================================================================
@@ -2225,6 +2249,7 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
             golden_update_policy_reverts_missing_policy,
             golden_update_policy_unprivileged_requires_role,
             golden_update_policy_rejects_seize_scopes_at_v1,
+            golden_update_policy_notfound_reads_old_id,
         ]),
         C::permit(_) => covered(&[
             golden_permit_sets_allowance_and_increments_nonce,

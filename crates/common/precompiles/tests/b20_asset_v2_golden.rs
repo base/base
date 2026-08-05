@@ -1790,6 +1790,29 @@ fn golden_update_policy_reverts_missing_policy() {
     assert_eq!(err, BasePrecompileError::revert(IB20::PolicyNotFound { policyId: 99 }));
 }
 
+/// Consensus gas pin (mirrors AssetV1): the `PolicyNotFound` revert path reads no old policy id, so
+/// it performs zero SLOADs. `AssetV2` preserves asset's frozen Beryl `update_policy` ordering into
+/// Cobalt, so asset's gas profile does not change across the fork boundary.
+#[test]
+fn golden_update_policy_notfound_does_not_read_old_id() {
+    let mut s = fresh();
+    let before = s.counter_sload();
+    let err = op_privileged(
+        &mut s,
+        ADMIN,
+        FakePolicyAccounting::new(),
+        IB20::updatePolicyCall { policyScope: B20PolicyType::TransferSender.id(), newPolicyId: 99 }
+            .abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::PolicyNotFound { policyId: 99 }));
+    assert_eq!(
+        s.counter_sload() - before,
+        0,
+        "PolicyNotFound path must not read the old policy id (frozen asset ordering)"
+    );
+}
+
 #[test]
 fn golden_update_policy_unprivileged_requires_role() {
     assert_unprivileged_requires_role(
@@ -3481,6 +3504,7 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_update_policy,
             golden_update_policy_reverts_missing_policy,
             golden_update_policy_unprivileged_requires_role,
+            golden_update_policy_notfound_does_not_read_old_id,
         ]),
         C::permit(_) => covered(&[
             golden_permit_sets_allowance_and_increments_nonce,

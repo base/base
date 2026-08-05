@@ -586,12 +586,18 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
         }
-        let old_policy_id = self.policy_id(token, policy_scope)?;
+        // Frozen Beryl ordering (see `token.rs` at v1.1.0/v1.2.0): validate the scope (pure), then
+        // the existence check, and only read the old id on the success path. Reading the old id
+        // before `policy_exists` would add an SLOAD on the `PolicyNotFound` revert path, changing
+        // gas — a consensus divergence from the frozen asset surface. (Stablecoin reads before the
+        // check; that difference is itself frozen, so the two variants intentionally differ here.)
+        Self::ensure_supported_policy_type(policy_scope)?;
         if !token.policy().policy_exists(token.policy_storage(), new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
         }
+        let old_policy_id = token.accounting().policy_id(policy_scope)?;
         token.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
         token.accounting_mut().emit_event(
             IB20::PolicyUpdated {
