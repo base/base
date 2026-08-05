@@ -17,13 +17,11 @@ use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{debug, error, info, instrument, warn};
 
-use super::{LoadRunner, SubmissionPipeline, TxType, load_runner::NONCE_RPC_TIMEOUT};
+use super::{GasPricer, LoadRunner, TxType, load_runner::NONCE_RPC_TIMEOUT};
 use crate::{
     BaselineError, Result,
     rpc::{BaseFeeExt, QueryProvider, RpcResultExt, TxpoolAdminClient, create_wallet_provider},
-    workload::{
-        await_token_balances, encode_erc20_balance_of, prep_submission_max_fee,
-    },
+    workload::{await_token_balances, encode_erc20_balance_of},
 };
 
 /// Maximum number of concurrent RPC requests during funding/draining operations.
@@ -46,7 +44,7 @@ impl LoadRunner {
         let client = self.client.clone();
         let primary_submission_rpc = self.config.primary_submission_rpc().clone();
         let chain_id = self.config.chain_id;
-        let max_gas_price = self.config.max_gas_price;
+        let pricer = GasPricer::new(self.config.max_gas_price);
 
         let pb_check = self.progress_bar(total_accounts as u64, "Checking balances");
 
@@ -198,9 +196,11 @@ impl LoadRunner {
                 BaselineError::Transaction("stale funder nonce range exceeds usize".into())
             })?);
         // Reth only classifies the full nonce chain as executable when the funder can afford every
-        // transaction's maximum declared L2 cost. Using an expected EIP-1559 price here can leave
-        // an affordable pending prefix followed by queued descendants.
-        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(max_gas_price));
+        // transaction's maximum declared L2 cost. Budget at the same `2 * base_fee` quote the
+        // funding txs will declare (zero tip) so affordability matches broadcast fees.
+        let base_fee = client.get_base_fee().await?;
+        let fees = pricer.funding_fees_for(base_fee);
+        let mut gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(fees.max_fee));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(funding_request_count));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
@@ -253,13 +253,14 @@ impl LoadRunner {
             .expect("nonce overflow");
         while !txs_remaining.is_empty() {
             let base_fee = client.get_base_fee().await?;
-            let max_priority_fee = (base_fee / 10).max(1).min(max_gas_price);
-            // Funding transactions form one strict nonce chain and may wait several blocks behind
-            // earlier transfers. Use the configured safety cap as maxFeePerGas so a rising base
-            // fee cannot make the head transaction non-executable and strand every later nonce.
-            // EIP-1559 still charges only base fee plus priority fee, not this full cap.
-            let max_fee = max_gas_price;
-            info!(base_fee, max_fee, max_priority_fee, "pricing funding transaction batch");
+            let fees = pricer.funding_fees_for(base_fee);
+            gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(fees.max_fee));
+            info!(
+                base_fee,
+                max_fee = fees.max_fee,
+                priority_fee = fees.priority_fee,
+                "pricing funding transaction batch"
+            );
             let batch: Vec<_> = (0..self.config.max_in_flight_per_sender)
                 .filter_map(|_| txs_remaining.pop_front())
                 .collect();
@@ -282,8 +283,8 @@ impl LoadRunner {
                         .with_nonce(nonce)
                         .with_chain_id(chain_id)
                         .with_gas_limit(21_000)
-                        .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee);
+                        .with_max_fee_per_gas(fees.max_fee)
+                        .with_max_priority_fee_per_gas(fees.priority_fee);
                     let result = provider.send_transaction(tx).await;
                     (result, address, deficit, nonce, fund_account)
                 }
@@ -351,19 +352,12 @@ impl LoadRunner {
                 let retry_futs = retries.into_iter().map(|(address, deficit, nonce, fund_account)| {
                     let provider = Arc::clone(&funder_provider);
                     async move {
-                        let mut replacement_max_fee = max_fee;
-                        let mut replacement_priority_fee = max_priority_fee;
+                        let mut replacement_fees = fees;
 
                         for attempt in 1..=FUNDING_REPLACEMENT_MAX_ATTEMPTS {
-                            let next_max_fee = replacement_max_fee
-                                .saturating_mul(FUNDING_REPLACEMENT_FEE_MULTIPLIER)
-                                .min(max_gas_price);
-                            let next_priority_fee = replacement_priority_fee
-                                .saturating_mul(FUNDING_REPLACEMENT_FEE_MULTIPLIER)
-                                .min(next_max_fee);
-                            if next_max_fee == replacement_max_fee
-                                && next_priority_fee == replacement_priority_fee
-                            {
+                            let next_fees =
+                                pricer.bumped(replacement_fees, FUNDING_REPLACEMENT_FEE_MULTIPLIER);
+                            if next_fees == replacement_fees {
                                 // A transaction from a previous run may already use the configured
                                 // absolute fee cap and therefore be impossible to replace. Let the
                                 // executable original settle, then verify the intended recipient.
@@ -377,8 +371,7 @@ impl LoadRunner {
                                     true,
                                 ));
                             }
-                            replacement_max_fee = next_max_fee;
-                            replacement_priority_fee = next_priority_fee;
+                            replacement_fees = next_fees;
 
                             let replacement = TransactionRequest::default()
                                 .with_to(address)
@@ -386,8 +379,8 @@ impl LoadRunner {
                                 .with_nonce(nonce)
                                 .with_chain_id(chain_id)
                                 .with_gas_limit(21_000)
-                                .with_max_fee_per_gas(replacement_max_fee)
-                                .with_max_priority_fee_per_gas(replacement_priority_fee);
+                                .with_max_fee_per_gas(replacement_fees.max_fee)
+                                .with_max_priority_fee_per_gas(replacement_fees.priority_fee);
 
                             match provider.send_transaction(replacement).await {
                                 Ok(pending) => {
@@ -434,8 +427,8 @@ impl LoadRunner {
                                         to = %address,
                                         nonce,
                                         attempt,
-                                        replacement_max_fee,
-                                        replacement_priority_fee,
+                                        replacement_max_fee = replacement_fees.max_fee,
+                                        replacement_priority_fee = replacement_fees.priority_fee,
                                         "replacement funding transaction still underpriced"
                                     );
                                 }
@@ -833,16 +826,14 @@ impl LoadRunner {
         let funder_provider =
             Arc::new(create_wallet_provider(self.config.primary_submission_rpc().clone(), wallet));
         let chain_id = self.config.chain_id;
-        let max_gas_price = self.config.max_gas_price;
+        let pricer = GasPricer::new(self.config.max_gas_price);
 
         let base_fee = self.client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1);
-        let max_fee =
-            prep_submission_max_fee(base_fee, max_priority_fee, max_gas_price);
+        let fees = pricer.funding_fees_for(base_fee);
 
         // Pre-flight balance check — abort before sending any TXs if the funder
         // cannot cover the total gas cost for needed token transfers.
-        let gas_cost_per_tx = U256::from(65_000u64).saturating_mul(U256::from(max_fee));
+        let gas_cost_per_tx = U256::from(65_000u64).saturating_mul(U256::from(fees.max_fee));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(transfers_needed.len()));
         let funder_balance = self.client.get_balance(funder_address).await.rpc("get balance")?;
 
@@ -878,8 +869,8 @@ impl LoadRunner {
                     .with_nonce(nonce)
                     .with_chain_id(chain_id)
                     .with_gas_limit(65_000)
-                    .with_max_fee_per_gas(max_fee)
-                    .with_max_priority_fee_per_gas(max_priority_fee);
+                    .with_max_fee_per_gas(fees.max_fee)
+                    .with_max_priority_fee_per_gas(fees.priority_fee);
                 nonce += 1;
                 (tx, token, sender)
             })
@@ -956,17 +947,12 @@ impl LoadRunner {
         let chain_id = self.config.chain_id;
 
         let base_fee = client.get_base_fee().await?;
-        let max_priority_fee = (base_fee / 10).max(1);
-        let max_fee = SubmissionPipeline::submission_max_fee(
-            base_fee,
-            max_priority_fee,
-            self.config.max_gas_price,
-        );
+        let fees = GasPricer::new(self.config.max_gas_price).funding_fees_for(base_fee);
         let drain_gas_limit = 21_000u128;
         // L1 data fee on Base can be significant (0.0001-0.001 ETH depending on L1 gas prices).
         // Use 0.001 ETH (1e15 wei) buffer to be safe. We may leave dust in accounts.
         let l1_fee_buffer = 1_000_000_000_000_000u128;
-        let drain_gas_cost = U256::from(drain_gas_limit * max_fee + l1_fee_buffer);
+        let drain_gas_cost = U256::from(drain_gas_limit * fees.max_fee + l1_fee_buffer);
 
         let total_accounts = self.accounts.len();
         let pb_drain = self.progress_bar(total_accounts as u64, "Draining accounts");
@@ -1010,8 +996,8 @@ impl LoadRunner {
                         .with_nonce(nonce)
                         .with_chain_id(chain_id)
                         .with_gas_limit(drain_gas_limit as u64)
-                        .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee);
+                        .with_max_fee_per_gas(fees.max_fee)
+                        .with_max_priority_fee_per_gas(fees.priority_fee);
 
                     match provider.send_transaction(tx).await {
                         Ok(pending) => {

@@ -64,11 +64,18 @@ pub struct Fees {
     pub priority_fee: u128,
 }
 
+/// Multiplier for funder/setup `maxFeePerGas` relative to the current base fee.
+///
+/// Funding, draining, and token-mint transfers are short-lived and do not need the
+/// measured-load headroom (`MAX_FEE_BASE_FEE_MULTIPLIER`). `2x` covers a single base-fee
+/// jump while keeping the funder's declared max-cost affordable.
+pub const FUNDING_MAX_FEE_BASE_FEE_MULTIPLIER: u128 = 2;
+
 /// Computes EIP-1559 fee fields from a base fee, capped at a `max_gas_price` ceiling.
 ///
-/// Centralizes the priority-fee and `maxFeePerGas` formulas so callers (the submission
-/// pipeline, funding, draining, and B-20/real-token setup) never need to read
-/// `max_gas_price` or reimplement the pricing math themselves.
+/// Centralizes fee formulas so callers never need to reimplement the pricing math.
+/// Use [`Self::fees_for`] for measured load submissions and [`Self::funding_fees_for`]
+/// for funder/setup transfers.
 #[derive(Debug, Clone, Copy)]
 pub struct GasPricer {
     max_gas_price: u128,
@@ -85,11 +92,25 @@ impl GasPricer {
         self.max_gas_price
     }
 
-    /// Fees for a fresh send at the given base fee.
+    /// Fees for a measured-load submission at the given base fee.
     pub fn fees_for(&self, base_fee: u128) -> Fees {
         let priority_fee = (base_fee / 10).max(1).min(self.max_gas_price);
         let max_fee =
             SubmissionPipeline::submission_max_fee(base_fee, priority_fee, self.max_gas_price);
+        Fees { max_fee, priority_fee }
+    }
+
+    /// Fees for funder/setup transfers: `2 * base_fee` max fee and zero priority fee.
+    ///
+    /// Setup transfers are not competing for inclusion against measured load, so a tip is
+    /// unnecessary. Budgeting and sending use the same quote so affordability checks match
+    /// the transactions that will actually be broadcast.
+    pub fn funding_fees_for(&self, base_fee: u128) -> Fees {
+        let priority_fee = 0;
+        let max_fee = base_fee
+            .saturating_mul(FUNDING_MAX_FEE_BASE_FEE_MULTIPLIER)
+            .min(self.max_gas_price)
+            .max(priority_fee);
         Fees { max_fee, priority_fee }
     }
 
@@ -1236,6 +1257,17 @@ mod tests {
         let fees = pricer.fees_for(100);
         assert_eq!(fees.priority_fee, 10);
         assert_eq!(fees.max_fee, SubmissionPipeline::submission_max_fee(100, 10, 1_000_000_000));
+    }
+
+    #[test]
+    fn gas_pricer_funding_fees_uses_two_x_base_fee_and_zero_priority() {
+        let pricer = GasPricer::new(1_000_000_000);
+        let fees = pricer.funding_fees_for(100);
+        assert_eq!(fees.priority_fee, 0);
+        assert_eq!(fees.max_fee, 200);
+
+        let capped = GasPricer::new(150).funding_fees_for(100);
+        assert_eq!(capped, Fees { max_fee: 150, priority_fee: 0 });
     }
 
     #[test]
