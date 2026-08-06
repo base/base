@@ -105,8 +105,8 @@ where
 
         let (proof, permit) = self
             .with_heartbeat_while_generating(&request, async {
-                let permit = self.tasks.acquire_submission_permit().await;
                 let proof = self.pool.prove(request.proof.clone()).await?;
+                let permit = self.tasks.acquire_submission_permit().await;
                 Ok((proof, permit))
             })
             .await

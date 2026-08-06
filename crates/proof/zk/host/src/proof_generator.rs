@@ -146,8 +146,8 @@ where
 
         let (result, permit) = self
             .with_heartbeat_while_generating(&request, async {
-                let permit = self.tasks.acquire_submission_permit().await;
                 let result = self.prove_to_completion(&request).await?;
+                let permit = self.tasks.acquire_submission_permit().await;
                 Ok((result, permit))
             })
             .await
