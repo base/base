@@ -164,8 +164,8 @@ mod tests {
             crate::IB20Asset::effectiveAtCall::SELECTOR,
             crate::IB20Asset::balanceOfUICall::SELECTOR,
             crate::IB20Asset::totalSupplyUICall::SELECTOR,
-            crate::IB20Asset::setUIMultiplierCall::SELECTOR,
-            crate::IB20Asset::cancelScheduledMultiplierCall::SELECTOR,
+            crate::IB20Asset::updateUIMultiplierCall::SELECTOR,
+            crate::IB20Asset::cancelUIMultiplierUpdateCall::SELECTOR,
             crate::IB20Asset::supportsInterfaceCall::SELECTOR,
         ] {
             assert!(

@@ -32,7 +32,7 @@ const DOMAIN_TYPEHASH: B256 =
 const VERSION: &[u8] = b"1";
 
 /// Second asset B-20 implementation. Activated at Cobalt; adds the ERC-8056 scheduled-multiplier
-/// surface (lazy multiplier, `setUIMultiplier`/`cancelScheduledMultiplier`, ERC-165) on top of a
+/// surface (lazy multiplier, `updateUIMultiplier`/`cancelUIMultiplierUpdate`, ERC-165) on top of a
 /// self-contained copy of the frozen V1 behavior.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AssetV2;
@@ -972,8 +972,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         let pending_effective_at = token.accounting().pending_effective_at()?;
         // A live pending blocks a new schedule.
         if U256::from(pending_effective_at) > now {
-            return Err(BasePrecompileError::revert(IB20Asset::PendingUpdateExists {
-                pendingEffectiveAt: U256::from(pending_effective_at),
+            return Err(BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateExists {
+                effectiveAt: U256::from(pending_effective_at),
             }));
         }
         // Fold a matured pending into the current multiplier before overwriting it.
@@ -1009,7 +1009,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         let pending_effective_at = U256::from(token.accounting().pending_effective_at()?);
         // A pending maturing at exactly `now` has already taken effect and is not cancellable.
         if pending_effective_at <= now {
-            return Err(BasePrecompileError::revert(IB20Asset::NoScheduledUIMultiplier {}));
+            return Err(BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateDoesNotExist {}));
         }
         token.accounting_mut().clear_pending_multiplier_and_effective_at()?;
         token.accounting_mut().emit_event(
@@ -2271,8 +2271,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             err,
-            BasePrecompileError::revert(IB20Asset::PendingUpdateExists {
-                pendingEffectiveAt: first_effective_at,
+            BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateExists {
+                effectiveAt: first_effective_at,
             })
         );
     }
@@ -2339,7 +2339,7 @@ mod tests {
         let mut tok = token();
         set_now(&mut tok, U256::from(1u64));
         let none = LOGIC.cancel_scheduled_multiplier(&mut tok, ALICE, true).unwrap_err();
-        assert_eq!(none, BasePrecompileError::revert(IB20Asset::NoScheduledUIMultiplier {}));
+        assert_eq!(none, BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateDoesNotExist {}));
 
         // A matured pending is no longer "live", so cancel still reverts.
         LOGIC
@@ -2347,7 +2347,7 @@ mod tests {
             .unwrap();
         set_now(&mut tok, U256::from(100u64));
         let matured = LOGIC.cancel_scheduled_multiplier(&mut tok, ALICE, true).unwrap_err();
-        assert_eq!(matured, BasePrecompileError::revert(IB20Asset::NoScheduledUIMultiplier {}));
+        assert_eq!(matured, BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateDoesNotExist {}));
     }
 
     #[test]

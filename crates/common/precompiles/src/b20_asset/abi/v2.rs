@@ -35,21 +35,21 @@ sol! {
         /// `updateExtraMetadata` was called with an empty metadata key.
         error InvalidMetadataKey();
 
-        /// A multiplier setter (`setUIMultiplier` / `updateUIMultiplier` / `updateMultiplier`) was
-        /// called with a multiplier of zero or above the `type(uint128).max` overflow guard.
+        /// A multiplier setter (`updateUIMultiplier` / `updateMultiplier`) was called with a
+        /// multiplier of zero or above the `type(uint128).max` overflow guard.
         error InvalidMultiplier();
 
-        /// [V2] `setUIMultiplier` was called with an `effectiveAt` that is not in the future
+        /// [V2] `updateUIMultiplier` was called with an `effectiveAt` that is not in the future
         error EffectiveAtInPast(uint256 effectiveAt);
 
-        /// [V2] `setUIMultiplier` was called with an `effectiveAt` beyond the `uint64` field range
+        /// [V2] `updateUIMultiplier` was called with an `effectiveAt` beyond the `uint64` field range
         error EffectiveAtTooFar(uint256 effectiveAt);
 
-        /// [V2] `setUIMultiplier` was called while a live pending update already exists.
-        error PendingUpdateExists(uint256 pendingEffectiveAt);
+        /// [V2] `updateUIMultiplier` was called while a live pending update already exists.
+        error UIMultiplierUpdateExists(uint256 effectiveAt);
 
-        /// [V2] `cancelScheduledMultiplier` was called when there is no live pending update.
-        error NoScheduledUIMultiplier();
+        /// [V2] `cancelUIMultiplierUpdate` was called when there is no live pending update.
+        error UIMultiplierUpdateDoesNotExist();
 
         /// A batched function was called with parallel arrays of differing lengths.
         error LengthMismatch(uint256 leftLen, uint256 rightLen);
@@ -68,15 +68,15 @@ sol! {
 
         // ── Events ───────────────────────────────────────────────────────────
 
-        /// Deprecated V1 event. `AssetV2`'s instant setter (`updateMultiplier` / `updateUIMultiplier`)
-        /// emits this alongside `UIMultiplierUpdated` for backward compatibility with indexers on the
-        /// legacy topic; the scheduled `setUIMultiplier` emits only `UIMultiplierUpdated`.
+        /// Deprecated V1 event. `AssetV2`'s instant setter (`updateMultiplier`) emits this alongside
+        /// `UIMultiplierUpdated` for backward compatibility with indexers on the legacy topic; the
+        /// scheduled `updateUIMultiplier` emits only `UIMultiplierUpdated`.
         event MultiplierUpdated(uint256 multiplier);
 
-        /// [V2] ERC-8056; emitted by `setUIMultiplier` and `updateMultiplier`.
+        /// [V2] ERC-8056; emitted by `updateUIMultiplier` and `updateMultiplier`.
         event UIMultiplierUpdated(uint256 oldMultiplier, uint256 newMultiplier, uint256 effectiveAtTimestamp);
 
-        /// [V2] Emitted by `cancelScheduledMultiplier`, and by `updateMultiplier` when it clears
+        /// [V2] Emitted by `cancelUIMultiplierUpdate`, and by `updateMultiplier` when it clears
         /// a live pending update.
         event UIMultiplierUpdateCancelled(uint256 cancelledMultiplier, uint256 cancelledEffectiveAt);
 
@@ -156,22 +156,19 @@ sol! {
         /// [V2] ERC-8056 Balances extension: `totalSupply() * multiplier() / WAD_PRECISION`.
         function totalSupplyUI() external view returns (uint256);
 
-        /// [V2] Schedules a single multiplier update effective at `effectiveAt`.
-        /// The standard corporate-action path; requires `OPERATOR_ROLE`.
-        function setUIMultiplier(uint256 newMultiplier, uint256 effectiveAt) external;
+        /// [V2] Schedules a single UI-multiplier update effective at `effectiveAt` — the canonical
+        /// corporate-action path (splits, reinvested dividends). Requires `OPERATOR_ROLE`.
+        function updateUIMultiplier(uint256 newMultiplier, uint256 effectiveAt) external;
 
         /// [V2] Cancels the single live pending update, restoring the no-pending state.
-        function cancelScheduledMultiplier() external;
+        function cancelUIMultiplierUpdate() external;
 
         /// Instant failsafe: sets the current multiplier immediately and clears any pending.
         /// At `AssetV1` emits only `MultiplierUpdated`; `AssetV2` emits both `MultiplierUpdated` and
-        /// `UIMultiplierUpdated`. Deprecated in favor of `updateUIMultiplier`; retained (dialable) and
-        /// kept in base-std's `IB20Asset` interface as a deprecated alias.
+        /// `UIMultiplierUpdated`. Deprecated (retained dialable, and kept in base-std's `IB20Asset`
+        /// interface as a deprecated function); the canonical setter is the scheduled
+        /// `updateUIMultiplier`.
         function updateMultiplier(uint256 newMultiplier) external;
-
-        /// [V2] The instant failsafe under the canonical ERC-8056 "UI Multiplier" vocabulary.
-        /// Behaves identically to `updateMultiplier` (same logic, same events).
-        function updateUIMultiplier(uint256 newMultiplier) external;
 
         /// [V2] ERC-165 interface detection.
         function supportsInterface(bytes4 interfaceId) external view returns (bool);
@@ -214,10 +211,9 @@ impl IB20Asset::IB20AssetCalls {
             Self::scaledBalanceOf(_) => "precompile-b20-asset-scaledBalanceOf",
             Self::balanceOfUI(_) => "precompile-b20-asset-balanceOfUI",
             Self::totalSupplyUI(_) => "precompile-b20-asset-totalSupplyUI",
-            Self::setUIMultiplier(_) => "precompile-b20-asset-setUIMultiplier",
-            Self::cancelScheduledMultiplier(_) => "precompile-b20-asset-cancelScheduledMultiplier",
-            Self::updateMultiplier(_) => "precompile-b20-asset-updateMultiplier",
             Self::updateUIMultiplier(_) => "precompile-b20-asset-updateUIMultiplier",
+            Self::cancelUIMultiplierUpdate(_) => "precompile-b20-asset-cancelUIMultiplierUpdate",
+            Self::updateMultiplier(_) => "precompile-b20-asset-updateMultiplier",
             Self::supportsInterface(_) => "precompile-b20-asset-supportsInterface",
             Self::batchMint(_) => "precompile-b20-asset-batchMint",
             Self::extraMetadata(_) => "precompile-b20-asset-extraMetadata",
@@ -241,7 +237,7 @@ mod tests {
 
     /// Absolute wire fingerprint for Cobalt's (canonical) surface.
     const V2_ABI_FINGERPRINT: B256 =
-        b256!("3da5383f3f700dede9e8918d25ec29f0b1451beab17d13d4e2aff78c5a52727d");
+        b256!("691ec59a8cf08af7730fa6a98c1fcc71ad6a5bfb2b563540b323e644169f034d");
 
     /// `IB20Asset` declares no enum, so this surface passes `0` for the count and no ordinals to
     /// [`AbiFingerprint`] — there is no discriminant here that escapes the ABI the way the
@@ -403,10 +399,9 @@ mod tests {
     }
 
     /// The exact selector set dialable at Cobalt (the 12 Beryl selectors plus the 8 ERC-8056
-    /// scheduled-multiplier selectors, plus the `updateUIMultiplier` alias, the ERC-8056
-    /// Conversion-extension `toUIAmount` / `fromUIAmount` aliases, and the `MAX_UI_MULTIPLIER`
-    /// getter added by the interface review). Adding or removing one changes which calls historical
-    /// blocks could make.
+    /// scheduled-multiplier selectors plus the ERC-8056 Conversion-extension `toUIAmount` /
+    /// `fromUIAmount` aliases and the `MAX_UI_MULTIPLIER` getter added by the interface review).
+    /// Adding or removing one changes which calls historical blocks could make.
     #[test]
     fn selector_set_is_frozen() {
         let mut selectors: Vec<[u8; 4]> = IB20Asset::IB20AssetCalls::selectors().collect();
@@ -425,7 +420,6 @@ mod tests {
             IB20Asset::fromUIAmountCall::SELECTOR,
             IB20Asset::scaledBalanceOfCall::SELECTOR,
             IB20Asset::updateMultiplierCall::SELECTOR,
-            IB20Asset::updateUIMultiplierCall::SELECTOR,
             IB20Asset::batchMintCall::SELECTOR,
             IB20Asset::extraMetadataCall::SELECTOR,
             IB20Asset::updateExtraMetadataCall::SELECTOR,
@@ -434,13 +428,13 @@ mod tests {
             IB20Asset::effectiveAtCall::SELECTOR,
             IB20Asset::balanceOfUICall::SELECTOR,
             IB20Asset::totalSupplyUICall::SELECTOR,
-            IB20Asset::setUIMultiplierCall::SELECTOR,
-            IB20Asset::cancelScheduledMultiplierCall::SELECTOR,
+            IB20Asset::updateUIMultiplierCall::SELECTOR,
+            IB20Asset::cancelUIMultiplierUpdateCall::SELECTOR,
             IB20Asset::supportsInterfaceCall::SELECTOR,
         ];
         expected.sort_unstable();
 
-        assert_eq!(selectors.len(), 24);
+        assert_eq!(selectors.len(), 23);
         assert_eq!(selectors, expected);
     }
 }

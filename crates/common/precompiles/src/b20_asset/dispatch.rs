@@ -378,12 +378,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 logic.update_multiplier(self, caller, c.newMultiplier, privileged)?;
                 Bytes::new()
             }
-            // ERC-8056-vocabulary alias of `updateMultiplier`; identical behavior.
             SC::updateUIMultiplier(c) => {
-                logic.update_multiplier(self, caller, c.newMultiplier, privileged)?;
-                Bytes::new()
-            }
-            SC::setUIMultiplier(c) => {
                 logic.set_ui_multiplier(
                     self,
                     caller,
@@ -393,7 +388,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 )?;
                 Bytes::new()
             }
-            SC::cancelScheduledMultiplier(_) => {
+            SC::cancelUIMultiplierUpdate(_) => {
                 logic.cancel_scheduled_multiplier(self, caller, privileged)?;
                 Bytes::new()
             }
@@ -739,7 +734,7 @@ mod tests {
             &mut token,
             ALICE,
             U256::from(1u64),
-            IB20Asset::setUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
+            IB20Asset::updateUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
                 .abi_encode(),
         )
         .unwrap();
@@ -791,7 +786,7 @@ mod tests {
     #[test]
     fn route_v1_rejects_scheduled_selector_as_unknown() {
         let mut token = make_token();
-        let calldata = IB20Asset::setUIMultiplierCall {
+        let calldata = IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD,
             effectiveAt: U256::from(2u64),
         }
@@ -815,8 +810,8 @@ mod tests {
     #[test]
     fn route_v1_rejects_scheduled_selector_with_malformed_args_as_unknown() {
         let mut token = make_token();
-        // A valid `setUIMultiplier` selector followed by truncated (non-decodable) arguments.
-        let mut calldata = IB20Asset::setUIMultiplierCall::SELECTOR.to_vec();
+        // A valid `updateUIMultiplier` selector followed by truncated (non-decodable) arguments.
+        let mut calldata = IB20Asset::updateUIMultiplierCall::SELECTOR.to_vec();
         calldata.extend_from_slice(&[0u8; 3]);
         let selector: [u8; 4] = calldata[..4].try_into().unwrap();
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();

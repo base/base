@@ -248,8 +248,8 @@ fn resolver_maps_forks_to_versions() {
     assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(AssetVersion::V2));
 }
 
-/// The ERC-8056 scheduled-multiplier selectors (plus the `updateUIMultiplier` alias) were
-/// introduced at Cobalt (`AssetV2`). At V1 (Beryl) they are absent from the frozen asset wire
+/// The ERC-8056 scheduled-multiplier selectors were introduced at Cobalt (`AssetV2`). At V1 (Beryl)
+/// they are absent from the frozen asset wire
 /// surface, so `route` falls through to the disjoint inherited `IB20` decode and rejects them as
 /// `UnknownFunctionSelector`, byte-identically to the deleted hand-written fork gate.
 #[test]
@@ -261,9 +261,8 @@ fn golden_v2_selectors_unknown_at_v1() {
         IB20Asset::effectiveAtCall {}.abi_encode(),
         IB20Asset::balanceOfUICall { account: ALICE }.abi_encode(),
         IB20Asset::totalSupplyUICall {}.abi_encode(),
-        IB20Asset::setUIMultiplierCall { newMultiplier: u(2), effectiveAt: u(1) }.abi_encode(),
-        IB20Asset::cancelScheduledMultiplierCall {}.abi_encode(),
-        IB20Asset::updateUIMultiplierCall { newMultiplier: u(2) }.abi_encode(),
+        IB20Asset::updateUIMultiplierCall { newMultiplier: u(2), effectiveAt: u(1) }.abi_encode(),
+        IB20Asset::cancelUIMultiplierUpdateCall {}.abi_encode(),
         IB20Asset::toUIAmountCall { rawAmount: u(100) }.abi_encode(),
         IB20Asset::fromUIAmountCall { uiAmount: u(200) }.abi_encode(),
         IB20Asset::MAX_UI_MULTIPLIERCall {}.abi_encode(),
@@ -2837,9 +2836,8 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         | SC::effectiveAt(_)
         | SC::balanceOfUI(_)
         | SC::totalSupplyUI(_)
-        | SC::setUIMultiplier(_)
-        | SC::cancelScheduledMultiplier(_)
         | SC::updateUIMultiplier(_)
+        | SC::cancelUIMultiplierUpdate(_)
         | SC::toUIAmount(_)
         | SC::fromUIAmount(_)
         | SC::MAX_UI_MULTIPLIER(_)
