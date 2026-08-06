@@ -2416,8 +2416,13 @@ mod tests {
 
         // MultiplierUpdated + UIMultiplierUpdated are emitted (no cancellation for a matured
         // pending, which folds into `old` silently); `old` is the matured effective value.
+        let events = &tok.accounting().events;
         assert_eq!(
-            last_event(&tok),
+            events[events.len() - 2],
+            IB20Asset::MultiplierUpdated { multiplier: instant }.encode_log_data()
+        );
+        assert_eq!(
+            events[events.len() - 1],
             IB20Asset::UIMultiplierUpdated {
                 oldMultiplier: matured,
                 newMultiplier: instant,
