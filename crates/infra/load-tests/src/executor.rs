@@ -195,7 +195,7 @@ impl LoadTestExecutor {
         // Cleanup must run even if the caller hook panics, or funded accounts can leak ETH.
         runner.set_display_stage(LoadTestStage::Cleanup);
         let hook_panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            (hooks.before_cleanup)(&summary);
+            runner.suspend_display(|| (hooks.before_cleanup)(&summary));
         }));
         let cleanup = Self::cleanup(&runner, funding_key, options.skip_drain).await;
         runner.finish_display();

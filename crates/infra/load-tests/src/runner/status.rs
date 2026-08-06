@@ -188,7 +188,31 @@ impl LoadTestDisplay {
 
     /// Updates the header for a bounded lifecycle stage.
     pub fn set_stage(&self, stage: LoadTestStage) {
+        let style = if stage == LoadTestStage::Submitting {
+            self.duration.map_or_else(
+                || {
+                    ProgressStyle::with_template("{spinner:.cyan} {msg}")
+                        .expect("template is valid")
+                },
+                |_| {
+                    ProgressStyle::with_template(
+                        "{spinner:.cyan} {msg}  [{bar:40.cyan/blue}] {percent}%",
+                    )
+                    .expect("template is valid")
+                    .progress_chars("█░")
+                },
+            )
+        } else {
+            ProgressStyle::with_template("{spinner:.cyan} {msg}").expect("template is valid")
+        };
+        self.header.set_style(style);
         self.header.set_message(format!("Base Load Test  {}", stage.as_str()));
+
+        if stage == LoadTestStage::Cleanup {
+            for bar in [&self.txs, &self.rate, &self.flight, &self.gas_lat, &self.flashblocks_lat] {
+                bar.finish_and_clear();
+            }
+        }
     }
 
     /// Updates all bars with the latest snapshot.
@@ -268,13 +292,15 @@ impl LoadTestDisplay {
 
     /// Finishes all bars and clears the stat rows.
     pub fn finish(&self) {
-        if let Some(d) = self.duration {
-            self.header.set_position(d.as_secs());
-        }
-        self.header.finish_with_message("Base Load Test  complete");
+        self.header.finish_and_clear();
         for bar in [&self.txs, &self.rate, &self.flight, &self.gas_lat, &self.flashblocks_lat] {
             bar.finish_and_clear();
         }
+    }
+
+    /// Temporarily clears the footer while another output stream writes.
+    pub fn suspend<T>(&self, operation: impl FnOnce() -> T) -> T {
+        self.multi_progress.suspend(operation)
     }
 
     /// Creates a setup progress bar managed by the same footer as tracing output.

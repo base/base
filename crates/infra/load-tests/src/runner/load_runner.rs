@@ -441,6 +441,14 @@ impl LoadRunner {
         }
     }
 
+    /// Temporarily clears the live footer while synchronous output is written.
+    pub fn suspend_display<T>(&self, operation: impl FnOnce() -> T) -> T {
+        match &self.display {
+            Some(display) => display.suspend(operation),
+            None => operation(),
+        }
+    }
+
     /// Replaces the internal stop flag with an externally-owned one.
     ///
     /// Call this before [`run`] when the caller needs to share the flag across threads
