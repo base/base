@@ -256,14 +256,8 @@ mod tests {
     fn from_tx_configs_maps_types_to_payload_names() {
         let configs = vec![
             TxConfig { weight: 1, tx_type: TxType::Transfer },
-            TxConfig {
-                weight: 1,
-                tx_type: TxType::Calldata { max_size: 64, repeat_count: 1 },
-            },
-            TxConfig {
-                weight: 1,
-                tx_type: TxType::Erc20 { contract: Address::repeat_byte(0x11) },
-            },
+            TxConfig { weight: 1, tx_type: TxType::Calldata { max_size: 64, repeat_count: 1 } },
+            TxConfig { weight: 1, tx_type: TxType::Erc20 { contract: Address::repeat_byte(0x11) } },
             TxConfig { weight: 1, tx_type: TxType::B20 },
             TxConfig {
                 weight: 1,

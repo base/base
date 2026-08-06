@@ -2,7 +2,6 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
-
 use async_trait::async_trait;
 
 use super::Payload;

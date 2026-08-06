@@ -24,7 +24,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 use super::{ResultsTracker, SentTransaction};
 use crate::{
@@ -420,14 +420,6 @@ impl SubmissionPipeline {
         let submit_request_limiter =
             config.max_concurrent_submit_requests.map(|max| Arc::new(Semaphore::new(max.max(1))));
 
-        info!(
-            signer_worker_count,
-            sender_worker_count,
-            submit_rpc_count = submission_batch_rpcs.len(),
-            max_concurrent_submit_requests = ?config.max_concurrent_submit_requests,
-            "starting submission pipeline"
-        );
-
         let mut signer_workers = Vec::with_capacity(signer_worker_count);
         for worker_id in 0..signer_worker_count {
             let ctx = SignerContext {
@@ -447,7 +439,7 @@ impl SubmissionPipeline {
         }
 
         let mut sender_workers = Vec::with_capacity(sender_worker_count);
-        for worker_id in 0..sender_worker_count {
+        for _ in 0..sender_worker_count {
             let ctx = SenderContext {
                 submission_batch_rpcs: Arc::clone(&submission_batch_rpcs),
                 nonce_managers: Arc::clone(&nonce_managers),
@@ -459,7 +451,7 @@ impl SubmissionPipeline {
             let queue = Arc::clone(&signed_queue);
             let shutdown = shutdown.clone();
             sender_workers.push(tokio::spawn(async move {
-                Self::sender_worker(worker_id, ctx, queue, shutdown).await;
+                Self::sender_worker(ctx, queue, shutdown).await;
             }));
         }
 
@@ -727,17 +719,14 @@ impl SubmissionPipeline {
             };
 
             let Some(batch) = batch else {
-                debug!(worker_id, "signer worker exiting");
                 break;
             };
 
             let batch_id = batch.id;
-            let batch_len = batch.len();
             let signed_batch = Self::sign_batch(&ctx, batch).await;
             queue.pending_batches.fetch_sub(1, Ordering::SeqCst);
 
             let Some(signed_batch) = signed_batch else {
-                debug!(worker_id, batch_id, batch_len, "prepared batch had no signed txs");
                 continue;
             };
 
@@ -752,7 +741,6 @@ impl SubmissionPipeline {
     }
 
     async fn sender_worker(
-        worker_id: usize,
         ctx: SenderContext,
         queue: Arc<PipelineQueue<SignedBatch>>,
         shutdown: CancellationToken,
@@ -767,7 +755,6 @@ impl SubmissionPipeline {
             };
 
             let Some(batch) = batch else {
-                debug!(worker_id, "sender worker exiting");
                 break;
             };
 

@@ -1,9 +1,8 @@
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes};
 use alloy_rpc_types::TransactionRequest;
-use revm::precompile::{PrecompileId, PrecompileSpecId};
-
 use async_trait::async_trait;
+use revm::precompile::{PrecompileId, PrecompileSpecId};
 
 use super::Payload;
 use crate::workload::SeededRng;

@@ -34,7 +34,7 @@ pub use submission::{
 };
 
 mod status;
-pub use status::{DisplaySnapshot, LoadTestDisplay};
+pub use status::{DisplaySnapshot, LoadTestDisplay, LoadTestStage};
 
 mod load_runner;
 pub use load_runner::LoadRunner;

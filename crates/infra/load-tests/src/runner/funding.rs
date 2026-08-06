@@ -1071,6 +1071,9 @@ impl LoadRunner {
     }
 
     pub(super) fn progress_bar(&self, total: u64, prefix: &str) -> ProgressBar {
+        if let Some(display) = &self.display {
+            return display.progress_bar(total, prefix);
+        }
         if self.snapshot_tx.is_some() {
             return ProgressBar::hidden();
         }

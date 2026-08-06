@@ -14,10 +14,11 @@ use base_cli_utils::RuntimeManager;
 use indicatif::MultiProgress;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 use crate::{
-    BaselineError, LoadConfig, LoadRunner, LoadTestDisplay, MetricsSummary, RealTokenSetup, Result,
-    RpcProviders, RpcResultExt, TestConfig,
+    BaselineError, LoadConfig, LoadRunner, LoadTestDisplay, LoadTestStage, MetricsSummary,
+    RealTokenSetup, Result, RpcProviders, RpcResultExt, TestConfig,
 };
 
 /// Runtime options for a load-test execution.
@@ -192,10 +193,12 @@ impl LoadTestExecutor {
         };
 
         // Cleanup must run even if the caller hook panics, or funded accounts can leak ETH.
+        runner.set_display_stage(LoadTestStage::Cleanup);
         let hook_panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
             (hooks.before_cleanup)(&summary);
         }));
         let cleanup = Self::cleanup(&runner, funding_key, options.skip_drain).await;
+        runner.finish_display();
         if let Err(payload) = hook_panic {
             std::panic::resume_unwind(payload);
         }
@@ -210,23 +213,25 @@ impl LoadTestExecutor {
         setup: LoadTestSetupAmounts,
         display: Option<LoadTestDisplayConfig>,
     ) -> Result<MetricsSummary> {
-        if runner.txpool_node_count() > 0 {
-            println!("Clearing txpool sender transactions...");
-            let removed = runner.clear_txpools().await?;
-            println!("Txpool clearing complete. Removed {removed} transaction(s).");
-        }
-
-        println!("Funding test accounts...");
-        runner.fund_accounts(funding_key.clone(), setup.funding).await?;
-        println!("Accounts funded.");
-
-        Self::setup_tokens(runner, funding_key, &setup).await?;
-
-        println!();
-        println!("Running load test...");
         if let Some(display) = display {
             runner.set_display(LoadTestDisplay::new(&display.multi_progress, display.duration));
         }
+        runner.set_display_stage(LoadTestStage::Setup);
+
+        if runner.txpool_node_count() > 0 {
+            info!(stage = LoadTestStage::Setup.as_str(), "clearing txpool sender transactions");
+            let removed = runner.clear_txpools().await?;
+            info!(stage = LoadTestStage::Setup.as_str(), removed, "txpool clearing complete");
+        }
+
+        info!(stage = LoadTestStage::Setup.as_str(), "funding test accounts");
+        runner.fund_accounts(funding_key.clone(), setup.funding).await?;
+        info!(stage = LoadTestStage::Setup.as_str(), "accounts funded");
+
+        Self::setup_tokens(runner, funding_key, &setup).await?;
+
+        runner.set_display_stage(LoadTestStage::Submitting);
+        info!(stage = LoadTestStage::Submitting.as_str(), "running load test");
         runner.run().await
     }
 
@@ -237,17 +242,15 @@ impl LoadTestExecutor {
         setup: &LoadTestSetupAmounts,
     ) -> Result<()> {
         if setup.real_token_setup.is_none() && !runner.collect_swap_tokens().is_empty() {
-            println!("Distributing swap tokens...");
+            info!(stage = LoadTestStage::Setup.as_str(), "distributing swap tokens");
             runner.setup_swap_tokens(funding_key.clone(), setup.swap_token).await?;
-            println!("Swap tokens distributed.");
+            info!(stage = LoadTestStage::Setup.as_str(), "swap tokens distributed");
         }
 
         if setup.real_token_setup.is_some() || runner.needs_b20_setup() {
-            println!("Preparing payload chain state...");
-            runner
-                .prepare_payloads(setup.b20_mint, setup.real_token_setup.as_ref())
-                .await?;
-            println!("Payload chain state ready.");
+            info!(stage = LoadTestStage::Setup.as_str(), "preparing payload chain state");
+            runner.prepare_payloads(setup.b20_mint, setup.real_token_setup.as_ref()).await?;
+            info!(stage = LoadTestStage::Setup.as_str(), "payload chain state ready");
         }
 
         Ok(())

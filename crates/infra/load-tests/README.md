@@ -107,10 +107,14 @@ fallback is visible.
 
 ### Logging
 
-Use `RUST_LOG=base_load_tests=debug` for pacing diagnostics. Debug output is organized around
-phases, blocks, batches with errors, and refills that actually submit transactions; normal
-per-transaction and per-account events are available only at trace level. Avoid trace logging for
-sustained load runs because its volume scales with transaction count.
+The CLI defaults to INFO logs for the load-test crates and WARN logs for dependencies. In an
+interactive terminal, a compact live footer stays below the logs through setup, submission, and
+confirmation draining. Redirected and non-interactive runs emit the same five-second structured
+progress events without terminal control sequences.
+
+Use `RUST_LOG=base_load_tests=debug` for pacing diagnostics. Normal per-transaction and per-account
+events are available only at trace level. Avoid trace logging for sustained load runs because its
+volume scales with transaction count.
 
 RPC and WebSocket credentials, full endpoint URLs, deterministic account seeds, and randomized
 recipient recovery values are excluded from structured logs. Fresh-recipient recovery instructions

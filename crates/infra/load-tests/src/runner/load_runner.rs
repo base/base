@@ -21,7 +21,9 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument};
 
-use super::{DisplaySnapshot, LoadConfig, LoadTestDisplay, SubmissionPipeline, TxType};
+use super::{
+    DisplaySnapshot, LoadConfig, LoadTestDisplay, LoadTestStage, SubmissionPipeline, TxType,
+};
 use crate::{
     BaselineError, Result,
     config::WorkloadConfig,
@@ -56,11 +58,6 @@ pub struct LoadRunner {
     pub(super) base_fee: u128,
     pub(super) display: Option<LoadTestDisplay>,
     pub(super) snapshot_tx: Option<watch::Sender<DisplaySnapshot>>,
-    pub(super) last_total_eth: Option<String>,
-    pub(super) last_min_eth: Option<String>,
-    pub(super) last_funds_low: bool,
-    pub(super) funder_address: Option<String>,
-    pub(super) sender_addresses: Vec<String>,
     /// Per-run salt for deriving each sender's own B-20 token, set during B-20 setup.
     pub(super) b20_run_salt: Option<B256>,
     pub(super) recipient_keys: Option<KeyStream>,
@@ -108,8 +105,6 @@ impl LoadRunner {
                 .map(BatchRpcClient::new)
                 .collect::<Vec<_>>(),
         );
-        let sender_addresses = accounts.accounts().iter().map(|a| a.address.to_string()).collect();
-
         let workload_config = WorkloadConfig::new("load-test").with_seed(config.seed);
         let generator =
             WorkloadGenerator::from_tx_configs(workload_config, &config.transactions, None)?;
@@ -177,11 +172,6 @@ impl LoadRunner {
             base_fee: 0,
             display: None,
             snapshot_tx: None,
-            last_total_eth: None,
-            last_min_eth: None,
-            last_funds_low: false,
-            funder_address: None,
-            sender_addresses,
             b20_run_salt: None,
             recipient_keys,
             recipient_rng,
@@ -202,11 +192,6 @@ impl LoadRunner {
     /// Returns the number of fresh recipient keys generated so far.
     pub fn fresh_recipient_count(&self) -> Option<u64> {
         self.recipient_keys.as_ref().map(KeyStream::generated_count)
-    }
-
-    /// Sets the funder wallet address for inclusion in live snapshots.
-    pub fn set_funder_address(&mut self, addr: String) {
-        self.funder_address = Some(addr);
     }
 
     /// Sets the config summary for inclusion in JSON output.
@@ -436,10 +421,24 @@ impl LoadRunner {
 
     /// Attaches a live progress-bar display.
     ///
-    /// When set and stdout is a TTY, the runner updates the indicatif bars
-    /// every 500 ms instead of emitting 5-second progress log lines.
+    /// When set, the runner updates the indicatif footer every 500 ms while
+    /// continuing to emit five-second structured progress events.
     pub fn set_display(&mut self, display: LoadTestDisplay) {
         self.display = Some(display);
+    }
+
+    /// Updates the live footer lifecycle stage when a display is attached.
+    pub fn set_display_stage(&self, stage: LoadTestStage) {
+        if let Some(display) = &self.display {
+            display.set_stage(stage);
+        }
+    }
+
+    /// Finishes and clears the live footer when the full lifecycle is complete.
+    pub fn finish_display(&self) {
+        if let Some(display) = &self.display {
+            display.finish();
+        }
     }
 
     /// Replaces the internal stop flag with an externally-owned one.

@@ -124,7 +124,7 @@ enum Command {
 }
 
 async fn run_load_test(args: LoadArgs) -> Result<()> {
-    let mp = LoadTestDisplay::init_tracing();
+    let multi_progress = LoadTestDisplay::init_tracing()?;
     let mode = LoadMode::from_args(&args);
     let config_path = args.config;
 
@@ -251,7 +251,10 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
             skip_drain,
         },
         LoadTestRunHooks {
-            display: Some(LoadTestDisplayConfig { multi_progress: mp, duration: display_duration }),
+            display: multi_progress.map(|multi_progress| LoadTestDisplayConfig {
+                multi_progress,
+                duration: display_duration,
+            }),
             before_cleanup: present_load_test_summary,
         },
     )

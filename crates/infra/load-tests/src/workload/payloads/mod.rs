@@ -4,7 +4,10 @@ use alloy_primitives::Address;
 use alloy_rpc_types::TransactionRequest;
 use async_trait::async_trait;
 
-use crate::{Result, workload::SeededRng, workload::chain_prep::ChainPrepContext};
+use crate::{
+    Result,
+    workload::{SeededRng, chain_prep::ChainPrepContext},
+};
 
 mod transfer;
 pub use transfer::TransferPayload;

@@ -79,9 +79,9 @@ impl B20TransferPayload {
 
     /// Records the per-run salt during chain preparation.
     pub fn set_run_salt(&self, run_salt: B256) -> Result<()> {
-        self.run_salt.set(run_salt).map_err(|_| {
-            BaselineError::Config("b20 run salt already set".into())
-        })
+        self.run_salt
+            .set(run_salt)
+            .map_err(|_| BaselineError::Config("b20 run salt already set".into()))
     }
 }
 
@@ -96,9 +96,8 @@ impl Payload for B20TransferPayload {
     }
 
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest {
-        let run_salt = self
-            .run_salt()
-            .expect("b20 run salt must be set by prepare before generate");
+        let run_salt =
+            self.run_salt().expect("b20 run salt must be set by prepare before generate");
 
         let amount = if self.min_amount == self.max_amount {
             self.min_amount

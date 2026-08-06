@@ -6,8 +6,8 @@ use super::{
     test_config::{TxTypeConfig, WeightedTxType},
 };
 use crate::{
-    workload::{RealTokenAcquisition, RealTokenPairTokenSetup, RealTokenSetup},
     utils::{BaselineError, Result},
+    workload::{RealTokenAcquisition, RealTokenPairTokenSetup, RealTokenSetup},
 };
 
 /// Optional setup for real-token bidirectional swap workloads.
