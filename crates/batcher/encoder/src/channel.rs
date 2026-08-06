@@ -31,7 +31,7 @@ impl fmt::Debug for OpenChannel {
     }
 }
 
-/// A channel that has been closed and is ready for frame submission.
+/// A closed channel retained through submission until its L2 range becomes safe.
 #[derive(Debug)]
 pub struct ReadyChannel {
     /// The channel identifier.
@@ -42,8 +42,6 @@ pub struct ReadyChannel {
     pub frames: Vec<Arc<Frame>>,
     /// Next frame index to submit (cursor). Rewound on requeue.
     pub cursor: usize,
-    /// Which input blocks this channel covers (indices into the encoder's block queue).
-    pub block_range: Range<usize>,
     /// Exact input block range encoded into this channel.
     pub encoded_block_range: Range<usize>,
     /// DA bytes still represented by this closed channel's frames.

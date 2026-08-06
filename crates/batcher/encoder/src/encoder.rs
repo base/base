@@ -34,12 +34,12 @@ pub struct BatchEncoder {
     config: EncoderConfig,
     /// Current L1 head block number (for channel duration tracking).
     l1_head: u64,
-    /// L2 blocks waiting to be encoded. Pruned when all their frames are confirmed.
+    /// Buffered L2 blocks above the latest observed safe head.
     blocks: VecDeque<BaseBlock>,
     /// Index into `blocks`: next block not yet fed into the current channel.
     block_cursor: usize,
-    /// Hash of the last block's header (or `B256::ZERO` if empty). Used for reorg detection.
-    tip: B256,
+    /// Hash of the last accepted block or safe-head anchor.
+    tip: Option<B256>,
     /// The channel currently being built. `None` between channels.
     current_channel: Option<OpenChannel>,
     /// Channels that are full and have frames ready to drain.
@@ -108,7 +108,7 @@ impl BatchEncoder {
             l1_head: 0,
             blocks: VecDeque::new(),
             block_cursor: 0,
-            tip: B256::ZERO,
+            tip: None,
             current_channel: None,
             ready_channels: VecDeque::new(),
             pending: HashMap::new(),
@@ -273,15 +273,7 @@ impl BatchEncoder {
             }
         }
 
-        // block_range records a high-water mark into the current blocks deque.
-        // The start is always 0; only .end is used (as prune_count in confirm()).
-        // Ranges across concurrent channels are intentionally overlapping at
-        // creation — confirm() uses saturating_sub adjustments so that whichever
-        // channel confirms first pops the correct prefix of the deque, and
-        // subsequent confirmations find their .end adjusted to 0 and are no-ops.
-        // This correctly handles out-of-order confirmations without double-pruning.
         let encoded_block_end = open.block_start.saturating_add(blocks_added);
-        let block_range = 0..encoded_block_end;
         let encoded_block_range = open.block_start..encoded_block_end;
         let frame_count = frames.len();
         let duration_blocks = self.l1_head.saturating_sub(opened_at_l1);
@@ -291,8 +283,6 @@ impl BatchEncoder {
         debug!(
             channel_id = ?channel_id,
             frame_count = %frame_count,
-            block_range_start = %block_range.start,
-            block_range_end = %block_range.end,
             encoded_block_range_start = %encoded_block_range.start,
             encoded_block_range_end = %encoded_block_range.end,
             close_reason = %close_reason,
@@ -322,7 +312,6 @@ impl BatchEncoder {
             id: channel_id,
             frames,
             cursor: 0,
-            block_range,
             encoded_block_range,
             da_backlog_bytes: closed_da_backlog_bytes,
             pending_confirmations: 0,
@@ -539,10 +528,7 @@ impl BatchEncoder {
             open.blocks_added = new_end.saturating_sub(new_start);
         }
 
-        // Adjust the high-water mark for all remaining channels.
-        // block_range.start is always 0 and unused in prune logic.
         for channel in &mut self.ready_channels {
-            channel.block_range.end = channel.block_range.end.saturating_sub(prune_count);
             channel.encoded_block_range.start =
                 channel.encoded_block_range.start.saturating_sub(prune_count);
             channel.encoded_block_range.end =
@@ -553,16 +539,18 @@ impl BatchEncoder {
 
 impl BatchPipeline for BatchEncoder {
     fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
-        if !self.blocks.is_empty() && block.header.parent_hash != self.tip {
+        if let Some(expected) = self.tip
+            && block.header.parent_hash != expected
+        {
             return Err((
-                ReorgError::ParentMismatch { expected: self.tip, got: block.header.parent_hash },
+                ReorgError::ParentMismatch { expected, got: block.header.parent_hash },
                 Box::new(block),
             ));
         }
 
         let number = block.header.number;
         let hash = block.header.hash_slow();
-        self.tip = hash;
+        self.tip = Some(hash);
         self.blocks.push_back(block);
         BatcherMetrics::pending_blocks().increment(1.0);
 
@@ -826,38 +814,11 @@ impl BatchPipeline for BatchEncoder {
             return;
         }
 
-        // Check if all frames are confirmed and none are in-flight.
+        // Safe-head advancement owns channel removal. Retaining fully submitted
+        // channels lets timeout handling detect stalled derivation.
         if channel.confirmed_count >= channel.frames.len() && channel.pending_confirmations == 0 {
-            let block_range = channel.block_range.clone();
-
-            debug!(
-                channel_id = ?channel.id,
-                block_range_start = %block_range.start,
-                block_range_end = %block_range.end,
-                "channel fully confirmed, pruning blocks"
-            );
-
+            debug!(channel_id = ?channel.id, "channel fully confirmed");
             BatcherMetrics::channel_fully_submitted_total().increment(1);
-
-            // Remove the channel.
-            self.ready_channels.remove(chan_idx);
-
-            // Adjust channel_idx for all pending refs pointing to channels after this one.
-            for pending in self.pending.values_mut() {
-                if pending.channel_idx > chan_idx {
-                    pending.channel_idx -= 1;
-                }
-            }
-
-            // Prune confirmed blocks from the deque.
-            let prune_count = block_range.end;
-            if prune_count > 0 {
-                self.blocks.drain(..prune_count);
-                self.rebase_after_block_prune(prune_count);
-                BatcherMetrics::pending_blocks().decrement(prune_count as f64);
-
-                debug!(prune_count = %prune_count, "pruned confirmed blocks from encoder queue");
-            }
         }
     }
 
@@ -931,7 +892,7 @@ impl BatchPipeline for BatchEncoder {
         );
         self.blocks.clear();
         self.block_cursor = 0;
-        self.tip = B256::ZERO;
+        self.tip = None;
         self.current_channel = None;
         self.ready_channels.clear();
         self.pending.clear();
@@ -952,26 +913,27 @@ impl BatchPipeline for BatchEncoder {
     }
 
     fn prune_safe(&mut self, safe_l2: BlockInfo) -> bool {
-        let Some(block) = self.blocks.iter().find(|block| block.header.number == safe_l2.number)
-        else {
-            return false;
+        let Some(oldest) = self.blocks.front() else {
+            self.tip = Some(safe_l2.hash);
+            return true;
         };
-        if block.header.hash_slow() != safe_l2.hash {
+
+        let oldest_number = oldest.header.number;
+        let next_safe = safe_l2.number.saturating_add(1);
+        if next_safe < oldest_number {
             return false;
         }
 
-        // Count how many leading blocks are both safe (number <= safe head) and
-        // already past the encoding cursor (index < block_cursor). We must not prune
-        // blocks that haven't been fed into a channel yet or we'd silently skip them.
-        let prune_count = self
-            .blocks
-            .iter()
-            .take(self.block_cursor)
-            .take_while(|b| b.header.number <= safe_l2.number)
-            .count();
+        let prune_count = (next_safe - oldest_number) as usize;
+        if prune_count > self.blocks.len() {
+            return false;
+        }
 
         if prune_count == 0 {
             return true;
+        }
+        if self.blocks[prune_count - 1].header.hash_slow() != safe_l2.hash {
+            return false;
         }
 
         debug!(
@@ -980,8 +942,48 @@ impl BatchPipeline for BatchEncoder {
             "pruning safe blocks from input queue"
         );
 
+        let span_start = self.block_cursor.saturating_sub(self.span_accumulator.len());
+        if !self.span_accumulator.is_empty() && prune_count > span_start {
+            self.block_cursor = span_start;
+            self.clear_span_accumulator();
+        }
+
+        let ready_channels_to_prune = self
+            .ready_channels
+            .iter()
+            .take_while(|channel| channel.encoded_block_range.end <= prune_count)
+            .count();
+        if ready_channels_to_prune > 0 {
+            let removed_pending_frames = self
+                .ready_channels
+                .iter()
+                .take(ready_channels_to_prune)
+                .map(|channel| channel.frames.len().saturating_sub(channel.cursor))
+                .sum::<usize>();
+            self.ready_channels.drain(..ready_channels_to_prune);
+            self.pending.retain(|_, pending| {
+                if pending.channel_idx < ready_channels_to_prune {
+                    return false;
+                }
+                pending.channel_idx -= ready_channels_to_prune;
+                true
+            });
+            if removed_pending_frames > 0 {
+                BatcherMetrics::pending_frames().decrement(removed_pending_frames as f64);
+            }
+        }
+
+        if self.current_channel.as_ref().is_some_and(|channel| {
+            channel.block_start.saturating_add(channel.blocks_added) <= prune_count
+        }) {
+            self.current_channel = None;
+        }
+
         self.blocks.drain(..prune_count);
         self.rebase_after_block_prune(prune_count);
+        if self.blocks.is_empty() {
+            self.tip = Some(safe_l2.hash);
+        }
         BatcherMetrics::pending_blocks().decrement(prune_count as f64);
         true
     }
@@ -997,6 +999,9 @@ impl BatchPipeline for BatchEncoder {
         let ready_channels = self
             .ready_channels
             .iter()
+            .filter(|channel| {
+                channel.confirmed_count < channel.frames.len() || channel.pending_confirmations > 0
+            })
             .map(|channel| channel.da_backlog_bytes)
             .fold(0u64, u64::saturating_add);
 
@@ -1141,63 +1146,27 @@ mod tests {
     }
 
     #[test]
-    fn test_confirm_prunes_blocks() {
+    fn test_safe_head_prunes_fully_confirmed_blocks() {
         let mut encoder = default_encoder();
-
-        // Add a block.
-        let block1 = make_block(B256::ZERO);
-        encoder.add_block(block1).unwrap();
-
-        // Step to encode the block.
-        let result = encoder.step().unwrap();
-        assert_eq!(result, StepResult::BlockEncoded);
-
-        // Close the channel by stepping when idle (force close via advance_l1_head).
-        encoder.advance_l1_head(100);
-
-        // The channel should have been closed due to timeout.
-        assert!(encoder.current_channel.is_none());
-
-        // Get the submission.
-        let sub = encoder.next_submission();
-        assert!(sub.is_some());
-        let sub = sub.unwrap();
-        let sub_id = sub.id;
-
-        // Confirm the submission.
-        encoder.confirm(sub_id, 100);
-
-        // Blocks should be pruned.
-        assert!(encoder.blocks.is_empty());
-        assert_eq!(encoder.block_cursor, 0);
-    }
-
-    #[test]
-    fn test_confirm_rebases_open_channel_block_range() {
-        let mut encoder = default_encoder();
-        let mut blocks = make_user_tx_chain(2).into_iter();
-
-        encoder.add_block(blocks.next().unwrap()).unwrap();
-        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        encoder.force_close_channel();
-        let first_submission = encoder.next_submission().unwrap();
-
-        encoder.add_block(blocks.next().unwrap()).unwrap();
-        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-        assert_eq!(encoder.current_channel.as_ref().unwrap().block_start, 1);
-
-        encoder.confirm(first_submission.id, 1);
-
-        let open = encoder.current_channel.as_ref().unwrap();
-        assert_eq!(open.block_start, 0);
-        assert_eq!(open.blocks_added, 1);
-        assert_eq!(encoder.blocks.len(), 1);
-
+        let blocks = make_user_tx_chain(2);
+        let safe_l2 = BlockInfo::from(&blocks[0]);
+        for block in blocks {
+            encoder.add_block(block).unwrap();
+            assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        }
         encoder.force_close_channel();
         for submission in drain_submissions(&mut encoder) {
-            encoder.confirm(submission.id, 2);
+            encoder.confirm(submission.id, 100);
         }
-        assert!(encoder.blocks.is_empty());
+
+        assert_eq!(encoder.ready_channels.len(), 1);
+        assert_eq!(encoder.blocks.len(), 2, "confirmation keeps blocks buffered");
+
+        assert!(encoder.prune_safe(safe_l2));
+        assert_eq!(encoder.ready_channels.len(), 1);
+        assert_eq!(encoder.blocks.len(), 1);
+        assert_eq!(encoder.blocks[0].header.number, 1);
+        assert_eq!(encoder.block_cursor, 1);
     }
 
     #[test]
@@ -1214,7 +1183,7 @@ mod tests {
 
         assert!(encoder.blocks.is_empty());
         assert_eq!(encoder.block_cursor, 0);
-        assert_eq!(encoder.tip, B256::ZERO);
+        assert_eq!(encoder.tip, None);
         assert!(encoder.current_channel.is_none());
         assert!(encoder.ready_channels.is_empty());
         assert!(encoder.pending.is_empty());
@@ -1467,10 +1436,15 @@ mod tests {
         let post_reorg_sub = encoder.next_submission().unwrap();
         assert_eq!(post_reorg_sub.id.0, 1, "post-reorg ID must not collide with pre-reorg ID 0");
 
-        // Verify the post-reorg confirm works correctly.
+        // Verify the post-reorg confirmation updates the retained channel.
         assert_eq!(encoder.ready_channels[0].pending_confirmations, 1);
         encoder.confirm(post_reorg_sub.id, 201);
-        assert!(encoder.blocks.is_empty(), "post-reorg blocks should be pruned on confirm");
+        assert_eq!(encoder.ready_channels[0].pending_confirmations, 0);
+        assert_eq!(
+            encoder.ready_channels[0].confirmed_count,
+            encoder.ready_channels[0].frames.len()
+        );
+        assert_eq!(encoder.blocks.len(), 1, "confirmation keeps the post-reorg block buffered");
     }
 
     // --- sub_safety_margin tests ---
@@ -1508,8 +1482,7 @@ mod tests {
     // --- target_num_frames tests ---
 
     /// With `target_num_frames = 2`, a channel whose frames span multiple entries must be
-    /// packed two-per-submission. After one submission, a single confirm must credit both
-    /// frames and trigger block pruning.
+    /// packed two-per-submission. One confirmation must credit both frames.
     #[test]
     fn test_target_num_frames_packs_multiple_frames() {
         let config = EncoderConfig {
@@ -1625,7 +1598,14 @@ mod tests {
         for submission in replay_submissions {
             encoder.confirm(submission.id, 5);
         }
-        assert!(encoder.blocks.is_empty(), "fresh replay should prune after timely confirmation");
+        assert_eq!(
+            encoder.blocks.len(),
+            1,
+            "timely confirmation keeps the replayed block buffered"
+        );
+        let safe_l2 = BlockInfo::from(&encoder.blocks[0]);
+        assert!(encoder.prune_safe(safe_l2));
+        assert!(encoder.blocks.is_empty());
     }
 
     #[test]
@@ -2126,25 +2106,24 @@ mod tests {
         );
     }
 
-    /// End-to-end span batch path: add a block, trigger size-based close,
-    /// get submission, confirm, and verify blocks are pruned.
+    /// End-to-end span batch path through confirmation and safe-head pruning.
     #[test]
     fn test_span_batch_end_to_end() {
         let mut encoder = span_encoder_tiny_target();
 
         let b1 = make_block(B256::ZERO);
+        let safe_l2 = BlockInfo::from(&b1);
         encoder.add_block(b1).unwrap();
         assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
 
         let sub = encoder.next_submission().expect("submission must be available");
         let sub_id = sub.id;
 
-        // Blocks must NOT be pruned until the submission is confirmed.
         assert!(!encoder.blocks.is_empty());
 
         encoder.confirm(sub_id, 10);
-
-        // After confirmation blocks must be pruned.
+        assert_eq!(encoder.blocks.len(), 1, "confirmation keeps the block buffered");
+        assert!(encoder.prune_safe(safe_l2));
         assert!(encoder.blocks.is_empty());
         assert_eq!(encoder.block_cursor, 0);
     }
@@ -2173,9 +2152,7 @@ mod tests {
         assert!(encoder.span_opened_at_l1.is_none());
     }
 
-    /// Multiple successive Span channels work correctly: each block immediately triggers
-    /// a size-based close (with tiny target), and each channel is confirmed and pruned
-    /// independently.
+    /// Multiple successive Span channels confirm independently and prune on safe-head advance.
     #[test]
     fn test_span_batch_multiple_channels() {
         let mut encoder = span_encoder_tiny_target();
@@ -2188,22 +2165,23 @@ mod tests {
         assert_eq!(encoder.ready_channels.len(), 1);
 
         // Second block → size threshold → second channel closed.
-        let b2 = make_block(b1_hash);
+        let mut b2 = make_block(b1_hash);
+        b2.header.number = 1;
+        let safe_l2 = BlockInfo::from(&b2);
         encoder.add_block(b2).unwrap();
         assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
         assert_eq!(encoder.ready_channels.len(), 2);
 
-        // Confirm first channel — its block is pruned.
         let sub1 = encoder.next_submission().expect("ch1 must have a submission");
-        let id1 = sub1.id;
-        encoder.confirm(id1, 10);
-        assert_eq!(encoder.ready_channels.len(), 1);
-
-        // Confirm second channel — its block is pruned.
         let sub2 = encoder.next_submission().expect("ch2 must have a submission");
-        let id2 = sub2.id;
-        encoder.confirm(id2, 11);
-        assert_eq!(encoder.ready_channels.len(), 0);
+        encoder.confirm(sub2.id, 11);
+        encoder.confirm(sub1.id, 10);
+        assert_eq!(encoder.ready_channels.len(), 2);
+        assert!(encoder.pending.is_empty());
+        assert_eq!(encoder.blocks.len(), 2);
+
+        assert!(encoder.prune_safe(safe_l2));
+        assert!(encoder.ready_channels.is_empty());
         assert!(encoder.blocks.is_empty());
     }
 
@@ -2239,8 +2217,7 @@ mod tests {
         }
     }
 
-    /// `prune_safe` must drain leading blocks whose number is <= the safe head
-    /// and that have already been encoded (index < `block_cursor`).
+    /// `prune_safe` drains the buffered prefix through the matching safe head.
     #[test]
     fn test_prune_safe_drains_encoded_blocks() {
         let mut encoder = default_encoder();
@@ -2271,7 +2248,7 @@ mod tests {
     }
 
     #[test]
-    fn test_prune_safe_rebases_open_channel_block_range() {
+    fn test_prune_safe_rebases_open_channel() {
         let mut encoder = default_encoder();
         for block in make_user_tx_chain(2) {
             encoder.add_block(block).unwrap();
@@ -2283,6 +2260,7 @@ mod tests {
         let safe_l2 = BlockInfo::from(&encoder.blocks[0]);
         assert!(encoder.prune_safe(safe_l2));
 
+        let remaining_safe_l2 = BlockInfo::from(&encoder.blocks[0]);
         let open = encoder.current_channel.as_ref().unwrap();
         assert_eq!(open.block_start, 0);
         assert_eq!(open.blocks_added, 1);
@@ -2292,13 +2270,14 @@ mod tests {
         for submission in drain_submissions(&mut encoder) {
             encoder.confirm(submission.id, 1);
         }
+        assert_eq!(encoder.blocks.len(), 1, "confirmation keeps the remaining block buffered");
+        assert!(encoder.prune_safe(remaining_safe_l2));
         assert!(encoder.blocks.is_empty());
     }
 
-    /// `prune_safe` must not prune blocks that have not yet been encoded
-    /// (index >= `block_cursor`), even if their number is below the safe head.
+    /// Safe-head pruning includes unencoded blocks and clamps the cursor to zero.
     #[test]
-    fn test_prune_safe_does_not_prune_unencoded_blocks() {
+    fn test_prune_safe_prunes_unencoded_blocks() {
         let mut encoder = default_encoder();
 
         let b1 = make_numbered_block(B256::ZERO, 1);
@@ -2313,69 +2292,29 @@ mod tests {
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
         assert_eq!(encoder.block_cursor, 1);
 
-        // Block 2 is safe but not encoded.
         assert!(encoder.prune_safe(BlockInfo { hash: b2_hash, number: 2, ..Default::default() }));
 
-        assert_eq!(encoder.blocks.len(), 1, "block 2 must not be pruned (not yet encoded)");
-        assert_eq!(encoder.blocks[0].header.number, 2);
-        assert_eq!(encoder.block_cursor, 0, "cursor adjusted after pruning block 1");
+        assert!(encoder.blocks.is_empty());
+        assert_eq!(encoder.block_cursor, 0);
+        assert!(encoder.current_channel.is_none());
     }
 
     #[test]
     fn test_prune_safe_rejects_inconsistent_chain() {
         let mut encoder = default_encoder();
-        assert!(!encoder.prune_safe(BlockInfo { number: 1, ..Default::default() }));
+        assert!(encoder.prune_safe(BlockInfo { number: 1, ..Default::default() }));
 
-        encoder.add_block(make_numbered_block(B256::ZERO, 1)).unwrap();
+        encoder.add_block(make_numbered_block(B256::ZERO, 3)).unwrap();
         encoder.step().unwrap();
 
         assert!(!encoder.prune_safe(BlockInfo {
             hash: B256::repeat_byte(1),
-            number: 1,
+            number: 3,
             ..Default::default()
         }));
-        assert!(!encoder.prune_safe(BlockInfo { number: 2, ..Default::default() }));
+        assert!(!encoder.prune_safe(BlockInfo { number: 4, ..Default::default() }));
+        assert!(!encoder.prune_safe(BlockInfo { number: 1, ..Default::default() }));
         assert_eq!(encoder.blocks.len(), 1);
-    }
-
-    /// `prune_safe` must adjust `block_range.end` on ready channels so that
-    /// a subsequent `confirm()` does not over-prune.
-    #[test]
-    fn test_prune_safe_adjusts_ready_channel_block_ranges() {
-        let mut encoder = default_encoder();
-
-        let b1 = make_numbered_block(B256::ZERO, 1);
-        let b1_hash = b1.header.hash_slow();
-        encoder.add_block(b1).unwrap();
-
-        let b2 = make_numbered_block(b1_hash, 2);
-        encoder.add_block(b2).unwrap();
-
-        // Encode both blocks.
-        encoder.step().unwrap();
-        encoder.step().unwrap();
-        assert_eq!(encoder.block_cursor, 2);
-
-        // Close the channel so we get a ready channel with block_range 0..2.
-        encoder.advance_l1_head(100);
-        assert!(!encoder.ready_channels.is_empty());
-        assert_eq!(encoder.ready_channels[0].block_range.end, 2);
-
-        // Prune block 1 (safe head = 1).
-        assert!(encoder.prune_safe(BlockInfo { hash: b1_hash, number: 1, ..Default::default() }));
-        assert_eq!(encoder.blocks.len(), 1);
-        assert_eq!(encoder.block_cursor, 1);
-
-        // The ready channel's block_range.end must be adjusted.
-        assert_eq!(
-            encoder.ready_channels[0].block_range.end, 1,
-            "block_range.end must be reduced by prune count"
-        );
-
-        // Confirm the channel — should prune the remaining block.
-        let sub = encoder.next_submission().unwrap();
-        encoder.confirm(sub.id, 101);
-        assert!(encoder.blocks.is_empty(), "confirm after prune_safe must finish pruning");
     }
 
     /// `encode_and_drain` steps until idle, force-closes, and returns all frames.

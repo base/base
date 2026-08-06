@@ -90,7 +90,7 @@ fn test_resume_triggers_catchup_from_safe_head() {
         let safe_head =
             BlockInfo { hash: B256::with_last_byte(42), number: 42, ..Default::default() };
 
-        let driver = BatchDriver::new(
+        let driver = BatchDriver::new_without_safe_head(
             ctx.clone(),
             TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
             source,
@@ -180,7 +180,7 @@ fn test_paused_drops_block_and_flush_events() {
             inner: TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
         };
 
-        let driver = BatchDriver::new(
+        let driver = BatchDriver::new_without_safe_head(
             ctx.clone(),
             pipeline,
             source,

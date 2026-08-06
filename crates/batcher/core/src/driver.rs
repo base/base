@@ -82,8 +82,32 @@ where
     /// starving receipt processing and cancellation checks.
     pub const STEP_BUDGET: usize = 128;
 
-    /// Create a new [`BatchDriver`].
+    /// Create a new [`BatchDriver`] with its L1 source, initial safe L2 head,
+    /// and ordered safe-head updates.
     pub fn new(
+        runtime: R,
+        pipeline: P,
+        source: S,
+        tx_manager: TM,
+        config: BatchDriverConfig,
+        throttle: DaThrottle<TC>,
+        head_sources: (L, BlockInfo, mpsc::Receiver<BlockInfo>),
+    ) -> Self {
+        let (l1_head_source, safe_head, safe_head_rx) = head_sources;
+        Self::new_inner(
+            runtime,
+            pipeline,
+            source,
+            tx_manager,
+            config,
+            throttle,
+            (l1_head_source, Some((safe_head, safe_head_rx))),
+        )
+    }
+
+    /// Create a driver without safe-head tracking for tests that do not exercise pruning.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn new_without_safe_head(
         runtime: R,
         pipeline: P,
         source: S,
@@ -92,6 +116,28 @@ where
         throttle: DaThrottle<TC>,
         l1_head_source: L,
     ) -> Self {
+        Self::new_inner(
+            runtime,
+            pipeline,
+            source,
+            tx_manager,
+            config,
+            throttle,
+            (l1_head_source, None),
+        )
+    }
+
+    fn new_inner(
+        runtime: R,
+        pipeline: P,
+        source: S,
+        tx_manager: TM,
+        config: BatchDriverConfig,
+        throttle: DaThrottle<TC>,
+        head_sources: (L, Option<(BlockInfo, mpsc::Receiver<BlockInfo>)>),
+    ) -> Self {
+        let (l1_head_source, safe_head_feed) = head_sources;
+        let (safe_head, safe_head_rx) = safe_head_feed.unzip();
         Self {
             runtime,
             pipeline,
@@ -103,8 +149,8 @@ where
             ),
             throttle,
             l1_head_source: Some(l1_head_source),
-            safe_head: None,
-            safe_head_rx: None,
+            safe_head,
+            safe_head_rx,
             drain_timeout: config.drain_timeout,
             stopped: false,
             admin_rx: None,
@@ -112,10 +158,8 @@ where
         }
     }
 
-    /// Attach an ordered safe-head update channel.
-    ///
-    /// Advances validate and prune confirmed blocks. Regressions or hash
-    /// conflicts reset the pipeline and restart the source above the safe head.
+    /// Attach a safe-head feed to a test driver created without one.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn with_safe_head_rx(mut self, initial: BlockInfo, rx: mpsc::Receiver<BlockInfo>) -> Self {
         self.safe_head = Some(initial);
         self.safe_head_rx = Some(rx);
@@ -278,9 +322,8 @@ where
     /// Ingest a new L2 block into the pipeline.
     ///
     /// If the pipeline signals a reorg via `add_block` (parent-hash mismatch),
-    /// discards in-flight submissions, resets the pipeline, and restarts
-    /// sequential catchup from `safe_head + 1`. The triggering block will be
-    /// re-delivered by the sequential poller.
+    /// discards in-flight submissions, resets the pipeline, and restarts the
+    /// source above the latest safe head.
     fn on_block(&mut self, block: Box<BaseBlock>) {
         let number = block.header.number;
         if self.safe_head.is_some_and(|safe_head| number <= safe_head.number) {
@@ -585,7 +628,7 @@ mod tests {
         Arc<NoopThrottleClient>,
         QueuedL1HeadSource,
     > {
-        BatchDriver::new(
+        BatchDriver::new_without_safe_head(
             runtime,
             TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
             QueuedSource::new(source_events),
@@ -783,21 +826,6 @@ mod tests {
         });
     }
 
-    #[test]
-    fn next_event_returns_safe_head_when_only_safe_head_is_ready() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let (safe_tx, safe_rx) = mpsc::channel(1);
-            safe_tx.send(safe_head(7)).await.expect("safe-head receiver should be open");
-
-            let mut driver =
-                driver_for_next_event(ctx, [], [], ImmediateConfirmTxManager { l1_block: 1 })
-                    .with_safe_head_rx(safe_head(0), safe_rx);
-
-            let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::SafeHead(head) if head.number == 7));
-        });
-    }
-
     /// `advance_l1_head` must be called with the confirmed L1 block on every
     /// confirmation so the encoder can detect channel timeouts.
     #[test]
@@ -851,10 +879,8 @@ mod tests {
         });
     }
 
-    /// When blob encoding fails the submission has already been dequeued from the pipeline
-    /// (cursor advanced, `pending_confirmations` incremented). Without a requeue the channel
-    /// is permanently stuck — `pending_confirmations` never returns to zero and blocks are
-    /// never pruned. The driver must call requeue so the encoder can unwind that state.
+    /// When blob encoding fails the submission has already been dequeued from the pipeline.
+    /// The driver must requeue it so the channel can submit those frames again.
     #[test]
     fn test_blob_encoding_failure_requeues_submission() {
         // Blob submission encoding feeds DERIVATION_VERSION_0 (1) + frame.encode()

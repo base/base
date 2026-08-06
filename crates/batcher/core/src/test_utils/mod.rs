@@ -4,7 +4,7 @@ mod throttle;
 pub use throttle::{ThrottleCallLog, TrackingThrottleClient};
 
 mod pipeline;
-pub use pipeline::{OneReorgPipeline, Recorded, ReorgPipeline, TrackingPipeline};
+pub use pipeline::{Recorded, ReorgPipeline, TrackingPipeline};
 
 #[cfg(any(test, feature = "test-utils"))]
 mod source;

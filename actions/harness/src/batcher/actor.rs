@@ -10,7 +10,7 @@ use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
-use base_protocol::{BatchType, BlockInfo};
+use base_protocol::BatchType;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio_util::sync::CancellationToken;
@@ -127,36 +127,6 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// [`advance`]: Batcher::advance
     pub fn new(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
-        Self::build(l2_source, rollup_config, config, None)
-    }
-
-    /// Create a new [`Batcher`] with an ordered L2 safe-head feed.
-    ///
-    /// When the receiver fires, the [`BatchDriver`] prunes confirmed blocks
-    /// from the encoder and uses the safe head value to determine the
-    /// catchup position after a reorg or [`signal_reorg`] call.
-    ///
-    /// Without this, the test driver does not reposition its source after a reorg.
-    ///
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    /// [`signal_reorg`]: Batcher::signal_reorg
-    pub fn with_safe_head_rx(
-        l2_source: S,
-        rollup_config: &RollupConfig,
-        config: BatcherConfig,
-        initial_safe_head: BlockInfo,
-        safe_head_rx: tokio::sync::mpsc::Receiver<BlockInfo>,
-    ) -> Self {
-        Self::build(l2_source, rollup_config, config, Some((initial_safe_head, safe_head_rx)))
-    }
-
-    /// Shared constructor. Builds and spawns the [`BatchDriver`] task.
-    fn build(
-        l2_source: S,
-        rollup_config: &RollupConfig,
-        config: BatcherConfig,
-        safe_head_rx: Option<(BlockInfo, tokio::sync::mpsc::Receiver<BlockInfo>)>,
-    ) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
         let rollup_config = Arc::new(rollup_config.clone());
         let mut encoder_config = config.encoder.clone();
@@ -182,24 +152,22 @@ impl<S: L2BlockProvider> Batcher<S> {
         let runtime = TokioRuntime::with_token(cancel.clone());
 
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Off);
-        let mut driver = BatchDriver::new(
+        let driver_config = BatchDriverConfig {
+            inbox: config.inbox_address,
+            max_pending_transactions: 16,
+            drain_timeout: Duration::from_secs(10),
+            force_blobs_when_throttling: true,
+        };
+        let da_throttle = DaThrottle::new(throttle, Arc::new(NoopThrottleClient));
+        let driver = BatchDriver::new_without_safe_head(
             runtime,
             pipeline,
             source,
             tx_manager.clone(),
-            BatchDriverConfig {
-                inbox: config.inbox_address,
-                max_pending_transactions: 16,
-                drain_timeout: Duration::from_secs(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(throttle, Arc::new(NoopThrottleClient)),
+            driver_config,
+            da_throttle,
             l1_source,
         );
-
-        if let Some((initial, rx)) = safe_head_rx {
-            driver = driver.with_safe_head_rx(initial, rx);
-        }
 
         let driver_task = tokio::spawn(async move { driver.run().await });
 
@@ -428,14 +396,6 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`UnsafeBlockSource::reset_catchup`]. After this call returns, the
     /// encoder is empty and ready to accept blocks from the new node's chain.
     ///
-    /// In production, this corresponds to the batcher detecting that the
-    /// L2 unsafe chain has diverged (e.g. because it was repointed to a
-    /// different sequencer node). The batcher achieves the same effect by
-    /// starting fresh and clearing the channel manager state.
-    ///
-    /// `block_number` is forwarded to the driver for logging. The actual
-    /// catchup position is determined by the safe-head feed, when configured.
-    ///
     /// # Panics
     ///
     /// Panics if the driver task has already exited.
@@ -443,7 +403,6 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     /// [`BatchPipeline::reset`]: base_batcher_encoder::BatchPipeline::reset
     /// [`UnsafeBlockSource::reset_catchup`]: base_batcher_source::UnsafeBlockSource::reset_catchup
-    /// [`with_safe_head_rx`]: Batcher::with_safe_head_rx
     pub async fn signal_reorg(&self) {
         self.block_tx.send(L2BlockEvent::Reorg).expect("driver task alive");
         tokio::task::yield_now().await;

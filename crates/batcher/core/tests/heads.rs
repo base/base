@@ -10,8 +10,7 @@ use base_batcher_core::{
     BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
     ThrottleController,
     test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, PendingSource, Recorded, SubmissionStub,
-        TrackingPipeline,
+        DriverFixture, ImmediateConfirmTxManager, PendingSource, Recorded, TrackingPipeline,
     },
 };
 use base_batcher_source::{ChannelL1HeadSource, L1HeadEvent};
@@ -32,11 +31,11 @@ fn safe_head(number: u64) -> BlockInfo {
 fn test_l1_head_source_advances_pipeline() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_safe_head_match(false);
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
 
         let (l1_source, l1_tx) = ChannelL1HeadSource::new();
 
-        let driver = BatchDriver::new(
+        let driver = BatchDriver::new_without_safe_head(
             ctx.clone(),
             pipeline,
             PendingSource,
@@ -77,7 +76,7 @@ fn test_l1_source_exhausted_disables_arm_driver_continues() {
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
         let (l1_source, l1_tx) = ChannelL1HeadSource::new();
 
-        let driver = BatchDriver::new(
+        let driver = BatchDriver::new_without_safe_head(
             ctx.clone(),
             pipeline,
             PendingSource,
@@ -111,38 +110,8 @@ fn test_l1_source_exhausted_disables_arm_driver_continues() {
     });
 }
 
-/// When a safe-head update arrives, the driver must call
-/// `prune_safe` on the pipeline with the new value.
 #[test]
-fn test_safe_head_update_prunes_pipeline() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-
-        let (safe_tx, safe_rx) = mpsc::channel(1);
-
-        let driver =
-            DriverFixture::build(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .with_safe_head_rx(safe_head(0), safe_rx);
-        let handle = ctx.spawn(driver.run());
-
-        // Send a new safe head.
-        safe_tx.send(safe_head(100)).await.unwrap();
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-
-        assert!(handle.await.unwrap().is_ok());
-        let r = recorded.lock().unwrap();
-        assert!(
-            r.safe_numbers.contains(&100),
-            "prune_safe must be called with the safe-head value, got {:?}",
-            r.safe_numbers
-        );
-    });
-}
-
-#[test]
-fn test_safe_head_regression_resets_pipeline() {
+fn test_safe_head_regression_and_chain_mismatch_reset_pipeline() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_safe_head_match(false);
@@ -161,7 +130,7 @@ fn test_safe_head_regression_resets_pipeline() {
         assert!(handle.await.unwrap().is_ok());
         let recorded = recorded.lock().unwrap();
         assert_eq!(recorded.resets, 2);
-        assert!(recorded.safe_numbers.contains(&10));
+        assert_eq!(recorded.safe_numbers, vec![10]);
     });
 }
 
@@ -176,30 +145,5 @@ fn test_safe_head_sender_drop_is_fatal() {
         drop(safe_tx);
 
         assert!(matches!(driver.run().await, Err(BatchDriverError::SafeHeadSourceClosed)));
-    });
-}
-
-/// Without a safe head receiver, confirmation-based L1 head advancement must
-/// still work normally. The driver uses `PendingL1HeadSource` (parks forever)
-/// so only submission confirmations drive `advance_l1_head`.
-#[test]
-fn test_no_safe_head_receiver_driver_runs_normally() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        pipeline.submissions.push_back(SubmissionStub::stub());
-
-        // No .with_safe_head_rx() — safe_head remains None.
-        let driver =
-            DriverFixture::build(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 7 });
-        let handle = ctx.spawn(driver.run());
-
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-
-        assert!(handle.await.unwrap().is_ok());
-        let r = recorded.lock().unwrap();
-        assert_eq!(r.l1_heads, vec![7], "confirmation-based advance_l1_head must still work");
-        assert!(r.safe_numbers.is_empty(), "prune_safe must not be called without a receiver");
     });
 }

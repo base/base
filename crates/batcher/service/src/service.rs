@@ -706,9 +706,8 @@ impl BatcherService {
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
             },
             DaThrottle::new(throttle, throttle_client),
-            l1_head_source,
+            (l1_head_source, safe_l2, safe_head_rx),
         )
-        .with_safe_head_rx(safe_l2, safe_head_rx)
         .with_stopped(self.config.stopped);
 
         let admin_server = match self.config.admin_addr {

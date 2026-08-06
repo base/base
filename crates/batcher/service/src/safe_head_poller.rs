@@ -126,26 +126,11 @@ mod tests {
     }
 
     #[test]
-    fn sends_head_changes() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let (tx, mut rx) = mpsc::channel(1);
-            let provider =
-                MockProvider { heads: Mutex::new(VecDeque::from([head(5)])), fallback: head(5) };
-            let poller = SafeHeadPoller::new(provider, Duration::from_secs(1), head(0), tx);
-            let handle = ctx.spawn(poller.run(ctx.clone()));
-
-            assert_eq!(rx.recv().await, Some(head(5)));
-            ctx.cancel();
-            handle.await.unwrap();
-        });
-    }
-
-    #[test]
-    fn preserves_regression_and_recovery_order() {
+    fn sends_ordered_head_changes_without_duplicates() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let (tx, mut rx) = mpsc::channel(1);
             let provider = MockProvider {
-                heads: Mutex::new(VecDeque::from([head(5), head(10)])),
+                heads: Mutex::new(VecDeque::from([head(5), head(5), head(10), head(10)])),
                 fallback: head(10),
             };
             let poller = SafeHeadPoller::new(provider, Duration::from_secs(1), head(10), tx);
@@ -153,21 +138,8 @@ mod tests {
 
             assert_eq!(rx.recv().await, Some(head(5)));
             assert_eq!(rx.recv().await, Some(head(10)));
-            ctx.cancel();
-            handle.await.unwrap();
-        });
-    }
-
-    #[test]
-    fn ignores_unchanged_head() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let (tx, mut rx) = mpsc::channel(1);
-            let provider = MockProvider { heads: Mutex::new(VecDeque::new()), fallback: head(10) };
-            let poller = SafeHeadPoller::new(provider, Duration::from_secs(1), head(10), tx);
-            let handle = ctx.spawn(poller.run(ctx.clone()));
-
-            ctx.sleep(Duration::from_secs(3)).await;
-            assert!(rx.try_recv().is_err());
+            ctx.sleep(Duration::from_secs(2)).await;
+            assert!(matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
             ctx.cancel();
             handle.await.unwrap();
         });

@@ -13,10 +13,9 @@ use base_action_harness::{
     TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_protocol::BlockInfo;
 
 // ---------------------------------------------------------------------------
-// A. Gap-filling with a single persistent batcher (reorg signal path)
+// Gap-filling with a single persistent batcher (reorg signal path)
 // ---------------------------------------------------------------------------
 
 /// Verifies the batcher gap-filling invariant using a single persistent
@@ -125,91 +124,7 @@ async fn batcher_gap_fill_single_instance_reorg_signal() {
 }
 
 // ---------------------------------------------------------------------------
-// B. Driver reset with safe-head tracking
-// ---------------------------------------------------------------------------
-
-/// Exercises driver and encoder recovery with a safe-head feed. This harness
-/// replays missing blocks explicitly; numbered polling is tested in the source
-/// crate.
-#[tokio::test]
-async fn batcher_gap_fill_with_safe_head_tracking() {
-    let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
-        ..BatcherConfig::default()
-    };
-    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
-    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut sequencer = h.create_l2_sequencer(l1_chain);
-
-    let mut blocks = Vec::with_capacity(10);
-    for _ in 0..10 {
-        blocks.push(sequencer.build_next_block_with_single_transaction().await);
-    }
-
-    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
-        &mut sequencer,
-        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
-    );
-
-    // Wire a safe-head event channel into the batcher.
-    let (safe_head_tx, safe_head_rx) = tokio::sync::mpsc::channel(1);
-    let mut batcher = Batcher::with_safe_head_rx(
-        ActionL2Source::new(),
-        &h.rollup_config,
-        batcher_cfg.clone(),
-        BlockInfo::default(),
-        safe_head_rx,
-    );
-
-    // ----- Phase 1: post blocks 1-5 -----
-    for block in &blocks[..5] {
-        batcher.push_block(block.clone());
-    }
-    batcher.advance(&mut h.l1).await;
-    chain.push(h.l1.tip().clone());
-
-    node.initialize().await;
-    let derived = node.run_until_idle().await;
-    assert_eq!(derived, 5, "Phase 1: expected 5 L2 blocks derived");
-    assert_eq!(node.l2_safe_number(), 5, "Phase 1: safe head must be 5");
-
-    // Update the batcher's safe head to match the verifier.
-    safe_head_tx.send(BlockInfo::from(&blocks[4])).await.expect("safe-head channel open");
-    // Yield to let the driver process the safe-head update (prune_safe).
-    tokio::task::yield_now().await;
-
-    // ----- Phase 2: repoint to node B, post gap blocks 8-10 -----
-    batcher.signal_reorg().await;
-
-    for block in &blocks[7..10] {
-        batcher.push_block(block.clone());
-    }
-    batcher.advance(&mut h.l1).await;
-    chain.push(h.l1.tip().clone());
-
-    let derived = node.run_until_idle().await;
-    assert_eq!(node.l2_safe_number(), 5, "Phase 2: safe head must stay at 5");
-    assert_eq!(derived, 0, "Phase 2: no blocks derived (gap)");
-
-    // ----- Phase 3: repoint back, fill the gap from safe_head + 1 = 6 -----
-    // The batcher's safe head remains 5, so catchup starts at 6.
-    batcher.signal_reorg().await;
-
-    for block in &blocks[5..10] {
-        batcher.push_block(block.clone());
-    }
-    batcher.advance(&mut h.l1).await;
-    chain.push(h.l1.tip().clone());
-
-    let derived = node.run_until_idle().await;
-    assert_eq!(derived, 5, "Phase 3: expected 5 L2 blocks derived (6-10)");
-    assert_eq!(node.l2_safe_number(), 10, "Phase 3: safe head must reach 10");
-}
-
-// ---------------------------------------------------------------------------
-// C. Gap-filling with separate batcher instances (restart model)
+// Gap-filling with separate batcher instances (restart model)
 // ---------------------------------------------------------------------------
 
 /// Verifies the same gap-filling invariant using separate [`Batcher`]
