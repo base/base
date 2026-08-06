@@ -1,6 +1,6 @@
 //! Proof generation orchestration for claimed Nitro worker jobs.
 
-use std::{future::Future, sync::Arc};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use base_proof_primitives::ProofRequest as NitroProofRequest;
@@ -19,13 +19,16 @@ use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider}
 use base_prover_service_protocol::{ProofJob, ProofRequestKind, TeeKind};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
-use tokio::task::JoinHandle;
+use tokio::{task::JoinHandle, time::timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
     NitroEnclavePool, NitroEnclavePoolError, ProofSubmitterRequest, ProofSubmitterRequestError,
 };
+
+/// Maximum time to wait for generation cleanup after heartbeat failure.
+const HEARTBEAT_FAILURE_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Claimed prover-service job data needed to generate and submit a Nitro proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,8 +184,8 @@ where
                         Some(Self::stopped_heartbeat_error())
                     })
                     .unwrap_or_else(Self::stopped_heartbeat_error);
-                match generate.await {
-                    Ok(_) => {
+                match timeout(HEARTBEAT_FAILURE_DRAIN_TIMEOUT, &mut generate).await {
+                    Ok(Ok(_)) => {
                         info!(
                             session_id = %request.claim.session_id,
                             lock_id = %request.claim.lock_id,
@@ -191,13 +194,22 @@ where
                             "discarding nitro proof generated after heartbeat failure"
                         );
                     }
-                    Err(error) => {
+                    Ok(Err(error)) => {
                         warn!(
                             session_id = %request.claim.session_id,
                             lock_id = %request.claim.lock_id,
                             worker_id = %request.claim.worker_id,
                             error = %error,
                             "nitro proof generation finished with error after heartbeat failure"
+                        );
+                    }
+                    Err(_) => {
+                        warn!(
+                            session_id = %request.claim.session_id,
+                            lock_id = %request.claim.lock_id,
+                            worker_id = %request.claim.worker_id,
+                            timeout = ?HEARTBEAT_FAILURE_DRAIN_TIMEOUT,
+                            "timed out waiting for nitro proof generation after heartbeat failure"
                         );
                     }
                 }
