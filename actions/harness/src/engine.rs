@@ -137,7 +137,11 @@ impl ActionEngineClient {
     /// Starts from [`build_test_genesis`] (pre-funded test accounts, all forks through
     /// Jovian at timestamp 0) and overrides each fork timestamp and the chain ID from the
     /// rollup config so the resulting [`BaseChainSpec`] matches the test's expectations.
-    fn build_genesis_for_rollup(rollup_config: &RollupConfig) -> Genesis {
+    ///
+    /// Exposed so an alternate engine backend (e.g. the production-builder-backed sequencer) can
+    /// launch a node against the exact same genesis this client commits, keeping block hashes and
+    /// state roots aligned with the verifier and `rollup_config.genesis.l2.hash`.
+    pub fn build_genesis_for_rollup(rollup_config: &RollupConfig) -> Genesis {
         let mut genesis = build_test_genesis();
         genesis.config.chain_id = rollup_config.l2_chain_id.id();
 
@@ -759,6 +763,10 @@ impl EngineClient for ActionEngineClient {
         };
         Ok(info)
     }
+
+    async fn el_syncing(&self) -> Result<bool, EngineClientError> {
+        Ok(false)
+    }
 }
 
 #[async_trait]
@@ -985,5 +993,16 @@ impl SequencerEngineClient for ActionEngineClient {
     async fn get_unsafe_head(&self) -> Result<L2BlockInfo, NodeEngineClientError> {
         let guard = self.inner.lock().expect("action engine inner lock poisoned");
         Ok(guard.canonical_head)
+    }
+
+    async fn el_sync_finished(&self) -> Result<bool, NodeEngineClientError> {
+        // The action engine executes synchronously and does not model background EL sync.
+        Ok(true)
+    }
+}
+
+impl crate::SequencerEngineBackend for ActionEngineClient {
+    fn block_hash_registry(&self) -> SharedBlockHashRegistry {
+        self.block_registry.clone()
     }
 }

@@ -386,7 +386,7 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
         JournalCheckpoint::default()
     }
 
-    fn checkpoint_commit(&mut self) {}
+    fn commit_latest_checkpoint(&mut self) {}
 
     fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {}
 
@@ -615,7 +615,7 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
         JournalCheckpoint::default()
     }
 
-    fn checkpoint_commit(&mut self) {}
+    fn commit_latest_checkpoint(&mut self) {}
 
     // A `checkpoint_revert` would silently leak partial writes (the overlay
     // cannot roll back), so trip loudly in debug/test builds if the admission

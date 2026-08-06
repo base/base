@@ -40,10 +40,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
     let arg_defs = args.iter().map(PrecompileArg::definition);
     let install_arg_defs = args.iter().map(PrecompileArg::definition);
     let install_arg_names = args.iter().map(|arg| &arg.ident);
-    let install = config.install.map(|install| {
-        let address = install
-            .address
-            .map_or_else(|| quote! { <#storage>::ADDRESS }, |address| quote! { #address });
+    let install = config.install.then(|| {
         let doc = format!("Installs the `{ident}` precompile into `precompiles`.");
 
         quote! {
@@ -53,7 +50,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
                 #(#install_arg_defs),*
             ) {
                 precompiles.extend_precompiles(::core::iter::once((
-                    #address,
+                    <#storage>::ADDRESS,
                     Self::precompile(#(#install_arg_names),*),
                 )));
             }
@@ -83,7 +80,7 @@ struct PrecompileConfig {
     storage: Option<Type>,
     macro_path: Option<Path>,
     args: Vec<PrecompileArg>,
-    install: Option<InstallConfig>,
+    install: bool,
 }
 
 impl Parse for PrecompileConfig {
@@ -93,7 +90,7 @@ impl Parse for PrecompileConfig {
         let mut macro_path = None;
         let mut args = Vec::new();
         let mut args_seen = false;
-        let mut install = None;
+        let mut install = false;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -126,14 +123,16 @@ impl Parse for PrecompileConfig {
                         .collect();
                 }
                 "install" => {
-                    reject_duplicate(&install, &key)?;
-                    install = if input.peek(syn::token::Paren) {
-                        let content;
-                        parenthesized!(content in input);
-                        Some(content.parse()?)
-                    } else {
-                        Some(InstallConfig { address: None })
-                    };
+                    if install {
+                        return Err(syn::Error::new_spanned(key, "duplicate `install` option"));
+                    }
+                    if input.peek(syn::token::Paren) {
+                        return Err(syn::Error::new_spanned(
+                            &key,
+                            "`install` does not accept arguments; registration uses `<storage>::ADDRESS`",
+                        ));
+                    }
+                    install = true;
                 }
                 _ => {
                     return Err(syn::Error::new_spanned(
@@ -176,40 +175,6 @@ impl Parse for PrecompileArg {
     }
 }
 
-struct InstallConfig {
-    address: Option<Expr>,
-}
-
-impl Parse for InstallConfig {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let key: Ident = input.parse()?;
-        if key != "addr" {
-            return Err(syn::Error::new_spanned(
-                &key,
-                format!(
-                    "unrecognized install argument `{key}`, the supported argument is `addr = \"0x...\"`"
-                ),
-            ));
-        }
-
-        input.parse::<Token![=]>()?;
-        let address = input.parse()?;
-
-        let has_non_comma_remainder = !input.is_empty() && !input.peek(Token![,]);
-        if has_non_comma_remainder {
-            return Err(syn::Error::new(input.span(), "unexpected `install` option"));
-        }
-        if !input.is_empty() {
-            input.parse::<Token![,]>()?;
-        }
-        if !input.is_empty() {
-            return Err(syn::Error::new(input.span(), "unexpected `install` option"));
-        }
-
-        Ok(Self { address: Some(address) })
-    }
-}
-
 fn reject_duplicate<T>(option: &Option<T>, ident: &Ident) -> syn::Result<()> {
     if option.is_some() {
         return Err(syn::Error::new_spanned(ident, format!("duplicate `{ident}` option")));
@@ -227,10 +192,21 @@ mod tests {
     use proc_macro2::TokenStream as TokenStream2;
     use quote::quote;
 
-    use super::PrecompileConfig;
+    use super::{PrecompileConfig, expand_impl};
 
     fn parse_config(tokens: TokenStream2) -> syn::Result<PrecompileConfig> {
         syn::parse2(tokens)
+    }
+
+    fn assert_install_rejects_arguments(tokens: TokenStream2) {
+        let err = parse_config(tokens).err().unwrap();
+        let msg = err.to_string();
+        assert!(
+            msg.contains(
+                "`install` does not accept arguments; registration uses `<storage>::ADDRESS`"
+            ),
+            "got: {msg}"
+        );
     }
 
     #[test]
@@ -263,38 +239,41 @@ mod tests {
 
         assert!(config.storage.is_some());
         assert!(config.macro_path.is_some());
+        assert!(!config.install);
     }
 
     #[test]
-    fn install_config_rejects_address_alias_with_helpful_diagnostic() {
-        let err = parse_config(quote! { install(address = X) }).err().unwrap();
+    fn config_accepts_bare_install() {
+        let config = parse_config(quote! { install }).unwrap();
 
-        let msg = err.to_string();
-        assert!(msg.contains("unrecognized install argument `address`"), "got: {msg}");
-        assert!(msg.contains("addr"), "got: {msg}");
+        assert!(config.install);
     }
 
     #[test]
-    fn install_config_rejects_typo_with_helpful_diagnostic() {
-        let err = parse_config(quote! { install(a = X) }).err().unwrap();
-
-        let msg = err.to_string();
-        assert!(msg.contains("unrecognized install argument `a`"), "got: {msg}");
-        assert!(msg.contains("addr"), "got: {msg}");
+    fn install_rejects_empty_parentheses() {
+        assert_install_rejects_arguments(quote! { install() });
     }
 
     #[test]
-    fn install_config_rejects_extra_option_without_comma() {
-        let err = parse_config(quote! { install(addr = X extra) }).err().unwrap();
-
-        assert!(err.to_string().contains("unexpected `install` option"));
+    fn install_rejects_addr_override() {
+        assert_install_rejects_arguments(quote! { install(addr = X) });
     }
 
     #[test]
-    fn install_config_rejects_extra_option_after_comma() {
-        let err = parse_config(quote! { install(addr = X, extra) }).err().unwrap();
+    fn install_rejects_address_alias() {
+        assert_install_rejects_arguments(quote! { install(address = X) });
+    }
 
-        assert!(err.to_string().contains("unexpected `install` option"));
+    #[test]
+    fn install_rejects_typo_argument() {
+        assert_install_rejects_arguments(quote! { install(a = X) });
+    }
+
+    #[test]
+    fn config_rejects_duplicate_install() {
+        let err = parse_config(quote! { install, install }).err().unwrap();
+
+        assert!(err.to_string().contains("duplicate `install` option"));
     }
 
     #[test]
@@ -309,5 +288,39 @@ mod tests {
         let err = parse_config(quote! { args(), args(x: u8) }).err().unwrap();
 
         assert!(err.to_string().contains("duplicate `args` option"));
+    }
+
+    #[test]
+    fn bare_install_expands_to_storage_address() {
+        let tokens = expand_impl(
+            quote! { install },
+            quote! {
+                pub struct Example;
+            },
+        )
+        .unwrap()
+        .to_string();
+
+        assert!(tokens.contains("ExampleStorage"), "got: {tokens}");
+        assert!(tokens.contains("ADDRESS"), "got: {tokens}");
+        assert!(tokens.contains("extend_precompiles"), "got: {tokens}");
+    }
+
+    #[test]
+    fn install_with_explicit_storage_uses_that_address() {
+        let tokens = expand_impl(
+            quote! { storage = CustomStorage<'_>, install },
+            quote! {
+                pub struct Example;
+            },
+        )
+        .unwrap()
+        .to_string();
+
+        assert!(tokens.contains("CustomStorage"), "got: {tokens}");
+        assert!(tokens.contains("ADDRESS"), "got: {tokens}");
+        assert!(tokens.contains("extend_precompiles"), "got: {tokens}");
+        assert!(tokens.contains(". dispatch"), "got: {tokens}");
+        assert!(!tokens.contains("ExampleStorage"), "got: {tokens}");
     }
 }

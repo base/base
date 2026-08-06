@@ -104,9 +104,9 @@ services:
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_SEQ1_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-sequencer-1
     command:
-      - sequencer
       - --chain
       - dev
+      - sequencer
       - --execution-chain=/genesis/l2/genesis.json
       - --datadir=/data
       - --telemetry.sampling-ratio=1
@@ -213,9 +213,9 @@ services:
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_SEQ2_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-sequencer-2
     command:
-      - sequencer
       - --chain
       - dev
+      - sequencer
       - --execution-chain=/genesis/l2/genesis.json
       - --datadir=/data
       - --telemetry.sampling-ratio=1

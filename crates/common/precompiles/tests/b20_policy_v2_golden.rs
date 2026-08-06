@@ -74,6 +74,11 @@ const ROOT_STAGE_FINALIZE_ADMIN: B256 =
     b256!("8af193788c98e688ce3bb069b241f1fea51bd8dc6d9aa95995bcd956071a111d");
 const ROOT_RENOUNCE_ADMIN: B256 =
     b256!("5d31ed7e17637df947521d71d43d5d9b93e75b070e6ffeee6e442ac9a2ce0e5b");
+// Composite roots are V2-only (no V1 equivalent). Bless with BLESS_GOLDEN=1.
+const ROOT_CREATE_COMPOSITE_UNION: B256 =
+    b256!("f76b88e4cd8e2379cd8fe082a8530e187eca346599b679abb5038aaf62d048ee");
+const ROOT_UPDATE_COMPOSITE: B256 =
+    b256!("fa1912098beb387418d4c28bf4d9cc499f0f2cf8a623e6d57a768bcf062c9094");
 
 // --- harness ----------------------------------------------------------------
 
@@ -206,8 +211,9 @@ fn golden_is_authorized_builtins_and_malformed() {
     // ALWAYS_ALLOW (0) authorizes everyone; ALWAYS_BLOCK rejects everyone.
     assert!(is_authorized(&mut s, PolicyRegistryStorage::ALWAYS_ALLOW_ID, ALICE));
     assert!(!is_authorized(&mut s, PolicyRegistryStorage::ALWAYS_BLOCK_ID, ALICE));
-    // Malformed id (type byte > 1) is unauthorized, never reverts.
-    assert!(!is_authorized(&mut s, 2u64 << 56, ALICE));
+    // Malformed id (type byte > INTERSECT) is unauthorized, never reverts. Type byte 2 is now
+    // UNION, so use 4 to stay above the composite range.
+    assert!(!is_authorized(&mut s, 4u64 << 56, ALICE));
 }
 
 #[test]
@@ -341,6 +347,232 @@ fn golden_create_reverts_zero_admin() {
     );
     assert!(rev);
     assert_eq!(bytes, Bytes::from(IPolicyRegistry::ZeroAddress {}.abi_encode()));
+}
+
+/// A composite discriminant (UNION/INTERSECT) decodes at V2 (the enum widened at Cobalt) and
+/// reaches the logic, which rejects it with `IncompatiblePolicyType` rather than a `Panic(0x21)`.
+/// The revert body is exactly the 4-byte selector (no args); this is a revert-only path, so no
+/// state-root golden moves.
+#[test]
+fn golden_create_policy_composite_type_is_incompatible_policy_type_in_v2() {
+    for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
+        let calldata = IPolicyRegistry::createPolicyCall { admin: ADMIN, policyType: policy_type }
+            .abi_encode();
+        let mut s = fresh();
+        let (rev, bytes) = call_policy(&mut s, ADMIN, calldata);
+        assert!(rev);
+        assert_eq!(bytes, Bytes::from(IPolicyRegistry::IncompatiblePolicyType::SELECTOR.as_ref()));
+    }
+}
+
+// ============================================================================
+// composite policies (V2: UNION / INTERSECT)
+// ============================================================================
+
+/// Adds `account` to allowlist policy `id` as its admin (`ADMIN`).
+fn set_allow(s: &mut HashMapStorageProvider, id: u64, account: Address) {
+    let (rev, _) = call_policy(
+        s,
+        ADMIN,
+        IPolicyRegistry::updateAllowlistCall {
+            policyId: id,
+            allowed: true,
+            accounts: vec![account],
+        }
+        .abi_encode(),
+    );
+    assert!(!rev, "updateAllowlist setup unexpectedly reverted");
+}
+
+/// Creates a composite policy as `ADMIN`, returning its decoded id.
+fn create_composite(s: &mut HashMapStorageProvider, gate: PolicyType, children: Vec<u64>) -> u64 {
+    let (rev, bytes) = call_policy(
+        s,
+        ADMIN,
+        IPolicyRegistry::createCompositePolicyCall {
+            admin: ADMIN,
+            policyType: gate,
+            childPolicyIds: children,
+        }
+        .abi_encode(),
+    );
+    assert!(!rev, "createCompositePolicy unexpectedly reverted");
+    IPolicyRegistry::createCompositePolicyCall::abi_decode_returns(&bytes).unwrap()
+}
+
+#[test]
+fn golden_create_composite_union() {
+    let mut s = fresh();
+    let a = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    let b = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    set_allow(&mut s, a, ALICE);
+    set_allow(&mut s, b, BOB);
+
+    let id = create_composite(&mut s, PolicyType::UNION, vec![a, b]);
+    assert_eq!((id >> 56) as u8, PolicyType::UNION as u8);
+
+    // Live UNION: authorized if ANY child authorizes.
+    assert!(is_authorized(&mut s, id, ALICE));
+    assert!(is_authorized(&mut s, id, BOB));
+    assert!(!is_authorized(&mut s, id, OUTSIDER));
+
+    // Creation emits PolicyCreated, PolicyAdminUpdated, then CompositePolicyUpdated last.
+    assert_eq!(
+        s.get_events(registry()).last().unwrap().topics()[0],
+        IPolicyRegistry::CompositePolicyUpdated::SIGNATURE_HASH
+    );
+    assert_root("create_composite_union", s, ROOT_CREATE_COMPOSITE_UNION);
+}
+
+#[test]
+fn golden_update_composite() {
+    let mut s = fresh();
+    let a = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    let b = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    let c = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    set_allow(&mut s, a, ALICE);
+    set_allow(&mut s, c, BOB);
+
+    let id = create_composite(&mut s, PolicyType::UNION, vec![a, b]);
+    assert!(is_authorized(&mut s, id, ALICE));
+    assert!(!is_authorized(&mut s, id, BOB));
+
+    // Replace [a, b] with [b, c]: ALICE (only in a) drops out, BOB (in c) joins.
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::updateCompositeCall { policyId: id, childPolicyIds: vec![b, c] }
+            .abi_encode(),
+    );
+    assert!(!rev);
+    assert!(bytes.is_empty());
+    assert!(!is_authorized(&mut s, id, ALICE));
+    assert!(is_authorized(&mut s, id, BOB));
+    assert_eq!(
+        s.get_events(registry()).last().unwrap().topics()[0],
+        IPolicyRegistry::CompositePolicyUpdated::SIGNATURE_HASH
+    );
+    assert_root("update_composite", s, ROOT_UPDATE_COMPOSITE);
+}
+
+/// Reads a composite's child set over the wire, asserting the call never reverts.
+fn composite_child_ids(storage: &mut HashMapStorageProvider, policy_id: u64) -> Vec<u64> {
+    let (rev, bytes) = call_policy(
+        storage,
+        OUTSIDER,
+        IPolicyRegistry::compositePolicyChildIdsCall { policyId: policy_id }.abi_encode(),
+    );
+    assert!(!rev, "compositePolicyChildIds unexpectedly reverted");
+    IPolicyRegistry::compositePolicyChildIdsCall::abi_decode_returns(&bytes).unwrap()
+}
+
+#[test]
+fn golden_composite_policy_child_ids() {
+    let mut s = fresh();
+    let a = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    let b = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    let c = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    let id = create_composite(&mut s, PolicyType::INTERSECT, vec![c, a]);
+
+    // Order is preserved verbatim — the registry neither sorts nor de-dupes.
+    assert_eq!(composite_child_ids(&mut s, id), vec![c, a]);
+
+    // The view tracks a full replacement, leaving no stale tail behind.
+    let (rev, _) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::updateCompositeCall { policyId: id, childPolicyIds: vec![a, b, c] }
+            .abi_encode(),
+    );
+    assert!(!rev);
+    assert_eq!(composite_child_ids(&mut s, id), vec![a, b, c]);
+
+    // The view agrees with the payload of the event it mirrors.
+    let emitted = IPolicyRegistry::CompositePolicyUpdated::decode_log_data(
+        s.get_events(registry()).last().unwrap(),
+    )
+    .unwrap()
+    .childPolicyIds;
+    assert_eq!(composite_child_ids(&mut s, id), emitted);
+}
+
+/// The view is total: every non-composite input yields an empty array rather than a revert,
+/// matching the never-reverts contract the rest of the read surface documents.
+#[test]
+fn golden_composite_policy_child_ids_empty_for_non_composites() {
+    let mut s = fresh();
+    let simple = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    // Type byte above INTERSECT — malformed, and never a valid stored policy.
+    let malformed = (9u64 << 56) | 7;
+    // Well-formed UNION id that was never created.
+    let uncreated = ((PolicyType::UNION as u64) << 56) | 999;
+
+    for policy_id in [
+        simple,
+        PolicyRegistryStorage::ALWAYS_ALLOW_ID,
+        PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+        malformed,
+        uncreated,
+    ] {
+        assert_eq!(
+            composite_child_ids(&mut s, policy_id),
+            Vec::<u64>::new(),
+            "expected an empty child set for policy {policy_id}"
+        );
+    }
+}
+
+/// The view bypasses the activation gate, like every other read on this surface.
+#[test]
+fn golden_composite_policy_child_ids_reads_before_activation() {
+    // No activation, matching `golden_write_reverts_when_not_activated`.
+    let mut s = HashMapStorageProvider::new(CHAIN_ID);
+    let (rev, bytes) = call_policy(
+        &mut s,
+        OUTSIDER,
+        IPolicyRegistry::compositePolicyChildIdsCall { policyId: 999 }.abi_encode(),
+    );
+    assert!(!rev, "view must not be gated on activation");
+    assert_eq!(
+        bytes,
+        Bytes::from(IPolicyRegistry::compositePolicyChildIdsCall::abi_encode_returns(&Vec::new()))
+    );
+}
+
+#[test]
+fn golden_create_composite_reverts_incompatible_type() {
+    let mut s = fresh();
+    let a = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    let b = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::createCompositePolicyCall {
+            admin: ADMIN,
+            policyType: PolicyType::ALLOWLIST,
+            childPolicyIds: vec![a, b],
+        }
+        .abi_encode(),
+    );
+    assert!(rev);
+    assert_eq!(bytes, Bytes::from(IPolicyRegistry::IncompatiblePolicyType {}.abi_encode()));
+}
+
+#[test]
+fn golden_update_composite_reverts_unauthorized() {
+    let mut s = fresh();
+    let a = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    let b = create(&mut s, ADMIN, ADMIN, PolicyType::ALLOWLIST);
+    let id = create_composite(&mut s, PolicyType::UNION, vec![a, b]);
+    // OUTSIDER is not the composite's admin.
+    let (rev, bytes) = call_policy(
+        &mut s,
+        OUTSIDER,
+        IPolicyRegistry::updateCompositeCall { policyId: id, childPolicyIds: vec![a, b] }
+            .abi_encode(),
+    );
+    assert!(rev);
+    assert_eq!(bytes, Bytes::from(IPolicyRegistry::Unauthorized {}.abi_encode()));
 }
 
 #[test]
@@ -839,6 +1071,7 @@ fn v2_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
             golden_create_blocklist,
             golden_create_allowlist,
             golden_create_reverts_zero_admin,
+            golden_create_policy_composite_type_is_incompatible_policy_type_in_v2,
         ]),
         C::createPolicyWithAccounts(_) => covered(&[
             golden_create_with_accounts,
@@ -882,6 +1115,18 @@ fn v2_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
         C::pendingPolicyAdmin(_) => covered(&[
             golden_reads_for_nonexistent_and_builtins,
             golden_stage_and_finalize_update_admin,
+        ]),
+        C::createCompositePolicy(_) => covered(&[
+            golden_create_composite_union,
+            golden_create_composite_reverts_incompatible_type,
+        ]),
+        C::updateComposite(_) => {
+            covered(&[golden_update_composite, golden_update_composite_reverts_unauthorized])
+        }
+        C::compositePolicyChildIds(_) => covered(&[
+            golden_composite_policy_child_ids,
+            golden_composite_policy_child_ids_empty_for_non_composites,
+            golden_composite_policy_child_ids_reads_before_activation,
         ]),
     }
 }

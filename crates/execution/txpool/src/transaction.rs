@@ -93,20 +93,7 @@ pub struct BasePooledTransaction<
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Create new instance of [Self].
     pub fn new(transaction: Recovered<Cons>, encoded_length: usize) -> Self {
-        Self {
-            inner: EthPooledTransaction::new(transaction, encoded_length),
-            estimated_tx_compressed_size: Default::default(),
-            _pd: core::marker::PhantomData,
-            encoded_2718: Default::default(),
-            received_at: unix_time_millis(),
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            watch_set: OnceLock::new(),
-            limit_class: OnceLock::new(),
-            watch_manifest: OnceLock::new(),
-        }
+        Self::new_with_received_at(transaction, encoded_length, unix_time_millis())
     }
 
     /// Create new instance with an explicit `received_at` timestamp (millis since Unix epoch).
@@ -161,11 +148,6 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.
     pub fn encoded_2718(&self) -> &Bytes {
         self.encoded_2718.get_or_init(|| self.inner.transaction().encoded_2718().into())
-    }
-
-    /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
-    const fn inner_received_at(&self) -> u128 {
-        self.received_at
     }
 }
 
@@ -504,7 +486,7 @@ where
     Pooled: Send + Sync + 'static,
 {
     fn received_at(&self) -> u128 {
-        self.inner_received_at()
+        self.received_at
     }
 }
 

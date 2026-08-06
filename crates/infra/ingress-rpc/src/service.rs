@@ -103,6 +103,7 @@ impl IngressApiServer for IngressService {
 
         let bundle = Bundle {
             txs: vec![data.clone()],
+            block_number: Some(0),
             max_timestamp: Some(expiry_timestamp),
             reverting_tx_hashes: vec![transaction.tx_hash()],
             ..Default::default()
@@ -458,6 +459,7 @@ mod tests {
 
     use alloy_provider::RootProvider;
     use base_bundles::test_utils::create_test_meter_bundle_response;
+    use base_observability_events::{DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES};
     use tokio::sync::{broadcast, mpsc};
     use url::Url;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
@@ -489,6 +491,8 @@ mod tests {
             transaction_events_enabled: false,
             transaction_events_file_path: "/tmp/transaction-events.jsonl".into(),
             transaction_events_queue_capacity: 1024,
+            transaction_events_max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            transaction_events_max_files: DEFAULT_MAX_FILES,
             transaction_events_required: false,
             transaction_events_network: "base-mainnet".to_string(),
         }
@@ -608,6 +612,10 @@ mod tests {
 
         let result = service.send_raw_transaction(tx_bytes).await;
         assert!(result.is_ok());
+
+        let requests = simulation_server.received_requests().await.unwrap();
+        let request: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(request["params"][0]["blockNumber"], "0x0");
 
         let metering = timeout(Duration::from_secs(1), builder_rx.recv()).await.unwrap().unwrap();
         assert_eq!(metering.response, create_test_meter_bundle_response());

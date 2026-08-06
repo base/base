@@ -7,11 +7,11 @@ use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
-use base_node_core::args::RollupArgs;
+use base_node_core::{HasRollupArgs, RollupArgs};
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
 use base_observability_events::{
-    DEFAULT_QUEUE_CAPACITY, GlobalTransactionEventWriter, TransactionEventProducer,
-    TransactionEventWriterConfig,
+    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
+    GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
 use base_proofs_extension::ProofsHistoryExtension;
 use base_tx_forwarding::{
@@ -225,6 +225,12 @@ impl StandardNodeArgs {
     }
 }
 
+impl HasRollupArgs for StandardNodeArgs {
+    fn rollup_args(&self) -> &RollupArgs {
+        &self.rpc.rollup_args
+    }
+}
+
 impl From<&StandardNodeArgs> for Option<FlashblocksConfig> {
     fn from(args: &StandardNodeArgs) -> Self {
         args.rpc.flashblocks_url.clone().map(|url| {
@@ -253,11 +259,11 @@ pub struct StandardBaseRethNode;
 
 impl StandardBaseRethNode {
     /// Applies a configured L1 upgrade signal to the execution chain spec before startup.
-    pub async fn apply_initial_upgrade_signal(
+    pub async fn apply_initial_upgrade_signal<A: HasRollupArgs + ?Sized>(
         builder: BaseNodeBuilder,
-        args: &StandardNodeArgs,
+        args: &A,
     ) -> eyre::Result<BaseNodeBuilder> {
-        Self::apply_initial_upgrade_signal_from_rollup_args(builder, &args.rpc.rollup_args).await
+        Self::apply_initial_upgrade_signal_from_rollup_args(builder, args.rollup_args()).await
     }
 
     /// Applies a configured L1 upgrade signal from rollup args before startup.
@@ -500,6 +506,8 @@ fn transaction_event_writer_config(
         enabled: true,
         file_path,
         queue_capacity: DEFAULT_QUEUE_CAPACITY,
+        max_file_bytes: env.max_file_bytes,
+        max_files: env.max_files,
         required: false,
         producer: TransactionEventProducer::BaseRethNode,
         network: env.network.clone(),
@@ -510,6 +518,8 @@ fn transaction_event_writer_config(
 struct TransactionEventEnv {
     enabled: bool,
     path: Option<PathBuf>,
+    max_file_bytes: u64,
+    max_files: usize,
     network: String,
 }
 
@@ -518,6 +528,14 @@ impl TransactionEventEnv {
         Self {
             enabled: transaction_event_journal_env_enabled(),
             path: env::var_os("BASE_TRANSACTION_EVENTS_PATH").map(PathBuf::from),
+            max_file_bytes: env::var("BASE_TRANSACTION_EVENTS_MAX_FILE_BYTES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(DEFAULT_MAX_FILE_BYTES),
+            max_files: env::var("BASE_TRANSACTION_EVENTS_MAX_FILES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(DEFAULT_MAX_FILES),
             network: env::var("BASE_TRANSACTION_EVENTS_NETWORK")
                 .or_else(|_| env::var("BASE_NODE_NETWORK"))
                 .unwrap_or_else(|_| "unknown".to_string()),
@@ -575,6 +593,12 @@ mod tests {
             enable_transaction_event_journal: false,
             transaction_event_journal_path: None,
         }
+    }
+
+    #[test]
+    fn standard_node_args_provides_embedded_rollup_args() {
+        let args = StandardNodeArgs::from(default_rpc_standard_node_args());
+        assert!(std::ptr::eq(args.rollup_args(), &args.rpc.rollup_args));
     }
 
     #[test]
@@ -729,8 +753,13 @@ mod tests {
         ])
         .args;
 
-        let env =
-            TransactionEventEnv { enabled: false, path: None, network: "unknown".to_string() };
+        let env = TransactionEventEnv {
+            enabled: false,
+            path: None,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_files: DEFAULT_MAX_FILES,
+            network: "unknown".to_string(),
+        };
         let config = transaction_event_writer_config(&args, &env).unwrap().unwrap();
         assert_eq!(config.file_path, PathBuf::from("/tmp/events.jsonl"));
         assert_eq!(config.producer, TransactionEventProducer::BaseRethNode);
@@ -742,6 +771,8 @@ mod tests {
         let env = TransactionEventEnv {
             enabled: true,
             path: Some(PathBuf::from("/tmp/env-events.jsonl")),
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_files: DEFAULT_MAX_FILES,
             network: "base-devnet".to_string(),
         };
         let config = transaction_event_writer_config(&args, &env).unwrap().unwrap();

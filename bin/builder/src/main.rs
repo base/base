@@ -27,11 +27,8 @@ fn main() {
 
     cli.run(|builder, builder_args| async move {
         let rollup_args = builder_args.rollup_args.clone();
-        let builder = StandardBaseRethNode::apply_initial_upgrade_signal_from_rollup_args(
-            builder,
-            &rollup_args,
-        )
-        .await?;
+        let builder =
+            StandardBaseRethNode::apply_initial_upgrade_signal(builder, &builder_args).await?;
 
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder_args.build_metering_store());

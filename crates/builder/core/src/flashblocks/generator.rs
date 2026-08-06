@@ -1,12 +1,10 @@
-use std::{
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::sync::Arc;
 
 use alloy_primitives::B256;
 use futures::{Future, FutureExt};
 use parking_lot::Mutex;
 use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
+use reth_execution_cache::SavedCache;
 use reth_node_api::{NodePrimitives, PayloadKind};
 use reth_payload_builder::{
     BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadId, PayloadJob,
@@ -17,16 +15,16 @@ use reth_primitives_traits::HeaderTy;
 use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFactory};
 use reth_revm::cached::CachedReads;
 use reth_tasks::Runtime;
-use tokio::{
-    sync::watch,
-    time::{Duration, Sleep},
-};
+use tokio::{sync::watch, time::Sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
-use crate::PayloadBuilder;
+use crate::{PayloadBuilder, PayloadJobDeadline};
 
-/// The generator type that creates new jobs that build empty blocks.
+/// Creates payload jobs that build blocks from Engine API payload attributes.
+///
+/// Each generated job delegates payload construction to the configured [`PayloadBuilder`] and
+/// manages its execution, resolution, cancellation, and deadline.
 #[derive(Debug)]
 pub struct BlockPayloadJobGenerator<Client, Builder> {
     /// The client that can interact with the chain.
@@ -41,8 +39,8 @@ pub struct BlockPayloadJobGenerator<Client, Builder> {
     ensure_only_one_payload: bool,
     /// The last payload being processed
     last_payload: Arc<Mutex<CancellationToken>>,
-    /// The extra block deadline in seconds
-    extra_block_deadline: std::time::Duration,
+    /// Calculates and constructs payload job deadline timers.
+    deadline: PayloadJobDeadline,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
 }
@@ -65,7 +63,7 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
             builder,
             ensure_only_one_payload,
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
-            extra_block_deadline,
+            deadline: PayloadJobDeadline::new(extra_block_deadline),
             pre_cached: None,
         }
     }
@@ -128,28 +126,11 @@ where
 
         info!("Spawn block building job");
 
-        // The deadline is critical for payload availability. If we reach the deadline,
-        // the payload job stops and cannot be queried again. With tight deadlines close
-        // to the block number, we risk reaching the deadline before the node queries the payload.
-        //
-        // Adding 0.5 seconds as wiggle room since block times are shorter here.
-        // TODO: A better long-term solution would be to implement cancellation logic
-        // that cancels existing jobs when receiving new block building requests.
-        //
-        // When batcher's max channel duration is big enough (e.g. 10m), the
-        // sequencer would send an avalanche of FCUs/getBlockByNumber on
-        // each batcher update (with 10m channel it's ~800 FCUs at once).
-        // At such moment it can happen that the time b/w FCU and ensuing
-        // getPayload would be on the scale of ~2.5s. Therefore we should
-        // "remember" the payloads long enough to accommodate this corner-case
-        // (without it we are losing blocks). Postponing the deadline for 5s
-        // (not just 0.5s) because of that.
-        let deadline = job_deadline(input.attributes.timestamp()) + self.extra_block_deadline;
-
-        let deadline = Box::pin(tokio::time::sleep(deadline));
+        let deadline = self.deadline.sleep(input.attributes.timestamp());
 
         // Extract hash before moving parent_header into Arc to avoid cloning
         let parent_hash = parent_header.hash();
+        let execution_cache = input.cache;
         let config = PayloadConfig::new(Arc::new(parent_header), input.attributes, id);
 
         // Create shared mutex for synchronizing cancellation with payload publishing
@@ -165,6 +146,7 @@ where
             publish_guard,
             deadline,
             cached_reads: self.maybe_pre_cached(parent_hash),
+            execution_cache,
         };
 
         job.spawn_build_job();
@@ -197,7 +179,13 @@ use std::{
     task::{Context, Poll},
 };
 
-/// A [`PayloadJob`] that builds empty blocks.
+/// A [`PayloadJob`] that manages the asynchronous construction of a block payload.
+///
+/// [`PayloadJobGenerator::new_payload_job`] creates this job when the
+/// [`PayloadBuilderService`](reth_payload_builder::PayloadBuilderService) receives new payload
+/// attributes from an Engine API forkchoice update. The service polls the job to enforce its
+/// deadline and resolve payload requests, while the job runs its [`PayloadBuilder`] on a blocking
+/// task and receives updated built payloads through a watch channel.
 pub struct BlockPayloadJob<Builder>
 where
     Builder: PayloadBuilder,
@@ -229,6 +217,8 @@ where
     /// This is used to avoid reading the same state over and over again when new attempts are
     /// triggered, because during the building process we'll repeatedly execute the transactions.
     pub(crate) cached_reads: Option<CachedReads>,
+    /// Optional execution cache shared with the engine.
+    pub(crate) execution_cache: Option<SavedCache>,
 }
 
 impl<Builder> std::fmt::Debug for BlockPayloadJob<Builder>
@@ -282,6 +272,8 @@ where
 pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     /// Previously cached disk reads
     pub cached_reads: CachedReads,
+    /// Optional execution cache shared with the engine.
+    pub execution_cache: Option<SavedCache>,
     /// How to configure the payload.
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
@@ -308,9 +300,15 @@ where
         let (watch_tx, watch_rx) = watch::channel(None);
         self.payload_rx = Some(watch_rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
+        let execution_cache = self.execution_cache.take();
         self.executor.spawn_blocking_task(Box::pin(async move {
-            let args =
-                BuildArguments { cached_reads, config: payload_config, cancel, publish_guard };
+            let args = BuildArguments {
+                cached_reads,
+                execution_cache,
+                config: payload_config,
+                cancel,
+                publish_guard,
+            };
             if let Err(e) = builder.try_build(args, &watch_tx).await {
                 warn!(error = %e, "Payload build task failed");
                 *build_error.lock() = Some(e.to_string());
@@ -400,26 +398,6 @@ impl<T> Future for ResolvePayload<T> {
     }
 }
 
-fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
-    let unix_now = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(d) => d.as_secs(),
-        Err(e) => {
-            warn!(error = %e, "System clock went backward, returning zero deadline");
-            return Duration::ZERO;
-        }
-    };
-
-    // Safe subtraction that handles the case where timestamp is in the past
-    let duration_until = unix_timestamp_secs.saturating_sub(unix_now);
-
-    if duration_until == 0 {
-        // Enforce a minimum block time of 1 second by rounding up any duration less than 1 second
-        Duration::from_secs(1)
-    } else {
-        Duration::from_secs(duration_until)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_eips::eip7685::Requests;
@@ -427,6 +405,7 @@ mod tests {
     use base_common_consensus::BasePrimitives;
     use base_execution_payload_builder::{BasePayloadBuilderAttributes, PayloadPrimitives};
     use rand::rng;
+    use reth_execution_cache::{ExecutionCache, SavedCache};
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
@@ -490,7 +469,7 @@ mod tests {
 
     #[derive(Debug, PartialEq, Clone)]
     enum BlockEvent {
-        Started,
+        Started(Option<B256>),
         Cancelled,
     }
 
@@ -507,7 +486,9 @@ mod tests {
             args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
             _payload_tx: &watch::Sender<Option<Self::BuiltPayload>>,
         ) -> Result<(), PayloadBuilderError> {
-            self.new_event(BlockEvent::Started);
+            self.new_event(BlockEvent::Started(
+                args.execution_cache.as_ref().map(SavedCache::executed_block_hash),
+            ));
 
             loop {
                 if args.cancel.is_cancelled() {
@@ -519,28 +500,6 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
-    }
-
-    #[tokio::test]
-    async fn test_job_deadline() {
-        // Test future deadline
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let future_timestamp = now + Duration::from_secs(2);
-        // 2 seconds from now
-        let deadline = job_deadline(future_timestamp.as_secs());
-        assert!(deadline <= Duration::from_secs(2));
-        assert!(deadline > Duration::from_secs(0));
-
-        // Test past deadline
-        let past_timestamp = now - Duration::from_secs(10);
-        let deadline = job_deadline(past_timestamp.as_secs());
-        // Should default to 1 second when timestamp is in the past
-        assert_eq!(deadline, Duration::from_secs(1));
-
-        // Test current timestamp
-        let deadline = job_deadline(now.as_secs());
-        // Should use 1 second when timestamp is current
-        assert_eq!(deadline, Duration::from_secs(1));
     }
 
     #[tokio::test]
@@ -587,16 +546,17 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(1)).await;
 
             let events = builder.get_events();
-            assert_eq!(events, vec![BlockEvent::Started, BlockEvent::Cancelled]);
+            assert_eq!(events, vec![BlockEvent::Started(None), BlockEvent::Cancelled]);
         }
 
         {
             // job resolve triggers cancellations from the build task
             let parent_hash = attr.payload_attributes.parent;
+            let cache = SavedCache::new(parent_hash, ExecutionCache::new(1_000));
             let input = BuildNewPayload {
                 attributes: attr.clone(),
                 parent_hash,
-                cache: None,
+                cache: Some(cache.clone()),
                 state_root_handle: None,
             };
             let mut job = generator.new_payload_job(input, attr.payload_id(&parent_hash))?;
@@ -606,7 +566,8 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(1)).await;
 
             let events = builder.get_events();
-            assert_eq!(events, vec![BlockEvent::Started, BlockEvent::Cancelled]);
+            assert_eq!(events, vec![BlockEvent::Started(Some(parent_hash)), BlockEvent::Cancelled]);
+            assert!(cache.is_available(), "builder must release the execution cache after exit");
         }
 
         Ok(())

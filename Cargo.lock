@@ -1437,7 +1437,7 @@ dependencies = [
  "alloy-transport 2.2.0",
  "futures",
  "http 1.4.2",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.28.0",
@@ -2861,7 +2861,7 @@ dependencies = [
  "hyper-util",
  "pin-project-lite",
  "rustls 0.21.12",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
@@ -3230,12 +3230,16 @@ dependencies = [
  "base-consensus-cli",
  "base-execution-chainspec",
  "base-execution-cli",
+ "base-execution-consensus",
+ "base-execution-evm",
+ "base-node-core",
  "base-node-runner",
  "base-txpool-rpc",
  "base-upgrade-signal",
  "clap",
  "eyre",
  "figment",
+ "reth-cli-commands",
  "reth-cli-runner",
  "serde",
  "tokio",
@@ -3266,6 +3270,7 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-source",
  "base-blobs",
+ "base-builder-core",
  "base-common-chains",
  "base-common-consensus",
  "base-common-genesis",
@@ -3288,6 +3293,7 @@ dependencies = [
  "base-runtime",
  "base-test-utils",
  "base-tx-manager",
+ "eyre",
  "reth-basic-payload-builder",
  "reth-db",
  "reth-db-common",
@@ -3581,6 +3587,7 @@ dependencies = [
  "reth-cli-util",
  "reth-db",
  "reth-evm",
+ "reth-execution-cache",
  "reth-execution-types",
  "reth-ipc",
  "reth-network-peers",
@@ -3608,6 +3615,7 @@ dependencies = [
  "reth-trie-common",
  "revm",
  "rlimit",
+ "rstest",
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
@@ -3728,7 +3736,7 @@ dependencies = [
  "metrics",
  "metrics-util",
  "rstest",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "serde",
  "serde_json",
  "sp1-sdk",
@@ -4207,11 +4215,11 @@ dependencies = [
  "lru 0.16.4",
  "metrics",
  "multihash",
- "openssl",
  "rand 0.9.5",
  "serde",
  "serde_json",
  "serde_repr",
+ "sha2 0.10.9",
  "snap",
  "tempfile",
  "thiserror 2.0.19",
@@ -4412,7 +4420,7 @@ dependencies = [
  "base-common-rpc-types-engine",
  "derive_more 2.1.1",
  "notify",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -4885,9 +4893,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tokio-stream",
- "tokio-util",
  "tracing",
- "url",
 ]
 
 [[package]]
@@ -5889,7 +5895,7 @@ dependencies = [
  "k256",
  "metrics",
  "reqwest 0.13.4",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
@@ -5941,6 +5947,8 @@ dependencies = [
  "async-trait",
  "backoff",
  "base-l1-head",
+ "base-metrics",
+ "base-proof-host",
  "base-proof-succinct-client-utils",
  "base-proof-succinct-elfs",
  "base-proof-succinct-host-utils",
@@ -6028,7 +6036,7 @@ dependencies = [
  "jsonrpsee",
  "metrics",
  "metrics-util",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -6070,6 +6078,7 @@ dependencies = [
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "brotli",
+ "criterion",
  "derive_more 2.1.1",
  "miniz_oxide 0.9.1",
  "proptest",
@@ -6222,6 +6231,7 @@ version = "0.0.0"
 dependencies = [
  "reth-cli-commands",
  "reth-node-core",
+ "reth-prune-types",
 ]
 
 [[package]]
@@ -6378,6 +6388,7 @@ dependencies = [
  "alloy-signer-local 2.2.0",
  "alloy-sol-types",
  "async-trait",
+ "base-batcher-encoder",
  "base-batcher-service",
  "base-builder-core",
  "base-bundle-extension",
@@ -6397,6 +6408,7 @@ dependencies = [
  "base-consensus-rpc",
  "base-consensus-sources",
  "base-execution-chainspec",
+ "base-execution-cli",
  "base-execution-rpc",
  "base-execution-txpool",
  "base-flashblocks",
@@ -6409,10 +6421,12 @@ dependencies = [
  "base-prover-service-client",
  "base-prover-service-protocol",
  "base-runtime",
+ "base-test-utils",
  "base-tx-forwarding",
  "base-tx-manager",
  "base-txpool-rpc",
  "base-txpool-tracing",
+ "base-upgrade-signal",
  "clap",
  "eyre",
  "hex",
@@ -6512,8 +6526,31 @@ dependencies = [
 name = "base-tx-forwarding"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.2.0",
+ "alloy-eips 2.2.0",
+ "alloy-network 2.2.0",
+ "alloy-primitives",
+ "alloy-provider 2.2.0",
+ "alloy-signer 2.2.0",
+ "base-common-consensus",
+ "base-common-rpc-types",
+ "base-execution-chainspec",
  "base-execution-txpool",
+ "base-metrics",
  "base-node-runner",
+ "base-observability-events",
+ "base-test-utils",
+ "eyre",
+ "futures",
+ "jsonrpsee",
+ "metrics",
+ "reth-tasks",
+ "reth-transaction-pool",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]
@@ -6775,25 +6812,12 @@ checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 name = "basectl"
 version = "0.0.0"
 dependencies = [
- "alloy-eips 2.2.0",
- "alloy-primitives",
- "alloy-provider 2.2.0",
- "alloy-rpc-types-eth 2.2.0",
  "anyhow",
- "base-common-network",
- "base-consensus-peers",
- "base-protocol",
- "base-prover-service-protocol",
  "basectl-cli",
- "chrono",
  "clap",
- "rustls 0.23.42",
- "serde",
- "serde_json",
+ "rustls 0.23.43",
  "tokio",
- "tracing",
  "tracing-subscriber 0.3.23",
- "url",
 ]
 
 [[package]]
@@ -6816,6 +6840,7 @@ dependencies = [
  "axum 0.8.9",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-evm",
  "base-common-flashblocks",
  "base-common-genesis",
  "base-common-network",
@@ -6827,6 +6852,7 @@ dependencies = [
  "base-prover-service-client",
  "base-prover-service-protocol",
  "chrono",
+ "clap",
  "crossterm",
  "dirs 6.0.0",
  "futures",
@@ -7280,7 +7306,7 @@ dependencies = [
  "num",
  "pin-project-lite",
  "rand 0.9.5",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-native-certs",
  "rustls-pemfile",
  "rustls-pki-types",
@@ -7817,9 +7843,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.3"
+version = "4.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fb99565819980999fb7b4a1796046a5c949e6d4ff132cf5fadf5a641e20d776"
+checksum = "301b56658598e48f3648647ac6fc887be7e7108eddfa4e9b63fcf3ec58c0cadf"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -7827,9 +7853,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.6.2"
+version = "4.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f09628afdcc538b57f3c6341e9c8e9970f18e4a481690a64974d7023bd33548b"
+checksum = "94a65403d1a1bd28f7dc68eb8506e8874808ee5eecb59298de588e2e1407a078"
 dependencies = [
  "anstream",
  "anstyle",
@@ -7839,14 +7865,14 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.6.3"
+version = "4.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32f2392eae7f16557a3d727ef3a12e57b2b2ca6f98566a5f4fb41ffe305df077"
+checksum = "d012d2b9d65aca7f18f4d9878a045bc17899bba951561ba5ec3c2ba1eed9a061"
 dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.2",
 ]
 
 [[package]]
@@ -10104,7 +10130,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f2f12607f92c69b12ed746fabf9ca4f5c482cba46679c1a75b874ed7c26adb"
 dependencies = [
  "futures-io",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-pki-types",
 ]
 
@@ -11072,7 +11098,7 @@ dependencies = [
  "hyper 1.11.0",
  "hyper-util",
  "log",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-native-certs",
  "tokio",
  "tokio-rustls 0.26.4",
@@ -11935,7 +11961,7 @@ dependencies = [
  "http 1.4.2",
  "jsonrpsee-core",
  "pin-project",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-pki-types",
  "rustls-platform-verifier 0.5.3",
  "soketto",
@@ -11988,7 +12014,7 @@ dependencies = [
  "hyper-util",
  "jsonrpsee-core",
  "jsonrpsee-types",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-platform-verifier 0.5.3",
  "serde",
  "serde_json",
@@ -12562,7 +12588,7 @@ dependencies = [
  "quinn-proto",
  "rand 0.8.7",
  "ring",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "socket2 0.5.10",
  "thiserror 2.0.19",
  "tokio",
@@ -12644,7 +12670,7 @@ dependencies = [
  "libp2p-identity",
  "rcgen",
  "ring",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-webpki 0.103.13",
  "thiserror 2.0.19",
  "x509-parser",
@@ -14107,15 +14133,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
-name = "openssl-src"
-version = "300.6.1+3.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46eb8fb9fb3b61ce1c0f8a026c4c1a0714d3a9e138e7fbde78753ce2babc3846"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "openssl-sys"
 version = "0.9.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14123,7 +14140,6 @@ checksum = "b47e7e6bb2c38cd930d25a23b40fa52e068c10e85f3e03a7f5ba5aaca5713695"
 dependencies = [
  "cc",
  "libc",
- "openssl-src",
  "pkg-config",
  "vcpkg",
 ]
@@ -15775,7 +15791,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash 2.1.3",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "socket2 0.6.5",
  "thiserror 2.0.19",
  "tokio",
@@ -15798,7 +15814,7 @@ dependencies = [
  "rand_pcg",
  "ring",
  "rustc-hash 2.1.3",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-pki-types",
  "slab",
  "thiserror 2.0.19",
@@ -16325,7 +16341,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "quinn",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -16372,7 +16388,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "quinn",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-pki-types",
  "rustls-platform-verifier 0.7.0",
  "serde",
@@ -20134,9 +20150,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.42"
+version = "0.23.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c54fcab019b409d04215d3a17cb438fd7fbf192ee61461f20f4fe18704bc138"
+checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -20190,7 +20206,7 @@ dependencies = [
  "jni 0.21.1",
  "log",
  "once_cell",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-native-certs",
  "rustls-platform-verifier-android",
  "rustls-webpki 0.103.13",
@@ -20211,7 +20227,7 @@ dependencies = [
  "jni 0.22.4",
  "log",
  "once_cell",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-native-certs",
  "rustls-platform-verifier-android",
  "rustls-webpki 0.103.13",
@@ -21617,7 +21633,7 @@ dependencies = [
  "opentelemetry-otlp 0.16.0",
  "opentelemetry_sdk 0.23.0",
  "prost 0.13.5",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "serde",
  "serde_json",
  "sp1-prover-types",
@@ -22156,7 +22172,7 @@ dependencies = [
  "prost 0.13.5",
  "reqwest 0.12.28",
  "reqwest-middleware",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "serde",
  "sha2 0.10.9",
  "sp1-build",
@@ -23131,9 +23147,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.54"
+version = "0.3.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e1d5e639ff6bab73cb6885cc7e7b1de96c3f32c68ec55f3952614bec1092244"
+checksum = "cdb87b95ec50ddfa440816d227a17b2ccbdda963a316a727fda0fc4334f7d134"
 dependencies = [
  "deranged",
  "libc",
@@ -23282,7 +23298,7 @@ version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "tokio",
 ]
 
@@ -23321,7 +23337,7 @@ dependencies = [
  "futures-util",
  "log",
  "native-tls",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
@@ -24054,7 +24070,7 @@ dependencies = [
  "log",
  "native-tls",
  "rand 0.9.5",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-pki-types",
  "sha1 0.10.7",
  "thiserror 2.0.19",
@@ -24350,7 +24366,7 @@ dependencies = [
  "base64 0.22.1",
  "log",
  "percent-encoding",
- "rustls 0.23.42",
+ "rustls 0.23.43",
  "rustls-pki-types",
  "ureq-proto",
  "utf8-zero",

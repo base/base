@@ -14,7 +14,7 @@ use revm::precompile::PrecompileResult;
 use crate::{
     B20FactoryStorage, B20Variant, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
     Factory, FactoryV1, FactoryVersion, FactoryVersions, IB20Factory, NoopPrecompileCallObserver,
-    PrecompileCallObserver, macros::decode_precompile_call,
+    PrecompileCallObserver,
 };
 
 impl<'a> B20FactoryStorage<'a> {
@@ -75,7 +75,7 @@ impl<'a> B20FactoryStorage<'a> {
         FactoryV1.create_b20(self, call, address_hash, upgrade)
     }
 
-    /// Decodes calldata and routes it to `version`'s logic.
+    /// Decodes calldata against the active wire surface and routes it to `version`'s logic.
     fn route<O>(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -88,7 +88,7 @@ impl<'a> B20FactoryStorage<'a> {
         O: PrecompileCallObserver,
     {
         let logic = version.implementation();
-        match decode_precompile_call!(calldata, IB20Factory::IB20FactoryCalls) {
+        match version.abi().decode(calldata)? {
             IB20Factory::IB20FactoryCalls::createB20(call) => {
                 let caller = ctx.caller();
                 // abi_decode_validate rejects non-canonical discriminants before dispatch,

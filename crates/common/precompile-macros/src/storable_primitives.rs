@@ -353,7 +353,9 @@ fn gen_packed_array_load(array_size: &usize, elem_byte_count: &usize) -> TokenSt
         for i in 0..#array_size {
             let slot_idx = calc_element_slot(i, #elem_byte_count);
             let offset = calc_element_offset(i, #elem_byte_count);
-            let slot_addr = base_slot + ::alloy_primitives::U256::from(slot_idx);
+            let slot_addr = base_slot
+                .checked_add(::alloy_primitives::U256::from(slot_idx))
+                .ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?;
             let slot_value = storage.load(slot_addr)?;
             result[i] = extract_from_word(slot_value, offset, #elem_byte_count)?;
         }
@@ -365,7 +367,9 @@ fn gen_packed_array_store(array_size: &usize, elem_byte_count: &usize) -> TokenS
     quote! {
         let slot_count = ::base_precompile_storage::calc_packed_slot_count(#array_size, #elem_byte_count);
         for slot_idx in 0..slot_count {
-            let slot_addr = base_slot + ::alloy_primitives::U256::from(slot_idx);
+            let slot_addr = base_slot
+                .checked_add(::alloy_primitives::U256::from(slot_idx))
+                .ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?;
             let mut slot_value = ::alloy_primitives::U256::ZERO;
             for i in 0..#array_size {
                 let elem_slot = calc_element_slot(i, #elem_byte_count);
@@ -384,7 +388,9 @@ fn gen_unpacked_array_load(array_size: &usize) -> TokenStream {
     quote! {
         let mut result = [Default::default(); #array_size];
         for i in 0..#array_size {
-            let elem_slot = base_slot + ::alloy_primitives::U256::from(i);
+            let elem_slot = base_slot
+                .checked_add(::alloy_primitives::U256::from(i))
+                .ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?;
             result[i] = ::base_precompile_storage::Storable::load(storage, elem_slot, ::base_precompile_storage::LayoutCtx::FULL)?;
         }
         Ok(result)
@@ -394,7 +400,9 @@ fn gen_unpacked_array_load(array_size: &usize) -> TokenStream {
 fn gen_unpacked_array_store() -> TokenStream {
     quote! {
         for (i, elem) in self.iter().enumerate() {
-            let elem_slot = base_slot + ::alloy_primitives::U256::from(i);
+            let elem_slot = base_slot
+                .checked_add(::alloy_primitives::U256::from(i))
+                .ok_or(::base_precompile_storage::BasePrecompileError::SlotOverflow)?;
             ::base_precompile_storage::Storable::store(elem, storage, elem_slot, ::base_precompile_storage::LayoutCtx::FULL)?;
         }
         Ok(())

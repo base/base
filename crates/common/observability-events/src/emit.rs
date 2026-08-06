@@ -364,9 +364,9 @@ mod tests {
     use serde_json::{Map, json};
 
     use crate::{
-        DEFAULT_QUEUE_CAPACITY, TransactionEventBuilder, TransactionEventEmitOutcome,
-        TransactionEventProducer, TransactionEventType, TransactionEventWriter,
-        TransactionEventWriterConfig,
+        DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventBuilder,
+        TransactionEventEmitOutcome, TransactionEventProducer, TransactionEventType,
+        TransactionEventWriter, TransactionEventWriterConfig,
     };
 
     fn disabled_writer() -> TransactionEventWriter {
@@ -374,6 +374,8 @@ mod tests {
             enabled: false,
             file_path: PathBuf::from("/tmp/transaction-events.jsonl"),
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_files: DEFAULT_MAX_FILES,
             required: false,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-devnet".to_string(),

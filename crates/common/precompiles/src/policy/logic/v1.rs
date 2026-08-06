@@ -91,8 +91,13 @@ impl PolicyRegistryV1 {
     }
 
     /// Validates policy-creation inputs and returns the raw policy type discriminator.
+    ///
+    /// Only the simple leaf types are admissible here. Composite gates are created via
+    /// `createCompositePolicy`, a selector this version's wire surface does not even declare.
+    /// Inlined rather than shared with [`super::PolicyRegistryV2`] so that widening the rule for a
+    /// later fork cannot reach back and change what this frozen version accepts.
     fn validate_create_policy_inputs(admin: Address, policy_type: PolicyType) -> Result<u8> {
-        if !policy_type.is_valid() {
+        if !matches!(policy_type, PolicyType::BLOCKLIST | PolicyType::ALLOWLIST) {
             return Err(BasePrecompileError::enum_conversion_error());
         }
         if admin == Address::ZERO {
@@ -518,6 +523,15 @@ mod tests {
             self.initialized = true;
             Ok(())
         }
+
+        // V1 has no composite policies; this fake never stores children.
+        fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
+            Ok(Vec::new())
+        }
+
+        fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
+            Ok(())
+        }
     }
 
     type Storage = FakePolicyAccounting;
@@ -897,6 +911,19 @@ mod tests {
             .create_policy_with_accounts(&mut rt, ADMIN, PolicyType::__Invalid, accounts)
             .unwrap_err();
         assert_eq!(err, BasePrecompileError::enum_conversion_error());
+    }
+
+    /// Composite gates were not dialable at Beryl — this version's wire surface rejects their
+    /// discriminants at decode. This pins the logic-level guard sitting behind that: `PolicyType`
+    /// is the canonical (widened) enum, so a composite is representable here even though no
+    /// calldata can produce one, and the frozen answer must stay `enum_conversion_error`.
+    #[test]
+    fn create_policy_rejects_composite_types() {
+        let mut rt = initialized();
+        for policy_type in [PolicyType::UNION, PolicyType::INTERSECT] {
+            let err = LOGIC.create_policy(&mut rt, ADMIN, policy_type).unwrap_err();
+            assert_eq!(err, BasePrecompileError::enum_conversion_error());
+        }
     }
 
     #[test]

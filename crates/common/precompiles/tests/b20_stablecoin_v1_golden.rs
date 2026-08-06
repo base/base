@@ -733,6 +733,25 @@ fn golden_burn_blocked_reverts_when_not_blocked() {
     assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE }));
 }
 
+/// The seize common selectors (`seizeWithMemo` and the `SEIZE_ROLE` / `SEIZE_HOLDER_POLICY` /
+/// `SEIZE_RECEIVER_POLICY` getters) were introduced at Cobalt (`StablecoinV2`). At V1 (Beryl) they
+/// are absent from the frozen common `IB20` surface, so `route` rejects them as `UnknownFunctionSelector`.
+#[test]
+fn golden_seize_selectors_unknown_at_v1() {
+    let mut s = fresh();
+    let calls: Vec<Vec<u8>> = vec![
+        IB20::seizeWithMemoCall { from: ALICE, to: BOB, amount: u(1), memo: MEMO }.abi_encode(),
+        IB20::SEIZE_ROLECall {}.abi_encode(),
+        IB20::SEIZE_HOLDER_POLICYCall {}.abi_encode(),
+        IB20::SEIZE_RECEIVER_POLICYCall {}.abi_encode(),
+    ];
+    for calldata in calls {
+        let selector: [u8; 4] = calldata[..4].try_into().unwrap();
+        let err = op(&mut s, ALICE, FakePolicyAccounting::new(), calldata).unwrap_err();
+        assert_eq!(err, BasePrecompileError::UnknownFunctionSelector(selector));
+    }
+}
+
 // ============================================================================
 // pause / unpause
 // ============================================================================
@@ -1764,7 +1783,9 @@ fn golden_grant_role_unchecked_bootstraps_first_admin() {
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         );
-        token.grant_role_unchecked(B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN).unwrap();
+        token
+            .grant_role_unchecked(B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN, BaseUpgrade::Beryl)
+            .unwrap();
     });
     read(&mut s, |t| {
         assert!(t.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
@@ -2075,6 +2096,10 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
             golden_burn_blocked_reverts_when_not_blocked,
             golden_burn_blocked_unprivileged_requires_role,
         ]),
+        C::seizeWithMemo(_)
+        | C::SEIZE_ROLE(_)
+        | C::SEIZE_HOLDER_POLICY(_)
+        | C::SEIZE_RECEIVER_POLICY(_) => covered(&[golden_seize_selectors_unknown_at_v1]),
 
         // pause / config / roles / policy / permit
         C::pause(_) => covered(&[

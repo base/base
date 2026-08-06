@@ -1,5 +1,33 @@
 #![doc = include_str!("../README.md")]
 
+mod commands;
+pub use commands::{
+    AddTarget, BanAction, BlockCommand, BlockSummaryJson, Cli, ClusterNodeScope, CommandOutcome,
+    Commands, ConductorAction, ConductorActionJson, ConductorActionName,
+    ConductorClusterActionArgs, ConductorCommand, ConductorCommands, ConductorFailureJson,
+    ConductorFanoutJson, ConductorLeaderArgs, ConductorNodeActionArgs, ConductorNodeJson,
+    ConductorStatusArgs, ConductorStatusJson, DestructiveClBulkArgs, DestructivePeerArgs,
+    DoctorCommand, ElSyncInfoJson, HeadJson, LeadershipStatus, MonitorCommands, NodeMetricsJson,
+    OptionalValue, P2pArgs, P2pCommand, P2pCommands, PausedSummaryJson, PeerAction, PeerActionJson,
+    PeerBulkAction, PeerBulkActionResultJson, PeerLayer, PeerTarget, PeersJson, ProofOutputStatus,
+    ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand, ProofsCommands,
+    ProofsFinalizeArgs, ProofsFinalizeJson, ProofsListArgs, ProofsListJson, ProofsStatusArgs,
+    ProofsStatusJson, SequencerAction, SequencerActionJson, SequencerCommand, SequencerCommands,
+    SequencerNodeActionArgs, SequencerNodeJson, SequencerRole, SequencerStartArgs,
+    SequencerStatusArgs, SequencerStatusJson, SyncStatusCommand, SyncStatusJson, TipReferenceJson,
+    TipStatus, TxpoolClearArgs, TxpoolClearJson, TxpoolCommand, TxpoolCommands, TxpoolReadArgs,
+    TxpoolReadJson, UnsafeHeadSource,
+};
+
+mod zenith;
+pub use zenith::{
+    ZenithCheck, ZenithCheckCursor, ZenithCheckStatus, ZenithCheckTarget, ZenithChecker,
+    ZenithObservations, ZenithReport, ZenithSchedule,
+};
+
+mod confirm;
+pub use confirm::Confirm;
+
 mod app;
 pub use app::{
     Action, ActionMenuItem, App, BLOB_SIZE, BlockContribution, CommandCenterView, ConductorState,
@@ -36,37 +64,37 @@ pub use doctor::{
 
 mod errors;
 pub use errors::{
-    BlockRefParseError, ConductorCommandError, DoctorArgsError, NodeLookupError, P2pCommandError,
-    P2pTargetError, ProofsCommandError, SequencerCommandError, StateConvergenceTimeoutError,
-    SyncStatusCommandError, TxpoolCommandError,
+    BlockRefParseError, ConductorCommandError, DoctorArgsError, MissingConsensusRpcError,
+    NodeLookupError, P2pCommandError, P2pTargetError, ProofsCommandError, SequencerCommandError,
+    StateConvergenceTimeoutError, TxpoolCommandError,
 };
 
 mod rpc;
 pub use rpc::{
     BacklogBlock, BacklogFetchResult, BacklogProgress, BaseTxpoolContent, BaseTxpoolContentFrom,
     BlockDaInfo, ClInfoReport, ClNodeIdentity, ConductorClusterSnapshot, ConductorControl,
-    ConductorFanoutReport, ConductorNodeFailure, ConductorNodeStatus, ConductorPollUpdate,
-    DiscoveryInfo, ElInfoReport, ElNodeIdentity, ElReachabilityOutcome, ElReachabilityResponse,
-    ElReachabilityStage, InitialBacklog, L1BlockInfo, L1ConnectionMode, LatestProposal,
-    NodeEndpoint, NodeInfoReport, PausedPeers, PeerListReport, PeerStatsReport, PeerSummary,
-    PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, ProofFinalizeRequest, ProofsClient,
-    ProofsSnapshot, RawInfoReport, RawPeerCounts, RawPeersReport, SEQUENCER_ACTIVE_RPC_TIMEOUT,
-    SyncStatusReport, TelemetryApiError, TelemetryClient, TelemetryClientError,
-    TelemetryErrorResponse, TimestampedFlashblock, TxSummary, TxpoolClient, TxpoolCounts,
-    TxpoolReport, TxpoolScope, TxpoolSenderSummary, TxpoolTransactionPool, TxpoolTransactionRow,
-    ValidatorNodeStatus, add_peer, ban_el_peer, ban_peer, conductor_pause_all_nodes,
-    conductor_pause_node, conductor_resume_all_nodes, conductor_resume_node, connect_peer,
-    decode_flashblock_transactions, disconnect_peer, el_peer_is_trusted, fetch_block,
-    fetch_block_transactions, fetch_cl_info, fetch_connected_peers, fetch_el_info,
-    fetch_full_system_config, fetch_info, fetch_initial_backlog_with_progress,
-    fetch_l1_block_number, fetch_l2_block_number, fetch_l2_chain_id, fetch_raw_info,
-    fetch_raw_peers, fetch_safe_and_latest, fetch_sequencer_active, fetch_sync_status,
-    list_banned_peers, pause_sequencer_node, remove_peer, restart_conductor_node,
-    run_block_fetcher, run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped,
-    run_l1_blob_watcher, run_pods_poller, run_proofs_poller, run_rollup_config_poller,
-    run_safe_head_poller, run_validator_poller, start_sequencer, start_sequencer_node,
-    stop_sequencer, stop_sequencer_node, transfer_conductor_leader, unban_el_peer, unban_peer,
-    unpause_sequencer_node,
+    ConductorFanoutAction, ConductorFanoutReport, ConductorNodeFailure, ConductorNodeStatus,
+    ConductorPollUpdate, DiscoveryInfo, ElInfoReport, ElNodeIdentity, ElReachabilityOutcome,
+    ElReachabilityResponse, ElReachabilityStage, InitialBacklog, L1BlockInfo, L1ConnectionMode,
+    LatestProposal, NodeEndpoint, NodeInfoReport, PausedPeers, PeerDirection, PeerListReport,
+    PeerStatsReport, PeerSummary, PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot,
+    ProofFinalizeRequest, ProofsClient, ProofsSnapshot, RawInfoReport, RawPeerCounts,
+    RawPeersReport, SEQUENCER_ACTIVE_RPC_TIMEOUT, SyncStatusReport, TelemetryApiError,
+    TelemetryClient, TelemetryClientError, TelemetryErrorResponse, TimestampedFlashblock,
+    TxSummary, TxpoolClient, TxpoolCounts, TxpoolReport, TxpoolScope, TxpoolSenderSummary,
+    TxpoolTransactionPool, TxpoolTransactionRow, ValidatorNodeStatus, add_peer, ban_el_peer,
+    ban_peer, conductor_pause_all_nodes, conductor_pause_node, conductor_resume_all_nodes,
+    conductor_resume_node, connect_peer, decode_flashblock_transactions, disconnect_peer,
+    el_peer_is_trusted, fetch_block, fetch_block_transactions, fetch_cl_info,
+    fetch_connected_peers, fetch_el_info, fetch_full_system_config, fetch_info,
+    fetch_initial_backlog_with_progress, fetch_l1_block_number, fetch_l2_block_number,
+    fetch_l2_chain_id, fetch_raw_info, fetch_raw_peers, fetch_safe_and_latest,
+    fetch_sequencer_active, fetch_sync_status, list_banned_peers, pause_sequencer_node,
+    remove_peer, restart_conductor_node, run_block_fetcher, run_conductor_poller,
+    run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher, run_pods_poller,
+    run_proofs_poller, run_rollup_config_poller, run_safe_head_poller, run_validator_poller,
+    start_sequencer, start_sequencer_node, stop_sequencer, stop_sequencer_node,
+    transfer_conductor_leader, unban_el_peer, unban_peer, unpause_sequencer_node,
 };
 
 mod tui;

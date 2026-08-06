@@ -15,7 +15,7 @@ workspace = true
 futures.workspace = true
 async-trait.workspace = true
 tracing = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "sync"] }
 thiserror = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }

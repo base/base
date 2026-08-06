@@ -38,6 +38,11 @@ impl TrustedProxyConfig {
         Self { ip_addr_http_header, trusted_proxy_cidrs }
     }
 
+    /// Parses a CIDR, trimming surrounding whitespace.
+    pub fn parse_cidr(s: &str) -> Result<IpNet, ipnet::AddrParseError> {
+        s.trim().parse()
+    }
+
     /// Returns whether the direct peer belongs to a configured trusted proxy CIDR.
     pub fn is_trusted_proxy(&self, connect_addr: IpAddr) -> bool {
         let connect_addr = connect_addr.to_canonical();

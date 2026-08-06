@@ -47,6 +47,7 @@ reth-rpc-eth-types.workspace = true
 reth-rpc-engine-api.workspace = true
 reth-execution-types.workspace = true
 reth-payload-builder.workspace = true
+reth-execution-cache.workspace = true
 base-execution-txpool.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
@@ -181,6 +182,7 @@ criterion = { workspace = true, features = ["html_reports"] }
 ctor.workspace = true
 hyper.workspace = true
 rlimit.workspace = true
+rstest.workspace = true
 nanoid.workspace = true
 tempfile.workspace = true
 hyper-util.workspace = true

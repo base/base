@@ -97,34 +97,6 @@ impl AssetV1 {
             .emit_event(IB20::Transfer { from, to: Address::ZERO, amount }.encode_log_data())
     }
 
-    /// Grants `role` to `account` without checking caller authorization.
-    ///
-    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`grant_role`](Asset::grant_role) path is not reachable. Bumps the `DefaultAdmin`
-    /// member count and emits `RoleGranted`. Kept inherent to V1 (off the `Asset` trait) so it stays
-    /// frozen with this version and off `&dyn Asset`.
-    pub(crate) fn grant_role_unchecked<S: AssetAccounting, A: PolicyAccounting>(
-        &self,
-        token: &mut B20AssetToken<S, A>,
-        role: B256,
-        account: Address,
-        sender: Address,
-    ) -> Result<()> {
-        if token.accounting().has_role(role, account)? {
-            return Ok(());
-        }
-        token.accounting_mut().set_role(role, account, true)?;
-        if role == B20TokenRole::DefaultAdmin.id() {
-            let current = token.accounting().role_member_count(role)?;
-            let next =
-                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-            token.accounting_mut().set_role_member_count(role, next)?;
-        }
-        token
-            .accounting_mut()
-            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
-    }
-
     /// Revokes `role` from `account` without checking caller authorization.
     fn revoke_role_unchecked<S: AssetAccounting, A: PolicyAccounting>(
         &self,
@@ -480,6 +452,28 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
         self.grant_role_unchecked(token, role, account, caller)
     }
 
+    fn grant_role_unchecked(
+        &self,
+        token: &mut B20AssetToken<S, A>,
+        role: B256,
+        account: Address,
+        sender: Address,
+    ) -> Result<()> {
+        if token.accounting().has_role(role, account)? {
+            return Ok(());
+        }
+        token.accounting_mut().set_role(role, account, true)?;
+        if role == B20TokenRole::DefaultAdmin.id() {
+            let current = token.accounting().role_member_count(role)?;
+            let next =
+                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+            token.accounting_mut().set_role_member_count(role, next)?;
+        }
+        token
+            .accounting_mut()
+            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
+    }
+
     fn revoke_role(
         &self,
         token: &mut B20AssetToken<S, A>,
@@ -793,7 +787,7 @@ mod tests {
     use crate::{
         Asset, AssetAccounting, AssetV1, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
         B20PolicyType, B20TokenRole, IB20, IB20Asset, PackedPolicy, PermitArgs, PolicyAccounting,
-        PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
+        PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting, TransferPolicyIds,
     };
 
     // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
@@ -962,6 +956,10 @@ mod tests {
             self.policy_ids.insert(policy_scope, policy_id);
             Ok(())
         }
+
+        fn transfer_policy_ids(&self) -> Result<TransferPolicyIds> {
+            TransferPolicyIds::read_individually(self)
+        }
         fn emit_event(&mut self, log: LogData) -> Result<()> {
             self.events.push(log);
             Ok(())
@@ -1078,6 +1076,15 @@ mod tests {
         }
         fn mark_initialized(&mut self) -> Result<()> {
             self.initialized = true;
+            Ok(())
+        }
+
+        // This fake does not exercise composite policies.
+        fn read_children(&self, _policy_id: u64) -> Result<Vec<u64>> {
+            Ok(Vec::new())
+        }
+
+        fn write_children(&mut self, _policy_id: u64, _child_policy_ids: &[u64]) -> Result<()> {
             Ok(())
         }
     }
@@ -1625,5 +1632,16 @@ mod tests {
         assert!(LOGIC.is_initialized(&tok).unwrap());
         tok.accounting_mut().initialized = false;
         assert!(!LOGIC.is_initialized(&tok).unwrap());
+    }
+
+    /// Pins this version's frozen EIP-712 domain typehash to the exact type string it must hash.
+    /// The constant is duplicated per version so each fork's wire surface stays independently
+    /// frozen; without this check a typo in one copy would silently change that version's digest.
+    #[test]
+    fn domain_typehash_matches_eip712_domain_type() {
+        let domain_type =
+            b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
+        assert_eq!(super::DOMAIN_TYPEHASH, keccak256(domain_type));
+        assert_eq!(super::VERSION, b"1");
     }
 }
