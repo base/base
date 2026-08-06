@@ -1821,7 +1821,9 @@ fn golden_grant_role_unchecked_bootstraps_first_admin() {
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         );
-        token.grant_role_unchecked(B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN).unwrap();
+        token
+            .grant_role_unchecked(B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN, BaseUpgrade::Beryl)
+            .unwrap();
     });
     read(&mut s, |t| {
         assert!(t.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());

@@ -119,7 +119,7 @@ sol! {
         function burnBlocked(address from, uint256 amount) external;
 
         // Seize
-        function seizeWithMemo(address from, address to, uint256 amount, bytes32 memo) external returns (bool);
+        function seizeWithMemo(address from, address to, uint256 amount, bytes32 memo) external;
 
         // Roles
         function hasRole(bytes32 role, address account) external view returns (bool);

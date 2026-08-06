@@ -21,7 +21,7 @@ pub use follow::{FollowError, RemoteClient, RemoteL2Client, RemoteL2ClientError}
 
 mod actors;
 pub use actors::{
-    AlloyL1BlockFetcher, BlockStream, BuildRequest, CancellableContext,
+    AlloyL1BlockFetcher, BlockStream, BuildPipelineState, BuildRequest, CancellableContext,
     CanonicalReconciliationInputs, CanonicalUnsafeCatchup, CheckpointActor, CheckpointClient,
     CheckpointDB, CheckpointError, CheckpointRequest, CheckpointWriter, Conductor, ConductorClient,
     ConductorError, DelayedL1OriginSelectorProvider, DelegateDerivationActor, DerivationActor,
@@ -44,9 +44,9 @@ pub use actors::{
     RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError, SealStepOutcome,
     SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
     SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle,
-    ShadowReconciliationGate, ShadowReconciliationTask, UnsafePayloadGossipClient,
-    UnsafePayloadGossipClientError, UnsealedPayloadHandle, UpgradeSignalMetricsActor,
-    UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,
+    UnsafePayloadGossipClient, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
+    UpgradeSignalMetricsActor, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
 };
 
 mod metrics;

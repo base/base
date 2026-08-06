@@ -1001,7 +1001,7 @@ fn golden_seize_moves_balance_emits_transfer_memo_seized() {
     )
     .unwrap();
 
-    assert_eq!(out, ok_true());
+    assert!(out.is_empty(), "seizeWithMemo is a void admin op (no bool return)");
     read(&mut s, |t| {
         assert_eq!(t.balance_of(ALICE).unwrap(), u(60));
         assert_eq!(t.balance_of(BOB).unwrap(), u(40));
