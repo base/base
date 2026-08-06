@@ -82,7 +82,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
     ///
     /// For each available semaphore permit (= one L1 transaction), dequeues one
     /// ready submission and encodes it as a blob or calldata transaction. Blob
-    /// submissions map each frame to one blob, matching op-batcher's blob-tx shape.
+    /// submissions map each frame to one blob.
     /// Loops until the semaphore is exhausted, the pipeline has no ready submissions,
     /// or the txpool is blocked.
     ///
