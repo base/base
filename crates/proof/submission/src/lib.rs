@@ -23,5 +23,5 @@ pub use submission::{ChallengeProofSubmission, NullifyProofSubmission};
 mod submitter;
 pub use submitter::AggregateProofSubmitter;
 
-#[cfg(feature = "test-utils")]
+#[cfg(any(all(test, feature = "snark-receipt"), feature = "test-utils"))]
 pub mod test_utils;

@@ -37,5 +37,5 @@ alloy-consensus.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [features]
-snark-receipt = ["dep:sp1-sdk", "dep:bincode", "dep:base-proof-primitives"]
-test-utils = ["snark-receipt"]
+snark-receipt = [ "dep:base-proof-primitives", "dep:bincode", "dep:sp1-sdk" ]
+test-utils = [ "snark-receipt" ]

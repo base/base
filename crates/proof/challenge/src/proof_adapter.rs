@@ -79,7 +79,7 @@ impl ChallengerProofAdapter {
             }
         };
 
-        SnarkReceiptEncoder::encode_dispute_proof(&receipt_bytes)
+        SnarkReceiptEncoder::encode_onchain_zk_proof(&receipt_bytes)
             .wrap_err("failed to encode SP1 PLONK receipt into dispute proof bytes")
     }
 

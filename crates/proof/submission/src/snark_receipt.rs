@@ -7,10 +7,26 @@ use thiserror::Error;
 
 /// Error returned when a prover-service SP1 PLONK receipt cannot be decoded.
 #[derive(Debug, Error)]
-#[error("invalid SP1 PLONK receipt: {reason}")]
-pub struct SnarkReceiptDecodeError {
-    /// Why the receipt was rejected.
-    pub reason: String,
+pub enum SnarkReceiptDecodeError {
+    /// The receipt bytes are not a bincode-encoded SP1 receipt.
+    #[error("decoding receipt: {0}")]
+    Receipt(#[from] bincode::error::DecodeError),
+
+    /// The receipt carries a TEE-2FA proof.
+    #[error("receipt carries a TEE-2FA proof; TEE-prefixed seals are not supported")]
+    TeeProof,
+
+    /// The receipt does not carry a PLONK proof.
+    #[error("receipt does not carry a PLONK proof")]
+    NotPlonk,
+
+    /// The receipt carries no proof bytes (mock proof).
+    #[error("receipt carries no proof bytes; mock proofs are not submittable")]
+    MockProof,
+
+    /// The PLONK proof hex is malformed.
+    #[error("decoding proof hex: {0}")]
+    ProofHex(#[from] hex::FromHexError),
 }
 
 /// Encodes prover-service SP1 PLONK receipts into the ZK dispute proof bytes
@@ -35,26 +51,19 @@ impl SnarkReceiptEncoder {
     /// seal: the prover-service SNARK path never sets one, so a receipt
     /// that does is unexpected and must not silently produce a seal in a
     /// format this codebase never verifies.
-    pub fn encode_dispute_proof(receipt_bytes: &[u8]) -> Result<Bytes, SnarkReceiptDecodeError> {
-        let invalid = |reason: String| SnarkReceiptDecodeError { reason };
+    pub fn encode_onchain_zk_proof(receipt_bytes: &[u8]) -> Result<Bytes, SnarkReceiptDecodeError> {
         let (receipt, _): (SP1ProofWithPublicValues, usize) =
-            bincode::serde::decode_from_slice(receipt_bytes, bincode::config::standard())
-                .map_err(|error| invalid(format!("decoding receipt: {error}")))?;
+            bincode::serde::decode_from_slice(receipt_bytes, bincode::config::standard())?;
         if receipt.tee_proof.is_some() {
-            return Err(invalid(
-                "receipt carries a TEE-2FA proof; TEE-prefixed seals are not supported".to_string(),
-            ));
+            return Err(SnarkReceiptDecodeError::TeeProof);
         }
         let SP1Proof::Plonk(plonk) = &receipt.proof else {
-            return Err(invalid("receipt does not carry a PLONK proof".to_string()));
+            return Err(SnarkReceiptDecodeError::NotPlonk);
         };
         if plonk.encoded_proof.is_empty() {
-            return Err(invalid(
-                "receipt carries no proof bytes; mock proofs are not submittable".to_string(),
-            ));
+            return Err(SnarkReceiptDecodeError::MockProof);
         }
-        let proof = hex::decode(&plonk.encoded_proof)
-            .map_err(|error| invalid(format!("decoding proof hex: {error}")))?;
+        let proof = hex::decode(&plonk.encoded_proof)?;
 
         let mut bytes = Vec::with_capacity(4 + proof.len());
         bytes.extend_from_slice(&plonk.plonk_vkey_hash[..4]);
@@ -68,45 +77,31 @@ mod tests {
     use sp1_sdk::SP1PublicValues;
 
     use super::*;
+    use crate::test_utils::SnarkReceiptFixture;
 
-    fn plonk_receipt(encoded_proof: &str) -> SP1ProofWithPublicValues {
-        let mut plonk_vkey_hash = [0u8; 32];
-        plonk_vkey_hash[..4].copy_from_slice(&[0x5a, 0x09, 0x3a, 0x2f]);
-        let mut receipt = SP1ProofWithPublicValues {
-            proof: SP1Proof::Plonk(Default::default()),
-            public_values: SP1PublicValues::new(),
-            sp1_version: "test".to_owned(),
-            tee_proof: None,
-        };
-        let SP1Proof::Plonk(plonk) = &mut receipt.proof else {
-            unreachable!();
-        };
-        plonk.encoded_proof = encoded_proof.to_owned();
-        plonk.plonk_vkey_hash = plonk_vkey_hash;
-        receipt
-    }
-
-    fn encode_receipt(receipt: &SP1ProofWithPublicValues) -> Vec<u8> {
-        bincode::serde::encode_to_vec(receipt, bincode::config::standard()).unwrap()
-    }
+    /// Arbitrary stand-in for the 4-byte PLONK verifier selector
+    /// (`plonk_vkey_hash[..4]`) that prefixes the on-chain seal.
+    const VKEY_PREFIX: [u8; 4] = [0x5a, 0x09, 0x3a, 0x2f];
 
     #[test]
-    fn encode_dispute_proof_prefixes_zk_type_and_vkey() {
-        let proof =
-            SnarkReceiptEncoder::encode_dispute_proof(&encode_receipt(&plonk_receipt("abcd")))
-                .expect("valid receipt encodes");
+    fn encode_onchain_zk_proof_prefixes_zk_type_and_vkey() {
+        let receipt_bytes = SnarkReceiptFixture::plonk_receipt_bytes(VKEY_PREFIX, "abcd");
+        let proof = SnarkReceiptEncoder::encode_onchain_zk_proof(&receipt_bytes)
+            .expect("valid receipt encodes");
 
         assert_eq!(proof.as_ref(), &[1, 0x5a, 0x09, 0x3a, 0x2f, 0xab, 0xcd]);
     }
 
     #[test]
-    fn encode_dispute_proof_rejects_invalid_receipts() {
-        SnarkReceiptEncoder::encode_dispute_proof(b"not-an-sp1-receipt")
+    fn encode_onchain_zk_proof_rejects_invalid_receipts() {
+        let error = SnarkReceiptEncoder::encode_onchain_zk_proof(b"not-an-sp1-receipt")
             .expect_err("invalid receipt must fail");
+
+        assert!(matches!(error, SnarkReceiptDecodeError::Receipt(_)));
     }
 
     #[test]
-    fn encode_dispute_proof_rejects_non_plonk_receipts() {
+    fn encode_onchain_zk_proof_rejects_non_plonk_receipts() {
         let receipt = SP1ProofWithPublicValues {
             proof: SP1Proof::Groth16(Default::default()),
             public_values: SP1PublicValues::new(),
@@ -114,28 +109,42 @@ mod tests {
             tee_proof: None,
         };
 
-        SnarkReceiptEncoder::encode_dispute_proof(&encode_receipt(&receipt))
-            .expect_err("non-PLONK receipt must fail");
+        let error = SnarkReceiptEncoder::encode_onchain_zk_proof(
+            &SnarkReceiptFixture::receipt_bytes(&receipt),
+        )
+        .expect_err("non-PLONK receipt must fail");
+
+        assert!(matches!(error, SnarkReceiptDecodeError::NotPlonk));
     }
 
     #[test]
-    fn encode_dispute_proof_rejects_tee_2fa_receipts() {
-        let mut receipt = plonk_receipt("abcd");
+    fn encode_onchain_zk_proof_rejects_tee_2fa_receipts() {
+        let mut receipt = SnarkReceiptFixture::plonk_receipt(VKEY_PREFIX, "abcd");
         receipt.tee_proof = Some(vec![0xEE; 8]);
 
-        SnarkReceiptEncoder::encode_dispute_proof(&encode_receipt(&receipt))
-            .expect_err("TEE-2FA receipt must fail");
+        let error = SnarkReceiptEncoder::encode_onchain_zk_proof(
+            &SnarkReceiptFixture::receipt_bytes(&receipt),
+        )
+        .expect_err("TEE-2FA receipt must fail");
+
+        assert!(matches!(error, SnarkReceiptDecodeError::TeeProof));
     }
 
     #[test]
-    fn encode_dispute_proof_rejects_mock_proofs() {
-        SnarkReceiptEncoder::encode_dispute_proof(&encode_receipt(&plonk_receipt("")))
+    fn encode_onchain_zk_proof_rejects_mock_proofs() {
+        let receipt_bytes = SnarkReceiptFixture::plonk_receipt_bytes(VKEY_PREFIX, "");
+        let error = SnarkReceiptEncoder::encode_onchain_zk_proof(&receipt_bytes)
             .expect_err("mock receipt must fail");
+
+        assert!(matches!(error, SnarkReceiptDecodeError::MockProof));
     }
 
     #[test]
-    fn encode_dispute_proof_rejects_malformed_proof_hex() {
-        SnarkReceiptEncoder::encode_dispute_proof(&encode_receipt(&plonk_receipt("zzzz")))
+    fn encode_onchain_zk_proof_rejects_malformed_proof_hex() {
+        let receipt_bytes = SnarkReceiptFixture::plonk_receipt_bytes(VKEY_PREFIX, "zzzz");
+        let error = SnarkReceiptEncoder::encode_onchain_zk_proof(&receipt_bytes)
             .expect_err("malformed proof hex must fail");
+
+        assert!(matches!(error, SnarkReceiptDecodeError::ProofHex(_)));
     }
 }
