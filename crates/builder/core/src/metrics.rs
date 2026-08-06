@@ -80,6 +80,12 @@ base_metrics::define_metrics! {
     reverted_tx_gas_used: histogram,
     #[describe("Gas used by reverted transactions in the latest block")]
     payload_reverted_tx_gas_used: gauge,
+    #[describe("Histogram of gas used by reverted transactions excluded from the block")]
+    excluded_revert_tx_gas_used: histogram,
+    #[describe("Histogram of reverted transactions excluded from the payload")]
+    payload_num_tx_reverted_and_excluded: histogram,
+    #[describe("Latest number of reverted transactions excluded from the payload")]
+    payload_num_tx_reverted_and_excluded_gauge: gauge,
     #[describe(
         "Histogram of local builder EVM transaction execution/simulation duration in seconds"
     )]
@@ -265,6 +271,7 @@ impl BuilderMetrics {
         num_txs_simulated_success: f64,
         num_txs_simulated_fail: f64,
         reverted_gas_used: f64,
+        num_txs_reverted_and_excluded: f64,
     ) {
         Self::payload_transaction_simulation_duration().record(payload_transaction_simulation_time);
         Self::payload_transaction_simulation_gauge().set(payload_transaction_simulation_time);
@@ -277,6 +284,8 @@ impl BuilderMetrics {
         Self::payload_num_tx_simulated_fail().record(num_txs_simulated_fail);
         Self::payload_num_tx_simulated_fail_gauge().set(num_txs_simulated_fail);
         Self::payload_reverted_tx_gas_used().set(reverted_gas_used);
+        Self::payload_num_tx_reverted_and_excluded().record(num_txs_reverted_and_excluded);
+        Self::payload_num_tx_reverted_and_excluded_gauge().set(num_txs_reverted_and_excluded);
     }
 }
 

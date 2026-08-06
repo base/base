@@ -658,6 +658,7 @@ impl BasePayloadBuilderCtx {
         let mut num_txs_simulated = 0;
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
+        let mut num_txs_reverted_and_excluded = 0;
         let mut reverted_gas_used: u64 = 0;
         let base_fee = self.base_fee();
         let mut diag = FlashblockDiagnostics::default();
@@ -1177,22 +1178,15 @@ impl BasePayloadBuilderCtx {
             let gas_used = result.tx_gas_used();
             let is_success = result.is_success();
             let exclude_revert = !is_success && allow_revert == Some(false);
-            if is_success {
-                log_txn(Ok(TxnOutcome::Success));
-                num_txs_simulated_success += 1;
-                BuilderMetrics::successful_tx_gas_used().record(gas_used as f64);
-            } else {
-                log_txn(Ok(if exclude_revert {
-                    TxnOutcome::RevertedAndExcluded
-                } else {
-                    TxnOutcome::Reverted
-                }));
-                num_txs_simulated_fail += 1;
-                reverted_gas_used += gas_used;
-                BuilderMetrics::reverted_tx_gas_used().record(gas_used as f64);
-            }
 
+            // Accounted separately, and before the reverted totals below: an excluded transaction
+            // contributes no gas to the sealed block, so folding it into `reverted_gas_used` would
+            // report gas the block never used.
             if exclude_revert {
+                log_txn(Ok(TxnOutcome::RevertedAndExcluded));
+                num_txs_reverted_and_excluded += 1;
+                BuilderMetrics::excluded_revert_tx_gas_used().record(gas_used as f64);
+
                 let err = TxnExecutionError::RevertProtected;
                 diag.record_rejection(&err);
                 let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
@@ -1213,6 +1207,17 @@ impl BasePayloadBuilderCtx {
                 );
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
+            }
+
+            if is_success {
+                log_txn(Ok(TxnOutcome::Success));
+                num_txs_simulated_success += 1;
+                BuilderMetrics::successful_tx_gas_used().record(gas_used as f64);
+            } else {
+                log_txn(Ok(TxnOutcome::Reverted));
+                num_txs_simulated_fail += 1;
+                reverted_gas_used += gas_used;
+                BuilderMetrics::reverted_tx_gas_used().record(gas_used as f64);
             }
 
             // add gas used by the transaction to cumulative gas used, before creating the
@@ -1314,6 +1319,7 @@ impl BasePayloadBuilderCtx {
             num_txs_simulated_success as f64,
             num_txs_simulated_fail as f64,
             reverted_gas_used as f64,
+            num_txs_reverted_and_excluded as f64,
         );
 
         diag.txs_considered = num_txs_considered;
