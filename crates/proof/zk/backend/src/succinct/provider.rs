@@ -4,6 +4,7 @@ use std::{error::Error as StdError, fmt, sync::Arc};
 
 use alloy_primitives::{Address, B256};
 use base_l1_head::{L1HeadCalculator, L1HeadError};
+use base_proof_host::Metrics;
 use base_proof_succinct_client_utils::boot::BootInfoStruct;
 use base_proof_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, host::SuccinctHost,
@@ -154,6 +155,61 @@ impl OpSuccinctWitnessProvider {
         &self,
         params: WitnessParams<'_>,
     ) -> Result<SP1Stdin, WitnessError> {
+        let timer =
+            base_metrics::timed!(Metrics::witness_build_duration_seconds(Metrics::PROVER_SP1));
+        let stdin = self.generate_witness_inner(params).await?;
+        drop(timer);
+        #[cfg(feature = "metrics")]
+        Metrics::witness_size_bytes(Metrics::PROVER_SP1)
+            .record(stdin.buffer.iter().map(Vec::len).sum::<usize>() as f64);
+
+        info!(
+            start_block = params.start_block,
+            end_block = params.end_block,
+            "witness generation completed"
+        );
+
+        Ok(stdin)
+    }
+
+    /// Generate aggregation stdin from a completed compressed range proof.
+    pub async fn generate_aggregation_witness(
+        &self,
+        mut range_proof: SP1ProofWithPublicValues,
+        range_vk: &SP1VerifyingKey,
+        prover_address: Address,
+    ) -> Result<SP1Stdin, WitnessError> {
+        let boot_info: BootInfoStruct = range_proof.public_values.read();
+        let boot_infos = vec![boot_info];
+        let proofs = vec![range_proof.proof];
+
+        let header =
+            self.host.fetcher.get_latest_l1_head_in_batch(&boot_infos).await.map_err(|source| {
+                WitnessError::AggregationL1Head { source: source.into_boxed_dyn_error() }
+            })?;
+        let l1_head_hash = header.hash_slow();
+
+        let headers =
+            self.host.fetcher.get_header_preimages(&boot_infos, l1_head_hash).await.map_err(
+                |source| WitnessError::AggregationHeaders { source: source.into_boxed_dyn_error() },
+            )?;
+
+        info!(
+            l1_head_hash = %l1_head_hash,
+            num_headers = headers.len(),
+            "fetched L1 headers for aggregation proof"
+        );
+
+        get_agg_proof_stdin(proofs, boot_infos, headers, range_vk, l1_head_hash, prover_address)
+            .map_err(|source| WitnessError::AggregationStdin {
+                source: source.into_boxed_dyn_error(),
+            })
+    }
+
+    async fn generate_witness_inner(
+        &self,
+        params: WitnessParams<'_>,
+    ) -> Result<SP1Stdin, WitnessError> {
         let WitnessParams { start_block, end_block, l1_head, intermediate_root_interval } = params;
 
         info!(
@@ -209,48 +265,9 @@ impl OpSuccinctWitnessProvider {
             self.host.run(&host_args).await.map_err(|source| WitnessError::HostRun {
                 source: source.into_boxed_dyn_error(),
             })?;
-        let stdin = self
-            .host
+        self.host
             .witness_generator()
             .get_sp1_stdin(witness)
-            .map_err(|source| WitnessError::Stdin { source: source.into_boxed_dyn_error() })?;
-
-        info!(start_block = start_block, end_block = end_block, "witness generation completed");
-
-        Ok(stdin)
-    }
-
-    /// Generate aggregation stdin from a completed compressed range proof.
-    pub async fn generate_aggregation_witness(
-        &self,
-        mut range_proof: SP1ProofWithPublicValues,
-        range_vk: &SP1VerifyingKey,
-        prover_address: Address,
-    ) -> Result<SP1Stdin, WitnessError> {
-        let boot_info: BootInfoStruct = range_proof.public_values.read();
-        let boot_infos = vec![boot_info];
-        let proofs = vec![range_proof.proof];
-
-        let header =
-            self.host.fetcher.get_latest_l1_head_in_batch(&boot_infos).await.map_err(|source| {
-                WitnessError::AggregationL1Head { source: source.into_boxed_dyn_error() }
-            })?;
-        let l1_head_hash = header.hash_slow();
-
-        let headers =
-            self.host.fetcher.get_header_preimages(&boot_infos, l1_head_hash).await.map_err(
-                |source| WitnessError::AggregationHeaders { source: source.into_boxed_dyn_error() },
-            )?;
-
-        info!(
-            l1_head_hash = %l1_head_hash,
-            num_headers = headers.len(),
-            "fetched L1 headers for aggregation proof"
-        );
-
-        get_agg_proof_stdin(proofs, boot_infos, headers, range_vk, l1_head_hash, prover_address)
-            .map_err(|source| WitnessError::AggregationStdin {
-                source: source.into_boxed_dyn_error(),
-            })
+            .map_err(|source| WitnessError::Stdin { source: source.into_boxed_dyn_error() })
     }
 }
