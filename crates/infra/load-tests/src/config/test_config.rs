@@ -107,9 +107,8 @@ pub struct TestConfig {
     ///
     /// The recipient stream is always positioned with a runtime-random seed/offset (never the
     /// configured `seed`), so repeated runs never regenerate the same "fresh" addresses. The
-    /// runner logs `randomized_recipient_seed`/`randomized_recipient_offset` at startup so
-    /// recipients can be recovered out-of-band via `AccountPool::with_offset` /
-    /// `AccountPool::from_mnemonic`, and writes `fresh_recipient_count` to the final summary.
+    /// runner prints recovery instructions directly at startup and writes
+    /// `fresh_recipient_count` to the final summary.
     #[serde(default)]
     pub fresh_recipient_ratio: f64,
 

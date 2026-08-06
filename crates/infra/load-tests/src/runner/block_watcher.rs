@@ -22,7 +22,7 @@ use base_common_network::Base;
 use futures::{StreamExt, stream};
 use tokio::sync::{Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use super::{BlockObservation, BlockReceipt, InclusionPulse, ResultsTracker};
 use crate::utils::{BaselineError, Result};
@@ -192,6 +192,9 @@ impl BlockWatcher {
         let mut last_progress_log = Instant::now();
         let mut last_availability_warning =
             Instant::now().checked_sub(Duration::from_secs(15)).unwrap_or_else(Instant::now);
+        let mut consecutive_probe_failures = 0u64;
+        let mut last_probe_warning =
+            Instant::now().checked_sub(Duration::from_secs(15)).unwrap_or_else(Instant::now);
 
         while !self.cancel_token.is_cancelled() {
             tokio::select! {
@@ -206,21 +209,33 @@ impl BlockWatcher {
             let mut required_retry = false;
             let latest = loop {
                 match self.fetch_latest_block_with_timeout(BLOCK_RPC_TIMEOUT).await {
-                    Ok(Some(block))
-                        if last_seen_block.is_none_or(|seen| block.observation.number > seen) =>
-                    {
-                        break Some(block);
-                    }
-                    Ok(_) => {
+                    Ok(block) => {
+                        if let Some(block) = block
+                            && last_seen_block.is_none_or(|seen| block.observation.number > seen)
+                        {
+                            if consecutive_probe_failures > 0 {
+                                debug!(
+                                    failed_probes = consecutive_probe_failures,
+                                    "block availability probes recovered"
+                                );
+                                consecutive_probe_failures = 0;
+                            }
+                            break Some(block);
+                        }
                         required_retry = true;
                     }
                     Err(error) => {
                         required_retry = true;
-                        warn!(
-                            error = %error,
-                            pending = self.results_tracker.pending_count(),
-                            "block availability probe failed"
-                        );
+                        consecutive_probe_failures = consecutive_probe_failures.saturating_add(1);
+                        if last_probe_warning.elapsed() >= Duration::from_secs(15) {
+                            warn!(
+                                error = %error,
+                                failed_probes = consecutive_probe_failures,
+                                pending = self.results_tracker.pending_count(),
+                                "block availability probes failing"
+                            );
+                            last_probe_warning = Instant::now();
+                        }
                     }
                 }
 
@@ -535,15 +550,15 @@ impl BlockWatcher {
                 success: receipt.status(),
             }),
             Ok(Ok(None)) => {
-                warn!(tx_hash = %tx_hash, "eth_getTransactionReceipt returned no receipt");
+                debug!(tx_hash = %tx_hash, "eth_getTransactionReceipt returned no receipt");
                 None
             }
             Ok(Err(e)) => {
-                warn!(tx_hash = %tx_hash, error = %e, "eth_getTransactionReceipt failed");
+                debug!(tx_hash = %tx_hash, error = %e, "eth_getTransactionReceipt failed");
                 None
             }
             Err(_) => {
-                warn!(
+                debug!(
                     tx_hash = %tx_hash,
                     timeout_secs = RECEIPT_RPC_TIMEOUT.as_secs(),
                     "eth_getTransactionReceipt timed out"
@@ -640,7 +655,7 @@ impl BlockWatcher {
 
                             for hash in hashes {
                                 if pending.remove(&hash) {
-                                    debug!(tx_hash = %hash, block = block_number, "transaction confirmed in block");
+                                    trace!(tx_hash = %hash, block = block_number, "transaction confirmed in block");
                                     on_confirmed(hash, block_number);
                                 }
                             }
@@ -748,7 +763,7 @@ impl BlockWatcher {
                 (mapped, false)
             }
             Ok(Ok(None)) => {
-                warn!(block = block_number, "eth_getBlockReceipts returned no receipts");
+                debug!(block = block_number, "eth_getBlockReceipts returned no receipts");
                 (Vec::new(), true)
             }
             Ok(Err(e)) => {
@@ -760,11 +775,11 @@ impl BlockWatcher {
                          per-transaction eth_getTransactionReceipt calls for the rest of this run"
                     );
                 }
-                warn!(block = block_number, error = %e, "eth_getBlockReceipts failed");
+                debug!(block = block_number, error = %e, "eth_getBlockReceipts failed");
                 (Vec::new(), true)
             }
             Err(_) => {
-                warn!(
+                debug!(
                     block = block_number,
                     timeout_secs = RECEIPT_RPC_TIMEOUT.as_secs(),
                     "eth_getBlockReceipts timed out"

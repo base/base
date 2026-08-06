@@ -11,7 +11,7 @@ use tokio_tungstenite::{
     tungstenite::{Bytes, protocol::Message},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use url::Url;
 
 use super::{FlashblockInclusion, InclusionPulse, ResultsTracker};
@@ -46,15 +46,27 @@ impl FlashblockWatcher {
     }
 
     async fn run(&self) {
-        info!(url = %self.ws_url, "starting flashblock watcher");
+        info!("starting flashblock watcher");
 
         let mut backoff = Duration::from_millis(100);
         let max_backoff = Duration::from_secs(5);
+        let mut failed_attempts = 0u64;
+        let mut has_connected = false;
+        let mut outage_reported = false;
+        let mut last_failure_warning =
+            Instant::now().checked_sub(Duration::from_secs(15)).unwrap_or_else(Instant::now);
 
         while !self.cancel_token.is_cancelled() {
             match tokio::time::timeout(CONNECT_TIMEOUT, connect_async(self.ws_url.as_str())).await {
                 Ok(Ok((ws_stream, _))) => {
-                    info!("flashblock websocket connected");
+                    if outage_reported {
+                        info!(failed_attempts, "flashblock websocket recovered");
+                        outage_reported = false;
+                    } else if !has_connected {
+                        info!("flashblock websocket connected");
+                    }
+                    has_connected = true;
+                    failed_attempts = 0;
                     backoff = Duration::from_millis(100);
 
                     let (_, mut read) = ws_stream.split();
@@ -76,16 +88,25 @@ impl FlashblockWatcher {
                                         self.process_message(Bytes::from(data)).await;
                                     }
                                     Some(Ok(Message::Close(_))) => {
-                                        info!("flashblock websocket closed by server");
+                                        debug!("flashblock websocket closed by server");
                                         break;
                                     }
                                     Some(Ok(_)) => {}
                                     Some(Err(e)) => {
-                                        warn!(error = %e, "flashblock websocket error");
+                                        failed_attempts = failed_attempts.saturating_add(1);
+                                        if last_failure_warning.elapsed() >= Duration::from_secs(15) {
+                                            warn!(
+                                                error = %e,
+                                                failed_attempts,
+                                                "flashblock websocket stream failing"
+                                            );
+                                            outage_reported = true;
+                                            last_failure_warning = Instant::now();
+                                        }
                                         break;
                                     }
                                     None => {
-                                        info!("flashblock websocket stream ended");
+                                        debug!("flashblock websocket stream ended");
                                         break;
                                     }
                                 }
@@ -97,14 +118,30 @@ impl FlashblockWatcher {
                     if self.cancel_token.is_cancelled() {
                         return;
                     }
-                    error!(error = %e, backoff_ms = backoff.as_millis(), "flashblock connection failed, retrying");
+                    failed_attempts = failed_attempts.saturating_add(1);
+                    if last_failure_warning.elapsed() >= Duration::from_secs(15) {
+                        warn!(
+                            error = %e,
+                            failed_attempts,
+                            backoff_ms = backoff.as_millis(),
+                            "flashblock connection failing, retrying"
+                        );
+                        outage_reported = true;
+                        last_failure_warning = Instant::now();
+                    }
                 }
                 Err(_) => {
-                    warn!(
-                        timeout_secs = CONNECT_TIMEOUT.as_secs(),
-                        backoff_ms = backoff.as_millis(),
-                        "flashblock connection timed out, retrying"
-                    );
+                    failed_attempts = failed_attempts.saturating_add(1);
+                    if last_failure_warning.elapsed() >= Duration::from_secs(15) {
+                        warn!(
+                            timeout_secs = CONNECT_TIMEOUT.as_secs(),
+                            failed_attempts,
+                            backoff_ms = backoff.as_millis(),
+                            "flashblock connection timing out, retrying"
+                        );
+                        outage_reported = true;
+                        last_failure_warning = Instant::now();
+                    }
                 }
             }
 

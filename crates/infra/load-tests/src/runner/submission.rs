@@ -772,14 +772,12 @@ impl SubmissionPipeline {
             };
 
             let batch_id = batch.id;
-            let batch_len = batch.len();
-            let submitted = Self::send_batch(ctx.clone(), batch, &shutdown).await;
+            Self::send_batch(ctx.clone(), batch, &shutdown).await;
             queue.pending_batches.fetch_sub(1, Ordering::SeqCst);
             let _ = ctx
                 .submit_event_tx
                 .send(SubmitEvent::BatchCompleted { id: batch_id, completed_at: Instant::now() })
                 .await;
-            debug!(worker_id, batch_id, batch_len, submitted, "signed batch complete");
         }
     }
 
@@ -846,7 +844,7 @@ impl SubmissionPipeline {
                         return submitted;
                     }
 
-                    warn!(
+                    debug!(
                         batch_id,
                         attempt,
                         next_attempt = attempt + 1,
@@ -876,96 +874,79 @@ impl SubmissionPipeline {
             let mut retry_unknown_txs = Vec::new();
             let mut retry_rejected_txs = Vec::new();
             let mut retry_rate_limited_txs = Vec::new();
+            let mut terminal_rejections = 0usize;
+            let mut retry_unknown_error = None;
+            let mut retry_rejected_error = None;
+            let mut retry_rate_limited_error = None;
+            let mut terminal_rejection_error = None;
 
             for (signed, result) in batch.txs.into_iter().zip(batch_results) {
                 match result {
                     BatchSendResult::Success(hash) => {
-                        submitted += Self::record_submitted(
-                            &ctx,
-                            signed,
-                            hash,
-                            measured,
-                            "tx submitted (batch)",
-                        )
-                        .await;
+                        submitted += Self::record_submitted(&ctx, signed, hash, measured).await;
                     }
                     BatchSendResult::Error(msg) => match Self::classify_batch_error(msg) {
                         BatchTxError::AlreadyKnown => {
                             let tx_hash = signed.tx_hash;
-                            submitted += Self::record_submitted(
-                                &ctx,
-                                signed,
-                                tx_hash,
-                                measured,
-                                "tx already known",
-                            )
-                            .await;
+                            submitted +=
+                                Self::record_submitted(&ctx, signed, tx_hash, measured).await;
                         }
-                        BatchTxError::RetryableRejected(msg) => {
-                            debug!(
-                                from = %signed.from,
-                                nonce = signed.nonce,
-                                attempt,
-                                error = %msg,
-                                "tx rejected with retryable error"
-                            );
+                        BatchTxError::RetryableRejected(message) => {
+                            retry_rejected_error.get_or_insert(message);
                             retry_rejected_txs.push(signed);
                         }
-                        BatchTxError::RetryableUnknown(msg) => {
-                            debug!(
-                                from = %signed.from,
-                                nonce = signed.nonce,
-                                attempt,
-                                error = %msg,
-                                "tx status unknown, retrying signed transaction"
-                            );
+                        BatchTxError::RetryableUnknown(message) => {
+                            retry_unknown_error.get_or_insert(message);
                             retry_unknown_txs.push(signed);
                         }
-                        BatchTxError::RateLimited(msg) => {
-                            Self::warn_rate_limited_once(&msg);
-                            debug!(
-                                from = %signed.from,
-                                nonce = signed.nonce,
-                                attempt,
-                                error = %msg,
-                                "tx rejected due to rate limiting, retrying with backoff"
-                            );
+                        BatchTxError::RateLimited(message) => {
+                            Self::warn_rate_limited_once(&message);
+                            retry_rate_limited_error.get_or_insert(message);
                             retry_rate_limited_txs.push(signed);
                         }
                         BatchTxError::NonceTooLow => {
-                            debug!(
-                                from = %signed.from,
-                                nonce = signed.nonce,
-                                attempt,
-                                "nonce too low during batch submission"
-                            );
                             // Nonce-too-low means the nonce was already consumed on-chain,
                             // either by a prior attempt or by the same tx landing before
                             // the response arrived. Treat as submitted to avoid returning
                             // the nonce (which would cause replacement-tx-underpriced cycles).
                             let tx_hash = signed.tx_hash;
-                            submitted += Self::record_submitted(
-                                &ctx,
-                                signed,
-                                tx_hash,
-                                measured,
-                                "tx nonce already used",
-                            )
-                            .await;
+                            submitted +=
+                                Self::record_submitted(&ctx, signed, tx_hash, measured).await;
                         }
-                        BatchTxError::Rejected(msg) => {
-                            debug!(
-                                from = %signed.from,
-                                nonce = signed.nonce,
-                                error = %msg,
-                                "tx rejected in batch"
-                            );
+                        BatchTxError::Rejected(message) => {
+                            terminal_rejections = terminal_rejections.saturating_add(1);
+                            if terminal_rejection_error.is_none() {
+                                terminal_rejection_error = Some(message.clone());
+                            }
                             Self::return_signed_nonce(&ctx, &signed).await;
                             Self::release_signed(&ctx.submit_event_tx, &signed, false).await;
-                            let _ = ctx.submit_event_tx.send(SubmitEvent::Failed(msg)).await;
+                            let _ = ctx.submit_event_tx.send(SubmitEvent::Failed(message)).await;
                         }
                     },
                 }
+            }
+
+            let retry_unknown_count = retry_unknown_txs.len();
+            let retry_rejected_count = retry_rejected_txs.len();
+            let retry_rate_limited_count = retry_rate_limited_txs.len();
+            if retry_unknown_count > 0
+                || retry_rejected_count > 0
+                || retry_rate_limited_count > 0
+                || terminal_rejections > 0
+            {
+                debug!(
+                    batch_id,
+                    attempt,
+                    retry_unknown_count,
+                    retry_rejected_count,
+                    retry_rate_limited_count,
+                    terminal_rejections,
+                    retry_unknown_error = ?retry_unknown_error.as_deref(),
+                    retry_rejected_error = ?retry_rejected_error.as_deref(),
+                    retry_rate_limited_error = ?retry_rate_limited_error.as_deref(),
+                    terminal_rejection_error = ?terminal_rejection_error.as_deref(),
+                    "batch submission contained transaction errors"
+                );
             }
 
             if retry_unknown_txs.is_empty()
@@ -980,7 +961,15 @@ impl SubmissionPipeline {
 
             if attempt + 1 >= SUBMIT_MAX_ATTEMPTS {
                 let failed = retry_unknown_txs.len() + retry_rejected_txs.len();
-                warn!(batch_id, attempt, failed, "retryable tx errors exceeded max attempts");
+                warn!(
+                    batch_id,
+                    attempt,
+                    failed,
+                    retry_unknown_error = ?retry_unknown_error.as_deref(),
+                    retry_rejected_error = ?retry_rejected_error.as_deref(),
+                    retry_rate_limited_error = ?retry_rate_limited_error.as_deref(),
+                    "retryable tx errors exceeded max attempts"
+                );
                 Self::fail_signed_batch(
                     &ctx.submit_event_tx,
                     retry_unknown_txs,
@@ -1025,7 +1014,6 @@ impl SubmissionPipeline {
         signed: SignedTransaction,
         tx_hash: TxHash,
         measured: bool,
-        message: &'static str,
     ) -> u64 {
         let tracked_hash = if tx_hash != signed.tx_hash {
             debug!(
@@ -1045,13 +1033,6 @@ impl SubmissionPipeline {
         }]);
         Self::release_signed(&ctx.submit_event_tx, &signed, true).await;
         let _ = ctx.submit_event_tx.send(SubmitEvent::Submitted(tracked_hash)).await;
-        debug!(
-            tx_hash = %tracked_hash,
-            from = %signed.from,
-            nonce = signed.nonce,
-            outcome = message,
-            "tx submission accepted"
-        );
         1
     }
 

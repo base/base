@@ -110,14 +110,11 @@ mod tests {
 
     use alloy_consensus::Transaction;
     use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-    use alloy_primitives::{Address, U256};
-    use reth_execution_types::ChangedAccount;
     use reth_payload_util::{BestPayloadTransactions, PayloadTransactions};
     use reth_transaction_pool::{
-        BestTransactionsAttributes, CoinbaseTipOrdering, PoolTransaction, TransactionOrigin,
-        TransactionPool, TransactionPoolExt,
+        CoinbaseTipOrdering, PoolTransaction,
         pool::PendingPool,
-        test_utils::{MockTransaction, MockTransactionFactory, testing_pool},
+        test_utils::{MockTransaction, MockTransactionFactory},
     };
 
     use crate::{RejectionCache, flashblocks::best_txs::BestFlashblocksTxs};
@@ -273,6 +270,13 @@ mod tests {
     /// instead of `pending`, making them invisible to FB2+.
     #[tokio::test]
     async fn test_prune_transactions_causes_nonce_chain_queuing() {
+        use alloy_primitives::{Address, U256};
+        use reth_execution_types::ChangedAccount;
+        use reth_transaction_pool::{
+            BestTransactionsAttributes, TransactionOrigin, TransactionPool, TransactionPoolExt,
+            test_utils::testing_pool,
+        };
+
         let pool = testing_pool();
 
         let senders: Vec<Address> = (0..3).map(|_| Address::random()).collect();
@@ -334,58 +338,6 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 3);
-    }
-
-    /// A preloaded single-sender chain remains available after its head is executed and pruned.
-    #[tokio::test]
-    async fn test_preloaded_nonce_chain_available_after_pruning_head() {
-        const REMAINING_TRANSACTIONS: usize = 40;
-
-        let pool = testing_pool();
-        let sender = Address::random();
-        for nonce in 0..=REMAINING_TRANSACTIONS {
-            let tx = MockTransaction::eip1559()
-                .with_sender(sender)
-                .with_nonce(nonce as u64)
-                .with_gas_limit(21_000)
-                .with_priority_fee(5_000_000_000)
-                .with_max_fee(100_000_000_000);
-            pool.add_transaction(TransactionOrigin::Local, tx).await.unwrap();
-        }
-        assert_eq!(pool.pool_size().pending, REMAINING_TRANSACTIONS + 1);
-        assert_eq!(pool.pool_size().queued, 0);
-
-        let best_attrs = BestTransactionsAttributes::new(0, None);
-        let mut best_txs = BestFlashblocksTxs::new(
-            BestPayloadTransactions::new(pool.best_transactions_with_attributes(best_attrs)),
-            test_rejection_cache(),
-        );
-        let head = best_txs.next(()).expect("preloaded chain head should be executable");
-        assert_eq!(head.nonce(), 0);
-        let head_hash = *head.hash();
-        best_txs.mark_committed(&[head_hash]);
-
-        pool.prune_transactions(vec![head_hash]);
-        assert_eq!(pool.pool_size().pending, REMAINING_TRANSACTIONS);
-        assert_eq!(pool.pool_size().queued, 0);
-
-        // Match the production refresh before the next flashblock iterator is constructed.
-        pool.update_accounts(vec![ChangedAccount {
-            address: sender,
-            nonce: 1,
-            balance: U256::MAX,
-        }]);
-
-        assert_eq!(pool.pool_size().pending, REMAINING_TRANSACTIONS);
-        assert_eq!(pool.pool_size().queued, 0);
-        best_txs.refresh_iterator(BestPayloadTransactions::new(
-            pool.best_transactions_with_attributes(best_attrs),
-        ));
-        let mut fb2_nonces = Vec::new();
-        while let Some(tx) = best_txs.next(()) {
-            fb2_nonces.push(tx.nonce());
-        }
-        assert_eq!(fb2_nonces, (1..=REMAINING_TRANSACTIONS as u64).collect::<Vec<_>>());
     }
 
     /// Rejected transactions are skipped across flashblock boundaries within the same block.

@@ -649,7 +649,12 @@ async fn rescue_await_drained_balances(
     }
 
     if !pending_accounts.is_empty() {
-        warn!(accounts = ?pending_accounts, "some rescue balances did not settle within timeout");
+        let sample: Vec<_> = pending_accounts.iter().take(3).copied().collect();
+        warn!(
+            pending_account_count = pending_accounts.len(),
+            pending_account_sample = ?sample,
+            "some rescue balances did not settle within timeout"
+        );
     }
 
     Ok(())

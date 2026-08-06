@@ -8,7 +8,7 @@ use alloy_provider::{
 };
 use base_common_network::Base;
 use tokio::sync::Semaphore;
-use tracing::{debug, instrument, warn};
+use tracing::{instrument, warn};
 use url::Url;
 
 use crate::utils::{BaselineError, Result};
@@ -109,7 +109,7 @@ impl TxpoolAdminClient {
     }
 
     /// Drops all pending transactions from the given sender address.
-    #[instrument(skip(self), fields(address = %address, url = %self.url))]
+    #[instrument(skip(self), fields(address = %address))]
     pub async fn drop_sender_transactions(&self, address: Address) -> Result<Vec<TxHash>> {
         self.provider
             .client()
@@ -234,7 +234,6 @@ impl BatchRpcClient {
             all_results.extend(self.send_raw_chunk(chunk).await?);
         }
 
-        debug!(count = raw_txs.len(), "batch send complete");
         Ok(all_results)
     }
 
@@ -252,17 +251,24 @@ impl BatchRpcClient {
             })
             .collect();
 
-        let response = self
-            .client
-            .post(self.url.as_str())
-            .json(&batch)
-            .send()
-            .await
-            .map_err(|e| BaselineError::Rpc(format!("batch send request failed: {e}")))?;
+        let response =
+            self.client.post(self.url.as_str()).json(&batch).send().await.map_err(|error| {
+                let error_kind = if error.is_timeout() {
+                    "timeout"
+                } else if error.is_connect() {
+                    "connection"
+                } else if error.is_request() {
+                    "request"
+                } else {
+                    "transport"
+                };
+                BaselineError::Rpc(format!("batch send request failed ({error_kind})"))
+            })?;
 
         let status = response.status();
-        let body_text = response.text().await.map_err(|e| {
-            BaselineError::Rpc(format!("failed to read batch send response body: {e}"))
+        let body_text = response.text().await.map_err(|error| {
+            let error_kind = if error.is_timeout() { "timeout" } else { "transport" };
+            BaselineError::Rpc(format!("failed to read batch send response body ({error_kind})"))
         })?;
 
         if !status.is_success() {
@@ -309,4 +315,35 @@ impl BatchRpcClient {
 fn truncate_for_log(s: &str) -> &str {
     let max = 256;
     if s.len() <= max { s } else { &s[..s.floor_char_boundary(max)] }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::TcpListener;
+
+    use alloy_primitives::Bytes;
+    use url::Url;
+
+    use super::BatchRpcClient;
+
+    #[tokio::test]
+    async fn batch_transport_error_omits_endpoint_credentials() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test endpoint");
+        let address = listener.local_addr().expect("read test endpoint");
+        drop(listener);
+        let url =
+            Url::parse(&format!("http://user:secret@{address}")).expect("valid credentialed URL");
+        let client = BatchRpcClient::new(url);
+
+        let error = client
+            .send_raw_transactions(&[Bytes::from(vec![1])], None)
+            .await
+            .expect_err("closed endpoint should reject request")
+            .to_string();
+
+        assert!(error.contains("batch send request failed"));
+        assert!(!error.contains("user"));
+        assert!(!error.contains("secret"));
+        assert!(!error.contains(&address.to_string()));
+    }
 }

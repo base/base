@@ -406,7 +406,6 @@ impl LoadRunner {
         let results_tracker =
             ResultsTracker::new_with_pulse_sender(&sender_addresses, inclusion_pulse_tx.clone());
 
-        info!(url = %self.config.query_rpc, "starting block watcher");
         let receipt_provider = RootProvider::<Base>::new_http(self.config.query_rpc.clone());
         let watcher_cancel = self.cancel_token.child_token();
         let _watcher_cancel_guard = watcher_cancel.clone().drop_guard();
@@ -1048,7 +1047,7 @@ impl LoadRunner {
                 let (stalled, undrained_gas) = results_tracker.measured_unconfirmed_inventory();
                 results_tracker.expire_pending(Duration::ZERO);
                 self.collector.record_undrained_inventory(stalled, undrained_gas);
-                warn!(
+                info!(
                     stalled,
                     undrained_gas,
                     stall_secs = DRAIN_STALL_TIMEOUT.as_secs(),
@@ -1354,9 +1353,7 @@ impl LoadRunner {
                     ))
                 })?;
             }
-
             chunk_index = chunk_index.saturating_add(1);
-            debug!(chunk_index, chunk_per_sender, "open-loop pre-sign producer generated chunk");
         }
 
         Ok(producer_state)
@@ -1557,10 +1554,14 @@ impl LoadRunner {
             Self::buffer_presigned_chunk(enqueue_state.buffer, enqueue_state.progress, chunk);
         }
         drain_state.drain_run_events();
+        let mut disabled_sender_count = 0usize;
         for sender in drain_state.rejected_senders.drain() {
             if enqueue_state.buffer.disable_sender(sender) {
-                warn!(sender = %sender, "disabled sender after terminal nonce rejection");
+                disabled_sender_count = disabled_sender_count.saturating_add(1);
             }
+        }
+        if disabled_sender_count > 0 {
+            warn!(disabled_sender_count, "disabled senders after terminal nonce rejection");
         }
 
         let plan_started = Instant::now();
@@ -1647,12 +1648,6 @@ impl LoadRunner {
             .map(|lag| lag.saturating_sub(submit_started.saturating_duration_since(cycle_started)));
         if !batch_ids.is_empty() && refill_lag.is_none() {
             drain_state.results_tracker.register_pending_refill(batch_ids.clone(), cycle_started);
-            warn!(
-                block = canonical.map(|block| block.number),
-                source = ?pulse.source,
-                batch_count = batch_ids.len(),
-                "block refill submissions exceeded 100ms acknowledgement budget"
-            );
         }
         let resulting_depth_gas = drain_state.total_outstanding_gas();
         let availability_lag_ms = canonical.map_or(0, |block| {
@@ -1683,24 +1678,23 @@ impl LoadRunner {
             submit_time,
             refill_lag,
         });
-        debug!(
-            block = canonical.map(|block| block.number),
-            source = ?pulse.source,
-            released_gas = pulse.released_gas,
-            depth_gas,
-            resulting_depth_gas,
-            desired_gas = plan.desired_gas,
-            inject_gas = plan.inject_gas,
-            selected_gas,
-            selected_count,
-            buffered_gas = enqueue_state.buffer.buffered_gas(),
-            availability_lag_ms,
-            plan_ms = plan_time.as_millis(),
-            submit_ms = submit_time.map(|time| time.as_millis()),
-            refill_lag_ms = refill_lag.map(|lag| lag.as_millis()),
-            limited_by = ?plan.limited_by,
-            "completed block-aligned refill enqueue"
-        );
+        if selected_gas > 0 || canonical.is_some() {
+            debug!(
+                block = canonical.map(|block| block.number),
+                source = ?pulse.source,
+                released_gas = pulse.released_gas,
+                depth_gas,
+                resulting_depth_gas,
+                desired_gas = plan.desired_gas,
+                selected_gas,
+                selected_count,
+                availability_lag_ms,
+                ack_budget_exceeded = !batch_ids.is_empty() && refill_lag.is_none(),
+                refill_lag_ms = refill_lag.map(|lag| lag.as_millis()),
+                limited_by = ?plan.limited_by,
+                "completed inclusion-triggered refill"
+            );
+        }
         Ok(())
     }
 
@@ -1815,10 +1809,7 @@ impl LoadRunner {
 
         let batch = SignedBatch { id: batch_id, attempt: 0, measured, txs: signed_txs };
         match Self::enqueue_signed_while_draining(submission_pipeline, batch, drain_state).await {
-            Ok(()) => {
-                debug!(batch_id, batch_len, "queued open-loop signed batch");
-                true
-            }
+            Ok(()) => true,
             Err(batch) => {
                 warn!(
                     batch_id,

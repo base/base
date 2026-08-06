@@ -105,6 +105,17 @@ the controller or submission pipeline.
 The final pacing summary reports canonical, flashblock, and safety refill-cycle counts so source
 fallback is visible.
 
+### Logging
+
+Use `RUST_LOG=base_load_tests=debug` for pacing diagnostics. Debug output is organized around
+phases, blocks, batches with errors, and refills that actually submit transactions; normal
+per-transaction and per-account events are available only at trace level. Avoid trace logging for
+sustained load runs because its volume scales with transaction count.
+
+RPC and WebSocket credentials, full endpoint URLs, deterministic account seeds, and randomized
+recipient recovery values are excluded from structured logs. Fresh-recipient recovery instructions
+are still printed explicitly at startup, so protect captured stdout/stderr as recovery material.
+
 `transaction_submission_rpcs` accepts either a single URL string or a list; submit batches are
 distributed across the configured HTTP endpoints.
 `txpool_nodes` is optional and defaults to an empty list; when present, the load tester calls

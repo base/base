@@ -8,7 +8,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
 use indicatif::{ProgressBar, ProgressStyle};
-use tracing::{debug, warn};
+use tracing::{trace, warn};
 use url::Url;
 
 use crate::{
@@ -169,7 +169,11 @@ impl ChainPrepContext<'_> {
 }
 
 /// Derives a prep/submission max fee from base fee, tip, and cap.
-pub(crate) fn prep_submission_max_fee(base_fee: u128, priority_fee: u128, max_gas_price: u128) -> u128 {
+pub(crate) fn prep_submission_max_fee(
+    base_fee: u128,
+    priority_fee: u128,
+    max_gas_price: u128,
+) -> u128 {
     let target = base_fee
         .saturating_mul(PREP_MAX_FEE_BASE_FEE_MULTIPLIER)
         .max(base_fee.saturating_add(priority_fee));
@@ -208,7 +212,7 @@ pub(crate) async fn await_token_balances(
                 .rpc("eth_call")
             {
                 Ok(bytes) if U256::from_be_slice(bytes.as_ref()) >= target_balance => {
-                    debug!(token = %token, sender = %sender, "token balance settled");
+                    trace!(token = %token, sender = %sender, "token balance settled");
                     settled += 1;
                     pb.inc(1);
                 }
@@ -230,8 +234,10 @@ pub(crate) async fn await_token_balances(
     }
 
     if !pending_accounts.is_empty() {
+        let sample: Vec<_> = pending_accounts.iter().take(3).copied().collect();
         return Err(BaselineError::Transaction(format!(
-            "token balances did not reach target within timeout: {pending_accounts:?}"
+            "{} token balances did not reach target within timeout; sample: {sample:?}",
+            pending_accounts.len(),
         )));
     }
 

@@ -75,11 +75,6 @@ impl MetricsCollector {
     /// Gas and revert status are unknown at landing time and stay at their defaults
     /// until [`Self::apply_receipts`] backfills them from the end-of-run receipt pass.
     pub fn record_confirmed(&mut self, metrics: TransactionMetrics) {
-        debug!(
-            tx_hash = %metrics.tx_hash,
-            block_latency_ms = ?metrics.block_latency.map(|d| d.as_millis()),
-            "tx landed"
-        );
         let at = metrics.confirmed_at.unwrap_or_else(Instant::now);
         // Canonical gas is backfilled later by the receipt pass, so a freshly landed
         // tx reports gas_used == 0. Use the estimate for the live rolling window

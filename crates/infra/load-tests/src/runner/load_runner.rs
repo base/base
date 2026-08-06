@@ -74,9 +74,7 @@ impl LoadRunner {
     #[instrument(
         skip_all,
         fields(
-            primary_submission_rpc = %config.primary_submission_rpc(),
             submission_rpc_count = config.transaction_submission_rpcs.len(),
-            query_rpc = %config.query_rpc,
             chain_id = config.chain_id,
         )
     )]
@@ -94,7 +92,6 @@ impl LoadRunner {
             AccountPool::from_mnemonic(mnemonic, config.account_count, config.sender_offset)?
         } else {
             info!(
-                seed = config.seed,
                 offset = config.sender_offset,
                 count = config.account_count,
                 "generating accounts from seed"
@@ -146,19 +143,16 @@ impl LoadRunner {
                 info!(
                     fresh_recipient_ratio = config.fresh_recipient_ratio,
                     recipient_offset_floor = sender_range_end,
-                    randomized_recipient_offset = randomized_offset,
-                    "fresh-recipient mode enabled with per-run randomized mnemonic offset; recover addresses with AccountPool::from_mnemonic(mnemonic, n, randomized_recipient_offset)",
+                    "fresh-recipient mode enabled with randomized mnemonic offset"
                 );
                 stream
             } else {
                 let randomized_recipient_seed: u64 = rand::rng().random();
                 let stream = KeyStream::from_seed(randomized_recipient_seed, sender_range_end)?;
                 info!(
-                    configured_seed = config.seed,
-                    randomized_recipient_seed,
                     fresh_recipient_ratio = config.fresh_recipient_ratio,
                     recipient_offset = sender_range_end,
-                    "fresh-recipient mode enabled with per-run randomized seed; recover addresses with AccountPool::with_offset(randomized_recipient_seed, n, recipient_offset)",
+                    "fresh-recipient mode enabled with randomized seed"
                 );
                 stream
             };

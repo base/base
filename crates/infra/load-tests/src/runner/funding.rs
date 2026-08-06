@@ -15,7 +15,7 @@ use alloy_sol_types::{SolCall, sol};
 use base_tx_manager::NonceManager;
 use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 use super::{GasPricer, LoadRunner, TxType, load_runner::NONCE_RPC_TIMEOUT};
 use crate::{
@@ -83,7 +83,7 @@ impl LoadRunner {
                 let deficit = amount_per_account.saturating_sub(balance);
                 accounts_to_fund.push((addr, deficit));
             } else {
-                debug!(address = %addr, balance = %balance, "account already funded");
+                trace!(address = %addr, balance = %balance, "account already funded");
             }
         }
 
@@ -96,15 +96,23 @@ impl LoadRunner {
         txpool_endpoints.extend(self.config.txpool_nodes.iter().cloned());
         txpool_endpoints.sort();
         txpool_endpoints.dedup();
-        for endpoint in &txpool_endpoints {
+        for (endpoint_index, endpoint) in txpool_endpoints.iter().enumerate() {
             let txpool_client = TxpoolAdminClient::new(endpoint.clone())?;
             match txpool_client.drop_sender_transactions(funder_address).await {
                 Ok(removed) if !removed.is_empty() => {
-                    info!(url = %endpoint, removed = removed.len(), "dropped stale exclusive-funder transactions");
+                    info!(
+                        endpoint_index,
+                        removed = removed.len(),
+                        "dropped stale exclusive-funder transactions"
+                    );
                 }
                 Ok(_) => {}
                 Err(error) => {
-                    debug!(url = %endpoint, error = %error, "funder txpool admin cleanup unavailable");
+                    debug!(
+                        endpoint_index,
+                        error = %error,
+                        "funder txpool admin cleanup unavailable"
+                    );
                 }
             }
         }
@@ -127,8 +135,9 @@ impl LoadRunner {
         }
         let mut highest_txpool_nonce = None;
         let mut txpool_content_available = false;
+        let mut txpool_content_failures = 0usize;
         let mut queued_funder_transactions = 0usize;
-        for endpoint in &txpool_endpoints {
+        for (endpoint_index, endpoint) in txpool_endpoints.iter().enumerate() {
             let txpool_client = TxpoolAdminClient::new(endpoint.clone())?;
             match txpool_client.sender_transaction_nonces(funder_address).await {
                 Ok((pending_nonces, queued_nonces)) => {
@@ -144,7 +153,12 @@ impl LoadRunner {
                     }
                 }
                 Err(error) => {
-                    debug!(url = %endpoint, error = %error, "sender txpool content unavailable");
+                    txpool_content_failures = txpool_content_failures.saturating_add(1);
+                    debug!(
+                        endpoint_index,
+                        error = %error,
+                        "sender txpool content unavailable"
+                    );
                 }
             }
         }
@@ -155,6 +169,8 @@ impl LoadRunner {
         }
         if !txpool_content_available {
             warn!(
+                endpoint_count = txpool_endpoints.len(),
+                failed_endpoint_count = txpool_content_failures,
                 "sender txpool content unavailable; queued funder transactions behind nonce gaps cannot be discovered"
             );
         }
@@ -299,7 +315,7 @@ impl LoadRunner {
                 match result {
                     Ok(pending) => {
                         let tx_hash = *pending.tx_hash();
-                        debug!(to = %address, deficit = %deficit, nonce, tx_hash = %tx_hash, fund_account, "funder transaction sent");
+                        trace!(to = %address, deficit = %deficit, nonce, tx_hash = %tx_hash, fund_account, "funder transaction sent");
                         if fund_account {
                             batch_pending.push(address);
                         }
@@ -310,7 +326,7 @@ impl LoadRunner {
                             // The provider signed the exact request above, so "already known"
                             // identifies this intended transaction rather than an arbitrary tx at
                             // the same nonce.
-                            info!(to = %address, nonce, fund_account, "funder transaction already pending");
+                            trace!(to = %address, nonce, fund_account, "funder transaction already pending");
                             if fund_account {
                                 batch_pending.push(address);
                             }
@@ -320,7 +336,7 @@ impl LoadRunner {
                             // A stale transaction raced this replacement into a block. Waiting for
                             // its canonical state below determines whether the intended recipient
                             // still needs a new transfer at the end of the reclaimed nonce range.
-                            info!(to = %address, nonce, fund_account, "funder nonce already consumed");
+                            trace!(to = %address, nonce, fund_account, "funder nonce already consumed");
                             existing_nonce_targets.push(nonce.saturating_add(1));
                             if fund_account {
                                 consumed_funding_nonces.push((address, deficit, nonce));
@@ -461,7 +477,7 @@ impl LoadRunner {
                             fund_account,
                             verify_after_existing,
                         )) => {
-                            info!(
+                            trace!(
                                 to = %address,
                                 nonce,
                                 attempt,
@@ -612,7 +628,7 @@ impl LoadRunner {
                     .with_pending_tag();
             Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
 
-            debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
+            trace!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
         }
 
         info!(funded = accounts_to_fund.len(), "funding complete");
@@ -799,7 +815,7 @@ impl LoadRunner {
                 transfers_needed.push((token, sender));
             } else {
                 already_funded += 1;
-                debug!(token = %token, sender = %sender, balance = %balance, "account already has sufficient tokens");
+                trace!(token = %token, sender = %sender, balance = %balance, "account already has sufficient tokens");
             }
         }
 
@@ -898,7 +914,7 @@ impl LoadRunner {
                 match result {
                     Ok(pending) => {
                         let tx_hash = *pending.tx_hash();
-                        debug!(token = %token, to = %sender, tx_hash = %tx_hash, "token mint sent");
+                        trace!(token = %token, to = %sender, tx_hash = %tx_hash, "token mint sent");
                         pending_txs.push((token, sender));
                     }
                     Err(e) => {
@@ -908,8 +924,7 @@ impl LoadRunner {
                 }
             }
 
-            await_token_balances(&self.client, &mut pending_txs, amount_per_token, &pb)
-                .await?;
+            await_token_balances(&self.client, &mut pending_txs, amount_per_token, &pb).await?;
         }
 
         pb.finish_and_clear();
@@ -973,7 +988,7 @@ impl LoadRunner {
                         .await
                         .rpc("get pending balance")?;
                     if balance <= drain_gas_cost {
-                        debug!(
+                        trace!(
                             address = %address,
                             balance = %balance,
                             "skipping drain, balance too low to cover gas"
@@ -1002,7 +1017,7 @@ impl LoadRunner {
                     match provider.send_transaction(tx).await {
                         Ok(pending) => {
                             let tx_hash = *pending.tx_hash();
-                            debug!(
+                            trace!(
                                 from = %address,
                                 amount = %send_amount,
                                 tx_hash = %tx_hash,
@@ -1089,7 +1104,7 @@ impl LoadRunner {
             for address in pending_accounts.drain(..) {
                 match client.get_balance(address).await.rpc("get balance") {
                     Ok(balance) if balance >= target_balance => {
-                        debug!(address = %address, balance = %balance, "funding balance settled");
+                        trace!(address = %address, balance = %balance, "funding balance settled");
                         settled += 1;
                         pb.inc(1);
                     }
@@ -1097,7 +1112,7 @@ impl LoadRunner {
                         still_pending.push(address);
                     }
                     Err(e) => {
-                        warn!(address = %address, error = %e, "failed to check funding balance");
+                        debug!(address = %address, error = %e, "failed to check funding balance");
                         still_pending.push(address);
                     }
                 }
@@ -1106,14 +1121,15 @@ impl LoadRunner {
         }
 
         if !pending_accounts.is_empty() {
+            let sample: Vec<_> = pending_accounts.iter().take(3).copied().collect();
             return Err(BaselineError::Transaction(format!(
-                "accounts did not reach funding target within timeout: {pending_accounts:?}"
+                "{} accounts did not reach funding target within timeout; sample: {sample:?}",
+                pending_accounts.len(),
             )));
         }
 
         Ok(settled)
     }
-
 
     pub(super) async fn refresh_sender_state(&mut self) -> Result<()> {
         let total_accounts = self.accounts.len();
@@ -1160,7 +1176,7 @@ impl LoadRunner {
                     .with_pending_tag();
             Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
 
-            debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
+            trace!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
         }
 
         Ok(())
@@ -1185,7 +1201,7 @@ impl LoadRunner {
             for address in pending_accounts.drain(..) {
                 match client.get_balance(address).await.rpc("get balance") {
                     Ok(balance) if balance <= max_remaining => {
-                        debug!(address = %address, balance = %balance, "drain balance settled");
+                        trace!(address = %address, balance = %balance, "drain balance settled");
                         settled += 1;
                         pb.inc(1);
                     }
@@ -1193,7 +1209,7 @@ impl LoadRunner {
                         still_pending.push(address);
                     }
                     Err(e) => {
-                        warn!(address = %address, error = %e, "failed to check drain balance");
+                        debug!(address = %address, error = %e, "failed to check drain balance");
                         still_pending.push(address);
                     }
                 }
@@ -1202,12 +1218,13 @@ impl LoadRunner {
         }
 
         if !pending_accounts.is_empty() {
+            let sample: Vec<_> = pending_accounts.iter().take(3).copied().collect();
             return Err(BaselineError::Transaction(format!(
-                "accounts did not drain within timeout: {pending_accounts:?}"
+                "{} accounts did not drain within timeout; sample: {sample:?}",
+                pending_accounts.len(),
             )));
         }
 
         Ok(settled)
     }
-
 }
