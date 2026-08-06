@@ -122,9 +122,16 @@ impl WorkerHeartbeat {
             };
 
             let interval = config.normalized_interval();
-            if remaining_before_sleep > interval {
-                sleep(interval).await;
-            }
+            let delay = if remaining_before_sleep > interval {
+                interval
+            } else {
+                remaining_before_sleep
+                    .checked_div(2)
+                    .unwrap_or(MIN_WORKER_HEARTBEAT_INTERVAL)
+                    .max(MIN_WORKER_HEARTBEAT_INTERVAL)
+                    .min(remaining_before_sleep)
+            };
+            sleep(delay).await;
 
             let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
                 warn!(

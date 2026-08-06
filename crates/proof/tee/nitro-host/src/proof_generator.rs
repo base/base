@@ -131,11 +131,15 @@ where
         );
 
         let l2_block = request.proof.claimed_l2_block_number;
-        let proof = match self
-            .with_heartbeat_while_generating(&request, self.pool.prove(request.proof.clone()))
+        let (proof, permit) = match self
+            .with_heartbeat_while_generating(&request, async {
+                let permit = self.tasks.acquire_submission_permit().await;
+                let proof = self.pool.prove(request.proof.clone()).await?;
+                Ok((proof, permit))
+            })
             .await
         {
-            Ok(proof) => proof,
+            Ok(value) => value,
             Err(ProofGeneratorError::Generate { session_id, source }) => {
                 warn!(
                     session_id = %request.claim.session_id,
@@ -185,7 +189,10 @@ where
             source,
         })?;
 
-        let submission = self.tasks.spawn_submission(&self.submitter, submit_request).await;
+        let submission = self
+            .tasks
+            .spawn_submission_with_permit(&self.submitter, submit_request, permit)
+            .await;
 
         info!(
             session_id = %request.claim.session_id,

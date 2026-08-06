@@ -127,11 +127,33 @@ impl ProofTaskController {
         self.drain_submissions().await;
     }
 
+    /// Acquires a pending-submission permit.
+    pub async fn acquire_submission_permit(&self) -> OwnedSemaphorePermit {
+        Arc::clone(&self.submission_permits)
+            .acquire_owned()
+            .await
+            .expect("submission permit semaphore should not be closed")
+    }
+
     /// Spawns proof submission after acquiring a pending-submission permit.
     pub async fn spawn_submission<Client>(
         &self,
         submitter: &ProofSubmitter<Client>,
         request: WorkerSubmitProofRequest,
+    ) -> ProofSubmissionTask
+    where
+        Client: Clone + ProverWorkerProvider + 'static,
+    {
+        let permit = self.acquire_submission_permit().await;
+        self.spawn_submission_with_permit(submitter, request, permit).await
+    }
+
+    /// Spawns proof submission with an already-acquired permit.
+    pub async fn spawn_submission_with_permit<Client>(
+        &self,
+        submitter: &ProofSubmitter<Client>,
+        request: WorkerSubmitProofRequest,
+        permit: OwnedSemaphorePermit,
     ) -> ProofSubmissionTask
     where
         Client: Clone + ProverWorkerProvider + 'static,
@@ -143,7 +165,6 @@ impl ProofTaskController {
         };
         let cancel = self.submission_cancel.clone();
         let submitter = submitter.clone();
-        let permit = self.acquire_submission_permit().await;
 
         let mut submissions = self.submissions.lock().await;
         Self::drain_finished_submissions(&mut submissions);
@@ -153,13 +174,6 @@ impl ProofTaskController {
         });
 
         ProofSubmissionTask::new(claim)
-    }
-
-    async fn acquire_submission_permit(&self) -> OwnedSemaphorePermit {
-        Arc::clone(&self.submission_permits)
-            .acquire_owned()
-            .await
-            .expect("submission permit semaphore should not be closed")
     }
 
     fn drain_finished_submissions(

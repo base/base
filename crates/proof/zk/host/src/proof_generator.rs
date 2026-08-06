@@ -171,11 +171,15 @@ where
             "starting zk proof generation"
         );
 
-        let result = match self
-            .with_heartbeat_while_generating(&request, self.prove_to_completion(&request))
+        let (result, permit) = match self
+            .with_heartbeat_while_generating(&request, async {
+                let permit = self.tasks.acquire_submission_permit().await;
+                let result = self.prove_to_completion(&request).await?;
+                Ok((result, permit))
+            })
             .await
         {
-            Ok(result) => result,
+            Ok(value) => value,
             Err(ProofGeneratorError::Generate { session_id, source }) => {
                 warn!(
                     session_id = %request.claim.session_id,
@@ -223,7 +227,10 @@ where
             source,
         })?;
 
-        let submission = self.tasks.spawn_submission(&self.submitter, submit_request).await;
+        let submission = self
+            .tasks
+            .spawn_submission_with_permit(&self.submitter, submit_request, permit)
+            .await;
 
         info!(
             session_id = %request.claim.session_id,
