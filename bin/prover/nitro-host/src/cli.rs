@@ -27,12 +27,9 @@ use base_proof_tee_nitro_host::{
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_worker::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
-    JobDiscoveryConfig,
 };
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
-#[cfg(any(target_os = "linux", feature = "local"))]
-use base_prover_service_protocol::TeeKind;
 use clap::{Parser, Subcommand};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use eyre::eyre;
@@ -362,11 +359,10 @@ async fn run_worker(
         worker.proof_generator_max_consecutive_heartbeat_failures,
     );
     let worker_id = format!("nitro-host-{}", Uuid::new_v4());
-    let discovery = JobDiscoveryConfig::tee(worker_id.clone(), vec![TeeKind::AwsNitro])
+    let host = NitroHost::new(client, Arc::new(pool), worker_id.clone(), heartbeat)
         .with_poll_interval(Duration::from_millis(worker.job_discovery_poll_interval_ms))
         .with_lock_duration_seconds(worker.job_discovery_lock_duration_seconds)
         .with_max_concurrent_jobs(worker.job_discovery_max_concurrent_jobs);
-    let host = NitroHost::new(client, Arc::new(pool), discovery, heartbeat);
     let registrar_handle = if let Some(addr) = registrar_listen_addr {
         Some(
             NitroProverServer::run_registrar_rpc_server(

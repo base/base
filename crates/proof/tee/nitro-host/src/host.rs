@@ -1,8 +1,8 @@
 //! Nitro TEE host orchestration.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
-use base_proof_worker::{JobClaimFilter, JobDiscovery, JobDiscoveryConfig, ProofSubmitter};
+use base_proof_worker::{JobDiscovery, JobDiscoveryConfig, ProofSubmitter};
 use base_prover_service_client::ProverWorkerProvider;
 use base_prover_service_protocol::TeeKind;
 use tokio_util::sync::CancellationToken;
@@ -19,26 +19,40 @@ pub struct NitroHost<Client> {
 }
 
 impl<Client> NitroHost<Client> {
-    /// Creates a Nitro host from a prover-service client and enclave pool.
-    ///
-    /// # Panics
-    ///
-    /// Panics unless `discovery` claims only AWS Nitro TEE jobs.
+    /// Creates a Nitro host that claims only AWS Nitro TEE jobs.
     pub fn new(
         client: Client,
         pool: Arc<NitroEnclavePool>,
-        discovery: JobDiscoveryConfig,
+        worker_id: impl Into<String>,
         heartbeat: ProofGeneratorHeartbeatConfig,
     ) -> Self {
-        assert!(
-            matches!(
-                discovery.claim_filter(),
-                JobClaimFilter::Tee { tee_kinds }
-                    if tee_kinds.as_slice() == [TeeKind::AwsNitro]
-            ),
-            "NitroHost requires JobDiscoveryConfig::tee with TeeKind::AwsNitro"
-        );
-        Self { client, pool, discovery, heartbeat }
+        Self {
+            client,
+            pool,
+            discovery: JobDiscoveryConfig::tee(worker_id, vec![TeeKind::AwsNitro]),
+            heartbeat,
+        }
+    }
+
+    /// Sets the delay after empty or failed discovery attempts.
+    #[must_use]
+    pub fn with_poll_interval(mut self, poll_interval: Duration) -> Self {
+        self.discovery = self.discovery.with_poll_interval(poll_interval);
+        self
+    }
+
+    /// Sets the requested claim lock duration in seconds.
+    #[must_use]
+    pub fn with_lock_duration_seconds(mut self, lock_duration_seconds: u32) -> Self {
+        self.discovery = self.discovery.with_lock_duration_seconds(lock_duration_seconds);
+        self
+    }
+
+    /// Sets the maximum number of claimed proof jobs being generated concurrently.
+    #[must_use]
+    pub fn with_max_concurrent_jobs(mut self, max_concurrent_jobs: usize) -> Self {
+        self.discovery = self.discovery.with_max_concurrent_jobs(max_concurrent_jobs);
+        self
     }
 }
 
@@ -48,13 +62,12 @@ where
 {
     /// Runs the host until cancellation is requested.
     pub async fn run_until_cancelled(self, cancel: CancellationToken) {
-        let Self { client, pool, discovery, heartbeat } = self;
-        let submitter = ProofSubmitter::new(client.clone());
+        let submitter = ProofSubmitter::new(self.client.clone());
         let proof_generator = Arc::new(
-            ProofGenerator::new(pool, submitter, heartbeat)
-                .with_max_pending_submissions(discovery.normalized_max_concurrent_jobs()),
+            ProofGenerator::new(self.pool, submitter, self.heartbeat)
+                .with_max_pending_submissions(self.discovery.normalized_max_concurrent_jobs()),
         );
-        let discovery = JobDiscovery::new(client, proof_generator, discovery);
+        let discovery = JobDiscovery::new(self.client, proof_generator, self.discovery);
 
         discovery.run_until_cancelled(cancel).await;
     }
