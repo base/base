@@ -97,6 +97,7 @@ struct PresignConfig {
 
 struct EnqueueProgress {
     presigned_generated: u64,
+    offered_gas: u128,
 }
 
 /// Live TUI / snapshot updates while the enqueue loop owns the collector.
@@ -251,6 +252,8 @@ pub enum InjectLimit {
     Nothing,
     /// Sender in-flight capacity prevented reaching the target.
     Capacity,
+    /// The configured gas-per-second budget prevented reaching the target.
+    Rate,
 }
 
 /// Gas budget produced for one block-aligned refill cycle.
@@ -297,6 +300,7 @@ impl MempoolDepthController {
         block_gas_limit: u64,
         depth_gas: u128,
         confirmed_gas: u128,
+        offered_gas: u128,
     ) -> InjectPlan {
         let floor_gas = self.target_gps.map_or_else(
             || u128::from(block_gas_limit),
@@ -319,9 +323,19 @@ impl MempoolDepthController {
         let desired_gas = floor_gas.saturating_add(catchup).min(ceiling_gas);
         let wanted = desired_gas.saturating_sub(depth_gas);
         let capacity_headroom = self.capacity_gas.saturating_sub(depth_gas);
-        let inject_gas = wanted.min(capacity_headroom);
+        let rate_headroom = self.target_gps.map_or(u128::MAX, |target_gps| {
+            u128::from(target_gps)
+                .saturating_mul(
+                    now.saturating_duration_since(self.measurement_started_at).as_nanos(),
+                )
+                .div_ceil(Duration::from_secs(1).as_nanos())
+                .saturating_sub(offered_gas)
+        });
+        let inject_gas = wanted.min(capacity_headroom).min(rate_headroom);
         let limited_by = if wanted == 0 {
             InjectLimit::Nothing
+        } else if rate_headroom <= capacity_headroom && inject_gas < wanted {
+            InjectLimit::Rate
         } else if inject_gas < wanted {
             InjectLimit::Capacity
         } else {
@@ -586,7 +600,7 @@ impl LoadRunner {
             },
         ));
 
-        let mut progress = EnqueueProgress { presigned_generated: 0 };
+        let mut progress = EnqueueProgress { presigned_generated: 0, offered_gas: 0 };
         let mut presign_buffer = PresignBuffer::new(sender_count);
 
         info!(
@@ -1557,6 +1571,7 @@ impl LoadRunner {
             block_gas_limit,
             depth_gas,
             drain_state.results_tracker.confirmed_gas(),
+            enqueue_state.progress.offered_gas,
         );
         let buffered_before = enqueue_state.buffer.buffered_gas();
         let mut sender_slots: HashMap<Address, u64> = drain_state
@@ -1582,6 +1597,8 @@ impl LoadRunner {
         );
         let selected_gas =
             selected.iter().fold(0u128, |total, tx| total.saturating_add(u128::from(tx.gas_limit)));
+        enqueue_state.progress.offered_gas =
+            enqueue_state.progress.offered_gas.saturating_add(selected_gas);
         let sender_capacity_limited = selected_gas < plan.inject_gas
             && (buffered_before >= plan.inject_gas || remaining_transaction_slots == 0);
         let presign_starved = selected_gas < plan.inject_gas && !sender_capacity_limited;
@@ -2061,7 +2078,7 @@ mod tests {
     }
 
     #[test]
-    fn controller_fills_floor_then_catches_up_to_two_blocks() {
+    fn controller_limits_refills_to_cumulative_rate_budget() {
         let started = Instant::now();
         let controller = MempoolDepthController::new(
             Some(1_000_000),
@@ -2070,13 +2087,20 @@ mod tests {
             started,
         );
 
-        let initial = controller.plan(started, 30_000_000, 0, 0);
+        let initial = controller.plan(started, 30_000_000, 0, 0, 0);
         assert_eq!(initial.floor_gas, 2_000_000);
-        assert_eq!(initial.inject_gas, 2_000_000);
+        assert_eq!(initial.inject_gas, 0);
+        assert_eq!(initial.limited_by, InjectLimit::Rate);
 
-        let behind = controller.plan(started + Duration::from_secs(2), 30_000_000, 0, 0);
+        let behind = controller.plan(started + Duration::from_secs(2), 30_000_000, 0, 0, 0);
         assert_eq!(behind.desired_gas, 4_000_000);
-        assert_eq!(behind.inject_gas, 4_000_000);
+        assert_eq!(behind.inject_gas, 2_000_000);
+        assert_eq!(behind.limited_by, InjectLimit::Rate);
+
+        let budget_spent =
+            controller.plan(started + Duration::from_secs(2), 30_000_000, 0, 0, 2_000_000);
+        assert_eq!(budget_spent.inject_gas, 0);
+        assert_eq!(budget_spent.limited_by, InjectLimit::Rate);
     }
 
     #[test]
@@ -2089,7 +2113,7 @@ mod tests {
             started,
         );
 
-        let plan = controller.plan(started, 30_000_000, 0, 0);
+        let plan = controller.plan(started + Duration::from_secs(2), 30_000_000, 0, 0, 0);
 
         assert_eq!(plan.inject_gas, 1_000_000);
         assert_eq!(plan.limited_by, InjectLimit::Capacity);
@@ -2105,8 +2129,13 @@ mod tests {
             started,
         );
 
-        let plan =
-            controller.plan(started + Duration::from_secs(2), 30_000_000, 2_000_000, 2_000_000);
+        let plan = controller.plan(
+            started + Duration::from_secs(2),
+            30_000_000,
+            2_000_000,
+            2_000_000,
+            2_000_000,
+        );
 
         assert_eq!(plan.desired_gas, 2_000_000);
         assert_eq!(plan.inject_gas, 0);
@@ -2123,7 +2152,13 @@ mod tests {
             started,
         );
 
-        let plan = controller.plan(started + Duration::from_secs(20), 30_000_000, 4_000_000, 0);
+        let plan = controller.plan(
+            started + Duration::from_secs(20),
+            30_000_000,
+            4_000_000,
+            0,
+            20_000_000,
+        );
 
         assert_eq!(plan.ceiling_gas, 4_000_000);
         assert_eq!(plan.inject_gas, 0);
@@ -2135,7 +2170,7 @@ mod tests {
         let controller =
             MempoolDepthController::new(None, Duration::from_secs(2), 100_000_000, started);
 
-        let plan = controller.plan(started, 30_000_000, 0, 0);
+        let plan = controller.plan(started, 30_000_000, 0, 0, 0);
 
         assert_eq!(plan.floor_gas, 30_000_000);
         assert_eq!(plan.desired_gas, 60_000_000);

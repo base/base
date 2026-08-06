@@ -51,7 +51,7 @@ pub const SUBMIT_MAX_ATTEMPTS: u32 = 5;
 /// The `max_gas_price` cap bounds worst-case cost, so the headroom is cheap.
 pub const MAX_FEE_BASE_FEE_MULTIPLIER: u128 = 4;
 /// Minimum priority fee used by measured load so very low base fees do not produce zero-value tips.
-pub const MIN_PRIORITY_FEE: u128 = 1_000_000_000;
+pub const MIN_PRIORITY_FEE: u128 = 1;
 
 /// Ensures the rate-limit warning is only logged once per process, since a
 /// saturated RPC can otherwise report it on every batch under sustained load.
@@ -1299,10 +1299,11 @@ mod tests {
     fn gas_pricer_fees_for_matches_submission_max_fee() {
         let pricer = GasPricer::new(2_000_000_000);
         let fees = pricer.fees_for(100);
-        assert_eq!(fees.priority_fee, MIN_PRIORITY_FEE);
+        let expected_priority_fee = (100 / 10).max(MIN_PRIORITY_FEE);
+        assert_eq!(fees.priority_fee, expected_priority_fee);
         assert_eq!(
             fees.max_fee,
-            SubmissionPipeline::submission_max_fee(100, MIN_PRIORITY_FEE, 2_000_000_000)
+            SubmissionPipeline::submission_max_fee(100, expected_priority_fee, 2_000_000_000)
         );
     }
 

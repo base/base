@@ -95,11 +95,13 @@ phase-locked canonical polling remains active as an automatic fallback and the a
 for final metrics. Both sources feed the same idempotent depth controller, so canonical observation
 does not double-release transactions already seen in a flashblock.
 
-The controller keeps at least `target_gps * block_time` gas outstanding and permits up to twice that
-depth while confirmed gas is behind the run-average target. When `target_gps` is omitted, the floor
-is one full block and the ceiling is two full blocks. Capacity and submission bottlenecks are
-reported without failing the run. Omit `flashblocks_ws` to run with canonical polling only; removing
-the flashblock watcher does not change the controller or submission pipeline.
+The controller targets `target_gps * block_time` gas outstanding and permits up to twice that depth
+while confirmed gas is behind the run-average target. Refills are capped by the cumulative measured
+submission budget (`target_gps * elapsed`), so faster flashblock inclusion cannot drive offered load
+above the configured rate. When `target_gps` is omitted, the floor is one full block and the ceiling
+is two full blocks. Capacity and submission bottlenecks are reported without failing the run. Omit
+`flashblocks_ws` to run with canonical polling only; removing the flashblock watcher does not change
+the controller or submission pipeline.
 The final pacing summary reports canonical, flashblock, and safety refill-cycle counts so source
 fallback is visible.
 
