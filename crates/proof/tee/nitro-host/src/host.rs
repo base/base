@@ -2,8 +2,9 @@
 
 use std::sync::Arc;
 
-use base_proof_worker::{JobDiscovery, JobDiscoveryConfig, ProofSubmitter};
+use base_proof_worker::{JobClaimFilter, JobDiscovery, JobDiscoveryConfig, ProofSubmitter};
 use base_prover_service_client::ProverWorkerProvider;
+use base_prover_service_protocol::TeeKind;
 use tokio_util::sync::CancellationToken;
 
 use crate::{NitroEnclavePool, ProofGenerator, ProofGeneratorHeartbeatConfig};
@@ -19,12 +20,24 @@ pub struct NitroHost<Client> {
 
 impl<Client> NitroHost<Client> {
     /// Creates a Nitro host from a prover-service client and enclave pool.
-    pub const fn new(
+    ///
+    /// # Panics
+    ///
+    /// Panics unless `discovery` claims only AWS Nitro TEE jobs.
+    pub fn new(
         client: Client,
         pool: Arc<NitroEnclavePool>,
         discovery: JobDiscoveryConfig,
         heartbeat: ProofGeneratorHeartbeatConfig,
     ) -> Self {
+        assert!(
+            matches!(
+                discovery.claim_filter(),
+                JobClaimFilter::Tee { tee_kinds }
+                    if tee_kinds.as_slice() == [TeeKind::AwsNitro]
+            ),
+            "NitroHost requires JobDiscoveryConfig::tee with TeeKind::AwsNitro"
+        );
         Self { client, pool, discovery, heartbeat }
     }
 }
