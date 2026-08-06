@@ -80,6 +80,9 @@ pub struct ValidatedTransaction<E = NoExtensions> {
     /// Milliseconds since Unix epoch.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub max_timestamp: Option<u64>,
+    /// Whether the transaction may revert. `None` leaves the builder's default behavior.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub allow_revert: Option<bool>,
     /// Extension fields, inlined into the top-level JSON object.
     ///
     /// Deliberately not `#[serde(default)]`: that would force an `E: Default`
@@ -140,6 +143,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: Some(7),
+            allow_revert: None,
             extensions: NoExtensions {},
         };
 
@@ -159,6 +163,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            allow_revert: None,
             extensions: NoExtensions {},
         };
 
@@ -179,6 +184,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            allow_revert: None,
             extensions: TestExtensions { extra: Some(9) },
         };
 
@@ -195,6 +201,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            allow_revert: None,
             extensions: TestExtensions { extra: Some(9) },
         };
         let json = serde_json::to_string(&extended).unwrap();
@@ -231,11 +238,41 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            allow_revert: None,
             extensions: NoExtensions {},
         };
         let json = serde_json::to_string(&tx).unwrap();
 
         let decoded: ValidatedTransaction = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.min_block_number, Some(u64::MAX));
+    }
+
+    #[test]
+    fn allow_revert_round_trips_and_defaults_when_absent() {
+        let tx = ValidatedTransaction {
+            sender: sender(),
+            raw: raw(),
+            min_block_number: None,
+            max_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+            allow_revert: Some(false),
+            extensions: NoExtensions {},
+        };
+        let json = serde_json::to_string(&tx).unwrap();
+        let decoded: ValidatedTransaction = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.allow_revert, Some(false));
+
+        let legacy = LegacyValidatedTransaction {
+            sender: sender(),
+            raw: raw(),
+            min_block_number: None,
+            max_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+        };
+        let json = serde_json::to_string(&legacy).unwrap();
+        let decoded: ValidatedTransaction = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.allow_revert, None);
     }
 }

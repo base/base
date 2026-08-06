@@ -156,6 +156,7 @@ where
                 max_block_number: transaction.transaction.max_block_number(),
                 min_timestamp: transaction.transaction.min_timestamp_millis(),
                 max_timestamp: transaction.transaction.max_timestamp_millis(),
+                allow_revert: transaction.transaction.allow_revert(),
                 extensions: E::extract(transaction),
             },
             tx_hash: *transaction.transaction.hash(),
@@ -219,7 +220,8 @@ mod tests {
             input: Default::default(),
         }
         .into();
-        let transaction = BasePooledTransaction::new(Recovered::new_unchecked(signed, sender), 128);
+        let transaction = BasePooledTransaction::new(Recovered::new_unchecked(signed, sender), 128)
+            .with_allow_revert(Some(false));
         Arc::new(ValidPoolTransaction {
             transaction_id: TransactionId::new(0u64.into(), nonce),
             transaction,
@@ -265,6 +267,7 @@ mod tests {
         assert_eq!(converted.tx_hash, *transaction.hash());
         assert_eq!(converted.transaction.sender, *transaction.sender_ref());
         assert!(!converted.transaction.raw.is_empty(), "the envelope must be encoded");
+        assert_eq!(converted.transaction.allow_revert, Some(false));
     }
 
     #[test]

@@ -75,6 +75,8 @@ pub struct BasePooledTransaction<
     /// Optional maximum timestamp (millis since Unix epoch) from bundle submission.
     /// The transaction should be evicted after this time.
     max_timestamp: Option<u64>,
+    /// Whether the transaction may revert, if specified.
+    allow_revert: Option<bool>,
     /// The set of on-chain state surfaces whose change invalidates this
     /// transaction, computed once during validation and consumed by the pool's
     /// invalidation index. Empty until set; see [`crate::WatchSet`].
@@ -114,6 +116,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            allow_revert: None,
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             watch_manifest: OnceLock::new(),
@@ -132,6 +135,12 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
         self.max_block_number = max_block_number;
         self.min_timestamp = min_timestamp;
         self.max_timestamp = max_timestamp;
+        self
+    }
+
+    /// Sets whether this transaction may revert, returning the modified instance.
+    pub const fn with_allow_revert(mut self, allow_revert: Option<bool>) -> Self {
+        self.allow_revert = allow_revert;
         self
     }
 
@@ -232,6 +241,7 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
         self.inner.size()
             + core::mem::size_of::<u128>()
             + core::mem::size_of::<Option<u64>>() * 4
+            + core::mem::size_of::<Option<bool>>()
             + core::mem::size_of::<OnceLock<crate::WatchSet>>()
             + watch_keys_size
             + core::mem::size_of::<OnceLock<crate::LimitClass>>()
@@ -507,6 +517,9 @@ pub trait BundleTransaction {
     /// Returns the maximum timestamp in milliseconds.
     fn max_timestamp_millis(&self) -> Option<u64>;
 
+    /// Returns whether the transaction may revert, if specified.
+    fn allow_revert(&self) -> Option<bool>;
+
     /// Returns `true` if this transaction's bundle constraints have expired
     /// relative to the given block number and block timestamp (in seconds).
     fn is_bundle_expired(&self, block_number: u64, block_timestamp_secs: u64) -> bool {
@@ -568,6 +581,10 @@ where
     fn max_timestamp_millis(&self) -> Option<u64> {
         self.max_timestamp
     }
+
+    fn allow_revert(&self) -> Option<bool> {
+        self.allow_revert
+    }
 }
 
 #[cfg(test)]
@@ -594,8 +611,8 @@ mod tests {
     };
 
     use crate::{
-        BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
-        WatchManifest, WatchSet,
+        BasePooledTransaction, BasePooledTx, BaseTransactionValidator, BundleTransaction,
+        ConfigSlot, InvalidationKey, WatchManifest, WatchSet,
     };
 
     fn signer() -> PrivateKeySigner {
@@ -668,6 +685,13 @@ mod tests {
         assert!(eip8130_pooled(U256::ZERO).requires_nonce_check());
         assert!(!eip8130_pooled(U256::from(1)).requires_nonce_check());
         assert!(!eip8130_pooled(Eip8130Constants::NONCE_KEY_MAX).requires_nonce_check());
+    }
+
+    #[test]
+    fn allow_revert_builder_is_exposed_through_bundle_transaction() {
+        let transaction = eip8130_pooled(U256::ZERO).with_allow_revert(Some(false));
+
+        assert_eq!(transaction.allow_revert(), Some(false));
     }
 
     #[test]

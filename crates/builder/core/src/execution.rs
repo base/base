@@ -152,6 +152,10 @@ pub enum TxnExecutionError {
     #[error("max gas usage exceeded")]
     MaxGasUsageExceeded,
 
+    /// Transaction reverted despite requiring revert protection.
+    #[error("revert-protected transaction reverted")]
+    RevertProtected,
+
     /// Metering data has not yet arrived for this transaction.
     #[error("metering data pending")]
     MeteringDataPending,
@@ -164,6 +168,7 @@ impl TxnExecutionError {
     ///
     /// Transient rejections depend on cumulative block state (gas used, DA used, etc.) and may
     /// succeed in a future block or flashblock with different cumulative values.
+    /// A revert-protected transaction is transient because its execution result depends on state.
     pub const fn is_permanent(&self) -> bool {
         matches!(
             self,

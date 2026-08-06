@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::TxHash;
+use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::test_utils::{
     ChainDriver, ChainDriverExt, ExternalTransactionPool, ONE_ETH, Protocol, TransactionBuilderExt,
@@ -52,6 +53,28 @@ async fn insert_bundle_transaction_with_nonce<P: Protocol>(
         timestamps.0,
         timestamps.1,
     );
+
+    pool.add_external_transaction(pool_tx).await?;
+
+    Ok(tx_hash)
+}
+
+async fn insert_reverting_transaction<P: Protocol>(
+    pool: &Arc<dyn ExternalTransactionPool>,
+    driver: &ChainDriver<P>,
+    signer: &PrivateKeySigner,
+    allow_revert: Option<bool>,
+) -> eyre::Result<TxHash> {
+    let recovered = driver
+        .create_transaction()
+        .with_signer(signer)
+        .random_reverting_transaction()
+        .build()
+        .await;
+    let tx_hash = TxHash::from(*recovered.tx_hash());
+    let encoded_len = recovered.encode_2718_len();
+    let pool_tx =
+        BasePooledTransaction::new(recovered, encoded_len).with_allow_revert(allow_revert);
 
     pool.add_external_transaction(pool_tx).await?;
 
@@ -248,6 +271,54 @@ async fn expired_bundle_excluded_while_valid_bundle_included_for_same_sender() -
         block.transactions.hashes().all(|hash| hash != expired_tx_hash),
         "expired bundle tx should be excluded"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn revert_protected_transaction_is_excluded_without_committing_state() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
+    let driver = rbuilder.driver().await?;
+    let signer = driver.fund_accounts(1, ONE_ETH).await?.remove(0);
+    let pool = rbuilder.pool_handle();
+    let nonce_before = driver.provider().get_transaction_count(signer.address()).await?;
+    let tx_hash = insert_reverting_transaction(&pool, &driver, &signer, Some(false)).await?;
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    let nonce_after = driver.provider().get_transaction_count(signer.address()).await?;
+
+    assert!(block.transactions.hashes().all(|hash| hash != tx_hash));
+    assert_eq!(nonce_after, nonce_before, "excluded transaction state must not be committed");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn explicitly_allowed_reverting_transaction_is_included() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
+    let driver = rbuilder.driver().await?;
+    let signer = driver.fund_accounts(1, ONE_ETH).await?.remove(0);
+    let pool = rbuilder.pool_handle();
+    let tx_hash = insert_reverting_transaction(&pool, &driver, &signer, Some(true)).await?;
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    assert!(block.transactions.hashes().any(|hash| hash == tx_hash));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn reverting_transaction_without_policy_is_included() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
+    let driver = rbuilder.driver().await?;
+    let signer = driver.fund_accounts(1, ONE_ETH).await?.remove(0);
+    let pool = rbuilder.pool_handle();
+    let tx_hash = insert_reverting_transaction(&pool, &driver, &signer, None).await?;
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    assert!(block.transactions.hashes().any(|hash| hash == tx_hash));
 
     Ok(())
 }

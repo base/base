@@ -69,6 +69,7 @@ async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        allow_revert: None,
         extensions: NoExtensions {},
     };
 
@@ -100,6 +101,7 @@ async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        allow_revert: None,
         extensions: NoExtensions {},
     };
 
@@ -124,6 +126,7 @@ async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        allow_revert: None,
         extensions: NoExtensions {},
     };
 

@@ -182,7 +182,8 @@ impl FlashblockDiagnostics {
             | TxnExecutionError::NonceTooLow
             | TxnExecutionError::InternalError(_)
             | TxnExecutionError::EvmError
-            | TxnExecutionError::MaxGasUsageExceeded => {
+            | TxnExecutionError::MaxGasUsageExceeded
+            | TxnExecutionError::RevertProtected => {
                 self.txs_rejected_other += 1;
             }
         }
@@ -819,6 +820,7 @@ impl BasePayloadBuilderCtx {
 
             let tx_da_size = tx.estimated_da_size();
             let tx_received_at_ms = tx.received_at();
+            let allow_revert = tx.allow_revert();
 
             // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
             // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
@@ -1174,15 +1176,43 @@ impl BasePayloadBuilderCtx {
 
             let gas_used = result.tx_gas_used();
             let is_success = result.is_success();
+            let exclude_revert = !is_success && allow_revert == Some(false);
             if is_success {
                 log_txn(Ok(TxnOutcome::Success));
                 num_txs_simulated_success += 1;
                 BuilderMetrics::successful_tx_gas_used().record(gas_used as f64);
             } else {
-                log_txn(Ok(TxnOutcome::Reverted));
+                log_txn(Ok(if exclude_revert {
+                    TxnOutcome::RevertedAndExcluded
+                } else {
+                    TxnOutcome::Reverted
+                }));
                 num_txs_simulated_fail += 1;
                 reverted_gas_used += gas_used;
                 BuilderMetrics::reverted_tx_gas_used().record(gas_used as f64);
+            }
+
+            if exclude_revert {
+                let err = TxnExecutionError::RevertProtected;
+                diag.record_rejection(&err);
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                record_rejected_tx_priority_fee(&err, priority_fee);
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderRejectedEventData::from_error(
+                            &err,
+                            info,
+                            limits,
+                            Some(&tx_resources),
+                        )
+                    },
+                );
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
             }
 
             // add gas used by the transaction to cumulative gas used, before creating the

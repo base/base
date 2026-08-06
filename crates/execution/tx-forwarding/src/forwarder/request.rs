@@ -85,6 +85,7 @@ mod tests {
                 max_block_number: Some(42),
                 min_timestamp: None,
                 max_timestamp: None,
+                allow_revert: None,
                 extensions: NoExtensions {},
             },
             tx_hash,

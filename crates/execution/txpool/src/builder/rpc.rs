@@ -98,12 +98,14 @@ where
         let encoded_len = tx.raw.len();
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
-        let pool_tx = BasePooledTransaction::new(recovered, encoded_len).with_bundle_metadata(
-            tx.min_block_number,
-            tx.max_block_number,
-            tx.min_timestamp,
-            tx.max_timestamp,
-        );
+        let pool_tx = BasePooledTransaction::new(recovered, encoded_len)
+            .with_bundle_metadata(
+                tx.min_block_number,
+                tx.max_block_number,
+                tx.min_timestamp,
+                tx.max_timestamp,
+            )
+            .with_allow_revert(tx.allow_revert);
 
         // Attach any extension data carried on the wire. This is a no-op for
         // `NoExtensions`, the default payload.
@@ -241,6 +243,7 @@ mod tests {
             max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            allow_revert: None,
             extensions,
         }
     }

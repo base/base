@@ -442,6 +442,7 @@ pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static s
         TxnExecutionError::InternalError(_) => "internal_error",
         TxnExecutionError::EvmError => "evm_error",
         TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
+        TxnExecutionError::RevertProtected => "revert_protected",
         TxnExecutionError::MeteringDataPending => "metering_data_pending",
     }
 }
@@ -647,5 +648,6 @@ mod tests {
             )),
             "tx_execution_time_exceeded"
         );
+        assert_eq!(rejection_reason_code(&TxnExecutionError::RevertProtected), "revert_protected");
     }
 }
