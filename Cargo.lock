@@ -5947,6 +5947,8 @@ dependencies = [
  "async-trait",
  "backoff",
  "base-l1-head",
+ "base-metrics",
+ "base-proof-host",
  "base-proof-succinct-client-utils",
  "base-proof-succinct-elfs",
  "base-proof-succinct-host-utils",

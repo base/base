@@ -14,6 +14,8 @@ workspace = true
 [dependencies]
 # base
 base-l1-head.workspace = true
+base-metrics.workspace = true
+base-proof-host.workspace = true
 base-proof-zk-host.workspace = true
 base-proof-succinct-elfs.workspace = true
 base-prover-service-protocol.workspace = true
@@ -52,3 +54,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
+
+[features]
+default = [ "metrics" ]
+# Declared so `base_metrics::timed!`/`time!` enable real timers in this crate.
+metrics = [ "base-metrics/metrics", "base-proof-host/metrics" ]
