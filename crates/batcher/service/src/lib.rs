@@ -30,9 +30,6 @@ pub use recent_txs::{MAX_CHECK_RECENT_TXS_DEPTH, recent_tx_sync_target};
 mod source;
 pub use source::RpcPollingSource;
 
-mod subscription;
-pub use subscription::{NullSubscription, WsBlockSubscription};
-
 mod l1_source;
 pub use l1_source::{NullL1HeadSubscription, RpcL1HeadPollingSource, WsL1HeadSubscription};
 

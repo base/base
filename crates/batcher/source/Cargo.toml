@@ -1,6 +1,6 @@
 [package]
 name = "base-batcher-source"
-description = "L2 unsafe block source: UnsafeBlockSource trait and HybridBlockSource"
+description = "Ordered L2 block polling and L1 head sourcing"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

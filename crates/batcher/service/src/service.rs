@@ -3,7 +3,6 @@
 use std::{future::pending, sync::Arc};
 
 use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
@@ -11,8 +10,7 @@ use base_batcher_core::{
     ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
-use base_batcher_source::{BlockSubscription, HybridBlockSource, HybridL1HeadSource, SourceError};
-use base_common_consensus::BaseBlock;
+use base_batcher_source::{HybridL1HeadSource, PollingBlockSource, SourceError};
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
@@ -31,9 +29,9 @@ use url::Url;
 
 use crate::{
     BatcherConfig, L2BlockParityMonitor, L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH,
-    NullL1HeadSubscription, NullSubscription, RpcL1HeadPollingSource, RpcL2BlockProvider,
-    RpcPollingSource, RpcThrottleClient, SafeHeadPoller, SafeHeadProvider, ShadowParityMonitor,
-    ShadowParityMonitorConfig, WsBlockSubscription, WsL1HeadSubscription, recent_tx_sync_target,
+    NullL1HeadSubscription, RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource,
+    RpcThrottleClient, SafeHeadPoller, SafeHeadProvider, ShadowParityMonitor,
+    ShadowParityMonitorConfig, WsL1HeadSubscription, recent_tx_sync_target,
 };
 
 const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
@@ -61,24 +59,6 @@ impl ThrottleClient for ServiceThrottle {
     }
 }
 
-/// Batcher-internal L2 subscription variant: either a live WS subscription or a no-op.
-///
-/// Using a concrete enum avoids heap allocation while still allowing
-/// `build_subscription` to return either branch to `start`.
-enum Subscription {
-    Ws(WsBlockSubscription),
-    Null(NullSubscription),
-}
-
-impl BlockSubscription for Subscription {
-    fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>> {
-        match self {
-            Self::Ws(ws) => ws.take_stream(),
-            Self::Null(null) => null.take_stream(),
-        }
-    }
-}
-
 /// Batcher-internal L1 subscription variant: either a live WS subscription or a no-op.
 enum L1Subscription {
     Ws(WsL1HeadSubscription),
@@ -100,7 +80,7 @@ impl base_batcher_source::L1HeadSubscription for L1Subscription {
 type ServiceDriver = BatchDriver<
     TokioRuntime,
     BatchEncoder,
-    HybridBlockSource<Subscription, RpcPollingSource>,
+    PollingBlockSource<RpcPollingSource>,
     SimpleTxManager<RootProvider>,
     ServiceThrottle,
     HybridL1HeadSource<L1Subscription, RpcL1HeadPollingSource, TokioRuntime>,
@@ -215,67 +195,6 @@ impl BatcherService {
     /// Create a new [`BatcherService`] from the given configuration.
     pub const fn new(config: BatcherConfig) -> Self {
         Self { config }
-    }
-
-    /// Build a block subscription for the given optional L2 WebSocket URL.
-    ///
-    /// When `url` is `Some`, connects a dedicated WS provider, subscribes to
-    /// new block headers, and builds a stream that fetches the full block for
-    /// each header. The provider is wrapped in a [`WsBlockSubscription`] so its
-    /// lifetime is tied to the returned subscription — and therefore to the
-    /// [`HybridBlockSource`] that consumes it — rather than to this function's
-    /// stack frame.
-    ///
-    /// When `url` is `None`, or if the WS connection fails, returns a
-    /// [`NullSubscription`] so that [`HybridBlockSource`] falls back entirely
-    /// to polling.
-    ///
-    /// [`HybridBlockSource`]: base_batcher_source::HybridBlockSource
-    async fn build_l2_subscription(
-        url: Option<&Url>,
-        fetch_provider: Arc<dyn Provider<Base> + Send + Sync>,
-    ) -> Subscription {
-        let Some(url) = url else {
-            return Subscription::Null(NullSubscription::new());
-        };
-
-        let ws_provider = match ProviderBuilder::new().connect(url.as_str()).await {
-            Ok(p) => Arc::new(p),
-            Err(e) => {
-                warn!(error = %e, l2_rpc = %url, "failed to connect L2 WS provider; falling back to polling");
-                return Subscription::Null(NullSubscription::new());
-            }
-        };
-
-        let sub = match ws_provider.subscribe_blocks().await {
-            Ok(s) => s,
-            Err(e) => {
-                warn!(error = %e, "failed to subscribe to new L2 blocks; falling back to polling");
-                return Subscription::Null(NullSubscription::new());
-            }
-        };
-
-        let stream = sub
-            .into_stream()
-            .then(move |header| {
-                let provider = Arc::clone(&fetch_provider);
-                async move {
-                    let rpc_block = provider
-                        .get_block_by_number(BlockNumberOrTag::Number(header.number))
-                        .full()
-                        .await
-                        .map_err(|e| SourceError::Provider(e.to_string()))?
-                        .ok_or(SourceError::BlockUnavailable(header.number))?;
-                    let block = rpc_block
-                        .map_header(|header| header.into_inner())
-                        .into_consensus()
-                        .map_transactions(|t| t.inner.into_inner());
-                    Ok(block)
-                }
-            })
-            .boxed();
-
-        Subscription::Ws(WsBlockSubscription::new(ws_provider, stream))
     }
 
     /// Build an L1 head subscription for the given optional L1 WebSocket URL.
@@ -466,7 +385,6 @@ impl BatcherService {
             l1_rpc_count = self.config.l1_rpc_url.len(),
             l2_rpc_count = self.config.l2_rpc_url.len(),
             rollup_rpc_count = self.config.rollup_rpc_url.len(),
-            l2_ws = self.config.l2_ws_url.as_ref().map(|u| u.as_str()),
             l1_ws = self.config.l1_ws_url.as_ref().map(|u| u.as_str()),
             "starting batcher service"
         );
@@ -486,13 +404,6 @@ impl BatcherService {
             })
             .await?,
         );
-
-        // Build the L2 block subscription. When l2_ws_url is configured the
-        // subscription owns its provider Arc so the connection stays live for
-        // the full driver run.
-        let l2_subscription =
-            Self::build_l2_subscription(self.config.l2_ws_url.as_ref(), Arc::clone(&l2_provider))
-                .await;
 
         // Connect to the rollup node using a typed jsonrpsee HTTP client so that
         // `optimism_rollupConfig` and `optimism_syncStatus` are called through the
@@ -694,10 +605,8 @@ impl BatcherService {
 
         let poller = RpcPollingSource::new(Arc::clone(&l2_provider));
 
-        // Assemble the hybrid L2 block source.
-        let source = HybridBlockSource::new(
+        let source = PollingBlockSource::new(
             TokioRuntime::new(),
-            l2_subscription,
             poller,
             safe_l2,
             self.config.poll_interval,
