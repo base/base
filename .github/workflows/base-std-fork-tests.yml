@@ -37,7 +37,6 @@ jobs:
           - fork: Cobalt
             key: cobalt
             base_anvil_ref: ae7557c4f8602caa1da0be33143bb2504c85b0c8
-            # base-std #193 squash-merge (void seizeWithMemo + deprecated burnBlocked in IB20).
             base_std_ref: 5a5605a36bc03449bd0d7540353ce842503042a7
     env:
       FORK_NAME: ${{ matrix.fork }}
