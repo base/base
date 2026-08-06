@@ -37,9 +37,8 @@ jobs:
           - fork: Cobalt
             key: cobalt
             base_anvil_ref: ae7557c4f8602caa1da0be33143bb2504c85b0c8
-            # TEMP: base-std branch commit with the void seizeWithMemo + deprecated burnBlocked
-            # interface changes (base-std PR #193). Move to the squash-merge SHA once #193 lands.
-            base_std_ref: 0d2be1ecdac0b720107779660d809efd5a06704e
+            # base-std #193 squash-merge (void seizeWithMemo + deprecated burnBlocked in IB20).
+            base_std_ref: 5a5605a36bc03449bd0d7540353ce842503042a7
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
