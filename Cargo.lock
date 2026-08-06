@@ -6118,7 +6118,6 @@ dependencies = [
  "base-proof-tee-nitro-host",
  "base-proof-worker",
  "base-prover-service-client",
- "base-prover-service-protocol",
  "clap",
  "eyre",
  "serde",

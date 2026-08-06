@@ -13,8 +13,6 @@ use base_proof_tee_nitro_host as _;
 use base_proof_worker as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use base_prover_service_client as _;
-#[cfg(not(any(target_os = "linux", feature = "local")))]
-use base_prover_service_protocol as _;
 use serde as _;
 use tokio as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
