@@ -83,6 +83,20 @@ jobs:
           save-if: ${{ true }}
           cache-targets: "false"
 
+      - name: Add swap space (Linux)
+        # `maxperf` uses fat LTO + codegen-units=1, so the final whole-program link of the
+        # larger binaries (base, base-consensus) needs more headroom than the aarch64 runner's
+        # RAM provides. This has silently OOM'd `build-binaries` for aarch64-unknown-linux-gnu
+        # (base, base-consensus) with no compiler error, just a runner-level shutdown signal
+        # partway through linking — see #4298. x86_64 and macOS builds aren't affected.
+        if: matrix.target.os == 'linux'
+        run: |
+          sudo fallocate -l 12G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
       - name: Build binary
         run: |
           cargo build --locked --profile maxperf --bin "${{ matrix.binary }}"
