@@ -1,4 +1,4 @@
-//! Worker proof submission task metadata and cancellation control.
+//! Worker proof submission task cancellation control.
 
 use std::sync::Arc;
 
@@ -12,30 +12,13 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::{
-    ClaimedProofJobMetadata, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS, ProofSubmitter,
-    ProofSubmitterError,
-};
+use crate::{DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS, ProofSubmitter, ProofSubmitterError};
 
 /// Default maximum number of in-flight proof submission tasks.
 pub const DEFAULT_MAX_PENDING_SUBMISSIONS: usize = DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS;
 
 /// Default grace period to wait for cancelled submissions before aborting them.
 pub const DEFAULT_SUBMISSION_SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
-
-/// Claim metadata for a proof submission retained by [`ProofTaskController`].
-#[derive(Debug)]
-pub struct ProofSubmissionTask {
-    /// Claim metadata for the proof job being submitted.
-    pub claim: ClaimedProofJobMetadata,
-}
-
-impl ProofSubmissionTask {
-    /// Creates a submission task handle from claim metadata.
-    pub const fn new(claim: ClaimedProofJobMetadata) -> Self {
-        Self { claim }
-    }
-}
 
 /// Cancellation and join control for spawned proof submission tasks.
 #[derive(Debug, Clone)]
@@ -57,31 +40,12 @@ impl ProofTaskController {
         }
     }
 
-    /// Uses a caller-provided cancellation token for spawned submission tasks.
-    #[must_use]
-    pub fn with_submission_cancel(mut self, submission_cancel: CancellationToken) -> Self {
-        self.submission_cancel = submission_cancel;
-        self
-    }
-
     /// Limits how many submission tasks may run at once.
     #[must_use]
     pub fn with_max_pending_submissions(mut self, max_pending: usize) -> Self {
         let max_pending = max_pending.max(1);
         self.submission_permits = Arc::new(Semaphore::new(max_pending));
         self
-    }
-
-    /// Sets how long shutdown waits for cancelled submissions before aborting them.
-    #[must_use]
-    pub const fn with_shutdown_grace(mut self, shutdown_grace: Duration) -> Self {
-        self.shutdown_grace = shutdown_grace;
-        self
-    }
-
-    /// Returns the cancellation token used for spawned submission tasks.
-    pub const fn submission_cancel(&self) -> &CancellationToken {
-        &self.submission_cancel
     }
 
     /// Returns the number of retained submission tasks that have not been drained.
@@ -140,12 +104,11 @@ impl ProofTaskController {
         &self,
         submitter: &ProofSubmitter<Client>,
         request: WorkerSubmitProofRequest,
-    ) -> ProofSubmissionTask
-    where
+    ) where
         Client: Clone + ProverWorkerProvider + 'static,
     {
         let permit = self.acquire_submission_permit().await;
-        self.spawn_submission_with_permit(submitter, request, permit).await
+        self.spawn_submission_with_permit(submitter, request, permit).await;
     }
 
     /// Spawns proof submission with an already-acquired permit.
@@ -154,15 +117,9 @@ impl ProofTaskController {
         submitter: &ProofSubmitter<Client>,
         request: WorkerSubmitProofRequest,
         permit: OwnedSemaphorePermit,
-    ) -> ProofSubmissionTask
-    where
+    ) where
         Client: Clone + ProverWorkerProvider + 'static,
     {
-        let claim = ClaimedProofJobMetadata {
-            session_id: request.session_id.clone(),
-            lock_id: request.lock_id.clone(),
-            worker_id: request.worker_id.clone(),
-        };
         let cancel = self.submission_cancel.clone();
         let submitter = submitter.clone();
 
@@ -172,8 +129,6 @@ impl ProofTaskController {
             let _permit = permit;
             submitter.submit_until_delivered_or_cancelled(request, &cancel).await
         });
-
-        ProofSubmissionTask::new(claim)
     }
 
     fn drain_finished_submissions(

@@ -25,6 +25,5 @@ pub use proof_submitter::{ProofSubmitter, ProofSubmitterError};
 
 mod task;
 pub use task::{
-    DEFAULT_MAX_PENDING_SUBMISSIONS, DEFAULT_SUBMISSION_SHUTDOWN_GRACE, ProofSubmissionTask,
-    ProofTaskController,
+    DEFAULT_MAX_PENDING_SUBMISSIONS, DEFAULT_SUBMISSION_SHUTDOWN_GRACE, ProofTaskController,
 };

@@ -584,7 +584,7 @@ mod tests {
             RetryConfig::unbounded(Duration::from_secs(60), Duration::from_secs(60)),
         );
         let controller = ProofTaskController::new();
-        drop(controller.spawn_submission(&submitter, submit_request()).await);
+        controller.spawn_submission(&submitter, submit_request()).await;
 
         timeout(Duration::from_secs(1), client.wait_for_submission_count(1))
             .await
