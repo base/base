@@ -1497,7 +1497,7 @@ where
             TxAuthError::SenderRecovery => "EOA sender recovery failed",
             TxAuthError::Scope { .. } => "actor scope insufficient",
             TxAuthError::AccountLocked => "account is locked",
-            TxAuthError::DelegationUnauthorized => "delegation requires native-k1 admin self actor",
+            TxAuthError::DelegationUnauthorized => "delegation requires native-k1 admin actor",
             TxAuthError::ConfigChainId { .. } => "config change targets a foreign chain",
             TxAuthError::ConfigSequence { .. } => "config change sequence mismatch",
             TxAuthError::Apply(apply) => Self::map_apply_error(apply),

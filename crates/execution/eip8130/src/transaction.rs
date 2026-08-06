@@ -69,7 +69,8 @@ impl TransactionAuthorizer {
     ///    state. A transaction that revokes its own authenticating actor in an
     ///    earlier change therefore fails the final sender check, exactly as the
     ///    contract would revert. A recorded delegation then requires that final
-    ///    sender to be the unlocked account's native-k1 admin self actor.
+    ///    sender to be an admin (unrestricted) actor on the unlocked account,
+    ///    authenticating via native secp256k1.
     ///
     /// Returns the [`AppliedTransaction`] (with every `AccountConfiguration`
     /// storage transition already written to `storage`), or the first
@@ -185,8 +186,15 @@ impl TransactionAuthorizer {
         Ok(AppliedTransaction { actors, config_changes, applied, revoke_discount_slots })
     }
 
-    /// Requires a delegation's final sender to be the unlocked account's native
-    /// secp256k1, unrestricted self actor.
+    /// Requires a delegation's final sender to be an admin (unrestricted) actor
+    /// on the unlocked account, authenticating via native secp256k1.
+    ///
+    /// This does **not** require the sender to be the account's native-k1 *self*
+    /// actor: any bound admin (`scope == 0`) actor authenticating with a
+    /// secp256k1 authenticator may set the account's delegation, consistent with
+    /// the admin role that already governs every other config mutation
+    /// (authorize/revoke actors, including revoking the root key). The
+    /// account-unlocked and native-secp256k1 guards remain.
     fn authorize_delegation(
         signed: &Eip8130Signed,
         storage: &AccountConfigurationStorage<'_>,
@@ -199,9 +207,7 @@ impl TransactionAuthorizer {
 
         let used_native_k1 = signed.explicit_sender().is_none()
             || signed.sender_auth().starts_with(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
-        let is_self =
-            sender.resolved.actor_id == AccountConfigurationStorage::self_actor_id(sender.account);
-        if !used_native_k1 || !is_self || !sender.resolved.is_admin() {
+        if !used_native_k1 || !sender.resolved.is_admin() {
             return Err(TxAuthError::DelegationUnauthorized);
         }
 
@@ -507,7 +513,10 @@ mod tests {
     }
 
     #[test]
-    fn delegation_authorization_rejects_non_self_native_k1_admin_actor() {
+    fn delegation_authorization_accepts_non_self_native_k1_admin_actor() {
+        // A bound admin (unrestricted) actor that is *not* the account's native
+        // self actor may now set the delegation, as long as it authenticates via
+        // native secp256k1 and the account is unlocked.
         let signer = key(0x33);
         let account = address!("0x00000000000000000000000000000000000000aa");
         let signer_id = actor_id(addr(&signer));
@@ -523,6 +532,55 @@ mod tests {
                 .at_mut(&signer_id)
                 .at_mut(&account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
+                .unwrap();
+            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            assert_eq!(out.actors.sender.account, account);
+            assert_eq!(out.actors.sender.resolved.actor_id, signer_id);
+            assert_ne!(
+                out.actors.sender.resolved.actor_id,
+                AccountConfigurationStorage::self_actor_id(account),
+                "delegating actor is intentionally not the native self actor",
+            );
+            assert_eq!(out.applied.delegation, Some(DelegationEffect::new(account, target)));
+        });
+    }
+
+    #[test]
+    fn delegation_authorization_rejects_scoped_non_self_native_k1_actor() {
+        // Broadening delegation to admin actors must not leak to merely-scoped
+        // (non-admin) actors. A sponsor payer covers gas and the nonce-free key
+        // lets a SENDER-scoped actor pass the sender check, so authorization
+        // reaches the delegation gate — which still rejects it because the
+        // sender's scope is not unrestricted.
+        let signer = key(0x37);
+        let account = address!("0x00000000000000000000000000000000000000ab");
+        let signer_id = actor_id(addr(&signer));
+        let payer = key(0x38);
+        let payer_account = address!("0x00000000000000000000000000000000000000ac");
+        let payer_id = actor_id(addr(&payer));
+        let target = address!("0x00000000000000000000000000000000000000dd");
+
+        let tx = TxEip8130 {
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            expiry: NOW + 1,
+            ..tx_with(
+                Some(account),
+                Some(payer_account),
+                vec![AccountChange::Delegation(Delegation { target })],
+            )
+        };
+        let signed = configured_signed(tx, &signer, Some(&payer));
+
+        with_storage(|acc| {
+            acc.actor_config
+                .at_mut(&signer_id)
+                .at_mut(&account)
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0))
+                .unwrap();
+            acc.actor_config
+                .at_mut(&payer_id)
+                .at_mut(&payer_account)
+                .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
                 .unwrap();
             assert_eq!(
                 TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
