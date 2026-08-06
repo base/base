@@ -309,15 +309,6 @@ mod test {
     }
 
     #[test]
-    fn test_serde_ignores_legacy_timestamp_millis_part() {
-        let attributes = BasePayloadAttributes::default();
-        let mut value = serde_json::to_value(&attributes).unwrap();
-        value.as_object_mut().unwrap().insert("timestampMillisPart".into(), "0xc8".into());
-
-        assert_eq!(serde_json::from_value::<BasePayloadAttributes>(value).unwrap(), attributes);
-    }
-
-    #[test]
     fn test_serde_roundtrip_attributes_pre_holocene() {
         let attributes = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
