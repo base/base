@@ -272,17 +272,59 @@ fn present_load_test_summary(summary: &MetricsSummary) {
         }
         let tp = &summary.throughput;
         println!("TPS: {:.2} | GPS: {:.0}", tp.tps, tp.gps);
+        let pacing = &summary.pacing;
+        let target_gps = summary
+            .config
+            .as_ref()
+            .and_then(|config| config.target_gps)
+            .map_or_else(|| "unbounded".to_string(), |target| target.to_string());
+        println!(
+            "Pacing: target_gps={}  offered_gps={:.0}  achieved_gps={:.0}",
+            target_gps, pacing.offered_gps, tp.gps
+        );
+        println!(
+            "Depth: mean/floor={:.2}x  blocks={}  under_floor={}  max_gas={}",
+            pacing.mean_depth_to_floor_ratio,
+            pacing.blocks_observed,
+            pacing.blocks_under_floor,
+            pacing.max_depth_gas
+        );
+        println!(
+            "Shortfalls: capacity={}  presign={}  rpc={}  chain={}",
+            pacing.capacity_limited_cycles,
+            pacing.presign_starved_cycles,
+            pacing.rpc_bound_cycles,
+            pacing.chain_bound_cycles
+        );
+        println!(
+            "Refill Sources: canonical={}  flashblock={}  safety={}",
+            pacing.canonical_cycles, pacing.flashblock_cycles, pacing.safety_cycles
+        );
+        println!(
+            "Block Fill: mean={:.1}%  load_test_reserved={:.1}%",
+            pacing.mean_block_fill_ratio * 100.0,
+            pacing.mean_our_block_ratio * 100.0
+        );
+        println!(
+            "Refill Lag: p50={:.1?}  p95={:.1?}  p99={:.1?}  max={:.1?}",
+            pacing.refill_lag.p50,
+            pacing.refill_lag.p95,
+            pacing.refill_lag.p99,
+            pacing.refill_lag.max
+        );
+        println!(
+            "Cycle Work: plan_p95={:.1?}  submit_p95={:.1?}",
+            pacing.plan_time.p95, pacing.submit_time.p95
+        );
+        println!(
+            "Availability Lag: p50={:.1?}  p95={:.1?}  max={:.1?}",
+            pacing.availability_lag.p50, pacing.availability_lag.p95, pacing.availability_lag.max
+        );
         let bl = &summary.block_latency;
         println!(
             "Block Latency:       min={:.1?}  p50={:.1?}  mean={:.1?}  p95={:.1?}  p99={:.1?}  max={:.1?}",
             bl.min, bl.p50, bl.mean, bl.p95, bl.p99, bl.max
         );
-        let fb = &summary.flashblocks_latency;
-        println!(
-            "FB Latency:          min={:.1?}  p50={:.1?}  mean={:.1?}  p95={:.1?}  p99={:.1?}  max={:.1?}  (n={})",
-            fb.min, fb.p50, fb.mean, fb.p95, fb.p99, fb.max, fb.count
-        );
-
         println!();
         println!(
             "Totals: Submitted={} | Confirmed={} | Failed={} | Reverted={} | Success={:.1}%",
@@ -293,6 +335,12 @@ fn present_load_test_summary(summary: &MetricsSummary) {
             summary.throughput.success_rate()
         );
         println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
+        if pacing.undrained_transactions > 0 {
+            println!(
+                "Undrained inventory: transactions={}  gas={}",
+                pacing.undrained_transactions, pacing.undrained_gas
+            );
+        }
         let rc: &ReceiptCoverage = &summary.receipt_coverage;
         if !rc.is_complete() {
             println!(

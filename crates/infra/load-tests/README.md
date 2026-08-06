@@ -62,12 +62,10 @@ transaction_submission_rpcs:
 query_rpc: "http://localhost:8545"
 # Optional: clear pending transactions from these admin RPC nodes for all sender addresses.
 txpool_nodes: []
-flashblocks_ws: "ws://localhost:7111"
 sender_count: 10
 target_gps: 2100000
-# Keep mempool_target_blocks * gas_cap gas submitted but unconfirmed.
-# gas_cap is target_gps when set, otherwise the chain block gas limit.
-mempool_target_blocks: 3
+# Align canonical block polling and convert target_gps into a per-block gas floor.
+block_time: "2s"
 duration: "30s"
 ```
 
@@ -76,7 +74,9 @@ ready/start handshake before measured submission can pass `--separate-setup <con
 `--block-gas-limit <gas>` on the command line; these orchestration controls are intentionally not
 part of the portable YAML configuration.
 
-`in_flight_per_sender` bounds unconfirmed transactions per sender; the aggregate cap defaults to
+`in_flight_per_sender` bounds unconfirmed transactions per sender and defaults to `16`, matching
+Reth's default per-account transaction-pool slots. It remains configurable for nodes with a
+different pool policy. The aggregate cap defaults to
 `in_flight_per_sender * sender_count`. Set `max_total_in_flight` to cap the aggregate independently
 of sender count, e.g. to protect a shared target node's mempool regardless of how many senders are
 configured.
@@ -89,14 +89,27 @@ shrinking the in-flight inventory target. Concurrency is otherwise bounded only 
 count (derived from the number of `transaction_submission_rpcs`), so `max_concurrent_submit_requests`
 is useful mainly to throttle *below* that.
 
-`flashblocks_ws` is required for builder flashblocks broadcast latency data.
+During measurement, the runner refills immediately after an inclusion source releases transaction
+inventory. When `flashblocks_ws` is configured, builder broadcasts provide the earliest signal;
+phase-locked canonical polling remains active as an automatic fallback and the authoritative source
+for final metrics. Both sources feed the same idempotent depth controller, so canonical observation
+does not double-release transactions already seen in a flashblock.
+
+The controller keeps at least `target_gps * block_time` gas outstanding and permits up to twice that
+depth while confirmed gas is behind the run-average target. When `target_gps` is omitted, the floor
+is one full block and the ceiling is two full blocks. Capacity and submission bottlenecks are
+reported without failing the run. Omit `flashblocks_ws` to run with canonical polling only; removing
+the flashblock watcher does not change the controller or submission pipeline.
+The final pacing summary reports canonical, flashblock, and safety refill-cycle counts so source
+fallback is visible.
+
 `transaction_submission_rpcs` accepts either a single URL string or a list; submit batches are
 distributed across the configured HTTP endpoints.
 `txpool_nodes` is optional and defaults to an empty list; when present, the load tester calls
 `admin_dropSenderTransactions` for every sender address on every configured node before funding.
-Transaction landing is detected by polling `query_rpc` with `eth_getBlockByNumber` every 500ms and
-matching submitted transaction hashes against each block's transaction list; the recorded block
-latency therefore includes the block poll and scan cost. Gas usage and revert status are backfilled
+Canonical transaction landing is detected by phase-locking `query_rpc` polling to `block_time`, then
+probing briefly until the next `eth_getBlockByNumber` response becomes available. Submitted hashes
+are matched against each block's transaction list. Gas usage and revert status are backfilled
 in a single `eth_getBlockReceipts` batch pass at the very end of the run, scoped only to the blocks
 that contained our transactions, so `query_rpc` must support `eth_getBlockReceipts`. Receipt-fetch
 delay is measured for logging but is no longer included in the JSON output.
@@ -241,9 +254,8 @@ real_token_setup:
 
 #### Running multiple load tests
 
-- You may need to tune `target_gps` / `mempool_target_blocks` (omit `target_gps` for
-  block-gas-limit inventory) and sender
-  count appropriately.
+- Tune `target_gps`, `block_time`, and sender count appropriately. Omit `target_gps` to keep one
+  to two block-gas-limits of inventory.
 
 #### Account Create
 

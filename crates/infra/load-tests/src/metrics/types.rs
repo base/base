@@ -161,8 +161,104 @@ pub struct ThroughputSample {
     pub gps: f64,
 }
 
-/// L2 block interval (2 seconds per block).
-pub(crate) const BLOCK_INTERVAL: Duration = Duration::from_secs(2);
+/// Source that triggered a pacing cycle.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PacingCycleSource {
+    /// Canonical block polling.
+    #[default]
+    Canonical,
+    /// Builder flashblock broadcast.
+    Flashblock,
+    /// Timer fallback.
+    Safety,
+}
+
+/// One block-aligned pacing cycle recorded by the runner.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PacingCycleObservation {
+    /// Inclusion source that triggered this cycle.
+    pub source: PacingCycleSource,
+    /// Elapsed measured-run time when this cycle started.
+    pub elapsed: Duration,
+    /// Whether the cycle was triggered by a newly observed canonical block.
+    pub block_observed: bool,
+    /// Total gas used by the observed block.
+    pub block_gas_used: u64,
+    /// Gas limit of the observed block.
+    pub block_gas_limit: u64,
+    /// Reserved gas limits from this load test included in the observed block.
+    pub our_included_gas: u128,
+    /// Estimated mempool depth before the refill cycle.
+    pub pre_refill_depth_gas: u128,
+    /// Estimated mempool depth after the refill cycle.
+    pub post_refill_depth_gas: u128,
+    /// Desired one-block floor.
+    pub floor_gas: u128,
+    /// Gas selected for submission.
+    pub offered_gas: u128,
+    /// Whether sender or global transaction capacity limited the plan.
+    pub capacity_limited: bool,
+    /// Whether the cycle began at the controller's depth ceiling.
+    pub chain_bound: bool,
+    /// Whether the presign buffer could not supply the planned gas.
+    pub presign_starved: bool,
+    /// Canonical boundary to block availability.
+    pub availability_lag: Option<Duration>,
+    /// Controller planning and presign-buffer selection time.
+    pub plan_time: Duration,
+    /// Refill batch enqueue-to-terminal-acknowledgement time.
+    pub submit_time: Option<Duration>,
+    /// Inclusion observation to terminal acknowledgement of all refill batches.
+    pub refill_lag: Option<Duration>,
+}
+
+/// Aggregate health of block-aligned mempool pacing.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PacingMetrics {
+    /// Gas offered by measured refill cycles.
+    pub offered_gas: u128,
+    /// Offered gas per wall-clock second.
+    pub offered_gps: f64,
+    /// Canonical blocks observed by the pacing loop.
+    pub blocks_observed: u64,
+    /// Refill cycles triggered by canonical block polling.
+    pub canonical_cycles: u64,
+    /// Refill cycles triggered by flashblock inclusion.
+    pub flashblock_cycles: u64,
+    /// Timer-driven fallback cycles.
+    pub safety_cycles: u64,
+    /// Observed blocks whose pre-refill depth was below the one-block floor.
+    pub blocks_under_floor: u64,
+    /// Cycles limited by sender in-flight capacity.
+    pub capacity_limited_cycles: u64,
+    /// Cycles starved by the presign buffer.
+    pub presign_starved_cycles: u64,
+    /// Refill cycles whose acknowledgement exceeded the 100ms budget.
+    pub rpc_bound_cycles: u64,
+    /// Block cycles that began at the two-block ceiling.
+    pub chain_bound_cycles: u64,
+    /// Maximum estimated submitted-but-unconfirmed gas.
+    pub max_depth_gas: u128,
+    /// Mean ratio of estimated depth to the configured one-block floor.
+    pub mean_depth_to_floor_ratio: f64,
+    /// Mean total block fill ratio.
+    pub mean_block_fill_ratio: f64,
+    /// Mean fraction of each block gas limit reserved by this load test's included transactions.
+    pub mean_our_block_ratio: f64,
+    /// Canonical boundary-to-availability latency.
+    pub availability_lag: LatencyMetrics,
+    /// Controller plan latency.
+    pub plan_time: LatencyMetrics,
+    /// Submission acknowledgement latency after planning.
+    pub submit_time: LatencyMetrics,
+    /// Inclusion observation-to-refill acknowledgement latency.
+    pub refill_lag: LatencyMetrics,
+    /// Submitted transactions intentionally left undrained at cutoff.
+    pub undrained_transactions: u64,
+    /// Estimated gas intentionally left undrained at cutoff.
+    pub undrained_gas: u128,
+}
 
 /// Range of block numbers in which test transactions were included.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -179,13 +275,13 @@ pub struct BlockRange {
 }
 
 impl BlockRange {
-    /// Returns the duration spanned by this block range using the fixed L2 block interval,
+    /// Returns the duration spanned by this block range using `block_time`,
     /// or `None` when the range spans fewer than 2 blocks.
-    pub fn block_time_duration(&self) -> Option<Duration> {
+    pub fn block_time_duration(&self, block_time: Duration) -> Option<Duration> {
         if self.block_count < 2 {
             return None;
         }
-        Some(BLOCK_INTERVAL * (self.block_count - 1) as u32)
+        Some(block_time * (self.block_count - 1) as u32)
     }
 }
 
@@ -240,10 +336,10 @@ pub struct ConfigSummary {
     pub max_concurrent_submit_requests: Option<u32>,
     /// Test duration.
     pub duration: Option<String>,
-    /// Optional gas-per-second ceiling used as the per-block gas unit for inventory.
+    /// Optional gas-per-second target used to size the per-block mempool floor.
     pub target_gps: Option<u64>,
-    /// Number of blocks of gas kept submitted but unconfirmed.
-    pub mempool_target_blocks: u64,
+    /// Expected cadence between canonical blocks.
+    pub block_time: String,
     /// Deterministic account seed.
     pub seed: u64,
     /// Chain ID.

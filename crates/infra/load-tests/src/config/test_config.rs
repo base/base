@@ -13,8 +13,8 @@ use super::{
 use crate::{
     metrics::ConfigSummary,
     runner::{TxConfig, TxType},
-    workload::RealTokenSetup,
     utils::{BaselineError, Result},
+    workload::RealTokenSetup,
 };
 
 /// Configuration for a load test, loadable from YAML.
@@ -35,7 +35,7 @@ pub struct TestConfig {
     /// Optional HTTP JSON-RPC endpoints whose txpools should be cleared before a test.
     #[serde(default)]
     pub txpool_nodes: Vec<Url>,
-    /// Builder flashblocks broadcast WebSocket endpoint.
+    /// Optional legacy builder flashblocks WebSocket endpoint.
     #[serde(default)]
     pub flashblocks_ws: Option<Url>,
 
@@ -80,18 +80,13 @@ pub struct TestConfig {
     /// Test duration (e.g., "30s", "5m", "1h").
     pub duration: Option<String>,
 
-    /// Optional gas/s ceiling used as the per-block gas unit for mempool inventory.
-    ///
-    /// When set, the runner keeps `mempool_target_blocks * target_gps` gas submitted but not
-    /// confirmed. Omit to size inventory from the chain block gas limit instead.
+    /// Optional gas/s target used to size each block's mempool floor.
     #[serde(default)]
     pub target_gps: Option<u64>,
 
-    /// Number of blocks of gas kept outstanding during measurement (submitted but not confirmed).
-    ///
-    /// Each block is `target_gps` gas when that ceiling is set, otherwise the block gas limit.
-    #[serde(default = "default_mempool_target_blocks")]
-    pub mempool_target_blocks: u64,
+    /// Expected cadence between canonical blocks (for example, "2s" or "200ms").
+    #[serde(default = "default_block_time")]
+    pub block_time: String,
 
     /// Seed for deterministic account generation (used if mnemonic not provided).
     ///
@@ -158,12 +153,12 @@ impl Default for TestConfig {
             funding_amount: "10000000000000000".to_string(),
             sender_count: 100,
             sender_offset: 0,
-            in_flight_per_sender: 256,
+            in_flight_per_sender: 16,
             max_total_in_flight: None,
             max_concurrent_submit_requests: None,
             duration: Some("60s".to_string()),
             target_gps: Some(20_000_000),
-            mempool_target_blocks: default_mempool_target_blocks(),
+            block_time: default_block_time(),
             seed: 12345,
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
@@ -193,7 +188,7 @@ impl fmt::Debug for TestConfig {
             .field("max_concurrent_submit_requests", &self.max_concurrent_submit_requests)
             .field("duration", &self.duration)
             .field("target_gps", &self.target_gps)
-            .field("mempool_target_blocks", &self.mempool_target_blocks)
+            .field("block_time", &self.block_time)
             .field("seed", &self.seed)
             .field("chain_id", &self.chain_id)
             .field("transactions", &self.transactions)
@@ -369,8 +364,8 @@ const fn default_aerodrome_tick_spacing() -> i32 {
     100
 }
 
-const fn default_mempool_target_blocks() -> u64 {
-    3
+fn default_block_time() -> String {
+    "2s".to_string()
 }
 
 fn default_swap_token_amount() -> String {
@@ -404,6 +399,9 @@ impl TestConfig {
         if self.sender_count == 0 {
             return Err(BaselineError::Config("sender_count must be > 0".into()));
         }
+        if self.in_flight_per_sender == 0 {
+            return Err(BaselineError::Config("in_flight_per_sender must be > 0".into()));
+        }
 
         if self.transaction_submission_rpcs.is_empty() {
             return Err(BaselineError::Config(
@@ -421,15 +419,17 @@ impl TestConfig {
             Self::validate_http_url(url, "txpool_nodes")?;
         }
 
-        let Some(flashblocks_ws) = &self.flashblocks_ws else {
-            return Err(BaselineError::Config("flashblocks_ws is required".into()));
-        };
-        Self::validate_ws_url(flashblocks_ws, "flashblocks_ws")?;
+        if let Some(flashblocks_ws) = &self.flashblocks_ws {
+            Self::validate_ws_url(flashblocks_ws, "flashblocks_ws")?;
+        }
 
         if !(0.0..=1.0).contains(&self.fresh_recipient_ratio) {
             return Err(BaselineError::Config(
                 "fresh_recipient_ratio must be between 0.0 and 1.0".into(),
             ));
+        }
+        if self.parse_block_time()?.is_zero() {
+            return Err(BaselineError::Config("block_time must be > 0".into()));
         }
 
         Ok(())
@@ -510,6 +510,13 @@ impl TestConfig {
             .transpose()
     }
 
+    /// Parses the configured canonical block cadence.
+    pub fn parse_block_time(&self) -> Result<Duration> {
+        humantime::parse_duration(self.block_time.trim()).map_err(|e| {
+            BaselineError::Config(format!("invalid block_time '{}': {e}", self.block_time))
+        })
+    }
+
     /// Parses the funding amount string into a U256.
     pub fn parse_funding_amount(&self) -> Result<alloy_primitives::U256> {
         self.funding_amount.parse().map_err(|e| {
@@ -553,7 +560,7 @@ impl TestConfig {
             max_concurrent_submit_requests: self.max_concurrent_submit_requests,
             duration: self.duration.clone(),
             target_gps: self.target_gps,
-            mempool_target_blocks: self.mempool_target_blocks,
+            block_time: self.block_time.clone(),
             seed: self.seed,
             chain_id: self.chain_id,
             transactions: serde_json::to_value(&self.transactions)
@@ -599,6 +606,7 @@ impl TestConfig {
         let query_rpc = self.query_rpc.clone().unwrap_or(primary_submission_rpc);
 
         let duration = self.parse_duration()?;
+        let block_time = self.parse_block_time()?;
 
         let transactions = if self.transactions.is_empty() {
             vec![TxConfig { weight: 100, tx_type: TxType::Transfer }]
@@ -617,8 +625,8 @@ impl TestConfig {
             sender_offset: self.sender_offset as usize,
             transactions,
             target_gps: self.target_gps,
-            mempool_target_blocks: self.mempool_target_blocks,
             block_gas_limit: None,
+            block_time,
             separate_setup: None,
             duration,
             max_in_flight_per_sender: self.in_flight_per_sender as usize,
@@ -627,10 +635,7 @@ impl TestConfig {
                 .max_concurrent_submit_requests
                 .map(|max| max as usize),
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
-            flashblocks_ws: self
-                .flashblocks_ws
-                .clone()
-                .ok_or_else(|| BaselineError::Config("flashblocks_ws is required".into()))?,
+            flashblocks_ws: self.flashblocks_ws.clone(),
             fresh_recipient_ratio: self.fresh_recipient_ratio,
         })
     }
@@ -827,7 +832,19 @@ flashblocks_ws: ws://localhost:7111
         assert!(config.mnemonic.is_none());
         assert!(config.txpool_nodes.is_empty());
         assert_eq!(config.target_gps, None);
-        assert_eq!(config.mempool_target_blocks, 3);
+        assert_eq!(config.block_time, "2s");
+    }
+
+    #[test]
+    fn rejects_zero_block_time() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+block_time: 0s
+"#;
+
+        let error = TestConfig::from_yaml(yaml).unwrap_err();
+
+        assert!(error.to_string().contains("block_time must be > 0"));
     }
 
     #[test]
@@ -1222,12 +1239,32 @@ flashblocks_ws: wss://localhost:7111
     }
 
     #[test]
-    fn missing_flashblocks_ws_is_rejected() {
+    fn flashblocks_ws_is_optional() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
 "#;
-        let err = TestConfig::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("flashblocks_ws"));
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert!(config.flashblocks_ws.is_none());
+        assert!(config.to_load_config(Some(1337)).unwrap().flashblocks_ws.is_none());
+    }
+
+    #[test]
+    fn flashblocks_ws_is_preserved_for_runtime() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+
+        assert_eq!(
+            config
+                .to_load_config(Some(1337))
+                .unwrap()
+                .flashblocks_ws
+                .as_ref()
+                .map(url::Url::as_str),
+            Some("ws://localhost:7111/")
+        );
     }
 
     #[test]

@@ -105,6 +105,8 @@ pub enum TxType {
 
 /// Default maximum gas price cap (1000 gwei).
 pub const DEFAULT_MAX_GAS_PRICE: u128 = 1_000_000_000_000;
+/// Default per-sender in-flight limit, aligned with Reth's default account slots.
+pub const DEFAULT_MAX_IN_FLIGHT_PER_SENDER: usize = 16;
 
 /// Configuration for a load test run.
 #[derive(Debug, Clone)]
@@ -127,17 +129,12 @@ pub struct LoadConfig {
     pub sender_offset: usize,
     /// Transaction types with weights.
     pub transactions: Vec<TxConfig>,
-    /// Optional gas-per-second ceiling used as the per-block gas unit for mempool inventory.
-    ///
-    /// When set, outstanding inventory is `mempool_target_blocks * target_gps` gas
-    /// (submitted but not confirmed). When omitted, the chain block gas limit is used instead.
+    /// Optional gas-per-second target used to size each block's mempool floor.
     pub target_gps: Option<u64>,
     /// Optional block gas limit override used to size uncapped mempool inventory.
     pub block_gas_limit: Option<u64>,
-    /// Number of blocks of gas to keep outstanding (submitted but not confirmed).
-    ///
-    /// Each "block" is `target_gps` gas when capped, otherwise the block gas limit.
-    pub mempool_target_blocks: u64,
+    /// Expected cadence between canonical blocks.
+    pub block_time: Duration,
     /// Benchmark-only control directory used to separate setup from measurement.
     pub separate_setup: Option<PathBuf>,
     /// Duration of the load test. `None` means run indefinitely until stopped.
@@ -164,8 +161,8 @@ pub struct LoadConfig {
     pub max_concurrent_submit_requests: Option<usize>,
     /// Maximum gas price cap to prevent overspending during congestion.
     pub max_gas_price: u128,
-    /// Builder flashblocks broadcast WebSocket endpoint.
-    pub flashblocks_ws: Url,
+    /// Optional builder flashblocks WebSocket used for early inclusion signals.
+    pub flashblocks_ws: Option<Url>,
     /// Fraction of transactions that draw a fresh recipient address instead of cycling through
     /// the sender pool. Used to drive account-trie fan-out for account-create workloads.
     pub fresh_recipient_ratio: f64,
@@ -188,14 +185,14 @@ impl LoadConfig {
             transactions: vec![TxConfig { weight: 100, tx_type: TxType::Transfer }],
             target_gps: None,
             block_gas_limit: None,
-            mempool_target_blocks: 3,
+            block_time: Duration::from_secs(2),
             separate_setup: None,
             duration: Some(Duration::from_secs(30)),
-            max_in_flight_per_sender: 128,
+            max_in_flight_per_sender: DEFAULT_MAX_IN_FLIGHT_PER_SENDER,
             max_total_in_flight: None,
             max_concurrent_submit_requests: None,
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
-            flashblocks_ws: "ws://localhost:7111".parse().expect("valid default flashblocks_ws"),
+            flashblocks_ws: None,
             fresh_recipient_ratio: 0.0,
         }
     }
@@ -218,8 +215,11 @@ impl LoadConfig {
         if self.block_gas_limit == Some(0) {
             return Err(BaselineError::Config("block_gas_limit must be > 0 when set".into()));
         }
-        if self.mempool_target_blocks == 0 {
-            return Err(BaselineError::Config("mempool_target_blocks must be > 0".into()));
+        if self.block_time.is_zero() {
+            return Err(BaselineError::Config("block_time must be > 0".into()));
+        }
+        if self.max_in_flight_per_sender == 0 {
+            return Err(BaselineError::Config("max_in_flight_per_sender must be > 0".into()));
         }
         if self.max_total_in_flight == Some(0) {
             return Err(BaselineError::Config("max_total_in_flight must be > 0 when set".into()));
@@ -264,7 +264,7 @@ impl LoadConfig {
                 ));
             }
         }
-        if !matches!(self.flashblocks_ws.scheme(), "ws" | "wss") {
+        if self.flashblocks_ws.as_ref().is_some_and(|url| !matches!(url.scheme(), "ws" | "wss")) {
             return Err(BaselineError::Config("flashblocks_ws must use ws:// or wss://".into()));
         }
         Ok(())

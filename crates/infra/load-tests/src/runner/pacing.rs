@@ -1,7 +1,7 @@
 //! Inventory headroom, presign streaming, and measured enqueue pacing.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -28,13 +28,14 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
 
 use super::{
-    BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadRunner, LoadTestDisplay,
-    PipelineStartConfig, PreparedTransaction, QueuedSubmitFailures, ResultsTracker, SignedBatch,
-    SignedTransaction, SubmissionPipeline, SubmitEvent, TxType,
+    BlockWatcher, DisplaySnapshot, FlashblockWatcher, InclusionPulse, InclusionSource, LoadRunner,
+    LoadTestDisplay, MIN_PRIORITY_FEE, PipelineStartConfig, PreparedTransaction, PresignBuffer,
+    QueuedSubmitFailures, ResultsTracker, SignedBatch, SignedTransaction, SubmissionPipeline,
+    SubmitEvent, TxType,
 };
 use crate::{
     BaselineError, Result,
-    metrics::{MetricsCollector, MetricsSummary},
+    metrics::{MetricsCollector, MetricsSummary, PacingCycleObservation, PacingCycleSource},
     rpc::BaseFeeExt,
     workload::{KeyStream, SeededRng, WorkloadGenerator},
 };
@@ -56,11 +57,9 @@ const DRAIN_STALL_TIMEOUT: Duration = Duration::from_secs(20);
 const SIGNED_BATCH_SIZE: usize = 200;
 const PRESIGN_CHANNEL_BUFFER: usize = 2;
 const IDLE_SLEEP: Duration = Duration::from_millis(10);
-const HEADROOM_RECHECK_INTERVAL: Duration = Duration::from_millis(100);
-const HEADROOM_STALL_TIMEOUT: Duration = Duration::from_secs(30);
+const PRESIGN_RECHECK_INTERVAL: Duration = Duration::from_millis(100);
 const PREFILL_TIMEOUT: Duration = Duration::from_secs(300);
 /// Adaptive open-loop target update cadence, matching closed-loop rate-limiter updates.
-const TARGET_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
 /// TUI / snapshot refresh cadence while the enqueue loop owns the collector.
 const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -98,13 +97,6 @@ struct PresignConfig {
 
 struct EnqueueProgress {
     presigned_generated: u64,
-    headroom_target: InFlightTarget,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct EnqueueLimits {
-    deadline: Option<Instant>,
-    stop_when_accepted_target_reached: bool,
 }
 
 /// Live TUI / snapshot updates while the enqueue loop owns the collector.
@@ -177,150 +169,189 @@ impl EnqueueProgressDisplay<'_> {
 struct EnqueueDrainState<'a> {
     submit_event_rx: &'a mut mpsc::Receiver<SubmitEvent>,
     queued_per_sender: &'a mut HashMap<Address, u64>,
+    rejected_senders: &'a mut HashSet<Address>,
+    queued_gas: &'a mut u128,
     collector: &'a mut MetricsCollector,
     results_tracker: &'a ResultsTracker,
     progress_display: Option<EnqueueProgressDisplay<'a>>,
 }
 
+struct PresignEnqueueState<'a> {
+    submission_pipeline: &'a SubmissionPipeline,
+    next_submit_batch_id: &'a AtomicU64,
+    signed_chunk_rx: &'a mut mpsc::Receiver<Vec<Vec<SignedTransaction>>>,
+    buffer: &'a mut PresignBuffer,
+    progress: &'a mut EnqueueProgress,
+    base_fee_tx: &'a watch::Sender<u128>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BlockAlignedEnqueueConfig {
+    controller: MempoolDepthController,
+    fallback_block_gas_limit: u64,
+    block_time: Duration,
+    presign_target_gas: u128,
+    max_in_flight_per_sender: usize,
+    max_total_in_flight: usize,
+    deadline: Option<Instant>,
+}
+
 impl EnqueueDrainState<'_> {
     fn apply_submit_event(&mut self, event: SubmitEvent) {
-        LoadRunner::apply_submit_event(event, self.queued_per_sender, self.collector);
+        LoadRunner::apply_submit_event(
+            event,
+            self.queued_per_sender,
+            self.rejected_senders,
+            self.queued_gas,
+            self.collector,
+            self.results_tracker,
+        );
+        self.record_completed_refills();
     }
 
     fn drain_run_events(&mut self) {
         LoadRunner::drain_run_events(
             self.submit_event_rx,
             self.queued_per_sender,
+            self.rejected_senders,
+            self.queued_gas,
             self.collector,
             self.results_tracker,
         );
+        self.record_completed_refills();
         if let Some(progress) = self.progress_display.as_mut() {
             progress.maybe_refresh(self.collector, self.results_tracker);
         }
     }
 
-    /// Total outstanding work: submissions accepted by an RPC and awaiting canonical
-    /// landing (`total_in_flight`) plus submissions handed to the submission pipeline
-    /// but not yet accepted/rejected by an RPC (`queued_per_sender`).
-    ///
-    /// The headroom gate must count both, not just `total_in_flight`, otherwise a
-    /// submission-pipeline backlog (e.g. a slow or saturated RPC) lets the enqueue loop
-    /// race far past `target_in_flight` before the gate ever engages.
-    fn total_outstanding(&self) -> u64 {
+    fn record_completed_refills(&mut self) {
+        for lag in self.results_tracker.drain_completed_refill_lags() {
+            self.collector.record_completed_refill_lag(lag);
+        }
+    }
+
+    fn total_outstanding_gas(&self) -> u128 {
+        self.results_tracker.unconfirmed_gas().saturating_add(*self.queued_gas)
+    }
+
+    fn remaining_transaction_slots(&self, capacity: usize) -> usize {
         let queued =
             self.queued_per_sender.values().fold(0u64, |total, count| total.saturating_add(*count));
-
-        self.results_tracker.total_in_flight().saturating_add(queued)
+        let occupied = self.results_tracker.total_in_flight().saturating_add(queued);
+        capacity.saturating_sub(usize::try_from(occupied).unwrap_or(usize::MAX))
     }
 }
 
-#[derive(Debug)]
-struct InFlightTarget {
-    current_target_in_flight: u64,
-    min_target_in_flight: u64,
-    max_target_in_flight: u64,
-    /// Fixed outstanding-gas inventory (`mempool_target_blocks * gas_cap`).
-    ///
-    /// For capped runs `gas_cap` is `target_gps` (one second of gas at the ceiling).
-    /// For uncapped runs it is the block gas limit.
-    target_outstanding_gas: u128,
-    initial_avg_gas: u64,
-    last_confirmed_sample_count: u64,
-    last_confirmed_sample_at: Instant,
+/// Constraint that limited a block-aligned injection plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InjectLimit {
+    /// The configured depth target was fully satisfied.
+    Target,
+    /// No injection was required because depth already met the target.
+    Nothing,
+    /// Sender in-flight capacity prevented reaching the target.
+    Capacity,
 }
 
-#[derive(Debug)]
-struct InFlightTargetUpdate {
-    previous_target_in_flight: u64,
-    updated_target_in_flight: u64,
-    confirmed_delta: u64,
-    sample_tps: f64,
-    smoothed_tps: f64,
+/// Gas budget produced for one block-aligned refill cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InjectPlan {
+    /// Gas to take from the presign buffer and enqueue.
+    pub inject_gas: u128,
+    /// Desired submitted-but-unconfirmed gas after this cycle.
+    pub desired_gas: u128,
+    /// Current submitted-but-unconfirmed gas.
+    pub depth_gas: u128,
+    /// One-block gas floor.
+    pub floor_gas: u128,
+    /// Two-block gas ceiling.
+    pub ceiling_gas: u128,
+    /// Constraint that determined the plan.
+    pub limited_by: InjectLimit,
 }
 
-impl InFlightTarget {
-    const fn saturated(
-        target_outstanding_gas: u128,
-        target_in_flight: u64,
-        max_target_in_flight: u64,
-        initial_avg_gas: u64,
-        sampled_at: Instant,
+/// Pure controller that keeps one to two blocks of gas in the mempool.
+#[derive(Debug, Clone, Copy)]
+pub struct MempoolDepthController {
+    target_gps: Option<u64>,
+    block_time: Duration,
+    capacity_gas: u128,
+    measurement_started_at: Instant,
+}
+
+impl MempoolDepthController {
+    /// Creates a controller for the measured run.
+    pub const fn new(
+        target_gps: Option<u64>,
+        block_time: Duration,
+        capacity_gas: u128,
+        measurement_started_at: Instant,
     ) -> Self {
-        Self {
-            current_target_in_flight: target_in_flight,
-            min_target_in_flight: 1,
-            max_target_in_flight,
-            target_outstanding_gas,
-            initial_avg_gas,
-            last_confirmed_sample_count: 0,
-            last_confirmed_sample_at: sampled_at,
-        }
+        Self { target_gps, block_time, capacity_gas, measurement_started_at }
     }
 
-    fn clamp_target_in_flight(&self, target_in_flight: u64) -> u64 {
-        target_in_flight.clamp(self.min_target_in_flight, self.max_target_in_flight)
-    }
-
-    const fn current_target_in_flight(&self) -> u64 {
-        self.current_target_in_flight
-    }
-
-    fn maybe_update(
-        &mut self,
+    /// Computes the gas to inject without performing I/O or reading a clock.
+    pub fn plan(
+        &self,
         now: Instant,
-        confirmed_count: u64,
-        avg_gas_per_tx: Option<u64>,
-    ) -> Option<InFlightTargetUpdate> {
-        if now.saturating_duration_since(self.last_confirmed_sample_at)
-            < TARGET_UPDATE_INTERVAL
-        {
-            return None;
-        }
-
-        let elapsed = now.saturating_duration_since(self.last_confirmed_sample_at).as_secs_f64();
-        let confirmed_delta = confirmed_count.saturating_sub(self.last_confirmed_sample_count);
-        let sample_tps = if elapsed > 0.0 { confirmed_delta as f64 / elapsed } else { 0.0 };
-        let average_gas = u128::from(avg_gas_per_tx.unwrap_or(self.initial_avg_gas).max(1));
-        let updated_target_in_flight = self.clamp_target_in_flight(
-            u64::try_from(self.target_outstanding_gas.div_ceil(average_gas)).unwrap_or(u64::MAX),
+        block_gas_limit: u64,
+        depth_gas: u128,
+        confirmed_gas: u128,
+    ) -> InjectPlan {
+        let floor_gas = self.target_gps.map_or_else(
+            || u128::from(block_gas_limit),
+            |target_gps| {
+                u128::from(target_gps)
+                    .saturating_mul(self.block_time.as_nanos())
+                    .div_ceil(Duration::from_secs(1).as_nanos())
+                    .min(u128::from(block_gas_limit))
+            },
         );
-        let previous_target_in_flight = self.current_target_in_flight;
-        self.current_target_in_flight = updated_target_in_flight;
-        self.last_confirmed_sample_count = confirmed_count;
-        self.last_confirmed_sample_at = now;
-        Some(InFlightTargetUpdate {
-            previous_target_in_flight,
-            updated_target_in_flight,
-            confirmed_delta,
-            sample_tps,
-            smoothed_tps: sample_tps,
-        })
+        let ceiling_gas = floor_gas.saturating_mul(2);
+        let catchup = self.target_gps.map_or(floor_gas, |target_gps| {
+            let cumulative_target = u128::from(target_gps)
+                .saturating_mul(
+                    now.saturating_duration_since(self.measurement_started_at).as_nanos(),
+                )
+                .div_ceil(Duration::from_secs(1).as_nanos());
+            cumulative_target.saturating_sub(confirmed_gas).min(floor_gas)
+        });
+        let desired_gas = floor_gas.saturating_add(catchup).min(ceiling_gas);
+        let wanted = desired_gas.saturating_sub(depth_gas);
+        let capacity_headroom = self.capacity_gas.saturating_sub(depth_gas);
+        let inject_gas = wanted.min(capacity_headroom);
+        let limited_by = if wanted == 0 {
+            InjectLimit::Nothing
+        } else if inject_gas < wanted {
+            InjectLimit::Capacity
+        } else {
+            InjectLimit::Target
+        };
+
+        InjectPlan { inject_gas, desired_gas, depth_gas, floor_gas, ceiling_gas, limited_by }
     }
 }
 
 impl LoadRunner {
     /// Computes the fixed transaction inventory required to hold the requested gas.
     pub fn mempool_target_transactions(
-        block_gas_limit: u64,
-        target_blocks: u64,
+        target_gas: u64,
         average_gas: u64,
         capacity: u64,
     ) -> Result<u64> {
         if average_gas == 0 {
             return Err(BaselineError::Config("calibrated average gas must be > 0".into()));
         }
-        let gas = u128::from(block_gas_limit)
-            .checked_mul(u128::from(target_blocks))
-            .ok_or_else(|| BaselineError::Config("mempool gas target overflowed".into()))?;
-        let target = gas.div_ceil(u128::from(average_gas));
+        let target = u128::from(target_gas).div_ceil(u128::from(average_gas));
         let target = u64::try_from(target)
             .map_err(|_| BaselineError::Config("mempool transaction target exceeds u64".into()))?;
         if target > capacity {
-            return Err(BaselineError::Config(format!(
-                "mempool target requires {target} transactions but sender capacity is {capacity}"
-            )));
+            warn!(
+                target,
+                capacity, "mempool target exceeds sender capacity; clamping to available capacity"
+            );
         }
-        Ok(target)
+        Ok(target.min(capacity))
     }
 
     #[instrument(skip(self), fields(target_gps = ?self.config.target_gps, continuous = self.config.duration.is_none(), duration = ?self.config.duration))]
@@ -355,28 +386,36 @@ impl LoadRunner {
             mpsc::channel::<SubmitEvent>(SUBMIT_CHANNEL_BUFFER);
 
         let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
-        let results_tracker = ResultsTracker::new(&sender_addresses);
-
-        info!(url = %self.config.flashblocks_ws, "starting flashblock transaction watcher");
-        let flashblock_watcher_task = Some(
-            FlashblockWatcher::new(
-                self.config.flashblocks_ws.clone(),
-                results_tracker.clone(),
-                self.cancel_token.clone(),
-            )
-            .start(),
-        );
+        const INCLUSION_PULSE_BUFFER: usize = 1_024;
+        let (inclusion_pulse_tx, mut inclusion_pulse_rx) =
+            mpsc::channel::<InclusionPulse>(INCLUSION_PULSE_BUFFER);
+        let results_tracker =
+            ResultsTracker::new_with_pulse_sender(&sender_addresses, inclusion_pulse_tx.clone());
 
         info!(url = %self.config.query_rpc, "starting block watcher");
         let receipt_provider = RootProvider::<Base>::new_http(self.config.query_rpc.clone());
+        let watcher_cancel = self.cancel_token.child_token();
+        let _watcher_cancel_guard = watcher_cancel.clone().drop_guard();
         let block_watcher_task = Some(
             BlockWatcher::new(
                 receipt_provider.clone(),
                 results_tracker.clone(),
-                self.cancel_token.clone(),
+                self.config.block_time,
+                inclusion_pulse_tx.clone(),
+                watcher_cancel.clone(),
             )
             .start(),
         );
+        let flashblock_watcher_task = self.config.flashblocks_ws.clone().map(|ws_url| {
+            FlashblockWatcher::new(
+                ws_url,
+                results_tracker.clone(),
+                inclusion_pulse_tx.clone(),
+                watcher_cancel.clone(),
+            )
+            .start()
+        });
+        drop(inclusion_pulse_tx);
 
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
@@ -418,6 +457,8 @@ impl LoadRunner {
         let next_submit_batch_id = AtomicU64::new(0);
         let mut queued_per_sender: HashMap<Address, u64> =
             self.accounts.accounts().iter().map(|a| (a.address, 0)).collect();
+        let mut rejected_senders = HashSet::new();
+        let mut queued_gas = 0u128;
 
         let mut last_base_fee_refresh = Instant::now();
         let mut last_progress_report = Instant::now();
@@ -464,12 +505,7 @@ impl LoadRunner {
                 "capping open-loop in-flight target with max_total_in_flight"
             );
         }
-        // Inventory is always `mempool_target_blocks * gas_cap` of submitted-but-unconfirmed
-        // gas. Capped runs use `target_gps` as the per-block gas unit (one second at the
-        // ceiling); uncapped runs use the chain's block gas limit.
-        let gas_cap = if let Some(target_gps) = self.config.target_gps {
-            target_gps
-        } else if let Some(limit) = self.config.block_gas_limit {
+        let block_gas_limit = if let Some(limit) = self.config.block_gas_limit {
             limit
         } else {
             self.client
@@ -483,31 +519,41 @@ impl LoadRunner {
                 .header
                 .gas_limit
         };
+        let requested_floor_gas = self.config.target_gps.map_or_else(
+            || u128::from(block_gas_limit),
+            |target_gps| {
+                u128::from(target_gps)
+                    .saturating_mul(self.config.block_time.as_nanos())
+                    .div_ceil(Duration::from_secs(1).as_nanos())
+            },
+        );
+        let floor_gas = requested_floor_gas.min(u128::from(block_gas_limit));
+        if requested_floor_gas > floor_gas {
+            warn!(
+                requested_floor_gas,
+                block_gas_limit,
+                "per-block gas target exceeds block gas limit; clamping to block capacity"
+            );
+        }
         let target = Self::mempool_target_transactions(
-            gas_cap,
-            self.config.mempool_target_blocks,
+            u64::try_from(floor_gas).unwrap_or(u64::MAX),
             initial_avg_gas,
             capacity as u64,
         )?;
-        let target_gas = u128::from(gas_cap) * u128::from(self.config.mempool_target_blocks);
-        let open_loop_headroom_target = InFlightTarget::saturated(
-            target_gas,
-            target,
-            capacity as u64,
-            initial_avg_gas,
-            Instant::now(),
-        );
-        let initial_target_in_flight = open_loop_headroom_target.current_target_in_flight();
+        let initial_target_in_flight = target;
 
-        let replacement_generator =
-            WorkloadGenerator::from_tx_configs(self.workload_config(), &self.config.transactions, self.b20_run_salt)?;
+        let replacement_generator = WorkloadGenerator::from_tx_configs(
+            self.workload_config(),
+            &self.config.transactions,
+            self.b20_run_salt,
+        )?;
         let producer_generator = std::mem::replace(&mut self.generator, replacement_generator);
         let producer_recipient_keys = self.recipient_keys.take();
         let producer_recipient_rng = std::mem::take(&mut self.recipient_rng);
 
-        let (signed_chunk_tx, mut signed_chunk_rx) =
-            mpsc::channel(PRESIGN_CHANNEL_BUFFER);
+        let (signed_chunk_tx, mut signed_chunk_rx) = mpsc::channel(PRESIGN_CHANNEL_BUFFER);
         let (base_fee_tx, base_fee_rx) = watch::channel(self.base_fee);
+        let pacing_base_fee_tx = base_fee_tx.clone();
         let base_fee_client = self.client.clone();
         let base_fee_cancel = self.cancel_token.clone();
         let base_fee_task = tokio::spawn(async move {
@@ -540,38 +586,41 @@ impl LoadRunner {
             },
         ));
 
-        let mut progress = EnqueueProgress {
-            presigned_generated: 0,
-            headroom_target: open_loop_headroom_target,
-        };
+        let mut progress = EnqueueProgress { presigned_generated: 0 };
+        let mut presign_buffer = PresignBuffer::new(sender_count);
 
         info!(
             sender_count,
             initial_target_in_flight,
             max_target_in_flight = capacity,
-            mempool_target_blocks = self.config.mempool_target_blocks,
+            floor_gas,
+            block_time_ms = self.config.block_time.as_millis(),
             "started open-loop streaming pre-sign pipeline"
         );
 
         if let Some(display) = self.display.as_ref() {
-            display.set_phase(&format!(
-                "prefill (target_in_flight={initial_target_in_flight})..."
-            ));
+            display.set_phase(&format!("prefill (target_in_flight={initial_target_in_flight})..."));
         }
         let prefill_deadline = Instant::now() + PREFILL_TIMEOUT;
-        let mut prefill_result = Self::enqueue_signed_transactions(
-            &submission_pipeline,
-            &next_submit_batch_id,
-            &mut signed_chunk_rx,
-            &mut progress,
-            EnqueueLimits {
-                deadline: Some(prefill_deadline),
-                stop_when_accepted_target_reached: true,
+        let prefill_result = Self::enqueue_prefill_transactions(
+            &mut PresignEnqueueState {
+                submission_pipeline: &submission_pipeline,
+                next_submit_batch_id: &next_submit_batch_id,
+                signed_chunk_rx: &mut signed_chunk_rx,
+                buffer: &mut presign_buffer,
+                progress: &mut progress,
+                base_fee_tx: &pacing_base_fee_tx,
             },
+            floor_gas.min(u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas))),
+            max_in_flight_per_sender,
+            capacity,
+            prefill_deadline,
             &self.stop_flag,
             &mut EnqueueDrainState {
                 submit_event_rx: &mut submit_event_rx,
                 queued_per_sender: &mut queued_per_sender,
+                rejected_senders: &mut rejected_senders,
+                queued_gas: &mut queued_gas,
                 collector: &mut self.collector,
                 results_tracker: &results_tracker,
                 progress_display: (use_live_display || use_snapshot_tx).then(|| {
@@ -608,6 +657,8 @@ impl LoadRunner {
                 Self::drain_run_events(
                     &mut submit_event_rx,
                     &mut queued_per_sender,
+                    &mut rejected_senders,
+                    &mut queued_gas,
                     &mut self.collector,
                     &results_tracker,
                 );
@@ -616,17 +667,17 @@ impl LoadRunner {
             Self::drain_run_events(
                 &mut submit_event_rx,
                 &mut queued_per_sender,
+                &mut rejected_senders,
+                &mut queued_gas,
                 &mut self.collector,
                 &results_tracker,
             );
             let pending_batches = submission_pipeline.pending_batches();
             if pending_batches > 0 {
-                prefill_result = Err(BaselineError::Timeout {
-                    operation: format!(
-                        "setup submission pipeline drain ({pending_batches} batches pending)"
-                    ),
-                    duration: SUBMIT_DRAIN_TIMEOUT,
-                });
+                warn!(
+                    pending_batches,
+                    "warmup submission pipeline is still draining; continuing as a measured bottleneck"
+                );
             }
         }
 
@@ -637,9 +688,12 @@ impl LoadRunner {
             Self::drain_run_events(
                 &mut submit_event_rx,
                 &mut queued_per_sender,
+                &mut rejected_senders,
+                &mut queued_gas,
                 &mut self.collector,
                 &results_tracker,
             );
+            while inclusion_pulse_rx.try_recv().is_ok() {}
             results_tracker.begin_measurement();
             self.collector.reset();
             self.collector.set_estimated_gas(initial_avg_gas);
@@ -662,19 +716,39 @@ impl LoadRunner {
                 duration_secs = ?self.config.duration.map(|d| d.as_secs()),
                 "starting open-loop measured enqueue"
             );
-            Self::enqueue_signed_transactions(
-                &submission_pipeline,
-                &next_submit_batch_id,
-                &mut signed_chunk_rx,
-                &mut progress,
-                EnqueueLimits {
-                    deadline: enqueue_deadline,
-                    stop_when_accepted_target_reached: false,
+            let depth_controller = MempoolDepthController::new(
+                self.config.target_gps,
+                self.config.block_time,
+                u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas)),
+                start,
+            );
+            Self::enqueue_block_aligned_transactions(
+                &mut PresignEnqueueState {
+                    submission_pipeline: &submission_pipeline,
+                    next_submit_batch_id: &next_submit_batch_id,
+                    signed_chunk_rx: &mut signed_chunk_rx,
+                    buffer: &mut presign_buffer,
+                    progress: &mut progress,
+                    base_fee_tx: &pacing_base_fee_tx,
                 },
+                BlockAlignedEnqueueConfig {
+                    controller: depth_controller,
+                    fallback_block_gas_limit: block_gas_limit,
+                    block_time: self.config.block_time,
+                    presign_target_gas: floor_gas.saturating_mul(2).min(
+                        u128::from(capacity as u64).saturating_mul(u128::from(initial_avg_gas)),
+                    ),
+                    max_in_flight_per_sender,
+                    max_total_in_flight: capacity,
+                    deadline: enqueue_deadline,
+                },
+                &mut inclusion_pulse_rx,
                 &self.stop_flag,
                 &mut EnqueueDrainState {
                     submit_event_rx: &mut submit_event_rx,
                     queued_per_sender: &mut queued_per_sender,
+                    rejected_senders: &mut rejected_senders,
+                    queued_gas: &mut queued_gas,
                     collector: &mut self.collector,
                     results_tracker: &results_tracker,
                     progress_display: (use_live_display || use_snapshot_tx).then(|| {
@@ -701,6 +775,7 @@ impl LoadRunner {
             )
             .await
         };
+        self.collector.set_pacing_duration(start.elapsed());
 
         let finished_file = self.config.separate_setup.as_deref().map(|dir| dir.join("finished"));
         Self::publish_handshake(finished_file.as_deref())?;
@@ -765,6 +840,8 @@ impl LoadRunner {
             Self::drain_run_events(
                 &mut submit_event_rx,
                 &mut queued_per_sender,
+                &mut rejected_senders,
+                &mut queued_gas,
                 &mut self.collector,
                 &results_tracker,
             );
@@ -859,7 +936,10 @@ impl LoadRunner {
             Self::drain_submit_events(
                 &mut submit_event_rx,
                 &mut queued_per_sender,
+                &mut rejected_senders,
+                &mut queued_gas,
                 &mut self.collector,
+                &results_tracker,
             );
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
@@ -887,8 +967,14 @@ impl LoadRunner {
         Self::drain_submit_events(
             &mut submit_event_rx,
             &mut queued_per_sender,
+            &mut rejected_senders,
+            &mut queued_gas,
             &mut self.collector,
+            &results_tracker,
         );
+        for lag in results_tracker.drain_completed_refill_lags() {
+            self.collector.record_completed_refill_lag(lag);
+        }
 
         // Keep background watchers alive through the drain so late flashblock
         // inclusions and block observations can still be joined into metrics.
@@ -934,14 +1020,6 @@ impl LoadRunner {
                 }
             }
 
-            // Use a shorter expiry during drain: the test is over, so any
-            // pending tx older than the drain window itself is stale.
-            let drain_expiry = PENDING_CONFIRMATION_TIMEOUT.saturating_sub(drain_start.elapsed());
-            let expired = results_tracker.expire_pending(drain_expiry);
-            if expired > 0 {
-                self.collector.record_failures("expired without confirmation", expired);
-            }
-
             let pending_count = results_tracker.pending_count();
             if pending_count == 0 {
                 break;
@@ -951,21 +1029,27 @@ impl LoadRunner {
                 last_drain_progress = Instant::now();
             } else if last_drain_progress.elapsed() >= DRAIN_STALL_TIMEOUT {
                 // No confirmations and no shrinkage for a while: the remainder is
-                // stuck (dropped, replaced, underwater, or never forwarded).
-                // Force-expire now instead of waiting out the full window.
-                let stalled = results_tracker.expire_pending(Duration::ZERO);
-                if stalled > 0 {
-                    self.collector.record_failures("expired without confirmation", stalled);
-                }
+                // expected mempool inventory at the measurement cutoff. Remove it
+                // from tracking without classifying it as a failed transaction.
+                let (stalled, undrained_gas) = results_tracker.measured_unconfirmed_inventory();
+                results_tracker.expire_pending(Duration::ZERO);
+                self.collector.record_undrained_inventory(stalled, undrained_gas);
                 warn!(
                     stalled,
+                    undrained_gas,
                     stall_secs = DRAIN_STALL_TIMEOUT.as_secs(),
-                    "confirmation drain stalled with no progress, force-expiring remainder"
+                    "confirmation drain stopped with expected undrained inventory"
                 );
                 break;
             }
 
             tokio::time::sleep(results_poll_interval).await;
+        }
+
+        if results_tracker.pending_count() > 0 {
+            let (undrained, undrained_gas) = results_tracker.measured_unconfirmed_inventory();
+            results_tracker.expire_pending(Duration::ZERO);
+            self.collector.record_undrained_inventory(undrained, undrained_gas);
         }
 
         for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
@@ -979,15 +1063,17 @@ impl LoadRunner {
         // Now safe to stop background watcher tasks.
         self.cancel_token.cancel();
 
-        if let Some(task) = flashblock_watcher_task {
-            match tokio::time::timeout(Duration::from_secs(2), task).await {
-                Ok(Err(e)) if e.is_panic() => warn!(error = %e, "flashblock watcher panicked"),
-                _ => {}
-            }
-        }
         if let Some(task) = block_watcher_task {
             match tokio::time::timeout(Duration::from_secs(2), task).await {
                 Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
+                _ => {}
+            }
+        }
+        if let Some(task) = flashblock_watcher_task {
+            match tokio::time::timeout(Duration::from_secs(2), task).await {
+                Ok(Err(error)) if error.is_panic() => {
+                    warn!(error = %error, "flashblock watcher panicked");
+                }
                 _ => {}
             }
         }
@@ -1039,10 +1125,7 @@ impl LoadRunner {
         Ok(summary)
     }
 
-    async fn sender_start_nonces(
-        &self,
-        sender_addresses: &[Address],
-    ) -> Result<Vec<u64>> {
+    async fn sender_start_nonces(&self, sender_addresses: &[Address]) -> Result<Vec<u64>> {
         let nonce_futures = sender_addresses.iter().map(|from| async move {
             let nonce_manager = self.nonce_managers.get(from).ok_or_else(|| {
                 BaselineError::Transaction(format!("missing nonce manager for sender {from}"))
@@ -1059,9 +1142,11 @@ impl LoadRunner {
             Ok(nonce)
         });
 
-        stream::iter(nonce_futures).buffered(super::funding::FUNDING_CONCURRENCY).try_collect().await
+        stream::iter(nonce_futures)
+            .buffered(super::funding::FUNDING_CONCURRENCY)
+            .try_collect()
+            .await
     }
-
 
     fn select_recipient(
         recipient_keys: &mut Option<KeyStream>,
@@ -1156,7 +1241,8 @@ impl LoadRunner {
             return Ok(Vec::new());
         }
 
-        let priority_fee = (base_fee / 10).max(1);
+        let priority_fee =
+            (base_fee / 10).max(MIN_PRIORITY_FEE).min(max_gas_price.saturating_sub(base_fee));
         let max_fee = SubmissionPipeline::submission_max_fee(base_fee, priority_fee, max_gas_price);
 
         let mut signing_tasks = Vec::with_capacity(sender_count);
@@ -1314,7 +1400,13 @@ impl LoadRunner {
             let tx_hash = *signed.hash();
             let raw = Bytes::from(signed.encoded_2718());
 
-            signed_txs.push(SignedTransaction { raw, tx_hash, from: prepared.from, nonce });
+            signed_txs.push(SignedTransaction {
+                raw,
+                tx_hash,
+                from: prepared.from,
+                nonce,
+                gas_limit: prepared.gas_limit,
+            });
         }
 
         Ok(SignedSender { sender_index: sender_job.sender_index, signed_txs })
@@ -1347,270 +1439,339 @@ impl LoadRunner {
         }
     }
 
-    /// Blocks new submissions while outstanding work (submitted-but-unconfirmed
-    /// `total_in_flight`, plus handed-to-the-pipeline-but-not-yet-RPC-accepted
-    /// `queued_per_sender`) is at or above `target_in_flight`, draining confirmation
-    /// and submit events in the meantime.
-    ///
-    /// This paces the open-loop fill to the builder's drain rate so the pool holds a
-    /// steady depth instead of being flooded in one burst and then draining empty.
-    /// A `target_in_flight` of 0 disables pacing (unbounded fill).
-    ///
-    /// Outstanding work is released by the block watcher mutating the shared
-    /// `ResultsTracker` out-of-band, not by submit events, so the wait re-reads
-    /// `total_outstanding` on a fixed interval rather than only when a submit event
-    /// arrives; a `recv` timeout means "re-check", never "grant headroom". If
-    /// outstanding work fails to fall for `HEADROOM_STALL_TIMEOUT` the
-    /// confirmation path is dead and the gate fails closed (returns `Err`) instead of
-    /// hanging or flooding the pool.
-    async fn wait_for_outstanding_headroom(
-        target_in_flight: u64,
-        deadline: Option<Instant>,
-        stop_when_accepted_target_reached: bool,
+    async fn enqueue_block_aligned_transactions(
+        enqueue_state: &mut PresignEnqueueState<'_>,
+        config: BlockAlignedEnqueueConfig,
+        inclusion_pulse_rx: &mut mpsc::Receiver<InclusionPulse>,
         stop_flag: &AtomicBool,
         drain_state: &mut EnqueueDrainState<'_>,
     ) -> Result<()> {
-        if target_in_flight == 0 {
-            return Ok(());
-        }
-
-        // Always apply queued Released/Submitted events before reading outstanding.
-        // Otherwise a fast path that returns while `outstanding < target` can leave
-        // `queued_per_sender` inflated and permanently block later waits.
-        drain_state.drain_run_events();
-
-        let mut last_outstanding = drain_state.total_outstanding();
-        let mut last_progress = Instant::now();
-        let mut last_wait_log = Instant::now()
-            .checked_sub(Duration::from_secs(5))
-            .unwrap_or_else(Instant::now);
-
-        while drain_state.total_outstanding() >= target_in_flight {
-            if stop_flag.load(Ordering::SeqCst) {
-                return Err(BaselineError::Transaction("stopped during open-loop enqueue".into()));
-            }
-            if stop_when_accepted_target_reached
-                && drain_state.results_tracker.total_in_flight() >= target_in_flight
-            {
-                return Ok(());
-            }
-            if deadline.is_some_and(|d| Instant::now() >= d) {
-                if stop_when_accepted_target_reached {
-                    return Err(BaselineError::Timeout {
-                        operation: "open-loop mempool prefill".into(),
-                        duration: PREFILL_TIMEOUT,
-                    });
-                }
-                return Ok(());
-            }
-
-            match tokio::time::timeout(
-                HEADROOM_RECHECK_INTERVAL,
-                drain_state.submit_event_rx.recv(),
-            )
-            .await
-            {
-                Ok(Some(event)) => {
-                    drain_state.apply_submit_event(event);
-                    drain_state.drain_run_events();
-                }
-                Ok(None) => return Ok(()),
-                Err(_) => drain_state.drain_run_events(),
-            }
-
-            let current = drain_state.total_outstanding();
-            let in_flight = drain_state.results_tracker.total_in_flight();
-            let pending = drain_state.results_tracker.pending_count();
-            let queued = current.saturating_sub(in_flight);
-            if last_wait_log.elapsed() >= Duration::from_secs(5) {
-                info!(
-                    outstanding = current,
-                    in_flight,
-                    queued,
-                    pending,
-                    target_in_flight,
-                    confirmed = drain_state.collector.confirmed_count(),
-                    wait_secs = last_progress.elapsed().as_secs(),
-                    prefill = stop_when_accepted_target_reached,
-                    "waiting for open-loop headroom (in-flight must drop before more submits)"
-                );
-                last_wait_log = Instant::now();
-            }
-            if current < last_outstanding {
-                last_outstanding = current;
-                last_progress = Instant::now();
-            } else if last_progress.elapsed() >= HEADROOM_STALL_TIMEOUT {
-                return Err(BaselineError::Timeout {
-                    operation: format!(
-                        "open-loop outstanding headroom (stuck at {current} outstanding, \
-                         in_flight={in_flight}, queued={queued}, pending={pending}, \
-                         target {target_in_flight})"
-                    ),
-                    duration: HEADROOM_STALL_TIMEOUT,
-                });
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn enqueue_signed_transactions(
-        submission_pipeline: &SubmissionPipeline,
-        next_submit_batch_id: &AtomicU64,
-        signed_chunk_rx: &mut mpsc::Receiver<Vec<Vec<SignedTransaction>>>,
-        progress: &mut EnqueueProgress,
-        limits: EnqueueLimits,
-        stop_flag: &AtomicBool,
-        drain_state: &mut EnqueueDrainState<'_>,
-    ) -> Result<()> {
-        let mut pending_signed_batch = Vec::with_capacity(SIGNED_BATCH_SIZE);
+        let safety_interval =
+            (config.block_time / 4).clamp(Duration::from_millis(1), Duration::from_millis(250));
+        let mut safety_tick = tokio::time::interval(safety_interval);
+        safety_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut last_block_gas_limit = config.fallback_block_gas_limit;
+        let signal_timeout =
+            config.block_time + (config.block_time / 2).min(Duration::from_millis(250));
+        let mut last_pulse_at =
+            Instant::now().checked_sub(signal_timeout).unwrap_or_else(Instant::now);
 
         loop {
             drain_state.drain_run_events();
-            if stop_flag.load(Ordering::SeqCst) {
-                return Err(BaselineError::Transaction("stopped during open-loop enqueue".into()));
-            }
-            if limits.deadline.is_some_and(|d| Instant::now() >= d) {
+            if stop_flag.load(Ordering::SeqCst)
+                || config.deadline.is_some_and(|deadline| Instant::now() >= deadline)
+            {
                 return Ok(());
             }
 
-            let signed_by_sender = match tokio::time::timeout(
-                HEADROOM_RECHECK_INTERVAL,
-                signed_chunk_rx.recv(),
+            tokio::select! {
+                biased;
+                maybe_pulse = inclusion_pulse_rx.recv() => {
+                    let Some(pulse) = maybe_pulse else {
+                        return Ok(());
+                    };
+                    if let Some(canonical) = pulse.canonical {
+                        last_block_gas_limit = canonical.gas_limit;
+                        enqueue_state.base_fee_tx.send_replace(canonical.base_fee);
+                    }
+                    last_pulse_at = pulse.observed_at;
+                    Self::run_refill_cycle(
+                        enqueue_state,
+                        &config.controller,
+                        pulse,
+                        last_block_gas_limit,
+                        config.max_in_flight_per_sender,
+                        config.max_total_in_flight,
+                        drain_state,
+                    )
+                    .await?;
+                }
+                _ = safety_tick.tick() => {
+                    if last_pulse_at.elapsed() >= signal_timeout {
+                        Self::run_refill_cycle(
+                            enqueue_state,
+                            &config.controller,
+                            InclusionPulse::safety(Instant::now()),
+                            last_block_gas_limit,
+                            config.max_in_flight_per_sender,
+                            config.max_total_in_flight,
+                            drain_state,
+                        )
+                        .await?;
+                        last_pulse_at = Instant::now();
+                    }
+                }
+                maybe_chunk = enqueue_state.signed_chunk_rx.recv(),
+                    if enqueue_state.buffer.buffered_gas() < config.presign_target_gas => {
+                    let Some(chunk) = maybe_chunk else {
+                        return Ok(());
+                    };
+                    Self::buffer_presigned_chunk(
+                        enqueue_state.buffer,
+                        enqueue_state.progress,
+                        chunk,
+                    );
+                }
+            }
+        }
+    }
+
+    fn buffer_presigned_chunk(
+        buffer: &mut PresignBuffer,
+        progress: &mut EnqueueProgress,
+        chunk: Vec<Vec<SignedTransaction>>,
+    ) {
+        for (sender_index, sender_txs) in chunk.into_iter().enumerate() {
+            progress.presigned_generated =
+                progress.presigned_generated.saturating_add(sender_txs.len() as u64);
+            buffer.push_sender_batch(sender_index, sender_txs);
+        }
+    }
+
+    async fn run_refill_cycle(
+        enqueue_state: &mut PresignEnqueueState<'_>,
+        controller: &MempoolDepthController,
+        pulse: InclusionPulse,
+        fallback_block_gas_limit: u64,
+        max_in_flight_per_sender: usize,
+        max_total_in_flight: usize,
+        drain_state: &mut EnqueueDrainState<'_>,
+    ) -> Result<()> {
+        let cycle_started = pulse.observed_at;
+        let canonical = pulse.canonical;
+        while let Ok(chunk) = enqueue_state.signed_chunk_rx.try_recv() {
+            Self::buffer_presigned_chunk(enqueue_state.buffer, enqueue_state.progress, chunk);
+        }
+        drain_state.drain_run_events();
+        for sender in drain_state.rejected_senders.drain() {
+            if enqueue_state.buffer.disable_sender(sender) {
+                warn!(sender = %sender, "disabled sender after terminal nonce rejection");
+            }
+        }
+
+        let plan_started = Instant::now();
+        let depth_gas = drain_state.total_outstanding_gas();
+        let block_gas_limit = canonical.map_or(fallback_block_gas_limit, |block| block.gas_limit);
+        let plan = controller.plan(
+            cycle_started,
+            block_gas_limit,
+            depth_gas,
+            drain_state.results_tracker.confirmed_gas(),
+        );
+        let buffered_before = enqueue_state.buffer.buffered_gas();
+        let mut sender_slots: HashMap<Address, u64> = drain_state
+            .queued_per_sender
+            .iter()
+            .map(|(from, queued)| {
+                let occupied =
+                    queued.saturating_add(drain_state.results_tracker.in_flight_for(from));
+                (
+                    *from,
+                    u64::try_from(max_in_flight_per_sender)
+                        .unwrap_or(u64::MAX)
+                        .saturating_sub(occupied),
+                )
+            })
+            .collect();
+        let remaining_transaction_slots =
+            drain_state.remaining_transaction_slots(max_total_in_flight);
+        let mut selected = enqueue_state.buffer.take_gas_with_limits(
+            plan.inject_gas,
+            &mut sender_slots,
+            remaining_transaction_slots,
+        );
+        let selected_gas =
+            selected.iter().fold(0u128, |total, tx| total.saturating_add(u128::from(tx.gas_limit)));
+        let sender_capacity_limited = selected_gas < plan.inject_gas
+            && (buffered_before >= plan.inject_gas || remaining_transaction_slots == 0);
+        let presign_starved = selected_gas < plan.inject_gas && !sender_capacity_limited;
+        if presign_starved {
+            debug!(
+                requested_gas = plan.inject_gas,
+                selected_gas,
+                buffered_gas = enqueue_state.buffer.buffered_gas(),
+                "presign buffer could not satisfy block refill"
+            );
+        } else if sender_capacity_limited {
+            debug!(
+                requested_gas = plan.inject_gas,
+                selected_gas, "per-sender pool slots limited block refill"
+            );
+        }
+        let plan_time = plan_started.elapsed();
+
+        let selected_count = selected.len();
+        let submit_started = Instant::now();
+        let first_batch_id = enqueue_state.next_submit_batch_id.load(Ordering::SeqCst);
+        while !selected.is_empty() {
+            if !Self::enqueue_signed_batch(
+                enqueue_state.submission_pipeline,
+                enqueue_state.next_submit_batch_id,
+                &mut selected,
+                SIGNED_BATCH_SIZE,
+                true,
+                drain_state,
             )
             .await
             {
-                Ok(Some(signed_by_sender)) => signed_by_sender,
-                Ok(None) => break,
-                Err(_) => continue,
-            };
-
-            for sender_signed in &signed_by_sender {
-                progress.presigned_generated =
-                    progress.presigned_generated.saturating_add(sender_signed.len() as u64);
+                break;
             }
-
-            let mut sender_iters =
-                signed_by_sender.into_iter().map(Vec::into_iter).collect::<Vec<_>>();
-
-            loop {
-                let mut made_progress = false;
-
-                for sender_iter in &mut sender_iters {
-                    if let Some(signed_tx) = sender_iter.next() {
-                        made_progress = true;
-                        pending_signed_batch.push(signed_tx);
-
-                        if pending_signed_batch.len() >= SIGNED_BATCH_SIZE
-                            && Self::pace_and_enqueue_signed_batch(
-                                submission_pipeline,
-                                next_submit_batch_id,
-                                &mut pending_signed_batch,
-                                progress,
-                                limits,
-                                stop_flag,
-                                drain_state,
-                            )
-                            .await?
-                        {
-                            return Ok(());
-                        }
-                    }
-                }
-
-                if !made_progress {
-                    break;
-                }
-            }
-
-            drain_state.drain_run_events();
         }
-
-        if !pending_signed_batch.is_empty() {
-            let _ = Self::pace_and_enqueue_signed_batch(
-                submission_pipeline,
-                next_submit_batch_id,
-                &mut pending_signed_batch,
-                progress,
-                limits,
-                stop_flag,
-                drain_state,
-            )
-            .await?;
+        let batch_ids: Vec<u64> =
+            (first_batch_id..enqueue_state.next_submit_batch_id.load(Ordering::SeqCst)).collect();
+        let refill_lag = Self::wait_for_batch_completions(
+            &batch_ids,
+            cycle_started,
+            Duration::from_millis(100),
+            drain_state,
+        )
+        .await;
+        let submit_time = refill_lag
+            .map(|lag| lag.saturating_sub(submit_started.saturating_duration_since(cycle_started)));
+        if !batch_ids.is_empty() && refill_lag.is_none() {
+            drain_state.results_tracker.register_pending_refill(batch_ids.clone(), cycle_started);
+            warn!(
+                block = canonical.map(|block| block.number),
+                source = ?pulse.source,
+                batch_count = batch_ids.len(),
+                "block refill submissions exceeded 100ms acknowledgement budget"
+            );
         }
-
+        let resulting_depth_gas = drain_state.total_outstanding_gas();
+        let availability_lag_ms = canonical.map_or(0, |block| {
+            block.observed_at.saturating_duration_since(block.expected_boundary).as_millis()
+        });
+        drain_state.collector.record_pacing_cycle(PacingCycleObservation {
+            elapsed: cycle_started.saturating_duration_since(controller.measurement_started_at),
+            source: match pulse.source {
+                InclusionSource::Canonical => PacingCycleSource::Canonical,
+                InclusionSource::Flashblock => PacingCycleSource::Flashblock,
+                InclusionSource::Safety => PacingCycleSource::Safety,
+            },
+            block_observed: canonical.is_some(),
+            block_gas_used: canonical.map_or(0, |block| block.gas_used),
+            block_gas_limit,
+            our_included_gas: canonical.map_or(0, |block| block.our_included_gas),
+            pre_refill_depth_gas: depth_gas,
+            post_refill_depth_gas: resulting_depth_gas,
+            floor_gas: plan.floor_gas,
+            offered_gas: selected_gas,
+            capacity_limited: matches!(plan.limited_by, InjectLimit::Capacity)
+                || sender_capacity_limited,
+            chain_bound: depth_gas >= plan.ceiling_gas,
+            presign_starved,
+            availability_lag: canonical
+                .map(|block| block.observed_at.saturating_duration_since(block.expected_boundary)),
+            plan_time,
+            submit_time,
+            refill_lag,
+        });
+        debug!(
+            block = canonical.map(|block| block.number),
+            source = ?pulse.source,
+            released_gas = pulse.released_gas,
+            depth_gas,
+            resulting_depth_gas,
+            desired_gas = plan.desired_gas,
+            inject_gas = plan.inject_gas,
+            selected_gas,
+            selected_count,
+            buffered_gas = enqueue_state.buffer.buffered_gas(),
+            availability_lag_ms,
+            plan_ms = plan_time.as_millis(),
+            submit_ms = submit_time.map(|time| time.as_millis()),
+            refill_lag_ms = refill_lag.map(|lag| lag.as_millis()),
+            limited_by = ?plan.limited_by,
+            "completed block-aligned refill enqueue"
+        );
         Ok(())
     }
 
-    /// Updates the in-flight target, waits for headroom, then enqueues one signed batch.
-    ///
-    /// Returns `Ok(true)` when the submit queue closed (caller should stop enqueueing)
-    /// and `Ok(false)` when the batch was accepted.
-    async fn pace_and_enqueue_signed_batch(
-        submission_pipeline: &SubmissionPipeline,
-        next_submit_batch_id: &AtomicU64,
-        pending_signed_batch: &mut Vec<SignedTransaction>,
-        progress: &mut EnqueueProgress,
-        limits: EnqueueLimits,
+    async fn wait_for_batch_completions(
+        batch_ids: &[u64],
+        cycle_started: Instant,
+        budget: Duration,
+        drain_state: &mut EnqueueDrainState<'_>,
+    ) -> Option<Duration> {
+        if batch_ids.is_empty() {
+            return Some(Duration::ZERO);
+        }
+
+        let deadline = cycle_started + budget;
+        loop {
+            drain_state.drain_run_events();
+            if let Some(completed_at) =
+                drain_state.results_tracker.take_completed_batches(batch_ids)
+            {
+                return Some(completed_at.saturating_duration_since(cycle_started));
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return None;
+            }
+            match tokio::time::timeout(remaining, drain_state.submit_event_rx.recv()).await {
+                Ok(Some(event)) => drain_state.apply_submit_event(event),
+                Ok(None) | Err(_) => return None,
+            }
+        }
+    }
+
+    async fn enqueue_prefill_transactions(
+        enqueue_state: &mut PresignEnqueueState<'_>,
+        target_gas: u128,
+        max_in_flight_per_sender: usize,
+        max_total_in_flight: usize,
+        deadline: Instant,
         stop_flag: &AtomicBool,
         drain_state: &mut EnqueueDrainState<'_>,
-    ) -> Result<bool> {
-        if let Some(update) = progress.headroom_target.maybe_update(
-            Instant::now(),
-            drain_state.collector.confirmed_count() as u64,
-            drain_state.results_tracker.observed_avg_gas(),
-        ) {
-            debug!(
-                previous_target_in_flight = update.previous_target_in_flight,
-                updated_target_in_flight = update.updated_target_in_flight,
-                confirmed_delta = update.confirmed_delta,
-                sample_tps = update.sample_tps,
-                smoothed_tps = update.smoothed_tps,
-                "adjusted open-loop in-flight target"
-            );
-        }
-        Self::wait_for_outstanding_headroom(
-            progress.headroom_target.current_target_in_flight(),
-            limits.deadline,
-            limits.stop_when_accepted_target_reached,
-            stop_flag,
-            drain_state,
-        )
-        .await?;
-        if limits.stop_when_accepted_target_reached
-            && drain_state.results_tracker.total_in_flight()
-                >= progress.headroom_target.current_target_in_flight()
-        {
-            return Ok(true);
-        }
-        if limits.deadline.is_some_and(|d| Instant::now() >= d) {
-            return Ok(true);
+    ) -> Result<()> {
+        while enqueue_state.buffer.buffered_gas() < target_gas {
+            drain_state.drain_run_events();
+            if stop_flag.load(Ordering::SeqCst) {
+                return Err(BaselineError::Transaction("stopped during open-loop enqueue".into()));
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            let chunk = match tokio::time::timeout(
+                PRESIGN_RECHECK_INTERVAL,
+                enqueue_state.signed_chunk_rx.recv(),
+            )
+            .await
+            {
+                Ok(Some(chunk)) => chunk,
+                Ok(None) => break,
+                Err(_) => continue,
+            };
+            Self::buffer_presigned_chunk(enqueue_state.buffer, enqueue_state.progress, chunk);
         }
 
-        // Cap each enqueue to remaining headroom so a 200-tx batch cannot jump from
-        // e.g. 400 → 600 when the target is 477. Prefill may still fill aggressively.
-        let max_batch_len = if limits.stop_when_accepted_target_reached {
-            usize::MAX
-        } else {
-            let available = progress
-                .headroom_target
-                .current_target_in_flight()
-                .saturating_sub(drain_state.total_outstanding())
-                .max(1);
-            usize::try_from(available).unwrap_or(usize::MAX)
-        };
+        let mut sender_slots: HashMap<Address, u64> = drain_state
+            .queued_per_sender
+            .keys()
+            .map(|from| (*from, u64::try_from(max_in_flight_per_sender).unwrap_or(u64::MAX)))
+            .collect();
+        let mut selected = enqueue_state.buffer.take_gas_with_limits(
+            target_gas,
+            &mut sender_slots,
+            drain_state.remaining_transaction_slots(max_total_in_flight),
+        );
+        while !selected.is_empty() {
+            if !Self::enqueue_signed_batch(
+                enqueue_state.submission_pipeline,
+                enqueue_state.next_submit_batch_id,
+                &mut selected,
+                SIGNED_BATCH_SIZE,
+                false,
+                drain_state,
+            )
+            .await
+            {
+                break;
+            }
+        }
 
-        Ok(!Self::enqueue_signed_batch(
-            submission_pipeline,
-            next_submit_batch_id,
-            pending_signed_batch,
-            max_batch_len,
-            // Prefill (`stop_when_accepted_target_reached`) is warmup and must not enter
-            // the measured cohort even if its submit events arrive after begin_measurement.
-            !limits.stop_when_accepted_target_reached,
-            drain_state,
-        )
-        .await)
+        Ok(())
     }
 
     async fn enqueue_signed_batch(
@@ -1631,6 +1792,8 @@ impl LoadRunner {
                 .entry(signed_tx.from)
                 .and_modify(|count| *count = count.saturating_add(1))
                 .or_insert(1);
+            *drain_state.queued_gas =
+                drain_state.queued_gas.saturating_add(u128::from(signed_tx.gas_limit));
         }
 
         let batch = SignedBatch { id: batch_id, attempt: 0, measured, txs: signed_txs };
@@ -1649,6 +1812,8 @@ impl LoadRunner {
                     if let Some(count) = drain_state.queued_per_sender.get_mut(&signed_tx.from) {
                         *count = count.saturating_sub(1);
                     }
+                    *drain_state.queued_gas =
+                        drain_state.queued_gas.saturating_sub(u128::from(signed_tx.gas_limit));
                 }
                 drain_state.collector.record_failures("submit queue closed", failed_count);
                 false
@@ -1693,17 +1858,27 @@ impl LoadRunner {
     fn apply_submit_event(
         event: SubmitEvent,
         queued_per_sender: &mut HashMap<Address, u64>,
+        rejected_senders: &mut HashSet<Address>,
+        queued_gas: &mut u128,
         collector: &mut MetricsCollector,
+        results_tracker: &ResultsTracker,
     ) {
         match event {
             SubmitEvent::Submitted(tx_hash) => collector.record_submitted(tx_hash),
             SubmitEvent::Failed(reason) => {
                 collector.record_failed(TxHash::ZERO, &reason);
             }
-            SubmitEvent::Released(from) => {
+            SubmitEvent::Released { from, gas_limit, accepted } => {
                 if let Some(count) = queued_per_sender.get_mut(&from) {
                     *count = count.saturating_sub(1);
                 }
+                *queued_gas = queued_gas.saturating_sub(u128::from(gas_limit));
+                if !accepted {
+                    rejected_senders.insert(from);
+                }
+            }
+            SubmitEvent::BatchCompleted { id, completed_at } => {
+                results_tracker.record_batch_completed(id, completed_at);
             }
         }
     }
@@ -1711,21 +1886,40 @@ impl LoadRunner {
     fn drain_submit_events(
         submit_event_rx: &mut mpsc::Receiver<SubmitEvent>,
         queued_per_sender: &mut HashMap<Address, u64>,
+        rejected_senders: &mut HashSet<Address>,
+        queued_gas: &mut u128,
         collector: &mut MetricsCollector,
+        results_tracker: &ResultsTracker,
     ) {
         while let Ok(event) = submit_event_rx.try_recv() {
-            Self::apply_submit_event(event, queued_per_sender, collector);
+            Self::apply_submit_event(
+                event,
+                queued_per_sender,
+                rejected_senders,
+                queued_gas,
+                collector,
+                results_tracker,
+            );
         }
     }
 
     fn drain_run_events(
         submit_event_rx: &mut mpsc::Receiver<SubmitEvent>,
         queued_per_sender: &mut HashMap<Address, u64>,
+        rejected_senders: &mut HashSet<Address>,
+        queued_gas: &mut u128,
         collector: &mut MetricsCollector,
         results_tracker: &ResultsTracker,
     ) {
         while let Ok(event) = submit_event_rx.try_recv() {
-            Self::apply_submit_event(event, queued_per_sender, collector);
+            Self::apply_submit_event(
+                event,
+                queued_per_sender,
+                rejected_senders,
+                queued_gas,
+                collector,
+                results_tracker,
+            );
         }
         for metrics in results_tracker.drain_confirmed_metrics() {
             collector.record_confirmed(metrics);
@@ -1754,27 +1948,27 @@ impl LoadRunner {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
-        sync::{Arc, atomic::AtomicBool},
+        collections::{HashMap, HashSet},
+        sync::Arc,
         time::{Duration, Instant},
     };
 
     use alloy_primitives::{Address, Bytes, TxHash};
     use tokio::sync::mpsc;
 
-    use super::{EnqueueDrainState, InFlightTarget, LoadRunner, TARGET_UPDATE_INTERVAL};
+    use super::{EnqueueDrainState, InjectLimit, LoadRunner, MempoolDepthController};
     use crate::{
         metrics::MetricsCollector,
         runner::{
-            PipelineStartConfig, ResultsTracker, SignedBatch, SignedTransaction, SubmissionPipeline,
-            SubmitEvent, SUBMIT_BATCH_QUEUE_BUFFER,
+            PipelineStartConfig, ResultsTracker, SUBMIT_BATCH_QUEUE_BUFFER, SignedBatch,
+            SignedTransaction, SubmissionPipeline, SubmitEvent,
         },
     };
     #[test]
-    fn mempool_target_uses_ceiling_and_checks_capacity() {
-        assert_eq!(LoadRunner::mempool_target_transactions(100, 3, 70, 10).unwrap(), 5);
-        assert!(LoadRunner::mempool_target_transactions(100, 3, 70, 4).is_err());
-        assert!(LoadRunner::mempool_target_transactions(100, 3, 0, 10).is_err());
+    fn mempool_target_rounds_up_and_clamps_to_capacity() {
+        assert_eq!(LoadRunner::mempool_target_transactions(300, 70, 10).unwrap(), 5);
+        assert_eq!(LoadRunner::mempool_target_transactions(300, 70, 4).unwrap(), 4);
+        assert!(LoadRunner::mempool_target_transactions(300, 0, 10).is_err());
     }
 
     fn test_signed_batch(id: u64, from: Address) -> SignedBatch {
@@ -1787,6 +1981,7 @@ mod tests {
                 tx_hash: TxHash::repeat_byte((id % 0xff) as u8),
                 from,
                 nonce: id,
+                gas_limit: 21_000,
             }],
         }
     }
@@ -1798,6 +1993,8 @@ mod tests {
         let results_tracker = ResultsTracker::new(&tracked_senders);
         let mut collector = MetricsCollector::new();
         let mut queued_per_sender = HashMap::from([(sender, 1_u64)]);
+        let mut rejected_senders = HashSet::new();
+        let mut queued_gas = 21_000u128;
 
         let (submit_event_tx, mut submit_event_rx) = mpsc::channel(1);
         let mut submission_pipeline = SubmissionPipeline::start(
@@ -1823,7 +2020,7 @@ mod tests {
         }
 
         submit_event_tx
-            .send(SubmitEvent::Released(sender))
+            .send(SubmitEvent::Released { from: sender, gas_limit: 21_000, accepted: true })
             .await
             .expect("event queue should accept first event");
 
@@ -1839,6 +2036,8 @@ mod tests {
             let mut drain_state = EnqueueDrainState {
                 submit_event_rx: &mut submit_event_rx,
                 queued_per_sender: &mut queued_per_sender,
+                rejected_senders: &mut rejected_senders,
+                queued_gas: &mut queued_gas,
                 collector: &mut collector,
                 results_tracker: &results_tracker,
 
@@ -1861,191 +2060,85 @@ mod tests {
         assert_eq!(collector.submitted_count(), 1);
     }
 
-    #[tokio::test]
-    async fn headroom_gate_resumes_when_block_watcher_lowers_in_flight_without_submit_event() {
-        use std::time::Instant;
-
-        use super::super::results_tracker::{BlockObservation, SentTransaction};
-
-        let sender = Address::repeat_byte(0x22);
-        let results_tracker = ResultsTracker::new(&[sender]);
-        let mut collector = MetricsCollector::new();
-        let mut queued_per_sender = HashMap::new();
-        let (_submit_event_tx, mut submit_event_rx) = mpsc::channel::<SubmitEvent>(1);
-
-        let tx_hash = TxHash::repeat_byte(0x22);
-        results_tracker.sent_transactions(vec![SentTransaction {
-            tx_hash,
-            from: sender,
-            measured: true,
-        }]);
-        assert_eq!(results_tracker.total_in_flight(), 1);
-
-        let tracker_for_watcher = results_tracker.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(150)).await;
-            tracker_for_watcher.on_new_block_hashes(
-                BlockObservation { number: 1, observed_at: Instant::now() },
-                vec![tx_hash],
-            );
-        });
-
-        let mut drain_state = EnqueueDrainState {
-            submit_event_rx: &mut submit_event_rx,
-            queued_per_sender: &mut queued_per_sender,
-            collector: &mut collector,
-            results_tracker: &results_tracker,
-
-            progress_display: None,
-        };
-
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            LoadRunner::wait_for_outstanding_headroom(
-                1,
-                None,
-                false,
-                &AtomicBool::new(false),
-                &mut drain_state,
-            ),
-        )
-        .await
-        .expect("gate must not hang when in-flight is released out-of-band");
-
-        assert!(result.is_ok(), "gate should resume once in-flight drops below target");
-        assert_eq!(results_tracker.total_in_flight(), 0);
-    }
-
-    #[tokio::test]
-    async fn headroom_gate_returns_immediately_when_pacing_disabled() {
-        use super::super::results_tracker::SentTransaction;
-
-        let sender = Address::repeat_byte(0x44);
-        let results_tracker = ResultsTracker::new(&[sender]);
-        let mut collector = MetricsCollector::new();
-        let mut queued_per_sender = HashMap::new();
-        let (_submit_event_tx, mut submit_event_rx) = mpsc::channel::<SubmitEvent>(1);
-
-        results_tracker.sent_transactions(vec![SentTransaction {
-            tx_hash: TxHash::repeat_byte(0x44),
-            from: sender,
-            measured: true,
-        }]);
-
-        let mut drain_state = EnqueueDrainState {
-            submit_event_rx: &mut submit_event_rx,
-            queued_per_sender: &mut queued_per_sender,
-            collector: &mut collector,
-            results_tracker: &results_tracker,
-
-            progress_display: None,
-        };
-
-        let result = tokio::time::timeout(
-            Duration::from_secs(1),
-            LoadRunner::wait_for_outstanding_headroom(
-                0,
-                None,
-                false,
-                &AtomicBool::new(false),
-                &mut drain_state,
-            ),
-        )
-        .await
-        .expect("target 0 must return without waiting even while in-flight is high");
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn headroom_gate_returns_ok_when_past_deadline() {
-        use std::time::Instant;
-
-        use super::super::results_tracker::SentTransaction;
-
-        let sender = Address::repeat_byte(0x55);
-        let results_tracker = ResultsTracker::new(&[sender]);
-        let mut collector = MetricsCollector::new();
-        let mut queued_per_sender = HashMap::new();
-        let (_submit_event_tx, mut submit_event_rx) = mpsc::channel::<SubmitEvent>(1);
-
-        results_tracker.sent_transactions(vec![SentTransaction {
-            tx_hash: TxHash::repeat_byte(0x55),
-            from: sender,
-            measured: true,
-        }]);
-
-        let mut drain_state = EnqueueDrainState {
-            submit_event_rx: &mut submit_event_rx,
-            queued_per_sender: &mut queued_per_sender,
-            collector: &mut collector,
-            results_tracker: &results_tracker,
-
-            progress_display: None,
-        };
-
-        let past_deadline = Some(Instant::now() - Duration::from_secs(1));
-        let result = tokio::time::timeout(
-            Duration::from_secs(1),
-            LoadRunner::wait_for_outstanding_headroom(
-                1,
-                past_deadline,
-                false,
-                &AtomicBool::new(false),
-                &mut drain_state,
-            ),
-        )
-        .await
-        .expect("gate must stop waiting once the load window deadline has passed");
-        assert!(result.is_ok(), "past-deadline gate returns Ok without failing closed");
-        assert_eq!(
-            results_tracker.total_in_flight(),
-            1,
-            "in-flight stays high; gate returns because window ended, not because it drained"
+    #[test]
+    fn controller_fills_floor_then_catches_up_to_two_blocks() {
+        let started = Instant::now();
+        let controller = MempoolDepthController::new(
+            Some(1_000_000),
+            Duration::from_secs(2),
+            10_000_000,
+            started,
         );
-    }
 
+        let initial = controller.plan(started, 30_000_000, 0, 0);
+        assert_eq!(initial.floor_gas, 2_000_000);
+        assert_eq!(initial.inject_gas, 2_000_000);
+
+        let behind = controller.plan(started + Duration::from_secs(2), 30_000_000, 0, 0);
+        assert_eq!(behind.desired_gas, 4_000_000);
+        assert_eq!(behind.inject_gas, 4_000_000);
+    }
 
     #[test]
-    fn saturated_headroom_target_tracks_observed_average_gas() {
-        let now = Instant::now();
-        let mut target = InFlightTarget::saturated(
-            300_000,
-            3,
-            10,
-            100_000,
-            now - TARGET_UPDATE_INTERVAL,
+    fn controller_reports_capacity_limit_without_error() {
+        let started = Instant::now();
+        let controller = MempoolDepthController::new(
+            Some(1_000_000),
+            Duration::from_secs(2),
+            1_000_000,
+            started,
         );
 
-        let update = target
-            .maybe_update(now, 1, Some(60_000))
-            .expect("elapsed update interval should recalibrate the inventory");
+        let plan = controller.plan(started, 30_000_000, 0, 0);
 
-        assert_eq!(update.updated_target_in_flight, 5);
-        assert_eq!(target.current_target_in_flight(), 5);
+        assert_eq!(plan.inject_gas, 1_000_000);
+        assert_eq!(plan.limited_by, InjectLimit::Capacity);
     }
-
-
-
 
     #[test]
-    fn capped_headroom_uses_mempool_target_blocks_times_gps() {
-        // target_gps=2_100_000, mempool_target_blocks=3 => 6_300_000 outstanding gas.
-        // At 21_000 gas/tx that is 300 transactions of submitted-but-unconfirmed inventory.
-        let now = Instant::now();
-        let mut target = InFlightTarget::saturated(
-            6_300_000,
-            300,
-            10_000,
-            21_000,
-            now - TARGET_UPDATE_INTERVAL,
+    fn controller_does_not_inject_when_depth_meets_floor_on_target() {
+        let started = Instant::now();
+        let controller = MempoolDepthController::new(
+            Some(1_000_000),
+            Duration::from_secs(2),
+            10_000_000,
+            started,
         );
-        assert_eq!(target.current_target_in_flight(), 300);
 
-        let update = target
-            .maybe_update(now, 50, Some(21_000))
-            .expect("elapsed update interval should keep the fixed gas inventory");
-        assert_eq!(update.updated_target_in_flight, 300);
-        assert_eq!(target.current_target_in_flight(), 300);
+        let plan =
+            controller.plan(started + Duration::from_secs(2), 30_000_000, 2_000_000, 2_000_000);
+
+        assert_eq!(plan.desired_gas, 2_000_000);
+        assert_eq!(plan.inject_gas, 0);
+        assert_eq!(plan.limited_by, InjectLimit::Nothing);
     }
 
+    #[test]
+    fn controller_cannot_inject_past_two_block_ceiling() {
+        let started = Instant::now();
+        let controller = MempoolDepthController::new(
+            Some(1_000_000),
+            Duration::from_secs(2),
+            10_000_000,
+            started,
+        );
+
+        let plan = controller.plan(started + Duration::from_secs(20), 30_000_000, 4_000_000, 0);
+
+        assert_eq!(plan.ceiling_gas, 4_000_000);
+        assert_eq!(plan.inject_gas, 0);
+    }
+
+    #[test]
+    fn unbounded_controller_targets_two_full_blocks() {
+        let started = Instant::now();
+        let controller =
+            MempoolDepthController::new(None, Duration::from_secs(2), 100_000_000, started);
+
+        let plan = controller.plan(started, 30_000_000, 0, 0);
+
+        assert_eq!(plan.floor_gas, 30_000_000);
+        assert_eq!(plan.desired_gas, 60_000_000);
+        assert_eq!(plan.inject_gas, 60_000_000);
+    }
 }

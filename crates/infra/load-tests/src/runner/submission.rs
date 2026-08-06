@@ -7,7 +7,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_consensus::transaction::SignableTransaction;
@@ -50,6 +50,8 @@ pub const SUBMIT_MAX_ATTEMPTS: u32 = 5;
 /// ~11 full blocks (~24s on a 2s chain) of growth before a tx goes underwater.
 /// The `max_gas_price` cap bounds worst-case cost, so the headroom is cheap.
 pub const MAX_FEE_BASE_FEE_MULTIPLIER: u128 = 4;
+/// Minimum priority fee used by measured load so very low base fees do not produce zero-value tips.
+pub const MIN_PRIORITY_FEE: u128 = 1_000_000_000;
 
 /// Ensures the rate-limit warning is only logged once per process, since a
 /// saturated RPC can otherwise report it on every batch under sustained load.
@@ -94,7 +96,8 @@ impl GasPricer {
 
     /// Fees for a measured-load submission at the given base fee.
     pub fn fees_for(&self, base_fee: u128) -> Fees {
-        let priority_fee = (base_fee / 10).max(1).min(self.max_gas_price);
+        let priority_fee =
+            (base_fee / 10).max(MIN_PRIORITY_FEE).min(self.max_gas_price.saturating_sub(base_fee));
         let max_fee =
             SubmissionPipeline::submission_max_fee(base_fee, priority_fee, self.max_gas_price);
         Fees { max_fee, priority_fee }
@@ -148,7 +151,21 @@ pub enum SubmitEvent {
     /// Transaction failed before acceptance.
     Failed(String),
     /// Sender has one fewer queued or in-flight submission.
-    Released(Address),
+    Released {
+        /// Sender whose queued count is released.
+        from: Address,
+        /// Gas removed from local queued-depth accounting.
+        gas_limit: u64,
+        /// Whether the RPC accepted the transaction.
+        accepted: bool,
+    },
+    /// Every transaction in a signed batch has received a terminal RPC result.
+    BatchCompleted {
+        /// Stable batch identifier.
+        id: u64,
+        /// Local completion time.
+        completed_at: Instant,
+    },
 }
 
 /// Summary of queued submissions abandoned during pipeline shutdown.
@@ -186,6 +203,8 @@ pub struct SignedTransaction {
     pub from: Address,
     /// Signed nonce.
     pub nonce: u64,
+    /// Gas reserved by the transaction.
+    pub gas_limit: u64,
 }
 
 /// A batch of prepared transactions.
@@ -683,7 +702,13 @@ impl SubmissionPipeline {
         let signed = typed_tx.into_signed(signature);
         let tx_hash = *signed.hash();
         let raw = Bytes::from(signed.encoded_2718());
-        Ok(SignedTransaction { raw, tx_hash, from: prepared.from, nonce })
+        Ok(SignedTransaction {
+            raw,
+            tx_hash,
+            from: prepared.from,
+            nonce,
+            gas_limit: prepared.gas_limit,
+        })
     }
 
     async fn signer_worker(
@@ -750,6 +775,10 @@ impl SubmissionPipeline {
             let batch_len = batch.len();
             let submitted = Self::send_batch(ctx.clone(), batch, &shutdown).await;
             queue.pending_batches.fetch_sub(1, Ordering::SeqCst);
+            let _ = ctx
+                .submit_event_tx
+                .send(SubmitEvent::BatchCompleted { id: batch_id, completed_at: Instant::now() })
+                .await;
             debug!(worker_id, batch_id, batch_len, submitted, "signed batch complete");
         }
     }
@@ -932,7 +961,7 @@ impl SubmissionPipeline {
                                 "tx rejected in batch"
                             );
                             Self::return_signed_nonce(&ctx, &signed).await;
-                            Self::release_signed(&ctx.submit_event_tx, &signed).await;
+                            Self::release_signed(&ctx.submit_event_tx, &signed, false).await;
                             let _ = ctx.submit_event_tx.send(SubmitEvent::Failed(msg)).await;
                         }
                     },
@@ -1008,12 +1037,13 @@ impl SubmissionPipeline {
         } else {
             signed.tx_hash
         };
-        Self::release_signed(&ctx.submit_event_tx, &signed).await;
         ctx.results_tracker.sent_transactions(vec![SentTransaction {
             tx_hash: tracked_hash,
             from: signed.from,
+            gas_limit: signed.gas_limit,
             measured,
         }]);
+        Self::release_signed(&ctx.submit_event_tx, &signed, true).await;
         let _ = ctx.submit_event_tx.send(SubmitEvent::Submitted(tracked_hash)).await;
         debug!(
             tx_hash = %tracked_hash,
@@ -1031,7 +1061,7 @@ impl SubmissionPipeline {
         reason: &'static str,
     ) {
         for signed in signed_txs {
-            Self::release_signed(submit_event_tx, &signed).await;
+            Self::release_signed(submit_event_tx, &signed, false).await;
             let _ = submit_event_tx.send(SubmitEvent::Failed(reason.into())).await;
         }
     }
@@ -1044,7 +1074,7 @@ impl SubmissionPipeline {
     ) {
         for signed in signed_txs {
             Self::return_signed_nonce(ctx, &signed).await;
-            Self::release_signed(submit_event_tx, &signed).await;
+            Self::release_signed(submit_event_tx, &signed, false).await;
             let _ = submit_event_tx.send(SubmitEvent::Failed(reason.into())).await;
         }
     }
@@ -1065,14 +1095,27 @@ impl SubmissionPipeline {
         submit_event_tx: &mpsc::Sender<SubmitEvent>,
         prepared: &PreparedTransaction,
     ) {
-        let _ = submit_event_tx.send(SubmitEvent::Released(prepared.from)).await;
+        let _ = submit_event_tx
+            .send(SubmitEvent::Released {
+                from: prepared.from,
+                gas_limit: prepared.gas_limit,
+                accepted: false,
+            })
+            .await;
     }
 
     async fn release_signed(
         submit_event_tx: &mpsc::Sender<SubmitEvent>,
         signed: &SignedTransaction,
+        accepted: bool,
     ) {
-        let _ = submit_event_tx.send(SubmitEvent::Released(signed.from)).await;
+        let _ = submit_event_tx
+            .send(SubmitEvent::Released {
+                from: signed.from,
+                gas_limit: signed.gas_limit,
+                accepted,
+            })
+            .await;
     }
 
     async fn sign_prepared(
@@ -1163,8 +1206,9 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        BatchTxError, Fees, GasPricer, MAX_FEE_BASE_FEE_MULTIPLIER, PipelineQueue, PreparedBatch,
-        PreparedTransaction, SignedBatch, SignedTransaction, SubmissionPipeline, SubmitEvent,
+        BatchTxError, Fees, GasPricer, MAX_FEE_BASE_FEE_MULTIPLIER, MIN_PRIORITY_FEE,
+        PipelineQueue, PreparedBatch, PreparedTransaction, SignedBatch, SignedTransaction,
+        SubmissionPipeline, SubmitEvent,
     };
 
     #[test]
@@ -1253,10 +1297,13 @@ mod tests {
 
     #[test]
     fn gas_pricer_fees_for_matches_submission_max_fee() {
-        let pricer = GasPricer::new(1_000_000_000);
+        let pricer = GasPricer::new(2_000_000_000);
         let fees = pricer.fees_for(100);
-        assert_eq!(fees.priority_fee, 10);
-        assert_eq!(fees.max_fee, SubmissionPipeline::submission_max_fee(100, 10, 1_000_000_000));
+        assert_eq!(fees.priority_fee, MIN_PRIORITY_FEE);
+        assert_eq!(
+            fees.max_fee,
+            SubmissionPipeline::submission_max_fee(100, MIN_PRIORITY_FEE, 2_000_000_000)
+        );
     }
 
     #[test]
@@ -1272,15 +1319,15 @@ mod tests {
 
     #[test]
     fn gas_pricer_fees_for_honors_max_gas_price_floor_and_cap() {
-        // Priority fee is never zero, even at a base fee of 0.
-        let pricer = GasPricer::new(1_000_000_000);
-        assert_eq!(pricer.fees_for(0).priority_fee, 1);
+        // Priority fee stays at the configured minimum when the cap permits it.
+        let pricer = GasPricer::new(2_000_000_000);
+        assert_eq!(pricer.fees_for(0).priority_fee, MIN_PRIORITY_FEE);
 
         // Both fee fields are capped at max_gas_price.
         let capped_pricer = GasPricer::new(500);
         let fees = capped_pricer.fees_for(1_000_000);
         assert_eq!(fees.max_fee, 500);
-        assert_eq!(fees.priority_fee, 500);
+        assert_eq!(fees.priority_fee, 0);
     }
 
     #[test]
@@ -1359,6 +1406,7 @@ mod tests {
                     tx_hash: TxHash::ZERO,
                     from: sender,
                     nonce: 0,
+                    gas_limit: 21_000,
                 }],
             })
             .await
