@@ -62,6 +62,8 @@ const PREFILL_TIMEOUT: Duration = Duration::from_secs(300);
 /// Adaptive open-loop target update cadence, matching closed-loop rate-limiter updates.
 /// TUI / snapshot refresh cadence while the enqueue loop owns the collector.
 const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
+/// Structured progress reporting cadence for long-running stages.
+const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 struct SenderJob {
@@ -105,6 +107,7 @@ struct EnqueueProgressDisplay<'a> {
     display: Option<&'a LoadTestDisplay>,
     snapshot_tx: Option<&'a watch::Sender<DisplaySnapshot>>,
     last_update: Instant,
+    last_log: Instant,
     start: Instant,
     duration: Option<Duration>,
     phase: Option<String>,
@@ -124,19 +127,46 @@ impl EnqueueProgressDisplay<'_> {
         collector: &mut MetricsCollector,
         results_tracker: &ResultsTracker,
     ) {
-        if self.display.is_none() && self.snapshot_tx.is_none() {
+        let should_render = (self.display.is_some() || self.snapshot_tx.is_some())
+            && self.last_update.elapsed() >= DISPLAY_RENDER_INTERVAL;
+        let should_log = self.last_log.elapsed() >= PROGRESS_REPORT_INTERVAL;
+        if !should_render && !should_log {
             return;
         }
-        if self.last_update.elapsed() < DISPLAY_RENDER_INTERVAL {
-            return;
-        }
-        self.last_update = Instant::now();
-        collector.sample_throughput(self.start.elapsed());
+        let elapsed = self.start.elapsed();
+        collector.sample_throughput(elapsed);
 
         let (p50, p99) = collector.rolling_p50_p99();
         let (flashblocks_p50, flashblocks_p99) = collector.rolling_flashblocks_p50_p99();
+        if should_log {
+            info!(
+                stage = self.phase.as_deref().unwrap_or("running"),
+                elapsed_secs = elapsed.as_secs(),
+                remaining_secs =
+                    self.duration.map(|duration| duration.saturating_sub(elapsed).as_secs()),
+                submitted = collector.submitted_count(),
+                confirmed = collector.confirmed_count(),
+                failed = collector.failed_count(),
+                in_flight = results_tracker.total_in_flight(),
+                pending = results_tracker.pending_count(),
+                senders_blocked =
+                    results_tracker.senders_at_limit(self.max_in_flight_per_sender as u64),
+                rolling_tps = collector.rolling_tps(),
+                rolling_gps = collector.rolling_gps(),
+                p50_ms = p50.as_millis() as u64,
+                p99_ms = p99.as_millis() as u64,
+                flashblocks_p50_ms = flashblocks_p50.as_millis() as u64,
+                flashblocks_p99_ms = flashblocks_p99.as_millis() as u64,
+                "load test progress"
+            );
+            self.last_log = Instant::now();
+        }
+        if !should_render {
+            return;
+        }
+        self.last_update = Instant::now();
         let snap = DisplaySnapshot {
-            elapsed: self.start.elapsed(),
+            elapsed,
             duration: self.duration,
             phase: self.phase.clone(),
             submitted: collector.submitted_count(),
@@ -480,7 +510,6 @@ impl LoadRunner {
         // Refresh once per block so the cached base fee tracks the climb the load
         // test itself induces; a stale fee mints underwater (unincludable) txs.
         const BASE_FEE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
-        const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 
         let use_live_display = self.display.as_ref().is_some_and(|d| d.is_active());
         let use_snapshot_tx = self.snapshot_tx.is_some();
@@ -636,27 +665,24 @@ impl LoadRunner {
                 queued_gas: &mut queued_gas,
                 collector: &mut self.collector,
                 results_tracker: &results_tracker,
-                progress_display: (use_live_display || use_snapshot_tx).then(|| {
-                    EnqueueProgressDisplay {
-                        display: self.display.as_ref(),
-                        snapshot_tx: self.snapshot_tx.as_ref(),
-                        last_update: Instant::now()
-                            .checked_sub(DISPLAY_RENDER_INTERVAL)
-                            .unwrap_or_else(Instant::now),
-                        start,
-                        duration: self.config.duration,
-                        phase: Some(format!(
-                            "prefill (target_in_flight={initial_target_in_flight})"
-                        )),
-                        max_in_flight_per_sender,
-                        account_count,
-                        gas_price_gwei: self.base_fee as f64 / 1e9,
-                        total_eth: self.last_total_eth.clone(),
-                        min_eth: self.last_min_eth.clone(),
-                        funds_low: self.last_funds_low,
-                        funder_address: self.funder_address.clone(),
-                        sender_addresses: self.sender_addresses.clone(),
-                    }
+                progress_display: Some(EnqueueProgressDisplay {
+                    display: self.display.as_ref(),
+                    snapshot_tx: self.snapshot_tx.as_ref(),
+                    last_update: Instant::now()
+                        .checked_sub(DISPLAY_RENDER_INTERVAL)
+                        .unwrap_or_else(Instant::now),
+                    last_log: Instant::now(),
+                    start,
+                    duration: None,
+                    phase: Some(format!("prefill (target_in_flight={initial_target_in_flight})")),
+                    max_in_flight_per_sender,
+                    account_count,
+                    gas_price_gwei: self.base_fee as f64 / 1e9,
+                    total_eth: self.last_total_eth.clone(),
+                    min_eth: self.last_min_eth.clone(),
+                    funds_low: self.last_funds_low,
+                    funder_address: self.funder_address.clone(),
+                    sender_addresses: self.sender_addresses.clone(),
                 }),
             },
         )
@@ -764,25 +790,24 @@ impl LoadRunner {
                     queued_gas: &mut queued_gas,
                     collector: &mut self.collector,
                     results_tracker: &results_tracker,
-                    progress_display: (use_live_display || use_snapshot_tx).then(|| {
-                        EnqueueProgressDisplay {
-                            display: self.display.as_ref(),
-                            snapshot_tx: self.snapshot_tx.as_ref(),
-                            last_update: Instant::now()
-                                .checked_sub(DISPLAY_RENDER_INTERVAL)
-                                .unwrap_or_else(Instant::now),
-                            start,
-                            duration: self.config.duration,
-                            phase: None,
-                            max_in_flight_per_sender,
-                            account_count,
-                            gas_price_gwei: self.base_fee as f64 / 1e9,
-                            total_eth: self.last_total_eth.clone(),
-                            min_eth: self.last_min_eth.clone(),
-                            funds_low: self.last_funds_low,
-                            funder_address: self.funder_address.clone(),
-                            sender_addresses: self.sender_addresses.clone(),
-                        }
+                    progress_display: Some(EnqueueProgressDisplay {
+                        display: self.display.as_ref(),
+                        snapshot_tx: self.snapshot_tx.as_ref(),
+                        last_update: Instant::now()
+                            .checked_sub(DISPLAY_RENDER_INTERVAL)
+                            .unwrap_or_else(Instant::now),
+                        last_log: Instant::now(),
+                        start,
+                        duration: self.config.duration,
+                        phase: Some("submitting".to_string()),
+                        max_in_flight_per_sender,
+                        account_count,
+                        gas_price_gwei: self.base_fee as f64 / 1e9,
+                        total_eth: self.last_total_eth.clone(),
+                        min_eth: self.last_min_eth.clone(),
+                        funds_low: self.last_funds_low,
+                        funder_address: self.funder_address.clone(),
+                        sender_addresses: self.sender_addresses.clone(),
                     }),
                 },
             )
@@ -1019,6 +1044,7 @@ impl LoadRunner {
         let mut last_confirmed_at = start.elapsed();
         let mut last_pending_count = results_tracker.pending_count();
         let mut last_drain_progress = Instant::now();
+        let mut last_drain_report = Instant::now();
 
         while drain_start.elapsed() < confirmation_drain_timeout {
             for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
@@ -1054,6 +1080,17 @@ impl LoadRunner {
                     "confirmation drain stopped with expected undrained inventory"
                 );
                 break;
+            }
+            if last_drain_report.elapsed() >= PROGRESS_REPORT_INTERVAL {
+                info!(
+                    stage = "draining confirmations",
+                    elapsed_secs = drain_start.elapsed().as_secs(),
+                    confirmed = self.collector.confirmed_count(),
+                    pending = pending_count,
+                    in_flight = results_tracker.total_in_flight(),
+                    "load test progress"
+                );
+                last_drain_report = Instant::now();
             }
 
             tokio::time::sleep(results_poll_interval).await;
