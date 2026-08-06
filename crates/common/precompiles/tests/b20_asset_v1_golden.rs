@@ -249,9 +249,9 @@ fn resolver_maps_forks_to_versions() {
 }
 
 /// The ERC-8056 scheduled-multiplier selectors were introduced at Cobalt (`AssetV2`). At V1 (Beryl)
-/// they are absent from the frozen asset wire
-/// surface, so `route` falls through to the disjoint inherited `IB20` decode and rejects them as
-/// `UnknownFunctionSelector`, byte-identically to the deleted hand-written fork gate.
+/// they are absent from the frozen asset wire surface, so `route` falls through to the disjoint
+/// inherited `IB20` decode and rejects them as `UnknownFunctionSelector`, byte-identically to the
+/// deleted hand-written fork gate.
 #[test]
 fn golden_v2_selectors_unknown_at_v1() {
     let mut s = fresh();
