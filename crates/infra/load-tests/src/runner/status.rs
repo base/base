@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use tracing_indicatif::{IndicatifWriter, writer::Stderr};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -102,11 +102,9 @@ impl LoadTestDisplay {
     pub fn init_tracing() -> Result<Option<MultiProgress>> {
         let filter = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("warn,base_load_tests=info,base_load_tester=info"));
-        let interactive = Self::terminal_supported(
-            io::stderr().is_terminal(),
-            std::env::var("TERM").ok().as_deref(),
-        );
-        let multi_progress = interactive.then(MultiProgress::new);
+        let interactive = Self::terminal_supported(io::stderr().is_terminal());
+        let multi_progress = interactive
+            .then(|| MultiProgress::with_draw_target(ProgressDrawTarget::stderr_with_hz(10)));
 
         if let Some(mp) = &multi_progress {
             let writer: IndicatifWriter<Stderr> = IndicatifWriter::new(mp.clone());
@@ -131,8 +129,8 @@ impl LoadTestDisplay {
     }
 
     /// Returns whether an attended terminal can render the live footer.
-    pub fn terminal_supported(stderr_is_terminal: bool, term: Option<&str>) -> bool {
-        stderr_is_terminal && !matches!(term, None | Some("") | Some("dumb"))
+    pub const fn terminal_supported(stderr_is_terminal: bool) -> bool {
+        stderr_is_terminal
     }
 
     /// Creates a new display and attaches its bars to `mp`.
@@ -281,9 +279,7 @@ impl LoadTestDisplay {
 
     /// Creates a setup progress bar managed by the same footer as tracing output.
     pub fn progress_bar(&self, total: u64, prefix: &str) -> ProgressBar {
-        let progress = self
-            .multi_progress
-            .insert_before(&self.header, ProgressBar::new(total));
+        let progress = self.multi_progress.insert_before(&self.header, ProgressBar::new(total));
         progress.set_style(
             ProgressStyle::with_template("{prefix} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
                 .expect("valid template")
@@ -339,10 +335,7 @@ mod tests {
 
     #[test]
     fn terminal_support_requires_a_real_terminal() {
-        assert!(LoadTestDisplay::terminal_supported(true, Some("xterm-256color")));
-        assert!(!LoadTestDisplay::terminal_supported(false, Some("xterm-256color")));
-        assert!(!LoadTestDisplay::terminal_supported(true, None));
-        assert!(!LoadTestDisplay::terminal_supported(true, Some("")));
-        assert!(!LoadTestDisplay::terminal_supported(true, Some("dumb")));
+        assert!(LoadTestDisplay::terminal_supported(true));
+        assert!(!LoadTestDisplay::terminal_supported(false));
     }
 }
