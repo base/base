@@ -25,7 +25,7 @@ mod parity_normalizer;
 pub use parity_normalizer::{ParityComparator, ParityNormalizer};
 
 mod recent_txs;
-pub use recent_txs::{MAX_CHECK_RECENT_TXS_DEPTH, RecentTxScanner, SCAN_FETCH_CONCURRENCY};
+pub use recent_txs::{MAX_CHECK_RECENT_TXS_DEPTH, recent_tx_sync_target};
 
 mod source;
 pub use source::RpcPollingSource;
