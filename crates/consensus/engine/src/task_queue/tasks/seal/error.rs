@@ -73,11 +73,12 @@ impl SealTaskError {
                         | SynchronizeTaskError::UnexpectedPayloadStatus(_) => false,
                     }
                 }
-                InsertTaskError::FromBlockError(_)
+                InsertTaskError::EmptyAuthoritativePayloads
+                | InsertTaskError::FromBlockError(_)
                 | InsertTaskError::L2BlockInfoConstruction(_) => true,
                 InsertTaskError::InsertFailed(_)
                 | InsertTaskError::UnexpectedPayloadStatus(_)
-                | InsertTaskError::ForkchoiceUpdateDidNotAdvance => false,
+                | InsertTaskError::ForkchoiceUpdateDidNotApply => false,
             },
             Self::GetPayloadFailed(_)
             | Self::HoloceneInvalidFlush
@@ -180,5 +181,45 @@ mod tests {
     ) {
         let err = SealTaskError::PayloadInsertionFailed(Box::new(insert_err));
         assert_eq!(err.is_fatal(), expected);
+    }
+
+    #[rstest]
+    #[case::holocene_invalid_flush(
+        SealTaskError::HoloceneInvalidFlush,
+        EngineTaskErrorSeverity::Flush
+    )]
+    #[case::unsafe_head_changed(
+        SealTaskError::UnsafeHeadChangedSinceBuild,
+        EngineTaskErrorSeverity::Reset
+    )]
+    #[case::get_payload_failed(
+        SealTaskError::GetPayloadFailed(rpc_error()),
+        EngineTaskErrorSeverity::Temporary
+    )]
+    #[case::deposit_only_failed(
+        SealTaskError::DepositOnlyPayloadFailed,
+        EngineTaskErrorSeverity::Critical
+    )]
+    #[case::deposit_only_reattempt_failed(
+        SealTaskError::DepositOnlyPayloadReattemptFailed,
+        EngineTaskErrorSeverity::Critical
+    )]
+    #[case::from_block(
+        SealTaskError::FromBlock(FromBlockError::InvalidGenesisHash),
+        EngineTaskErrorSeverity::Critical
+    )]
+    #[case::clock_went_backwards(
+        SealTaskError::ClockWentBackwards,
+        EngineTaskErrorSeverity::Critical
+    )]
+    #[case::unexpected_payload_version(
+        SealTaskError::UnexpectedPayloadVersion("V3".to_string()),
+        EngineTaskErrorSeverity::Temporary
+    )]
+    fn seal_task_error_severity(
+        #[case] error: SealTaskError,
+        #[case] expected: EngineTaskErrorSeverity,
+    ) {
+        assert_eq!(error.severity(), expected);
     }
 }

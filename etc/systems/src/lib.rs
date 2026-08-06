@@ -49,14 +49,16 @@ mod l2;
 pub use l2::{
     InProcessBatcher, InProcessBatcherConfig, InProcessBuilder, InProcessBuilderConfig,
     InProcessClient, InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig,
-    L2ContainerConfig, L2Stack, L2StackConfig,
+    InProcessFollowConsensus, InProcessFollowConsensusConfig, L2ClientConsensus,
+    L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencer,
+    ShadowSequencerConfig, ShadowSequencersConfig,
 };
 
 mod network;
 pub use network::{ensure_network_exists, ensure_network_exists_with_name, network_name};
 
 mod rpc;
-pub use rpc::SystemTestRpcClient;
+pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};
 
 mod setup;
 pub use setup::{
@@ -66,10 +68,17 @@ pub use setup::{
 };
 
 mod smoke;
+#[cfg(feature = "upgrade-signal")]
+pub use smoke::RuntimeUpgradeSignalGuard;
 pub use smoke::{SystemTestStack, SystemTestStackBuilder};
 
 mod system_config;
 pub use system_config::{StableSystemTestConfig, SystemTestPorts};
+
+#[cfg(feature = "upgrade-signal")]
+mod upgrade_signal;
+#[cfg(feature = "upgrade-signal")]
+pub use upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 
 mod urls;
 pub use urls::SystemTestUrls;

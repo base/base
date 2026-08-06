@@ -1,22 +1,32 @@
-use std::time::Instant;
+use std::{marker::PhantomData, time::Instant};
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Decodable2718;
+use alloy_primitives::TxHash;
 use base_common_consensus::BaseTransactionSigned;
+use base_observability_events::{
+    TransactionEventProducer, TransactionEventType, transaction_event,
+};
 use jsonrpsee::{
     core::RpcResult,
     proc_macros::rpc,
     types::{ErrorCode, ErrorObjectOwned},
 };
 use reth_transaction_pool::TransactionPool;
+use serde_json::{Map, json};
 use tracing::debug;
 
 use super::metrics::Metrics as BuilderApiMetrics;
-use crate::{BasePooledTransaction, PoolRejectionLabel, ValidatedTransaction};
+use crate::{
+    BasePooledTransaction, NoExtensions, PoolRejectionLabel, ValidatedTransaction,
+    ValidatedTransactionExtensions,
+};
 
 /// RPC interface for submitting pre-validated transactions to a block builder.
+///
+/// `E` is the wire extension payload; see [`ValidatedTransactionExtensions`].
 #[rpc(server, namespace = "base")]
-pub trait BuilderApi {
+pub trait BuilderApi<E> {
     /// Inserts a single pre-validated transaction into the builder's pool.
     ///
     /// The transaction is EIP-2718 encoded with its sender address pre-recovered,
@@ -25,7 +35,7 @@ pub trait BuilderApi {
     /// Returns an error if decoding or pool insertion fails.
     /// Use JSON-RPC batch requests for efficient bulk submission.
     #[method(name = "insertValidatedTransaction")]
-    async fn insert_validated_transaction(&self, tx: ValidatedTransaction) -> RpcResult<()>;
+    async fn insert_validated_transaction(&self, tx: ValidatedTransaction<E>) -> RpcResult<()>;
 }
 
 /// Server implementation of [`BuilderApi`] backed by a transaction pool.
@@ -34,23 +44,40 @@ pub trait BuilderApi {
 /// directly into the pool without re-validating signatures, since the sender
 /// addresses are trusted from the forwarding mempool node.
 #[derive(Debug)]
-pub struct BuilderApiImpl<P> {
+pub struct BuilderApiImpl<P, E = NoExtensions> {
     pool: P,
+    _extensions: PhantomData<E>,
 }
 
-impl<P> BuilderApiImpl<P> {
+impl<P> BuilderApiImpl<P, NoExtensions> {
     /// Creates a new handler backed by the given transaction pool.
+    ///
+    /// This constructor is defined only for [`NoExtensions`] so that
+    /// `BuilderApiImpl::new(pool)` resolves without a type annotation. A single
+    /// constructor on the generic impl would leave `E` unconstrained at every
+    /// call site (`E0282`), because type-parameter defaults do not participate
+    /// in inference for associated-function calls.
     pub const fn new(pool: P) -> Self {
-        Self { pool }
+        Self { pool, _extensions: PhantomData }
+    }
+}
+
+impl<P, E> BuilderApiImpl<P, E> {
+    /// Creates a new handler carrying the wire extension payload `E`.
+    ///
+    /// Use as `BuilderApiImpl::<_, MyExtensions>::with_extensions(pool)`.
+    pub const fn with_extensions(pool: P) -> Self {
+        Self { pool, _extensions: PhantomData }
     }
 }
 
 #[async_trait::async_trait]
-impl<P> BuilderApiServer for BuilderApiImpl<P>
+impl<P, E> BuilderApiServer<E> for BuilderApiImpl<P, E>
 where
     P: TransactionPool<Transaction = BasePooledTransaction> + Send + Sync + 'static,
+    E: ValidatedTransactionExtensions<BasePooledTransaction>,
 {
-    async fn insert_validated_transaction(&self, tx: ValidatedTransaction) -> RpcResult<()> {
+    async fn insert_validated_transaction(&self, tx: ValidatedTransaction<E>) -> RpcResult<()> {
         debug!(
             sender = %tx.sender,
             "rpc::insert_validated_transaction"
@@ -67,14 +94,23 @@ where
                     None::<()>,
                 )
             })?;
+        let tx_hash = *consensus_tx.hash();
         let encoded_len = tx.raw.len();
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
         let pool_tx = BasePooledTransaction::new(recovered, encoded_len).with_bundle_metadata(
-            tx.target_block_number,
+            tx.min_block_number,
+            tx.max_block_number,
             tx.min_timestamp,
             tx.max_timestamp,
         );
+
+        // Attach any extension data carried on the wire. This is a no-op for
+        // `NoExtensions`, the default payload.
+        let pool_tx = tx.extensions.apply(pool_tx).map_err(|e| {
+            BuilderApiMetrics::extension_errors().increment(1);
+            ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
+        })?;
 
         // Insert into the pool
         let start = Instant::now();
@@ -83,11 +119,25 @@ where
 
         match result {
             Ok(_) => {
+                self.emit_validated_insert_event(
+                    TransactionEventType::TxpoolValidatedInsertAccepted,
+                    tx_hash,
+                    Map::from_iter([("encoded_len".to_string(), json!(encoded_len))]),
+                );
                 debug!(sender = %sender, "inserted validated transaction");
                 BuilderApiMetrics::txs_inserted().increment(1);
                 Ok(())
             }
             Err(e) => {
+                self.emit_validated_insert_event(
+                    TransactionEventType::TxpoolValidatedInsertRejected,
+                    tx_hash,
+                    Map::from_iter([
+                        ("rejection_stage".to_string(), json!("pool_insert")),
+                        ("encoded_len".to_string(), json!(encoded_len)),
+                        ("error".to_string(), json!(e.to_string())),
+                    ]),
+                );
                 debug!(sender = %sender, error = %e, "pool rejected transaction");
                 BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
                 Err(ErrorObjectOwned::owned(
@@ -100,6 +150,28 @@ where
     }
 }
 
+impl<P, E> BuilderApiImpl<P, E> {
+    fn emit_validated_insert_event(
+        &self,
+        event_type: TransactionEventType,
+        tx_hash: TxHash,
+        mut data: Map<String, serde_json::Value>,
+    ) {
+        data.entry("rpc_method".to_string())
+            .or_insert_with(|| json!("base_insertValidatedTransaction"));
+
+        let _ = transaction_event!(
+            producer: TransactionEventProducer::BaseBuilder,
+            event_type: event_type,
+            tx_hash: tx_hash,
+            id: {
+                "tx_hash" => format!("{tx_hash:#x}"),
+            },
+            data: data,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_consensus::TxEip1559;
@@ -109,7 +181,7 @@ mod tests {
     use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;
-    use crate::{BasePooledTransaction, ValidatedTransaction};
+    use crate::{BasePooledTransaction, NoExtensions, ValidatedTransaction};
 
     // ==========================================================================
     // Helper functions for creating test transactions
@@ -157,6 +229,104 @@ mod tests {
         BuilderApiImpl::new(NoopTransactionPool::<BasePooledTransaction>::new())
     }
 
+    fn validated_transaction<E>(
+        sender: Address,
+        raw: Bytes,
+        extensions: E,
+    ) -> ValidatedTransaction<E> {
+        ValidatedTransaction {
+            sender,
+            raw,
+            min_block_number: None,
+            max_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+            extensions,
+        }
+    }
+
+    // ==========================================================================
+    // Wire extension tests
+    // ==========================================================================
+
+    /// Extension payload that records whether `apply` ran, and can be told to
+    /// fail so the handler's error mapping is observable.
+    #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+    struct TestExtensions {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        reject: Option<bool>,
+    }
+
+    impl ValidatedTransactionExtensions<BasePooledTransaction> for TestExtensions {
+        fn extract(
+            _tx: &reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>,
+        ) -> Self {
+            Self::default()
+        }
+
+        fn apply(
+            self,
+            tx: BasePooledTransaction,
+        ) -> Result<BasePooledTransaction, crate::ExtensionError> {
+            if self.reject == Some(true) {
+                return Err(crate::ExtensionError("rejected by test extension".to_string()));
+            }
+            Ok(tx)
+        }
+    }
+
+    fn extension_handler()
+    -> BuilderApiImpl<NoopTransactionPool<BasePooledTransaction>, TestExtensions> {
+        BuilderApiImpl::<_, TestExtensions>::with_extensions(NoopTransactionPool::<
+            BasePooledTransaction,
+        >::new())
+    }
+
+    #[tokio::test]
+    async fn extension_apply_failure_returns_invalid_params() {
+        let handler = extension_handler();
+        let (sender, raw) = create_eip1559_tx();
+
+        let tx = validated_transaction(sender, raw, TestExtensions { reject: Some(true) });
+
+        let err = handler.insert_validated_transaction(tx).await.unwrap_err();
+        assert_eq!(
+            err.code(),
+            ErrorCode::InvalidParams.code(),
+            "a failing extension must surface as InvalidParams, not reach the pool"
+        );
+        assert!(
+            err.message().contains("rejected by test extension"),
+            "extension error should be propagated: {}",
+            err.message()
+        );
+    }
+
+    #[tokio::test]
+    async fn extension_apply_success_reaches_the_pool() {
+        let handler = extension_handler();
+        let (sender, raw) = create_eip1559_tx();
+
+        let tx = validated_transaction(sender, raw, TestExtensions { reject: None });
+
+        let err = handler.insert_validated_transaction(tx).await.unwrap_err();
+        // The extension passed, so the request got as far as the noop pool,
+        // which rejects everything with an internal error.
+        assert_eq!(
+            err.code(),
+            ErrorCode::InternalError.code(),
+            "a passing extension must fall through to pool insertion"
+        );
+    }
+
+    #[test]
+    fn both_monomorphizations_build_rpc_modules() {
+        // The stock call-site shape must keep working untouched...
+        let _stock = handler().into_rpc();
+        // ...and a custom extension payload must also produce a module.
+        let _custom = extension_handler().into_rpc();
+    }
+
     // ==========================================================================
     // Decode error tests
     // ==========================================================================
@@ -165,13 +335,11 @@ mod tests {
     async fn decode_invalid_bytes_returns_invalid_params() {
         let handler = handler();
 
-        let tx = ValidatedTransaction {
-            sender: Address::repeat_byte(0x01),
-            raw: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            target_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-        };
+        let tx = validated_transaction(
+            Address::repeat_byte(0x01),
+            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            NoExtensions {},
+        );
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err(), "expected decode error for invalid bytes");
@@ -193,13 +361,7 @@ mod tests {
     async fn decode_empty_bytes_returns_invalid_params() {
         let handler = handler();
 
-        let tx = ValidatedTransaction {
-            sender: Address::ZERO,
-            raw: Bytes::new(),
-            target_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-        };
+        let tx = validated_transaction(Address::ZERO, Bytes::new(), NoExtensions {});
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err(), "expected decode error for empty bytes");
@@ -220,13 +382,7 @@ mod tests {
         let (sender, full_raw) = create_deposit_tx();
         let truncated = Bytes::from(full_raw[..full_raw.len() / 2].to_vec());
 
-        let tx = ValidatedTransaction {
-            sender,
-            raw: truncated,
-            target_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-        };
+        let tx = validated_transaction(sender, truncated, NoExtensions {});
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err(), "expected decode error for truncated tx");
@@ -244,13 +400,11 @@ mod tests {
         let handler = handler();
 
         // Type byte 0xFF is not a valid EIP-2718 tx type
-        let tx = ValidatedTransaction {
-            sender: Address::repeat_byte(0x01),
-            raw: Bytes::from_static(&[0xFF, 0x01, 0x02, 0x03]),
-            target_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-        };
+        let tx = validated_transaction(
+            Address::repeat_byte(0x01),
+            Bytes::from_static(&[0xFF, 0x01, 0x02, 0x03]),
+            NoExtensions {},
+        );
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err(), "expected decode error for invalid type byte");
@@ -263,13 +417,8 @@ mod tests {
     async fn decode_single_byte_returns_invalid_params() {
         let handler = handler();
 
-        let tx = ValidatedTransaction {
-            sender: Address::ZERO,
-            raw: Bytes::from_static(&[0x02]), // Just type byte, no payload
-            target_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-        };
+        // Just the type byte, without a payload.
+        let tx = validated_transaction(Address::ZERO, Bytes::from_static(&[0x02]), NoExtensions {});
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err());
@@ -283,13 +432,11 @@ mod tests {
         let handler = handler();
 
         // Legacy tx (type 0x00) followed by invalid RLP
-        let tx = ValidatedTransaction {
-            sender: Address::ZERO,
-            raw: Bytes::from_static(&[0x00, 0x01, 0x02]),
-            target_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-        };
+        let tx = validated_transaction(
+            Address::ZERO,
+            Bytes::from_static(&[0x00, 0x01, 0x02]),
+            NoExtensions {},
+        );
 
         let result = handler.insert_validated_transaction(tx).await;
         let err = result.unwrap_err();
@@ -301,13 +448,7 @@ mod tests {
         let handler = handler();
 
         let (sender, raw) = create_eip1559_tx();
-        let tx = ValidatedTransaction {
-            sender,
-            raw,
-            target_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-        };
+        let tx = validated_transaction(sender, raw, NoExtensions {});
 
         let result = handler.insert_validated_transaction(tx).await;
         let err = result.unwrap_err();

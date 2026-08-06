@@ -62,6 +62,15 @@ sol!(
 
 sol!(
     #[sol(rpc)]
+    MockProtocolVersions,
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/contracts/out/MockProtocolVersions.sol/MockProtocolVersions.json"
+    )
+);
+
+sol!(
+    #[sol(rpc)]
     ParentBlockhashGuard,
     concat!(
         env!("CARGO_MANIFEST_DIR"),

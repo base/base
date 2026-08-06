@@ -1,11 +1,8 @@
-use alloy_primitives::{Address, U256};
-use base_common_genesis::BaseUpgrade;
+use alloy_primitives::Address;
+use base_common_genesis::UpgradeActivationSink;
 use url::Url;
 
-use super::{
-    UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalConfigError, UpgradeSignalDefaults,
-    UpgradeSignalMode,
-};
+use super::{UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMode};
 
 /// CLI arguments shared by nodes that read the L1 upgrade signal contract.
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
@@ -14,128 +11,120 @@ pub struct UpgradeSignalArgs {
     #[arg(long = "upgrade-signal.contract", env = "BASE_NODE_UPGRADE_SIGNAL_CONTRACT")]
     pub contract_address: Option<Address>,
 
-    /// Hardfork IDs to pass to the L1 upgrade signal contract.
-    ///
-    /// If omitted while the contract is configured, all contract-backed Base hardfork IDs are
-    /// read.
-    #[arg(
-        long = "upgrade-signal.hardfork-id",
-        env = "BASE_NODE_UPGRADE_SIGNAL_HARDFORK_ID",
-        value_delimiter = ','
-    )]
-    pub hardfork_ids: Vec<String>,
-
-    /// Hardfork IDs that are allowed to mutate the local schedule.
-    ///
-    /// If omitted, every read hardfork ID is eligible for application when the selected mode
-    /// permits schedule mutation.
-    #[arg(
-        long = "upgrade-signal.apply-hardfork-id",
-        env = "BASE_NODE_UPGRADE_SIGNAL_APPLY_HARDFORK_ID",
-        value_delimiter = ','
-    )]
-    pub apply_hardfork_ids: Vec<String>,
-
     /// Upgrade signal application mode.
     #[arg(
         long = "upgrade-signal.mode",
         env = "BASE_NODE_UPGRADE_SIGNAL_MODE",
         value_enum,
-        default_value_t = UpgradeSignalMode::MetricsOnly
+        default_value_t = UpgradeSignalMode::default()
     )]
     pub mode: UpgradeSignalMode,
 
-    /// L1 block tag used to read the upgrade signal contract.
+    /// L1 block tag used to read the upgrade signal contract. Also selects the interval between
+    /// live contract reads: 15m for finalized, 6m24s for safe, 12s for latest.
     #[arg(
         long = "upgrade-signal.l1-block-tag",
         env = "BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG",
         value_enum,
-        default_value_t = UpgradeSignalBlockTag::Finalized
+        default_value_t = UpgradeSignalBlockTag::default()
     )]
     pub l1_block_tag: UpgradeSignalBlockTag,
 }
 
 impl UpgradeSignalArgs {
     /// Builds a schedule read configuration if the upgrade signal is enabled.
-    pub fn config(&self) -> Result<Option<UpgradeSignalConfig>, UpgradeSignalConfigError> {
-        let Some(contract_address) = self.contract_address else {
-            if !self.hardfork_ids.is_empty() || !self.apply_hardfork_ids.is_empty() {
-                return Err(UpgradeSignalConfigError::MissingContractAddress);
-            }
+    pub fn config(&self) -> Option<UpgradeSignalConfig> {
+        let contract_address = self.contract_address?;
+
+        Some(UpgradeSignalConfig {
+            contract_address,
+            mode: self.mode,
+            l1_block_tag: self.l1_block_tag,
+            node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
+        })
+    }
+
+    /// Returns startup config when the selected mode applies the signal before startup.
+    pub fn startup_config(
+        &self,
+        l1_rpc_args: &UpgradeSignalL1RpcArgs,
+    ) -> eyre::Result<Option<UpgradeSignalStartupConfig>> {
+        let Some(signal_config) = self.config() else {
             return Ok(None);
         };
+        if !signal_config.mode.applies_at_startup() {
+            return Ok(None);
+        }
 
-        let hardfork_ids = Self::configured_hardfork_ids(&self.hardfork_ids)?;
-        let apply_hardfork_ids =
-            Self::configured_apply_hardfork_ids(&hardfork_ids, &self.apply_hardfork_ids)?;
-
-        Ok(Some(UpgradeSignalConfig {
-            contract_address,
-            hardfork_ids,
-            apply_hardfork_ids,
-            mode: self.mode,
-            l1_block_tag: self.l1_block_tag.block_number_or_tag(),
-            node_protocol_version: U256::from(UpgradeSignalDefaults::NODE_PROTOCOL_VERSION),
-        }))
+        let l1_rpc = l1_rpc_args.required_l1_rpc()?;
+        Ok(Some(UpgradeSignalStartupConfig { signal_config, l1_rpc }))
     }
 
-    /// Returns the configured hardfork IDs, or the default contract-backed hardfork schedule.
-    pub fn configured_hardfork_ids(
-        hardfork_ids: &[String],
-    ) -> Result<Vec<BaseUpgrade>, UpgradeSignalConfigError> {
-        if hardfork_ids.is_empty() {
-            return Ok(BaseUpgrade::CONTRACT_VARIANTS.to_vec());
+    /// Applies one startup read to both execution and consensus schedules when startup mode applies.
+    pub async fn apply_startup_to_sinks<EL, CL>(
+        &self,
+        l1_rpc_args: &UpgradeSignalL1RpcArgs,
+        log_context: &'static str,
+        chain_id: u64,
+        execution_sink: &mut EL,
+        consensus_sink: &mut CL,
+    ) -> eyre::Result<()>
+    where
+        EL: UpgradeActivationSink + Clone,
+        EL::Error: std::error::Error + Send + Sync + 'static,
+        CL: UpgradeActivationSink + Clone,
+        CL::Error: std::error::Error + Send + Sync + 'static,
+    {
+        if let Some(startup_config) = self.startup_config(l1_rpc_args)? {
+            startup_config
+                .apply_to_sinks(log_context, chain_id, execution_sink, consensus_sink)
+                .await?;
         }
 
-        let source = hardfork_ids.iter().map(String::as_str).collect::<Vec<_>>();
-        let mut ids = Vec::new();
-        for hardfork_id in source {
-            let hardfork_id = hardfork_id.trim();
-            if hardfork_id.is_empty() {
-                return Err(UpgradeSignalConfigError::EmptyHardforkId);
-            }
-            let hardfork_id =
-                BaseUpgrade::from_contract_fork_name(hardfork_id).ok_or_else(|| {
-                    UpgradeSignalConfigError::UnknownHardforkId(hardfork_id.to_string())
-                })?;
-            if !ids.contains(&hardfork_id) {
-                ids.push(hardfork_id);
-            }
-        }
-
-        Ok(ids)
-    }
-
-    /// Returns the configured apply hardfork IDs, or the read hardfork IDs when omitted.
-    ///
-    /// Every apply hardfork ID must also be a read hardfork ID, since only read signals can be
-    /// applied. A non-subset apply ID is rejected rather than silently ignored.
-    pub fn configured_apply_hardfork_ids(
-        hardfork_ids: &[BaseUpgrade],
-        apply_hardfork_ids: &[String],
-    ) -> Result<Vec<BaseUpgrade>, UpgradeSignalConfigError> {
-        if apply_hardfork_ids.is_empty() {
-            return Ok(hardfork_ids.to_vec());
-        }
-
-        let apply_hardfork_ids = Self::configured_hardfork_ids(apply_hardfork_ids)?;
-        for apply_hardfork_id in &apply_hardfork_ids {
-            if !hardfork_ids.contains(apply_hardfork_id) {
-                return Err(UpgradeSignalConfigError::ApplyHardforkIdNotRead(
-                    apply_hardfork_id.contract_id().to_string(),
-                ));
-            }
-        }
-
-        Ok(apply_hardfork_ids)
+        Ok(())
     }
 }
 
-/// TODO: Default this to the execution CLI's L1 RPC URL so users do not need to pass the same
-/// endpoint twice. This likely requires refactoring how the upgrade signal args are wired into
-/// the standalone execution CLI.
+/// Startup upgrade signal config with a resolved L1 RPC.
+#[derive(Debug, Clone)]
+pub struct UpgradeSignalStartupConfig {
+    /// Schedule read configuration.
+    pub signal_config: UpgradeSignalConfig,
+    /// L1 RPC used to read the upgrade signal contract.
+    pub l1_rpc: Url,
+}
+
+impl UpgradeSignalStartupConfig {
+    /// Applies one startup read to both execution and consensus schedules.
+    pub async fn apply_to_sinks<EL, CL>(
+        self,
+        log_context: &'static str,
+        chain_id: u64,
+        execution_sink: &mut EL,
+        consensus_sink: &mut CL,
+    ) -> eyre::Result<()>
+    where
+        EL: UpgradeActivationSink + Clone,
+        EL::Error: std::error::Error + Send + Sync + 'static,
+        CL: UpgradeActivationSink + Clone,
+        CL::Error: std::error::Error + Send + Sync + 'static,
+    {
+        self.signal_config
+            .apply_startup_to_sinks(
+                self.l1_rpc,
+                log_context,
+                chain_id,
+                execution_sink,
+                consensus_sink,
+            )
+            .await
+    }
+}
+
+/// CLI argument for the L1 RPC endpoint used by execution upgrade-signal polling.
 ///
-/// CLI argument for the L1 RPC endpoint used by standalone execution nodes.
+/// Integrated callers may default this from the consensus L1 RPC so both services read from the
+/// same L1 endpoint by default.
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 pub struct UpgradeSignalL1RpcArgs {
     /// L1 execution RPC URL used to read the upgrade signal contract.
@@ -143,44 +132,43 @@ pub struct UpgradeSignalL1RpcArgs {
     pub upgrade_signal_l1_rpc: Option<Url>,
 }
 
+impl UpgradeSignalL1RpcArgs {
+    /// Defaults the execution upgrade-signal L1 RPC from another service's L1 RPC when unset.
+    pub fn apply_default_from(&mut self, l1_rpc: &Url) {
+        self.upgrade_signal_l1_rpc.get_or_insert_with(|| l1_rpc.clone());
+    }
+
+    /// Returns the configured L1 RPC, or an internal-error if it was never set.
+    pub fn required_l1_rpc(&self) -> eyre::Result<Url> {
+        self.upgrade_signal_l1_rpc
+            .clone()
+            .ok_or_else(|| eyre::eyre!("upgrade signal L1 RPC not derived; this is a bug"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use alloy_rpc_types_eth::BlockNumberOrTag;
-    use base_common_genesis::BaseUpgrade;
 
     use super::*;
 
     #[test]
-    fn disabled_when_no_contract_or_hardfork_id() {
+    fn disabled_when_no_contract() {
         let args = UpgradeSignalArgs::default();
 
-        assert_eq!(args.config().unwrap(), None);
+        assert_eq!(args.config(), None);
     }
 
     #[test]
-    fn uses_default_ids_for_contract_without_hardfork_id() {
+    fn enabled_for_contract() {
         let args = UpgradeSignalArgs {
             contract_address: Some(address!("0000000000000000000000000000000000000001")),
             ..Default::default()
         };
 
-        let config = args.config().unwrap().unwrap();
+        let config = args.config().unwrap();
 
-        assert_eq!(config.hardfork_ids, BaseUpgrade::CONTRACT_VARIANTS.to_vec());
-        assert_eq!(config.apply_hardfork_ids, BaseUpgrade::CONTRACT_VARIANTS.to_vec());
         assert_eq!(config.mode, UpgradeSignalMode::MetricsOnly);
-    }
-
-    #[test]
-    fn rejects_hardfork_id_without_contract() {
-        let args =
-            UpgradeSignalArgs { hardfork_ids: vec!["azul".to_string()], ..Default::default() };
-
-        assert!(matches!(
-            args.config().unwrap_err(),
-            UpgradeSignalConfigError::MissingContractAddress
-        ));
     }
 
     #[test]
@@ -191,7 +179,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(args.config().unwrap().unwrap().l1_block_tag, BlockNumberOrTag::Latest);
+        assert_eq!(args.config().unwrap().l1_block_tag, UpgradeSignalBlockTag::Latest);
     }
 
     #[test]
@@ -199,52 +187,78 @@ mod tests {
         let contract = address!("0000000000000000000000000000000000000001");
         let args = UpgradeSignalArgs {
             contract_address: Some(contract),
-            hardfork_ids: vec!["azul".to_string()],
             mode: UpgradeSignalMode::StartupApply,
             ..Default::default()
         };
 
-        let config = args.config().unwrap().unwrap();
+        let config = args.config().unwrap();
 
         assert_eq!(config.contract_address, contract);
-        assert_eq!(config.hardfork_ids, [BaseUpgrade::Azul]);
-        assert_eq!(config.apply_hardfork_ids, [BaseUpgrade::Azul]);
         assert_eq!(config.mode, UpgradeSignalMode::StartupApply);
+        assert_eq!(config.node_protocol_version, UpgradeSignalDefaults::node_protocol_version());
+    }
+
+    #[test]
+    fn startup_config_is_none_when_mode_does_not_apply_at_startup() {
+        let args = UpgradeSignalArgs {
+            contract_address: Some(address!("0000000000000000000000000000000000000001")),
+            ..Default::default()
+        };
+
+        assert!(args.startup_config(&UpgradeSignalL1RpcArgs::default()).unwrap().is_none());
+    }
+
+    #[test]
+    fn startup_config_requires_l1_rpc_when_mode_applies_at_startup() {
+        let args = UpgradeSignalArgs {
+            contract_address: Some(address!("0000000000000000000000000000000000000001")),
+            mode: UpgradeSignalMode::StartupApply,
+            ..Default::default()
+        };
+
+        let error = args.startup_config(&UpgradeSignalL1RpcArgs::default()).unwrap_err();
+
+        assert_eq!(error.to_string(), "upgrade signal L1 RPC not derived; this is a bug");
+    }
+
+    #[test]
+    fn startup_config_returns_resolved_config_when_mode_applies_at_startup() {
+        let contract_address = address!("0000000000000000000000000000000000000001");
+        let l1_rpc = Url::parse("http://l1:8545").unwrap();
+        let args = UpgradeSignalArgs {
+            contract_address: Some(contract_address),
+            mode: UpgradeSignalMode::StartupApply,
+            ..Default::default()
+        };
+        let l1_rpc_args = UpgradeSignalL1RpcArgs { upgrade_signal_l1_rpc: Some(l1_rpc.clone()) };
+
+        let config = args.startup_config(&l1_rpc_args).unwrap().unwrap();
+
+        assert_eq!(config.signal_config.contract_address, contract_address);
+        assert_eq!(config.l1_rpc, l1_rpc);
+    }
+
+    #[test]
+    fn defaults_execution_l1_rpc_from_shared_l1_rpc() {
+        let mut args = UpgradeSignalL1RpcArgs::default();
+        let l1_rpc = Url::parse("http://localhost:8545").unwrap();
+
+        args.apply_default_from(&l1_rpc);
+
+        assert_eq!(args.upgrade_signal_l1_rpc.as_ref().map(Url::as_str), Some(l1_rpc.as_str()));
+    }
+
+    #[test]
+    fn preserves_explicit_execution_l1_rpc_when_defaulting() {
+        let explicit_l1_rpc = Url::parse("http://finalized-l1:8545").unwrap();
+        let mut args =
+            UpgradeSignalL1RpcArgs { upgrade_signal_l1_rpc: Some(explicit_l1_rpc.clone()) };
+
+        args.apply_default_from(&Url::parse("http://localhost:8545").unwrap());
+
         assert_eq!(
-            config.node_protocol_version,
-            U256::from(UpgradeSignalDefaults::NODE_PROTOCOL_VERSION)
+            args.upgrade_signal_l1_rpc.as_ref().map(Url::as_str),
+            Some(explicit_l1_rpc.as_str())
         );
-    }
-
-    #[test]
-    fn uses_explicit_apply_ids() {
-        let args = UpgradeSignalArgs {
-            contract_address: Some(address!("0000000000000000000000000000000000000001")),
-            hardfork_ids: vec!["azul".to_string(), "beryl".to_string()],
-            apply_hardfork_ids: vec!["beryl".to_string()],
-            mode: UpgradeSignalMode::RuntimeAdmin,
-            ..Default::default()
-        };
-
-        let config = args.config().unwrap().unwrap();
-
-        assert_eq!(config.hardfork_ids, [BaseUpgrade::Azul, BaseUpgrade::Beryl]);
-        assert_eq!(config.apply_hardfork_ids, [BaseUpgrade::Beryl]);
-        assert_eq!(config.mode, UpgradeSignalMode::RuntimeAdmin);
-    }
-
-    #[test]
-    fn rejects_apply_id_not_in_read_ids() {
-        let args = UpgradeSignalArgs {
-            contract_address: Some(address!("0000000000000000000000000000000000000001")),
-            hardfork_ids: vec!["azul".to_string()],
-            apply_hardfork_ids: vec!["beryl".to_string()],
-            ..Default::default()
-        };
-
-        assert!(matches!(
-            args.config().unwrap_err(),
-            UpgradeSignalConfigError::ApplyHardforkIdNotRead(_)
-        ));
     }
 }

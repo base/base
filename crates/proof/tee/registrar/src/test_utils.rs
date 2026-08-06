@@ -1,7 +1,5 @@
 //! Shared test fixtures for the registrar crate.
 
-use std::time::SystemTime;
-
 use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope};
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_eth::TransactionReceipt;
@@ -65,22 +63,17 @@ pub fn signer_from_private_key(private_key: &[u8; 32]) -> Address {
 }
 
 /// Builds a test [`ProverInstance`] with a deterministic instance id.
-pub fn prover_instance(
-    host_port: &str,
-    health_status: InstanceHealthStatus,
-    launch_time: Option<SystemTime>,
-) -> ProverInstance {
+pub fn prover_instance(host_port: &str, health_status: InstanceHealthStatus) -> ProverInstance {
     ProverInstance {
         instance_id: format!("i-{host_port}"),
         endpoint: url::Url::parse(&format!("http://{host_port}")).unwrap(),
         health_status,
-        launch_time,
     }
 }
 
-/// Builds a healthy test [`ProverInstance`] with no launch time.
+/// Builds a healthy test [`ProverInstance`].
 pub fn healthy_prover_instance(host_port: &str) -> ProverInstance {
-    prover_instance(host_port, InstanceHealthStatus::Healthy, None)
+    prover_instance(host_port, InstanceHealthStatus::Healthy)
 }
 
 /// Builds a transaction receipt with the requested success status.

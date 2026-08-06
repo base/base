@@ -16,7 +16,7 @@ use crate::transaction::BundleTransaction;
 /// and keeps the shared `current_block_number` in sync with the chain tip.
 ///
 /// Transactions with `max_timestamp` before the block timestamp or
-/// `target_block_number` before the block number are removed.
+/// `max_block_number` before the block number are removed.
 /// Regular transactions (no bundle metadata) are never affected.
 ///
 /// Intended to be spawned on both client and builder nodes with their

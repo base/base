@@ -25,6 +25,9 @@ alloy-eips = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
 
+# network
+alloy-network = { workspace = true, optional = true }
+
 # Serde
 serde_json = { workspace = true, features = ["alloc"] }
 serde = { workspace = true, features = ["derive", "alloc"] }
@@ -33,11 +36,11 @@ serde = { workspace = true, features = ["derive", "alloc"] }
 revm = { workspace = true, optional = true }
 alloy-evm = { workspace = true, optional = true }
 base-common-evm = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true }
 reth-rpc-convert = { workspace = true, optional = true }
 
 # signing
 alloy-signer = { workspace = true, optional = true }
-alloy-network = { workspace = true, optional = true }
 
 
 # arbitrary
@@ -67,6 +70,7 @@ std = [
 	"base-common-consensus/std",
 	"base-common-evm?/std",
 	"derive_more/std",
+	"reth-primitives-traits?/std",
 	"revm?/std",
 	"serde/std",
 	"serde_json/std",
@@ -79,6 +83,7 @@ arbitrary = [
 	"alloy-serde/arbitrary",
 	"base-common-consensus/arbitrary",
 	"dep:arbitrary",
+	"reth-primitives-traits?/arbitrary",
 	"revm?/arbitrary",
 	"std",
 ]
@@ -91,14 +96,17 @@ serde = [
 	"alloy-rpc-types-eth/serde",
 	"base-common-consensus/serde",
 	"base-common-evm?/serde",
+	"reth-primitives-traits?/serde",
 	"revm?/serde",
 ]
+network = [ "dep:alloy-network" ]
 reth = [
 	"dep:alloy-evm",
-	"dep:alloy-network",
 	"dep:alloy-signer",
 	"dep:base-common-evm",
+	"dep:reth-primitives-traits",
 	"dep:reth-rpc-convert",
 	"dep:revm",
+	"network",
 	"std",
 ]

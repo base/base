@@ -28,8 +28,9 @@ pub use anchor_state_registry::{
 
 mod dispute_game_factory;
 pub use dispute_game_factory::{
-    DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameAtIndex,
-    encode_create_calldata, encode_extra_data, game_already_exists_selector,
+    DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameAtIndex, GameLookupError,
+    GameLookupKey, encode_create_calldata, encode_extra_data, game_already_exists_selector,
+    game_lookup_blocks, game_lookup_count, game_lookup_key,
 };
 
 mod tee_prover_registry;
@@ -40,6 +41,7 @@ pub use tee_prover_registry::{
 mod nitro_enclave_verifier;
 pub use nitro_enclave_verifier::{
     INitroEnclaveVerifier, NitroEnclaveVerifierClient, NitroEnclaveVerifierContractClient,
+    caller_not_owner_or_revoker_selector,
 };
 
 mod error;

@@ -14,12 +14,15 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     types::ErrorObjectOwned,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::server::{
-    ProverServiceServer, WorkerApiConfig, failed_precondition, internal, invalid_argument,
-    not_found, record_rpc_result,
+use crate::{
+    metrics,
+    server::{
+        ProverServiceServer, WorkerApiConfig, failed_precondition, internal, invalid_argument,
+        not_found, record_rpc_result, record_worker_rpc_result, rpc_status_code_str,
+    },
 };
 
 #[async_trait]
@@ -79,6 +82,7 @@ impl ProverServiceServer {
             api_proof_type: request.proof_type.into(),
             tee_kinds: request.tee_kinds.into_iter().map(Into::into).collect(),
             zk_vms: request.zk_vms.into_iter().map(Into::into).collect(),
+            zk_backends: request.zk_backends,
             lock_duration_seconds: resolve_lock_duration(
                 self.config.worker,
                 request.lock_duration_seconds,
@@ -111,8 +115,38 @@ impl ProverServiceServer {
     /// Extends the lock on a worker-owned proof job.
     pub async fn heartbeat_impl(&self, request: HeartbeatRequest) -> RpcResult<HeartbeatResponse> {
         let start = std::time::Instant::now();
+        let session_id = request.session_id.clone();
+        let lock_id = request.lock_id.clone();
+        let worker_id = request.worker_id.clone();
+        let lock_duration_seconds = request.lock_duration_seconds;
         let result = self.heartbeat_inner(request).await;
-        record_rpc_result("Heartbeat", start, &result);
+        record_worker_rpc_result("Heartbeat", start, &result, &worker_id);
+
+        match &result {
+            Ok(response) => {
+                debug!(
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
+                    lock_duration_seconds = lock_duration_seconds,
+                    status = ?response.job.status,
+                    lock_expires_at = ?response.job.lock_expires_at,
+                    "worker proof job heartbeat succeeded"
+                );
+            }
+            Err(error) => {
+                debug!(
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
+                    lock_duration_seconds = lock_duration_seconds,
+                    status_code = %rpc_status_code_str(error.code()),
+                    error_code = error.code(),
+                    error_message = %error.message(),
+                    "worker proof job heartbeat failed"
+                );
+            }
+        }
 
         result
     }
@@ -199,10 +233,19 @@ impl ProverServiceServer {
 
         match outcome {
             SubmitProofOutcome::Completed(job) => {
+                metrics::record_terminal_proof_job(metrics::PROOF_STATUS_SUCCEEDED, &job);
                 info!(
                     worker_id = %request.worker_id,
                     session_id = %request.session_id,
                     "worker submitted proof result"
+                );
+                Ok(WorkerSubmitProofResponse { job: into_protocol_job(job)? })
+            }
+            SubmitProofOutcome::AlreadyCompleted(job) => {
+                info!(
+                    worker_id = %request.worker_id,
+                    session_id = %request.session_id,
+                    "worker replayed already completed proof result"
                 );
                 Ok(WorkerSubmitProofResponse { job: into_protocol_job(job)? })
             }

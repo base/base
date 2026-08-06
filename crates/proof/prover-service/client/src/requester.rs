@@ -3,8 +3,9 @@
 use async_trait::async_trait;
 use backon::Retryable;
 use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiClient,
+    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
+    ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    ProverRequesterApiClient,
 };
 use base_retry::RetryConfig;
 use jsonrpsee::http_client::HttpClient;
@@ -31,6 +32,18 @@ pub trait ProofRequesterProvider: Send + Sync {
         &self,
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError>;
+
+    /// Delete a completed proof request so the same session id can be retried.
+    async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> Result<(), ProverServiceClientError>;
+
+    /// Delete completed TEE proof requests produced by one signer.
+    async fn delete_proofs_by_tee_signer(
+        &self,
+        request: DeleteProofsByTeeSignerRequest,
+    ) -> Result<u64, ProverServiceClientError>;
 
     /// List submitted proof requests.
     async fn list_proofs(
@@ -138,6 +151,52 @@ impl ProofRequesterClient {
         .await
     }
 
+    /// Delete a completed proof request so the same session id can be retried.
+    pub async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> Result<(), ProverServiceClientError> {
+        debug!(session_id = %request.session_id, "deleting proof");
+        (|| {
+            let request = request.clone();
+
+            async move { Ok(self.inner.delete_proof_request(request).await?) }
+        })
+        .retry(self.retry.to_backoff_builder())
+        .when(ProverServiceClientError::is_retryable)
+        .notify(|error, delay| {
+            warn!(
+                session_id = %request.session_id,
+                backoff_ms = delay.as_millis(),
+                error = %error,
+                "delete proof failed; retrying"
+            );
+        })
+        .await
+    }
+
+    /// Delete completed TEE proof requests produced by one signer.
+    pub async fn delete_proofs_by_tee_signer(
+        &self,
+        request: DeleteProofsByTeeSignerRequest,
+    ) -> Result<u64, ProverServiceClientError> {
+        debug!(tee_signer = %request.tee_signer, "deleting proofs by TEE signer");
+        // `request` is `Copy`, so each retry attempt gets its own copy via `async move`
+        // while the outer binding stays available for the `notify` closure below.
+        (|| async move { Ok(self.inner.delete_proofs_by_tee_signer(request).await?) })
+            .retry(self.retry.to_backoff_builder())
+            .when(ProverServiceClientError::is_retryable)
+            .notify(|error, delay| {
+                warn!(
+                    tee_signer = %request.tee_signer,
+                    backoff_ms = delay.as_millis(),
+                    error = %error,
+                    "delete proofs by TEE signer failed; retrying"
+                );
+            })
+            .await
+    }
+
     /// List submitted proof requests.
     pub async fn list_proofs(
         &self,
@@ -182,6 +241,20 @@ impl ProofRequesterProvider for ProofRequesterClient {
         Self::get_proof(self, request).await
     }
 
+    async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> Result<(), ProverServiceClientError> {
+        Self::delete_proof_request(self, request).await
+    }
+
+    async fn delete_proofs_by_tee_signer(
+        &self,
+        request: DeleteProofsByTeeSignerRequest,
+    ) -> Result<u64, ProverServiceClientError> {
+        Self::delete_proofs_by_tee_signer(self, request).await
+    }
+
     async fn list_proofs(
         &self,
         request: ListProofsRequest,
@@ -204,10 +277,10 @@ mod tests {
 
     use async_trait::async_trait;
     use base_prover_service_protocol::{
-        GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequest,
-        ProofRequestKind, ProofResult, ProofStatus, ProofSummary, ProofType,
-        ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkProofRequest,
-        ZkProofResult, ZkVm,
+        DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
+        ListProofsRequest, ListProofsResponse, ProofRequest, ProofRequestKind, ProofResult,
+        ProofStatus, ProofSummary, ProofType, ProveBlockRangeRequest, ProveBlockRangeResponse,
+        ProverRequesterApiServer, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
     use base_retry::RetryConfig;
     use chrono::Utc;
@@ -223,7 +296,7 @@ mod tests {
 
     /// Outcome script for a single requester call when the test wants to drive
     /// retry behavior. The server returns the head of the queue per call.
-    #[derive(Debug)]
+    #[derive(Clone, Copy, Debug)]
     enum ScriptedOutcome {
         Retryable,
         Fatal,
@@ -236,14 +309,18 @@ mod tests {
         reject_get_proof: bool,
         prove_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
         get_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
+        delete_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
         prove_calls: Arc<AtomicU32>,
         get_calls: Arc<AtomicU32>,
+        delete_calls: Arc<AtomicU32>,
     }
 
     #[derive(Debug, Default)]
     struct MockRequesterState {
         prove_request: Option<ProveBlockRangeRequest>,
         get_request: Option<GetProofRequest>,
+        delete_request: Option<DeleteProofRequest>,
+        batch_delete_request: Option<DeleteProofsByTeeSignerRequest>,
         list_request: Option<ListProofsRequest>,
     }
 
@@ -260,8 +337,10 @@ mod tests {
                 reject_get_proof: false,
                 prove_script: Arc::new(Mutex::new(VecDeque::new())),
                 get_script: Arc::new(Mutex::new(VecDeque::new())),
+                delete_script: Arc::new(Mutex::new(VecDeque::new())),
                 prove_calls: Arc::new(AtomicU32::new(0)),
                 get_calls: Arc::new(AtomicU32::new(0)),
+                delete_calls: Arc::new(AtomicU32::new(0)),
             }
         }
 
@@ -279,12 +358,20 @@ mod tests {
             self.get_script.lock().expect("script lock").extend(outcomes);
         }
 
+        fn queue_delete_outcomes<I: IntoIterator<Item = ScriptedOutcome>>(&self, outcomes: I) {
+            self.delete_script.lock().expect("script lock").extend(outcomes);
+        }
+
         fn prove_calls(&self) -> u32 {
             self.prove_calls.load(Ordering::SeqCst)
         }
 
         fn get_calls(&self) -> u32 {
             self.get_calls.load(Ordering::SeqCst)
+        }
+
+        fn delete_calls(&self) -> u32 {
+            self.delete_calls.load(Ordering::SeqCst)
         }
     }
 
@@ -376,8 +463,35 @@ mod tests {
                 result: Some(ProofResult::Compressed(ZkProofResult {
                     zk_vm: ZkVm::Sp1,
                     proof: vec![0xab, 0xcd].into(),
+                    execution_stats: None,
                 })),
             })
+        }
+
+        async fn delete_proof_request(&self, request: DeleteProofRequest) -> RpcResult<()> {
+            self.delete_calls.fetch_add(1, Ordering::SeqCst);
+            self.state.lock().expect("state lock should not be poisoned").delete_request =
+                Some(request);
+
+            let scripted = self.delete_script.lock().expect("script lock").pop_front();
+            match scripted {
+                Some(ScriptedOutcome::Retryable) => {
+                    Err(unavailable_error("scripted delete_proof_request retryable failure"))
+                }
+                Some(ScriptedOutcome::Fatal) => {
+                    Err(invalid_params_error("scripted delete_proof_request fatal failure"))
+                }
+                None | Some(ScriptedOutcome::Success) => Ok(()),
+            }
+        }
+
+        async fn delete_proofs_by_tee_signer(
+            &self,
+            request: DeleteProofsByTeeSignerRequest,
+        ) -> RpcResult<u64> {
+            self.state.lock().expect("state lock should not be poisoned").batch_delete_request =
+                Some(request);
+            Ok(2)
         }
 
         async fn list_proofs(&self, request: ListProofsRequest) -> RpcResult<ListProofsResponse> {
@@ -410,6 +524,7 @@ mod tests {
                     l1_head: None,
                     intermediate_root_interval: None,
                     zk_vm: ZkVm::Sp1,
+                    zk_backend: ZkBackend::Cluster,
                 }),
             },
         }
@@ -440,6 +555,21 @@ mod tests {
             other => panic!("unexpected proof result variant: {other:?}"),
         }
 
+        let delete_request = DeleteProofRequest { session_id: "session-get".to_owned() };
+        provider
+            .delete_proof_request(delete_request.clone())
+            .await
+            .expect("delete_proof_request should succeed");
+
+        let batch_delete_request = DeleteProofsByTeeSignerRequest {
+            tee_signer: "0x1111111111111111111111111111111111111111".parse().unwrap(),
+        };
+        let batch_delete_response = provider
+            .delete_proofs_by_tee_signer(batch_delete_request)
+            .await
+            .expect("delete_proofs_by_tee_signer should succeed");
+        assert_eq!(batch_delete_response, 2);
+
         let list_request =
             ListProofsRequest { offset: 7, limit: 25, status_filter: Some(ProofStatus::Succeeded) };
         let list_response =
@@ -452,6 +582,8 @@ mod tests {
             let state = api.state.lock().expect("state lock should not be poisoned");
             assert_eq!(state.prove_request.as_ref(), Some(&prove_request));
             assert_eq!(state.get_request.as_ref(), Some(&get_request));
+            assert_eq!(state.delete_request.as_ref(), Some(&delete_request));
+            assert_eq!(state.batch_delete_request, Some(batch_delete_request));
             assert_eq!(state.list_request, Some(list_request));
         }
 
@@ -546,6 +678,24 @@ mod tests {
 
         assert!(!err.is_retryable());
         assert_eq!(api_clone.get_calls(), 1);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn requester_retries_retryable_delete_until_success() {
+        let api = MockRequesterApi::new();
+        api.queue_delete_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::Success]);
+        let api_clone = api.clone();
+        let server = RunningRequesterServer::spawn_with_retry(api, fast_retry_config()).await;
+
+        server
+            .client
+            .delete_proof_request(DeleteProofRequest { session_id: "session-delete".to_owned() })
+            .await
+            .expect("delete_proof_request should succeed after retry");
+
+        assert_eq!(api_clone.delete_calls(), 2);
 
         server.shutdown().await;
     }

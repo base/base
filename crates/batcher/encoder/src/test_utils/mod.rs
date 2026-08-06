@@ -45,6 +45,10 @@ impl BatchPipeline for MockBatchPipeline {
         self.submissions.pop_front()
     }
 
+    fn has_ready_submission(&self) -> bool {
+        !self.submissions.is_empty()
+    }
+
     fn confirm(&mut self, id: SubmissionId, l1_block: u64) {
         self.confirmed.push((id, l1_block));
     }

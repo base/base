@@ -13,8 +13,6 @@ pub struct FlashblocksConfig {
     pub max_pending_blocks_depth: u64,
     /// Interval between upstream websocket ping frames.
     pub subscriber_ping_interval: Duration,
-    /// Whether to enable cached execution via the flashblocks-aware engine validator.
-    pub cached_execution: bool,
     /// Shared Flashblocks state.
     pub state: Arc<FlashblocksState>,
 }
@@ -27,7 +25,6 @@ impl FlashblocksConfig {
             websocket_url,
             max_pending_blocks_depth,
             subscriber_ping_interval: Duration::from_secs(30),
-            cached_execution: false,
             state,
         }
     }

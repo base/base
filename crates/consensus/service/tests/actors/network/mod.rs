@@ -1,6 +1,6 @@
 //! Integration tests for the network actor.
 
-use crate::actors::network::mocks::TestNetwork;
+use crate::actors::network::mocks::{ForwardedUnsafeBlock, TestNetwork};
 
 pub(super) mod mocks;
 

@@ -6,7 +6,7 @@ use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::{BoundlessProver, BoundlessProverConfig};
 use base_proof_tee_registrar::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, RegistrarConfig, RegistrarError,
+    INSTANCE_CACHE_TTL_CYCLES, RegistrarConfig, RegistrarError,
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use boundless_market::{
@@ -176,11 +176,22 @@ pub(crate) struct Cli {
     )]
     max_concurrency: usize,
 
+    /// Discovery cycles to preserve signers for instances missing from discovery output.
+    ///
+    /// Shorter TTLs speed up real cleanup but are more vulnerable to transient AWS/ALB
+    /// discovery flakes; longer TTLs protect against flakes but delay cleanup.
+    #[arg(
+        long,
+        env = cli_env!("INSTANCE_CACHE_TTL_CYCLES"),
+        default_value_t = INSTANCE_CACHE_TTL_CYCLES
+    )]
+    instance_cache_ttl_cycles: u32,
+
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
 
-    /// Transaction submission retry delay in seconds.
+    /// Initial transaction submission retry delay in seconds.
     #[arg(
         long = "tx-retry-delay-secs",
         env = cli_env!("TX_RETRY_DELAY_SECS"),
@@ -188,14 +199,6 @@ pub(crate) struct Cli {
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     tx_retry_delay: u64,
-
-    /// Grace period for registering newly launched unhealthy instances.
-    #[arg(
-        long = "unhealthy-registration-window-secs",
-        env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"),
-        default_value_t = DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS
-    )]
-    unhealthy_registration_window: u64,
 
     /// `NitroEnclaveVerifier` contract address for CRL checks. Providing this enables CRL checks.
     #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
@@ -262,9 +265,9 @@ impl Cli {
             poll_interval: Duration::from_secs(self.poll_interval),
             prover_timeout: Duration::from_secs(self.prover_timeout),
             max_concurrency: self.max_concurrency,
+            instance_cache_ttl_cycles: self.instance_cache_ttl_cycles,
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay),
-            unhealthy_registration_window: Duration::from_secs(self.unhealthy_registration_window),
             crl_nitro_verifier_address: self.crl_nitro_verifier_address,
             health_addr: self.health.socket_addr(),
             log_config: self.log.into(),
@@ -375,11 +378,21 @@ mod tests {
             "30",
             "--tx-retry-delay-secs",
             "2",
-            "--unhealthy-registration-window-secs",
-            "600",
+            "--instance-cache-ttl-cycles",
+            "3",
         ]);
 
         assert!(Cli::try_parse_from(args).is_ok());
+    }
+
+    #[test]
+    fn instance_cache_ttl_cycles_configures_registrar() {
+        let mut args = required_args();
+        args.extend(["--instance-cache-ttl-cycles", "2"]);
+
+        let config = Cli::parse_from(args).config().unwrap();
+
+        assert_eq!(config.instance_cache_ttl_cycles, 2);
     }
 
     #[test]

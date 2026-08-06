@@ -15,9 +15,14 @@ use tracing::info;
 
 pub(crate) mod builder;
 
+pub(super) enum ForwardedUnsafeBlock {
+    P2p(BaseExecutionPayloadEnvelope),
+    Admin(BaseExecutionPayloadEnvelope),
+}
+
 pub(crate) struct TestNetwork {
     pub(super) inbound_data: NetworkInboundData,
-    pub(super) blocks_rx: mpsc::Receiver<BaseExecutionPayloadEnvelope>,
+    pub(super) blocks_rx: mpsc::Receiver<ForwardedUnsafeBlock>,
     #[allow(dead_code)]
     handle: JoinHandle<Result<(), NetworkActorError>>,
 }

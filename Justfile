@@ -20,8 +20,12 @@ mod check 'etc/just/check.just'
 mod build 'etc/just/build.just'
 # SP1 / succinct ELF builds and proving helpers
 mod succinct 'etc/just/succinct.just'
-# ZK prover gRPC request helpers
+# Standalone user-funded prover stack (user RPCs + Succinct Network key)
+mod prover 'etc/just/prover.just'
+# Prover-service JSON-RPC request helpers
 mod zk-prover 'etc/just/zk-prover.just'
+# Challenge / dispute helpers
+mod challenge 'etc/just/challenge.just'
 
 alias t := test
 alias f := fix
@@ -44,38 +48,6 @@ load-test-continuous network='devnet':
 setup:
     #!/usr/bin/env bash
     set -euo pipefail
-
-    OS="$(uname -s)"
-    ARCH="$(uname -m)"
-
-    # ── Install fast linker ──
-    if [[ "$OS" == "Darwin" ]]; then
-        if ! brew list lld &>/dev/null; then
-            echo "Installing lld linker for faster builds..."
-            brew install lld
-        fi
-        # Verify lld is reachable at the path .cargo/config.toml expects
-        if [[ "$ARCH" == "arm64" ]]; then
-            LLD="/opt/homebrew/opt/lld/bin/ld64.lld"
-        else
-            LLD="/usr/local/opt/lld/bin/ld64.lld"
-        fi
-        if [[ ! -x "$LLD" ]]; then
-            echo "ERROR: lld not found at $LLD"
-            echo "Try: brew install lld"
-            exit 1
-        fi
-        echo "Found lld at $LLD"
-    elif [[ "$OS" == "Linux" ]]; then
-        if ! command -v mold &>/dev/null; then
-            echo "mold not found. Install it for faster builds:"
-            echo "  Ubuntu/Debian: sudo apt-get install -y mold"
-            echo "  Fedora:        sudo dnf install mold"
-            echo "  Arch:          sudo pacman -S mold"
-            exit 1
-        fi
-        echo "Found mold at $(command -v mold)"
-    fi
 
     just build contracts
     echo "Setup complete!"

@@ -8,6 +8,12 @@ pub use config::{
     RealTokenSetupConfig, TestConfig, TxTypeConfig, WeightedTxType, WorkloadConfig,
 };
 
+mod executor;
+pub use executor::{
+    LoadTestCleanupSummary, LoadTestDisplayConfig, LoadTestExecutor, LoadTestRunHooks,
+    LoadTestRunOptions, LoadTestRunOutput, LoadTestSetupAmounts, SignalHandlerGuard,
+};
+
 mod utils;
 pub use utils::{BaselineError, Result};
 
@@ -19,17 +25,18 @@ pub use rpc::{
 
 mod metrics;
 pub use metrics::{
-    BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
-    MetricsAggregator, MetricsCollector, MetricsSummary, ObservedWindowMetrics, RollingWindow,
-    SubmissionStats, TailMetrics, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
+    BlockLoadMetrics, BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics,
+    LatencyMetrics, MetricsAggregator, MetricsCollector, MetricsSummary, ReceiptCoverage,
+    RollingWindow, SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
     TransactionMetrics,
 };
 
 mod workload;
 pub use workload::{
     AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload,
-    FundedAccount, OsakaPayload, Payload, PrecompileLooper, PrecompilePayload, SeededRng,
-    StoragePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator, parse_precompile_id,
+    FundedAccount, KeyStream, OsakaPayload, Payload, PrecompileLooper, PrecompilePayload,
+    SeededRng, StoragePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator,
+    parse_precompile_id,
 };
 
 mod runner;

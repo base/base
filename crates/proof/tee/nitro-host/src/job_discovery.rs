@@ -95,6 +95,7 @@ impl JobDiscoveryConfig {
             proof_type: ProofType::Tee,
             tee_kinds: vec![TeeKind::AwsNitro],
             zk_vms: Vec::new(),
+            zk_backends: Vec::new(),
             lock_duration_seconds: self.lock_duration_seconds,
         }
     }
@@ -333,7 +334,7 @@ mod tests {
         GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest,
         HeartbeatResponse, ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind,
         RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
-        WorkerSubmitProofResponse, ZkProofRequest, ZkVm,
+        WorkerSubmitProofResponse, ZkBackend, ZkProofRequest, ZkVm,
     };
     use chrono::Utc;
     use tokio::time::timeout;
@@ -420,6 +421,7 @@ mod tests {
         ProverConfig {
             l1_eth_url: "http://127.0.0.1:1".to_string(),
             l2_eth_url: "http://127.0.0.1:1".to_string(),
+            l2_node_url: "http://127.0.0.1:1".to_string(),
             l1_beacon_url: "http://127.0.0.1:1".to_string(),
             l2_chain_id: 0,
             rollup_config: RollupConfig::default(),
@@ -477,6 +479,7 @@ mod tests {
                     l1_head: None,
                     intermediate_root_interval: None,
                     zk_vm: ZkVm::Sp1,
+                    zk_backend: ZkBackend::Cluster,
                 }),
             },
             attempt: 1,

@@ -24,7 +24,6 @@ use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
-use base_common_rpc_types::Transaction as BaseTransaction;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadEnvelopeV3,
     BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
@@ -71,6 +70,9 @@ pub type TestBlockchainProvider = BlockchainProvider<TestNodeTypes>;
 
 /// Type alias for the noop pool used by the engine client.
 pub type TestPool = NoopTransactionPool<BasePooledTransaction>;
+
+/// Type alias for Base L2 RPC blocks returned by the action engine.
+type ActionL2RpcBlock = <Base as Network>::BlockResponse;
 
 /// A payload built in-process during sequencer mode, waiting to be sealed or inserted.
 #[derive(Debug, Clone)]
@@ -135,7 +137,11 @@ impl ActionEngineClient {
     /// Starts from [`build_test_genesis`] (pre-funded test accounts, all forks through
     /// Jovian at timestamp 0) and overrides each fork timestamp and the chain ID from the
     /// rollup config so the resulting [`BaseChainSpec`] matches the test's expectations.
-    fn build_genesis_for_rollup(rollup_config: &RollupConfig) -> Genesis {
+    ///
+    /// Exposed so an alternate engine backend (e.g. the production-builder-backed sequencer) can
+    /// launch a node against the exact same genesis this client commits, keeping block hashes and
+    /// state roots aligned with the verifier and `rollup_config.genesis.l2.hash`.
+    pub fn build_genesis_for_rollup(rollup_config: &RollupConfig) -> Genesis {
         let mut genesis = build_test_genesis();
         genesis.config.chain_id = rollup_config.l2_chain_id.id();
 
@@ -178,6 +184,13 @@ impl ActionEngineClient {
                 "azul activation timestamp ({azul}) must be <= beryl activation timestamp ({beryl})",
             );
         }
+        if let Some(cobalt) = hf.base.cobalt {
+            let beryl = hf.base.beryl.expect("cobalt requires beryl to be configured");
+            assert!(
+                beryl <= cobalt,
+                "beryl activation timestamp ({beryl}) must be <= cobalt activation timestamp ({cobalt})",
+            );
+        }
 
         // Base Azul requires Osaka (the EL counterpart).
         genesis.config.osaka_time = hf.base.azul;
@@ -187,6 +200,9 @@ impl ActionEngineClient {
         }
         if let Some(ts) = hf.base.beryl {
             base.insert("beryl".to_string(), serde_json::json!(ts));
+        }
+        if let Some(ts) = hf.base.cobalt {
+            base.insert("cobalt".to_string(), serde_json::json!(ts));
         }
         if base.is_empty() {
             genesis.config.extra_fields.remove("base");
@@ -498,6 +514,7 @@ impl ActionEngineClient {
                 withdrawals: Some(vec![]),
                 parent_beacon_block_root: None,
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: Some(payload.transactions.clone()),
             no_tx_pool: Some(true),
@@ -508,6 +525,7 @@ impl ActionEngineClient {
             // The spec notes: "as long as MinBaseFee is not explicitly set, the
             // default value (0) will be systematically applied."
             min_base_fee: Some(0),
+            timestamp_millis_part: None,
         };
 
         let built = Self::build_payload(inner, payload.parent_hash, attrs)?;
@@ -585,11 +603,11 @@ impl ActionEngineClient {
         }
     }
 
-    fn header_to_l2_rpc_block(header: &Header, block_hash: B256) -> Block<BaseTransaction> {
+    fn header_to_l2_rpc_block(header: &Header, block_hash: B256) -> ActionL2RpcBlock {
         let sealed = Sealed::new_unchecked(header.clone(), block_hash);
         let rpc_header = alloy_rpc_types_eth::Header::from_sealed(sealed);
         Block {
-            header: rpc_header,
+            header: rpc_header.into(),
             uncles: vec![],
             transactions: BlockTransactions::Hashes(vec![]),
             withdrawals: None,
@@ -698,7 +716,7 @@ impl EngineClient for ActionEngineClient {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<Block<BaseTransaction>>, EngineClientError> {
+    ) -> Result<Option<ActionL2RpcBlock>, EngineClientError> {
         let guard = self.inner.lock().expect("action engine inner lock poisoned");
         let block = match numtag {
             BlockNumberOrTag::Number(n) => guard
@@ -744,6 +762,10 @@ impl EngineClient for ActionEngineClient {
             BlockNumberOrTag::Earliest => None,
         };
         Ok(info)
+    }
+
+    async fn el_syncing(&self) -> Result<bool, EngineClientError> {
+        Ok(false)
     }
 }
 
@@ -971,5 +993,16 @@ impl SequencerEngineClient for ActionEngineClient {
     async fn get_unsafe_head(&self) -> Result<L2BlockInfo, NodeEngineClientError> {
         let guard = self.inner.lock().expect("action engine inner lock poisoned");
         Ok(guard.canonical_head)
+    }
+
+    async fn el_sync_finished(&self) -> Result<bool, NodeEngineClientError> {
+        // The action engine executes synchronously and does not model background EL sync.
+        Ok(true)
+    }
+}
+
+impl crate::SequencerEngineBackend for ActionEngineClient {
+    fn block_hash_registry(&self) -> SharedBlockHashRegistry {
+        self.block_registry.clone()
     }
 }

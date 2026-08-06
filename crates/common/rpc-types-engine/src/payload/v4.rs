@@ -78,6 +78,66 @@ impl BaseExecutionPayloadV4 {
     }
 }
 
+/// The maximum number of transactions in an execution payload, per
+/// `MAX_TRANSACTIONS_PER_PAYLOAD` in the Ethereum consensus specs.
+pub const MAX_TRANSACTIONS_PER_PAYLOAD: usize = 1 << 20;
+
+/// The maximum number of withdrawals in a Base execution payload.
+///
+/// Base sets the withdrawals root directly and requires the SSZ `withdrawals`
+/// list to be present but empty (see [`BaseExecutionPayloadV4`]), so any
+/// non-empty list is invalid and is rejected during decode.
+pub const MAX_WITHDRAWALS_PER_PAYLOAD: usize = 0;
+
+/// SSZ `transactions` list bounded to [`MAX_TRANSACTIONS_PER_PAYLOAD`].
+///
+/// Transactions are variable-length SSZ items, so the decoder derives their
+/// count from the list's leading offset. Bounding the count rejects a frame that
+/// declares more transactions than the protocol allows *before* one entry per
+/// declared element is allocated, closing the pre-authentication
+/// allocation-amplification vector.
+#[cfg(feature = "std")]
+#[derive(Debug)]
+pub struct BoundedTransactions(pub Vec<Bytes>);
+
+#[cfg(feature = "std")]
+impl ssz::Decode for BoundedTransactions {
+    fn is_ssz_fixed_len() -> bool {
+        false
+    }
+
+    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, ssz::DecodeError> {
+        ssz::decode_list_of_variable_length_items(bytes, Some(MAX_TRANSACTIONS_PER_PAYLOAD))
+            .map(Self)
+    }
+}
+
+/// SSZ `withdrawals` list bounded to [`MAX_WITHDRAWALS_PER_PAYLOAD`].
+///
+/// Withdrawals are fixed-length SSZ items, so their count is the byte length
+/// divided by the per-item size. Bounding the count rejects an oversized list
+/// before the backing vector is allocated.
+#[cfg(feature = "std")]
+#[derive(Debug)]
+pub struct BoundedWithdrawals(pub Vec<alloy_eips::eip4895::Withdrawal>);
+
+#[cfg(feature = "std")]
+impl ssz::Decode for BoundedWithdrawals {
+    fn is_ssz_fixed_len() -> bool {
+        false
+    }
+
+    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, ssz::DecodeError> {
+        let per_item = <alloy_eips::eip4895::Withdrawal as ssz::Decode>::ssz_fixed_len();
+        if per_item != 0 && bytes.len() / per_item > MAX_WITHDRAWALS_PER_PAYLOAD {
+            return Err(ssz::DecodeError::BytesInvalid(alloc::format!(
+                "withdrawals list declares more than {MAX_WITHDRAWALS_PER_PAYLOAD} items"
+            )));
+        }
+        Vec::<alloy_eips::eip4895::Withdrawal>::from_ssz_bytes(bytes).map(Self)
+    }
+}
+
 #[cfg(feature = "std")]
 impl ssz::Decode for BaseExecutionPayloadV4 {
     fn is_ssz_fixed_len() -> bool {
@@ -100,8 +160,8 @@ impl ssz::Decode for BaseExecutionPayloadV4 {
         builder.register_type::<Bytes>()?;
         builder.register_type::<U256>()?;
         builder.register_type::<B256>()?;
-        builder.register_type::<Vec<Bytes>>()?;
-        builder.register_type::<Vec<alloy_eips::eip4895::Withdrawal>>()?;
+        builder.register_type::<BoundedTransactions>()?;
+        builder.register_type::<BoundedWithdrawals>()?;
         builder.register_type::<u64>()?;
         builder.register_type::<u64>()?;
         builder.register_type::<B256>()?;
@@ -125,9 +185,9 @@ impl ssz::Decode for BaseExecutionPayloadV4 {
                         extra_data: decoder.decode_next()?,
                         base_fee_per_gas: decoder.decode_next()?,
                         block_hash: decoder.decode_next()?,
-                        transactions: decoder.decode_next()?,
+                        transactions: decoder.decode_next::<BoundedTransactions>()?.0,
                     },
-                    withdrawals: decoder.decode_next()?,
+                    withdrawals: decoder.decode_next::<BoundedWithdrawals>()?.0,
                 },
                 blob_gas_used: decoder.decode_next()?,
                 excess_blob_gas: decoder.decode_next()?,
@@ -208,10 +268,11 @@ pub struct BaseExecutionPayloadEnvelopeV4 {
 }
 
 #[cfg(test)]
-#[cfg(feature = "serde")]
+#[cfg(any(feature = "serde", feature = "std"))]
 mod tests {
     use super::*;
 
+    #[cfg(feature = "serde")]
     #[test]
     fn serde_roundtrip_execution_payload_envelope_v4() {
         // modified execution payload envelope v3 with empty deposit, withdrawal, and consolidation
@@ -219,5 +280,62 @@ mod tests {
         let response = r#"{"executionPayload":{"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"withdrawals":[],"blobGasUsed":"0x0","excessBlobGas":"0x0","withdrawalsRoot":"0x123400000000000000000000000000000000000000000000000000000000babe"},"blockValue":"0x0","blobsBundle":{"commitments":[],"proofs":[],"blobs":[]},"shouldOverrideBuilder":false,"parentBeaconBlockRoot":"0xdead00000000000000000000000000000000000000000000000000000000beef","executionRequests":["0xdeadbeef"]}"#;
         let envelope: BaseExecutionPayloadEnvelopeV4 = serde_json::from_str(response).unwrap();
         assert_eq!(serde_json::to_string(&envelope).unwrap(), response);
+    }
+
+    /// Regression test for the pre-authentication allocation-amplification
+    /// denial-of-service (CWE-770) reachable from the public gossip port.
+    ///
+    /// The `transactions` field is an SSZ list of variable-length items, so its
+    /// element count is derived from the leading 4-byte offset rather than
+    /// declared explicitly. An attacker sets that offset as large as a wire
+    /// frame allows; the decoder divides it by `BYTES_PER_LENGTH_OFFSET` and
+    /// tries to materialize that many entries. A single ~10 `MiB` frame (~0.5
+    /// `MiB` on the wire once snappy-compressed) thus declares ~2.6M
+    /// transactions, forcing that many heap entries and loop iterations before
+    /// any signature check runs.
+    ///
+    /// A bounded transaction list must reject the frame the moment the declared
+    /// count exceeds its maximum, instead of honoring the attacker's count.
+    #[cfg(feature = "std")]
+    #[test]
+    fn decode_rejects_transaction_count_bomb() {
+        // Byte offsets of the container's fixed region, following the field
+        // order in `ssz_append`. Each variable-length field (extra_data,
+        // transactions, withdrawals) occupies a 4-byte offset slot here and
+        // stores its data in the trailing variable region.
+        const FIXED_LEN: usize = 560;
+        const EXTRA_DATA_OFFSET: usize = 436;
+        const TRANSACTIONS_OFFSET: usize = 504;
+        const WITHDRAWALS_OFFSET: usize = 508;
+
+        // Number of transactions an attacker can declare by filling a maximum
+        // decompressed frame with offsets — orders of magnitude beyond the few
+        // thousand a real block can hold.
+        let declared_txs = crate::MAX_DECOMPRESSED_ENVELOPE_BYTES / ssz::BYTES_PER_LENGTH_OFFSET;
+        let transactions_len = declared_txs * ssz::BYTES_PER_LENGTH_OFFSET;
+
+        // Fixed region: every field is left zeroed except the three variable
+        // offset slots. The extra_data and transactions slots point at the same
+        // position (an empty extra_data), and withdrawals begins after the
+        // injected transactions region (an empty withdrawals list).
+        let mut frame = Vec::with_capacity(FIXED_LEN + transactions_len);
+        frame.resize(FIXED_LEN, 0);
+        frame[EXTRA_DATA_OFFSET..][..4].copy_from_slice(&(FIXED_LEN as u32).to_le_bytes());
+        frame[TRANSACTIONS_OFFSET..][..4].copy_from_slice(&(FIXED_LEN as u32).to_le_bytes());
+        frame[WITHDRAWALS_OFFSET..][..4]
+            .copy_from_slice(&((FIXED_LEN + transactions_len) as u32).to_le_bytes());
+
+        // Transactions region: `declared_txs` offsets that all point past the
+        // end of the list, so every declared transaction decodes as empty and
+        // the leading offset alone dictates the element count.
+        for _ in 0..declared_txs {
+            frame.extend_from_slice(&(transactions_len as u32).to_le_bytes());
+        }
+
+        let decoded = <BaseExecutionPayloadV4 as ssz::Decode>::from_ssz_bytes(&frame);
+        assert!(
+            decoded.is_err(),
+            "decoder honored {declared_txs} attacker-declared transactions instead of rejecting the frame",
+        );
     }
 }

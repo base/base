@@ -12,7 +12,7 @@ use base_consensus_derive::{ChainProvider, PipelineError, PipelineErrorKind, Res
 use base_protocol::BlockInfo;
 use lru::LruCache;
 
-use crate::Metrics;
+use crate::{L1RpcProvider, Metrics};
 
 /// The [`AlloyChainProvider`] is a concrete implementation of the [`ChainProvider`] trait, providing
 /// data over Ethereum JSON-RPC using an alloy provider as the backend.
@@ -56,8 +56,10 @@ impl AlloyChainProvider {
     }
 
     /// Creates a new [`AlloyChainProvider`] from the provided [`url::Url`].
+    ///
+    /// The underlying HTTP provider uses the shared [`crate::L1_RPC_TIMEOUT`] deadline.
     pub fn new_http(url: url::Url, cache_size: usize) -> Self {
-        let inner = RootProvider::new_http(url);
+        let inner = L1RpcProvider::new_http(url);
         Self::new(inner, cache_size)
     }
 

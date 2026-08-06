@@ -3,19 +3,30 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_genesis::ChainConfig;
+use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use alloy_transport::TransportResult;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_engine::BaseEngineClient;
-use base_consensus_providers::OnlineBeaconClient;
+use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
+use base_upgrade_signal::UpgradeSignalConfig;
 use url::Url;
 
 use crate::{
-    EngineConfig, NetworkConfig, RollupNode, SequencerConfig, actors::DerivationDelegateClient,
-    service::node::L1Config,
+    EngineConfig, NetworkConfig, RollupNode, SequencerConfig, UpgradeSignalNodeConfig,
+    actors::DerivationDelegateClient, service::node::L1Config,
 };
+
+/// Upgrade signal configuration for the [`RollupNodeBuilder`].
+#[derive(Debug, Clone, Default)]
+pub struct UpgradeSignalBuilderConfig {
+    /// Optional L1 upgrade signal metrics observer configuration.
+    pub metrics_config: Option<UpgradeSignalConfig>,
+    /// Optional L1 RPC endpoint override for upgrade signal reads.
+    pub l1_rpc: Option<Url>,
+}
 
 /// Configuration for Derivation Delegate mode.
 #[derive(Debug, Clone)]
@@ -47,6 +58,8 @@ pub struct L1ConfigBuilder {
     pub slot_duration_override: Option<u64>,
     /// Number of L1 blocks to keep distance from the L1 head for the verifier.
     pub verifier_l1_confs: u64,
+    /// Optional sender used only to filter L1 data-availability transactions.
+    pub da_batcher_sender_override: Option<Address>,
 }
 
 /// The [`RollupNodeBuilder`] is used to construct a [`RollupNode`] service.
@@ -83,6 +96,8 @@ pub struct RollupNodeBuilder {
     /// When set, enables persistent safe head tracking via redb and serves
     /// `optimism_safeHeadAtL1Block` RPC requests from the database.
     pub safedb_path: Option<PathBuf>,
+    /// Upgrade signal configuration.
+    pub upgrade_signal_config: UpgradeSignalBuilderConfig,
 }
 
 impl RollupNodeBuilder {
@@ -121,6 +136,10 @@ impl RollupNodeBuilder {
             finalized_poll_interval: None,
             checkpoint_path: None,
             safedb_path: None,
+            upgrade_signal_config: UpgradeSignalBuilderConfig {
+                metrics_config: None,
+                l1_rpc: None,
+            },
         }
     }
 
@@ -167,6 +186,11 @@ impl RollupNodeBuilder {
         Self { checkpoint_path: Some(path), ..self }
     }
 
+    /// Sets the upgrade signal configuration.
+    pub fn with_upgrade_signal_config(self, config: UpgradeSignalBuilderConfig) -> Self {
+        Self { upgrade_signal_config: config, ..self }
+    }
+
     /// Assembles the [`RollupNode`] service.
     ///
     /// Returns an error if the internal L2 provider transport cannot be constructed. WebSocket
@@ -187,9 +211,10 @@ impl RollupNodeBuilder {
             chain_config: Arc::new(self.l1_config_builder.chain_config),
             trust_rpc: self.l1_config_builder.trust_rpc,
             beacon_client: l1_beacon,
-            engine_provider: RootProvider::new_http(self.l1_config_builder.rpc_url.clone()),
+            engine_provider: L1RpcProvider::new_http(self.l1_config_builder.rpc_url.clone()),
             finalized_poll_interval,
             verifier_l1_confs: self.l1_config_builder.verifier_l1_confs,
+            da_batcher_sender_override: self.l1_config_builder.da_batcher_sender_override,
         };
 
         let l2_provider_url = Self::derivation_l2_provider_url(self.engine_config.l2_url.clone());
@@ -213,6 +238,15 @@ impl RollupNodeBuilder {
             )
         });
 
+        let upgrade_signal_config = self.upgrade_signal_config.metrics_config.map(|config| {
+            UpgradeSignalNodeConfig::resolve(
+                config,
+                self.upgrade_signal_config.l1_rpc.as_ref(),
+                l1_config.engine_provider.clone(),
+                rollup_config.l2_chain_id.id(),
+            )
+        });
+
         Ok(RollupNode {
             config: rollup_config,
             l1_config,
@@ -225,6 +259,7 @@ impl RollupNodeBuilder {
             derivation_delegate_provider,
             checkpoint_path,
             safedb_path: self.safedb_path,
+            upgrade_signal_config,
         })
     }
 
@@ -263,6 +298,7 @@ mod tests {
             rpc_url: Url::parse("http://127.0.0.1:8545").unwrap(),
             slot_duration_override: None,
             verifier_l1_confs: 0,
+            da_batcher_sender_override: None,
         };
         let engine_config = EngineConfig {
             config: Arc::new(rollup_config.clone()),

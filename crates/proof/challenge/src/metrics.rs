@@ -7,11 +7,8 @@ base_metrics::define_metrics! {
     #[describe("Challenger is running")]
     up: gauge,
 
-    #[describe("Total number of game indices evaluated during scanning, including tracked games")]
+    #[describe("Total number of factory game indices evaluated during scanning")]
     games_scanned_total: counter,
-
-    #[describe("Number of in-progress game indices retained by the game scanner")]
-    scan_tracked_in_progress: gauge,
 
     #[describe("Latest factory index scanned by the game scanner")]
     scan_head: gauge,
@@ -63,6 +60,9 @@ base_metrics::define_metrics! {
     #[describe("Number of in-flight proof sessions")]
     pending_proofs: gauge,
 
+    #[describe("Number of games ignored after terminal proof-submission reverts")]
+    ignored_games: gauge,
+
     #[describe("Total number of TEE proof attempts")]
     tee_proof_attempts_total: counter,
 
@@ -98,17 +98,11 @@ base_metrics::define_metrics! {
     #[describe("Latency in seconds for bond transaction confirmation")]
     bond_tx_latency_seconds: histogram,
 
-    #[describe("Number of games currently tracked for bond claiming")]
-    bonds_tracked: gauge,
-
     #[describe("Total number of bonds successfully claimed")]
     bonds_completed_total: counter,
 
-    #[describe("Total number of bonds dropped because recipient changed after resolve")]
-    bonds_not_claimable_total: counter,
-
     #[describe("Total bond discovery scans performed")]
-    #[label(name = "scan_type", default = ["full", "incremental"])]
+    #[label(name = "scan_type", default = ["full"])]
     bond_discovery_scans_total: counter,
 
     #[describe("Total claimable games found by bond discovery")]
@@ -123,22 +117,17 @@ base_metrics::define_metrics! {
     anchor_update_tx_outcome_total: counter,
 
     #[describe(
-        "Number of otherwise-removable games currently retained while awaiting anchor state update"
-    )]
-    anchor_update_retained_games: gauge,
-
-    #[describe(
-        "Total games retained past bond lifecycle completion while awaiting anchor state update"
-    )]
-    anchor_update_retained_games_total: counter,
-
-    #[describe(
         "L2 block number of the most recent anchor state successfully advanced by this challenger. \
          Monotonically increases as the challenger drives the anchor forward; absent until the \
          first successful setAnchorState() observation."
     )]
     #[no_zero]
     anchor_l2_block_number: gauge,
+
+    #[describe(
+        "Elapsed time in seconds from a resolved game's L2 block timestamp to resolve transaction confirmation"
+    )]
+    game_finality_time_seconds: histogram,
 
     #[describe("Challenger account balance in wei")]
     account_balance_wei: gauge,
@@ -155,7 +144,7 @@ impl ChallengerMetrics {
     pub const STATUS_ERROR: &str = "error";
 
     /// Label value when a resolve was skipped because the game was already
-    /// resolved on-chain (e.g. by another actor).
+    /// resolved onchain (e.g. by another actor).
     pub const STATUS_ALREADY_RESOLVED: &str = "already_resolved";
 
     /// Label value when an anchor update was skipped (game not eligible).

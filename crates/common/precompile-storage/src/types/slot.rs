@@ -7,7 +7,7 @@ use alloy_primitives::{Address, U256};
 use crate::{
     error::{BasePrecompileError, Result},
     packing::FieldLocation,
-    provider::{Handler, LayoutCtx, Storable, StorableType, StorageOps},
+    provider::{Handler, LayoutCtx, Storable, StorableType, StorageFeatures, StorageOps},
     storage_ctx::StorageCtx,
 };
 
@@ -95,12 +95,20 @@ impl<'a, T> Slot<'a, T> {
 }
 
 impl<T> StorageOps for Slot<'_, T> {
+    fn ensure_writable(&self) -> Result<()> {
+        self.storage.ensure_writable()
+    }
+
     fn load(&self, slot: U256) -> Result<U256> {
         self.storage.sload(self.address, slot)
     }
 
     fn store(&mut self, slot: U256, value: U256) -> Result<()> {
         self.storage.sstore(self.address, slot, value)
+    }
+
+    fn storage_features(&self) -> StorageFeatures {
+        self.storage.storage_features()
     }
 }
 
@@ -110,6 +118,10 @@ struct TransientOps<'a> {
 }
 
 impl StorageOps for TransientOps<'_> {
+    fn ensure_writable(&self) -> Result<()> {
+        self.storage.ensure_writable()
+    }
+
     fn load(&self, slot: U256) -> Result<U256> {
         self.storage.tload(self.address, slot)
     }

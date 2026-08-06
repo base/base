@@ -33,6 +33,8 @@ const KEYBINDINGS: &[Keybinding] = &[
 
 type PauseRx = Option<(String, mpsc::Receiver<Result<(String, PausedPeers), String>>)>;
 
+const BLOCK_DELTA_RED_THRESHOLD: i128 = 100;
+
 /// Items rendered in the per-node action menu.
 ///
 /// Each variant maps either to a [`PendingAction`] (after confirmation) or to a
@@ -493,22 +495,16 @@ impl View for ConductorView {
             Overlay::HashInput { node: target, input, cursor, prefilled } => {
                 match key.code {
                     KeyCode::Esc => self.close_overlay(),
-                    KeyCode::Backspace => {
-                        if *cursor > 0 {
-                            *cursor -= 1;
-                            input.remove(*cursor);
-                            *prefilled = false;
-                        }
+                    KeyCode::Backspace if *cursor > 0 => {
+                        *cursor -= 1;
+                        input.remove(*cursor);
+                        *prefilled = false;
                     }
-                    KeyCode::Left => {
-                        if *cursor > 0 {
-                            *cursor -= 1;
-                        }
+                    KeyCode::Left if *cursor > 0 => {
+                        *cursor -= 1;
                     }
-                    KeyCode::Right => {
-                        if *cursor < input.len() {
-                            *cursor += 1;
-                        }
+                    KeyCode::Right if *cursor < input.len() => {
+                        *cursor += 1;
                     }
                     KeyCode::Home => *cursor = 0,
                     KeyCode::End => *cursor = input.len(),
@@ -525,12 +521,14 @@ impl View for ConductorView {
                             *prefilled = true;
                         }
                     }
-                    KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        if c.is_ascii_hexdigit() && input.len() < 64 {
-                            input.insert(*cursor, c);
-                            *cursor += 1;
-                            *prefilled = false;
-                        }
+                    KeyCode::Char(c)
+                        if !key.modifiers.contains(KeyModifiers::CONTROL)
+                            && c.is_ascii_hexdigit()
+                            && input.len() < 64 =>
+                    {
+                        input.insert(*cursor, c);
+                        *cursor += 1;
+                        *prefilled = false;
                     }
                     KeyCode::Enter => {
                         if let Some(hash) = parse_hex_hash(input) {
@@ -997,6 +995,29 @@ fn trim_prefix(input: &str) -> &str {
     input.strip_prefix("0x").or_else(|| input.strip_prefix("0X")).unwrap_or(input)
 }
 
+fn latest_block<T>(nodes: &[T], extract: impl Copy + Fn(&T) -> Option<u64>) -> Option<u64> {
+    nodes.iter().filter_map(extract).max()
+}
+
+fn block_label(block: u64, baseline: Option<u64>) -> Line<'static> {
+    let Some(baseline) = baseline else { return Line::from(format!("   {block}")) };
+    let delta = i128::from(block) - i128::from(baseline);
+    if delta == 0 {
+        return Line::from(format!("   {block}"));
+    }
+
+    let delta_style = if delta < -BLOCK_DELTA_RED_THRESHOLD {
+        Style::default().fg(Color::Red)
+    } else {
+        Style::default()
+    };
+
+    Line::from(vec![
+        Span::raw(format!("   {block} ")),
+        Span::styled(format!("({delta:+})"), delta_style),
+    ])
+}
+
 fn render_cluster_table(
     f: &mut Frame<'_>,
     area: Rect,
@@ -1039,6 +1060,10 @@ fn render_cluster_table(
     let leader_safe: Option<(u64, alloy_primitives::B256)> = nodes.iter().find_map(|n| {
         if n.is_leader == Some(true) { n.safe_l2_block.zip(n.safe_l2_hash) } else { None }
     });
+    let unsafe_l2_baseline = latest_block(nodes, |node| node.unsafe_l2_block);
+    let safe_l2_baseline = latest_block(nodes, |node| node.safe_l2_block);
+    let finalized_l2_baseline = latest_block(nodes, |node| node.finalized_l2_block);
+    let el_block_baseline = latest_block(nodes, |node| node.el_block);
 
     // ── Header row: node names ─────────────────────────────────────────────
     let mut header_cells = vec![Cell::from("")];
@@ -1158,10 +1183,10 @@ fn render_cluster_table(
     for node in nodes {
         let (label, style) = match node.unsafe_l2_block {
             Some(n) if node.is_leader == Some(true) => {
-                (format!("   #{n}"), Style::default().fg(Color::Yellow))
+                (block_label(n, unsafe_l2_baseline), Style::default().fg(Color::Yellow))
             }
-            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
-            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+            Some(n) => (block_label(n, unsafe_l2_baseline), Style::default().fg(Color::White)),
+            None => (Line::from("   ?"), Style::default().fg(Color::DarkGray)),
         };
         l2_cells.push(Cell::from(label).style(style));
     }
@@ -1202,10 +1227,10 @@ fn render_cluster_table(
     for node in nodes {
         let (label, style) = match node.safe_l2_block {
             Some(n) if node.is_leader == Some(true) => {
-                (format!("   #{n}"), Style::default().fg(Color::Yellow))
+                (block_label(n, safe_l2_baseline), Style::default().fg(Color::Yellow))
             }
-            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
-            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+            Some(n) => (block_label(n, safe_l2_baseline), Style::default().fg(Color::White)),
+            None => (Line::from("   ?"), Style::default().fg(Color::DarkGray)),
         };
         safe_l2_cells.push(Cell::from(label).style(style));
     }
@@ -1246,10 +1271,10 @@ fn render_cluster_table(
     for node in nodes {
         let (label, style) = match node.finalized_l2_block {
             Some(n) if node.is_leader == Some(true) => {
-                (format!("   #{n}"), Style::default().fg(Color::Yellow))
+                (block_label(n, finalized_l2_baseline), Style::default().fg(Color::Yellow))
             }
-            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
-            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+            Some(n) => (block_label(n, finalized_l2_baseline), Style::default().fg(Color::White)),
+            None => (Line::from("   ?"), Style::default().fg(Color::DarkGray)),
         };
         finalized_l2_cells.push(Cell::from(label).style(style));
     }
@@ -1265,7 +1290,7 @@ fn render_cluster_table(
             (Some(cur), Some(head)) => {
                 let lag = head.saturating_sub(cur);
                 let color = if lag > 10 { Color::Yellow } else { Color::Green };
-                (format!("   #{cur} / #{head}"), Style::default().fg(color))
+                (format!("   {cur} / {head}"), Style::default().fg(color))
             }
             _ => ("   ? / ?".to_string(), Style::default().fg(Color::DarkGray)),
         };
@@ -1295,10 +1320,10 @@ fn render_cluster_table(
     for node in nodes {
         let (label, style) = match node.el_block {
             Some(n) if node.is_leader == Some(true) => {
-                (format!("   #{n}"), Style::default().fg(Color::Yellow))
+                (block_label(n, el_block_baseline), Style::default().fg(Color::Yellow))
             }
-            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
-            None => ("   -".to_string(), Style::default().fg(Color::DarkGray)),
+            Some(n) => (block_label(n, el_block_baseline), Style::default().fg(Color::White)),
+            None => (Line::from("   -"), Style::default().fg(Color::DarkGray)),
         };
         el_block_cells.push(Cell::from(label).style(style));
     }
@@ -1472,6 +1497,10 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     for _ in 0..node_count {
         constraints.push(Constraint::Percentage(node_pct));
     }
+    let unsafe_l2_baseline = latest_block(nodes, |node| node.unsafe_l2_block);
+    let safe_l2_baseline = latest_block(nodes, |node| node.safe_l2_block);
+    let finalized_l2_baseline = latest_block(nodes, |node| node.finalized_l2_block);
+    let el_block_baseline = latest_block(nodes, |node| node.el_block);
 
     // ── Header row: node names ─────────────────────────────────────────────
     let mut header_cells = vec![Cell::from("")];
@@ -1507,8 +1536,8 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     ];
     for node in nodes {
         let (label, style) = node.unsafe_l2_block.map_or_else(
-            || ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
-            |n| (format!("   #{n}"), Style::default().fg(Color::White)),
+            || (Line::from("   ?"), Style::default().fg(Color::DarkGray)),
+            |n| (block_label(n, unsafe_l2_baseline), Style::default().fg(Color::White)),
         );
         l2_cells.push(Cell::from(label).style(style));
     }
@@ -1538,8 +1567,8 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     ];
     for node in nodes {
         let (label, style) = node.safe_l2_block.map_or_else(
-            || ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
-            |n| (format!("   #{n}"), Style::default().fg(Color::White)),
+            || (Line::from("   ?"), Style::default().fg(Color::DarkGray)),
+            |n| (block_label(n, safe_l2_baseline), Style::default().fg(Color::White)),
         );
         safe_l2_cells.push(Cell::from(label).style(style));
     }
@@ -1569,8 +1598,8 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     ];
     for node in nodes {
         let (label, style) = node.finalized_l2_block.map_or_else(
-            || ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
-            |n| (format!("   #{n}"), Style::default().fg(Color::White)),
+            || (Line::from("   ?"), Style::default().fg(Color::DarkGray)),
+            |n| (block_label(n, finalized_l2_baseline), Style::default().fg(Color::White)),
         );
         finalized_l2_cells.push(Cell::from(label).style(style));
     }
@@ -1586,7 +1615,7 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
             (Some(cur), Some(head)) => {
                 let lag = head.saturating_sub(cur);
                 let color = if lag > 10 { Color::Yellow } else { Color::Green };
-                (format!("   #{cur} / #{head}"), Style::default().fg(color))
+                (format!("   {cur} / {head}"), Style::default().fg(color))
             }
             _ => ("   ? / ?".to_string(), Style::default().fg(Color::DarkGray)),
         };
@@ -1618,8 +1647,8 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     ];
     for node in nodes {
         let (label, style) = node.el_block.map_or_else(
-            || ("   -".to_string(), Style::default().fg(Color::DarkGray)),
-            |n| (format!("   #{n}"), Style::default().fg(Color::White)),
+            || (Line::from("   -"), Style::default().fg(Color::DarkGray)),
+            |n| (block_label(n, el_block_baseline), Style::default().fg(Color::White)),
         );
         el_block_cells.push(Cell::from(label).style(style));
     }
@@ -1701,6 +1730,35 @@ mod tests {
 
     const SAMPLE_HEX: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+    fn conductor_status(
+        name: &str,
+        is_leader: Option<bool>,
+        unsafe_l2_block: Option<u64>,
+    ) -> ConductorNodeStatus {
+        ConductorNodeStatus {
+            name: name.to_string(),
+            is_leader,
+            conductor_active: None,
+            conductor_paused: None,
+            conductor_stopped: None,
+            sequencer_healthy: None,
+            sequencer_active: None,
+            unsafe_l2_block,
+            unsafe_l2_hash: None,
+            safe_l2_block: None,
+            safe_l2_hash: None,
+            finalized_l2_block: None,
+            current_l1_block: None,
+            head_l1_block: None,
+            cl_peer_count: None,
+            el_block: None,
+            el_syncing: None,
+            el_peer_count: None,
+            suffrage: None,
+            discovered: true,
+        }
+    }
+
     #[test]
     fn parses_bare_hex_hash() {
         let parsed = parse_hex_hash(SAMPLE_HEX).expect("bare 64-char hex parses");
@@ -1724,5 +1782,50 @@ mod tests {
     fn rejects_non_hex() {
         let bad = "g".repeat(64);
         assert!(parse_hex_hash(&bad).is_none());
+    }
+
+    #[test]
+    fn block_label_formats_signed_delta_from_baseline() {
+        assert_eq!(block_label(7, Some(10)).to_string(), "   7 (-3)");
+        assert_eq!(block_label(10, Some(10)).to_string(), "   10");
+        assert_eq!(block_label(12, Some(10)).to_string(), "   12 (+2)");
+        assert_eq!(block_label(7, None).to_string(), "   7");
+    }
+
+    #[test]
+    fn block_label_colors_delta_red_when_more_than_100_blocks_behind() {
+        let stale = block_label(899, Some(1000));
+        assert_eq!(stale.to_string(), "   899 (-101)");
+        assert_eq!(stale.spans[1].style.fg, Some(Color::Red));
+
+        let boundary = block_label(900, Some(1000));
+        assert_eq!(boundary.to_string(), "   900 (-100)");
+        assert_eq!(boundary.spans[1].style.fg, None);
+    }
+
+    #[test]
+    fn latest_block_uses_max_reported_block() {
+        let nodes = vec![
+            conductor_status("sequencer-0", Some(true), Some(10)),
+            conductor_status("sequencer-1", Some(false), Some(7)),
+            conductor_status("sequencer-2", Some(false), Some(12)),
+        ];
+
+        let baseline = latest_block(&nodes, |node| node.unsafe_l2_block);
+
+        assert_eq!(baseline, Some(12));
+    }
+
+    #[test]
+    fn latest_block_ignores_unknown_blocks() {
+        let nodes = vec![
+            conductor_status("sequencer-0", Some(false), None),
+            conductor_status("sequencer-1", Some(false), Some(7)),
+            conductor_status("sequencer-2", None, Some(12)),
+        ];
+
+        let baseline = latest_block(&nodes, |node| node.unsafe_l2_block);
+
+        assert_eq!(baseline, Some(12));
     }
 }

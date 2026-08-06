@@ -154,6 +154,7 @@ impl ExecutorTestFixtureCreator {
                 withdrawals: Default::default(),
                 suggested_fee_recipient: executing_header.beneficiary,
                 slot_number: None,
+                target_gas_limit: None,
             },
             gas_limit: Some(executing_header.gas_limit),
             transactions: Some(encoded_executing_transactions),
@@ -172,6 +173,7 @@ impl ExecutorTestFixtureCreator {
                     .map(u64::from_be_bytes)
                     .expect("Invalid header format for Jovian")
             }),
+            timestamp_millis_part: None,
         };
 
         let fixture_path = self.data_dir.join("fixture.json");

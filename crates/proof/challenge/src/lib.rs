@@ -9,14 +9,20 @@
 mod cli;
 pub use cli::{ChallengerArgs, Cli, HealthArgs, LogArgs, MetricsArgs, SignerCli, TxManagerCli};
 
+mod anchor;
+pub use anchor::AnchorUpdater;
+
 mod config;
-pub use config::{ChallengerConfig, ConfigError, UrlValidationError, Validated};
+pub use config::ChallengerConfig;
 
 mod driver;
-pub use driver::{Driver, DriverComponents, DriverConfig, TeeConfig};
+pub use driver::{Driver, DriverComponents};
 
 mod pending;
 pub use pending::{DisputeIntent, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate};
+
+mod proof_manager;
+pub use proof_manager::DisputeProofManager;
 
 mod proof_adapter;
 pub use proof_adapter::ChallengerProofAdapter;
@@ -28,7 +34,7 @@ mod metrics;
 pub use metrics::ChallengerMetrics;
 
 mod scanner;
-pub use scanner::{CandidateGame, GameCategory, GameEvaluation, GameScanner};
+pub use scanner::{CandidateGame, GameCategory, GameScanner};
 
 mod service;
 pub use service::ChallengerService;
@@ -36,19 +42,13 @@ pub use service::ChallengerService;
 mod submitter;
 pub use submitter::ChallengeSubmitter;
 
-mod tee;
-pub use tee::L1HeadProvider;
-
 mod validator;
 pub use validator::{
     IntermediateValidationParams, OutputValidator, ValidationResult, ValidatorError,
 };
 
-mod verify;
-pub use verify::{AccountProofError, AccountProofVerifier};
-
 mod bond;
-pub use bond::{BondManager, BondPhase, BondTransactionSubmitter, RemovalReason, TrackedGame};
+pub use bond::{BondManager, BondManagerConfig};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

@@ -36,8 +36,8 @@ use tracing::{debug, error, info};
 /// [`BaseProofsExExBuilder::with_max_prune_blocks_startup`].
 const DEFAULT_MAX_PRUNE_BLOCKS_STARTUP: u64 = 100_000;
 
-/// How many blocks to process in a single batch before yielding. Default is 50 blocks.
-const SYNC_BLOCKS_BATCH_SIZE: usize = 50;
+/// How many blocks to process in a single sync turn before yielding.
+const SYNC_BLOCKS_PER_TURN: usize = 50;
 
 /// Default proofs history window: 1 month of blocks at 2s block time
 const DEFAULT_PROOFS_HISTORY_WINDOW: u64 = 1_296_000;
@@ -135,7 +135,7 @@ where
 /// use base_execution_chainspec::BaseChainSpec;
 /// use base_execution_exex::BaseProofsExEx;
 /// use base_node_core::{BaseNode, args::RollupArgs};
-/// use base_execution_trie::{InMemoryProofsStorage, BaseProofsStorage, db::MdbxProofsStorage};
+/// use base_execution_trie::{InMemoryProofsStorage, BaseProofsStorage, RocksdbProofsStorage};
 /// use reth_provider::providers::BlockchainProvider;
 /// use std::{sync::Arc, time::Duration};
 ///
@@ -152,8 +152,8 @@ where
 /// # let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 /// # let storage_path = temp_dir.path().join("proofs_storage");
 ///
-/// # let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
-/// #    MdbxProofsStorage::new(&storage_path).expect("Failed to create MdbxProofsStorage"),
+/// # let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
+/// #    RocksdbProofsStorage::new(&storage_path).expect("Failed to create RocksdbProofsStorage"),
 /// # ).into();
 ///
 /// let storage_exec = storage.clone();
@@ -459,14 +459,14 @@ where
                 return;
             }
 
-            let end = (latest + SYNC_BLOCKS_BATCH_SIZE as u64).min(target);
+            let end = latest.saturating_add(SYNC_BLOCKS_PER_TURN as u64).min(target);
             info!(
                 target: "base::exex",
                 start = latest + 1,
                 end,
                 target,
-                batch_size = end - latest,
-                "Processing proofs storage sync batch"
+                blocks = end - latest,
+                "Processing proofs storage sync turn"
             );
 
             let mut batch: Vec<BatchBlock<Primitives>> =
@@ -513,8 +513,8 @@ where
             );
             return Ok(BatchBlock::Cached {
                 block_with_parent: cached.block_with_parent,
-                sorted_trie_updates: Arc::clone(&sorted.trie_updates),
-                sorted_post_state: Arc::clone(&sorted.hashed_state),
+                sorted_trie_updates: Arc::clone(&sorted.sorted.trie_updates),
+                sorted_post_state: Arc::clone(&sorted.sorted.hashed_state),
             });
         }
 
@@ -709,13 +709,15 @@ mod tests {
     use alloy_consensus::private::alloy_primitives::B256;
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
     use base_execution_trie::{
-        BaseProofsStorage, BaseProofsStore, BlockStateDiff, db::MdbxProofsStorage,
+        BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };
     use reth_db::test_utils::tempdir_path;
     use reth_ethereum_primitives::{Block, Receipt};
     use reth_execution_types::{Chain, ExecutionOutcome};
     use reth_primitives_traits::RecoveredBlock;
-    use reth_trie::{HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted};
+    use reth_trie::{
+        ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,
+    };
 
     use super::*;
 
@@ -760,10 +762,10 @@ mod tests {
             }
             blocks.push(b);
 
-            let data = LazyTrieData::ready(
+            let data = LazyTrieData::ready(ComputedTrieData::new(
                 Arc::new(HashedPostStateSorted::default()),
                 Arc::new(TrieUpdatesSorted::default()),
-            );
+            ));
             trie_data.insert(n, data);
         }
 
@@ -820,10 +822,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_notification_chain_committed() {
-        // MDBX proofs storage
+        // RocksDB proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
 
@@ -847,10 +849,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_notification_chain_committed_caches_already_stored_blocks() {
-        // MDBX proofs storage
+        // RocksDB proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
 
@@ -881,10 +883,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_notification_chain_reorged() {
-        // MDBX proofs storage
+        // RocksDB proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
         store_blocks(1, 10, &proofs);
@@ -925,10 +927,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_notification_chain_reorged_beyond_stored_blocks() {
-        // MDBX proofs storage
+        // RocksDB proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
         store_blocks(1, 10, &proofs);
@@ -965,10 +967,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_notification_chain_reverted() {
-        // MDBX proofs storage
+        // RocksDB proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
         store_blocks(1, 10, &proofs);
@@ -1003,10 +1005,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_notification_chain_reverted_beyond_stored_blocks() {
-        // MDBX proofs storage
+        // RocksDB proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
         store_blocks(1, 5, &proofs);
@@ -1041,10 +1043,10 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_initialized_errors_on_storage_not_initialized() {
-        // MDBX proofs storage
+        // RocksDB proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         let (ctx, _handle) =
             reth_exex_test_utils::test_exex_context().await.expect("exex test context");
@@ -1055,10 +1057,10 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_initialized_errors_when_prune_exceeds_threshold() {
-        // MDBX proofs storage
+        // RocksDB proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
 
@@ -1083,10 +1085,10 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_initialized_succeeds() {
-        // MDBX proofs storage
+        // RocksDB proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
 
@@ -1099,10 +1101,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_notification_schedules_async_on_gap() {
-        // MDBX proofs storage
+        // RocksDB proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
 

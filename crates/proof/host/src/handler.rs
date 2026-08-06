@@ -24,7 +24,7 @@ use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot};
 use futures::FutureExt;
 use tokio::sync::Semaphore;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
     HostConfig, HostError, HostProviders, Metrics, Result, SharedKeyValueStore, store_ordered_trie,
@@ -363,29 +363,30 @@ impl PayloadWitnessPrefetcher {
             }
         };
 
-        let execute_payload_response = match self
-            .inner
-            .providers
-            .l2
-            .client()
-            .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
-                "debug_executePayload",
-                (parent_block_hash, payload_attributes),
-            )
-            .await
-        {
-            Ok(response) => response,
-            Err(err) => {
-                warn!(
-                    target: HOST_SERVER_TARGET,
-                    block_number,
-                    ?parent_block_hash,
-                    error = %err,
-                    "payload witness prefetch failed: debug_executePayload failed"
-                );
-                return false;
-            }
-        };
+        let execute_payload_response =
+            match base_metrics::time!(Metrics::l2_proof_node_rpc_latency_seconds(), {
+                self.inner
+                    .providers
+                    .l2
+                    .client()
+                    .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
+                        "debug_executePayload",
+                        (parent_block_hash, payload_attributes),
+                    )
+                    .await
+            }) {
+                Ok(response) => response,
+                Err(err) => {
+                    error!(
+                        target: HOST_SERVER_TARGET,
+                        block_number,
+                        ?parent_block_hash,
+                        error = %err,
+                        "payload witness prefetch failed: debug_executePayload failed"
+                    );
+                    return false;
+                }
+            };
 
         if let Err(err) =
             insert_execution_witness_preimages_batched(Arc::clone(&kv), execute_payload_response)
@@ -974,7 +975,7 @@ async fn handle_hint_inner(
                 .get_block_by_hash(hash)
                 .full()
                 .await?
-                .ok_or(HostError::BlockNotFound)?;
+                .ok_or(HostError::BlockNotFound(hash))?;
             let encoded_transactions = transactions
                 .into_transactions()
                 .map(|tx| tx.inner.encoded_2718())
@@ -1093,7 +1094,7 @@ async fn handle_hint_inner(
                 .get_block_by_hash(hash)
                 .full()
                 .await?
-                .ok_or(HostError::BlockNotFound)?;
+                .ok_or(HostError::BlockNotFound(hash))?;
 
             let encoded_transactions = transactions
                 .into_transactions()
@@ -1172,8 +1173,7 @@ async fn handle_hint_inner(
 
             let hash: B256 = hint.data.as_ref().try_into()?;
 
-            warn!(node_hash = %hash, "L2StateNode hint sent");
-            warn!("debug_executePayload failed to return a complete witness");
+            error!(node_hash = %hash, "debug_executePayload failed to return a complete witness");
 
             let preimage: Bytes = providers.l2.client().request("debug_dbGet", &[hash]).await?;
             let actual_hash = keccak256(preimage.as_ref());
@@ -1274,21 +1274,23 @@ async fn handle_hint_inner(
             let payload_attributes: BasePayloadAttributes =
                 serde_json::from_slice(encoded_payload_attributes)?;
 
-            let execute_payload_response = match providers
-                .l2
-                .client()
-                .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
-                    "debug_executePayload",
-                    (parent_block_hash, payload_attributes),
-                )
-                .await
-            {
-                Ok(response) => response,
-                Err(e) => {
-                    warn!(error = %e, "debug_executePayload failed");
-                    return Ok(());
-                }
-            };
+            let execute_payload_response =
+                match base_metrics::time!(Metrics::l2_proof_node_rpc_latency_seconds(), {
+                    providers
+                        .l2
+                        .client()
+                        .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
+                            "debug_executePayload",
+                            (parent_block_hash, payload_attributes),
+                        )
+                        .await
+                }) {
+                    Ok(response) => response,
+                    Err(e) => {
+                        error!(error = %e, "debug_executePayload failed");
+                        return Ok(());
+                    }
+                };
 
             insert_execution_witness_preimages(Arc::clone(&kv), execute_payload_response).await?;
 
@@ -1339,6 +1341,7 @@ mod tests {
             prover: ProverConfig {
                 l1_eth_url: "http://127.0.0.1:1".to_string(),
                 l2_eth_url: "http://127.0.0.1:1".to_string(),
+                l2_node_url: "http://127.0.0.1:1".to_string(),
                 l1_beacon_url: "http://127.0.0.1:1".to_string(),
                 l2_chain_id: 0,
                 rollup_config: RollupConfig::default(),
@@ -1353,7 +1356,8 @@ mod tests {
         let beacon = OnlineBeaconClient::new_http("http://127.0.0.1:1".to_string());
         let blobs =
             OnlineBlobProvider { beacon_client: beacon, genesis_time: 0, slot_interval: 12 };
-        HostProviders { l1, blobs, l2 }
+        let l2_node = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        HostProviders { l1, blobs, l2, l2_node }
     }
 
     fn test_providers(l2: RootProvider<Base>) -> HostProviders {

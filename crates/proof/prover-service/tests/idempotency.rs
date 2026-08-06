@@ -6,7 +6,7 @@
 mod common;
 
 use base_prover_service_protocol::{
-    ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProverRequesterApiClient,
+    ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProverRequesterApiClient, ZkBackend,
     ZkProofRequest, ZkVm,
 };
 use common::connect;
@@ -23,6 +23,7 @@ fn compressed_request(session_id: &str, start_block_number: u64) -> ProveBlockRa
                 l1_head: None,
                 intermediate_root_interval: None,
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             }),
         },
     }

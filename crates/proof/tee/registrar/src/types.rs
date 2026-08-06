@@ -1,5 +1,3 @@
-use std::time::SystemTime;
-
 use url::Url;
 
 /// A prover instance discovered from the infrastructure layer.
@@ -9,11 +7,8 @@ pub struct ProverInstance {
     pub instance_id: String,
     /// HTTP endpoint URL for the prover (e.g. `http://10.0.1.5:8000/`).
     pub endpoint: Url,
-    /// Current health status of the instance.
+    /// Current health status from discovery or direct readiness probing.
     pub health_status: InstanceHealthStatus,
-    /// EC2 launch time of the instance. Used to determine if recently-launched
-    /// unhealthy instances should still be eligible for registration.
-    pub launch_time: Option<SystemTime>,
 }
 
 /// Health status of a discovered prover instance.
@@ -21,9 +16,9 @@ pub struct ProverInstance {
 pub enum InstanceHealthStatus {
     /// ALB health checks are in progress — instance just started.
     Initial,
-    /// Instance is reachable and passing health checks.
+    /// Instance is reachable and passing readiness checks.
     Healthy,
-    /// Instance did not respond to the poll or is failing health checks.
+    /// Instance did not respond to `readyz` or is failing health checks.
     Unhealthy,
     /// ALB is draining connections from this instance.
     Draining,

@@ -12,7 +12,7 @@ pub struct Predeploys;
 
 impl Predeploys {
     /// List of all predeploys.
-    pub const ALL: [Address; 24] = [
+    pub const ALL: [Address; 25] = [
         Self::LEGACY_MESSAGE_PASSER,
         Self::DEPLOYER_WHITELIST,
         Self::LEGACY_ERC20_ETH,
@@ -37,6 +37,7 @@ impl Predeploys {
         Self::OPERATOR_FEE_VAULT,
         Self::CROSS_L2_INBOX,
         Self::L2_TO_L2_XDM,
+        Self::BASE_TIME,
     ];
 
     /// The `LegacyMessagePasser` contract stores commitments to withdrawal transactions before the
@@ -138,6 +139,9 @@ impl Predeploys {
 
     /// The `L2ToL2CrossDomainMessenger` proxy address.
     pub const L2_TO_L2_XDM: Address = address!("0x4200000000000000000000000000000000000023");
+
+    /// The `BaseTime` predeploy address.
+    pub const BASE_TIME: Address = address!("0x4200000000000000000000000000000000000030");
 }
 
 /// Container for system addresses that are not predeploy contracts.

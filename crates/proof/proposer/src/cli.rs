@@ -51,10 +51,6 @@ pub struct ProposerArgs {
     #[arg(long = "dry-run", env = cli_env!("DRY_RUN"))]
     pub dry_run: bool,
 
-    /// Allow proposals based on non-finalized L1 data.
-    #[arg(long = "allow-non-finalized", env = cli_env!("ALLOW_NON_FINALIZED"))]
-    pub allow_non_finalized: bool,
-
     /// URL of the prover RPC endpoint.
     #[arg(long = "prover-rpc", env = cli_env!("PROVER_RPC"))]
     pub prover_rpc: Url,
@@ -152,14 +148,6 @@ pub struct ProposerArgs {
         value_parser = clap::value_parser!(NonZeroUsize)
     )]
     pub recovery_scan_concurrency: NonZeroUsize,
-
-    /// Address of the `TEEProverRegistry` contract on L1.
-    /// When set, the proposer validates signers before onchain submission.
-    #[arg(
-        long = "tee-prover-registry-address",
-        env = cli_env!("TEE_PROVER_REGISTRY_ADDRESS")
-    )]
-    pub tee_prover_registry_address: Option<Address>,
 
     /// Transaction manager configuration.
     #[command(flatten)]

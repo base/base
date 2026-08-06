@@ -568,9 +568,10 @@ async fn test_reset_derivation_pipeline_success(#[values(true, false)] via_chann
             false => actor.reset_derivation_pipeline().await,
             true => {
                 let (tx, rx) = oneshot::channel();
-                actor
+                let reset_requested = actor
                     .handle_admin_query(&mut None, SequencerAdminQuery::ResetDerivationPipeline(tx))
                     .await;
+                assert!(reset_requested);
                 rx.await.unwrap()
             }
         }
@@ -597,9 +598,10 @@ async fn test_reset_derivation_pipeline_error(#[values(true, false)] via_channel
             false => actor.reset_derivation_pipeline().await,
             true => {
                 let (tx, rx) = oneshot::channel();
-                actor
+                let reset_requested = actor
                     .handle_admin_query(&mut None, SequencerAdminQuery::ResetDerivationPipeline(tx))
                     .await;
+                assert!(!reset_requested);
                 rx.await.unwrap()
             }
         }

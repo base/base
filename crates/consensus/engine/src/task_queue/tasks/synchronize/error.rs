@@ -27,10 +27,50 @@ impl EngineTaskError for SynchronizeTaskError {
     fn severity(&self) -> EngineTaskErrorSeverity {
         match self {
             Self::FinalizedAheadOfUnsafe(_, _) => EngineTaskErrorSeverity::Critical,
-            Self::ForkchoiceUpdateFailed(_) | Self::UnexpectedPayloadStatus(_) => {
-                EngineTaskErrorSeverity::Temporary
+            // Transient RPC failure: retry the forkchoice call in place.
+            Self::ForkchoiceUpdateFailed(_) => EngineTaskErrorSeverity::Temporary,
+            // An INVALID forkchoice status means the engine rejected the current head (a poisoned
+            // unsafe head). Retrying in place wedges derivation forever, so escalate to a reset,
+            // which re-discovers a canonical head from the EL. Mirrors op-node's
+            // `tryUpdateEngineInternal`, which maps a non-VALID forkchoice status to a reset.
+            Self::UnexpectedPayloadStatus(_) | Self::InvalidForkchoiceState => {
+                EngineTaskErrorSeverity::Reset
             }
-            Self::InvalidForkchoiceState => EngineTaskErrorSeverity::Reset,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_rpc_types_engine::PayloadStatusEnum;
+    use alloy_transport::RpcError;
+    use rstest::rstest;
+
+    use super::*;
+
+    #[rstest]
+    #[case::finalized_ahead_of_unsafe(
+        SynchronizeTaskError::FinalizedAheadOfUnsafe(10, 5),
+        EngineTaskErrorSeverity::Critical
+    )]
+    #[case::rpc_failure_is_temporary(
+        SynchronizeTaskError::ForkchoiceUpdateFailed(RpcError::local_usage_str("test")),
+        EngineTaskErrorSeverity::Temporary
+    )]
+    #[case::invalid_forkchoice_state_resets(
+        SynchronizeTaskError::InvalidForkchoiceState,
+        EngineTaskErrorSeverity::Reset
+    )]
+    #[case::invalid_payload_status_resets(
+        SynchronizeTaskError::UnexpectedPayloadStatus(PayloadStatusEnum::Invalid {
+            validation_error: String::new(),
+        }),
+        EngineTaskErrorSeverity::Reset
+    )]
+    fn severity_escalates_invalid_forkchoice_to_reset(
+        #[case] error: SynchronizeTaskError,
+        #[case] expected: EngineTaskErrorSeverity,
+    ) {
+        assert_eq!(error.severity(), expected);
     }
 }

@@ -17,6 +17,7 @@ base-bundles.workspace = true
 base-node-runner.workspace = true
 base-builder-publish.workspace = true
 base-common-flashblocks.workspace = true
+base-observability-events.workspace = true
 
 # reth
 reth-db.workspace = true
@@ -46,6 +47,7 @@ reth-rpc-eth-types.workspace = true
 reth-rpc-engine-api.workspace = true
 reth-execution-types.workspace = true
 reth-payload-builder.workspace = true
+reth-execution-cache.workspace = true
 base-execution-txpool.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
@@ -90,6 +92,7 @@ base-common-rpc-types.workspace = true
 base-common-rpc-types-engine.workspace = true
 base-common-evm = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
+base-execution-eip8130.workspace = true
 
 # tokio
 tokio.workspace = true
@@ -134,12 +137,12 @@ dirs-next.workspace = true
 secp256k1.workspace = true
 serde_with.workspace = true
 parking_lot.workspace = true
-derive_more.workspace = true
 tar = { workspace = true, optional = true }
 ctor = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["debug"] }
 serde = { workspace = true, features = ["std"] }
 hyper-util = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
@@ -179,6 +182,7 @@ criterion = { workspace = true, features = ["html_reports"] }
 ctor.workspace = true
 hyper.workspace = true
 rlimit.workspace = true
+rstest.workspace = true
 nanoid.workspace = true
 tempfile.workspace = true
 hyper-util.workspace = true
@@ -187,6 +191,7 @@ http-body-util.workspace = true
 [features]
 default = [ "jemalloc", "metrics" ]
 metrics = [
+	"base-common-evm/metrics",
 	"base-metrics/metrics",
 	"dep:metrics",
 	"reth-evm/metrics",

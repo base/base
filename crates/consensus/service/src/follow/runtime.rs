@@ -8,13 +8,16 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::follow::{
-    engine::FollowEngine,
-    error::FollowError,
-    local::FollowLocalClient,
-    prefetcher::{PREFETCH_WINDOW, PayloadPrefetcher, PrefetchedPayload},
-    proof_gate::ProofGate,
-    source::RemoteClient,
+use crate::{
+    Metrics,
+    follow::{
+        engine::FollowEngine,
+        error::FollowError,
+        local::FollowLocalClient,
+        prefetcher::{PREFETCH_WINDOW, PayloadPrefetcher, PrefetchedPayload},
+        proof_gate::ProofGate,
+        source::RemoteClient,
+    },
 };
 
 const SAFETY_POLL_INTERVAL: Duration = Duration::from_secs(30);
@@ -142,6 +145,9 @@ where
             latest.block_info.number,
         )
         .await?;
+        if let Some(safe_block) = safe.as_ref() {
+            Self::log_l2_origin_validation(local.as_ref(), safe_block).await;
+        }
 
         let safe_limit = safe.as_ref().unwrap_or(&local_safe).block_info.number;
 
@@ -156,6 +162,9 @@ where
             latest.block_info.number.min(safe_limit),
         )
         .await?;
+        if let Some(finalized_block) = finalized.as_ref() {
+            Self::log_l2_origin_validation(local.as_ref(), finalized_block).await;
+        }
 
         engine.update_safe_finalized_blocks(safe, finalized).await
     }
@@ -193,6 +202,61 @@ where
             });
         }
         Ok(Some(local_block))
+    }
+
+    /// Checks whether a hash-verified local block's L1 origin is canonical in the local L1 view.
+    async fn validate_l2_origin_against_local_l1(
+        local: &Local,
+        block: &L2BlockInfo,
+    ) -> Result<(), FollowError> {
+        let origin = block.l1_origin;
+        let local_hash = local
+            .l1_block_hash(origin.number)
+            .await?
+            .ok_or(FollowError::LocalL1BlockUnavailable(origin.number))?;
+        if local_hash != origin.hash {
+            return Err(FollowError::L2OriginNotCanonical {
+                l2_number: block.block_info.number,
+                l1_number: origin.number,
+                local_l1: local_hash,
+                l2_origin: origin.hash,
+            });
+        }
+        Ok(())
+    }
+
+    async fn log_l2_origin_validation(local: &Local, block: &L2BlockInfo) {
+        match Self::validate_l2_origin_against_local_l1(local, block).await {
+            Ok(()) => {}
+            Err(FollowError::LocalL1BlockUnavailable(l1_number)) => {
+                Metrics::follow_l1_origin_check_failures_total("unavailable").increment(1);
+                info!(
+                    target: "follow",
+                    l2_block = block.block_info.number,
+                    l1_block = l1_number,
+                    "Local L1 origin block unavailable; promoting label without local L1 confirmation"
+                );
+            }
+            Err(FollowError::LocalL1BlockFetch { number, source }) => {
+                Metrics::follow_l1_origin_check_failures_total("fetch_failed").increment(1);
+                info!(
+                    target: "follow",
+                    error = %source,
+                    l2_block = block.block_info.number,
+                    l1_block = number,
+                    "L1 origin fetch failed; promoting label without local L1 confirmation"
+                );
+            }
+            Err(error) => {
+                Metrics::follow_l1_origin_check_failures_total("not_canonical").increment(1);
+                warn!(
+                    target: "follow",
+                    error = %error,
+                    l2_block = block.block_info.number,
+                    "L2 origin not canonical on local L1; promoting label anyway"
+                );
+            }
+        }
     }
 }
 
@@ -248,7 +312,7 @@ mod tests {
     use alloy_rpc_types_engine::ExecutionPayloadV1;
     use async_trait::async_trait;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-    use base_protocol::L2BlockInfo;
+    use base_protocol::{BlockInfo, L2BlockInfo};
     use mockall::predicate::eq;
     use tokio::{sync::Mutex, time};
     use tokio_util::sync::CancellationToken;
@@ -392,6 +456,7 @@ mod tests {
                 _ => block_info(0),
             }))
         });
+        local.expect_l1_block_hash().returning(|_| Ok(Some(B256::ZERO)));
         local.expect_proofs_latest().returning(move || Ok(Some(proofs_latest)));
         local
     }
@@ -522,6 +587,7 @@ mod tests {
                 _ => block_info(0),
             }))
         });
+        local.expect_l1_block_hash().returning(|_| Ok(Some(B256::ZERO)));
         let proofs_for_mock = Arc::clone(&proofs_latest);
         local
             .expect_proofs_latest()
@@ -632,6 +698,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn out_of_range_source_labels_skip_l1_origin_validation() {
+        let mut local = MockFollowLocalClient::new();
+        local.expect_block_info().returning(|tag| {
+            Ok(Some(match tag {
+                BlockNumberOrTag::Latest => block_info(10),
+                BlockNumberOrTag::Safe => block_info(8),
+                BlockNumberOrTag::Finalized => block_info(7),
+                _ => panic!("unexpected local block lookup: {tag:?}"),
+            }))
+        });
+        local.expect_l1_block_hash().times(0);
+
+        let mut source = MockRemoteClient::new();
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(source_block_info(20)));
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(source_block_info(6)));
+        let engine = Arc::new(RecordingEngine {
+            inserted: Mutex::new(Vec::new()),
+            labels: Mutex::new(Vec::new()),
+            delay: Duration::ZERO,
+        });
+        let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+
+        FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
+            Arc::new(local),
+            Arc::new(source),
+            engine_for_update,
+        )
+        .await
+        .expect("labels");
+
+        assert!(engine.labels.lock().await.is_empty());
+    }
+
+    #[tokio::test]
     async fn safe_and_finalized_update_skips_without_local_safe_label() {
         let mut local = MockFollowLocalClient::new();
         local.expect_block_info().returning(|tag| {
@@ -660,8 +766,8 @@ mod tests {
 
     #[tokio::test]
     async fn safe_label_rejects_source_hash_mismatch() {
-        // A safe label whose hash disagrees with the local block surfaces SourceBlockHashMismatch
-        // and promotes nothing. `.times(1)` asserts there is exactly one source read for the label.
+        // Safe label hash disagrees with the local block at that height; returns
+        // SourceBlockHashMismatch and does not promote labels.
         let local = Arc::new(local_client(10, 8, 7, 100));
         let mut source = MockRemoteClient::new();
         source.expect_get_block_info().with(eq(BlockNumberOrTag::Safe)).times(1).returning(|_| {
@@ -688,10 +794,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn l2_origin_mismatch_does_not_block_label_promotion() {
+        let mut local = MockFollowLocalClient::new();
+        local.expect_block_info().returning(|tag| {
+            Ok(Some(match tag {
+                BlockNumberOrTag::Latest => block_info(10),
+                BlockNumberOrTag::Safe => block_info(8),
+                BlockNumberOrTag::Finalized => block_info(7),
+                BlockNumberOrTag::Number(9) => L2BlockInfo {
+                    l1_origin: alloy_eips::BlockNumHash {
+                        number: 0,
+                        hash: B256::with_last_byte(1),
+                    },
+                    ..block_info(9)
+                },
+                _ => panic!("unexpected local block lookup: {tag:?}"),
+            }))
+        });
+        local.expect_l1_block_hash().returning(|_| Ok(Some(B256::ZERO)));
+        let mut source = MockRemoteClient::new();
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(source_block_info(9)));
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(source_block_info(6)));
+        let engine = Arc::new(RecordingEngine {
+            inserted: Mutex::new(Vec::new()),
+            labels: Mutex::new(Vec::new()),
+            delay: Duration::ZERO,
+        });
+        let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+
+        FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
+            Arc::new(local),
+            Arc::new(source),
+            engine_for_update,
+        )
+        .await
+        .expect("label update");
+
+        assert_eq!(*engine.labels.lock().await, vec![(Some(9), None)]);
+    }
+
+    #[tokio::test]
+    async fn unavailable_l2_origin_does_not_block_label_promotion() {
+        let mut local = MockFollowLocalClient::new();
+        local.expect_block_info().returning(|tag| {
+            Ok(Some(match tag {
+                BlockNumberOrTag::Latest => block_info(10),
+                BlockNumberOrTag::Safe => block_info(8),
+                BlockNumberOrTag::Finalized => block_info(7),
+                BlockNumberOrTag::Number(9) => block_info(9),
+                _ => panic!("unexpected local block lookup: {tag:?}"),
+            }))
+        });
+        local.expect_l1_block_hash().returning(|_| Ok(None));
+        let mut source = MockRemoteClient::new();
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(source_block_info(9)));
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(source_block_info(6)));
+        let engine = Arc::new(RecordingEngine {
+            inserted: Mutex::new(Vec::new()),
+            labels: Mutex::new(Vec::new()),
+            delay: Duration::ZERO,
+        });
+        let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+
+        FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
+            Arc::new(local),
+            Arc::new(source),
+            engine_for_update,
+        )
+        .await
+        .expect("label update");
+
+        assert_eq!(*engine.labels.lock().await, vec![(Some(9), None)]);
+    }
+
+    #[tokio::test]
     async fn finalized_label_rejects_source_hash_mismatch() {
-        // The same coherent-read check applies to the finalized label. Here the safe label is
-        // consistent (so evaluation reaches the finalized read), but the in-range finalized block's
-        // hash disagrees with the local block: surface SourceBlockHashMismatch and promote nothing.
+        // Safe label is consistent so evaluation reaches finalized; the in-range finalized hash
+        // disagrees with local, which returns SourceBlockHashMismatch.
         let local = Arc::new(local_client(10, 9, 7, 100));
         let mut source = MockRemoteClient::new();
         source

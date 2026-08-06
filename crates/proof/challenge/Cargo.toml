@@ -18,9 +18,9 @@ alloy-eips.workspace = true
 alloy-provider.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
-alloy-rpc-types-eth.workspace = true
 alloy-trie = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, optional = true }
+alloy-rpc-types-eth = { workspace = true, optional = true }
 
 # Tx Manager
 base-tx-manager.workspace = true
@@ -31,9 +31,10 @@ base-balance-monitor.workspace = true
 # Proof
 base-proof-rpc.workspace = true
 base-proof-contracts.workspace = true
+base-proof-primitives.workspace = true
+base-proof-submission.workspace = true
 base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
-base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # Protocol
 base-protocol.workspace = true
@@ -42,7 +43,7 @@ base-common-consensus.workspace = true
 # Async
 tokio.workspace = true
 futures.workspace = true
-async-trait.workspace = true
+async-trait = { workspace = true, optional = true }
 
 # Tracing
 tracing.workspace = true
@@ -74,8 +75,9 @@ base-health = { workspace = true, features = ["axum-server"] }
 
 # Misc
 url.workspace = true
+sp1-sdk.workspace = true
 humantime.workspace = true
-derive_more = { workspace = true, features = ["debug"] }
+bincode = { workspace = true, features = ["serde"] }
 
 # Test utilities (optional)
 serde_json = { workspace = true, optional = true }
@@ -90,6 +92,8 @@ metrics-util = { workspace = true, features = ["debugging"] }
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
 test-utils = [
 	"alloy-consensus",
+	"alloy-rpc-types-eth",
+	"async-trait",
 	"base-protocol/test-utils",
 	"base-runtime/test-utils",
 	"serde_json",

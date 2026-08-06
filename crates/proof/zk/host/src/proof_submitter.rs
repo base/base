@@ -21,7 +21,7 @@ impl TryFrom<ProofSubmitterRequest> for WorkerSubmitProofRequest {
 
     fn try_from(request: ProofSubmitterRequest) -> Result<Self, Self::Error> {
         match request.result {
-            ProofResult::Compressed(_) | ProofResult::SnarkGroth16(_) => Ok(Self {
+            ProofResult::Compressed(_) | ProofResult::SnarkPlonk(_) => Ok(Self {
                 session_id: request.session_id,
                 lock_id: request.lock_id,
                 worker_id: request.worker_id,
@@ -39,7 +39,11 @@ mod tests {
     use super::*;
 
     fn zk_result() -> ProofResult {
-        ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![1, 2, 3].into() })
+        ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![1, 2, 3].into(),
+            execution_stats: None,
+        })
     }
 
     #[test]
@@ -67,6 +71,7 @@ mod tests {
             l2_block_number: 11,
             prev_output_root: alloy_primitives::B256::repeat_byte(3),
             config_hash: alloy_primitives::B256::repeat_byte(4),
+            schedule_id: alloy_primitives::B256::repeat_byte(5),
         }
     }
 
@@ -76,6 +81,7 @@ mod tests {
             aggregate_proposal: proposal(),
             proposals: vec![proposal()],
             tee_kind: TeeKind::AwsNitro,
+            tee_signer: alloy_primitives::Address::repeat_byte(0x11),
         });
 
         let result = WorkerSubmitProofRequest::try_from(ProofSubmitterRequest {

@@ -20,11 +20,29 @@ pub use recovery::RecoveryModeGuard;
 mod seal;
 pub use seal::{PayloadSealer, SealState, SealStepError, SealStepOutcome};
 
+mod shadow_cycle;
+pub use shadow_cycle::{ShadowCycle, ShadowReconciliationTask};
+
+mod engine_request_coordinator;
+pub use engine_request_coordinator::SequencerEngineRequestCoordinator;
+
+mod shadow_reconciliation;
+pub use shadow_reconciliation::{
+    CanonicalReconciliationInputs, CanonicalUnsafeCatchup, SequencerEngineState,
+    ShadowReconciliationGate,
+};
+
 mod ticker;
 pub use ticker::ScheduledTicker;
 
 mod pool;
 pub use pool::PoolActivation;
+
+mod pipeline_state;
+pub use pipeline_state::BuildPipelineState;
+
+mod shadow_state;
+pub use shadow_state::ShadowSequencingState;
 
 mod actor;
 pub use actor::{PendingStopSender, SequencerActor};

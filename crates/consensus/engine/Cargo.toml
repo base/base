@@ -14,6 +14,7 @@ workspace = true
 # workspace
 base-metrics.workspace = true
 base-common-genesis.workspace = true
+base-consensus-providers.workspace = true
 base-protocol = {workspace = true, features = ["serde", "std"]}
 
 # alloy
@@ -41,8 +42,11 @@ base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 url.workspace = true
 tokio.workspace = true
 tower.workspace = true
+http.workspace = true
 async-trait.workspace = true
 http-body-util.workspace = true
+opentelemetry.workspace = true
+opentelemetry-http.workspace = true
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }

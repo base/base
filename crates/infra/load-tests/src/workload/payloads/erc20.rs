@@ -37,6 +37,10 @@ impl Payload for Erc20Payload {
         "erc20"
     }
 
+    fn uses_runner_recipient(&self) -> bool {
+        true
+    }
+
     fn generate(&self, rng: &mut SeededRng, _from: Address, to: Address) -> TransactionRequest {
         let amount = if self.min_amount == self.max_amount {
             self.min_amount

@@ -36,6 +36,5 @@ url.workspace = true
 eyre.workspace = true
 tracing.workspace = true
 futures.workspace = true
-tokio-util.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["macros", "rt", "signal", "time"] }

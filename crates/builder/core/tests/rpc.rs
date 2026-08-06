@@ -6,7 +6,7 @@ use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
 use alloy_rpc_client::RpcClient;
 use base_builder_core::BuilderApiExtension;
 use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
-use base_execution_txpool::ValidatedTransaction;
+use base_execution_txpool::{NoExtensions, ValidatedTransaction};
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::Account;
 
@@ -65,9 +65,11 @@ async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
     let validated_tx = ValidatedTransaction {
         sender,
         raw,
-        target_block_number: None,
+        min_block_number: None,
+        max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        extensions: NoExtensions {},
     };
 
     let result: Result<(), _> =
@@ -94,9 +96,11 @@ async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
     let validated_tx = ValidatedTransaction {
         sender,
         raw,
-        target_block_number: None,
+        min_block_number: None,
+        max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        extensions: NoExtensions {},
     };
 
     // EIP-1559 transactions are supported by the pool
@@ -116,9 +120,11 @@ async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
     let validated_tx = ValidatedTransaction {
         sender: Address::repeat_byte(0x01),
         raw: Bytes::from(vec![0xFF, 0x01, 0x02, 0x03]),
-        target_block_number: None,
+        min_block_number: None,
+        max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        extensions: NoExtensions {},
     };
 
     let result: Result<(), _> =

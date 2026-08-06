@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use base_proof_succinct_elfs::AGGREGATION_ELF;
-use base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
+use base_proof_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, host::SuccinctHost};
 use serde::{Deserialize, Serialize};
 use sp1_cluster_artifact::{
     redis::RedisArtifactClient,
@@ -36,12 +36,10 @@ pub const fn get_range_elf_embedded() -> &'static [u8] {
     RANGE_ELF_EMBEDDED
 }
 
-use base_proof_succinct_ethereum_host_utils::host::SingleChainOPSuccinctHost;
-
 /// Initialize the host.
-pub fn initialize_host(fetcher: Arc<OPSuccinctDataFetcher>) -> Arc<SingleChainOPSuccinctHost> {
+pub fn initialize_host(fetcher: Arc<OPSuccinctDataFetcher>) -> Arc<SuccinctHost> {
     tracing::info!("Initializing host with Ethereum DA");
-    Arc::new(SingleChainOPSuccinctHost::new(fetcher))
+    Arc::new(SuccinctHost::new(fetcher))
 }
 
 /// Returns true if `SP1_PROVER` is set to `"cluster"` (self-hosted cluster mode).
@@ -65,6 +63,18 @@ pub async fn cluster_setup_keys()
             cpu_prover.setup(Elf::Static(AGGREGATION_ELF)).context("agg ELF setup failed")?;
         let agg_vk = agg_pk.verifying_key().clone();
         anyhow::Ok((range_pk, range_vk, agg_pk, agg_vk))
+    })
+    .await?
+}
+
+/// Set up only the range proving key via blocking `CpuProver`.
+///
+/// Runs in `spawn_blocking` because `CpuProver` creates its own tokio runtime
+/// internally, which would panic if called directly from an async context.
+pub async fn cluster_setup_range_key() -> Result<SP1ProvingKey> {
+    tokio::task::spawn_blocking(|| {
+        let cpu_prover = CpuProver::new();
+        cpu_prover.setup(Elf::Static(get_range_elf_embedded())).context("range ELF setup failed")
     })
     .await?
 }

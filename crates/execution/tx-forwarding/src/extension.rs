@@ -1,11 +1,10 @@
 //! Contains the [`TxForwardingExtension`] which wires up the transaction
 //! forwarding pipeline on the Base node builder.
 
-use base_execution_txpool::{SpawnedConsumer, SpawnedForwarder};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use tracing::info;
 
-use crate::TxForwardingConfig;
+use crate::{TxForwardingConfig, TxForwardingService};
 
 /// Helper struct that wires the transaction forwarding pipeline into the node builder.
 #[derive(Debug)]
@@ -40,17 +39,14 @@ impl BaseNodeExtension for TxForwardingExtension {
             );
 
             let pool = ctx.pool().clone();
-            let consumer_config = config.to_consumer_config();
-            let forwarder_config = config.to_forwarder_config();
             let executor = ctx.task_executor;
-            let consumer = SpawnedConsumer::spawn(pool, consumer_config, &executor);
-            let forwarder = SpawnedForwarder::spawn(&consumer.sender, forwarder_config, &executor);
+            let handle = TxForwardingService::new(config).spawn(pool, &executor);
 
             executor.spawn_with_graceful_shutdown_signal(|signal| {
                 Box::pin(async move {
                     let _guard = signal.await;
-                    consumer.shutdown();
-                    forwarder.shutdown().await;
+                    let report = handle.shutdown().await;
+                    info!(?report, "transaction forwarding pipeline stopped");
                 })
             });
 

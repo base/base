@@ -19,7 +19,7 @@ use revm::{
 
 use crate::{
     error::{BasePrecompileError, IntoPrecompileResult, Result},
-    provider::PrecompileStorageProvider,
+    provider::{PrecompileStorageProvider, StorageFeatures},
 };
 
 type ScopedProvider<'a> = dyn PrecompileStorageProvider + 'a;
@@ -91,6 +91,25 @@ impl<'a> StorageCtx<'a> {
         })
     }
 
+    /// Executes a closure with full account bytecode, returning the closure's result.
+    pub fn with_account_code<T>(
+        &self,
+        address: Address,
+        mut f: impl FnMut(&Bytecode) -> Result<T>,
+    ) -> Result<T> {
+        let mut result: Option<Result<T>> = None;
+        self.try_with_storage(|s| {
+            s.with_account_code(address, &mut |code| {
+                result = Some(f(code));
+            })
+        })?;
+        result.unwrap_or_else(|| {
+            Err(BasePrecompileError::Fatal(
+                "with_account_code callback was not invoked".to_string(),
+            ))
+        })
+    }
+
     /// Returns the current chain ID.
     pub fn chain_id(&self) -> u64 {
         self.with_storage(|s| s.chain_id())
@@ -127,9 +146,21 @@ impl<'a> StorageCtx<'a> {
         self.try_with_storage(|s| s.tload(address, key))
     }
 
+    /// Reads transient storage without exposing a TLOAD opcode charge.
+    ///
+    /// Use this only when the native operation applies its own gas schedule.
+    pub fn tload_unmetered(&self, address: Address, key: U256) -> Result<U256> {
+        self.try_with_storage(|s| s.tload_unmetered(address, key))
+    }
+
     /// Performs an SSTORE (persistent storage write).
     pub fn sstore(&self, address: Address, key: U256, value: U256) -> Result<()> {
         self.try_with_storage(|s| s.sstore(address, key, value))
+    }
+
+    /// Checks whether the current call context permits storage writes.
+    pub fn ensure_writable(&self) -> Result<()> {
+        if self.is_static() { Err(BasePrecompileError::StaticCallViolation) } else { Ok(()) }
     }
 
     /// Performs a TSTORE (transient storage write).
@@ -165,6 +196,10 @@ impl<'a> StorageCtx<'a> {
     /// Returns the remaining EIP-8037 state-gas reservoir.
     pub fn reservoir(&self) -> u64 {
         self.with_storage(|s| s.reservoir())
+    }
+    /// Returns the active persistent-storage features.
+    pub fn storage_features(&self) -> StorageFeatures {
+        self.with_storage(|s| s.storage_features())
     }
     /// Returns whether the current call context is static.
     pub fn is_static(&self) -> bool {
@@ -296,8 +331,15 @@ impl CheckpointGuard<'_> {
     /// surface loudly. Contrast with `drop` below, which uses `try_borrow_mut`
     /// because `drop` may run during unwinding where a second panic would abort.
     pub fn commit(mut self) {
-        if self.checkpoint.take().is_some() {
-            self.storage.with_storage(|s| s.checkpoint_commit());
+        let checkpoint = self.checkpoint.take();
+        if let Some(checkpoint) = checkpoint {
+            self.storage.with_storage(|storage| {
+                #[cfg(any(test, feature = "test-utils"))]
+                storage.assert_latest_checkpoint(checkpoint);
+                #[cfg(not(any(test, feature = "test-utils")))]
+                let _ = checkpoint;
+                storage.commit_latest_checkpoint();
+            });
         }
     }
 }
@@ -459,6 +501,19 @@ mod tests {
                 ctx.sstore(addr, key, U256::from(1)).unwrap();
             }
             assert_eq!(ctx.sload(addr, key).unwrap(), U256::from(99));
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "out-of-order checkpoint commit (expected top of stack)")]
+    fn checkpoint_commit_rejects_non_lifo_order() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let outer = ctx.checkpoint();
+            let _inner = ctx.checkpoint();
+
+            outer.commit();
         });
     }
 

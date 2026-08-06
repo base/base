@@ -9,6 +9,7 @@ use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
 use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::SyncStatus;
+use base_upgrade_signal::UpgradeSignalApplySummary;
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(unused_imports))]
 use getrandom as _; // required for compiling wasm32-unknown-unknown
 use ipnet::IpNet;
@@ -277,6 +278,10 @@ pub trait AdminApi {
     /// Resets the derivation pipeline.
     #[method(name = "resetDerivationPipeline")]
     async fn admin_reset_derivation_pipeline(&self) -> RpcResult<()>;
+
+    /// Refreshes the runtime upgrade signal schedule from L1.
+    #[method(name = "refreshUpgradeSignal")]
+    async fn admin_refresh_upgrade_signal(&self) -> RpcResult<UpgradeSignalApplySummary>;
 }
 
 /// The admin namespace for the consensus node.
@@ -363,6 +368,7 @@ mod tests {
     use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
     use base_consensus_safedb::SafeHeadResponse;
     use base_protocol::SyncStatus;
+    use base_upgrade_signal::UpgradeSignalApplySummary;
     use ipnet::IpNet;
     use jsonrpsee::{
         PendingSubscriptionSink,
@@ -623,6 +629,10 @@ mod tests {
         async fn admin_reset_derivation_pipeline(&self) -> RpcResult<()> {
             unimplemented!()
         }
+
+        async fn admin_refresh_upgrade_signal(&self) -> RpcResult<UpgradeSignalApplySummary> {
+            unimplemented!()
+        }
     }
 
     #[rstest]
@@ -636,6 +646,7 @@ mod tests {
     #[case("admin_setRecoverMode")]
     #[case("admin_overrideLeader")]
     #[case("admin_resetDerivationPipeline")]
+    #[case("admin_refreshUpgradeSignal")]
     fn admin_api_wire_names(#[case] expected: &str) {
         let module = StubAdminApi.into_rpc();
         let names: Vec<&str> = module.method_names().collect();

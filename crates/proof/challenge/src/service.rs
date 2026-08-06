@@ -5,15 +5,16 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
-    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
-    DisputeGameFactoryClient, DisputeGameFactoryContractClient,
+    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
+    AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
-use base_proof_rpc::{L1Client, L1ClientConfig, L2Client, L2ClientConfig};
+use base_proof_rpc::{L1Client, L1ClientConfig, L1Provider, L2Client, L2ClientConfig, L2Provider};
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
@@ -22,8 +23,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver, DriverComponents,
-    DriverConfig, GameScanner, OutputValidator,
+    AnchorUpdater, BondManager, BondManagerConfig, ChallengeSubmitter, ChallengerConfig,
+    ChallengerMetrics, Driver, DriverComponents, GameScanner, OutputValidator,
 };
 
 /// Top-level challenger service.
@@ -33,38 +34,21 @@ pub struct ChallengerService;
 impl ChallengerService {
     /// Runs the full challenger service lifecycle.
     ///
-    /// # Lifecycle
-    ///
-    /// 1. Install TLS provider
-    /// 2. Create the cancellation token and signal handler
-    /// 3. Create L1 provider, tx-manager, and challenge submitter
-    /// 4. Create contract clients and read onchain config
-    /// 5. Create L2 and ZK clients
-    /// 6. Assemble scanner, validator, and driver
-    /// 7. Start health HTTP server
-    /// 8. Start driver loop
-    /// 9. Wait for shutdown signal
-    /// 10. Graceful shutdown
-    ///
     /// # Errors
     ///
     /// Returns an error if RPC clients cannot connect or onchain
     /// configuration is invalid.
     pub async fn run(config: ChallengerConfig) -> Result<()> {
-        // ── 1. Install TLS provider ──────────────────────────────────────────
         // Install the default rustls CryptoProvider before any TLS connections are created.
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         info!(version = env!("CARGO_PKG_VERSION"), "Challenger starting");
 
-        // ── 2. Cancellation token and signal handler ─────────────────────────
         let cancel = CancellationToken::new();
         let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
-        // ── 3. Construct tx-manager and challenge submitter ──────────────────
-        let signer_config = config.signing;
-        let sender_addr = signer_config.address();
-        let l1_rpc_url = config.l1_eth_rpc.as_ref().clone();
+        let sender_addr = config.signing.address();
+        let l1_rpc_url = config.l1_eth_rpc.clone();
         let l1_provider = if config.metrics.enabled {
             let (layer, mut balance_rx) = BalanceMonitorLayer::new(
                 sender_addr,
@@ -89,7 +73,7 @@ impl ChallengerService {
             .map_err(|e| eyre::eyre!("failed to fetch L1 chain ID: {e}"))?;
         let tx_manager = SimpleTxManager::new(
             l1_provider,
-            signer_config,
+            config.signing,
             config.tx_manager,
             chain_id,
             Arc::new(BaseTxMetrics::new("challenger")),
@@ -98,7 +82,6 @@ impl ChallengerService {
         .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
         let submitter = ChallengeSubmitter::new(tx_manager);
 
-        // ── 4. Contract clients and onchain config ───────────────────────────
         let factory_client = DisputeGameFactoryContractClient::new(
             config.dispute_game_factory_addr,
             l1_rpc_url.clone(),
@@ -109,6 +92,36 @@ impl ChallengerService {
         );
 
         let verifier_client = AggregateVerifierContractClient::new(l1_rpc_url.clone())?;
+        let impl_address = factory_client.game_impls(config.game_type).await?;
+        if impl_address == Address::ZERO {
+            return Err(eyre::eyre!(
+                "no AggregateVerifier implementation registered for game type {}",
+                config.game_type
+            ));
+        }
+        let (block_interval, intermediate_block_interval) = tokio::try_join!(
+            verifier_client.read_block_interval(impl_address),
+            verifier_client.read_intermediate_block_interval(impl_address),
+        )?;
+        if block_interval == 0 || intermediate_block_interval == 0 {
+            return Err(eyre::eyre!(
+                "BLOCK_INTERVAL ({block_interval}) and INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval}) must be non-zero"
+            ));
+        }
+        if block_interval % intermediate_block_interval != 0 {
+            return Err(eyre::eyre!(
+                "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
+            ));
+        }
+        info!(
+            block_interval,
+            intermediate_block_interval,
+            intermediate_roots_count = block_interval / intermediate_block_interval,
+            impl_address = %impl_address,
+            game_type = config.game_type,
+            "Read onchain config from AggregateVerifier"
+        );
+
         let anchor_registry_client = AnchorStateRegistryContractClient::new(
             config.anchor_state_registry_addr,
             l1_rpc_url.clone(),
@@ -118,95 +131,80 @@ impl ChallengerService {
             "AnchorStateRegistry client initialized"
         );
 
-        let factory_client = Arc::new(factory_client);
+        let factory_client: Arc<dyn DisputeGameFactoryClient> = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
-        let anchor_registry_client = Arc::new(anchor_registry_client);
+        let anchor_registry_client: Arc<dyn AnchorStateRegistryClient> =
+            Arc::new(anchor_registry_client);
 
-        // ── 5. L2 client ─────────────────────────────────────────────────────
-        let l2_config = L2ClientConfig::new(config.l2_eth_rpc.as_ref().clone());
-        let l2_client = Arc::new(L2Client::new(l2_config)?);
+        let l2_client = Arc::new(L2Client::new(L2ClientConfig::new(config.l2_eth_rpc.clone()))?);
         info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
 
-        // ── 6. Prover-service requester client ───────────────────────────────
         let proof_requester_config = ProverServiceClientConfig::new(config.zk_rpc_url.to_string())
             .with_request_timeout(config.zk_request_timeout);
         let proof_requester = Arc::new(ProofRequesterClient::connect(&proof_requester_config)?);
         info!(endpoint = %config.zk_rpc_url, "Prover-service requester client initialized");
 
-        // ── 6b. TEE proof config ────────────────────────────────────────────
-        //
-        // TEE-first proof sourcing is the steady-state mode. TEE proofs flow
-        // through the same `proof_requester` as ZK proofs; the TEE config only
-        // carries an L1 head provider used to build the TEE proof request
-        // envelope. The driver automatically falls back to the ZK path when a
-        // TEE proof is unavailable for a given session, so TEE-first is safe
-        // to run even in deployments where TEE proofs are not yet generated
-        // for every session.
-        let l1_config = L1ClientConfig::new(l1_rpc_url.clone());
-        let l1_client = L1Client::new(l1_config)
-            .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
-        let tee = Some(crate::TeeConfig { l1_head_provider: Arc::new(l1_client) });
+        let l1_client = L1Client::new(L1ClientConfig::new(l1_rpc_url.clone()))
+            .map_err(|e| eyre::eyre!("failed to create L1 client: {e}"))?;
+        let l1_provider: Arc<dyn L1Provider> = Arc::new(l1_client);
 
-        // ── 7. Bond manager (optional) ─────────────────────────────────────
+        let scanner = GameScanner::new(
+            Arc::clone(&factory_client),
+            Arc::clone(&verifier_client),
+            Arc::clone(&anchor_registry_client),
+        );
+
+        let anchor_updater = AnchorUpdater::new(
+            Arc::clone(&factory_client),
+            Arc::clone(&anchor_registry_client),
+            Arc::clone(&l2_client) as Arc<dyn L2Provider>,
+            config.anchor_state_registry_addr,
+            config.game_type,
+            block_interval,
+            intermediate_block_interval,
+        );
+
         let bond_manager = if !config.bond_claim_addresses.is_empty() {
-            let mut bm = BondManager::new(
-                config.bond_claim_addresses,
-                l1_rpc_url,
-                Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
-                config.bond_discovery_lookback_games,
-                config.bond_discovery_interval,
+            Some(BondManager::new(
+                BondManagerConfig {
+                    claim_addresses: config.bond_claim_addresses,
+                    l1_rpc_url,
+                    lookback: config.bond_discovery_lookback_games,
+                    discovery_interval: config.bond_discovery_interval,
+                    metrics_enabled: config.metrics.enabled,
+                },
+                Arc::clone(&factory_client),
+                Arc::clone(&l2_client) as Arc<dyn L2Provider>,
                 TokioRuntime::new(),
-            );
-            bm.set_anchor_update_retention(config.anchor_update_retention);
-            info!("starting bond recovery scan");
-            if let Err(e) = bm.startup_scan(&*verifier_client).await {
-                // On failure `bond_scan_head` stays at 0, so
-                // `discover_claimable_games` will progressively scan the
-                // factory over multiple ticks (capped at `lookback` games
-                // per tick). This is intentional: progressive catch-up
-                // is preferable to disabling bond claiming entirely.
-                warn!(error = %e, "bond startup scan failed, continuing without recovery");
-            }
-            info!(tracked = bm.tracked_count(), "bond manager ready");
-            Some(bm)
+            ))
         } else {
             info!("bond claiming disabled (no --bond-claim-addresses)");
             None
         };
 
-        // ── 7b. Assemble scanner, validator, and driver ─────────────────────
-        let scanner =
-            GameScanner::new(factory_client, Arc::clone(&verifier_client), anchor_registry_client);
-
         let validator = OutputValidator::new(l2_client);
 
-        // ── 8. Start health HTTP server ──────────────────────────────────────
         let ready = Arc::new(AtomicBool::new(false));
-        let health_handle = {
-            let addr = config.health_addr;
-            let ready_flag = Arc::clone(&ready);
-            let health_cancel = cancel.clone();
-            tokio::spawn(async move { HealthServer::serve(addr, ready_flag, health_cancel).await })
-        };
+        let health_handle = tokio::spawn(HealthServer::serve(
+            config.health_addr,
+            Arc::clone(&ready),
+            cancel.clone(),
+        ));
 
-        // ── 9. Run driver ────────────────────────────────────────────────────
-        let driver_config = DriverConfig {
+        let driver = Driver::new(DriverComponents {
+            scanner,
+            validator,
+            proof_requester,
+            submitter,
+            l1_provider,
+            verifier_client,
+            bond_manager,
+            anchor_updater,
             poll_interval: config.poll_interval,
             max_proof_duration: config.max_proof_duration,
+            tee_submit_retry_limit: config.tee_submit_retry_limit,
             cancel: cancel.child_token(),
-        };
-        let driver = Driver::new(
-            driver_config,
-            DriverComponents {
-                scanner,
-                validator,
-                proof_requester,
-                submitter,
-                tee,
-                verifier_client,
-                bond_manager,
-            },
-        );
+        });
 
         // Signal readiness immediately after initialization — the driver loop
         // itself is purely operational work that should not gate readiness probes.
@@ -218,7 +216,6 @@ impl ChallengerService {
         driver.run().await;
         drop(cancel_guard);
 
-        // ── 10. Graceful shutdown ────────────────────────────────────────────
         info!("Driver stopped, shutting down...");
         ready.store(false, Ordering::SeqCst);
 

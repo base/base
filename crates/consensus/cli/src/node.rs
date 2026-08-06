@@ -7,12 +7,21 @@ use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
-use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder};
+use base_consensus_node::{
+    EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
+    UpgradeSignalBuilderConfig,
+};
+use base_consensus_providers::L1RpcProvider;
+use base_upgrade_signal::{
+    UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeApplier,
+    UpgradeSignalSchedule, UpgradeSignalStartupMode,
+};
 use clap::Args;
 use eyre::Context;
+use reth_node_core::args::TraceArgs;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
@@ -28,6 +37,24 @@ pub struct ConsensusNodeOverrides {
     pub l2_engine_rpc: Option<Url>,
     /// Override for the L2 Engine API JWT secret.
     pub l2_engine_jwt_secret: Option<JwtSecret>,
+    /// Override for the L1 RPC endpoint used by consensus upgrade-signal reads.
+    pub upgrade_signal_l1_rpc: Option<Url>,
+}
+
+impl ConsensusNodeOverrides {
+    /// Creates overrides for consensus embedded alongside an execution node.
+    ///
+    /// Consensus uses the same upgrade-signal L1 RPC as execution when one is configured.
+    pub const fn embedded_execution(
+        l2_engine_rpc: Url,
+        upgrade_signal_l1_rpc: Option<Url>,
+    ) -> Self {
+        Self {
+            l2_engine_rpc: Some(l2_engine_rpc),
+            l2_engine_jwt_secret: None,
+            upgrade_signal_l1_rpc,
+        }
+    }
 }
 
 /// Standalone consensus node command.
@@ -41,6 +68,10 @@ pub struct ConsensusNodeCommand {
     #[command(flatten)]
     pub metrics: MetricsArgs,
 
+    /// `OpenTelemetry` tracing export configuration.
+    #[command(flatten)]
+    pub traces: TraceArgs,
+
     /// Consensus node arguments.
     #[command(flatten)]
     pub args: ConsensusNodeConfigArgs,
@@ -49,11 +80,6 @@ pub struct ConsensusNodeCommand {
 impl ConsensusNodeCommand {
     /// Runs the standalone consensus node command.
     pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        base_cli_utils::init_tracing!(
-            LogConfig::from(self.logging.clone()),
-            ["libp2p_gossipsub=error"]
-        )?;
-
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
@@ -65,7 +91,71 @@ impl ConsensusNodeCommand {
             CliMetrics::init_p2p(&args.config.p2p_flags);
         }
 
-        RuntimeManager::new().run_until_ctrl_c(args.start_with_overrides(cfg, Default::default()))
+        let metrics_enabled = self.metrics.enabled;
+        let rt = RuntimeManager::new().tokio_runtime()?;
+        // Build the subscriber — including the gRPC OTLP layer — inside the main runtime
+        // so tonic's transport channel lives for the full program lifetime (reth pattern).
+        rt.block_on(async {
+            LogConfig::from(self.logging.clone())
+                .init_with_trace_args(&self.traces, &["libp2p_gossipsub=error"])
+        })?;
+        rt.block_on(async move {
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
+                    Ok(())
+                }
+                res = async move {
+                    let _upgrade_countdown_metrics = metrics_enabled
+                        .then(|| CliMetrics::spawn_upgrade_countdown_recorder(cfg.clone()));
+                    args.start_with_overrides(cfg, Default::default()).await
+                } => res,
+            }
+        })
+    }
+}
+
+/// Options used to start a consensus rollup node.
+#[derive(Debug, Clone)]
+pub struct ConsensusNodeStartOptions {
+    /// Rollup configuration for the node.
+    pub rollup_config: RollupConfig,
+    /// External endpoint and upgrade-signal overrides.
+    pub overrides: ConsensusNodeOverrides,
+    /// Cancellation token used to stop the node.
+    pub cancellation: CancellationToken,
+    /// Startup behavior for contract-backed upgrade signal application.
+    pub upgrade_signal_startup_mode: UpgradeSignalStartupMode,
+}
+
+impl ConsensusNodeStartOptions {
+    /// Creates start options with default overrides and a fresh cancellation token.
+    pub fn new(rollup_config: RollupConfig) -> Self {
+        Self {
+            rollup_config,
+            overrides: ConsensusNodeOverrides::default(),
+            cancellation: CancellationToken::new(),
+            upgrade_signal_startup_mode: UpgradeSignalStartupMode::ReadAndApply,
+        }
+    }
+
+    /// Sets caller-supplied endpoint overrides.
+    pub fn with_overrides(self, overrides: ConsensusNodeOverrides) -> Self {
+        Self { overrides, ..self }
+    }
+
+    /// Sets the cancellation token.
+    pub fn with_cancellation(self, cancellation: CancellationToken) -> Self {
+        Self { cancellation, ..self }
+    }
+
+    /// Sets upgrade-signal startup behavior.
+    pub fn with_upgrade_signal_startup_mode(
+        self,
+        upgrade_signal_startup_mode: UpgradeSignalStartupMode,
+    ) -> Self {
+        Self { upgrade_signal_startup_mode, ..self }
     }
 }
 
@@ -141,6 +231,10 @@ pub struct ConsensusNodeConfigArgs {
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
     #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
     pub checkpoint_path: Option<PathBuf>,
+
+    /// L1 upgrade signal schedule arguments.
+    #[command(flatten)]
+    pub upgrade_signal: UpgradeSignalArgs,
 }
 
 /// Consensus node configuration arguments for embedded callers.
@@ -232,6 +326,7 @@ impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
             sequencer_flags: SequencerArgs::default(),
             safedb_path: args.safedb_path,
             checkpoint_path: args.checkpoint_path,
+            upgrade_signal: UpgradeSignalArgs::default(),
         }
     }
 }
@@ -249,6 +344,7 @@ impl From<EmbeddedSequencerConsensusNodeConfigArgs> for ConsensusNodeConfigArgs 
             sequencer_flags: args.sequencer_flags,
             safedb_path: args.safedb_path,
             checkpoint_path: args.checkpoint_path,
+            upgrade_signal: UpgradeSignalArgs::default(),
         }
     }
 }
@@ -259,9 +355,11 @@ impl ConsensusNodeArgs {
         self.config.l2_config.load(&self.chain.l2_chain_id).map_err(|e| eyre::eyre!(e))
     }
 
-    /// Validates that a sequencer signing key is configured when running in sequencer mode.
+    /// Validates that a non-shadow sequencer has a signing key configured.
     pub fn validate_sequencer_key(&self) -> eyre::Result<()> {
-        if self.config.node_mode.is_sequencer() {
+        if self.config.node_mode.is_sequencer()
+            && !self.config.sequencer_flags.config().is_shadow_sequencer()
+        {
             let signer = &self.config.p2p_flags.signer;
             if signer.sequencer_key.is_none()
                 && signer.sequencer_key_path.is_none()
@@ -273,6 +371,18 @@ impl ConsensusNodeArgs {
                      or --p2p.signer.endpoint"
                 );
             }
+        }
+        Ok(())
+    }
+
+    /// Validates that the dangerous DA batcher sender override is only used by validators.
+    pub fn validate_da_batcher_sender_override(&self) -> eyre::Result<()> {
+        if self.config.l1_rpc_args.l1_da_batcher_sender_override.is_some()
+            && !self.config.node_mode.is_validator()
+        {
+            eyre::bail!(
+                "--l1.dangerously-override-da-batcher-sender is only supported in validator mode"
+            );
         }
         Ok(())
     }
@@ -292,7 +402,42 @@ impl ConsensusNodeArgs {
         cfg: RollupConfig,
         overrides: ConsensusNodeOverrides,
     ) -> eyre::Result<RollupNode> {
+        self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
+            cfg,
+            overrides,
+            UpgradeSignalStartupMode::ReadAndApply,
+        )
+        .await
+    }
+
+    /// Builds a rollup node with caller-supplied endpoint overrides and upgrade-signal startup behavior.
+    pub async fn build_rollup_node_with_overrides_and_upgrade_signal_startup(
+        &self,
+        mut cfg: RollupConfig,
+        overrides: ConsensusNodeOverrides,
+        startup_mode: UpgradeSignalStartupMode,
+    ) -> eyre::Result<RollupNode> {
         self.validate_sequencer_key()?;
+        self.validate_da_batcher_sender_override()?;
+        if let Some(sender) = self.config.l1_rpc_args.l1_da_batcher_sender_override {
+            warn!(
+                %sender,
+                "overriding the L1 data-availability batcher sender filter"
+            );
+        }
+        let upgrade_signal_config = self.config.upgrade_signal.config();
+        let upgrade_signal_l1_rpc = overrides.upgrade_signal_l1_rpc.clone();
+        if let Some(signal_config) = &upgrade_signal_config
+            && startup_mode.reads_and_applies()
+            && signal_config.mode.applies_at_startup()
+        {
+            self.apply_initial_upgrade_signal(
+                &mut cfg,
+                signal_config,
+                upgrade_signal_l1_rpc.as_ref(),
+            )
+            .await?;
+        }
 
         info!(
             target: "rollup_node",
@@ -312,6 +457,7 @@ impl ConsensusNodeArgs {
             rpc_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
             slot_duration_override: self.config.l1_rpc_args.l1_slot_duration_override,
             verifier_l1_confs: self.config.l1_rpc_args.l1_verifier_confs,
+            da_batcher_sender_override: self.config.l1_rpc_args.l1_da_batcher_sender_override,
         };
 
         let l2_engine_rpc = overrides
@@ -355,7 +501,11 @@ impl ConsensusNodeArgs {
             p2p_config,
             rpc_config,
         )
-        .with_sequencer_config(self.config.sequencer_flags.config());
+        .with_sequencer_config(self.config.sequencer_flags.config())
+        .with_upgrade_signal_config(UpgradeSignalBuilderConfig {
+            metrics_config: upgrade_signal_config,
+            l1_rpc: upgrade_signal_l1_rpc,
+        });
 
         if let Some(path) = self.config.checkpoint_path.clone() {
             builder = builder.with_checkpoint_path(path);
@@ -365,6 +515,47 @@ impl ConsensusNodeArgs {
         }
 
         builder.build().await.wrap_err("Failed to build rollup node")
+    }
+
+    /// Applies the configured L1 upgrade signal to the rollup config before startup.
+    pub async fn apply_initial_upgrade_signal(
+        &self,
+        cfg: &mut RollupConfig,
+        signal_config: &UpgradeSignalConfig,
+        upgrade_signal_l1_rpc: Option<&Url>,
+    ) -> eyre::Result<()> {
+        let reader = signal_config.reader(L1RpcProvider::new_http(
+            self.resolved_upgrade_signal_l1_rpc(upgrade_signal_l1_rpc),
+        ));
+        let schedule = signal_config
+            .read_validated_schedule(
+                &reader,
+                "consensus startup",
+                &[UpgradeSignalMetricLayer::Consensus],
+            )
+            .await?;
+
+        Self::apply_schedule_to_rollup_config(cfg, &schedule);
+
+        Ok(())
+    }
+
+    /// Returns the L1 RPC used by consensus upgrade-signal reads.
+    fn resolved_upgrade_signal_l1_rpc(&self, upgrade_signal_l1_rpc: Option<&Url>) -> Url {
+        upgrade_signal_l1_rpc.cloned().unwrap_or_else(|| self.config.l1_rpc_args.l1_eth_rpc.clone())
+    }
+
+    /// Applies a contract-backed upgrade activation schedule to a rollup config.
+    pub fn apply_schedule_to_rollup_config(
+        cfg: &mut RollupConfig,
+        schedule: &UpgradeSignalSchedule,
+    ) -> usize {
+        let chain_id = cfg.l2_chain_id.id();
+        let summary = UpgradeSignalRuntimeApplier::apply_schedule_to_sink(chain_id, schedule, cfg)
+            .unwrap_or_else(|never| match never {});
+        summary.log("rollup config");
+
+        summary.applied_upgrades
     }
 
     /// Starts a rollup node with default external endpoint configuration.
@@ -379,7 +570,7 @@ impl ConsensusNodeArgs {
         cfg: RollupConfig,
         overrides: ConsensusNodeOverrides,
     ) -> eyre::Result<()> {
-        self.start_with_overrides_and_cancellation(cfg, overrides, CancellationToken::new()).await
+        self.start_with_options(ConsensusNodeStartOptions::new(cfg).with_overrides(overrides)).await
     }
 
     /// Starts a rollup node with caller-supplied endpoint overrides and cancellation.
@@ -389,14 +580,34 @@ impl ConsensusNodeArgs {
         overrides: ConsensusNodeOverrides,
         cancellation: CancellationToken,
     ) -> eyre::Result<()> {
-        self.build_rollup_node_with_overrides(cfg, overrides)
-            .await?
-            .start_with_cancellation(cancellation)
-            .await
-            .map_err(|e| {
-                error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
-                eyre::eyre!(e)
-            })
+        self.start_with_options(
+            ConsensusNodeStartOptions::new(cfg)
+                .with_overrides(overrides)
+                .with_cancellation(cancellation),
+        )
+        .await
+    }
+
+    /// Starts a rollup node with caller-supplied options.
+    pub async fn start_with_options(&self, options: ConsensusNodeStartOptions) -> eyre::Result<()> {
+        let ConsensusNodeStartOptions {
+            rollup_config,
+            overrides,
+            cancellation,
+            upgrade_signal_startup_mode,
+        } = options;
+        self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
+            rollup_config,
+            overrides,
+            upgrade_signal_startup_mode,
+        )
+        .await?
+        .start_with_cancellation(cancellation)
+        .await
+        .map_err(|e| {
+            error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
+            eyre::eyre!(e)
+        })
     }
 
     /// Returns the configured genesis signer address for the selected L2 chain.
@@ -413,8 +624,9 @@ mod tests {
     use std::{path::PathBuf, process::Command};
 
     use alloy_chains::Chain;
-    use alloy_primitives::B256;
-    use clap::Parser;
+    use alloy_primitives::{B256, U256, address};
+    use base_common_genesis::BaseUpgrade;
+    use clap::{Args, Parser};
     use rstest::rstest;
 
     use super::*;
@@ -440,7 +652,169 @@ mod tests {
             sequencer_flags: SequencerArgs::default(),
             safedb_path: None,
             checkpoint_path: None,
+            upgrade_signal: UpgradeSignalArgs::default(),
         }
+    }
+
+    #[derive(Parser)]
+    struct CommandParser<T: Args> {
+        #[command(flatten)]
+        args: T,
+    }
+
+    #[test]
+    fn parses_upgrade_signal_args() {
+        let args = CommandParser::<ConsensusNodeConfigArgs>::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l2-engine-rpc",
+            "http://localhost:8551",
+            "--upgrade-signal.contract",
+            "0x0000000000000000000000000000000000000001",
+        ])
+        .args;
+
+        assert_eq!(
+            args.upgrade_signal.contract_address,
+            Some(address!("0000000000000000000000000000000000000001"))
+        );
+    }
+
+    #[test]
+    fn parses_da_batcher_sender_override() {
+        let batcher = address!("2222222222222222222222222222222222222222");
+        let args = CommandParser::<ConsensusNodeConfigArgs>::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l2-engine-rpc",
+            "http://localhost:8551",
+            "--l1.dangerously-override-da-batcher-sender",
+            "0x2222222222222222222222222222222222222222",
+        ])
+        .args;
+
+        assert_eq!(args.l1_rpc_args.l1_da_batcher_sender_override, Some(batcher));
+    }
+
+    #[test]
+    fn embedded_consensus_preserves_da_batcher_sender_override() {
+        let batcher = address!("2222222222222222222222222222222222222222");
+        let args = CommandParser::<EmbeddedConsensusNodeConfigArgs>::parse_from([
+            "base",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l1.dangerously-override-da-batcher-sender",
+            "0x2222222222222222222222222222222222222222",
+        ])
+        .args;
+
+        let config = ConsensusNodeConfigArgs::from(args);
+        assert_eq!(config.l1_rpc_args.l1_da_batcher_sender_override, Some(batcher));
+    }
+
+    fn upgrade_schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
+        UpgradeSignalSchedule::new(
+            signals
+                .iter()
+                .map(|(upgrade_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
+                    upgrade_id: *upgrade_id,
+                    activation_timestamp: *activation_timestamp,
+                    protocol_version: U256::from(7),
+                    l1_block_number: 1,
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn applies_positive_schedule_to_rollup_config() {
+        let mut cfg = RollupConfig::default();
+
+        let applied = ConsensusNodeArgs::apply_schedule_to_rollup_config(
+            &mut cfg,
+            &upgrade_schedule(&[(BaseUpgrade::Delta, 40), (BaseUpgrade::Azul, 42)]),
+        );
+
+        assert_eq!(applied, 2);
+        assert_eq!(cfg.upgrades.activation_timestamp(BaseUpgrade::Delta), Some(40));
+        assert_eq!(cfg.upgrades.activation_timestamp(BaseUpgrade::Azul), Some(42));
+    }
+
+    #[test]
+    fn zero_signal_clears_existing_rollup_config() {
+        let mut cfg = RollupConfig::default();
+        cfg.set_upgrade_activation_timestamp(BaseUpgrade::Azul, 42);
+        cfg.set_upgrade_activation_timestamp(BaseUpgrade::Delta, 40);
+
+        let applied = ConsensusNodeArgs::apply_schedule_to_rollup_config(
+            &mut cfg,
+            &upgrade_schedule(&[(BaseUpgrade::Azul, 0)]),
+        );
+
+        assert_eq!(applied, 0);
+        assert_eq!(cfg.upgrades.activation_timestamp(BaseUpgrade::Azul), None);
+        assert_eq!(cfg.upgrades.activation_timestamp(BaseUpgrade::Delta), Some(40));
+    }
+
+    #[test]
+    fn zero_signal_for_unscheduled_rollup_upgrade_is_counted_as_clear() {
+        let mut cfg = RollupConfig::default();
+
+        let applied = ConsensusNodeArgs::apply_schedule_to_rollup_config(
+            &mut cfg,
+            &upgrade_schedule(&[(BaseUpgrade::Azul, 0)]),
+        );
+
+        assert_eq!(applied, 0);
+        assert_eq!(cfg.upgrades.activation_timestamp(BaseUpgrade::Azul), None);
+    }
+
+    #[test]
+    fn embedded_execution_overrides_preserve_upgrade_signal_context() {
+        let overrides = ConsensusNodeOverrides::embedded_execution(
+            Url::parse("http://localhost:8551").unwrap(),
+            Some(Url::parse("http://localhost:8545").unwrap()),
+        );
+
+        assert_eq!(
+            overrides.upgrade_signal_l1_rpc.as_ref().map(Url::as_str),
+            Some("http://localhost:8545/")
+        );
+    }
+
+    #[test]
+    fn startup_upgrade_signal_defaults_to_consensus_l1_rpc() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            default_node_config_args(),
+        );
+
+        assert_eq!(
+            args.resolved_upgrade_signal_l1_rpc(None).as_str(),
+            args.config.l1_rpc_args.l1_eth_rpc.as_str()
+        );
+    }
+
+    #[test]
+    fn startup_upgrade_signal_prefers_override_l1_rpc() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            default_node_config_args(),
+        );
+        let upgrade_signal_l1_rpc = Url::parse("http://override-l1:8545").unwrap();
+
+        assert_eq!(
+            args.resolved_upgrade_signal_l1_rpc(Some(&upgrade_signal_l1_rpc)).as_str(),
+            upgrade_signal_l1_rpc.as_str()
+        );
     }
 
     #[rstest]
@@ -523,6 +897,42 @@ mod tests {
             },
         );
         assert_eq!(args.validate_sequencer_key().is_ok(), expected_ok);
+    }
+
+    #[test]
+    fn shadow_sequencer_does_not_require_signing_key() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                sequencer_flags: SequencerArgs {
+                    shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
+                    ..SequencerArgs::default()
+                },
+                ..default_node_config_args()
+            },
+        );
+
+        assert!(args.validate_sequencer_key().is_ok());
+    }
+
+    #[test]
+    fn da_batcher_sender_override_is_rejected_in_sequencer_mode() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                l1_rpc_args: L1ClientArgs {
+                    l1_da_batcher_sender_override: Some(address!(
+                        "2222222222222222222222222222222222222222"
+                    )),
+                    ..L1ClientArgs::default()
+                },
+                ..default_node_config_args()
+            },
+        );
+
+        assert!(args.validate_da_batcher_sender_override().is_err());
     }
 
     #[test]

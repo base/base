@@ -1,29 +1,36 @@
 //! ABI dispatch for the asset B-20 variant.
 //!
-//! Asset-specific selectors are tried first via `IB20Asset::IB20AssetCalls`.
-//! The `IB20` match block handles inherited selectors.
-
-use alloc::string::ToString;
+//! The dispatcher owns everything that is *not* version-specific: it decodes the
+//! calldata, resolves the active version once from the hardfork (via
+//! [`AssetVersions`]), and routes each operation — including reads — to the active
+//! version's [`Asset`] implementation. Only constant getters (role IDs, policy type
+//! IDs) that are invariant across all versions are answered inline. The `announce`
+//! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
+//! routing responsibility; its version-defined business steps live on [`Asset`].
 
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolValue};
+use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    AssetAccounting, B20AssetStorage, B20AssetToken, B20TokenRole, BerylAuxiliaryMetrics,
-    BerylCallRecorder, BerylMetricLabels, BerylSelector, Burnable, Configurable,
+    AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
+    B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
-    Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
-    PrecompileCallObserver, RoleManaged, Token, Transferable,
-    macros::decode_precompile_call,
+    NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
 };
 
-impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
-    /// ABI-dispatches `calldata` to the appropriate `IB20Asset` handler.
-    pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        self.dispatch_with_observer(ctx, calldata, NoopPrecompileCallObserver)
+impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
+    /// ABI-dispatches `calldata` to the appropriate handler for `upgrade`.
+    pub fn dispatch(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        upgrade: BaseUpgrade,
+    ) -> PrecompileResult {
+        self.dispatch_with_observer(ctx, calldata, upgrade, NoopPrecompileCallObserver)
     }
 
     /// ABI-dispatches `calldata` and observes the decoded asset B-20 operation.
@@ -31,6 +38,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
+        upgrade: BaseUpgrade,
         observer: O,
     ) -> PrecompileResult
     where
@@ -45,8 +53,14 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
-
-        match self.accounting().is_initialized() {
+        // Gate by hardfork: resolve the active version once. `None` is unreachable in practice —
+        // the precompile is only installed from Beryl — but we revert defensively.
+        let Some(version) = AssetVersions::from_base_upgrade(upgrade) else {
+            return recorder
+                .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
+        };
+        // Ensure the token has been deployed (has bytecode at its address).
+        match version.implementation().is_initialized(self) {
             Ok(true) => {}
             Ok(false) => {
                 return recorder
@@ -54,131 +68,118 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             }
             Err(error) => return recorder.record_base_error_result(ctx, error),
         }
-        recorder.record_base_result(ctx, self.inner_with_observer(ctx, calldata, observer), |b| b)
+        recorder.record_base_result(ctx, self.route(ctx, calldata, version, false, observer), |b| b)
     }
 
-    /// Decodes calldata and executes the matching `IB20Asset` or inherited `IB20` operation.
-    pub fn inner(
+    /// Grants `role` to `account` without checking caller authorization, using the token logic
+    /// implementation active at `upgrade`.
+    ///
+    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
+    /// authorized [`Asset::grant_role`](crate::Asset) path is not yet reachable.
+    pub fn grant_role_unchecked(
         &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-    ) -> base_precompile_storage::Result<Bytes> {
-        self.inner_with_observer(ctx, calldata, NoopPrecompileCallObserver)
+        role: alloy_primitives::B256,
+        account: alloy_primitives::Address,
+        sender: alloy_primitives::Address,
+        upgrade: BaseUpgrade,
+    ) -> base_precompile_storage::Result<()> {
+        // `None` is unreachable in practice — the precompile is only installed from Beryl — but
+        // we revert defensively, mirroring `dispatch_with_observer`.
+        let Some(version) = AssetVersions::from_base_upgrade(upgrade) else {
+            return Err(BasePrecompileError::Revert(Bytes::new()));
+        };
+        version.implementation().grant_role_unchecked(self, role, account, sender)
     }
 
-    /// Decodes calldata, observes the decoded operation, and executes the matching handler.
-    pub fn inner_with_observer<O>(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        observer: O,
-    ) -> base_precompile_storage::Result<Bytes>
-    where
-        O: PrecompileCallObserver,
-    {
-        self.inner_with_privilege_and_observer(ctx, calldata, false, observer)
-    }
-
-    /// Decodes calldata and executes it with optional factory-init privilege.
-    pub fn inner_with_privilege(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        privileged: bool,
-    ) -> base_precompile_storage::Result<Bytes> {
-        self.inner_with_privilege_and_observer(
-            ctx,
-            calldata,
-            privileged,
-            NoopPrecompileCallObserver,
-        )
-    }
-
-    /// Decodes calldata, observes the decoded operation, and executes it with optional
+    /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
     /// factory-init privilege.
-    pub fn inner_with_privilege_and_observer<O>(
+    pub fn route<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
+        version: AssetVersion,
         privileged: bool,
         observer: O,
     ) -> base_precompile_storage::Result<Bytes>
     where
         O: PrecompileCallObserver,
     {
-        // Asset-specific and overridden selectors are caught here first.
-        if let Some(selector) = BerylSelector::selector(calldata)
-            && IB20Asset::IB20AssetCalls::valid_selector(selector)
-        {
-            let call =
-                IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
-                    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
-                })?;
-            let label = call.as_label();
-            let asset_observer = observer.clone();
-            return observer.observe(label, move || {
-                self.handle_asset_call(ctx, call, privileged, asset_observer)
-            });
-        }
-
-        // Fall through to inherited IB20 selectors.
-        let call = decode_precompile_call!(calldata, IB20::IB20Calls);
+        let call = version.abi().decode(calldata)?;
         let label = call.as_label();
-
-        observer.observe(label, || self.handle_b20_call(ctx, call, privileged))
+        match call {
+            AssetCall::Asset(call) => {
+                let asset_observer = observer.clone();
+                observer.observe(label, move || {
+                    self.handle_asset_call(ctx, call, version, privileged, asset_observer)
+                })
+            }
+            AssetCall::Common(call) => {
+                observer.observe(label, || self.handle_b20_call(ctx, call, version, privileged))
+            }
+        }
     }
 
     fn handle_b20_call(
         &mut self,
         ctx: StorageCtx<'_>,
         call: C,
+        version: AssetVersion,
         privileged: bool,
     ) -> base_precompile_storage::Result<Bytes> {
+        let logic = version.implementation();
+        let caller = ctx.caller();
         let encoded: Bytes = match call {
-            // --- Pure reads ---
-            C::name(_) => self.accounting().name()?.abi_encode().into(),
-            C::symbol(_) => self.accounting().symbol()?.abi_encode().into(),
-            C::decimals(_) => {
-                U256::from(AssetAccounting::decimals(self.accounting())?).abi_encode().into()
-            }
-            C::totalSupply(_) => self.accounting().total_supply()?.abi_encode().into(),
-            C::balanceOf(c) => self.accounting().balance_of(c.account)?.abi_encode().into(),
-            C::allowance(c) => self.accounting().allowance(c.owner, c.spender)?.abi_encode().into(),
-            C::supplyCap(_) => self.accounting().supply_cap()?.abi_encode().into(),
-            C::nonces(c) => self.accounting().nonce(c.owner)?.abi_encode().into(),
-            C::contractURI(_) => self.accounting().contract_uri()?.abi_encode().into(),
+            // --- Pure reads (routed to the active version) ---
+            C::name(_) => logic.name(self)?.abi_encode().into(),
+            C::symbol(_) => logic.symbol(self)?.abi_encode().into(),
+            C::decimals(_) => U256::from(logic.decimals(self)?).abi_encode().into(),
+            C::totalSupply(_) => logic.total_supply(self)?.abi_encode().into(),
+            C::balanceOf(c) => logic.balance_of(self, c.account)?.abi_encode().into(),
+            C::allowance(c) => logic.allowance(self, c.owner, c.spender)?.abi_encode().into(),
+            C::supplyCap(_) => logic.supply_cap(self)?.abi_encode().into(),
+            C::nonces(c) => logic.nonce(self, c.owner)?.abi_encode().into(),
+            C::contractURI(_) => logic.contract_uri(self)?.abi_encode().into(),
 
-            // --- Role identifiers ---
+            // --- Role identifiers (invariant across versions) ---
             C::DEFAULT_ADMIN_ROLE(_) => B20TokenRole::DefaultAdmin.id().abi_encode().into(),
             C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
             C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
             C::BURN_BLOCKED_ROLE(_) => B20TokenRole::BurnBlocked.id().abi_encode().into(),
+            C::SEIZE_ROLE(_) => B20TokenRole::Seize.id().abi_encode().into(),
             C::PAUSE_ROLE(_) => B20TokenRole::Pause.id().abi_encode().into(),
             C::UNPAUSE_ROLE(_) => B20TokenRole::Unpause.id().abi_encode().into(),
             C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
 
-            // --- Policy type identifiers ---
-            C::TRANSFER_SENDER_POLICY(_) => Self::transfer_sender_policy().abi_encode().into(),
-            C::TRANSFER_RECEIVER_POLICY(_) => Self::transfer_receiver_policy().abi_encode().into(),
-            C::TRANSFER_EXECUTOR_POLICY(_) => Self::transfer_executor_policy().abi_encode().into(),
-            C::MINT_RECEIVER_POLICY(_) => Self::mint_receiver_policy().abi_encode().into(),
+            // --- Policy type identifiers (invariant across versions) ---
+            C::TRANSFER_SENDER_POLICY(_) => B20PolicyType::TransferSender.id().abi_encode().into(),
+            C::TRANSFER_RECEIVER_POLICY(_) => {
+                B20PolicyType::TransferReceiver.id().abi_encode().into()
+            }
+            C::TRANSFER_EXECUTOR_POLICY(_) => {
+                B20PolicyType::TransferExecutor.id().abi_encode().into()
+            }
+            C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
+            C::SEIZE_HOLDER_POLICY(_) => B20PolicyType::SeizeHolder.id().abi_encode().into(),
+            C::SEIZE_RECEIVER_POLICY(_) => B20PolicyType::SeizeReceiver.id().abi_encode().into(),
 
             // --- Role reads ---
-            C::hasRole(c) => self.has_role(c.role, c.account)?.abi_encode().into(),
-            C::getRoleAdmin(c) => self.role_admin(c.role)?.abi_encode().into(),
+            C::hasRole(c) => logic.has_role(self, c.role, c.account)?.abi_encode().into(),
+            C::getRoleAdmin(c) => logic.role_admin(self, c.role)?.abi_encode().into(),
 
             // --- Pause reads ---
-            C::pausedFeatures(_) => self.paused_features()?.abi_encode().into(),
-            C::isPaused(c) => self.is_paused(c.feature)?.abi_encode().into(),
+            C::pausedFeatures(_) => logic.paused_features(self)?.abi_encode().into(),
+            C::isPaused(c) => logic.is_paused(self, c.feature)?.abi_encode().into(),
 
             // --- Policy reads ---
-            C::policyId(c) => self.policy_id(c.policyScope)?.abi_encode().into(),
+            C::policyId(c) => logic.policy_id(self, c.policyScope)?.abi_encode().into(),
 
             // --- Domain reads ---
-            C::DOMAIN_SEPARATOR(_) => self.domain_separator(ctx.chain_id())?.abi_encode().into(),
+            C::DOMAIN_SEPARATOR(_) => {
+                logic.domain_separator(self, ctx.chain_id())?.abi_encode().into()
+            }
             C::eip712Domain(_) => {
                 let (fields, name, version, chain_id, verifying_contract, salt, extensions) =
-                    self.eip712_domain(ctx.chain_id())?;
+                    logic.eip712_domain(self, ctx.chain_id())?;
                 IB20::eip712DomainCall::abi_encode_returns(&IB20::eip712DomainReturn {
                     fields,
                     name,
@@ -193,40 +194,36 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 
             // --- ERC-20 mutating ---
             C::transfer(c) => {
-                let caller = ctx.caller();
-                self.transfer(caller, c.to, c.amount, privileged)?;
+                logic.transfer(self, caller, c.to, c.amount, privileged)?;
                 true.abi_encode().into()
             }
             C::transferFrom(c) => {
-                let caller = ctx.caller();
-                self.transfer_from(caller, c.from, c.to, c.amount, privileged)?;
+                logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
                 true.abi_encode().into()
             }
             C::approve(c) => {
-                let caller = ctx.caller();
-                self.approve(caller, c.spender, c.amount)?;
+                logic.approve(self, caller, c.spender, c.amount)?;
                 true.abi_encode().into()
             }
             C::transferWithMemo(c) => {
-                let caller = ctx.caller();
-                self.transfer_with_memo(caller, c.to, c.amount, c.memo, privileged)?;
+                logic.transfer(self, caller, c.to, c.amount, privileged)?;
+                logic.emit_memo(self, caller, c.memo)?;
                 true.abi_encode().into()
             }
             C::transferFromWithMemo(c) => {
-                let caller = ctx.caller();
-                self.transfer_from_with_memo(caller, c.from, c.to, c.amount, c.memo, privileged)?;
+                logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
+                logic.emit_memo(self, caller, c.memo)?;
                 true.abi_encode().into()
             }
 
             // --- Mint ---
             C::mint(c) => {
-                let caller = ctx.caller();
-                self.mint(caller, c.to, c.amount, privileged)?;
+                logic.mint(self, caller, c.to, c.amount, privileged)?;
                 Bytes::new()
             }
             C::mintWithMemo(c) => {
-                let caller = ctx.caller();
-                self.mint_with_memo(caller, c.to, c.amount, c.memo, privileged)?;
+                logic.mint(self, caller, c.to, c.amount, privileged)?;
+                logic.emit_memo(self, caller, c.memo)?;
                 Bytes::new()
             }
 
@@ -234,94 +231,87 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             // Self-burn operations are never factory-privileged: during init the caller is the
             // factory, not a token holder.
             C::burn(c) => {
-                let caller = ctx.caller();
-                self.burn(caller, caller, c.amount, false)?;
+                logic.burn(self, caller, c.amount)?;
                 Bytes::new()
             }
             C::burnWithMemo(c) => {
-                let caller = ctx.caller();
-                self.burn_with_memo(caller, caller, c.amount, c.memo, false)?;
+                logic.burn(self, caller, c.amount)?;
+                logic.emit_memo(self, caller, c.memo)?;
                 Bytes::new()
             }
             C::burnBlocked(c) => {
-                let caller = ctx.caller();
-                self.burn_blocked(caller, c.from, c.amount, privileged)?;
+                logic.burn_blocked(self, caller, c.from, c.amount, privileged)?;
                 Bytes::new()
+            }
+
+            // --- Seize ---
+            C::seizeWithMemo(c) => {
+                logic.seize_with_memo(self, caller, c.from, c.to, c.amount, c.memo)?;
+                true.abi_encode().into()
             }
 
             // --- Pause ---
             C::pause(c) => {
-                let caller = ctx.caller();
-                self.pause(caller, c.features, privileged)?;
+                logic.pause(self, caller, c.features, privileged)?;
                 Bytes::new()
             }
             C::unpause(c) => {
-                let caller = ctx.caller();
-                self.unpause(caller, c.features, privileged)?;
+                logic.unpause(self, caller, c.features, privileged)?;
                 Bytes::new()
             }
 
             // --- Admin ---
             C::updateSupplyCap(c) => {
-                let caller = ctx.caller();
-                Configurable::update_supply_cap(self, caller, c.newSupplyCap, privileged)?;
+                logic.update_supply_cap(self, caller, c.newSupplyCap, privileged)?;
                 Bytes::new()
             }
             C::updateName(c) => {
-                let caller = ctx.caller();
-                Configurable::update_name(self, caller, c.newName, privileged)?;
+                logic.update_name(self, caller, c.newName, privileged)?;
                 Bytes::new()
             }
             C::updateSymbol(c) => {
-                let caller = ctx.caller();
-                Configurable::update_symbol(self, caller, c.newSymbol, privileged)?;
+                logic.update_symbol(self, caller, c.newSymbol, privileged)?;
                 Bytes::new()
             }
             C::updateContractURI(c) => {
-                let caller = ctx.caller();
-                Configurable::update_contract_uri(self, caller, c.newURI, privileged)?;
+                logic.update_contract_uri(self, caller, c.newURI, privileged)?;
                 Bytes::new()
             }
 
             // --- Role mutations ---
             C::grantRole(c) => {
-                let caller = ctx.caller();
-                self.grant_role(caller, c.role, c.account, privileged)?;
+                logic.grant_role(self, caller, c.role, c.account, privileged)?;
                 Bytes::new()
             }
             C::revokeRole(c) => {
-                let caller = ctx.caller();
-                self.revoke_role(caller, c.role, c.account, privileged)?;
+                logic.revoke_role(self, caller, c.role, c.account, privileged)?;
                 Bytes::new()
             }
             // Renounce operations are never factory-privileged: they are only meaningful for the
             // role holder making the call after token creation.
             C::renounceRole(c) => {
-                let caller = ctx.caller();
-                self.renounce_role(caller, c.role, c.callerConfirmation)?;
+                logic.renounce_role(self, caller, c.role, c.callerConfirmation)?;
                 Bytes::new()
             }
             C::renounceLastAdmin(_) => {
-                let caller = ctx.caller();
-                self.renounce_last_admin(caller)?;
+                logic.renounce_last_admin(self, caller)?;
                 Bytes::new()
             }
             C::setRoleAdmin(c) => {
-                let caller = ctx.caller();
-                self.set_role_admin(caller, c.role, c.newAdminRole, privileged)?;
+                logic.set_role_admin(self, caller, c.role, c.newAdminRole, privileged)?;
                 Bytes::new()
             }
 
             // --- Policy mutations ---
             C::updatePolicy(c) => {
-                let caller = ctx.caller();
-                self.update_policy(caller, c.policyScope, c.newPolicyId, privileged)?;
+                logic.update_policy(self, caller, c.policyScope, c.newPolicyId, privileged)?;
                 Bytes::new()
             }
 
             // --- Permit ---
             C::permit(c) => {
-                self.permit(
+                logic.permit(
+                    self,
                     ctx.chain_id(),
                     ctx.timestamp(),
                     PermitArgs {
@@ -344,43 +334,68 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         &mut self,
         ctx: StorageCtx<'_>,
         call: SC,
+        version: AssetVersion,
         privileged: bool,
         observer: O,
     ) -> base_precompile_storage::Result<Bytes>
     where
         O: PrecompileCallObserver,
     {
+        let logic = version.implementation();
         let caller = ctx.caller();
         let encoded: Bytes = match call {
-            // --- Role / precision constants ---
-            SC::OPERATOR_ROLE(_) => Self::OPERATOR_ROLE.abi_encode().into(),
+            SC::OPERATOR_ROLE(_) => logic.operator_role().abi_encode().into(),
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
 
             // --- Multiplier reads ---
-            SC::multiplier(_) => self.accounting().multiplier()?.abi_encode().into(),
-            SC::toScaledBalance(c) => self.to_scaled_balance(c.rawBalance)?.abi_encode().into(),
-            SC::toRawBalance(c) => self.to_raw_balance(c.scaledBalance)?.abi_encode().into(),
-            SC::scaledBalanceOf(c) => self.scaled_balance_of(c.account)?.abi_encode().into(),
+            SC::multiplier(_) => logic.multiplier(self)?.abi_encode().into(),
+            SC::uiMultiplier(_) => logic.ui_multiplier(self)?.abi_encode().into(),
+            SC::newUIMultiplier(_) => logic.new_ui_multiplier(self)?.abi_encode().into(),
+            SC::effectiveAt(_) => logic.effective_at(self)?.abi_encode().into(),
+            SC::toScaledBalance(c) => {
+                logic.to_scaled_balance(self, c.rawBalance)?.abi_encode().into()
+            }
+            SC::toRawBalance(c) => logic.to_raw_balance(self, c.scaledBalance)?.abi_encode().into(),
+            SC::scaledBalanceOf(c) => logic.scaled_balance_of(self, c.account)?.abi_encode().into(),
+            SC::balanceOfUI(c) => logic.balance_of_ui(self, c.account)?.abi_encode().into(),
+            SC::totalSupplyUI(_) => logic.total_supply_ui(self)?.abi_encode().into(),
+
+            // --- ERC-165 ---
+            SC::supportsInterface(c) => {
+                logic.supports_interface(c.interfaceId)?.abi_encode().into()
+            }
 
             // --- Announcement reads ---
             SC::isAnnouncementIdUsed(c) => {
-                self.accounting().is_announcement_id_used(c.id.as_str())?.abi_encode().into()
+                logic.is_announcement_id_used(self, c.id.as_str())?.abi_encode().into()
             }
 
             // --- Extra metadata reads ---
-            SC::extraMetadata(c) => {
-                self.accounting().extra_metadata(c.key.as_str())?.abi_encode().into()
-            }
+            SC::extraMetadata(c) => logic.extra_metadata(self, c.key.as_str())?.abi_encode().into(),
 
             // --- Multiplier mutations ---
             SC::updateMultiplier(c) => {
-                self.update_multiplier(caller, c.newMultiplier, privileged)?;
+                logic.update_multiplier(self, caller, c.newMultiplier, privileged)?;
+                Bytes::new()
+            }
+            SC::setUIMultiplier(c) => {
+                logic.set_ui_multiplier(
+                    self,
+                    caller,
+                    c.newMultiplier,
+                    c.effectiveAt,
+                    privileged,
+                )?;
+                Bytes::new()
+            }
+            SC::cancelScheduledMultiplier(_) => {
+                logic.cancel_scheduled_multiplier(self, caller, privileged)?;
                 Bytes::new()
             }
 
             // --- Announcement ---
             SC::announce(c) => {
-                self.announce(ctx, c, privileged, &observer)?;
+                self.announce(ctx, c, version, privileged, &observer)?;
                 Bytes::new()
             }
 
@@ -390,26 +405,30 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
                     &BerylAuxiliaryMetrics::b20("asset", "batchMint"),
                     c.recipients.len(),
                 );
-                self.batch_mint(caller, c.recipients, c.amounts, privileged)?;
+                logic.batch_mint(self, caller, c.recipients, c.amounts, privileged)?;
                 Bytes::new()
             }
 
             // --- Extra metadata mutations ---
             SC::updateExtraMetadata(c) => {
-                self.update_extra_metadata(caller, c.key, c.value, privileged)?;
+                logic.update_extra_metadata(self, caller, c.key, c.value, privileged)?;
                 Bytes::new()
             }
         };
         Ok(encoded)
     }
 
-    /// Posts an announcement and atomically executes `internal_calls` via self-dispatch.
+    /// Posts an announcement and atomically executes `internalCalls` via self-dispatch.
     ///
+    /// Re-dispatching arbitrary sub-calls is a routing responsibility, so it stays in the
+    /// dispatcher; the version's [`Asset::begin_announce`]/[`Asset::end_announce`] bracket the loop
+    /// with the version-defined business steps. Each internal call routes at the same `version`.
     /// The selector check in the inner loop prevents recursive invocation.
     fn announce<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         call: IB20Asset::announceCall,
+        version: AssetVersion,
         privileged: bool,
         observer: &O,
     ) -> base_precompile_storage::Result<()>
@@ -425,31 +444,18 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             internal_call_count,
             internal_call_bytes,
         );
-        self.ensure_operator_role(caller, privileged)?;
 
+        let logic = version.implementation();
         let id = call.id;
-        if self.accounting().is_announcement_id_used(id.as_str())? {
-            return Err(BasePrecompileError::revert(IB20Asset::AnnouncementIdAlreadyUsed { id }));
-        }
-        self.accounting_mut().mark_announcement_id_used(id.as_str())?;
+        logic.begin_announce(self, caller, id.clone(), call.description, call.uri, privileged)?;
 
-        self.accounting_mut().emit_event(
-            IB20Asset::Announcement {
-                caller,
-                id: id.clone(),
-                description: call.description,
-                uri: call.uri,
-            }
-            .encode_log_data(),
-        )?;
-
-        // Each internal call is dispatched via `inner_with_privilege`, a direct Rust function
-        // call. Unlike the base-std Solidity reference which routes each `internalCalls` entry
-        // through a DELEGATECALL (~100 gas opcode overhead + memory expansion), the native
-        // precompile replaces the entire EVM execution path so per-opcode call overhead does not
-        // apply. The cheaper batched cost is intentional: the native precompile pays for the
-        // storage work of each sub-call (the same SLOAD/SSTORE operations as the Solidity
-        // reference) but not for EVM call-frame overhead that exists only in the interpreter.
+        // Each internal call is dispatched via `route`, a direct Rust function call. Unlike the
+        // base-std Solidity reference which routes each `internalCalls` entry through a DELEGATECALL
+        // (~100 gas opcode overhead + memory expansion), the native precompile replaces the entire
+        // EVM execution path so per-opcode call overhead does not apply. The cheaper batched cost is
+        // intentional: the native precompile pays for the storage work of each sub-call (the same
+        // SLOAD/SSTORE operations as the Solidity reference) but not for EVM call-frame overhead
+        // that exists only in the interpreter.
         for call in &internal_calls {
             let call_bytes: &[u8] = call.as_ref();
             if call_bytes.len() < 4 {
@@ -460,18 +466,20 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             if call_bytes[..4] == IB20Asset::announceCall::SELECTOR {
                 return Err(BasePrecompileError::revert(IB20Asset::AnnouncementInProgress {}));
             }
-            self.inner_with_privilege(ctx, call_bytes, privileged).map_err(|err| {
-                if err.is_system_error() {
-                    err
-                } else {
-                    BasePrecompileError::revert(IB20Asset::InternalCallFailed {
-                        call: call.clone(),
-                    })
-                }
-            })?;
+            self.route(ctx, call_bytes, version, privileged, NoopPrecompileCallObserver).map_err(
+                |err| {
+                    if err.is_system_error() {
+                        err
+                    } else {
+                        BasePrecompileError::revert(IB20Asset::InternalCallFailed {
+                            call: call.clone(),
+                        })
+                    }
+                },
+            )?;
         }
 
-        self.accounting_mut().emit_event(IB20Asset::EndAnnouncement { id }.encode_log_data())
+        logic.end_announce(self, id)
     }
 }
 
@@ -481,20 +489,22 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use alloy_primitives::{Address, Bytes, U256};
-    use alloy_sol_types::{SolCall, SolError, SolEvent};
-    use base_precompile_storage::{
-        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx,
-    };
+    use alloy_sol_types::{SolCall, SolError, SolValue};
+    use base_common_genesis::BaseUpgrade;
+    use base_precompile_storage::{HashMapStorageProvider, Result, StorageCtx};
 
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20AssetStorage,
-        B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset, InMemoryPolicy,
-        InMemoryTokenAccounting, NoopPrecompileCallObserver, PrecompileCallMetric,
-        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus, Token,
-        TokenAccounting,
+        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
+        AssetV1, AssetVersion, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind,
+        FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, NoopPrecompileCallObserver,
+        PolicyVersion, PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
+        PrecompileCallStatus, Token, TokenAccounting,
     };
 
-    type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
+    type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, FakePolicyAccounting>;
+
+    /// Upgrade at which the asset precompile is active for every dispatch test.
+    const UPGRADE: BaseUpgrade = BaseUpgrade::Beryl;
 
     #[derive(Debug, Clone, Default)]
     struct RecordingObserver {
@@ -517,17 +527,24 @@ mod tests {
     const BOB: Address = Address::repeat_byte(0xbb);
     const TOKEN: Address = Address::repeat_byte(0x01);
     const ACTIVATION_ADMIN: Address = Address::repeat_byte(0xcb);
+    const ACTIVATION_ADMIN_CONFIG: ActivationAdminConfig =
+        ActivationAdminConfig::static_fallback(Some(ACTIVATION_ADMIN));
+
     fn make_token() -> TestAssetToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         accounting.multiplier = B20AssetStorage::WAD; // 1:1 multiplier
-        TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestAssetToken::with_storage_and_policy(
+            accounting,
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
+        )
     }
 
     fn activate_b20_asset(storage: &mut HashMapStorageProvider) {
         storage.set_caller(ACTIVATION_ADMIN);
         StorageCtx::enter(storage, |ctx| {
             ActivationRegistryStorage::new(ctx)
-                .activate(ActivationFeature::B20Asset.id(), Some(ACTIVATION_ADMIN))
+                .activate(ActivationFeature::B20Asset.id(), ACTIVATION_ADMIN_CONFIG)
         })
         .unwrap();
     }
@@ -541,7 +558,23 @@ mod tests {
 
     fn call_asset(token: &mut TestAssetToken, caller: Address, calldata: Vec<u8>) -> Result<Bytes> {
         let mut storage = storage_with_caller(caller);
-        StorageCtx::enter(&mut storage, |ctx| token.inner(ctx, calldata.as_ref()))
+        StorageCtx::enter(&mut storage, |ctx| {
+            token.route(ctx, calldata.as_ref(), AssetVersion::V1, false, NoopPrecompileCallObserver)
+        })
+    }
+
+    fn call_asset_v2_at(
+        token: &mut TestAssetToken,
+        caller: Address,
+        now: U256,
+        calldata: Vec<u8>,
+    ) -> Result<Bytes> {
+        let mut storage = storage_with_caller(caller);
+        storage.set_timestamp(now);
+        token.accounting_mut().timestamp = now;
+        StorageCtx::enter(&mut storage, |ctx| {
+            token.route(ctx, calldata.as_ref(), AssetVersion::V2, false, NoopPrecompileCallObserver)
+        })
     }
 
     fn batch_mint_calldata(recipients: Vec<Address>, amounts: Vec<U256>) -> Vec<u8> {
@@ -556,7 +589,7 @@ mod tests {
         let mut storage = storage_with_caller(ALICE);
 
         let output = StorageCtx::enter(&mut storage, |ctx| {
-            token.dispatch_with_observer(ctx, &calldata, observer.clone())
+            token.dispatch_with_observer(ctx, &calldata, UPGRADE, observer.clone())
         })
         .expect("dispatch should not fatally error");
 
@@ -577,7 +610,7 @@ mod tests {
         let mut storage = storage_with_caller(ALICE);
 
         let output = StorageCtx::enter(&mut storage, |ctx| {
-            token.dispatch_with_observer(ctx, &calldata, observer.clone())
+            token.dispatch_with_observer(ctx, &calldata, UPGRADE, observer.clone())
         })
         .expect("dispatch should not fatally error");
 
@@ -589,20 +622,6 @@ mod tests {
         assert_eq!(calls[0].0.variant, Some("asset"));
         assert_eq!(calls[0].1.status, PrecompileCallStatus::Revert);
         assert_eq!(calls[0].1.error, Some(BerylErrorKind::AbiDecode));
-    }
-
-    #[test]
-    fn to_scaled_balance_one_to_one_multiplier() {
-        let token = make_token();
-        assert_eq!(token.to_scaled_balance(U256::from(100u64)).unwrap(), U256::from(100u64));
-    }
-
-    #[test]
-    fn to_scaled_balance_two_to_one_multiplier() {
-        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.multiplier = B20AssetStorage::WAD * U256::from(2u64);
-        let token = TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
-        assert_eq!(token.to_scaled_balance(U256::from(50u64)).unwrap(), U256::from(100u64));
     }
 
     #[test]
@@ -623,37 +642,6 @@ mod tests {
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
         assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(200u64));
         assert_eq!(token.accounting().total_supply().unwrap(), U256::from(300u64));
-        assert_eq!(
-            token.accounting().events,
-            alloc::vec![
-                IB20::Transfer { from: Address::ZERO, to: ALICE, amount: U256::from(100u64) }
-                    .encode_log_data(),
-                IB20::Transfer { from: Address::ZERO, to: BOB, amount: U256::from(200u64) }
-                    .encode_log_data()
-            ]
-        );
-    }
-
-    #[test]
-    fn batch_mint_requires_mint_role() {
-        let mut token = make_token();
-
-        let err = call_asset(
-            &mut token,
-            ALICE,
-            batch_mint_calldata(alloc::vec![BOB], alloc::vec![U256::from(100u64)]),
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: B20TokenRole::Mint.id(),
-            })
-        );
-        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::ZERO);
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::ZERO);
     }
 
     #[test]
@@ -681,131 +669,6 @@ mod tests {
         );
     }
 
-    // --- batchMint: EmptyBatch / LengthMismatch ---
-
-    #[test]
-    fn batch_mint_rejects_empty() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((B20TokenRole::Mint.id(), ALICE), true);
-
-        assert_eq!(
-            call_asset(&mut token, ALICE, batch_mint_calldata(alloc::vec![], alloc::vec![]))
-                .unwrap_err(),
-            BasePrecompileError::revert(IB20Asset::EmptyBatch {})
-        );
-    }
-
-    #[test]
-    fn batch_mint_rejects_length_mismatch() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((B20TokenRole::Mint.id(), ALICE), true);
-
-        assert_eq!(
-            call_asset(
-                &mut token,
-                ALICE,
-                batch_mint_calldata(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]),
-            )
-            .unwrap_err(),
-            BasePrecompileError::revert(IB20Asset::LengthMismatch {
-                leftLen: U256::ONE,
-                rightLen: U256::from(2u64),
-            })
-        );
-
-        assert_eq!(
-            call_asset(
-                &mut token,
-                ALICE,
-                batch_mint_calldata(alloc::vec![], alloc::vec![U256::ONE]),
-            )
-            .unwrap_err(),
-            BasePrecompileError::revert(IB20Asset::LengthMismatch {
-                leftLen: U256::ZERO,
-                rightLen: U256::ONE,
-            })
-        );
-    }
-
-    // --- toScaledBalance: zero balance / sub-WAD truncation / scaledBalanceOf delegation ---
-    #[test]
-    fn to_scaled_balance_zero_balance_yields_zero() {
-        let token = make_token();
-        assert_eq!(token.to_scaled_balance(U256::ZERO).unwrap(), U256::ZERO);
-    }
-
-    #[test]
-    fn to_scaled_balance_sub_wad_multiplier_truncates_to_zero() {
-        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        // 0.5 WAD: 1 token → 0.5 scaled → truncates to 0 via integer division
-        accounting.multiplier = B20AssetStorage::WAD / U256::from(2u64);
-        let token = TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
-        assert_eq!(token.to_scaled_balance(U256::from(1u64)).unwrap(), U256::ZERO);
-    }
-
-    #[test]
-    fn scaled_balance_of_derives_from_balance() {
-        let mut token = make_token(); // 1:1 multiplier
-        token.accounting_mut().balances.insert(ALICE, U256::from(75u64));
-        // scaledBalanceOf(account) = toScaledBalance(balanceOf(account))
-        let balance = token.accounting().balance_of(ALICE).unwrap();
-        assert_eq!(token.to_scaled_balance(balance).unwrap(), U256::from(75u64));
-    }
-
-    // --- updateMultiplier: persistence ---
-
-    #[test]
-    fn multiplier_update_persists() {
-        let mut token = make_token();
-        let new_multiplier = B20AssetStorage::WAD * U256::from(3u64);
-        token.accounting_mut().set_multiplier(new_multiplier).unwrap();
-        assert_eq!(token.accounting().multiplier().unwrap(), new_multiplier);
-    }
-
-    // --- extraMetadata / updateExtraMetadata ---
-
-    #[test]
-    fn extra_metadata_missing_key_returns_empty() {
-        let token = make_token();
-        // "Returns the empty string if not set"
-        assert_eq!(token.accounting().extra_metadata("category").unwrap(), "");
-    }
-
-    #[test]
-    fn extra_metadata_empty_value_clears_entry() {
-        let mut token = make_token();
-        token.accounting_mut().set_extra_metadata_value("region", "us-east".to_string()).unwrap();
-        assert_eq!(token.accounting().extra_metadata("region").unwrap(), "us-east");
-        // "passing an empty value removes the entry"
-        token.accounting_mut().set_extra_metadata_value("region", String::new()).unwrap();
-        assert_eq!(token.accounting().extra_metadata("region").unwrap(), "");
-    }
-
-    // --- isAnnouncementIdUsed: fresh state ---
-
-    #[test]
-    fn announcement_id_not_used_initially() {
-        let token = make_token();
-        let id = "2026-Q1-split";
-        // "Returns true if id has previously been consumed by announce" → false for new id
-        assert!(!token.accounting().is_announcement_id_used(id).unwrap());
-    }
-
-    /// `to_scaled_balance` must return an arithmetic overflow panic rather than silently
-    /// saturating when `balance * multiplier` exceeds `U256::MAX`.
-    #[test]
-    fn to_scaled_balance_overflows_when_product_exceeds_u256_max() {
-        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        // Any balance > 1 overflows when multiplied by this multiplier.
-        accounting.multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
-        let token = TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
-
-        assert_eq!(
-            token.to_scaled_balance(U256::from(2u64)).unwrap_err(),
-            BasePrecompileError::under_overflow()
-        );
-    }
-
     /// System errors produced by an inner `announce` call must propagate unchanged and must
     /// not be wrapped as [`IB20Asset::InternalCallFailed`]. A deliberately overflowing
     /// `toScaledBalance` produces `Panic(UnderOverflow)`, which `is_system_error()` returns
@@ -815,7 +678,7 @@ mod tests {
         let mut token = make_token();
         // Any balance > 1 overflows when multiplied by this multiplier.
         token.accounting_mut().multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
-        token.accounting_mut().roles.insert((TestAssetToken::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
 
         let inner_call = Bytes::from(
             IB20Asset::toScaledBalanceCall { rawBalance: U256::from(2u64) }.abi_encode(),
@@ -830,7 +693,7 @@ mod tests {
 
         let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
 
-        assert_eq!(err, BasePrecompileError::under_overflow());
+        assert_eq!(err, base_precompile_storage::BasePrecompileError::under_overflow());
     }
 
     /// A non-system revert produced by an inner `announce` call must be wrapped as
@@ -839,7 +702,7 @@ mod tests {
     fn announce_inner_ordinary_revert_wraps_as_internal_call_failed() {
         let mut token = make_token();
         // ALICE has OPERATOR_ROLE (needed for announce) but not MINT_ROLE (needed for mint).
-        token.accounting_mut().roles.insert((TestAssetToken::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
 
         let inner_call = Bytes::from(IB20::mintCall { to: BOB, amount: U256::ONE }.abi_encode());
         let calldata = IB20Asset::announceCall {
@@ -854,7 +717,107 @@ mod tests {
 
         assert_eq!(
             err,
-            BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: inner_call })
+            base_precompile_storage::BasePrecompileError::revert(IB20Asset::InternalCallFailed {
+                call: inner_call
+            })
+        );
+    }
+
+    #[test]
+    fn route_v2_schedules_and_flips_multiplier_lazily() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        let target = B20AssetStorage::WAD * U256::from(3u64);
+        let effective_at = U256::from(1_000u64);
+
+        call_asset_v2_at(
+            &mut token,
+            ALICE,
+            U256::from(1u64),
+            IB20Asset::setUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
+                .abi_encode(),
+        )
+        .unwrap();
+
+        let before = call_asset_v2_at(
+            &mut token,
+            ALICE,
+            U256::from(999u64),
+            IB20Asset::multiplierCall {}.abi_encode(),
+        )
+        .unwrap();
+        assert_eq!(before, Bytes::from(B20AssetStorage::WAD.abi_encode()));
+
+        let after = call_asset_v2_at(
+            &mut token,
+            ALICE,
+            effective_at,
+            IB20Asset::multiplierCall {}.abi_encode(),
+        )
+        .unwrap();
+        assert_eq!(after, Bytes::from(target.abi_encode()));
+
+        let effective_at_read = call_asset_v2_at(
+            &mut token,
+            ALICE,
+            U256::from(1u64),
+            IB20Asset::effectiveAtCall {}.abi_encode(),
+        )
+        .unwrap();
+        assert_eq!(effective_at_read, Bytes::from(effective_at.abi_encode()));
+    }
+
+    #[test]
+    fn route_v2_supports_interface() {
+        let mut token = make_token();
+        let out = call_asset_v2_at(
+            &mut token,
+            ALICE,
+            U256::ZERO,
+            IB20Asset::supportsInterfaceCall {
+                interfaceId: alloy_primitives::FixedBytes::new([0x01, 0xff, 0xc9, 0xa7]),
+            }
+            .abi_encode(),
+        )
+        .unwrap();
+        assert_eq!(out, Bytes::from(true.abi_encode()));
+    }
+
+    #[test]
+    fn route_v1_rejects_scheduled_selector_as_unknown() {
+        let mut token = make_token();
+        let calldata = IB20Asset::setUIMultiplierCall {
+            newMultiplier: B20AssetStorage::WAD,
+            effectiveAt: U256::from(2u64),
+        }
+        .abi_encode();
+        let selector: [u8; 4] = calldata[..4].try_into().unwrap();
+        // Routed at V1 (Beryl) the ERC-8056 selector is absent from the frozen asset surface, so it
+        // falls through to the disjoint inherited IB20 decode and stays unknown.
+        let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
+        assert_eq!(
+            err,
+            base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(selector)
+        );
+    }
+
+    /// Pins rejection *ahead* of argument decoding: a pre-Cobalt (V1) call carrying an ERC-8056
+    /// selector but non-decodable arguments must still reject as `UnknownFunctionSelector`, exactly
+    /// as it did before the shared ABI enum grew; never `AbiDecodeFailed`. This falls out of the
+    /// frozen V1 surface not declaring the selector — the asset branch is skipped before any
+    /// argument decode, and the disjoint inherited IB20 decode yields the unknown selector. A gate
+    /// that decoded first (post-decode) would leak `AbiDecodeFailed` here and fork historical Beryl.
+    #[test]
+    fn route_v1_rejects_scheduled_selector_with_malformed_args_as_unknown() {
+        let mut token = make_token();
+        // A valid `setUIMultiplier` selector followed by truncated (non-decodable) arguments.
+        let mut calldata = IB20Asset::setUIMultiplierCall::SELECTOR.to_vec();
+        calldata.extend_from_slice(&[0u8; 3]);
+        let selector: [u8; 4] = calldata[..4].try_into().unwrap();
+        let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
+        assert_eq!(
+            err,
+            base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(selector)
         );
     }
 
@@ -866,7 +829,7 @@ mod tests {
         storage.set_call_value(U256::from(1u64));
 
         let out = StorageCtx::enter(&mut storage, |ctx| {
-            token.dispatch_with_observer(ctx, &calldata, NoopPrecompileCallObserver)
+            token.dispatch_with_observer(ctx, &calldata, UPGRADE, NoopPrecompileCallObserver)
         })
         .expect("dispatch must not fatally error");
 

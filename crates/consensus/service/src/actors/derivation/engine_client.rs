@@ -5,7 +5,7 @@ use base_consensus_engine::ConsolidateInput;
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 
-use crate::{EngineActorRequest, EngineClientError, EngineClientResult, ResetRequest};
+use crate::{EngineActorRequest, EngineClientError, EngineClientResult, ResetOrigin, ResetRequest};
 
 /// Client to use to interact with the engine.
 #[cfg_attr(test, mockall::automock(type SafeL2Signal = AttributesWithParent;))]
@@ -42,7 +42,10 @@ impl DerivationEngineClient for QueuedDerivationEngineClient {
 
         info!(target: "derivation", "Sending reset request to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest { result_tx })))
+            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                result_tx,
+                origin: ResetOrigin::Derivation,
+            })))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
 

@@ -15,15 +15,17 @@ pub use error::EngineError;
 mod request;
 pub use request::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineClientResult, EngineRpcRequest,
-    GetPayloadRequest, InsertUnsafePayloadRequest, ResetRequest,
+    GetPayloadRequest, InsertUnsafePayloadRequest, ReconcileShadowRequest, ResetOrigin,
+    ResetRequest,
 };
 
 mod engine_request_processor;
 #[cfg(test)]
 pub use client::MockEngineDerivationClient;
-pub use engine_request_processor::{
-    BootstrapRole, EngineProcessor, EngineProcessorOptions, EngineRequestReceiver,
-};
+pub use engine_request_processor::{EngineProcessor, EngineRequestReceiver, ResetOutcome};
+
+mod validator_engine_request_handler;
+pub use validator_engine_request_handler::ValidatorEngineRequestHandler;
 
 mod rpc_request_processor;
 pub use rpc_request_processor::EngineRpcProcessor;

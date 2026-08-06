@@ -9,9 +9,10 @@ use base_common_network::Base;
 use base_consensus_node::{
     EngineConfig, FollowNode, FollowNodeConfig, L1Config, NodeMode, RemoteL2Client,
 };
-use base_consensus_providers::OnlineBeaconClient;
+use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use clap::Args;
+use reth_node_core::args::TraceArgs;
 use tracing::{error, info, warn};
 use url::Url;
 
@@ -31,6 +32,10 @@ pub struct ConsensusFollowNodeCommand {
     #[command(flatten)]
     pub metrics: MetricsArgs,
 
+    /// `OpenTelemetry` tracing export configuration.
+    #[command(flatten)]
+    pub traces: TraceArgs,
+
     /// Follow-node arguments.
     #[command(flatten)]
     pub args: ConsensusFollowNodeConfigArgs,
@@ -39,22 +44,38 @@ pub struct ConsensusFollowNodeCommand {
 impl ConsensusFollowNodeCommand {
     /// Runs the standalone consensus follow-node command.
     pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        base_cli_utils::init_tracing!(
-            LogConfig::from(self.logging.clone()),
-            ["libp2p_gossipsub=error"]
-        )?;
-
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
 
         let args = ConsensusFollowNodeArgs::new(chain, self.args);
-        if self.metrics.enabled {
+        let metrics_config = if self.metrics.enabled {
             let cfg = args.load_rollup_config()?;
             CliMetrics::init_rollup_config(&cfg);
-        }
+            Some(cfg)
+        } else {
+            None
+        };
 
-        RuntimeManager::new().run_until_ctrl_c(args.start())
+        let rt = RuntimeManager::new().tokio_runtime()?;
+        rt.block_on(async {
+            LogConfig::from(self.logging.clone())
+                .init_with_trace_args(&self.traces, &["libp2p_gossipsub=error"])
+        })?;
+        rt.block_on(async move {
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
+                    Ok(())
+                }
+                res = async move {
+                    let _upgrade_countdown_metrics =
+                        metrics_config.map(CliMetrics::spawn_upgrade_countdown_recorder);
+                    args.start().await
+                } => res,
+            }
+        })
     }
 }
 
@@ -171,12 +192,14 @@ impl ConsensusFollowNodeArgs {
         };
         let engine_client =
             Arc::new(engine_config.build_engine_client().await.map_err(|e| eyre::eyre!(e))?);
+        let l1_provider = L1RpcProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone());
         let l2_source = RemoteL2Client::new(self.config.source_l2_rpc.clone());
         let rpc_builder = Option::<RpcBuilder>::from(self.config.rpc_flags.clone());
 
         Ok(FollowNode::new(FollowNodeConfig {
             rollup_config,
             engine_client,
+            l1_provider,
             local_l2_provider,
             l2_source,
             rpc_builder,
@@ -244,9 +267,10 @@ impl ConsensusFollowNodeArgs {
             chain_config: Arc::new(l1_chain_config),
             trust_rpc: self.config.l1_rpc_args.l1_trust_rpc,
             beacon_client: l1_beacon,
-            engine_provider: RootProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone()),
+            engine_provider: L1RpcProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone()),
             finalized_poll_interval: L1Config::default_finalized_poll_interval(cfg.l1_chain_id),
             verifier_l1_confs: self.config.l1_rpc_args.l1_verifier_confs,
+            da_batcher_sender_override: self.config.l1_rpc_args.l1_da_batcher_sender_override,
         })
     }
 }

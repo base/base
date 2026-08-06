@@ -175,6 +175,7 @@ impl BaseChainSpec {
         let azul_time = genesis_info.base.azul;
         let beryl_time = genesis_info.base.beryl;
         let cobalt_time = genesis_info.base.cobalt;
+        let zenith_time = genesis_info.base.zenith;
         let time_upgrade_opts = [
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
             (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
@@ -191,6 +192,7 @@ impl BaseChainSpec {
             (BaseUpgrade::Azul.boxed(), azul_time),
             (BaseUpgrade::Beryl.boxed(), beryl_time),
             (BaseUpgrade::Cobalt.boxed(), cobalt_time),
+            (BaseUpgrade::Zenith.boxed(), zenith_time),
         ];
 
         let mut time_upgrades = time_upgrade_opts
@@ -447,7 +449,7 @@ impl BaseChainSpec {
             inserted = true;
         }
         // Only execution-ladder upgrades enter the reth hardfork schedule; contract-only
-        // upgrades (Delta, PectraBlobSchedule) are ignored here.
+        // upgrades (Delta, PectraBlobSchedule) and genesis-only Zenith are ignored here.
         if hardfork_id.is_execution() {
             hardforks.insert(hardfork_id, condition);
             inserted = true;
@@ -486,11 +488,8 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
         let genesis = serde_json::from_str(cfg.genesis_json)?;
         let upgrades =
             base_common_chains::ChainUpgrades::new(BaseUpgrade::forks_for(cfg)).to_chain_upgrades();
-        Self::validate_beryl_activation_admin(
-            &upgrades,
-            Some(cfg.activation_admin_address),
-            cfg.chain_id,
-        )?;
+        let activation_admin_address = cfg.beryl_activation_admin_address();
+        Self::validate_beryl_activation_admin(&upgrades, activation_admin_address, cfg.chain_id)?;
         let genesis_header = match cfg.genesis_l2_hash {
             B256::ZERO => SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &upgrades)),
             hash => SealedHeader::new(Self::make_genesis_header(&genesis, &upgrades), hash),
@@ -527,7 +526,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
                 prune_delete_limit: cfg.prune_delete_limit,
                 ..Default::default()
             },
-            activation_admin_address: Some(cfg.activation_admin_address),
+            activation_admin_address,
         })
     }
 }
@@ -628,7 +627,7 @@ impl EthereumHardforks for BaseChainSpec {
 }
 
 impl Upgrades for BaseChainSpec {
-    fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
+    fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
         self.fork(fork)
     }
 
@@ -929,6 +928,8 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
         let mut config = ChainConfig::mainnet().clone();
         config.chain_id = chain_id;
+        config.beryl_timestamp = None;
+        config.cobalt_timestamp = None;
         let spec = BaseChainSpec::try_from(&config).unwrap();
         let timestamp = 42;
         let parent = spec.genesis_header();
@@ -961,6 +962,16 @@ mod tests {
     }
 
     #[test]
+    fn builtin_chain_specs_never_activate_zenith() {
+        // Built-in production schedules do not configure the genesis-only Zenith upgrade.
+        for spec in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia(), BaseChainSpec::devnet()] {
+            assert_eq!(spec.fork(BaseUpgrade::Zenith), ForkCondition::Never);
+            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 0));
+            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, u64::MAX));
+        }
+    }
+
+    #[test]
     fn base_mainnet_genesis() {
         let base_mainnet_spec = BaseChainSpec::mainnet();
         let genesis = base_mainnet_spec.genesis_header();
@@ -973,14 +984,18 @@ mod tests {
     }
 
     #[test]
-    fn activation_admin_matches_chain_config() {
+    fn activation_admin_matches_beryl_constants() {
         assert_eq!(
             BaseChainSpec::mainnet().activation_admin_address(),
-            Some(address!("cE3a3bEE7E72E2A24079f3c0Cb3b97740ED425A9"))
+            Some(base_common_chains::MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS)
         );
         assert_eq!(
             BaseChainSpec::sepolia().activation_admin_address(),
-            Some(address!("5F43072722f59964d886CBb507F6a85ca0759D42"))
+            Some(base_common_chains::SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS)
+        );
+        assert_eq!(
+            BaseChainSpec::zeronet().activation_admin_address(),
+            Some(base_common_chains::ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS)
         );
     }
 
@@ -1051,15 +1066,15 @@ mod tests {
     }
 
     #[test]
-    fn beryl_chain_config_with_zero_activation_admin_is_rejected() {
+    fn beryl_chain_config_without_known_activation_admin_is_rejected() {
         let mut config = ChainConfig::devnet().clone();
+        config.chain_id = 987_654;
         config.beryl_timestamp = Some(0);
-        config.activation_admin_address = Address::ZERO;
 
         let err = BaseChainSpec::try_from(&config)
-            .expect_err("Beryl chain config with zero activation admin should be rejected");
+            .expect_err("Beryl chain config without activation admin should be rejected");
         assert!(
-            matches!(err, BaseChainSpecError::ZeroActivationAdminAddress { chain_id } if chain_id == config.chain_id)
+            matches!(err, BaseChainSpecError::MissingActivationAdminAddress { chain_id } if chain_id == config.chain_id)
         );
     }
 
@@ -1111,7 +1126,7 @@ mod tests {
         let genesis = base_zeronet_spec.genesis_header();
         assert_eq!(
             genesis.hash_slow(),
-            b256!("0x1842d6ef4c40e2a4794458e167f6d327269df919b626979111c37ad3a96047bf")
+            b256!("0x572a15dd7e69df35913f7f2217376609fc20d59276169977de92c01684637162")
         );
     }
 
@@ -1199,7 +1214,9 @@ mod tests {
         "jovianTime": 54,
         "base": {
           "v1": 55,
-          "v2": 60
+          "v2": 60,
+          "v3": 65,
+          "zenith": 1000000
         },
         "activationAdminAddress": "0xcb00000000000000000000000000000000000000",
         "optimism": {
@@ -1240,6 +1257,10 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Azul, 55));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 59));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 60));
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 64));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 65));
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 999_999));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 1_000_000));
     }
 
     #[test]

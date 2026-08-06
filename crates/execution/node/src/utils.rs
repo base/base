@@ -65,6 +65,7 @@ pub fn payload_attributes<T>(timestamp: u64) -> BasePayloadBuilderAttributes<T> 
         withdrawals: Some(vec![]),
         parent_beacon_block_root: Some(B256::ZERO),
         slot_number: None,
+        target_gas_limit: None,
     };
 
     BasePayloadBuilderAttributes {
@@ -84,5 +85,6 @@ pub fn payload_attributes<T>(timestamp: u64) -> BasePayloadBuilderAttributes<T> 
         gas_limit: Some(30_000_000),
         eip_1559_params: None,
         min_base_fee: None,
+        timestamp_millis_part: None,
     }
 }

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use alloy_primitives::{Address, LogData, U256};
+use alloy_primitives::{Address, B256, LogData, U256};
 use revm::{
     context::journaled_state::JournalCheckpoint,
     context_interface::cfg::GasParams,
@@ -8,7 +8,10 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 
-use crate::{error::BasePrecompileError, provider::PrecompileStorageProvider};
+use crate::{
+    error::BasePrecompileError,
+    provider::{PrecompileStorageProvider, StorageFeatures, validate_loaded_code_presence},
+};
 
 /// In-memory [`PrecompileStorageProvider`] for unit tests.
 ///
@@ -35,6 +38,7 @@ pub struct HashMapStorageProvider {
     gas_params: GasParams,
     state_gas_used: u64,
     gas_refunded: i64,
+    storage_features: StorageFeatures,
     /// Emitted events keyed by contract address.
     pub events: HashMap<Address, Vec<LogData>>,
 }
@@ -80,6 +84,7 @@ impl HashMapStorageProvider {
             gas_params: GasParams::default(),
             state_gas_used: 0,
             gas_refunded: 0,
+            storage_features: StorageFeatures::Legacy,
         }
     }
 }
@@ -133,6 +138,21 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     ) -> Result<(), BasePrecompileError> {
         let account = self.accounts.entry(address).or_default();
         f(&*account);
+        Ok(())
+    }
+
+    fn with_account_code(
+        &mut self,
+        address: Address,
+        f: &mut dyn FnMut(&Bytecode),
+    ) -> Result<(), BasePrecompileError> {
+        let empty = Bytecode::default();
+        let (expected_hash, code) =
+            self.accounts.get(&address).map_or((B256::ZERO, &empty), |account| {
+                (account.code_hash, account.code.as_ref().unwrap_or(&empty))
+            });
+        validate_loaded_code_presence(expected_hash, code)?;
+        f(code);
         Ok(())
     }
 
@@ -190,6 +210,15 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(self.transient.get(&(address, key)).copied().unwrap_or(U256::ZERO))
     }
 
+    fn tload_unmetered(
+        &mut self,
+        address: Address,
+        key: U256,
+    ) -> Result<U256, BasePrecompileError> {
+        // Test backend: `tload` never deducts gas, so the raw read is unmetered.
+        Ok(self.transient.get(&(address, key)).copied().unwrap_or(U256::ZERO))
+    }
+
     fn deduct_gas(&mut self, gas: u64) -> Result<(), BasePrecompileError> {
         self.gas_deducted = self.gas_deducted.saturating_add(gas);
         Ok(())
@@ -233,6 +262,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         0
     }
 
+    fn storage_features(&self) -> StorageFeatures {
+        self.storage_features
+    }
+
     fn is_static(&self) -> bool {
         self.is_static
     }
@@ -262,9 +295,18 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         JournalCheckpoint { log_i: 0, journal_i: idx, selfdestructed_i: 0 }
     }
 
-    fn checkpoint_commit(&mut self) {
+    fn commit_latest_checkpoint(&mut self) {
         assert!(!self.snapshots.is_empty(), "checkpoint_commit called with no active checkpoint");
         self.snapshots.pop();
+    }
+
+    fn assert_latest_checkpoint(&self, checkpoint: JournalCheckpoint) {
+        assert!(!self.snapshots.is_empty(), "checkpoint_commit called with no active checkpoint");
+        assert_eq!(
+            checkpoint.journal_i,
+            self.snapshots.len() - 1,
+            "out-of-order checkpoint commit (expected top of stack)"
+        );
     }
 
     fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
@@ -400,6 +442,11 @@ impl HashMapStorageProvider {
     pub fn set_gas_params(&mut self, gas_params: GasParams) {
         self.gas_params = gas_params;
     }
+
+    /// Overrides persistent-storage features (test-utils only).
+    pub const fn set_storage_features(&mut self, features: StorageFeatures) {
+        self.storage_features = features;
+    }
 }
 
 /// Test helper: returns a fresh `(HashMapStorageProvider, precompile_address)` pair.
@@ -410,13 +457,83 @@ pub fn setup_storage() -> (HashMapStorageProvider, Address) {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::{Address, B256, U256};
 
     use super::*;
     use crate::provider::PrecompileStorageProvider;
 
     const ADDR: Address = Address::ZERO;
     const KEY: U256 = U256::ZERO;
+
+    #[test]
+    fn with_account_code_reads_absent_as_empty_without_creating_account() {
+        let mut p = HashMapStorageProvider::new(1);
+        let mut observed_empty = false;
+
+        p.with_account_code(ADDR, &mut |code| observed_empty = code.is_empty()).unwrap();
+
+        assert!(observed_empty);
+        assert!(!p.accounts.contains_key(&ADDR), "a code read must not create the account");
+    }
+
+    #[test]
+    fn with_account_code_reads_empty_hash_with_missing_code_as_empty() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.accounts.insert(ADDR, AccountInfo { code: None, ..Default::default() });
+        let mut observed_empty = false;
+
+        p.with_account_code(ADDR, &mut |code| observed_empty = code.is_empty()).unwrap();
+
+        assert!(observed_empty);
+        assert!(p.accounts.get(&ADDR).is_some_and(|account| account.code.is_none()));
+    }
+
+    #[test]
+    fn with_account_code_reads_matching_populated_code() {
+        let mut p = HashMapStorageProvider::new(1);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        p.set_code(ADDR, code.clone()).unwrap();
+        let mut observed = None;
+
+        p.with_account_code(ADDR, &mut |loaded| observed = Some(loaded.clone())).unwrap();
+
+        assert_eq!(observed, Some(code));
+    }
+
+    #[test]
+    fn with_account_code_rejects_missing_code_for_nonempty_hash() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.accounts.insert(
+            ADDR,
+            AccountInfo { code_hash: B256::repeat_byte(0x11), code: None, ..Default::default() },
+        );
+        let mut callback_invoked = false;
+
+        let error = p.with_account_code(ADDR, &mut |_| callback_invoked = true).unwrap_err();
+
+        assert!(matches!(error, BasePrecompileError::Fatal(_)));
+        assert!(!callback_invoked);
+        assert!(p.accounts.get(&ADDR).is_some_and(|account| account.code.is_none()));
+    }
+
+    #[test]
+    fn with_account_code_does_not_rehash_populated_code() {
+        let mut p = HashMapStorageProvider::new(1);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        p.accounts.insert(
+            ADDR,
+            AccountInfo {
+                code_hash: B256::repeat_byte(0x22),
+                code: Some(code.clone()),
+                ..Default::default()
+            },
+        );
+        let mut observed = None;
+
+        p.with_account_code(ADDR, &mut |loaded| observed = Some(loaded.clone())).unwrap();
+
+        assert_eq!(observed, Some(code));
+    }
 
     #[test]
     fn set_code_static_violation_before_state_gas_charge() {
@@ -552,11 +669,21 @@ mod tests {
     }
 
     #[test]
-    fn checkpoint_commit_does_not_revert_mutations() {
+    fn commit_latest_checkpoint_does_not_revert_mutations() {
         let mut p = HashMapStorageProvider::new(1);
         p.checkpoint();
         p.sstore(ADDR, KEY, U256::from(42u64)).unwrap();
-        p.checkpoint_commit();
+        p.commit_latest_checkpoint();
         assert_eq!(p.sload(ADDR, KEY).unwrap(), U256::from(42u64));
+    }
+
+    #[test]
+    #[should_panic(expected = "out-of-order checkpoint commit (expected top of stack)")]
+    fn assert_latest_checkpoint_rejects_out_of_order_checkpoint() {
+        let mut p = HashMapStorageProvider::new(1);
+        let outer = p.checkpoint();
+        p.checkpoint();
+
+        p.assert_latest_checkpoint(outer);
     }
 }

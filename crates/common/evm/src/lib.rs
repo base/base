@@ -16,10 +16,14 @@ pub use result::BaseHaltReason;
 mod l1block;
 pub use l1block::L1BlockInfo;
 
+mod base_time;
+pub use base_time::{BaseTime, BaseTimeTransitionError};
+
 mod transaction;
 pub use transaction::{
     BaseTransaction, BaseTransactionBuilder, BaseTransactionError, BaseTxTr, BuildError,
-    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
+    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, EIP8130_TRANSACTION_TYPE,
+    Eip8130ExecutionMode, Eip8130TransactionParts,
 };
 
 mod handler;
@@ -37,6 +41,14 @@ pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};
 mod evm;
 pub use evm::BaseEvm;
 
+#[cfg(feature = "std")]
+mod eip8130;
+#[cfg(feature = "std")]
+pub use eip8130::{Eip8130Executor, Eip8130Outcome};
+
+mod eip8130_phase_statuses;
+pub use eip8130_phase_statuses::Eip8130PhaseStatuses;
+
 mod factory;
 pub use factory::BaseEvmFactory;
 
@@ -51,6 +63,9 @@ pub use receipt_builder::{AlloyReceiptBuilder, BaseReceiptBuilder};
 
 mod canyon;
 pub use canyon::ensure_create2_deployer;
+
+mod cobalt;
+pub use cobalt::ensure_eip8130_system_accounts;
 
 mod executor;
 pub use executor::{

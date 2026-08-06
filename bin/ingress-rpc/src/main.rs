@@ -4,16 +4,17 @@ use std::time::Duration;
 
 use alloy_provider::RootProvider;
 use audit_archiver_lib::{AuditConnector, BundleEvent, RpcBundleEventPublisher};
-use base_bundles::MeterBundleResponse;
 use base_cli_utils::LogConfig;
 use base_common_network::Base;
+use base_observability_events::GlobalTransactionEventWriter;
 use clap::Parser;
 use ingress_rpc_lib::{
-    BuilderConnector, Config, HealthServer, IngressApiServer, IngressService, Providers,
+    BuilderConnector, Config, HealthServer, IngressApiServer, IngressService,
+    MeteringForwardMessage,
 };
 use jsonrpsee::server::Server;
 use tokio::sync::{broadcast, mpsc};
-use tracing::info;
+use tracing::{info, warn};
 
 base_cli_utils::define_log_args!("TIPS_INGRESS");
 base_cli_utils::define_metrics_args!("TIPS_INGRESS", 9002);
@@ -52,18 +53,29 @@ async fn main() -> anyhow::Result<()> {
         message = "Starting ingress service",
         address = %config.address,
         port = config.port,
-        mempool_url = %config.mempool_url,
         simulation_rpc = %config.simulation_rpc,
         metrics_addr = %metrics_addr,
         metrics_port = metrics_port,
         health_check_address = %config.health_check_addr,
     );
 
-    let providers = Providers {
-        mempool: RootProvider::<Base>::new_http(config.mempool_url),
-        simulation: RootProvider::<Base>::new_http(config.simulation_rpc),
-        raw_tx_forward: config.raw_tx_forward_rpc.clone().map(RootProvider::<Base>::new_http),
-    };
+    if config.deprecated_mempool_url.is_some() {
+        warn!(
+            env = "TIPS_INGRESS_RPC_MEMPOOL",
+            "Deprecated ingress mempool forwarding config is set and will be ignored"
+        );
+    }
+    if config.deprecated_raw_tx_forward_rpc.is_some() {
+        warn!(
+            env = "TIPS_INGRESS_RAW_TX_FORWARD_RPC",
+            "Deprecated ingress raw transaction forwarder config is set and will be ignored"
+        );
+    }
+
+    let simulation_provider = RootProvider::<Base>::new_http(config.simulation_rpc.clone());
+
+    GlobalTransactionEventWriter::init(Some(config.transaction_event_writer_config()))
+        .map_err(|err| anyhow::anyhow!("{err:#}"))?;
 
     let audit_publisher = RpcBundleEventPublisher::new(
         config.audit_rpc_url.as_str(),
@@ -78,15 +90,15 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let (builder_tx, _) =
-        broadcast::channel::<MeterBundleResponse>(config.max_buffered_meter_bundle_responses);
+        broadcast::channel::<MeteringForwardMessage>(config.max_buffered_meter_bundle_responses);
     info!(
         builder_rpcs = ?config.builder_rpcs,
         send_to_builder = config.send_to_builder,
         "Configuring builder connectors"
     );
-    config.builder_rpcs.iter().for_each(|builder_rpc| {
+    config.builder_rpcs.iter().enumerate().for_each(|(destination_index, builder_rpc)| {
         let metering_rx = builder_tx.subscribe();
-        BuilderConnector::connect(metering_rx, builder_rpc.clone());
+        BuilderConnector::connect(metering_rx, builder_rpc.clone(), destination_index);
     });
 
     let health_check_addr = config.health_check_addr;
@@ -97,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let bind_addr = format!("{}:{}", config.address, config.port);
-    let service = IngressService::new(providers, audit_tx, builder_tx, cli.config);
+    let service = IngressService::new(simulation_provider, audit_tx, builder_tx, cli.config);
 
     let server = Server::builder().build(&bind_addr).await?;
     let addr = server.local_addr()?;

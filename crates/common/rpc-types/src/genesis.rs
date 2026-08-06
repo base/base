@@ -35,7 +35,7 @@ impl TryFrom<&OtherFields> for ChainInfo {
 
 /// Base-specific upgrade configuration in a genesis file.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpgradeInfo {
     /// Base Azul upgrade timestamp.
     #[serde(alias = "v1")]
@@ -46,6 +46,9 @@ pub struct UpgradeInfo {
     /// Cobalt upgrade timestamp.
     #[serde(alias = "v3")]
     pub cobalt: Option<u64>,
+    /// Zenith upgrade timestamp.
+    #[serde(alias = "future")]
+    pub zenith: Option<u64>,
 }
 
 /// The Base chain-specific genesis block specification.
@@ -138,7 +141,8 @@ mod tests {
           "ecotoneTime": 0,
           "base": {
             "v1": 14,
-            "v2": 16
+            "v2": 16,
+            "zenith": 1000000
           }
         }
         "#;
@@ -158,10 +162,22 @@ mod tests {
                 holocene_time: None,
                 isthmus_time: None,
                 jovian_time: None,
-                base: UpgradeInfo { azul: Some(14), beryl: Some(16), cobalt: None },
+                base: UpgradeInfo {
+                    azul: Some(14),
+                    beryl: Some(16),
+                    cobalt: None,
+                    zenith: Some(1_000_000),
+                },
                 activation_admin_address: None,
             }
         );
+    }
+
+    #[test]
+    fn upgrade_info_accepts_future_alias() {
+        let upgrades: UpgradeInfo = serde_json::from_str(r#"{"future":18}"#).unwrap();
+
+        assert_eq!(upgrades.zenith, Some(18));
     }
 
     #[test]
@@ -224,7 +240,12 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: UpgradeInfo { azul: Some(14), beryl: Some(16), cobalt: None },
+                    base: UpgradeInfo {
+                        azul: Some(14),
+                        beryl: Some(16),
+                        cobalt: None,
+                        zenith: None,
+                    },
                     activation_admin_address: None,
                 }),
                 base_fee_info: Some(FeeInfo {
@@ -250,7 +271,12 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: UpgradeInfo { azul: Some(14), beryl: Some(16), cobalt: None },
+                    base: UpgradeInfo {
+                        azul: Some(14),
+                        beryl: Some(16),
+                        cobalt: None,
+                        zenith: None,
+                    },
                     activation_admin_address: None,
                 }),
                 base_fee_info: Some(FeeInfo {

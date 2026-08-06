@@ -6,7 +6,10 @@ use core::{
     task::{Context, Poll},
     time::Duration,
 };
-use std::sync::{Arc, LazyLock};
+use std::{
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+};
 
 use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
@@ -14,18 +17,21 @@ use async_trait::async_trait;
 use base_common_flashblocks::FlashblocksPayloadV1;
 use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_rpc::BaseEthApiBuilder;
 use base_execution_txpool::BasePooledTransaction;
-use base_node_core::{BasePayloadValidatorBuilder, args::RollupArgs, node::BasePoolBuilder};
-use base_node_runner::{BaseNode, test_utils::init_silenced_tracing};
+use base_node_core::args::RollupArgs;
+use base_node_runner::{
+    BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks,
+    PayloadServiceBuilder as BasePayloadServiceBuilder, test_utils::init_silenced_tracing,
+};
 use futures::{FutureExt, StreamExt};
 use nanoid::nanoid;
 use parking_lot::Mutex;
-use reth_node_builder::{NodeBuilder, NodeConfig};
+use reth_node_builder::{Node, NodeBuilder, NodeConfig};
 use reth_node_core::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
     exit::NodeExitFuture,
 };
+use reth_provider::providers::BlockchainProvider;
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use tokio::{sync::oneshot, task::JoinHandle};
@@ -33,9 +39,11 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    BuilderConfig, SharedMeteringProvider,
+    BuilderConfig, CandidateSource, DefaultCandidateSource, SharedMeteringProvider,
     flashblocks::FlashblocksServiceBuilder,
-    test_utils::{EngineApi, Ipc, TransactionPoolObserver, create_test_db, driver::ChainDriver},
+    test_utils::{
+        EngineApi, Ipc, TransactionPoolObserver, create_test_db_env, driver::ChainDriver,
+    },
 };
 
 /// Clears OTEL-related environment variables that can interfere with CLI argument parsing.
@@ -65,10 +73,12 @@ pub struct LocalInstance {
     builder_config: BuilderConfig,
     runtime: Option<Runtime>,
     exit_future: NodeExitFuture,
-    _node_handle: Box<dyn Any + Send>,
-    pool_handle: Arc<dyn ExternalTransactionPool>,
+    node_handle: Option<Box<dyn Any + Send>>,
+    pool_handle: Option<Arc<dyn ExternalTransactionPool>>,
     pool_observer: TransactionPoolObserver,
     metering_provider: SharedMeteringProvider,
+    /// Temporary directory backing the node's database, removed on drop.
+    db_dir: PathBuf,
 }
 
 struct PoolHandle<P> {
@@ -101,6 +111,93 @@ where
     }
 }
 
+/// Builder for a [`LocalInstance`] that supports injecting a custom
+/// [`CandidateSource`] and installing node [extensions](BaseNodeExtension).
+///
+/// The resulting node is wired through the same payload-service and extension-hook pipeline used by
+/// the production runner, so extensions installed here run exactly as they would in a real node.
+///
+/// ```ignore
+/// let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+///     .with_candidate_source(my_source)
+///     .install_ext::<MyExtension>(my_config)
+///     .build()
+///     .await?;
+/// ```
+#[derive(derive_more::Debug)]
+pub struct LocalInstanceBuilder<S = DefaultCandidateSource> {
+    builder_config: BuilderConfig,
+    node_config: NodeConfig<BaseChainSpec>,
+    candidate_source: S,
+    #[debug("{}", extensions.len())]
+    extensions: Vec<Box<dyn BaseNodeExtension>>,
+}
+
+impl LocalInstanceBuilder {
+    /// Creates a new builder with the given builder configuration, the default node configuration,
+    /// the default candidate source, and no extensions.
+    pub fn new(builder_config: BuilderConfig) -> Self {
+        Self {
+            builder_config,
+            node_config: default_node_config(),
+            candidate_source: DefaultCandidateSource,
+            extensions: Vec::new(),
+        }
+    }
+}
+
+impl<S> LocalInstanceBuilder<S> {
+    /// Overrides the Reth node configuration.
+    #[must_use]
+    pub fn with_node_config(mut self, node_config: NodeConfig<BaseChainSpec>) -> Self {
+        self.node_config = node_config;
+        self
+    }
+
+    /// Replaces the candidate transaction source used by the flashblocks build loop.
+    #[must_use]
+    pub fn with_candidate_source<S2>(self, candidate_source: S2) -> LocalInstanceBuilder<S2> {
+        LocalInstanceBuilder {
+            builder_config: self.builder_config,
+            node_config: self.node_config,
+            candidate_source,
+            extensions: self.extensions,
+        }
+    }
+
+    /// Installs a node extension built from the given config, mirroring
+    /// [`BaseNodeRunner::install_ext`](base_node_runner::BaseNodeRunner::install_ext).
+    #[must_use]
+    pub fn install_ext<T: FromExtensionConfig + 'static>(mut self, config: T::Config) -> Self {
+        self.extensions.push(Box::new(T::from_config(config)));
+        self
+    }
+
+    /// Installs an already-constructed node extension.
+    #[must_use]
+    pub fn with_extension(mut self, extension: Box<dyn BaseNodeExtension>) -> Self {
+        self.extensions.push(extension);
+        self
+    }
+
+    /// Launches the node described by this builder and returns the running [`LocalInstance`].
+    ///
+    /// This method does not prefund any accounts, so before sending any transactions make sure that
+    /// sender accounts are funded.
+    pub async fn build(self) -> eyre::Result<LocalInstance>
+    where
+        S: CandidateSource<BasePooledTransaction> + Clone + Unpin + 'static,
+    {
+        Box::pin(LocalInstance::launch(
+            self.builder_config,
+            self.node_config,
+            self.candidate_source,
+            self.extensions,
+        ))
+        .await
+    }
+}
+
 impl LocalInstance {
     /// Creates a new local instance of the builder node with the given builder configuration,
     /// with the default Reth node configuration.
@@ -108,7 +205,7 @@ impl LocalInstance {
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
     pub async fn new(builder_config: BuilderConfig) -> eyre::Result<Self> {
-        Box::pin(Self::new_with_node_config(builder_config, default_node_config())).await
+        Box::pin(LocalInstanceBuilder::new(builder_config).build()).await
     }
 
     /// Creates a new local instance of the builder node with the given builder configuration,
@@ -120,65 +217,79 @@ impl LocalInstance {
         builder_config: BuilderConfig,
         node_config: NodeConfig<BaseChainSpec>,
     ) -> eyre::Result<Self> {
+        Box::pin(LocalInstanceBuilder::new(builder_config).with_node_config(node_config).build())
+            .await
+    }
+
+    /// Core launch routine shared by all constructors.
+    ///
+    /// Builds the node through the runner's payload-service seam (so a custom [`CandidateSource`]
+    /// can be injected) and applies caller-supplied [extensions](BaseNodeExtension) via the same
+    /// [`NodeHooks`] pipeline used in production, plus an internal hook that captures the running
+    /// node's transaction pool for tests.
+    async fn launch<S>(
+        builder_config: BuilderConfig,
+        node_config: NodeConfig<BaseChainSpec>,
+        candidate_source: S,
+        extensions: Vec<Box<dyn BaseNodeExtension>>,
+    ) -> eyre::Result<Self>
+    where
+        S: CandidateSource<BasePooledTransaction> + Clone + Unpin + 'static,
+    {
         clear_otel_env_vars();
         init_silenced_tracing();
         let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
-        let base_node = BaseNode::new(RollupArgs::default());
-
-        let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
-        let (txpool_ready_tx, txpool_ready_rx) =
-            oneshot::channel::<AllTransactionsEvents<BasePooledTransaction>>();
-        let (pool_handle_tx, pool_handle_rx) =
-            oneshot::channel::<Arc<dyn ExternalTransactionPool>>();
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let metering_provider = Arc::clone(&builder_config.metering_provider);
 
-        let addons: base_node_runner::BaseAddOns<
-            _,
-            BaseEthApiBuilder,
-            BasePayloadValidatorBuilder,
-        > = base_node
-            .add_ons_builder()
-            .with_da_config(da_config.clone())
-            .with_gas_limit_config(gas_limit_config.clone())
-            .build();
+        let base_node = BaseNode::new(RollupArgs::default())
+            .with_da_config(da_config)
+            .with_gas_limit_config(gas_limit_config);
 
-        let node_builder = NodeBuilder::<_, BaseChainSpec>::new(node_config.clone())
-            .with_database(create_test_db(node_config.clone()))
+        // Build the flashblocks payload service with the (possibly custom) candidate source.
+        let service_builder = FlashblocksServiceBuilder::new(builder_config.clone())
+            .with_candidate_source(candidate_source);
+        let components = service_builder.build_components(&base_node);
+
+        let (txpool_ready_tx, txpool_ready_rx) =
+            oneshot::channel::<AllTransactionsEvents<BasePooledTransaction>>();
+        let (pool_handle_tx, pool_handle_rx) =
+            oneshot::channel::<Arc<dyn ExternalTransactionPool>>();
+
+        // The node types fix the database to the concrete `DatabaseEnv`, so the test database must
+        // be a bare `DatabaseEnv` (not a `TempDatabase`) for the extension hook types to line up.
+        let (db, db_dir) = create_test_db_env(node_config.clone())?;
+
+        let builder = NodeBuilder::<_, BaseChainSpec>::new(node_config.clone())
+            .with_database(db)
             .with_launch_context(runtime.clone())
-            .with_types::<BaseNode>()
-            .with_components(
-                base_node
-                    .components()
-                    .pool(pool_component())
-                    .payload(FlashblocksServiceBuilder(builder_config.clone())),
-            )
-            .with_add_ons(addons)
-            .on_rpc_started(move |_, _| {
-                let _ = rpc_ready_tx.send(());
-                Ok(())
-            })
-            .on_node_started(move |ctx| {
-                txpool_ready_tx
-                    .send(ctx.pool.all_transactions_event_listener())
-                    .expect("Failed to send txpool ready signal");
+            .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
+            .with_components(components)
+            .with_add_ons(base_node.add_ons())
+            .on_component_initialized(move |_ctx| Ok(()));
 
-                let pool_handle: Arc<dyn ExternalTransactionPool> =
-                    Arc::new(PoolHandle { pool: ctx.pool });
-                pool_handle_tx.send(pool_handle).expect("Failed to send pool handle");
+        // Apply caller-supplied extensions through the production hook pipeline, then append an
+        // internal node-started hook that captures the running node's transaction pool.
+        let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
+        let hooks = hooks.add_node_started_hook(move |full_node| {
+            if txpool_ready_tx.send(full_node.pool.all_transactions_event_listener()).is_err() {
+                tracing::warn!("txpool ready receiver dropped before node-started hook fired");
+            }
+            let pool_handle: Arc<dyn ExternalTransactionPool> =
+                Arc::new(PoolHandle { pool: full_node.pool });
+            if pool_handle_tx.send(pool_handle).is_err() {
+                tracing::warn!("pool handle receiver dropped before node-started hook fired");
+            }
+            Ok(())
+        });
 
-                Ok(())
-            });
-
-        let node_handle = node_builder.launch().await?;
+        let node_handle = hooks.apply_to(builder).launch().await?;
         let exit_future = node_handle.node_exit_future;
-        let boxed_handle = Box::new(node_handle.node);
-        let node_handle: Box<dyn Any + Send> = boxed_handle;
+        let node_handle: Box<dyn Any + Send> = Box::new(node_handle.node);
 
-        // Wait for all required components to be ready
-        rpc_ready_rx.await.expect("Failed to receive ready signal");
+        // Wait for the node-started hook to publish the pool handles.
         let pool_monitor = txpool_ready_rx.await.expect("Failed to receive txpool ready signal");
         let pool_handle = pool_handle_rx.await.expect("Failed to receive pool handle");
 
@@ -186,11 +297,12 @@ impl LocalInstance {
             builder_config,
             node_config,
             exit_future,
-            _node_handle: node_handle,
-            pool_handle,
+            node_handle: Some(node_handle),
+            pool_handle: Some(pool_handle),
             runtime: Some(runtime),
             pool_observer: TransactionPoolObserver::new(pool_monitor),
             metering_provider,
+            db_dir,
         })
     }
 
@@ -250,7 +362,7 @@ impl LocalInstance {
 
     /// Returns a cloned handle for submitting external transactions to the pool.
     pub fn pool_handle(&self) -> Arc<dyn ExternalTransactionPool> {
-        Arc::clone(&self.pool_handle)
+        Arc::clone(self.pool_handle.as_ref().expect("pool handle present"))
     }
 
     /// Returns a reference to the shared metering provider.
@@ -276,10 +388,20 @@ impl Drop for LocalInstance {
     fn drop(&mut self) {
         if let Some(runtime) = self.runtime.take() {
             runtime.graceful_shutdown_with_timeout(Duration::from_secs(10));
+            // Drop the node and the pool handle (both hold open database handles via the node's
+            // provider / the pool's transaction validator) before removing the backing files.
+            drop(self.node_handle.take());
+            drop(self.pool_handle.take());
             if let Err(e) = std::fs::remove_dir_all(self.node_config().datadir().to_string()) {
                 eprintln!(
                     "Warning: failed to remove temporary data directory {}: {e}",
                     self.node_config().datadir()
+                );
+            }
+            if let Err(e) = std::fs::remove_dir_all(&self.db_dir) {
+                eprintln!(
+                    "Warning: failed to remove temporary database directory {}: {e}",
+                    self.db_dir.display()
                 );
             }
         }
@@ -331,7 +453,12 @@ pub fn default_node_config_with_azul() -> NodeConfig<BaseChainSpec> {
     node_config_with_chain_spec(chain_spec_with_azul())
 }
 
-fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChainSpec> {
+/// Builds a [`LocalInstance`]-style Reth node configuration for the given chain spec.
+///
+/// Uses the same IPC-only RPC setup, disabled discovery, unused ports, and temporary data
+/// directories as [`default_node_config`], but with a caller-supplied chain spec — so an in-process
+/// builder node can be launched against a custom genesis (e.g. one derived from a rollup config).
+pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChainSpec> {
     let tempdir = std::env::temp_dir();
     let random_id = nanoid!();
 
@@ -368,10 +495,6 @@ fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChain
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network)
-}
-
-fn pool_component() -> BasePoolBuilder<BasePooledTransaction> {
-    BasePoolBuilder::<BasePooledTransaction>::default()
 }
 
 /// A utility for listening to flashblocks WebSocket messages during tests.

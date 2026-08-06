@@ -6,24 +6,49 @@
 //! - Batcher (in-process, submits L2 transaction batches to L1)
 //! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
 
+use std::{num::NonZeroU64, time::Duration};
+
+use alloy_consensus::SignableTransaction;
+use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_genesis::ChainConfig;
-use alloy_primitives::B256;
+use alloy_network::{Ethereum, TransactionBuilder};
+use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::RollupConfig;
+use base_common_network::Base;
+use base_common_rpc_types::BaseTransactionRequest;
 use base_consensus_node::NodeMode;
+use base_execution_cli::ExecutionUpgradeSignalConfig;
+use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
+use base_upgrade_signal::UpgradeSignalConfig;
 use eyre::{Result, WrapErr};
+use tokio::time::{sleep, timeout};
 use url::Url;
 
 use super::{
     InProcessBatcher, InProcessBatcherConfig, InProcessBuilder, InProcessBuilderConfig,
     InProcessClient, InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig,
-    L2ContainerConfig,
+    InProcessFollowConsensus, InProcessFollowConsensusConfig, L2ContainerConfig, ShadowSequencer,
+    ShadowSequencerConfig,
 };
-use crate::config::SEQUENCER;
+use crate::config::{ANVIL_ACCOUNT_1, BATCHER, SEQUENCER};
+
+/// Consensus mode used by the L2 client node.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum L2ClientConsensusMode {
+    /// Run the client consensus node as a normal validator.
+    #[default]
+    Validator,
+    /// Run the client consensus node in follow mode against the builder RPC.
+    Follow,
+}
 
 /// Configuration for the L2 stack.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct L2StackConfig {
     /// L2 genesis JSON content.
     pub l2_genesis: Vec<u8>,
@@ -51,6 +76,58 @@ pub struct L2StackConfig {
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
+    /// Consensus mode for the L2 client node.
+    pub client_consensus_mode: L2ClientConsensusMode,
+    /// Optional L1 upgrade signal configuration shared by both consensus nodes.
+    pub upgrade_signal: Option<UpgradeSignalConfig>,
+    /// Optional L1 upgrade signal configuration for the client execution node.
+    pub execution_upgrade_signal: Option<ExecutionUpgradeSignalConfig>,
+    /// Shadow sequencer configuration. When [`None`], no shadow sequencers are started.
+    pub shadow_sequencers: Option<ShadowSequencersConfig>,
+    /// Additional node extensions installed on the builder, after its built-in RPC wiring.
+    pub extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
+    /// Additional node extensions installed on the client, after its built-in extensions.
+    pub extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
+}
+
+/// Configuration for the shadow sequencers running alongside the active sequencer.
+#[derive(Debug, Clone)]
+pub struct ShadowSequencersConfig {
+    /// Signing keys for shadow sequencers. Each entry spawns one shadow sequencer. Each key must
+    /// be distinct from [`L2StackConfig::sequencer_key`] so the shadow's blocks are rejected as
+    /// non-canonical by the rest of the network.
+    pub keys: Vec<B256>,
+    /// Number of private blocks each shadow sequencer builds per reconciliation cycle.
+    pub blocks_per_cycle: NonZeroU64,
+    /// If set, start the active sequencer first and delay shadows until this L2 height.
+    pub start_block: Option<u64>,
+}
+
+/// Running L2 client consensus node.
+#[derive(Debug)]
+pub enum L2ClientConsensus {
+    /// Standard validator consensus node.
+    Validator(InProcessConsensus),
+    /// Follow-mode consensus node.
+    Follow(InProcessFollowConsensus),
+}
+
+impl L2ClientConsensus {
+    /// Returns the RPC URL for this consensus node.
+    pub fn rpc_url(&self) -> Url {
+        match self {
+            Self::Validator(consensus) => consensus.rpc_url(),
+            Self::Follow(consensus) => consensus.rpc_url(),
+        }
+    }
+
+    /// Returns the follow-mode rollup configuration, when this is a follow-mode consensus node.
+    pub fn follow_rollup_config(&self) -> Option<&RollupConfig> {
+        match self {
+            Self::Validator(_) => None,
+            Self::Follow(consensus) => Some(consensus.rollup_config()),
+        }
+    }
 }
 
 /// A complete L2 network stack composed of Builder + Consensus + Batcher.
@@ -65,14 +142,15 @@ pub struct L2StackConfig {
 /// 2. Builder consensus node connects to builder's engine API (in-process CL, Sequencer mode)
 /// 3. Batcher connects to builder RPC and builder consensus RPC
 /// 4. Client starts (in-process EL)
-/// 5. Client consensus node connects to client's engine API (in-process CL, Validator mode)
-/// 6. Client consensus connects to builder consensus via P2P
+/// 5. Client consensus node connects to client's engine API
+/// 6. Validator-mode client consensus connects to builder consensus via P2P
 pub struct L2Stack {
     builder: InProcessBuilder,
     builder_consensus: InProcessConsensus,
     batcher: InProcessBatcher,
     client: InProcessClient,
-    client_consensus: InProcessConsensus,
+    client_consensus: L2ClientConsensus,
+    shadow_sequencers: Vec<ShadowSequencer>,
 }
 
 impl std::fmt::Debug for L2Stack {
@@ -83,6 +161,7 @@ impl std::fmt::Debug for L2Stack {
             .field("batcher", &self.batcher)
             .field("client", &self.client)
             .field("client_consensus", &self.client_consensus)
+            .field("shadow_sequencers", &self.shadow_sequencers)
             .finish()
     }
 }
@@ -99,8 +178,11 @@ impl L2Stack {
         let l1_rpc_url: Url = config.l1_rpc_url.parse().wrap_err("Invalid L1 RPC URL")?;
         let l1_beacon_url: Url = config.l1_beacon_url.parse().wrap_err("Invalid L1 beacon URL")?;
 
-        let rollup_config: RollupConfig = serde_json::from_slice(&config.rollup_config)
+        let mut rollup_config: RollupConfig = serde_json::from_slice(&config.rollup_config)
             .wrap_err("Failed to parse rollup config")?;
+        if config.shadow_sequencers.as_ref().is_some_and(|shadow| shadow.start_block.is_some()) {
+            rollup_config.block_time = 2;
+        }
         let l1_chain_config: ChainConfig = serde_json::from_slice(&config.l1_genesis)
             .wrap_err("Failed to parse L1 chain config")?;
 
@@ -113,6 +195,7 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.builder_auth_port),
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
             flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
+            extra_extensions: config.extra_builder_extensions,
         };
         let builder = InProcessBuilder::start(builder_config)
             .await
@@ -139,21 +222,32 @@ impl L2Stack {
             l1_slot_duration_override: Some(4),
             sequencer_stopped: true,
             verifier_l1_confs: 0,
+            shadow_blocks_per_cycle: None,
+            upgrade_signal: config.upgrade_signal.clone(),
         };
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
             .await
             .wrap_err("Failed to start builder consensus")?;
 
-        // 3. Start the in-process batcher, pointing at builder consensus RPC.
-        // No host gateway translation needed — the batcher runs in the same process as the test.
-        let batcher = InProcessBatcher::start(InProcessBatcherConfig {
-            l1_rpc_url: l1_rpc_url.clone(),
-            l2_rpc_url: builder.rpc_url()?,
-            rollup_rpc_url: builder_consensus.rpc_url(),
-            batcher_key: config.batcher_key,
-        })
-        .await
-        .wrap_err("Failed to start in-process batcher")?;
+        // 3. Start the normal batcher immediately. Delayed-shadow tests instead start a
+        // short-lived, deterministic batcher after producing their historical prefix.
+        let delayed_shadow =
+            config.shadow_sequencers.as_ref().is_some_and(|c| c.start_block.is_some());
+        let mut batcher = if delayed_shadow {
+            None
+        } else {
+            Some(
+                InProcessBatcher::start(InProcessBatcherConfig {
+                    l1_rpc_url: l1_rpc_url.clone(),
+                    l2_rpc_url: builder.rpc_url()?,
+                    rollup_rpc_url: builder_consensus.rpc_url(),
+                    batcher_key: config.batcher_key,
+                    force_batch_submission: false,
+                })
+                .await
+                .wrap_err("Failed to start in-process batcher")?,
+            )
+        };
 
         // 4. Start the client (in-process EL).
         // If tx forwarding is enabled, configure it with the builder's RPC URL
@@ -179,48 +273,219 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.client_auth_port),
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             tx_forwarding_config,
+            upgrade_signal: config.execution_upgrade_signal.clone(),
+            extra_extensions: config.extra_client_extensions,
         };
         let client = InProcessClient::start(client_config)
             .await
             .wrap_err("Failed to start in-process client")?;
 
-        // 5. Start client consensus (in-process CL, Validator mode).
-        let client_consensus_config = InProcessConsensusConfig {
-            rollup_config,
-            l1_chain_config,
-            jwt_secret: config.jwt_secret,
-            l1_rpc_url,
-            l1_beacon_url,
-            l2_engine_url: client.engine_url()?,
-            mode: NodeMode::Validator,
-            sequencer_key: None,
-            p2p_key: None,
-            rpc_port: container_config.and_then(|c| c.client_consensus_rpc_port),
-            p2p_tcp_port: container_config.and_then(|c| c.client_consensus_p2p_tcp_port),
-            p2p_udp_port: container_config.and_then(|c| c.client_consensus_p2p_udp_port),
-            unsafe_block_signer: SEQUENCER.address,
-            l1_slot_duration_override: Some(4),
-            sequencer_stopped: false,
-            verifier_l1_confs: config.verifier_l1_confs,
+        // 5. Start client consensus.
+        let client_consensus = match config.client_consensus_mode {
+            L2ClientConsensusMode::Validator => {
+                let client_consensus_config = InProcessConsensusConfig {
+                    rollup_config: rollup_config.clone(),
+                    l1_chain_config: l1_chain_config.clone(),
+                    jwt_secret: config.jwt_secret,
+                    l1_rpc_url: l1_rpc_url.clone(),
+                    l1_beacon_url: l1_beacon_url.clone(),
+                    l2_engine_url: client.engine_url()?,
+                    mode: NodeMode::Validator,
+                    sequencer_key: None,
+                    p2p_key: None,
+                    rpc_port: container_config.and_then(|c| c.client_consensus_rpc_port),
+                    p2p_tcp_port: container_config.and_then(|c| c.client_consensus_p2p_tcp_port),
+                    p2p_udp_port: container_config.and_then(|c| c.client_consensus_p2p_udp_port),
+                    unsafe_block_signer: SEQUENCER.address,
+                    l1_slot_duration_override: Some(4),
+                    sequencer_stopped: false,
+                    verifier_l1_confs: config.verifier_l1_confs,
+                    shadow_blocks_per_cycle: None,
+                    upgrade_signal: config.upgrade_signal.clone(),
+                };
+                let client_consensus = InProcessConsensus::start(client_consensus_config)
+                    .await
+                    .wrap_err("Failed to start client consensus")?;
+
+                // Connect the client consensus to the builder consensus via P2P.
+                let builder_p2p_addr = builder_consensus.p2p_addr();
+                client_consensus
+                    .connect_peer(&builder_p2p_addr)
+                    .await
+                    .wrap_err("Failed to connect client consensus to builder consensus")?;
+                L2ClientConsensus::Validator(client_consensus)
+            }
+            L2ClientConsensusMode::Follow => {
+                // Follow-mode consensus polls the builder RPC directly, so it does not need a P2P
+                // peer connection before the sequencer starts producing blocks.
+                let client_consensus_config = InProcessFollowConsensusConfig {
+                    rollup_config: rollup_config.clone(),
+                    jwt_secret: config.jwt_secret,
+                    l1_rpc_url: l1_rpc_url.clone(),
+                    local_l2_rpc_url: client.rpc_url()?,
+                    source_l2_rpc_url: builder.rpc_url()?,
+                    l2_engine_url: client.engine_url()?,
+                    upgrade_signal: config.upgrade_signal.clone(),
+                    rpc_port: container_config.and_then(|c| c.client_consensus_rpc_port),
+                    insert_delay: Duration::ZERO,
+                };
+                let client_consensus = InProcessFollowConsensus::start(client_consensus_config)
+                    .await
+                    .wrap_err("Failed to start follow client consensus")?;
+                L2ClientConsensus::Follow(client_consensus)
+            }
         };
-        let client_consensus = InProcessConsensus::start(client_consensus_config)
-            .await
-            .wrap_err("Failed to start client consensus")?;
 
-        // 6. Connect the client consensus to the builder consensus via P2P.
-        let builder_p2p_addr = builder_consensus.p2p_addr();
-        client_consensus
-            .connect_peer(&builder_p2p_addr)
-            .await
-            .wrap_err("Failed to connect client consensus to builder consensus")?;
+        // 6. Unless late startup was requested, shadows join the gossip mesh before active
+        // sequencing begins. Preserve that ordering because it is the normal production path.
+        if let Some(start_block) = config.shadow_sequencers.as_ref().and_then(|c| c.start_block) {
+            let provider = RootProvider::<Base>::new_http(builder.rpc_url()?);
+            let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)
+                .wrap_err("Failed to parse delayed-shadow batch trigger signer")?;
+            let first_nonce = provider.get_transaction_count(signer.address()).await?;
+            for offset in 0..start_block {
+                let transaction = BaseTransactionRequest::default()
+                    .from(signer.address())
+                    .to(Address::repeat_byte(0xfe))
+                    .value(U256::from(1))
+                    .transaction_type(2)
+                    .with_gas_limit(21_000)
+                    .with_max_fee_per_gas(1_000_000_000)
+                    .with_max_priority_fee_per_gas(0)
+                    .with_chain_id(rollup_config.l2_chain_id.id())
+                    .with_nonce(first_nonce + offset)
+                    .build_typed_tx()
+                    .map_err(|error| eyre::eyre!("Invalid batch trigger transaction: {error:?}"))?;
+                let signature = signer.sign_hash_sync(&transaction.signature_hash())?;
+                let raw_transaction: Bytes =
+                    transaction.into_signed(signature).encoded_2718().into();
+                let pending = provider
+                    .send_raw_transaction(&raw_transaction)
+                    .await
+                    .wrap_err("Failed to submit delayed-shadow batch trigger transaction")?;
+                let transaction_hash = *pending.tx_hash();
+                drop(pending);
+                if offset == 0 {
+                    sleep(Duration::from_millis(500)).await;
+                    builder_consensus
+                        .start_sequencer()
+                        .await
+                        .wrap_err("Failed to produce delayed-shadow catch-up blocks")?;
+                }
+                timeout(Duration::from_secs(10), async {
+                    while provider.get_transaction_receipt(transaction_hash).await?.is_none() {
+                        sleep(Duration::from_millis(10)).await;
+                    }
+                    Ok::<_, eyre::Error>(())
+                })
+                .await
+                .wrap_err("Timed out waiting for delayed-shadow catch-up receipt")??;
+            }
+            batcher = Some(
+                InProcessBatcher::start(InProcessBatcherConfig {
+                    l1_rpc_url: l1_rpc_url.clone(),
+                    l2_rpc_url: builder.rpc_url()?,
+                    rollup_rpc_url: builder_consensus.rpc_url(),
+                    batcher_key: config.batcher_key,
+                    force_batch_submission: true,
+                })
+                .await
+                .wrap_err("Failed to start delayed-shadow batcher")?,
+            );
+            let safe_target = start_block.saturating_sub(1);
+            let safe_wait = timeout(Duration::from_secs(30), async {
+                loop {
+                    if let Some(error) = batcher.as_ref().and_then(InProcessBatcher::failure) {
+                        return Err(eyre::eyre!(
+                            "Batcher exited before safe-head catch-up: {error}"
+                        ));
+                    }
+                    let safe_height = provider
+                        .get_block_by_number(BlockNumberOrTag::Safe)
+                        .await?
+                        .map_or(0, |block| block.header.number);
+                    if safe_height >= safe_target {
+                        return Ok::<_, eyre::Error>(());
+                    }
+                    sleep(Duration::from_millis(500)).await;
+                }
+            })
+            .await;
+            if safe_wait.is_err() {
+                let safe_height = provider
+                    .get_block_by_number(BlockNumberOrTag::Safe)
+                    .await?
+                    .map_or(0, |block| block.header.number);
+                let l1_provider = RootProvider::<Ethereum>::new_http(l1_rpc_url.clone());
+                let batcher_nonce = l1_provider.get_transaction_count(BATCHER.address).await?;
+                eyre::bail!(
+                    "Timed out waiting for active sequencer safe head before delayed shadows: \
+                     safe={safe_height}, target={safe_target}, batcher_nonce={batcher_nonce}"
+                );
+            }
+            safe_wait.expect("timeout handled")?;
+        }
 
-        // 7. Start the sequencer now that peers are connected, ensuring no blocks are missed.
-        builder_consensus
-            .start_sequencer()
-            .await
-            .wrap_err("Failed to start sequencer after peer connection")?;
+        let active_consensus_p2p_addr = builder_consensus.p2p_addr();
+        let mut shadow_sequencers = Vec::new();
+        if let Some(shadow_config) = &config.shadow_sequencers {
+            shadow_sequencers.reserve(shadow_config.keys.len());
+            for (index, shadow_key) in shadow_config.keys.iter().enumerate() {
+                let shadow = ShadowSequencer::start(ShadowSequencerConfig {
+                    sequencer_key: *shadow_key,
+                    l2_genesis: config.l2_genesis.clone(),
+                    rollup_config: rollup_config.clone(),
+                    l1_chain_config: l1_chain_config.clone(),
+                    jwt_secret: config.jwt_secret,
+                    l1_rpc_url: l1_rpc_url.clone(),
+                    l1_beacon_url: l1_beacon_url.clone(),
+                    active_consensus_p2p_addr: active_consensus_p2p_addr.clone(),
+                    active_sequencer_address: SEQUENCER.address,
+                    shadow_blocks_per_cycle: shadow_config.blocks_per_cycle,
+                })
+                .await
+                .wrap_err_with(|| format!("Failed to start shadow sequencer {index}"))?;
+                let shadow_start_height = if shadow_config.start_block.is_some() {
+                    Some(
+                        RootProvider::<Base>::new_http(builder.rpc_url()?)
+                            .get_block_number()
+                            .await?,
+                    )
+                } else {
+                    None
+                };
+                if let Some(shadow_start_height) = shadow_start_height {
+                    let shadow_provider = RootProvider::<Base>::new_http(shadow.rpc_url()?);
+                    timeout(Duration::from_secs(30), async {
+                        while shadow_provider.get_block_number().await? < shadow_start_height {
+                            sleep(Duration::from_millis(100)).await;
+                        }
+                        Ok::<_, eyre::Error>(())
+                    })
+                    .await
+                    .wrap_err("Timed out waiting for delayed shadow safe catch-up")??;
+                    batcher.as_ref().expect("delayed batcher started").stop();
+                }
+                shadow_sequencers.push(shadow);
+            }
+        }
 
-        Ok(Self { builder, builder_consensus, batcher, client, client_consensus })
+        // 7. In the default path, start active sequencing only after every shadow connected.
+        if !delayed_shadow {
+            builder_consensus
+                .start_sequencer()
+                .await
+                .wrap_err("Failed to start sequencer after peer connection")?;
+        }
+
+        Ok(Self {
+            builder,
+            builder_consensus,
+            batcher: batcher.expect("batcher starts in both shadow startup paths"),
+            client,
+            client_consensus,
+            shadow_sequencers,
+        })
     }
 
     /// Returns a reference to the in-process builder.
@@ -241,6 +506,21 @@ impl L2Stack {
     /// Returns a reference to the in-process client.
     pub const fn client(&self) -> &InProcessClient {
         &self.client
+    }
+
+    /// Returns a reference to the client's consensus node.
+    pub const fn client_consensus(&self) -> &L2ClientConsensus {
+        &self.client_consensus
+    }
+
+    /// Returns the shadow sequencers running alongside the active sequencer.
+    pub fn shadow_sequencers(&self) -> &[ShadowSequencer] {
+        &self.shadow_sequencers
+    }
+
+    /// Returns the shadow sequencer at `index`, if present.
+    pub fn shadow_sequencer(&self, index: usize) -> Option<&ShadowSequencer> {
+        self.shadow_sequencers.get(index)
     }
 
     /// Returns the builder's HTTP RPC URL.
@@ -266,5 +546,10 @@ impl L2Stack {
     /// Returns the client consensus node's RPC URL.
     pub fn client_consensus_rpc_url(&self) -> Url {
         self.client_consensus.rpc_url()
+    }
+
+    /// Returns the follow-mode client consensus rollup configuration, when enabled.
+    pub fn client_follow_rollup_config(&self) -> Option<&RollupConfig> {
+        self.client_consensus.follow_rollup_config()
     }
 }

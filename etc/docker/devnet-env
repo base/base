@@ -42,15 +42,15 @@ BUILDER_LIBP2P_PEER_ID=16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12
 
 # L2 Bootnode identities
 L2_BOOTNODE_DOCKER_SUBNET=172.30.0.0/24
-L2_EL_BOOTNODE_ADVERTISE_IP=172.30.0.10
-L2_CL_BOOTNODE_ADVERTISE_IP=172.30.0.11
+L2_EL_BOOTNODE_ADVERTISE_IP=172.30.0.41
+L2_CL_BOOTNODE_ADVERTISE_IP=172.30.0.40
 L2_BUILDER_ADVERTISE_IP=172.30.0.20
 L2_CLIENT_ADVERTISE_IP=172.30.0.21
 L2_SEQ1_ADVERTISE_IP=172.30.0.22
 L2_SEQ2_ADVERTISE_IP=172.30.0.23
 L2_EL_BOOTNODE_P2P_KEY=1111111111111111111111111111111111111111111111111111111111111111
 L2_EL_BOOTNODE_ENODE_ID=4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1
-L2_EL_BOOTNODE_ENODE=enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303
+L2_EL_BOOTNODE_ENODE=enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.41:9303
 L2_CL_BOOTNODE_P2P_KEY=2222222222222222222222222222222222222222222222222222222222222222
 L2_CL_BOOTNODE_ENR_PATH=/bootnodes/cl-bootnode.enr
 
@@ -101,10 +101,6 @@ L2_BASE_RPC_CL_P2P_PORT=8103
 
 # Batcher Ports
 BATCHER_METRICS_PORT=6060
-
-# ZK Prover Ports
-ZK_PROVER_GRPC_PORT=9000
-ZK_PROVER_POSTGRES_PORT=5433
 
 # L2 Sequencer-1 Ports
 L2_SEQ1_HTTP_PORT=10545
@@ -167,11 +163,18 @@ L2_INGRESS_HEALTH_PORT=8081
 L2_INGRESS_METRICS_PORT=9002
 
 # L2 Audit Archiver Ports
-AUDIT_METRICS_PORT=9003
+AUDIT_RPC_PORT=9100
+AUDIT_METRICS_PORT=9102
 
 # Ingress Infrastructure Ports
 MINIO_API_PORT=7000
 MINIO_CONSOLE_PORT=7001
+TRANSACTION_EVENTS_POSTGRES_PORT=5434
+TRANSACTION_EVENTS_VECTOR_METRICS_PORT=8686
+TRANSACTION_EVENTS_VECTOR_IMAGE=timberio/vector:0.47.0-debian
+TRANSACTION_EVENTS_POSTGRES_ADVERTISE_IP=172.30.0.30
+AUDIT_ARCHIVER_ADVERTISE_IP=172.30.0.31
+TRANSACTION_EVENTS_VECTOR_ADVERTISE_IP=172.30.0.32
 
 # Verifier L1 confirmation depth for the client (validator) consensus node.
 # When non-zero, the client's derivation pipeline stays this many L1 blocks
@@ -188,15 +191,18 @@ L2_BASE_AZUL_BLOCK=20
 # Optional: set to a non-negative block number to schedule Base Beryl in devnet.
 # Leave unset to avoid setting base.beryl during genesis generation.
 L2_BASE_BERYL_BLOCK=21
+# Optional: set to a non-negative block number to schedule Base Cobalt in devnet.
+# Leave unset to avoid setting base.cobalt during genesis generation.
+L2_BASE_COBALT_BLOCK=22
+# Optional: set to a non-negative block number to schedule Base Zenith in devnet.
+# Leave unset to avoid setting base.zenith during genesis generation.
+# L2_BASE_ZENITH_BLOCK=23
 
 # Metering Resource Limits
-# Whole-block budgets for gas/state-root/DA, plus a per-flashblock execution budget.
-# These preserve the builder's current 10-flashblock targets: 60M gas / block,
-# ~1.5MB DA / block, ~1s state root / block, and 5s execution / flashblock.
+# Whole-block budgets for gas and DA.
+# These preserve the builder's current 10-flashblock targets: 60M gas / block
+# and ~1.5MB DA / block.
 METERING_GAS_LIMIT=60000000
-METERING_EXECUTION_TIME_US=5000000
-METERING_STATE_ROOT_TIME_US=1000000
 METERING_DA_BYTES=1572860
 METERING_TARGET_FLASHBLOCKS_PER_BLOCK=10
-BUILDER_BLOCK_STATE_ROOT_GAS_LIMIT=600000000
 BUILDER_MAX_REJECTED_TXS_PER_BLOCK=20000

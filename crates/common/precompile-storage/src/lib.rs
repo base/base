@@ -18,7 +18,8 @@ pub use packing::{
 mod provider;
 pub use provider::{
     ContractStorage, FromWord, Handler, Layout, LayoutCtx, Packable, PrecompileStorageProvider,
-    Storable, StorableType, StorageKey, StorageOps, sealed,
+    Storable, StorableType, StorageFeatures, StorageKey, StorageOps, sealed,
+    validate_loaded_code_presence,
 };
 
 mod registration;
@@ -35,6 +36,9 @@ pub use types::{
 
 mod evm;
 pub use evm::EvmPrecompileStorageProvider;
+
+mod journal;
+pub use journal::JournalStorageProvider;
 
 #[cfg(any(test, feature = "test-utils"))]
 mod hashmap;

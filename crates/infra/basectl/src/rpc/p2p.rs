@@ -1,6 +1,6 @@
 //! P2P RPC fetch helpers — EL admin / net and CL opp2p endpoints.
 
-use std::{net::IpAddr, str::FromStr, time::Duration};
+use std::{fmt, net::IpAddr, str::FromStr, time::Duration};
 
 use alloy_provider::{
     Provider, ProviderBuilder,
@@ -11,7 +11,7 @@ use alloy_transport::TransportError;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
 use base_common_network::Base;
-use base_consensus_gossip::PeerStats;
+use base_consensus_gossip::{Direction, PeerInfo, PeerStats};
 use base_consensus_peers::{BootNode, NodeRecord};
 use base_consensus_rpc::BaseP2PApiClient;
 use jsonrpsee::{
@@ -46,16 +46,72 @@ pub struct NodeEndpoint {
     pub discovery: DiscoveryInfo,
 }
 
+/// Raw advertised execution-layer node identity from `admin_nodeInfo`.
+///
+/// The verbatim enode is kept alongside the parsed [`NodeEndpoint`] so
+/// operators can copy-paste it into commands like `basectl p2p add-peer` — and
+/// so it stays visible even when endpoint parsing fails.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ElNodeIdentity {
+    /// Full `enode://` URL advertised by the EL node. `None` when the EL RPC
+    /// does not expose `admin_nodeInfo`.
+    pub enode: Option<String>,
+}
+
+impl ElNodeIdentity {
+    /// Builds the identity from the raw `admin_nodeInfo` enode string, treating
+    /// an empty string as absent.
+    pub fn from_admin_node_info(enode: &str) -> Self {
+        Self { enode: (!enode.trim().is_empty()).then(|| enode.to_string()) }
+    }
+}
+
+/// Raw advertised consensus-layer node identity from `opp2p_self`.
+///
+/// These are the verbatim values the node advertises, kept alongside the
+/// parsed [`NodeEndpoint`] so operators can copy-paste them into commands like
+/// `basectl p2p add-peer` (multiaddr) or `basectl p2p remove-peer` (peer ID) —
+/// and so they stay visible even when endpoint parsing fails.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClNodeIdentity {
+    /// Full `enr:` record advertised by the CL node. `None` when `opp2p_self`
+    /// is unavailable or did not include an ENR.
+    pub enr: Option<String>,
+    /// libp2p peer ID of the CL node. `None` when `opp2p_self` is unavailable.
+    pub peer_id: Option<String>,
+    /// Multiaddrs the CL node reports listening on. Empty when `opp2p_self` is
+    /// unavailable or reported no addresses.
+    pub addresses: Vec<String>,
+}
+
+impl ClNodeIdentity {
+    /// Builds the identity from an `opp2p_self` response, treating an empty
+    /// ENR as absent.
+    pub fn from_self_info(info: &PeerInfo) -> Self {
+        Self {
+            enr: info.enr.clone().filter(|enr| !enr.trim().is_empty()),
+            peer_id: Some(info.peer_id.clone()),
+            addresses: info.addresses.clone(),
+        }
+    }
+}
+
 /// Combined EL + CL advertised endpoint report.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeInfoReport {
     /// Execution-layer advertised endpoint. `None` when the EL RPC does not
     /// expose `admin_nodeInfo` or its enode/ENR could not be parsed.
     pub el: Option<NodeEndpoint>,
+    /// Raw execution-layer enode record from `admin_nodeInfo`.
+    pub el_identity: ElNodeIdentity,
     /// Consensus-layer advertised endpoint. `None` when the `opp2p_self` ENR
     /// was missing or could not be parsed.
     pub cl: Option<NodeEndpoint>,
+    /// Raw consensus-layer ENR, peer ID, and multiaddrs from `opp2p_self`.
+    pub cl_identity: ClNodeIdentity,
 }
 
 /// Combined EL + CL peer-count summary.
@@ -72,12 +128,14 @@ pub struct PeerStatsReport {
 }
 
 /// Execution-layer p2p endpoint and peer-count summary.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ElInfoReport {
     /// Execution-layer advertised endpoint. `None` when the EL RPC does not
     /// expose `admin_nodeInfo` or its enode/ENR could not be parsed.
     pub endpoint: Option<NodeEndpoint>,
+    /// Raw execution-layer enode record from `admin_nodeInfo`.
+    pub identity: ElNodeIdentity,
     /// Connected EL peer count from `net_peerCount`.
     pub peer_count: Option<u32>,
     /// Reason the EL peer count is absent, when applicable.
@@ -85,12 +143,14 @@ pub struct ElInfoReport {
 }
 
 /// Consensus-layer p2p endpoint and peer-count summary.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClInfoReport {
     /// Consensus-layer advertised endpoint. `None` when the `opp2p_self` ENR
     /// was missing or could not be parsed.
     pub endpoint: Option<NodeEndpoint>,
+    /// Raw consensus-layer ENR, peer ID, and multiaddrs from `opp2p_self`.
+    pub identity: ClNodeIdentity,
     /// Connected CL peer statistics from `opp2p_peerStats`.
     pub peer_stats: Option<PeerStats>,
     /// Reason the CL peer statistics are absent, when applicable.
@@ -105,8 +165,39 @@ pub struct PeerSummary {
     pub id: String,
     /// Best-effort remote address string.
     pub address: String,
-    /// Connection direction label.
-    pub direction: String,
+    /// Connection direction.
+    pub direction: PeerDirection,
+}
+
+/// Connection direction of a peer relative to the local node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum PeerDirection {
+    /// The node did not report a direction.
+    Unknown,
+    /// The remote peer initiated the connection.
+    Inbound,
+    /// The local peer initiated the connection.
+    Outbound,
+}
+
+impl fmt::Display for PeerDirection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unknown => f.write_str("Unknown"),
+            Self::Inbound => f.write_str("Inbound"),
+            Self::Outbound => f.write_str("Outbound"),
+        }
+    }
+}
+
+impl From<Direction> for PeerDirection {
+    fn from(direction: Direction) -> Self {
+        match direction {
+            Direction::Unknown => Self::Unknown,
+            Direction::Inbound => Self::Inbound,
+            Direction::Outbound => Self::Outbound,
+        }
+    }
 }
 
 /// Connected peers per layer.
@@ -169,7 +260,12 @@ pub struct RawPeersReport {
 /// `opp2p_peerStats`) run concurrently over a single connection per layer.
 pub async fn fetch_info(rpc: &Url, cl_rpc: &Url) -> Result<(NodeInfoReport, PeerStatsReport)> {
     let (el, cl) = tokio::try_join!(fetch_el_info(rpc), fetch_cl_info(cl_rpc))?;
-    let node_info = NodeInfoReport { el: el.endpoint, cl: cl.endpoint };
+    let node_info = NodeInfoReport {
+        el: el.endpoint,
+        el_identity: el.identity,
+        cl: cl.endpoint,
+        cl_identity: cl.identity,
+    };
     let peer_stats = PeerStatsReport { el_count: el.peer_count, cl: cl.peer_stats };
     Ok((node_info, peer_stats))
 }
@@ -196,6 +292,58 @@ pub async fn remove_peer(rpc: &Url, enode: &str) -> Result<bool> {
         }
         Err(err) => Err(err).with_context(|| format!("calling admin_removePeer on {rpc}")),
     }
+}
+
+/// Bans an execution-layer peer through `admin_banPeer`.
+pub async fn ban_el_peer(rpc: &Url, enode: &str) -> Result<bool> {
+    el_admin_peer_bool(rpc, "admin_banPeer", enode).await
+}
+
+/// Unbans an execution-layer peer through `admin_unbanPeer`.
+pub async fn unban_el_peer(rpc: &Url, enode: &str) -> Result<bool> {
+    el_admin_peer_bool(rpc, "admin_unbanPeer", enode).await
+}
+
+/// Calls a boolean-returning execution-layer admin peer method with the enode
+/// as its sole positional parameter, mapping a missing method to a clear error.
+async fn el_admin_peer_bool(rpc: &Url, method: &'static str, enode: &str) -> Result<bool> {
+    let el_provider = connect_el(rpc).await?;
+    match el_provider.client().request(method, (enode,)).await {
+        Ok(accepted) => Ok(accepted),
+        Err(err) if is_method_not_found(&err) => {
+            Err(err).with_context(|| format!("`{method}` not exposed by {rpc}"))
+        }
+        Err(err) => Err(err).with_context(|| format!("calling {method} on {rpc}")),
+    }
+}
+
+/// Reports whether the execution-layer peer identified by `enode` is currently
+/// connected as a trusted peer, via `admin_peers`.
+///
+/// reth silently skips trusted peers when banning (returning success without
+/// applying the ban), so callers use this to fail fast with a clear message.
+/// Returns `false` when the peer is not among the connected peers or when the EL
+/// RPC does not expose `admin_peers`: in both cases the trusted status cannot be
+/// confirmed, so the caller should not block the ban. This therefore only
+/// catches trusted peers with a live session, which is the common ban case.
+pub async fn el_peer_is_trusted(rpc: &Url, enode: &str) -> Result<bool> {
+    let Some(node_id) = enode_node_id(enode) else { return Ok(false) };
+    let el_provider = connect_el(rpc).await?;
+    match el_provider.peers().await {
+        Ok(peers) => Ok(peers.iter().any(|peer| {
+            peer.network.trusted
+                && enode_node_id(&peer.enode).is_some_and(|id| id.eq_ignore_ascii_case(&node_id))
+        })),
+        Err(err) if is_method_not_found(&err) => Ok(false),
+        Err(err) => Err(err).with_context(|| format!("fetching admin_peers from {rpc}")),
+    }
+}
+
+/// Extracts the lowercase-comparable node ID (the hex public key between
+/// `enode://` and `@`) from an enode URL, or `None` if it is not an enode.
+fn enode_node_id(enode: &str) -> Option<String> {
+    let node_id = enode.strip_prefix("enode://")?.split('@').next()?;
+    (!node_id.is_empty()).then(|| node_id.to_string())
 }
 
 /// Connects a consensus-layer peer through `opp2p_connectPeer`.
@@ -262,28 +410,30 @@ pub async fn list_banned_peers(cl_rpc: &Url) -> Result<Vec<String>> {
 pub async fn fetch_el_info(rpc: &Url) -> Result<ElInfoReport> {
     let el_provider = connect_el(rpc).await?;
 
-    let (endpoint, peer_count) = tokio::join!(
+    let ((endpoint, identity), peer_count) = tokio::join!(
         async {
             match el_provider.node_info().await {
-                Ok(info) => match parse_el_node_endpoint(
-                    &info.enode,
-                    &info.enr,
-                    info.ip,
-                    info.ports.discovery,
-                    info.ports.listener,
-                ) {
-                    Ok(endpoint) => Ok::<Option<NodeEndpoint>, anyhow::Error>(Some(endpoint)),
-                    Err(err) => {
-                        warn!(error = %err, "failed to parse EL node endpoint; reporting EL as unavailable");
-                        Ok::<Option<NodeEndpoint>, anyhow::Error>(None)
-                    }
-                },
-                Err(err) if is_method_not_found(&err) => {
-                    Ok::<Option<NodeEndpoint>, anyhow::Error>(None)
+                Ok(info) => {
+                    let identity = ElNodeIdentity::from_admin_node_info(&info.enode);
+                    let endpoint = match parse_el_node_endpoint(
+                        &info.enode,
+                        &info.enr,
+                        info.ip,
+                        info.ports.discovery,
+                        info.ports.listener,
+                    ) {
+                        Ok(endpoint) => Some(endpoint),
+                        Err(err) => {
+                            warn!(error = %err, "failed to parse EL node endpoint; reporting EL as unavailable");
+                            None
+                        }
+                    };
+                    (endpoint, identity)
                 }
+                Err(err) if is_method_not_found(&err) => (None, ElNodeIdentity::default()),
                 Err(err) => {
                     warn!(error = %err, "failed to fetch EL node endpoint; reporting EL endpoint as unavailable");
-                    Ok::<Option<NodeEndpoint>, anyhow::Error>(None)
+                    (None, ElNodeIdentity::default())
                 }
             }
         },
@@ -301,7 +451,8 @@ pub async fn fetch_el_info(rpc: &Url) -> Result<ElInfoReport> {
         },
     );
     Ok(ElInfoReport {
-        endpoint: endpoint?,
+        endpoint,
+        identity,
         peer_count: peer_count.0,
         peer_count_error: peer_count.1,
     })
@@ -334,6 +485,7 @@ pub async fn fetch_cl_info(cl_rpc: &Url) -> Result<ClInfoReport> {
     let cl_info = cl_info?;
     let (peer_stats, peer_stats_error) = peer_stats?;
 
+    let identity = cl_info.as_ref().map(ClNodeIdentity::from_self_info).unwrap_or_default();
     let endpoint = cl_info.map_or_else(
         || {
             warn!(rpc = %cl_rpc, "CL opp2p_self not exposed by this RPC; reporting CL endpoint as unavailable");
@@ -347,7 +499,7 @@ pub async fn fetch_cl_info(cl_rpc: &Url) -> Result<ClInfoReport> {
             }
         },
     );
-    Ok(ClInfoReport { endpoint, peer_stats, peer_stats_error })
+    Ok(ClInfoReport { endpoint, identity, peer_stats, peer_stats_error })
 }
 
 /// Fetches connected EL + CL peer lists for `basectl p2p peers`.
@@ -364,9 +516,9 @@ pub async fn fetch_connected_peers(rpc: &Url, cl_rpc: &Url) -> Result<PeerListRe
                             id: peer.id,
                             address: peer.network.remote_address.to_string(),
                             direction: if peer.network.inbound {
-                                "Inbound".to_string()
+                                PeerDirection::Inbound
                             } else {
-                                "Outbound".to_string()
+                                PeerDirection::Outbound
                             },
                         })
                         .collect::<Vec<_>>();
@@ -395,7 +547,7 @@ pub async fn fetch_connected_peers(rpc: &Url, cl_rpc: &Url) -> Result<PeerListRe
             .map(|(id, peer)| PeerSummary {
                 id,
                 address: peer.addresses.join(", "),
-                direction: peer.direction.to_string(),
+                direction: peer.direction.into(),
             })
             .collect::<Vec<_>>();
         cl.sort_by(|a, b| a.id.cmp(&b.id));
@@ -650,11 +802,61 @@ mod tests {
     use base_consensus_gossip::{
         Connectedness, Direction, GossipScores, PeerInfo, PeerScores, ReqRespScores,
     };
-    use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
     use super::{
-        NodeEndpoint, is_jsonrpc_method_not_found, parse_cl_node_endpoint, parse_el_node_endpoint,
+        ClNodeIdentity, ElNodeIdentity, NodeEndpoint, PeerDirection, parse_cl_node_endpoint,
+        parse_el_node_endpoint,
     };
+
+    fn sample_cl_peer_info(enr: Option<String>) -> PeerInfo {
+        PeerInfo {
+            peer_id: "peer-id".to_string(),
+            node_id: "node-id".to_string(),
+            user_agent: "agent".to_string(),
+            protocol_version: "1.0.0".to_string(),
+            enr,
+            addresses: vec!["/ip4/127.0.0.1/tcp/8999/p2p/peer-id".to_string()],
+            protocols: None,
+            connectedness: Connectedness::Connected,
+            direction: Direction::Outbound,
+            protected: false,
+            chain_id: 8453,
+            latency: 0,
+            gossip_blocks: true,
+            peer_scores: PeerScores {
+                gossip: GossipScores::default(),
+                req_resp: ReqRespScores::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn el_identity_keeps_raw_enode_and_treats_empty_as_absent() {
+        let identity = ElNodeIdentity::from_admin_node_info("enode://abc@203.0.113.10:30303");
+        assert_eq!(
+            identity,
+            ElNodeIdentity { enode: Some("enode://abc@203.0.113.10:30303".to_string()) }
+        );
+
+        assert_eq!(ElNodeIdentity::from_admin_node_info("  "), ElNodeIdentity::default());
+    }
+
+    #[test]
+    fn cl_identity_keeps_raw_records_and_treats_missing_enr_as_absent() {
+        let peer = sample_cl_peer_info(Some("enr:-cl-record".to_string()));
+        assert_eq!(
+            ClNodeIdentity::from_self_info(&peer),
+            ClNodeIdentity {
+                enr: Some("enr:-cl-record".to_string()),
+                peer_id: Some("peer-id".to_string()),
+                addresses: vec!["/ip4/127.0.0.1/tcp/8999/p2p/peer-id".to_string()],
+            }
+        );
+
+        let identity = ClNodeIdentity::from_self_info(&sample_cl_peer_info(None));
+        assert_eq!(identity.enr, None);
+        assert_eq!(identity.peer_id, Some("peer-id".to_string()));
+    }
 
     #[test]
     fn parses_el_endpoint_from_enode_and_enr() {
@@ -683,25 +885,7 @@ mod tests {
 
     #[test]
     fn parses_cl_endpoint_from_opp2p_self_enr() {
-        let peer = PeerInfo {
-            peer_id: "peer-id".to_string(),
-            node_id: "node-id".to_string(),
-            user_agent: "agent".to_string(),
-            protocol_version: "1.0.0".to_string(),
-            enr: Some("enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg".to_string()),
-            addresses: vec!["/ip4/127.0.0.1/tcp/8999/p2p/peer-id".to_string()],
-            protocols: None,
-            connectedness: Connectedness::Connected,
-            direction: Direction::Outbound,
-            protected: false,
-            chain_id: 8453,
-            latency: 0,
-            gossip_blocks: true,
-            peer_scores: PeerScores {
-                gossip: GossipScores::default(),
-                req_resp: ReqRespScores::default(),
-            },
-        };
+        let peer = sample_cl_peer_info(Some("enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg".to_string()));
 
         let endpoint = parse_cl_node_endpoint(&peer).unwrap();
 
@@ -713,13 +897,21 @@ mod tests {
     }
 
     #[test]
-    fn detects_jsonrpc_method_not_found_for_cl_p2p_methods() {
-        let err = JsonRpcClientError::Call(ErrorObjectOwned::owned(
-            -32601,
-            "method not found",
-            None::<()>,
-        ));
+    fn peer_direction_keeps_stable_json_and_display_spelling() {
+        for (direction, label) in [
+            (PeerDirection::Unknown, "Unknown"),
+            (PeerDirection::Inbound, "Inbound"),
+            (PeerDirection::Outbound, "Outbound"),
+        ] {
+            assert_eq!(serde_json::to_value(direction).unwrap(), label);
+            assert_eq!(direction.to_string(), label);
+        }
+    }
 
-        assert!(is_jsonrpc_method_not_found(&err));
+    #[test]
+    fn peer_direction_maps_upstream_direction_variants() {
+        assert_eq!(PeerDirection::from(Direction::Unknown), PeerDirection::Unknown);
+        assert_eq!(PeerDirection::from(Direction::Inbound), PeerDirection::Inbound);
+        assert_eq!(PeerDirection::from(Direction::Outbound), PeerDirection::Outbound);
     }
 }

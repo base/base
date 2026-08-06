@@ -127,7 +127,7 @@ impl Discv5Driver {
 
         let initial_store_length = store.len();
 
-        for bn in bootnodes.0.into_iter().chain(BootNodes::from_chain_id(chain_id).0.into_iter()) {
+        for bn in bootnodes.0.into_iter().chain(BootNodes::from_chain_id(chain_id).0) {
             let res = match bn {
                 BootNode::Enr(enr) => Ok(enr.clone()),
                 BootNode::Enode(enode) => disc.request_enr(enode.clone()).await,
@@ -292,33 +292,32 @@ impl Discv5Driver {
                             continue;
                         };
                         match event {
-                            discv5::Event::Discovered(enr) => {
-                                if EnrValidation::validate(&enr, chain_id).is_valid() {
-                                    debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
-                                    Metrics::discovery_event("discovered").increment(1.0);
-                                    if try_forward_enr(&enr_sender, enr.clone()) {
-                                        store.add_enr(enr);
-                                    }
+                            discv5::Event::Discovered(enr)
+                                if EnrValidation::validate(&enr, chain_id).is_valid() =>
+                            {
+                                debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
+                                Metrics::discovery_event("discovered").increment(1.0);
+                                if try_forward_enr(&enr_sender, enr.clone()) {
+                                    store.add_enr(enr);
                                 }
                             }
-                            discv5::Event::SessionEstablished(enr, addr) => {
-                                if EnrValidation::validate(&enr, chain_id).is_valid() {
-                                    debug!(target: "discovery", addr = ?addr, enr = ?enr, "Session established with valid ENR, forwarding to swarm");
-                                    Metrics::discovery_event("session_established").increment(1.0);
-                                    if try_forward_enr(&enr_sender, enr.clone()) {
-                                        store.add_enr(enr);
-                                    }
+                            discv5::Event::SessionEstablished(enr, addr)
+                                if EnrValidation::validate(&enr, chain_id).is_valid() =>
+                            {
+                                debug!(target: "discovery", addr = ?addr, enr = ?enr, "Session established with valid ENR, forwarding to swarm");
+                                Metrics::discovery_event("session_established").increment(1.0);
+                                if try_forward_enr(&enr_sender, enr.clone()) {
+                                    store.add_enr(enr);
                                 }
                             }
-                            discv5::Event::UnverifiableEnr { enr, .. } => {
-                                if EnrValidation::validate(&enr, chain_id).is_valid() {
-                                    debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
-                                    Metrics::discovery_event("unverifiable_enr").increment(1.0);
-                                    if try_forward_enr(&enr_sender, enr.clone()) {
-                                        store.add_enr(enr);
-                                    }
+                            discv5::Event::UnverifiableEnr { enr, .. }
+                                if EnrValidation::validate(&enr, chain_id).is_valid() =>
+                            {
+                                debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
+                                Metrics::discovery_event("unverifiable_enr").increment(1.0);
+                                if try_forward_enr(&enr_sender, enr.clone()) {
+                                    store.add_enr(enr);
                                 }
-
                             }
                             _ => {}
                         }

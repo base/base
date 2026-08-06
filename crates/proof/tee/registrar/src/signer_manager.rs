@@ -6,13 +6,14 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{ITEEProverRegistry, TEEProverRegistryClient};
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
+use base_proof_tee_nitro_verifier::VerifierJournal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tokio::{
     sync::Semaphore,
@@ -27,8 +28,28 @@ use crate::{DiscoveryResolution, RegistrarError, RegistrarMetrics, Result};
 /// errors before giving up.
 pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
 
-/// Default delay between transaction submission retries in seconds.
+/// Default initial delay between transaction submission retries in seconds.
 pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
+
+const ATTESTATION_NONCE_DOMAIN: &[u8] = b"base-proof-tee-registrar:attestation-nonce:v1";
+
+/// Runtime configuration for [`SignerManager`].
+#[derive(Debug, Clone, Copy)]
+pub struct SignerManagerConfig {
+    /// `TEEProverRegistry` contract address.
+    pub registry_address: Address,
+    /// Maximum concurrent proof-generation tasks.
+    pub max_concurrency: usize,
+    /// Maximum number of transaction submission retries for transient errors.
+    pub max_tx_retries: u32,
+    /// Delay between transaction submission retries.
+    pub tx_retry_delay: Duration,
+    /// Maximum proof attestation age accepted before on-chain submission.
+    pub max_attestation_age: Duration,
+}
+
+/// Maximum exponential backoff delay between transaction submission retries.
+const MAX_TX_RETRY_BACKOFF_DELAY: Duration = Duration::from_secs(60);
 
 /// State for a proof-generation task currently in-flight.
 ///
@@ -55,19 +76,19 @@ pub struct SignerManager<P, R, T> {
     registry_address: Address,
     max_tx_retries: u32,
     tx_retry_delay: Duration,
+    max_attestation_age: Duration,
 }
 
 impl<P, R, T> SignerManager<P, R, T> {
     /// Creates a signer manager from the signer lifecycle dependencies.
-    pub fn new(
-        proof_provider: P,
-        registry: R,
-        tx_manager: T,
-        registry_address: Address,
-        max_concurrency: usize,
-        max_tx_retries: u32,
-        tx_retry_delay: Duration,
-    ) -> Self {
+    pub fn new(proof_provider: P, registry: R, tx_manager: T, config: SignerManagerConfig) -> Self {
+        let SignerManagerConfig {
+            registry_address,
+            max_concurrency,
+            max_tx_retries,
+            tx_retry_delay,
+            max_attestation_age,
+        } = config;
         let proof_semaphore = Semaphore::new(max_concurrency.max(1));
         Self {
             proof_provider,
@@ -77,7 +98,27 @@ impl<P, R, T> SignerManager<P, R, T> {
             registry_address,
             max_tx_retries,
             tx_retry_delay,
+            max_attestation_age,
         }
+    }
+
+    /// Derives the deterministic attestation nonce for a signer.
+    pub fn attestation_nonce(&self, signer: Address) -> [u8; 32] {
+        Self::attestation_nonce_for(self.registry_address, signer)
+    }
+
+    /// Derives the deterministic attestation nonce for a registry/signer pair.
+    pub fn attestation_nonce_for(registry_address: Address, signer: Address) -> [u8; 32] {
+        let mut input = Vec::with_capacity(
+            ATTESTATION_NONCE_DOMAIN.len()
+                + registry_address.as_slice().len()
+                + signer.as_slice().len(),
+        );
+        input.extend_from_slice(ATTESTATION_NONCE_DOMAIN);
+        input.extend_from_slice(registry_address.as_slice());
+        input.extend_from_slice(signer.as_slice());
+
+        *keccak256(input)
     }
 }
 
@@ -106,11 +147,18 @@ impl ProofTaskSet {
         match joined {
             Ok((id, (signer, result))) => {
                 let removed = self.pending.remove(&signer);
+                let was_cancelled =
+                    removed.as_ref().is_some_and(|entry| entry.cancel.is_cancelled());
                 let instance_id =
                     removed.as_ref().map_or("missing", |entry| entry.instance_id.as_str());
 
                 match result {
                     Ok(()) => {
+                        RegistrarMetrics::record_proof_task_completed(if was_cancelled {
+                            RegistrarMetrics::PROOF_TASK_OUTCOME_CANCELLED
+                        } else {
+                            RegistrarMetrics::PROOF_TASK_OUTCOME_SUCCEEDED
+                        });
                         debug!(
                             task_id = ?id,
                             signer = %signer,
@@ -120,6 +168,9 @@ impl ProofTaskSet {
                         );
                     }
                     Err(e) => {
+                        RegistrarMetrics::record_proof_task_completed(
+                            RegistrarMetrics::PROOF_TASK_OUTCOME_FAILED,
+                        );
                         warn!(
                             task_id = ?id,
                             error = %e,
@@ -133,6 +184,9 @@ impl ProofTaskSet {
                 }
             }
             Err(join_err) => {
+                RegistrarMetrics::record_proof_task_completed(
+                    RegistrarMetrics::PROOF_TASK_OUTCOME_JOIN_ERROR,
+                );
                 let id = join_err.id();
                 let removed = self.pending.extract_if(|_, p| p.task_id == id).next();
                 let signer = removed.as_ref().map(|(signer, _)| *signer);
@@ -186,6 +240,9 @@ where
             return Ok(());
         };
         if already_registered {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_ALREADY_REGISTERED,
+            );
             debug!(
                 signer = %signer_address,
                 instance = %instance_id,
@@ -199,9 +256,15 @@ where
             instance = %instance_id,
             "generating proof for unregistered signer"
         );
+        RegistrarMetrics::record_registration_stage(
+            RegistrarMetrics::REGISTRATION_STAGE_PROOF_STARTED,
+        );
 
         let Some(permit) = signer_cancel.run_until_cancelled(self.proof_semaphore.acquire()).await
         else {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
+            );
             return Ok(());
         };
         let proof_permit = match permit {
@@ -226,15 +289,53 @@ where
             ))
             .await
         else {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
+            );
             return Ok(());
         };
         let proof = match proof_result {
-            Ok(proof) => proof,
+            Ok(proof) => {
+                RegistrarMetrics::record_registration_stage(
+                    RegistrarMetrics::REGISTRATION_STAGE_PROOF_SUCCEEDED,
+                );
+                proof
+            }
             Err(_) if signer_cancel.is_cancelled() => {
+                RegistrarMetrics::record_registration_stage(
+                    RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
+                );
                 return Ok(());
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => {
+                RegistrarMetrics::record_registration_stage(
+                    RegistrarMetrics::REGISTRATION_STAGE_PROOF_FAILED,
+                );
+                return Err(e.into());
+            }
         };
+        let journal = match VerifierJournal::decode(&proof.output) {
+            Ok(journal) => journal,
+            Err(e) => {
+                RegistrarMetrics::record_registration_stage(
+                    RegistrarMetrics::REGISTRATION_STAGE_PROOF_INVALID,
+                );
+                return Err(RegistrarError::InvalidProofJournal { reason: e.to_string() });
+            }
+        };
+        let expected_nonce = self.attestation_nonce(signer_address);
+        if journal.nonce.as_ref() != expected_nonce.as_slice() {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_PROOF_INVALID,
+            );
+            self.proof_provider.block_recovery_for_signer(signer_address);
+            return Err(RegistrarError::InvalidAttestationProof(format!(
+                "nonce mismatch for signer {signer_address}: expected 0x{}, got 0x{}",
+                hex::encode(expected_nonce),
+                hex::encode(journal.nonce)
+            )));
+        }
+        let attestation_timestamp = journal.timestamp;
         drop(proof_permit);
 
         let calldata = Bytes::from(
@@ -264,9 +365,19 @@ where
                 if signer_cancel.is_cancelled() {
                     return Ok(());
                 }
+                if let Err(e) = self.ensure_attestation_fresh(signer_address, attestation_timestamp)
+                {
+                    RegistrarMetrics::record_registration_stage(
+                        RegistrarMetrics::REGISTRATION_STAGE_PROOF_STALE,
+                    );
+                    return Err(e);
+                }
 
                 // Do not wrap send in run_until_cancelled: dropping it after nonce
                 // acquisition can leave a nonce gap.
+                RegistrarMetrics::record_registration_stage(
+                    RegistrarMetrics::REGISTRATION_STAGE_TX_SUBMITTED,
+                );
                 match self.tx_manager.send(candidate.clone()).await {
                     Ok(receipt) => break 'submit receipt,
                     Err(e) => {
@@ -283,6 +394,9 @@ where
                                     error = %e,
                                     "tx error but signer is registered onchain, treating as success"
                                 );
+                                RegistrarMetrics::record_registration_stage(
+                                    RegistrarMetrics::REGISTRATION_STAGE_TX_OBSERVED_REGISTERED,
+                                );
                                 RegistrarMetrics::registrations_total().increment(1);
                                 return Ok(());
                             }
@@ -297,31 +411,55 @@ where
                         }
 
                         if !e.is_retryable() {
-                            if matches!(e, TxManagerError::ExecutionReverted { .. }) {
+                            if let TxManagerError::ExecutionReverted { data, reason, .. } = &e {
+                                let registry_error = data
+                                    .as_ref()
+                                    .and_then(|d| d.get(..4))
+                                    .and_then(|selector| selector.try_into().ok())
+                                    .and_then(
+                                        ITEEProverRegistry::ITEEProverRegistryErrors::name_by_selector,
+                                    );
                                 warn!(
                                     signer = %signer_address,
+                                    registry_error = ?registry_error,
+                                    reason = ?reason,
                                     "execution reverted, blocking proof recovery for signer"
                                 );
                                 self.proof_provider.block_recovery_for_signer(signer_address);
                             }
+                            RegistrarMetrics::record_registration_stage(
+                                RegistrarMetrics::REGISTRATION_STAGE_TX_FAILED,
+                            );
                             return Err(RegistrarError::from(e));
                         }
 
                         if retry == self.max_tx_retries {
+                            RegistrarMetrics::record_registration_stage(
+                                RegistrarMetrics::REGISTRATION_STAGE_TX_FAILED,
+                            );
                             return Err(RegistrarError::from(e));
                         }
 
                         let retry = retry + 1;
+                        let max_retry_delay = MAX_TX_RETRY_BACKOFF_DELAY.max(self.tx_retry_delay);
+                        let retry_delay = self
+                            .tx_retry_delay
+                            .saturating_mul(2_u32.saturating_pow(retry - 1))
+                            .min(max_retry_delay);
                         warn!(
                             error = %e,
                             signer = %signer_address,
                             retry,
                             max_retries = self.max_tx_retries,
+                            delay = ?retry_delay,
                             "tx submission failed, retrying with same proof"
+                        );
+                        RegistrarMetrics::record_registration_stage(
+                            RegistrarMetrics::REGISTRATION_STAGE_TX_RETRY,
                         );
 
                         if signer_cancel
-                            .run_until_cancelled(tokio::time::sleep(self.tx_retry_delay))
+                            .run_until_cancelled(tokio::time::sleep(retry_delay))
                             .await
                             .is_none()
                         {
@@ -334,6 +472,9 @@ where
         };
 
         if !receipt.inner.status() {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_TX_REVERTED,
+            );
             warn!(
                 signer = %signer_address,
                 tx_hash = %receipt.transaction_hash,
@@ -348,7 +489,33 @@ where
             tx_hash = %receipt.transaction_hash,
             "signer registered successfully"
         );
+        RegistrarMetrics::record_registration_stage(
+            RegistrarMetrics::REGISTRATION_STAGE_TX_SUCCEEDED,
+        );
         RegistrarMetrics::registrations_total().increment(1);
+
+        Ok(())
+    }
+
+    fn ensure_attestation_fresh(&self, signer: Address, timestamp_ms: u64) -> Result<()> {
+        let now_ms =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        let age = Duration::from_millis(now_ms.saturating_sub(timestamp_ms));
+
+        if age > self.max_attestation_age {
+            warn!(
+                signer = %signer,
+                age_secs = age.as_secs(),
+                max_age_secs = self.max_attestation_age.as_secs(),
+                timestamp_ms,
+                "pre-submission freshness check failed"
+            );
+            return Err(RegistrarError::StaleAttestationProof {
+                signer,
+                age,
+                max_age: self.max_attestation_age,
+            });
+        }
 
         Ok(())
     }
@@ -495,6 +662,7 @@ mod tests {
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
     use base_proof_tee_nitro_attestation_prover::AttestationProof;
+    use base_proof_tee_nitro_verifier::VerificationResult;
     use base_tx_manager::{SendHandle, TxManagerError};
     use tokio::sync::Notify;
 
@@ -510,6 +678,7 @@ mod tests {
 
     const TEST_PENDING_INSTANCE_ID: &str = "i-pending-test";
     const GATED_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+    const TEST_MAX_ATTESTATION_AGE: Duration = Duration::from_secs(3300);
     const ATTESTATION: &[u8] = b"stub-attestation";
     const SIGNER_A: Address = Address::new([0xAA; 20]);
     const SIGNER_B: Address = Address::new([0xBB; 20]);
@@ -632,7 +801,44 @@ mod tests {
     struct RecordingProofProvider {
         cancel_then_error: bool,
         blocked_signers: Arc<Mutex<Vec<Address>>>,
+        proof_output: Option<Bytes>,
         records: ProofRecords,
+    }
+
+    fn expected_nonce(signer: Address) -> [u8; 32] {
+        SignerManager::<RecordingProofProvider, MockRegistry, RecordingTxManager>::attestation_nonce_for(
+            TEST_REGISTRY_ADDRESS,
+            signer,
+        )
+    }
+
+    fn proof_output_with_nonce(nonce: &[u8]) -> Bytes {
+        proof_output_with_nonce_and_age(nonce, Duration::ZERO)
+    }
+
+    fn proof_output_with_age(age: Duration) -> Bytes {
+        proof_output_with_nonce_and_age(&expected_nonce(SIGNER_A), age)
+    }
+
+    fn proof_output_with_nonce_and_age(nonce: &[u8], age: Duration) -> Bytes {
+        let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+        let age_ms = u64::try_from(age.as_millis()).unwrap_or(u64::MAX);
+        let timestamp = u64::try_from(now_ms).unwrap_or(u64::MAX).saturating_sub(age_ms);
+        Bytes::from(
+            VerifierJournal {
+                result: VerificationResult::Success,
+                trustedCertsPrefixLen: 1,
+                timestamp,
+                certs: Vec::new(),
+                certExpiries: Vec::new(),
+                userData: Bytes::new(),
+                nonce: Bytes::copy_from_slice(nonce),
+                publicKey: Bytes::new(),
+                pcrs: Vec::new(),
+                moduleId: "test-module".to_string(),
+            }
+            .encode(),
+        )
     }
 
     #[async_trait]
@@ -659,7 +865,10 @@ mod tests {
                 ));
             }
             Ok(AttestationProof {
-                output: Bytes::from_static(b"stub-output"),
+                output: self
+                    .proof_output
+                    .clone()
+                    .unwrap_or_else(|| proof_output_with_nonce(&expected_nonce(signer_address))),
                 proof_bytes: Bytes::from_static(b"stub-proof"),
             })
         }
@@ -674,14 +883,35 @@ mod tests {
         registry: MockRegistry,
         tx_manager: T,
     ) -> SignerManager<RecordingProofProvider, MockRegistry, T> {
+        manager_with_config(
+            proof_provider,
+            registry,
+            tx_manager,
+            DEFAULT_MAX_TX_RETRIES,
+            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+            TEST_MAX_ATTESTATION_AGE,
+        )
+    }
+
+    fn manager_with_config<T>(
+        proof_provider: RecordingProofProvider,
+        registry: MockRegistry,
+        tx_manager: T,
+        max_tx_retries: u32,
+        tx_retry_delay: Duration,
+        max_attestation_age: Duration,
+    ) -> SignerManager<RecordingProofProvider, MockRegistry, T> {
         SignerManager::new(
             proof_provider,
             registry,
             tx_manager,
-            TEST_REGISTRY_ADDRESS,
-            DEFAULT_MAX_CONCURRENCY,
-            DEFAULT_MAX_TX_RETRIES,
-            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+            SignerManagerConfig {
+                registry_address: TEST_REGISTRY_ADDRESS,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                max_tx_retries,
+                tx_retry_delay,
+                max_attestation_age,
+            },
         )
     }
 
@@ -859,6 +1089,37 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn register_signer_backs_off_between_tx_retries() {
+        for (case, max_retries, retry_delay, errors, expected_sends, expected_elapsed) in [
+            ("exponential", 3, Duration::from_secs(1), 3, 4, Duration::from_secs(7)),
+            ("capped", 4, Duration::from_secs(30), 4, 5, Duration::from_secs(210)),
+        ] {
+            let manager = manager_with_config(
+                RecordingProofProvider::default(),
+                MockRegistry::default(),
+                RecordingTxManager::with_errors(
+                    (1..=errors)
+                        .map(|retry| TxManagerError::Rpc(format!("transient {retry}")))
+                        .collect(),
+                ),
+                max_retries,
+                retry_delay,
+                TEST_MAX_ATTESTATION_AGE,
+            );
+            let start = tokio::time::Instant::now();
+
+            let result = register(&manager, &CancellationToken::new()).await;
+
+            assert!(
+                result.is_ok(),
+                "{case}: retryable errors should eventually succeed: {result:?}"
+            );
+            assert_eq!(manager.tx_manager.send_count(), expected_sends, "{case}");
+            assert_eq!(start.elapsed(), expected_elapsed, "{case}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn register_signer_reverted_receipt_blocks_recovery() {
         let proof_provider = RecordingProofProvider::default();
         let manager = manager_with(
@@ -875,6 +1136,96 @@ mod tests {
         );
         assert_eq!(manager.tx_manager.send_count(), 1, "should submit exactly one tx");
         assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
+    }
+
+    #[tokio::test]
+    async fn register_signer_rejects_nonce_mismatch_before_tx() {
+        let proof_provider = RecordingProofProvider {
+            proof_output: Some(proof_output_with_nonce(b"old-nonce")),
+            ..Default::default()
+        };
+        let manager = manager_with(
+            proof_provider.clone(),
+            MockRegistry::default(),
+            RecordingTxManager::default(),
+        );
+
+        let result = register(&manager, &CancellationToken::new()).await;
+
+        assert!(
+            matches!(result, Err(RegistrarError::InvalidAttestationProof(_))),
+            "mismatched nonce should fail before submission: {result:?}"
+        );
+        assert_eq!(manager.tx_manager.send_count(), 0, "nonce mismatch must not submit a tx");
+        assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
+    }
+
+    #[tokio::test]
+    async fn register_signer_rejects_stale_proof_before_tx() {
+        let proof_provider = RecordingProofProvider {
+            proof_output: Some(proof_output_with_age(
+                TEST_MAX_ATTESTATION_AGE + Duration::from_secs(1),
+            )),
+            ..Default::default()
+        };
+        let manager = manager_with(
+            proof_provider.clone(),
+            MockRegistry::default(),
+            RecordingTxManager::default(),
+        );
+
+        let result = register(&manager, &CancellationToken::new()).await;
+
+        assert!(
+            matches!(result, Err(RegistrarError::StaleAttestationProof { signer, .. }) if signer == SIGNER_A),
+            "stale proof should fail before submission: {result:?}"
+        );
+        assert_eq!(manager.tx_manager.send_count(), 0, "stale proof must not submit a tx");
+        assert!(proof_provider.blocked_signers.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn register_signer_rechecks_freshness_before_retry_send() {
+        let proof_provider = RecordingProofProvider::default();
+        let manager = manager_with_config(
+            proof_provider.clone(),
+            MockRegistry::default(),
+            RecordingTxManager::with_errors(vec![TxManagerError::Rpc("transient".into())]),
+            DEFAULT_MAX_TX_RETRIES,
+            Duration::from_millis(50),
+            Duration::from_millis(20),
+        );
+
+        let result = register(&manager, &CancellationToken::new()).await;
+
+        assert!(
+            matches!(result, Err(RegistrarError::StaleAttestationProof { signer, .. }) if signer == SIGNER_A),
+            "proof should become stale before retry submission: {result:?}"
+        );
+        assert_eq!(manager.tx_manager.send_count(), 1, "stale retry must not submit again");
+        assert!(proof_provider.blocked_signers.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn register_signer_rejects_invalid_proof_journal_before_tx() {
+        let proof_provider = RecordingProofProvider {
+            proof_output: Some(Bytes::from_static(b"not-an-abi-journal")),
+            ..Default::default()
+        };
+        let manager = manager_with(
+            proof_provider.clone(),
+            MockRegistry::default(),
+            RecordingTxManager::default(),
+        );
+
+        let result = register(&manager, &CancellationToken::new()).await;
+
+        assert!(
+            matches!(result, Err(RegistrarError::InvalidProofJournal { .. })),
+            "invalid proof journal should fail before submission: {result:?}"
+        );
+        assert_eq!(manager.tx_manager.send_count(), 0, "invalid proof must not submit a tx");
+        assert!(proof_provider.blocked_signers.lock().unwrap().is_empty());
     }
 
     #[tokio::test(start_paused = true)]
@@ -928,10 +1279,13 @@ mod tests {
             proof_provider.clone(),
             MockRegistry::default(),
             RecordingTxManager::stalling(),
-            TEST_REGISTRY_ADDRESS,
-            1,
-            DEFAULT_MAX_TX_RETRIES,
-            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+            SignerManagerConfig {
+                registry_address: TEST_REGISTRY_ADDRESS,
+                max_concurrency: 1,
+                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
+            },
         ));
         let cancel = CancellationToken::new();
 

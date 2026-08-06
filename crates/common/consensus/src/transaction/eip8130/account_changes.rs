@@ -1,7 +1,8 @@
 //! [EIP-8130] `account_changes` entry types.
 //!
 //! An [`AccountChange`] is a tagged-union entry inside `TxEip8130::account_changes`.
-//! On the wire, each entry is encoded as `type_byte || rlp([entry_fields...])`.
+//! On the wire, each entry is a single RLP list whose first element is the type
+//! byte: `rlp([type_byte, entry_fields...])`.
 //!
 //! [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 
@@ -9,7 +10,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::{
-    Buf, BufMut, Decodable, Encodable, Header, RlpDecodable, RlpEncodable, length_of_length,
+    BufMut, Decodable, Encodable, Header, RlpDecodable, RlpEncodable, length_of_length,
 };
 
 use crate::transaction::eip8130::constants::Eip8130Constants;
@@ -51,35 +52,45 @@ impl Scope {
         self.0
     }
 
-    /// Returns true if the scope grants the `SCOPE_SIGNATURE` context.
-    pub const fn has_signature(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_SIGNATURE != 0
-    }
-
-    /// Returns true if the scope grants the `SCOPE_SENDER` context.
+    /// Returns true if the scope grants the ungated `SCOPE_SENDER` context.
     pub const fn has_sender(&self) -> bool {
         self.0 & Eip8130Constants::SCOPE_SENDER != 0
     }
 
-    /// Returns true if the scope grants the `SCOPE_PAYER` context.
-    pub const fn has_payer(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_PAYER != 0
+    /// Returns true if the scope enables policy gating.
+    pub const fn has_policy(&self) -> bool {
+        self.0 & Eip8130Constants::SCOPE_POLICY != 0
     }
 
-    /// Returns true if the scope grants the `SCOPE_CONFIG` context.
-    pub const fn has_config(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_CONFIG != 0
+    /// Returns true if the scope grants the nonce context.
+    pub const fn has_nonce(&self) -> bool {
+        self.0 & Eip8130Constants::SCOPE_NONCE != 0
+    }
+
+    /// Returns true if the scope grants self-pay (`payer == sender`).
+    pub const fn has_self_payer(&self) -> bool {
+        self.0 & Eip8130Constants::SCOPE_SELF_PAYER != 0
+    }
+
+    /// Returns true if the scope grants sponsorship (`payer != sender`).
+    pub const fn has_sponsor_payer(&self) -> bool {
+        self.0 & Eip8130Constants::SCOPE_SPONSOR_PAYER != 0
     }
 }
 
 /// Initial actor installed on a newly-created account.
 ///
-/// Per [EIP-8130], a create entry's initial actors are `[actorId, authenticator]`
-/// tuples, always registered as unrestricted owners (`scope = 0x00`, no expiry,
-/// no policy). Scope, expiry, and policy are deliberately not expressible here
-/// and default to their zero values; restricted keys are added afterwards via a
-/// [`ConfigChange`]. The field order matches the wire encoding and the
-/// address-derivation commitment (`actorId || authenticator`).
+/// Per [EIP-8130], a create entry's initial actors are
+/// `[actorId, authenticator, scope, policyData]` tuples. `scope` is stored
+/// verbatim (`0x00` = unrestricted admin; unknown bits allowed), and `policyData`
+/// is empty unless `scope` sets `POLICY`, in which case it is exactly
+/// `manager (20) || commitment (32)`. Two things are deliberately **not**
+/// expressible here and are added afterwards via a [`ConfigChange`]: `expiry`
+/// (initial actors are always non-expiring, committed as `0`) and a
+/// self-referential `manager = account` (the account address is not known at
+/// commitment time). The field order matches the wire encoding and the
+/// address-derivation commitment (`actorId || authenticator || scope ||
+/// policyData`).
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
@@ -91,6 +102,19 @@ pub struct InitialActor {
     pub actor_id: B256,
     /// Address of the authenticator contract (e.g. an ERC-1271 authenticator).
     pub authenticator: Address,
+    /// Scope byte (`0x00` = unrestricted admin), stored verbatim.
+    pub scope: u8,
+    /// Policy data: empty unless `scope` sets `POLICY`, otherwise exactly
+    /// `manager (20) || commitment (32)`. Committed to the derived address.
+    pub policy_data: Bytes,
+}
+
+impl InitialActor {
+    /// Constructs an unrestricted admin initial actor (`scope == 0x00`, no
+    /// policy), the common owner case.
+    pub const fn owner(actor_id: B256, authenticator: Address) -> Self {
+        Self { actor_id, authenticator, scope: 0, policy_data: Bytes::new() }
+    }
 }
 
 /// Operation performed by an [`ActorChange`] inside a [`ConfigChange`].
@@ -127,7 +151,7 @@ impl ActorChangeType {
 ///
 /// Per [EIP-8130], `data` is the operation-specific, contract-ABI-encoded blob:
 /// `abi.encode(ActorConfig, bytes policyData)` for an `Authorize` (carrying the
-/// new actor's authenticator, scope, expiry, policy type, and policy data), and
+/// new actor's authenticator, scope, expiry, and policy data), and
 /// empty for a `Revoke`. It is opaque at this layer — decoded only where the
 /// change is applied (native authorization or `applySignedActorChanges`) — and
 /// is the value hashed (`keccak256(data)`) in the config-change signature
@@ -193,7 +217,11 @@ impl Decodable for ActorChange {
 }
 
 /// Body of an [`AccountChange::Create`] entry.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
+///
+/// This struct has no standalone RLP codec: on the wire a create entry is a
+/// single flat list `rlp([type_byte, user_salt, code, initial_actors])`, encoded
+/// by [`AccountChange`]. See that type for the wire format.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -207,7 +235,11 @@ pub struct CreateEntry {
 }
 
 /// Body of an [`AccountChange::ConfigChange`] entry.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
+///
+/// This struct has no standalone RLP codec: on the wire a config-change entry is
+/// a single flat list `rlp([type_byte, chain_id, sequence, actor_changes, auth])`,
+/// encoded by [`AccountChange`]. See that type for the wire format.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -218,12 +250,16 @@ pub struct ConfigChange {
     pub sequence: u64,
     /// Actor authorize/revoke operations applied in order.
     pub actor_changes: Vec<ActorChange>,
-    /// Authorization payload validated against an existing actor with `SCOPE_CONFIG`.
+    /// Authorization payload validated against an admin actor (`scope == 0`).
     pub auth: Bytes,
 }
 
 /// Body of an [`AccountChange::Delegation`] entry.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
+///
+/// This struct has no standalone RLP codec: on the wire a delegation entry is a
+/// single flat list `rlp([type_byte, target])`, encoded by [`AccountChange`]. See
+/// that type for the wire format.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -234,10 +270,19 @@ pub struct Delegation {
 
 /// A tagged-union entry inside `TxEip8130::account_changes`.
 ///
-/// On the wire each entry is `type_byte || rlp([body_fields...])`:
-/// - `0x00` -> [`AccountChange::Create`]
-/// - `0x01` -> [`AccountChange::ConfigChange`]
-/// - `0x02` -> [`AccountChange::Delegation`]
+/// On the wire each entry is a single RLP list whose first element is the type
+/// byte, followed by the body fields inline (per [EIP-8130]):
+/// - `rlp([0x00, user_salt, code, initial_actors])` -> [`AccountChange::Create`]
+/// - `rlp([0x01, chain_id, sequence, actor_changes, auth])` -> [`AccountChange::ConfigChange`]
+/// - `rlp([0x02, target])` -> [`AccountChange::Delegation`]
+///
+/// The type byte is a genuine list element (not an EIP-2718-style `type_byte ||
+/// rlp(...)` prefix), so each entry is one self-contained RLP item and the
+/// surrounding `account_changes` list frames as one item per entry. This mirrors
+/// the sibling [`ActorChange`] codec, which likewise carries its discriminant as
+/// the first list element.
+///
+/// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -263,49 +308,86 @@ impl AccountChange {
         }
     }
 
-    fn body_len(&self) -> usize {
-        match self {
-            Self::Create(b) => b.length(),
-            Self::ConfigChange(b) => b.length(),
-            Self::Delegation(b) => b.length(),
-        }
+    /// Length of the RLP list payload: the type byte followed by the body
+    /// fields, all inline in one list (the type byte is a list element, so it is
+    /// RLP-encoded, e.g. `0x00` -> `0x80`).
+    fn rlp_payload_length(&self) -> usize {
+        let fields_len = match self {
+            Self::Create(b) => b.user_salt.length() + b.code.length() + b.initial_actors.length(),
+            Self::ConfigChange(b) => {
+                b.chain_id.length()
+                    + b.sequence.length()
+                    + b.actor_changes.length()
+                    + b.auth.length()
+            }
+            Self::Delegation(b) => b.target.length(),
+        };
+        self.type_byte().length() + fields_len
     }
 }
 
 impl Encodable for AccountChange {
     fn encode(&self, out: &mut dyn BufMut) {
-        out.put_u8(self.type_byte());
+        let payload_length = self.rlp_payload_length();
+        Header { list: true, payload_length }.encode(out);
+        self.type_byte().encode(out);
         match self {
-            Self::Create(b) => b.encode(out),
-            Self::ConfigChange(b) => b.encode(out),
-            Self::Delegation(b) => b.encode(out),
+            Self::Create(b) => {
+                b.user_salt.encode(out);
+                b.code.encode(out);
+                b.initial_actors.encode(out);
+            }
+            Self::ConfigChange(b) => {
+                b.chain_id.encode(out);
+                b.sequence.encode(out);
+                b.actor_changes.encode(out);
+                b.auth.encode(out);
+            }
+            Self::Delegation(b) => {
+                b.target.encode(out);
+            }
         }
     }
 
     fn length(&self) -> usize {
-        1 + self.body_len()
+        let payload_length = self.rlp_payload_length();
+        length_of_length(payload_length) + payload_length
     }
 }
 
 impl Decodable for AccountChange {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        if buf.is_empty() {
-            return Err(alloy_rlp::Error::InputTooShort);
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(alloy_rlp::Error::UnexpectedString);
         }
-        let type_byte = buf[0];
-        buf.advance(1);
-        match type_byte {
-            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CREATE => {
-                CreateEntry::decode(buf).map(Self::Create)
-            }
-            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG => {
-                ConfigChange::decode(buf).map(Self::ConfigChange)
-            }
+        let started_len = buf.len();
+        let type_byte = u8::decode(buf)?;
+        let this = match type_byte {
+            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CREATE => Self::Create(CreateEntry {
+                user_salt: B256::decode(buf)?,
+                code: Bytes::decode(buf)?,
+                initial_actors: Vec::<InitialActor>::decode(buf)?,
+            }),
+            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG => Self::ConfigChange(ConfigChange {
+                chain_id: u64::decode(buf)?,
+                sequence: u64::decode(buf)?,
+                actor_changes: Vec::<ActorChange>::decode(buf)?,
+                auth: Bytes::decode(buf)?,
+            }),
             Eip8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION => {
-                Delegation::decode(buf).map(Self::Delegation)
+                Self::Delegation(Delegation { target: Address::decode(buf)? })
             }
-            _ => Err(alloy_rlp::Error::Custom("invalid AccountChange type byte")),
+            _ => return Err(alloy_rlp::Error::Custom("invalid AccountChange type byte")),
+        };
+        let consumed = started_len - buf.len();
+        if consumed != header.payload_length {
+            return Err(alloy_rlp::Error::ListLengthMismatch {
+                expected: header.payload_length,
+                got: consumed,
+            });
         }
+        Ok(this)
     }
 }
 
@@ -318,16 +400,18 @@ mod tests {
     #[test]
     fn scope_bit_helpers() {
         let s = Scope(
-            Eip8130Constants::SCOPE_SIGNATURE
-                | Eip8130Constants::SCOPE_SENDER
-                | Eip8130Constants::SCOPE_PAYER
-                | Eip8130Constants::SCOPE_CONFIG,
+            Eip8130Constants::SCOPE_SENDER
+                | Eip8130Constants::SCOPE_POLICY
+                | Eip8130Constants::SCOPE_NONCE
+                | Eip8130Constants::SCOPE_SELF_PAYER
+                | Eip8130Constants::SCOPE_SPONSOR_PAYER,
         );
-        assert!(s.has_signature());
         assert!(s.has_sender());
-        assert!(s.has_payer());
-        assert!(s.has_config());
-        assert!(!Scope::UNRESTRICTED.has_signature());
+        assert!(s.has_policy());
+        assert!(s.has_nonce());
+        assert!(s.has_self_payer());
+        assert!(s.has_sponsor_payer());
+        assert!(!Scope::UNRESTRICTED.has_sender());
     }
 
     #[test]
@@ -363,11 +447,18 @@ mod tests {
                     "0x3333333333333333333333333333333333333333333333333333333333333333"
                 ),
                 authenticator: address!("0x00000000000000000000000000000000000000bb"),
+                scope: Eip8130Constants::SCOPE_POLICY,
+                policy_data: bytes!(
+                    "00000000000000000000000000000000000000cc4444444444444444444444444444444444444444444444444444444444444444"
+                ),
             }],
         });
         let mut buf = Vec::new();
         ac.encode(&mut buf);
-        assert_eq!(buf[0], Eip8130Constants::ACCOUNT_CHANGE_TYPE_CREATE);
+        assert_eq!(
+            first_list_element_type_byte(&buf),
+            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CREATE
+        );
         assert_eq!(buf.len(), ac.length());
         let decoded = AccountChange::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(ac, decoded);
@@ -389,7 +480,11 @@ mod tests {
         });
         let mut buf = Vec::new();
         ac.encode(&mut buf);
-        assert_eq!(buf[0], Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG);
+        assert_eq!(
+            first_list_element_type_byte(&buf),
+            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG
+        );
+        assert_eq!(buf.len(), ac.length());
         let decoded = AccountChange::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(ac, decoded);
     }
@@ -401,7 +496,11 @@ mod tests {
         });
         let mut buf = Vec::new();
         ac.encode(&mut buf);
-        assert_eq!(buf[0], Eip8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION);
+        assert_eq!(
+            first_list_element_type_byte(&buf),
+            Eip8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION
+        );
+        assert_eq!(buf.len(), ac.length());
         let decoded = AccountChange::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(ac, decoded);
     }
@@ -417,10 +516,85 @@ mod tests {
 
     #[test]
     fn account_change_invalid_type_byte() {
-        let buf = [0xffu8, 0xc0];
+        // A well-formed RLP list `[0x7f]` (header 0xc1, element 0x7f) carrying an
+        // unrecognized type byte must be rejected by the type-byte match arm.
+        let buf = [0xc1u8, 0x7f];
         let mut slice = &buf[..];
         let res = AccountChange::decode(&mut slice);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn account_change_entry_is_single_rlp_item() {
+        // Each entry must be exactly one self-contained RLP list item: the type
+        // discriminant lives *inside* the list (spec `rlp([type, ...])`), never as
+        // a bare prefix byte. A bare prefix would split the entry into two RLP
+        // tokens and desync the surrounding `account_changes` list framing.
+        let ac = AccountChange::Delegation(Delegation {
+            target: address!("0x00000000000000000000000000000000000000dd"),
+        });
+        let mut buf = Vec::new();
+        ac.encode(&mut buf);
+
+        let mut slice = buf.as_slice();
+        let header = Header::decode(&mut slice).unwrap();
+        assert!(header.list, "an account-change entry must be a single RLP list");
+        // The list header must account for the entire entry, so decoding it
+        // leaves exactly its payload and nothing trailing.
+        assert_eq!(slice.len(), header.payload_length);
+    }
+
+    #[test]
+    fn account_changes_vec_frames_one_item_per_entry() {
+        // Regression guard for the framing: the outer `account_changes` list must
+        // contain exactly one RLP item per entry. Under a bare `type_byte ||
+        // rlp(body)` encoding a generic RLP walk would see two items per entry.
+        let entries = vec![
+            AccountChange::Delegation(Delegation { target: Address::ZERO }),
+            AccountChange::ConfigChange(ConfigChange {
+                chain_id: 1,
+                sequence: 0,
+                actor_changes: Vec::new(),
+                auth: Bytes::new(),
+            }),
+            AccountChange::Create(CreateEntry {
+                user_salt: b256!(
+                    "0x2222222222222222222222222222222222222222222222222222222222222222"
+                ),
+                code: bytes!("6080604052"),
+                initial_actors: vec![InitialActor::owner(
+                    b256!("0x3333333333333333333333333333333333333333333333333333333333333333"),
+                    address!("0x00000000000000000000000000000000000000bb"),
+                )],
+            }),
+        ];
+
+        let mut buf = Vec::new();
+        entries.encode(&mut buf);
+
+        let mut slice = buf.as_slice();
+        let outer = Header::decode(&mut slice).unwrap();
+        assert!(outer.list);
+        let mut payload = &slice[..outer.payload_length];
+        let mut count = 0usize;
+        while !payload.is_empty() {
+            let item = Header::decode(&mut payload).unwrap();
+            payload = &payload[item.payload_length..];
+            count += 1;
+        }
+        assert_eq!(count, entries.len(), "each entry must frame as exactly one RLP item");
+
+        let decoded = Vec::<AccountChange>::decode(&mut buf.as_slice()).unwrap();
+        assert_eq!(decoded, entries);
+    }
+
+    /// Decodes the outer RLP list header of an encoded [`AccountChange`] and
+    /// returns its first element (the type byte).
+    fn first_list_element_type_byte(encoded: &[u8]) -> u8 {
+        let mut slice = encoded;
+        let header = Header::decode(&mut slice).unwrap();
+        assert!(header.list, "an account-change entry must be a single RLP list");
+        u8::decode(&mut slice).unwrap()
     }
 
     #[test]

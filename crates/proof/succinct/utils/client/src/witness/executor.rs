@@ -1,14 +1,12 @@
+//! Pipeline construction and block execution for Succinct witness and range programs.
+
 use std::{fmt::Debug, sync::Arc};
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::Sealed;
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use base_consensus_derive::{
-    BlobProvider, ChainProvider, DataAvailabilityProvider, L2ChainProvider, Pipeline,
-    SignalReceiver,
-};
+use base_consensus_derive::{BlobProvider, EthereumDataSource, Pipeline, SignalReceiver};
 use base_proof::{
     BaseExecutor, BootInfo, OracleL1ChainProvider, OracleL2ChainProvider, OraclePipeline,
     new_oracle_pipeline_cursor,
@@ -24,7 +22,8 @@ use crate::{
     precompiles::{CustomCrypto, ZkvmBaseEvmFactory},
 };
 
-// Gets the inputs for constructing the derivation pipeline.
+/// Gets the inputs for constructing the derivation pipeline.
+///
 /// Returns (`BootInfo`, pipeline components, `safe_head_block_number`).
 /// The safe head block number is the L2 block number of the agreed-upon safe head,
 /// i.e. the starting block of the proven range.
@@ -38,10 +37,6 @@ pub async fn get_inputs_for_pipeline<O>(
 where
     O: CommsClient + FlushableCache + Send + Sync + Debug,
 {
-    ////////////////////////////////////////////////////////////////
-    //                          PROLOGUE                          //
-    ////////////////////////////////////////////////////////////////
-
     let boot = match BootInfo::load(oracle.as_ref()).await {
         Ok(boot) => boot,
         Err(e) => {
@@ -75,10 +70,6 @@ where
         ));
     }
 
-    ////////////////////////////////////////////////////////////////
-    //                   DERIVATION & EXECUTION                   //
-    ////////////////////////////////////////////////////////////////
-
     // Create a new derivation driver with the given boot information and oracle.
     let cursor = new_oracle_pipeline_cursor(
         rollup_config.as_ref(),
@@ -93,39 +84,66 @@ where
     Ok((boot_clone, (cursor, l1_provider, l2_provider), safe_head_number))
 }
 
-/// Constructs a derivation pipeline and executes block derivation.
-#[async_trait]
-pub trait WitnessExecutor {
-    /// Oracle client.
-    type O: CommsClient + FlushableCache + Send + Sync + Debug;
-    /// Blob provider.
-    type B: BlobProvider + Send + Sync + Debug + Clone;
-    /// L1 chain data provider.
-    type L1: ChainProvider + Send + Sync + Debug + Clone;
-    /// L2 chain data provider.
-    type L2: L2ChainProvider + Send + Sync + Debug + Clone;
-    /// Data availability provider.
-    type DA: DataAvailabilityProvider + Send + Sync + Debug + Clone;
+/// Derivation and execution pipeline for Ethereum DA.
+#[derive(Debug)]
+pub struct WitnessExecutor<O, B>
+where
+    O: CommsClient + FlushableCache + Send + Sync + Debug,
+    B: BlobProvider + Send + Sync + Debug + Clone,
+{
+    _marker: std::marker::PhantomData<(O, B)>,
+}
+
+#[allow(clippy::new_without_default)]
+impl<O, B> WitnessExecutor<O, B>
+where
+    O: CommsClient + FlushableCache + Send + Sync + Debug,
+    B: BlobProvider + Send + Sync + Debug + Clone,
+{
+    /// Create a new executor.
+    pub const fn new() -> Self {
+        Self { _marker: std::marker::PhantomData }
+    }
 
     /// Build the derivation pipeline from the given providers.
     #[allow(clippy::too_many_arguments)]
-    async fn create_pipeline(
+    pub async fn create_pipeline(
         &self,
         rollup_config: Arc<RollupConfig>,
         l1_config: Arc<ChainConfig>,
         cursor: Arc<RwLock<PipelineCursor>>,
-        oracle: Arc<Self::O>,
-        beacon: Self::B,
-        l1_provider: Self::L1,
-        l2_provider: Self::L2,
-    ) -> Result<OraclePipeline<Self::O, Self::L1, Self::L2, Self::DA>>;
+        oracle: Arc<O>,
+        beacon: B,
+        l1_provider: OracleL1ChainProvider<O>,
+        l2_provider: OracleL2ChainProvider<O>,
+    ) -> Result<
+        OraclePipeline<
+            O,
+            OracleL1ChainProvider<O>,
+            OracleL2ChainProvider<O>,
+            EthereumDataSource<OracleL1ChainProvider<O>, B>,
+        >,
+    > {
+        let da_provider =
+            EthereumDataSource::new_from_parts(l1_provider.clone(), beacon, &rollup_config);
+        Ok(OraclePipeline::new(
+            rollup_config,
+            l1_config,
+            cursor,
+            oracle,
+            da_provider,
+            l1_provider,
+            l2_provider,
+        )
+        .await?)
+    }
 
     /// Run derivation and block execution to produce the proven boot info and derived L2 block.
     ///
     /// The intermediate root sampling interval is taken from
     /// [`BootInfo::intermediate_block_interval`] (committed via preimage key 9, same source as
     /// the TEE), so callers do not need to pass it explicitly.
-    async fn run<O, DP, P>(
+    pub async fn run<DP, P>(
         &self,
         boot: BootInfo,
         pipeline: DP,
@@ -133,7 +151,6 @@ pub trait WitnessExecutor {
         l2_provider: OracleL2ChainProvider<O>,
     ) -> Result<(BootInfo, u64, Vec<alloy_primitives::B256>)>
     where
-        O: CommsClient + FlushableCache + Send + Sync + Debug,
         DP: DriverPipeline<P> + Send + Sync + Debug,
         P: Pipeline + SignalReceiver + Send + Sync + Debug,
     {

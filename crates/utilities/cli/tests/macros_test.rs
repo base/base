@@ -95,6 +95,7 @@ mod log_args_tests {
 
         let level_arg = args.iter().find(|a| a.get_long() == Some("verbose")).unwrap();
         assert_eq!(level_arg.get_env().map(|s| s.to_str().unwrap()), Some("TEST_LOG_VERBOSITY"),);
+        assert!(level_arg.get_help().unwrap().to_string().contains("-vvvv=DEBUG"));
 
         let format_arg = args.iter().find(|a| a.get_long() == Some("logs.stdout.format")).unwrap();
         assert_eq!(format_arg.get_env().map(|s| s.to_str().unwrap()), Some("TEST_LOG_FORMAT"),);

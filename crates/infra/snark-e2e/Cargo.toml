@@ -1,0 +1,32 @@
+[package]
+name = "base-snark-e2e"
+description = "SNARK PLONK end-to-end prover verification for K8s CronJob execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+sp1-sdk = { workspace = true }
+tracing = { workspace = true }
+base-l1-head = { workspace = true }
+alloy-provider = { workspace = true }
+alloy-rpc-types = { workspace = true }
+alloy-primitives = { workspace = true }
+base-common-network = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+base-prover-service-client = { workspace = true }
+base-prover-service-protocol = { workspace = true }
+bincode = { workspace = true, features = ["serde"] }
+base-proof-succinct-proof-utils = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }

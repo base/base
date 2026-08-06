@@ -7,6 +7,7 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::NetworkPayloadEnvelope;
 use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
 use tokio::sync::watch::Receiver;
+use tracing::instrument;
 
 use crate::HandlerEncodeError;
 
@@ -47,6 +48,14 @@ pub struct BlockHandler {
 impl Handler for BlockHandler {
     /// Checks validity of a [`NetworkPayloadEnvelope`] received over P2P gossip.
     /// If valid, sends the [`NetworkPayloadEnvelope`] to the block update channel.
+    #[instrument(
+        skip_all,
+        fields(
+            topic = %msg.topic,
+            block_hash = tracing::field::Empty,
+            block_number = tracing::field::Empty
+        )
+    )]
     fn handle(&mut self, msg: Message) -> (MessageAcceptance, Option<NetworkPayloadEnvelope>) {
         let decoded = if msg.topic == self.blocks_v1_topic.hash() {
             NetworkPayloadEnvelope::decode_v1(&msg.data)
@@ -62,13 +71,18 @@ impl Handler for BlockHandler {
         };
 
         match decoded {
-            Ok(envelope) => match self.block_valid(&envelope) {
-                Ok(()) => (MessageAcceptance::Accept, Some(envelope)),
-                Err(err) => {
-                    warn!(target: "gossip", ?err, hash = ?envelope.payload_hash, "Received invalid block");
-                    (err.into(), None)
+            Ok(envelope) => {
+                tracing::Span::current()
+                    .record("block_hash", tracing::field::display(envelope.payload.block_hash()));
+                tracing::Span::current().record("block_number", envelope.payload.block_number());
+                match self.block_valid(&envelope) {
+                    Ok(()) => (MessageAcceptance::Accept, Some(envelope)),
+                    Err(err) => {
+                        warn!(target: "gossip", ?err, hash = ?envelope.payload_hash, "Received invalid block");
+                        (err.into(), None)
+                    }
                 }
-            },
+            }
             Err(err) => {
                 warn!(target: "gossip", ?err, "Failed to decode block");
                 (MessageAcceptance::Reject, None)

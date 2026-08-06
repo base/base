@@ -50,6 +50,14 @@ pub struct EncoderConfig {
     /// Default: 1 (one blob per transaction).
     pub target_num_frames: usize,
 
+    /// Maximum number of L2 blocks to accumulate into one span batch.
+    ///
+    /// When unset, span batches close only on size and channel-duration thresholds.
+    /// Set this to match the reference batcher's `max-blocks-per-span-batch` behavior.
+    ///
+    /// Default: `None`.
+    pub max_blocks_per_span_batch: Option<usize>,
+
     /// Whether to encode blocks as individual
     /// [`SingleBatch`](base_protocol::batch::SingleBatch)es
     /// or accumulate them into a single [`SpanBatch`](base_protocol::SpanBatch).
@@ -103,6 +111,7 @@ impl Default for EncoderConfig {
             max_channel_duration: 2,
             sub_safety_margin: 0,
             target_num_frames: 1,
+            max_blocks_per_span_batch: None,
             batch_type: BatchType::Single,
             da_type: DaType::Blob,
             approx_compr_ratio: 0.6,
@@ -139,6 +148,9 @@ impl EncoderConfig {
             return Err(EncoderConfigError::CalldataRequiresSingleFrame {
                 target_num_frames: self.target_num_frames,
             });
+        }
+        if matches!(self.max_blocks_per_span_batch, Some(0 | 1)) {
+            return Err(EncoderConfigError::InvalidMaxBlocksPerSpanBatch);
         }
         if matches!(self.da_type, DaType::Blob) && self.max_frame_size > Self::MAX_BLOB_FRAME_SIZE {
             return Err(EncoderConfigError::BlobFrameSizeTooLarge {
@@ -216,6 +228,9 @@ pub enum EncoderConfigError {
         /// The configured target number of frames.
         target_num_frames: usize,
     },
+    /// `max_blocks_per_span_batch <= 1`.
+    #[error("max_blocks_per_span_batch must be greater than one when set")]
+    InvalidMaxBlocksPerSpanBatch,
     /// `da_type == DaType::Blob` but `max_frame_size` leaves no room for the
     /// derivation-version prefix.
     #[error(
@@ -296,6 +311,7 @@ mod tests {
             cfg.max_frame_size + EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE,
             EncoderConfig::BLOB_MAX_DATA_SIZE
         );
+        assert_eq!(cfg.max_blocks_per_span_batch, None);
     }
 
     #[rstest]
@@ -373,6 +389,19 @@ mod tests {
         };
 
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_tiny_max_blocks_per_span_batch() {
+        for max_blocks_per_span_batch in [0, 1] {
+            let cfg = EncoderConfig {
+                max_blocks_per_span_batch: Some(max_blocks_per_span_batch),
+                ..EncoderConfig::default()
+            };
+
+            let err = cfg.validate().unwrap_err();
+            assert!(matches!(err, EncoderConfigError::InvalidMaxBlocksPerSpanBatch));
+        }
     }
 
     #[rstest]

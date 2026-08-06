@@ -18,36 +18,31 @@ mod output_proposer;
 pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};
 
 mod proof_adapter;
-pub use proof_adapter::{DispatchedProof, ProofRequesterDispatcher, ProposerProofAdapter};
+pub use proof_adapter::ProposerProofAdapter;
 
 mod proposal_intervals;
 pub use proposal_intervals::ProposalIntervals;
 
+mod proof_target;
+pub use proof_target::ProofTarget;
+
 mod proof_recovery;
-pub use proof_recovery::{
-    ProofCollectorRecoveryProvider, ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig,
-};
+pub use proof_recovery::{ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig};
 
 mod proof_collector;
-pub use proof_collector::{
-    CollectedProof, ProofCollector, ProofCollectorOrchestrator, ProofCollectorRuntimeConfig,
-    ProofCollectorState, ProofCollectorTickResult, ProofSubmitEffect, TargetPoll,
-};
+pub use proof_collector::ProofCollector;
 
 mod proof_dispatcher;
-pub use proof_dispatcher::{
-    ProofDispatchAttempt, ProofDispatchOutcome, ProofDispatcher, ProofDispatcherConfig,
-    ProofDispatcherRuntimeConfig, ProofDispatcherState, ProofDispatcherTickResult,
-};
+pub use proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig};
 
 mod proof_submitter;
-pub use proof_submitter::{ProofSubmitter, ProofSubmitterConfig, SubmitAction};
+pub use proof_submitter::{ProofSubmitter, SubmitAction};
 
 mod driver;
 pub use driver::{DriverConfig, PipelineHandle, ProposerDriverControl, RecoveredState};
 
 mod pipeline;
-pub use pipeline::{PipelineConfig, ProvingPipeline};
+pub use pipeline::ProvingPipeline;
 
 mod error;
 pub use error::ProposerError;

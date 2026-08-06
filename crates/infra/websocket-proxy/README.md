@@ -24,9 +24,24 @@ websocket-proxy --upstream-ws ws://sequencer:9000
 
 # Enable Brotli compression for downstream clients
 websocket-proxy --upstream-ws ws://sequencer:9000 --enable-compression
+
+# Trust client IP forwarding from a proxy network
+websocket-proxy \
+  --upstream-ws ws://sequencer:9000 \
+  --trusted-proxy-cidrs 10.0.0.0/8
 ```
 
 Run `websocket-proxy --help` for a full list of parameters.
+
+### Trusted Proxies
+
+Forwarded client IP headers are ignored by default. Configure `--trusted-proxy-cidrs` with every
+trusted proxy in the forwarding chain. The direct peer must be trusted before the header selected
+by `--ip-addr-http-header` (default: `X-Forwarded-For`) is read.
+
+All forwarding-header lines and comma-separated entries are scanned right to left, skipping
+trusted proxies and using the first untrusted IP. Without trusted CIDRs, connection limits use
+the direct peer IP.
 
 ## For Developers
 
@@ -34,7 +49,7 @@ Run `websocket-proxy --help` for a full list of parameters.
 
 You can build and test the project using [Cargo](https://doc.rust-lang.org/cargo/). Some useful commands are:
 
-```
+```text
 # Build the project
 cargo build
 

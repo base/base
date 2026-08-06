@@ -52,10 +52,10 @@ pub enum BaseTxEnvelope {
     #[envelope(ty = 126)]
     #[serde(serialize_with = "crate::serde_deposit_tx_rpc")]
     Deposit(Sealed<TxDeposit>),
-    /// An [EIP-8130] Account Abstraction transaction tagged with type 0x7B.
+    /// An [EIP-8130] Account Abstraction transaction tagged with type 0x79.
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
-    #[envelope(ty = 123, typed = TxEip8130)]
+    #[envelope(ty = 121, typed = TxEip8130)]
     Eip8130(Eip8130Signed),
 }
 
@@ -68,6 +68,9 @@ pub trait BaseTransaction {
 
     /// Returns `Some` if the transaction is a deposit.
     fn as_deposit(&self) -> Option<&Sealed<TxDeposit>>;
+
+    /// Returns `Some` if the transaction is an EIP-8130 transaction.
+    fn as_eip8130(&self) -> Option<&Eip8130Signed>;
 }
 
 impl BaseTransaction for BaseTxEnvelope {
@@ -77,6 +80,10 @@ impl BaseTransaction for BaseTxEnvelope {
 
     fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
         self.as_deposit()
+    }
+
+    fn as_eip8130(&self) -> Option<&Eip8130Signed> {
+        self.as_eip8130()
     }
 }
 
@@ -96,6 +103,13 @@ where
         match self {
             Self::BuiltIn(b) => b.as_deposit(),
             Self::Other(t) => t.as_deposit(),
+        }
+    }
+
+    fn as_eip8130(&self) -> Option<&Eip8130Signed> {
+        match self {
+            Self::BuiltIn(b) => b.as_eip8130(),
+            Self::Other(t) => t.as_eip8130(),
         }
     }
 }

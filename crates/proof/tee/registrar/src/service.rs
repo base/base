@@ -24,7 +24,7 @@ use url::Url;
 
 use crate::{
     AwsTargetGroupDiscovery, CertManager, DriverConfig, ProverClient, RegistrarError,
-    RegistrarMetrics, RegistrationDriver, Result, SignerManager,
+    RegistrarMetrics, RegistrationDriver, Result, SignerManager, SignerManagerConfig,
 };
 
 const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -53,12 +53,12 @@ pub struct RegistrarConfig {
     pub prover_timeout: Duration,
     /// Maximum number of instances to process concurrently.
     pub max_concurrency: usize,
+    /// Discovery cycles to preserve last-known active signers for missing instances.
+    pub instance_cache_ttl_cycles: u32,
     /// Maximum number of transaction submission retries for transient errors.
     pub max_tx_retries: u32,
-    /// Delay between transaction submission retries.
+    /// Initial delay between transaction submission retries.
     pub tx_retry_delay: Duration,
-    /// Grace window for registering recently launched unhealthy instances.
-    pub unhealthy_registration_window: Duration,
     /// Optional Nitro verifier address for CRL checks. Providing this enables CRL checks.
     pub crl_nitro_verifier_address: Option<Address>,
     /// Health server bind address.
@@ -83,9 +83,9 @@ impl fmt::Debug for RegistrarConfig {
             .field("poll_interval", &self.poll_interval)
             .field("prover_timeout", &self.prover_timeout)
             .field("max_concurrency", &self.max_concurrency)
+            .field("instance_cache_ttl_cycles", &self.instance_cache_ttl_cycles)
             .field("max_tx_retries", &self.max_tx_retries)
             .field("tx_retry_delay", &self.tx_retry_delay)
-            .field("unhealthy_registration_window", &self.unhealthy_registration_window)
             .field("crl_nitro_verifier_address", &self.crl_nitro_verifier_address)
             .field("health_addr", &self.health_addr)
             .field("log_config", &self.log_config)
@@ -211,14 +211,18 @@ impl RegistrarConfig {
         let health_handle =
             tokio::spawn(HealthServer::serve(self.health_addr, Arc::clone(&ready), cancel.clone()));
 
+        let max_attestation_age = self.boundless_prover.max_attestation_age;
         let signer_manager = Arc::new(SignerManager::new(
             self.boundless_prover,
             registry,
             tx_manager.clone(),
-            self.tee_prover_registry_address,
-            self.max_concurrency,
-            self.max_tx_retries,
-            self.tx_retry_delay,
+            SignerManagerConfig {
+                registry_address: self.tee_prover_registry_address,
+                max_concurrency: self.max_concurrency,
+                max_tx_retries: self.max_tx_retries,
+                tx_retry_delay: self.tx_retry_delay,
+                max_attestation_age,
+            },
         ));
         let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
             Some(CertManager::new(
@@ -239,7 +243,7 @@ impl RegistrarConfig {
                 poll_interval: self.poll_interval,
                 cancel: cancel.clone(),
                 max_concurrency: self.max_concurrency,
-                unhealthy_registration_window: self.unhealthy_registration_window,
+                instance_cache_ttl_cycles: self.instance_cache_ttl_cycles,
             },
             cert_manager,
             signer_manager,
@@ -323,9 +327,9 @@ mod tests {
             poll_interval: Duration::from_secs(1),
             prover_timeout: Duration::from_secs(1),
             max_concurrency: 1,
+            instance_cache_ttl_cycles: crate::INSTANCE_CACHE_TTL_CYCLES,
             max_tx_retries: 1,
             tx_retry_delay: Duration::from_secs(1),
-            unhealthy_registration_window: Duration::from_secs(1),
             crl_nitro_verifier_address: None,
             health_addr: "127.0.0.1:0".parse().unwrap(),
             log_config: base_cli_utils::LogConfig::default(),

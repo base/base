@@ -165,31 +165,26 @@ impl TransactionPane {
             KeyCode::Esc | KeyCode::Char('q') => return true,
 
             KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(selected) = self.table_state.selected()
-                    && selected + 1 < len
+                if let Some(selected) =
+                    self.table_state.selected().filter(|&selected| selected + 1 < len)
                 {
                     self.table_state.select(Some(selected + 1));
                 }
             }
 
             KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(selected) = self.table_state.selected()
-                    && selected > 0
+                if let Some(selected) = self.table_state.selected().filter(|&selected| selected > 0)
                 {
                     self.table_state.select(Some(selected - 1));
                 }
             }
 
-            KeyCode::Home | KeyCode::Char('g') => {
-                if len > 0 {
-                    self.table_state.select(Some(0));
-                }
+            KeyCode::Home | KeyCode::Char('g') if len > 0 => {
+                self.table_state.select(Some(0));
             }
 
-            KeyCode::End | KeyCode::Char('G') => {
-                if len > 0 {
-                    self.table_state.select(Some(len - 1));
-                }
+            KeyCode::End | KeyCode::Char('G') if len > 0 => {
+                self.table_state.select(Some(len - 1));
             }
 
             KeyCode::PageUp => {

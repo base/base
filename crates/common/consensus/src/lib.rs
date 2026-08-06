@@ -21,9 +21,12 @@ pub use reth_compat::{BaseBlockBody, BasePrimitives, CompactTxDeposit, DepositRe
 mod receipts;
 pub use receipts::{
     BaseReceipt, BaseReceiptEnvelope, BaseTxReceipt, DepositReceipt, DepositReceiptWithBloom,
+    Eip8130Receipt,
 };
 
 mod transaction;
+#[cfg(feature = "reth")]
+pub use transaction::Eip8130TimestampError;
 #[cfg(feature = "serde")]
 pub use transaction::serde_deposit_tx_rpc;
 pub use transaction::{
@@ -39,8 +42,8 @@ pub use extra::{EIP1559ParamEncoder, EIP1559ParamError, HoloceneExtraData, Jovia
 
 mod source;
 pub use source::{
-    DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource, UpgradeDepositSource,
-    UserDepositSource,
+    BaseTimeDepositSource, DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource,
+    UpgradeDepositSource, UserDepositSource,
 };
 
 mod predeploys;

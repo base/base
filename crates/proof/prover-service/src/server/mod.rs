@@ -4,8 +4,9 @@ use std::fmt;
 
 use base_prover_service_db::ProofRequestRepo;
 use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer,
+    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
+    ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    ProverRequesterApiServer,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -14,6 +15,7 @@ use jsonrpsee::{
 
 use crate::WorkerQueueConfig;
 
+mod delete_proof_request;
 mod get_proof;
 mod list_proofs;
 mod prove_block_range;
@@ -101,6 +103,17 @@ impl ProverRequesterApiServer for ProverServiceServer {
         self.get_proof_impl(request).await
     }
 
+    async fn delete_proof_request(&self, request: DeleteProofRequest) -> RpcResult<()> {
+        self.delete_proof_request_impl(request).await
+    }
+
+    async fn delete_proofs_by_tee_signer(
+        &self,
+        request: DeleteProofsByTeeSignerRequest,
+    ) -> RpcResult<u64> {
+        self.delete_proofs_by_tee_signer_impl(request).await
+    }
+
     async fn list_proofs(&self, request: ListProofsRequest) -> RpcResult<ListProofsResponse> {
         self.list_proofs_impl(request).await
     }
@@ -149,6 +162,21 @@ fn record_rpc_result<T>(method: &str, start: std::time::Instant, result: &RpcRes
     };
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
     crate::metrics::inc_requests(method, success, status_code);
+    crate::metrics::record_response_latency(method, success, elapsed_ms);
+}
+
+fn record_worker_rpc_result<T>(
+    method: &str,
+    start: std::time::Instant,
+    result: &RpcResult<T>,
+    worker_id: &str,
+) {
+    let (success, status_code) = match result {
+        Ok(_) => (true, "OK"),
+        Err(error) => (false, rpc_status_code_str(error.code())),
+    };
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+    crate::metrics::inc_worker_requests(method, success, status_code, worker_id);
     crate::metrics::record_response_latency(method, success, elapsed_ms);
 }
 

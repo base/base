@@ -65,29 +65,35 @@ pub struct BasePooledTransaction<
     encoded_2718: OnceLock<Bytes>,
     /// Timestamp (millis since Unix epoch) when this transaction was received.
     received_at: u128,
-    /// Optional target block number from bundle submission.
-    target_block_number: Option<u64>,
+    /// Optional minimum block number from bundle submission.
+    min_block_number: Option<u64>,
+    /// Optional maximum block number from bundle submission.
+    max_block_number: Option<u64>,
     /// Optional minimum timestamp (millis since Unix epoch) from bundle submission.
     /// The transaction should not be included before this time.
     min_timestamp: Option<u64>,
     /// Optional maximum timestamp (millis since Unix epoch) from bundle submission.
     /// The transaction should be evicted after this time.
     max_timestamp: Option<u64>,
+    /// The set of on-chain state surfaces whose change invalidates this
+    /// transaction, computed once during validation and consumed by the pool's
+    /// invalidation index. Empty until set; see [`crate::WatchSet`].
+    watch_set: OnceLock<crate::WatchSet>,
+    /// The admission limit classification (resolved sender/payer, lock/trusted
+    /// status, payer balance and max cost), computed once during validation and
+    /// consumed by the pool's admission guard. Unset until classified; see
+    /// [`crate::LimitClass`].
+    limit_class: OnceLock<crate::LimitClass>,
+    /// The authorization read-set and build-time predicates captured during
+    /// EIP-8130 validation. Unset for other transaction types; see
+    /// [`crate::WatchManifest`].
+    watch_manifest: OnceLock<crate::WatchManifest>,
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Create new instance of [Self].
     pub fn new(transaction: Recovered<Cons>, encoded_length: usize) -> Self {
-        Self {
-            inner: EthPooledTransaction::new(transaction, encoded_length),
-            estimated_tx_compressed_size: Default::default(),
-            _pd: core::marker::PhantomData,
-            encoded_2718: Default::default(),
-            received_at: unix_time_millis(),
-            target_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-        }
+        Self::new_with_received_at(transaction, encoded_length, unix_time_millis())
     }
 
     /// Create new instance with an explicit `received_at` timestamp (millis since Unix epoch).
@@ -104,20 +110,26 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
             received_at,
-            target_block_number: None,
+            min_block_number: None,
+            max_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            watch_set: OnceLock::new(),
+            limit_class: OnceLock::new(),
+            watch_manifest: OnceLock::new(),
         }
     }
 
     /// Sets bundle metadata on this transaction, returning the modified instance.
     pub const fn with_bundle_metadata(
         mut self,
-        target_block_number: Option<u64>,
+        min_block_number: Option<u64>,
+        max_block_number: Option<u64>,
         min_timestamp: Option<u64>,
         max_timestamp: Option<u64>,
     ) -> Self {
-        self.target_block_number = target_block_number;
+        self.min_block_number = min_block_number;
+        self.max_block_number = max_block_number;
         self.min_timestamp = min_timestamp;
         self.max_timestamp = max_timestamp;
         self
@@ -136,11 +148,6 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.
     pub fn encoded_2718(&self) -> &Bytes {
         self.encoded_2718.get_or_init(|| self.inner.transaction().encoded_2718().into())
-    }
-
-    /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
-    const fn inner_received_at(&self) -> u128 {
-        self.received_at
     }
 }
 
@@ -216,7 +223,20 @@ impl<Cons: Typed2718, Pooled> Typed2718 for BasePooledTransaction<Cons, Pooled> 
 
 impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Pooled> {
     fn size(&self) -> usize {
-        self.inner.size() + core::mem::size_of::<u128>() + core::mem::size_of::<Option<u64>>() * 3
+        let watch_keys_size =
+            self.watch_set.get().map_or(0, |watch_set| core::mem::size_of_val(watch_set.keys()));
+        let manifest_slots_size = self
+            .watch_manifest
+            .get()
+            .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
+        self.inner.size()
+            + core::mem::size_of::<u128>()
+            + core::mem::size_of::<Option<u64>>() * 4
+            + core::mem::size_of::<OnceLock<crate::WatchSet>>()
+            + watch_keys_size
+            + core::mem::size_of::<OnceLock<crate::LimitClass>>()
+            + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
+            + manifest_slots_size
     }
 }
 
@@ -347,6 +367,52 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     fn eip8130_nonce_channel_key(&self) -> Option<U256> {
         None
     }
+
+    /// Returns the EIP-8130 replay identifier, if applicable.
+    fn eip8130_replay_id(&self) -> Option<B256> {
+        None
+    }
+
+    /// Returns the invalidation watch set computed during validation, if set.
+    ///
+    /// Defaults to `None` for implementers that do not track invalidation
+    /// surfaces.
+    fn watch_set(&self) -> Option<&crate::WatchSet> {
+        None
+    }
+
+    /// Records the invalidation watch set computed during validation.
+    ///
+    /// Defaults to a no-op for implementers that do not track invalidation
+    /// surfaces.
+    fn set_watch_set(&self, _watch_set: crate::WatchSet) {}
+
+    /// Returns the admission limit classification computed during validation, if
+    /// set. Defaults to `None`.
+    fn limit_class(&self) -> Option<&crate::LimitClass> {
+        None
+    }
+
+    /// Records the admission limit classification computed during validation.
+    /// Defaults to a no-op.
+    fn set_limit_class(&self, _limit_class: crate::LimitClass) {}
+
+    /// Returns build-time predicates captured during EIP-8130 authorization.
+    ///
+    /// Defaults to `None` for transaction types that do not carry a manifest.
+    fn watch_manifest(&self) -> Option<&crate::WatchManifest> {
+        None
+    }
+
+    /// Records build-time predicates captured during EIP-8130 authorization.
+    ///
+    /// Defaults to a no-op for transaction types that do not carry a manifest.
+    fn set_watch_manifest(&self, _watch_manifest: crate::WatchManifest) {}
+
+    /// Returns whether this transaction belongs in the EIP-8130 sidecar.
+    fn is_eip8130_sidecar_transaction(&self) -> bool {
+        self.eip8130_nonce_channel_key().is_some() || self.eip8130_replay_id().is_some()
+    }
 }
 
 impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
@@ -368,6 +434,44 @@ where
         let nonce_key = signed.tx().nonce_key;
         (!nonce_key.is_zero() && nonce_key != Eip8130Constants::NONCE_KEY_MAX).then_some(nonce_key)
     }
+
+    fn eip8130_replay_id(&self) -> Option<B256> {
+        let signed = self.as_eip8130()?;
+        // `replay_id` keys mempool dedup/replacement only for nonce-free
+        // (`nonce_key == NONCE_KEY_MAX`) transactions, which have no nonce slot.
+        // Standard and 2D transactions dedupe/replace on
+        // `(sender, nonce_key, nonce_sequence)` under the standard nonce rules,
+        // so they must not be tracked by `replay_id` (which excludes fees and
+        // would otherwise block legitimate replace-by-fee at the same sequence).
+        if signed.tx().nonce_key != Eip8130Constants::NONCE_KEY_MAX {
+            return None;
+        }
+        Some(signed.tx().replay_id(self.sender()))
+    }
+
+    fn watch_set(&self) -> Option<&crate::WatchSet> {
+        self.watch_set.get()
+    }
+
+    fn set_watch_set(&self, watch_set: crate::WatchSet) {
+        let _ = self.watch_set.set(watch_set);
+    }
+
+    fn limit_class(&self) -> Option<&crate::LimitClass> {
+        self.limit_class.get()
+    }
+
+    fn watch_manifest(&self) -> Option<&crate::WatchManifest> {
+        self.watch_manifest.get()
+    }
+
+    fn set_watch_manifest(&self, watch_manifest: crate::WatchManifest) {
+        let _ = self.watch_manifest.set(watch_manifest);
+    }
+
+    fn set_limit_class(&self, limit_class: crate::LimitClass) {
+        let _ = self.limit_class.set(limit_class);
+    }
 }
 
 /// Trait for transactions that expose their received-at timestamp.
@@ -382,7 +486,7 @@ where
     Pooled: Send + Sync + 'static,
 {
     fn received_at(&self) -> u128 {
-        self.inner_received_at()
+        self.received_at
     }
 }
 
@@ -391,8 +495,11 @@ where
 /// All timestamp values are in milliseconds since Unix epoch. Block-timestamp
 /// arguments (which arrive in seconds) are converted internally.
 pub trait BundleTransaction {
-    /// Returns the target block number, if set.
-    fn target_block_number(&self) -> Option<u64>;
+    /// Returns the minimum block number, if set.
+    fn min_block_number(&self) -> Option<u64>;
+
+    /// Returns the maximum block number, if set.
+    fn max_block_number(&self) -> Option<u64>;
 
     /// Returns the minimum timestamp in milliseconds.
     fn min_timestamp_millis(&self) -> Option<u64>;
@@ -411,8 +518,8 @@ pub trait BundleTransaction {
             return true;
         }
 
-        if let Some(target) = self.target_block_number()
-            && block_number > target
+        if let Some(max_block) = self.max_block_number()
+            && block_number > max_block
         {
             return true;
         }
@@ -420,9 +527,15 @@ pub trait BundleTransaction {
         false
     }
 
-    /// Returns `true` if this transaction's `min_timestamp` has not yet been
-    /// reached. `block_timestamp_secs` is the block timestamp in seconds.
-    fn is_bundle_not_yet_valid(&self, block_timestamp_secs: u64) -> bool {
+    /// Returns `true` if this transaction's bundle validity window has not yet
+    /// started. `block_timestamp_secs` is the block timestamp in seconds.
+    fn is_bundle_not_yet_valid(&self, block_number: u64, block_timestamp_secs: u64) -> bool {
+        if let Some(min_block) = self.min_block_number()
+            && block_number < min_block
+        {
+            return true;
+        }
+
         let block_timestamp_millis = block_timestamp_secs.saturating_mul(1000);
 
         if let Some(min_ts) = self.min_timestamp_millis()
@@ -440,8 +553,12 @@ where
     Cons: Send + Sync,
     Pooled: Send + Sync + 'static,
 {
-    fn target_block_number(&self) -> Option<u64> {
-        self.target_block_number
+    fn min_block_number(&self) -> Option<u64> {
+        self.min_block_number
+    }
+
+    fn max_block_number(&self) -> Option<u64> {
+        self.max_block_number
     }
 
     fn min_timestamp_millis(&self) -> Option<u64> {
@@ -459,7 +576,7 @@ mod tests {
 
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Bytes, TxKind, U256};
+    use alloy_primitives::{Address, Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
@@ -469,13 +586,17 @@ mod tests {
     };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
+    use reth_primitives_traits::InMemorySize;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
         blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
     };
 
-    use crate::{BasePooledTransaction, BaseTransactionValidator};
+    use crate::{
+        BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
+        WatchManifest, WatchSet,
+    };
 
     fn signer() -> PrivateKeySigner {
         PrivateKeySigner::random()
@@ -547,5 +668,43 @@ mod tests {
         assert!(eip8130_pooled(U256::ZERO).requires_nonce_check());
         assert!(!eip8130_pooled(U256::from(1)).requires_nonce_check());
         assert!(!eip8130_pooled(Eip8130Constants::NONCE_KEY_MAX).requires_nonce_check());
+    }
+
+    #[test]
+    fn in_memory_size_includes_watch_keys() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size_without_keys = transaction.size();
+        let watch_set = WatchSet::new()
+            .watch(InvalidationKey::Balance(Address::ZERO))
+            .watch(InvalidationKey::ProtocolNonce(Address::ZERO));
+        let keys_size = core::mem::size_of_val(watch_set.keys());
+
+        transaction.set_watch_set(watch_set);
+
+        assert_eq!(transaction.size(), size_without_keys + keys_size);
+    }
+
+    #[test]
+    fn in_memory_size_includes_manifest_slots() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size_without_slots = transaction.size();
+        let manifest = WatchManifest::new(
+            vec![
+                ConfigSlot { address: Address::ZERO, slot: U256::ZERO, expected: U256::ZERO },
+                ConfigSlot {
+                    address: Address::repeat_byte(1),
+                    slot: U256::from(1),
+                    expected: U256::from(2),
+                },
+            ],
+            Address::ZERO,
+            U256::ZERO,
+            u64::MAX,
+        );
+        let slots_size = core::mem::size_of_val(manifest.config_slots());
+
+        transaction.set_watch_manifest(manifest);
+
+        assert_eq!(transaction.size(), size_without_slots + slots_size);
     }
 }

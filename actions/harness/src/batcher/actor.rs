@@ -71,6 +71,12 @@ pub enum BatcherError {
     /// The L2 source was exhausted before any blocks could be batched.
     #[error("no L2 blocks available to batch")]
     NoBlocks,
+    /// A new batch cycle was started before prior submissions were mined.
+    #[error("cannot start a batch cycle with outstanding frame submissions")]
+    OutstandingSubmissions,
+    /// The driver did not queue a frame submission before the harness timeout.
+    #[error("timed out waiting for batch frame submission")]
+    SubmissionTimeout,
 }
 
 /// Batcher actor that drives a persistent [`BatchDriver`] through [`L1Miner`].
@@ -83,8 +89,9 @@ pub enum BatcherError {
 ///
 /// Each call to [`advance`] drives one complete batch cycle:
 /// 1. Drain the L2 source and forward each block to the driver via the channel.
-/// 2. Send a [`L2BlockEvent::Flush`] to force-close the current channel.
-/// 3. Yield to let the driver encode blocks, submit frames, and suspend.
+/// 2. Send a [`L2BlockEvent::Flush`] (with an ack) to force-close the current channel.
+/// 3. Wait for the ack, confirming the driver has encoded every resulting frame and
+///    handed it to the tx manager (not just the first).
 /// 4. Mine one L1 block via the shared [`L1MinerTxManager`], firing all
 ///    receipt oneshots and delivering an [`L1HeadEvent::NewHead`] to the driver.
 /// 5. Yield to let the driver confirm receipts and advance its L1 head.
@@ -210,10 +217,16 @@ impl<S: L2BlockProvider> Batcher<S> {
 
     /// Drain the L2 source and forward all blocks to the driver, then flush.
     ///
-    /// Performs steps 1–3 of [`advance`] without mining: sends all L2 blocks,
-    /// sends [`L2BlockEvent::Flush`], and yields once so the driver encodes the
-    /// blocks and calls [`send_async`] for each submission. After this returns,
-    /// [`pending_count`] reflects how many frame transactions are waiting.
+    /// Performs steps 1–3 of [`advance`] without mining: sends all L2 blocks, then a
+    /// [`L2BlockEvent::Flush`] carrying an acknowledgement, and waits for that ack. The ack
+    /// fires once the driver has fully drained encoding and submission for this cycle — i.e.
+    /// every frame resulting from the flush (not just the first) has been handed to the tx
+    /// manager — so after this returns, [`pending_count`] reflects the *complete* set of
+    /// frame transactions waiting, even when a cycle produces more than one frame.
+    ///
+    /// The ack is delivered through the same ordered channel as the preceding `Block` events
+    /// (rather than a side channel like the admin API) so it can't be observed before the
+    /// driver has actually ingested them.
     ///
     /// # Panics
     ///
@@ -223,7 +236,6 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`advance`]: Batcher::advance
     /// [`try_advance`]: Batcher::try_advance
     /// [`pending_count`]: Batcher::pending_count
-    /// [`send_async`]: crate::L1MinerTxManager::send_async
     pub async fn encode_only(&mut self) {
         self.try_encode_only().await.unwrap_or_else(|e| panic!("Batcher::encode_only failed: {e}"))
     }
@@ -232,6 +244,9 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// [`encode_only`]: Batcher::encode_only
     async fn try_encode_only(&mut self) -> Result<(), BatcherError> {
+        if self.pending_count() > 0 || self.staged_count() > 0 {
+            return Err(BatcherError::OutstandingSubmissions);
+        }
         let mut block_count = 0u64;
         while let Some(block) = self.l2_source.next_block() {
             self.block_tx.send(L2BlockEvent::Block(Box::new(block))).expect("driver task alive");
@@ -240,8 +255,12 @@ impl<S: L2BlockProvider> Batcher<S> {
         if block_count == 0 {
             return Err(BatcherError::NoBlocks);
         }
-        self.block_tx.send(L2BlockEvent::Flush).expect("driver task alive");
-        tokio::task::yield_now().await;
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        self.block_tx.send(L2BlockEvent::Flush { ack: Some(ack_tx) }).expect("driver task alive");
+        tokio::time::timeout(Duration::from_secs(10), ack_rx)
+            .await
+            .map_err(|_| BatcherError::SubmissionTimeout)?
+            .map_err(|_| BatcherError::SubmissionTimeout)?;
         Ok(())
     }
 
@@ -278,6 +297,36 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`wait_until_requeued`]: Batcher::wait_until_requeued
     pub fn fail_next_n_submissions(&self, n: usize) {
         self.tx_manager.fail_next_n(n);
+    }
+
+    /// Schedule the next `n` frame submissions to be rejected as if the txpool
+    /// nonce slot is held by a stuck transaction.
+    ///
+    /// Each of the next `n` calls the background [`BatchDriver`] makes to
+    /// [`TxManager::send_async`] resolves with [`TxManagerError::AlreadyReserved`].
+    /// The driver classifies this as [`TxOutcome::TxpoolBlocked`]: it requeues
+    /// the frames, stops submitting, and calls [`TxManager::cancel_tx`] on its
+    /// next loop iteration to clear the slot before resubmitting. Use
+    /// [`cancellation_count`] to assert the recovery path ran, and
+    /// [`wait_until_requeued`] to wait for the frames to return to pending.
+    ///
+    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
+    /// [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    /// [`TxManagerError::AlreadyReserved`]: base_tx_manager::TxManagerError::AlreadyReserved
+    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_core::TxOutcome::TxpoolBlocked
+    /// [`cancellation_count`]: Batcher::cancellation_count
+    /// [`wait_until_requeued`]: Batcher::wait_until_requeued
+    pub fn block_next_n_submissions(&self, n: usize) {
+        self.tx_manager.block_next_n(n);
+    }
+
+    /// Returns how many times the driver has called [`TxManager::cancel_tx`] to
+    /// recover from a txpool blockage.
+    ///
+    /// [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    pub fn cancellation_count(&self) -> usize {
+        self.tx_manager.cancellation_count()
     }
 
     /// Mine all pending frame submissions in one L1 block.

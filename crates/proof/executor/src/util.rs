@@ -119,12 +119,14 @@ mod test {
                 withdrawals: Default::default(),
                 parent_beacon_block_root: Default::default(),
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: None,
             no_tx_pool: None,
             gas_limit: None,
             eip_1559_params,
             min_base_fee: None,
+            timestamp_millis_part: None,
         }
     }
 

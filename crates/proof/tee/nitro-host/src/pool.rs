@@ -207,10 +207,8 @@ mod tests {
     use std::collections::HashMap;
 
     use alloy_genesis::ChainConfig;
-    use alloy_signer::utils::public_key_to_address;
     use base_common_genesis::RollupConfig;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
-    use k256::ecdsa::VerifyingKey;
 
     use super::*;
     use crate::test_utils::AddressBasedMockRegistry;
@@ -219,6 +217,7 @@ mod tests {
         ProverConfig {
             l1_eth_url: "http://127.0.0.1:1".to_string(),
             l2_eth_url: "http://127.0.0.1:1".to_string(),
+            l2_node_url: "http://127.0.0.1:1".to_string(),
             l1_beacon_url: "http://127.0.0.1:1".to_string(),
             l2_chain_id: 0,
             rollup_config: RollupConfig::default(),
@@ -234,9 +233,7 @@ mod tests {
     }
 
     async fn signer_for(transport: &NitroTransport) -> alloy_primitives::Address {
-        let pk = transport.signer_public_key().await.unwrap();
-        let vk = VerifyingKey::from_sec1_bytes(&pk).unwrap();
-        public_key_to_address(&vk)
+        transport.signer_address().await.unwrap()
     }
 
     #[tokio::test]

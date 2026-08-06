@@ -296,7 +296,7 @@ mod tests {
         BackendSession, BackendSessionState, GetProofSessionRequest, GetProofSessionResponse,
         ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind, ProofResult, ProofType,
         ProverWorkerApiServer, RecordProofSessionRequest, RecordProofSessionResponse, SessionType,
-        ZkProofRequest, ZkProofResult, ZkVm,
+        ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
     use base_retry::RetryConfig;
     use chrono::Utc;
@@ -614,6 +614,7 @@ mod tests {
             proof_type: ProofType::Compressed,
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
+            zk_backends: vec![ZkBackend::Cluster],
             lock_duration_seconds: 60,
         }
     }
@@ -689,12 +690,17 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             }),
         }
     }
 
     fn proof_result() -> ProofResult {
-        ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![1, 2, 3].into() })
+        ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![1, 2, 3].into(),
+            execution_stats: None,
+        })
     }
 
     #[tokio::test]
@@ -707,6 +713,7 @@ mod tests {
             proof_type: ProofType::Compressed,
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
+            zk_backends: vec![ZkBackend::Cluster],
             lock_duration_seconds: 60,
         };
         let provider: &dyn ProverWorkerProvider = &server.client;

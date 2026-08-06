@@ -185,6 +185,7 @@ impl Server {
                 intermediate_roots: vec![],
                 config_hash,
                 tee_image_hash: self.tee_image_hash,
+                schedule_id: boot_info.schedule_id,
             };
             let signing_data = journal.encode();
 
@@ -198,6 +199,7 @@ impl Server {
                 l2_block_number,
                 prev_output_root,
                 config_hash,
+                schedule_id: boot_info.schedule_id,
             });
 
             prev_output_root = *output_root;
@@ -231,6 +233,7 @@ impl Server {
                 intermediate_roots,
                 config_hash,
                 tee_image_hash: self.tee_image_hash,
+                schedule_id: boot_info.schedule_id,
             };
             let signing_data = journal.encode();
 
@@ -244,6 +247,7 @@ impl Server {
                 l2_block_number: last.l2_block_number,
                 prev_output_root: agreed_l2_output_root,
                 config_hash,
+                schedule_id: boot_info.schedule_id,
             }
         };
 
@@ -345,7 +349,7 @@ mod tests {
         );
         assert_eq!(
             config_hash_for_chain(763360).unwrap(),
-            b256!("ab64b3118d2d030a3fd3fe3005239a2f332e48848bbedddca9e10df77ac7303e"),
+            b256!("d14ddabfc0ad1dd737d6e5917cf271fd479bd539c9b3d85a602589c679a9983a"),
         );
     }
 }

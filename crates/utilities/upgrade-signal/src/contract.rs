@@ -7,28 +7,26 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, sol};
 use base_common_genesis::BaseUpgrade;
-use futures::future::{join_all, try_join};
+use futures::future::try_join;
 use tokio::time::sleep;
 use tracing::warn;
 
-use crate::{UpgradeSignal, UpgradeSignalError, UpgradeSignalMetrics, UpgradeSignalSchedule};
+use crate::{
+    UpgradeSignal, UpgradeSignalError, UpgradeSignalMetricLayer, UpgradeSignalMetrics,
+    UpgradeSignalSchedule,
+};
 
 sol! {
-    /// L1 upgrade signal interface.
+    /// L1 `ProtocolVersions` upgrade schedule interface.
     ///
     /// The address can be a proxy. Nodes only depend on this read interface.
-    interface IUpgradeSignal {
-        /// Emitted when an activation timestamp is set for a hardfork ID.
-        event TimestampSet(string indexed hardforkId, uint256 timestamp);
+    interface IProtocolVersions {
+        /// Returns the activation timestamp for every registered upgrade, ordered by ascending
+        /// upgrade id (`0` = not scheduled).
+        function getSchedule() external view returns (uint64[] memory);
 
-        /// Emitted when a protocol version is set for a hardfork ID.
-        event ProtocolVersionSet(string indexed hardforkId, uint256 protocolVersion);
-
-        /// Returns the activation timestamp for `hardforkId`.
-        function getTimestamp(string hardforkId) external view returns (uint256);
-
-        /// Returns the minimum node protocol version for `hardforkId`.
-        function getProtocolVersion(string hardforkId) external view returns (uint256);
+        /// Returns the minimum protocol version clients must run (packed semver).
+        function minimumProtocolVersion() external view returns (uint256);
     }
 }
 
@@ -78,8 +76,9 @@ impl AlloyUpgradeSignalReader {
 
     /// Returns the L1 block number and concrete block ID for the configured block tag.
     ///
-    /// Pinning reads to a concrete block hash ensures every per-fork call in a schedule observes
-    /// the same L1 state. The block tag (finalized by default) keeps the schedule reorg-stable.
+    /// Pinning reads to a concrete block hash ensures every contract call in a schedule read
+    /// observes the same L1 state. The block tag (finalized by default) keeps the schedule
+    /// reorg-stable.
     pub async fn pinned_l1_block_id(&self) -> Result<(u64, BlockId), UpgradeSignalError> {
         let block = self
             .provider
@@ -93,101 +92,106 @@ impl AlloyUpgradeSignalReader {
         Ok((block.header.number, BlockId::hash(block.header.hash)))
     }
 
-    /// Converts an ABI uint256 timestamp into the node's `u64` timestamp representation.
-    pub fn decode_timestamp(value: U256) -> Result<u64, UpgradeSignalError> {
-        u64::try_from(value).map_err(|_| UpgradeSignalError::timestamp_overflow(value))
-    }
-
-    /// Reads one hardfork signal using a previously observed L1 block ID.
-    pub async fn read_signal_at_l1_block(
+    /// Reads the contract's id-ordered activation timestamps and the global minimum protocol
+    /// version using a previously observed L1 block ID.
+    pub async fn read_contract_schedule_at_l1_block(
         &self,
-        hardfork_id: BaseUpgrade,
-        l1_block_number: u64,
         l1_block: BlockId,
-    ) -> Result<UpgradeSignal, UpgradeSignalError> {
-        let (timestamp_output, version_output) = try_join(
+    ) -> Result<(Vec<u64>, U256), UpgradeSignalError> {
+        let (schedule_output, version_output) = try_join(
             self.call_at_block(
-                IUpgradeSignal::getTimestampCall {
-                    hardforkId: hardfork_id.contract_id().to_string(),
-                },
+                IProtocolVersions::getScheduleCall {},
                 l1_block,
-                "getTimestamp failed",
+                "getSchedule failed",
             ),
             self.call_at_block(
-                IUpgradeSignal::getProtocolVersionCall {
-                    hardforkId: hardfork_id.contract_id().to_string(),
-                },
+                IProtocolVersions::minimumProtocolVersionCall {},
                 l1_block,
-                "getProtocolVersion failed",
+                "minimumProtocolVersion failed",
             ),
         )
         .await?;
-        let timestamp =
-            IUpgradeSignal::getTimestampCall::abi_decode_returns(timestamp_output.as_ref())
-                .map_err(|error| UpgradeSignalError::decode("getTimestamp decode failed", error))?;
-        let activation_timestamp = Self::decode_timestamp(timestamp)?;
 
-        let protocol_version =
-            IUpgradeSignal::getProtocolVersionCall::abi_decode_returns(version_output.as_ref())
-                .map_err(|error| {
-                    UpgradeSignalError::decode("getProtocolVersion decode failed", error)
-                })?;
+        let timestamps =
+            IProtocolVersions::getScheduleCall::abi_decode_returns(schedule_output.as_ref())
+                .map_err(|error| UpgradeSignalError::decode("getSchedule decode failed", error))?;
 
-        Ok(UpgradeSignal { hardfork_id, activation_timestamp, protocol_version, l1_block_number })
+        let minimum_protocol_version =
+            IProtocolVersions::minimumProtocolVersionCall::abi_decode_returns(
+                version_output.as_ref(),
+            )
+            .map_err(|error| {
+                UpgradeSignalError::decode("minimumProtocolVersion decode failed", error)
+            })?;
+
+        Ok((timestamps, minimum_protocol_version))
     }
 
-    /// Reads the upgrade signal for `hardfork_id`.
-    pub async fn read_signal(
-        &self,
-        hardfork_id: BaseUpgrade,
-    ) -> Result<UpgradeSignal, UpgradeSignalError> {
-        let (l1_block_number, l1_block) = self.pinned_l1_block_id().await?;
-        self.read_signal_at_l1_block(hardfork_id, l1_block_number, l1_block).await
-    }
-
-    /// Reads the upgrade signal schedule for `hardfork_ids`.
+    /// Maps the contract's id-ordered activation timestamps onto the node's hardfork ladder.
     ///
-    /// Records `l1_read_errors_total` on failure: all hardfork IDs if the L1 block fetch fails,
-    /// only the failing hardfork ID if a per-hardfork contract call fails.
+    /// The contract keys upgrades by ascending numeric registration id and keeps names offchain,
+    /// so entries are aligned with [`BaseUpgrade::CONTRACT_VARIANTS`] by registration id: id `0`
+    /// maps to the oldest contract-backed hardfork, and each following id maps to the next
+    /// hardfork in the ladder. This is a positional mapping by id, not a sort by timestamp, so the
+    /// timestamps need not be monotonic. Contract entries beyond the ladder
+    /// belong to upgrades newer than this binary knows and are logged and ignored, and hardforks
+    /// without a contract entry produce no signal. Every signal carries the contract's global
+    /// minimum protocol version.
+    pub fn map_schedule(
+        timestamps: &[u64],
+        minimum_protocol_version: U256,
+        l1_block_number: u64,
+    ) -> UpgradeSignalSchedule {
+        if timestamps.len() > BaseUpgrade::CONTRACT_VARIANTS.len() {
+            warn!(
+                target: "upgrade_signal",
+                contract_upgrades = timestamps.len(),
+                known_upgrades = BaseUpgrade::CONTRACT_VARIANTS.len(),
+                "L1 schedule has more upgrades than this binary knows; newest entries ignored"
+            );
+        }
+
+        let signals: Vec<_> = BaseUpgrade::CONTRACT_VARIANTS
+            .iter()
+            .zip(timestamps.iter())
+            .map(|(upgrade_id, activation_timestamp)| UpgradeSignal {
+                upgrade_id: *upgrade_id,
+                activation_timestamp: *activation_timestamp,
+                protocol_version: minimum_protocol_version,
+                l1_block_number,
+            })
+            .collect();
+
+        UpgradeSignalSchedule::new(signals)
+    }
+
+    /// Reads the full contract-backed upgrade signal schedule.
+    ///
+    /// Records `l1_read_errors_total` for all contract-backed upgrades when the L1 block fetch or
+    /// the schedule read fails; the whole schedule is read with one `getSchedule` call, so
+    /// per-upgrade failures no longer exist.
     pub async fn read_schedule(
         &self,
-        hardfork_ids: &[BaseUpgrade],
+        metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
         let (l1_block_number, l1_block) = match self.pinned_l1_block_id().await {
             Ok(block) => block,
             Err(error) => {
-                UpgradeSignalMetrics::record_l1_read_errors(hardfork_ids);
+                UpgradeSignalMetrics::record_l1_read_errors_for_layers(metrics_layers);
                 return Err(error);
             }
         };
-        let mut signals = Vec::with_capacity(hardfork_ids.len());
-        let mut first_error = None;
 
-        for (hardfork_id, result) in
-            join_all(hardfork_ids.iter().copied().map(|hardfork_id| async move {
-                (
-                    hardfork_id,
-                    self.read_signal_at_l1_block(hardfork_id, l1_block_number, l1_block).await,
-                )
-            }))
-            .await
-        {
-            match result {
-                Ok(signal) => signals.push(signal),
+        let (timestamps, minimum_protocol_version) =
+            match self.read_contract_schedule_at_l1_block(l1_block).await {
+                Ok(values) => values,
                 Err(error) => {
-                    UpgradeSignalMetrics::record_l1_read_error(hardfork_id);
-                    if first_error.is_none() {
-                        first_error = Some(error);
-                    }
+                    UpgradeSignalMetrics::record_l1_read_errors_for_layers(metrics_layers);
+                    return Err(error);
                 }
-            }
-        }
+            };
 
-        if let Some(error) = first_error {
-            return Err(error);
-        }
-
-        Ok(UpgradeSignalSchedule::new(signals))
+        Ok(Self::map_schedule(&timestamps, minimum_protocol_version, l1_block_number))
     }
 
     /// Reads the schedule, retrying transient failures with a fixed backoff before giving up.
@@ -196,14 +200,14 @@ impl AlloyUpgradeSignalReader {
     /// outright; after `max_attempts` failures the last error is returned (fail-fast).
     pub async fn read_schedule_with_retries(
         &self,
-        hardfork_ids: &[BaseUpgrade],
         max_attempts: u32,
         backoff: Duration,
+        metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
         let max_attempts = max_attempts.max(1);
         let mut attempt = 1;
         loop {
-            match self.read_schedule(hardfork_ids).await {
+            match self.read_schedule(metrics_layers).await {
                 Ok(schedule) => return Ok(schedule),
                 Err(error) if attempt >= max_attempts => return Err(error),
                 Err(error) => {
@@ -221,72 +225,85 @@ impl AlloyUpgradeSignalReader {
         }
     }
 
-    /// Reads the schedule, tolerating per-fork failures.
+    /// Reads the schedule, tolerating read failures.
     ///
-    /// Records `l1_read_errors_total` for each fork that fails and returns the signals that were
-    /// read successfully. Intended for the live metrics poller, which must not abort the whole
-    /// schedule (or the node) because a single fork read failed.
+    /// Records `l1_read_errors_total` and returns an empty schedule when the read fails. Intended
+    /// for the live metrics poller, which must not abort the node because a schedule read failed.
     pub async fn read_schedule_tolerant(
         &self,
-        hardfork_ids: &[BaseUpgrade],
+        metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> UpgradeSignalSchedule {
-        let (l1_block_number, l1_block) = match self.pinned_l1_block_id().await {
-            Ok(block) => block,
+        match self.read_schedule(metrics_layers).await {
+            Ok(schedule) => schedule,
             Err(error) => {
-                UpgradeSignalMetrics::record_l1_read_errors(hardfork_ids);
                 warn!(
                     target: "upgrade_signal",
                     error = %error,
-                    "failed to fetch L1 block for upgrade signal poll"
+                    "failed to read live L1 upgrade signal schedule"
                 );
-                return UpgradeSignalSchedule::default();
-            }
-        };
-        let mut signals = Vec::with_capacity(hardfork_ids.len());
-        for (hardfork_id, result) in
-            join_all(hardfork_ids.iter().copied().map(|hardfork_id| async move {
-                (
-                    hardfork_id,
-                    self.read_signal_at_l1_block(hardfork_id, l1_block_number, l1_block).await,
-                )
-            }))
-            .await
-        {
-            match result {
-                Ok(signal) => signals.push(signal),
-                Err(error) => {
-                    UpgradeSignalMetrics::record_l1_read_error(hardfork_id);
-                    warn!(
-                        target: "upgrade_signal",
-                        hardfork_id = %hardfork_id.contract_id(),
-                        error = %error,
-                        "failed to read live L1 upgrade signal for hardfork"
-                    );
-                }
+                UpgradeSignalSchedule::default()
             }
         }
-        UpgradeSignalSchedule::new(signals)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::U256;
-
     use super::*;
 
-    #[test]
-    fn decodes_u64_timestamp() {
-        assert_eq!(AlloyUpgradeSignalReader::decode_timestamp(U256::from(42)).unwrap(), 42);
+    fn signals(schedule: &UpgradeSignalSchedule) -> Vec<(BaseUpgrade, u64)> {
+        schedule
+            .signals
+            .iter()
+            .map(|signal| (signal.upgrade_id, signal.activation_timestamp))
+            .collect()
     }
 
     #[test]
-    fn rejects_timestamp_overflow() {
-        let value = U256::from(u64::MAX) + U256::from(1);
+    fn maps_partial_schedule_to_oldest_hardforks() {
+        let schedule = AlloyUpgradeSignalReader::map_schedule(&[10, 20, 0], U256::from(7), 99);
 
-        assert!(matches!(
-            AlloyUpgradeSignalReader::decode_timestamp(value).unwrap_err(),
-            UpgradeSignalError::TimestampOverflow(actual) if actual == value
-        ));
+        assert_eq!(
+            signals(&schedule),
+            vec![(BaseUpgrade::Regolith, 10), (BaseUpgrade::Canyon, 20), (BaseUpgrade::Delta, 0)]
+        );
+        assert!(
+            schedule
+                .signals
+                .iter()
+                .all(|signal| signal.protocol_version == U256::from(7)
+                    && signal.l1_block_number == 99)
+        );
+    }
+
+    #[test]
+    fn maps_full_schedule_in_ladder_order() {
+        let timestamps: Vec<u64> = (1..=BaseUpgrade::CONTRACT_VARIANTS.len() as u64).collect();
+
+        let schedule = AlloyUpgradeSignalReader::map_schedule(&timestamps, U256::from(7), 1);
+
+        assert_eq!(
+            signals(&schedule),
+            BaseUpgrade::CONTRACT_VARIANTS.iter().copied().zip(timestamps).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ignores_entries_newer_than_known_ladder() {
+        let mut timestamps: Vec<u64> = (1..=BaseUpgrade::CONTRACT_VARIANTS.len() as u64).collect();
+        timestamps.push(777);
+
+        let schedule = AlloyUpgradeSignalReader::map_schedule(&timestamps, U256::from(7), 1);
+
+        assert_eq!(schedule.signals.len(), BaseUpgrade::CONTRACT_VARIANTS.len());
+        assert_eq!(signals(&schedule).first().copied(), Some((BaseUpgrade::Regolith, 1)));
+        assert!(!signals(&schedule).iter().any(|(_, timestamp)| *timestamp == 777));
+    }
+
+    #[test]
+    fn produces_no_signal_for_hardforks_without_contract_entries() {
+        let schedule = AlloyUpgradeSignalReader::map_schedule(&[42], U256::from(7), 1);
+
+        assert_eq!(signals(&schedule), vec![(BaseUpgrade::Regolith, 42)]);
     }
 }

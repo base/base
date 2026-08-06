@@ -1,6 +1,6 @@
 //! JSON-RPC request and response types for the shared prover service protocol.
 
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
@@ -27,8 +27,8 @@ impl ProofRequestIdCollisionMessage {
 pub enum ProofType {
     /// Compressed ZK proof.
     Compressed,
-    /// Groth16 SNARK proof.
-    SnarkGroth16,
+    /// PLONK SNARK proof.
+    SnarkPlonk,
     /// Trusted execution environment proof.
     Tee,
 }
@@ -47,6 +47,49 @@ pub enum TeeKind {
 pub enum ZkVm {
     /// Succinct SP1.
     Sp1,
+}
+
+/// ZK proving backend that executes a proof request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZkBackend {
+    /// Local SP1 execution statistics without proof bytes.
+    DryRun,
+    /// Self-hosted SP1 cluster.
+    #[default]
+    Cluster,
+    /// Succinct SP1 prover network.
+    Network,
+}
+
+impl ZkBackend {
+    /// Returns the canonical wire and database representation.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DryRun => "dry_run",
+            Self::Cluster => "cluster",
+            Self::Network => "network",
+        }
+    }
+}
+
+impl fmt::Display for ZkBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<&str> for ZkBackend {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "dry_run" => Ok(Self::DryRun),
+            "cluster" => Ok(Self::Cluster),
+            "network" => Ok(Self::Network),
+            other => Err(format!("Unknown ZK backend: {other}")),
+        }
+    }
 }
 
 /// Status of a submitted proof request.
@@ -91,6 +134,20 @@ pub struct ProveBlockRangeResponse {
     pub session_id: String,
 }
 
+/// Request to delete a completed proof request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteProofRequest {
+    /// Proof session identifier.
+    pub session_id: String,
+}
+
+/// Request to delete completed TEE proofs produced by one signer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteProofsByTeeSignerRequest {
+    /// TEE signer whose completed proof requests should be deleted.
+    pub tee_signer: Address,
+}
+
 /// Submitted proof request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProofRequest {
@@ -106,8 +163,8 @@ pub struct ProofRequest {
 pub enum ProofRequestKind {
     /// Request a compressed ZK proof.
     Compressed(ZkProofRequest),
-    /// Request a Groth16 SNARK proof.
-    SnarkGroth16(SnarkGroth16ProofRequest),
+    /// Request a PLONK SNARK proof.
+    SnarkPlonk(SnarkPlonkProofRequest),
     /// Request a TEE proof.
     Tee(TeeProofRequest),
 }
@@ -130,11 +187,16 @@ pub struct ZkProofRequest {
     pub intermediate_root_interval: Option<u64>,
     /// ZK virtual machine implementation to use.
     pub zk_vm: ZkVm,
+    /// Proving backend that should execute this request.
+    ///
+    /// Defaults to [`ZkBackend::Cluster`] when omitted so older clients keep working.
+    #[serde(default)]
+    pub zk_backend: ZkBackend,
 }
 
-/// Groth16 SNARK proof request parameters.
+/// PLONK SNARK proof request parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SnarkGroth16ProofRequest {
+pub struct SnarkPlonkProofRequest {
     /// Underlying ZK proof request.
     pub proof: ZkProofRequest,
     /// On-chain prover address.
@@ -156,8 +218,8 @@ pub struct TeeProofRequest {
 pub enum ProofResult {
     /// Compressed ZK proof result.
     Compressed(ZkProofResult),
-    /// Groth16 SNARK proof result.
-    SnarkGroth16(SnarkGroth16ProofResult),
+    /// PLONK SNARK proof result.
+    SnarkPlonk(SnarkPlonkProofResult),
     /// TEE proof result.
     Tee(TeeProofResult),
 }
@@ -169,11 +231,29 @@ pub struct ZkProofResult {
     pub zk_vm: ZkVm,
     /// Serialized proof bytes.
     pub proof: Bytes,
+    /// Local execution statistics, present for dry-run ZK results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_stats: Option<ExecutionStats>,
 }
 
-/// Groth16 SNARK proof result.
+/// Local SP1 execution statistics for a dry-run ZK proof.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SnarkGroth16ProofResult {
+pub struct ExecutionStats {
+    /// Total RISC-V instruction cycles reported by SP1.
+    pub total_instruction_cycles: u64,
+    /// Total SP1 gas reported by SP1.
+    pub total_sp1_gas: u64,
+    /// Per-section cycle tracker values reported by the range program.
+    pub cycle_tracker: HashMap<String, u64>,
+    /// Time spent generating the witness, in milliseconds.
+    pub witness_generation_ms: u64,
+    /// Time spent executing the SP1 range program, in milliseconds.
+    pub execution_ms: u64,
+}
+
+/// PLONK SNARK proof result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnarkPlonkProofResult {
     /// Wrapped ZK proof result.
     pub proof: ZkProofResult,
 }
@@ -187,6 +267,9 @@ pub struct TeeProofResult {
     pub proposals: Vec<Proposal>,
     /// Trusted execution environment implementation that produced the proof.
     pub tee_kind: TeeKind,
+    /// Signer that produced the proof, recovered host-side from the proof
+    /// signature.
+    pub tee_signer: Address,
 }
 
 /// Request to fetch proof status and result data.
@@ -302,6 +385,9 @@ pub struct GetNextProofRequest {
     /// ZK virtual machines this worker can execute for ZK proofs.
     #[serde(default)]
     pub zk_vms: Vec<ZkVm>,
+    /// ZK proving backends this worker can execute for ZK proofs.
+    #[serde(default)]
+    pub zk_backends: Vec<ZkBackend>,
     /// Requested lock duration in seconds. Zero uses the server default.
     pub lock_duration_seconds: u32,
 }
@@ -434,7 +520,9 @@ pub struct RecordProofSessionResponse {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Bytes, address};
+    use std::collections::HashMap;
+
+    use alloy_primitives::{Address, Bytes, address};
     use serde_json::json;
 
     use super::*;
@@ -451,6 +539,7 @@ mod tests {
                     l1_head: Some(B256::repeat_byte(0xab)),
                     intermediate_root_interval: Some(128),
                     zk_vm: ZkVm::Sp1,
+                    zk_backend: ZkBackend::Cluster,
                 }),
             },
         };
@@ -469,7 +558,8 @@ mod tests {
                             "number_of_blocks_to_prove": 20,
                             "l1_head": format!("{:#x}", B256::repeat_byte(0xab)),
                             "intermediate_root_interval": 128,
-                            "zk_vm": "sp1"
+                            "zk_vm": "sp1",
+                            "zk_backend": "cluster"
                         }
                     }
                 }
@@ -491,6 +581,49 @@ mod tests {
         }));
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn zk_result_omits_execution_stats_unless_present() {
+        let result = ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: Bytes::from_static(&[0xab, 0xcd]),
+            execution_stats: None,
+        });
+        let value = serde_json::to_value(result).expect("zk result should serialize");
+        assert!(value["payload"].get("execution_stats").is_none());
+
+        let result = ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: Bytes::new(),
+            execution_stats: Some(ExecutionStats {
+                total_instruction_cycles: 10,
+                total_sp1_gas: 20,
+                cycle_tracker: HashMap::from([("section".to_owned(), 30)]),
+                witness_generation_ms: 40,
+                execution_ms: 50,
+            }),
+        });
+        let value = serde_json::to_value(result).expect("zk result should serialize");
+        assert_eq!(
+            value,
+            json!({
+                "proof_type": "compressed",
+                "payload": {
+                    "zk_vm": "sp1",
+                    "proof": "0x",
+                    "execution_stats": {
+                        "total_instruction_cycles": 10,
+                        "total_sp1_gas": 20,
+                        "cycle_tracker": {
+                            "section": 30
+                        },
+                        "witness_generation_ms": 40,
+                        "execution_ms": 50
+                    }
+                }
+            })
+        );
     }
 
     #[test]
@@ -576,6 +709,7 @@ mod tests {
             aggregate_proposal: aggregate_proposal.clone(),
             proposals: vec![proposal.clone()],
             tee_kind: TeeKind::AwsNitro,
+            tee_signer: Address::repeat_byte(0x11),
         });
 
         let value = serde_json::to_value(result).expect("tee result should serialize");
@@ -592,6 +726,7 @@ mod tests {
                 "l2_block_number": aggregate_proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", aggregate_proposal.prev_output_root),
                 "config_hash": format!("{:#x}", aggregate_proposal.config_hash),
+                "schedule_id": format!("{:#x}", aggregate_proposal.schedule_id),
             })
         );
         assert_eq!(
@@ -604,6 +739,7 @@ mod tests {
                 "l2_block_number": proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", proposal.prev_output_root),
                 "config_hash": format!("{:#x}", proposal.config_hash),
+                "schedule_id": format!("{:#x}", proposal.schedule_id),
             })
         );
     }
@@ -695,6 +831,7 @@ mod tests {
             aggregate_proposal: aggregate_proposal.clone(),
             proposals: vec![proposal.clone()],
             tee_kind: TeeKind::AwsNitro,
+            tee_signer: Address::repeat_byte(0x11),
         };
 
         let value = serde_json::to_value(result).expect("tee result payload should serialize");
@@ -709,6 +846,7 @@ mod tests {
                 "l2_block_number": aggregate_proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", aggregate_proposal.prev_output_root),
                 "config_hash": format!("{:#x}", aggregate_proposal.config_hash),
+                "schedule_id": format!("{:#x}", aggregate_proposal.schedule_id),
             })
         );
         assert_eq!(
@@ -721,6 +859,7 @@ mod tests {
                 "l2_block_number": proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", proposal.prev_output_root),
                 "config_hash": format!("{:#x}", proposal.config_hash),
+                "schedule_id": format!("{:#x}", proposal.schedule_id),
             })
         );
     }
@@ -743,6 +882,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             }
         );
     }
@@ -766,6 +906,7 @@ mod tests {
             proof_type: ProofType::Compressed,
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
+            zk_backends: vec![ZkBackend::Cluster, ZkBackend::DryRun],
             lock_duration_seconds: 30,
         };
 
@@ -778,6 +919,7 @@ mod tests {
                 "proof_type": "compressed",
                 "tee_kinds": [],
                 "zk_vms": ["sp1"],
+                "zk_backends": ["cluster", "dry_run"],
                 "lock_duration_seconds": 30
             })
         );
@@ -794,6 +936,7 @@ mod tests {
 
         assert_eq!(request.tee_kinds, Vec::new());
         assert_eq!(request.zk_vms, Vec::new());
+        assert_eq!(request.zk_backends, Vec::new());
     }
 
     #[test]
@@ -823,6 +966,7 @@ mod tests {
             result: ProofResult::Compressed(ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: vec![1, 2, 3].into(),
+                execution_stats: None,
             }),
         };
 
@@ -853,6 +997,7 @@ mod tests {
             l2_block_number,
             prev_output_root: B256::repeat_byte(byte + 2),
             config_hash: B256::repeat_byte(byte + 3),
+            schedule_id: B256::repeat_byte(byte + 4),
         }
     }
 }

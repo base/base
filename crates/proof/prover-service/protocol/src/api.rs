@@ -3,11 +3,11 @@
 use jsonrpsee::proc_macros::rpc;
 
 use crate::{
-    GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse,
-    GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse,
-    ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
-    RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
-    WorkerSubmitProofResponse,
+    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetNextProofRequest, GetNextProofResponse,
+    GetProofRequest, GetProofResponse, GetProofSessionRequest, GetProofSessionResponse,
+    HeartbeatRequest, HeartbeatResponse, ListProofsRequest, ListProofsResponse,
+    ProveBlockRangeRequest, ProveBlockRangeResponse, RecordProofSessionRequest,
+    RecordProofSessionResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 
 #[cfg_attr(
@@ -37,6 +37,20 @@ pub trait ProverRequesterApi {
         &self,
         request: GetProofRequest,
     ) -> jsonrpsee::core::RpcResult<GetProofResponse>;
+
+    /// Delete a completed proof request so it can be retried with the same session id.
+    #[method(name = "deleteProofRequest")]
+    async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> jsonrpsee::core::RpcResult<()>;
+
+    /// Delete completed TEE proof requests produced by one signer.
+    #[method(name = "deleteProofsByTeeSigner")]
+    async fn delete_proofs_by_tee_signer(
+        &self,
+        request: DeleteProofsByTeeSignerRequest,
+    ) -> jsonrpsee::core::RpcResult<u64>;
 
     /// List submitted proof requests.
     #[method(name = "listProofs")]

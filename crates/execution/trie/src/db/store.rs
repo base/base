@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, ops::RangeBounds, path::Path};
+use std::{collections::BTreeMap, ops::RangeBounds, path::Path, time::Duration};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
@@ -9,7 +9,7 @@ use metrics::{Label, gauge};
 use reth_db::{
     Database, DatabaseEnv, DatabaseError,
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW},
-    mdbx::{DatabaseArguments, init_db_for},
+    mdbx::{DatabaseArguments, MaxReadTransactionDuration, init_db_for},
     table::{DupSort, Table},
     transaction::{DbTx, DbTxMut},
 };
@@ -48,6 +48,13 @@ pub struct MdbxProofsStorage {
     env: DatabaseEnv,
 }
 
+/// Options for opening [`MdbxProofsStorage`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MdbxProofsStorageOptions {
+    /// Maximum duration of a read transaction.
+    pub max_read_transaction_duration: Option<Duration>,
+}
+
 struct ProofWindowValue {
     earliest: NumHash,
     latest: NumHash,
@@ -75,7 +82,21 @@ struct HistoryDeleteBatch {
 impl MdbxProofsStorage {
     /// Creates a new [`MdbxProofsStorage`] instance with the given path.
     pub fn new(path: &Path) -> Result<Self, BaseProofsStorageError> {
-        let env = init_db_for::<_, Tables>(path, DatabaseArguments::default())
+        Self::new_with_options(path, MdbxProofsStorageOptions::default())
+    }
+
+    /// Creates a new [`MdbxProofsStorage`] instance with the given path and options.
+    pub fn new_with_options(
+        path: &Path,
+        options: MdbxProofsStorageOptions,
+    ) -> Result<Self, BaseProofsStorageError> {
+        let mut args = DatabaseArguments::default();
+        if let Some(duration) = options.max_read_transaction_duration {
+            args = args.with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Set(
+                duration,
+            )));
+        }
+        let env = init_db_for::<_, Tables>(path, args)
             .map_err(|e| DatabaseError::Other(format!("Failed to open database: {e}")))?;
         Ok(Self { env })
     }
@@ -1306,6 +1327,17 @@ mod tests {
     };
 
     const B0: u64 = 0;
+
+    #[test]
+    fn new_with_options_accepts_custom_max_read_transaction_duration() {
+        let dir = TempDir::new().unwrap();
+        let options = MdbxProofsStorageOptions {
+            max_read_transaction_duration: Some(Duration::from_secs(30)),
+        };
+        let store = MdbxProofsStorage::new_with_options(dir.path(), options).expect("env");
+
+        let _tx = store.env.tx().expect("ro tx");
+    }
 
     #[test]
     fn store_hashed_accounts_writes_versioned_values() {

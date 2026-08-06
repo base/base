@@ -9,7 +9,8 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, Predeploys};
 use base_common_evm::L1BlockInfo;
-use base_execution_txpool::{BasePooledTx, estimated_da_size::DataAvailabilitySized};
+use base_execution_eip8130::IntrinsicGas;
+use base_execution_txpool::{BasePooledTx, GuardMetrics, estimated_da_size::DataAvailabilitySized};
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
@@ -36,7 +37,7 @@ use reth_storage_api::{StateProvider, StateProviderFactory, errors::ProviderErro
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use reth_trie_common::ExecutionWitnessMode;
 use revm::context::{Block, BlockEnv};
-use tracing::{debug, trace, warn};
+use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, config::BaseBuilderConfig,
@@ -171,6 +172,10 @@ where
     /// Given build arguments including a Base client, transaction pool,
     /// and configuration, this function creates a transaction payload. Returns
     /// a result indicating success with the payload or an error in case of failure.
+    #[instrument(
+        skip_all,
+        fields(payload_id = tracing::field::Empty, parent_num = tracing::field::Empty)
+    )]
     fn build_payload<'a, Txs>(
         &self,
         args: BuildArguments<Attrs, BaseBuiltPayload<N>>,
@@ -191,6 +196,8 @@ where
             cancel,
             best_payload,
         };
+        tracing::Span::current().record("payload_id", tracing::field::display(ctx.payload_id()));
+        tracing::Span::current().record("parent_num", ctx.parent().number());
 
         let builder = Builder::new(best);
 
@@ -280,7 +287,7 @@ where
             config,
             cached_reads: Default::default(),
             execution_cache: None,
-            trie_handle: None,
+            state_root_handle: None,
             cancel: Default::default(),
             best_payload: None,
         };
@@ -374,13 +381,15 @@ impl<Txs> Builder<'_, Txs> {
             }
         }
 
+        let block_num = ctx.parent().number().saturating_add(1);
         let BlockBuilderOutcome {
             execution_result,
             hashed_state,
             trie_updates,
             block,
             block_access_list,
-        } = builder.finish(state_provider, None)?;
+        } = debug_span!("finish_payload", block_num)
+            .in_scope(|| builder.finish(state_provider, None))?;
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
@@ -513,7 +522,10 @@ impl ExecutionInfo {
     }
 
     /// Returns true if the transaction would exceed the block limits:
-    /// - block gas limit: ensures the transaction still fits into the block.
+    /// - block gas limit: ensures the transaction still fits into the block. `tx_reserved_gas` is
+    ///   the gas reserved against the block budget: `gas_limit` for ordinary transactions, and
+    ///   `gas_limit + payer_auth` for EIP-8130, since payer authentication is metered on top of the
+    ///   declared gas limit (see `IntrinsicGas::max_payer_auth_cost`).
     /// - tx DA limit: if configured, ensures the tx does not exceed the maximum allowed DA limit
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
@@ -524,7 +536,7 @@ impl ExecutionInfo {
         block_gas_limit: u64,
         tx_data_limit: Option<u64>,
         block_data_limit: Option<u64>,
-        tx_gas_limit: u64,
+        tx_reserved_gas: u64,
         da_footprint_gas_scalar: Option<u16>,
     ) -> bool {
         if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
@@ -546,7 +558,7 @@ impl ExecutionInfo {
             }
         }
 
-        self.cumulative_gas_used + tx_gas_limit > block_gas_limit
+        self.cumulative_gas_used.saturating_add(tx_reserved_gas) > block_gas_limit
     }
 }
 
@@ -641,6 +653,7 @@ where
     /// When `no_tx_pool` is `false` the builder is composing a new block from mempool plus
     /// attribute pre-includes; pre-includes there may legitimately be skipped on `InvalidTx`,
     /// so the historical skip-and-continue behavior is preserved.
+    #[instrument(skip_all, fields(phase = "sequencer_txs"))]
     pub fn execute_sequencer_transactions(
         &self,
         builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
@@ -687,6 +700,7 @@ where
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(()))` if the job was cancelled.
+    #[instrument(skip_all, fields(phase = "mempool_txs"))]
     pub fn execute_best_transactions<Builder>(
         &self,
         info: &mut ExecutionInfo,
@@ -711,8 +725,56 @@ where
         let tx_da_limit = self.builder_config.da_config.max_da_tx_size();
         let base_fee = builder.evm_mut().block().basefee();
 
+        let block_timestamp = self.attributes().timestamp();
         while let Some(tx) = best_txs.next(()) {
+            if self.builder_config.manifest_precheck_enabled
+                && let Some(manifest) = tx.watch_manifest()
+                && let Err(stale) = manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp)
+            {
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx.hash(),
+                    cause = stale.cause(),
+                    "skipping EIP-8130 transaction with stale authorization manifest"
+                );
+                GuardMetrics::record_builder_precheck_drop(&stale);
+                // Nonce-free replay-ID entries are independent. The upstream
+                // payload adapter invalidates by sender (not by replay ID), so
+                // marking one would suppress unrelated entries from this sender.
+                // This transaction has already been consumed from the iterator.
+                if tx.eip8130_replay_id().is_none() {
+                    best_txs.mark_invalid(tx.sender(), tx.nonce());
+                }
+                continue;
+            }
+
             let tx_da_size = tx.estimated_da_size();
+
+            // EIP-8130 meters payer authentication gas on top of the declared gas limit, so it must
+            // be reserved against the block gas budget in addition to `gas_limit`. Reserve a
+            // conservative upper bound (worst-case payer policy gate) derived from the payer auth
+            // blob (`0` for non-8130 / self-pay); see `IntrinsicGas::max_payer_auth_cost`.
+            let tx_payer_auth = match tx.as_eip8130() {
+                Some(signed) => match IntrinsicGas::max_payer_auth_cost(signed) {
+                    Ok(payer_auth) => payer_auth,
+                    Err(err) => {
+                        trace!(
+                            target: "payload_builder",
+                            %err,
+                            tx_hash = ?tx.hash(),
+                            "skipping EIP-8130 transaction with unschedulable payer authenticator"
+                        );
+                        // Mirror the manifest pre-check above: a nonce-free replay-ID entry is
+                        // independent, so invalidating by sender would suppress unrelated entries.
+                        if tx.eip8130_replay_id().is_none() {
+                            best_txs.mark_invalid(tx.sender(), tx.nonce());
+                        }
+                        continue;
+                    }
+                },
+                None => 0,
+            };
+
             let tx = tx.into_consensus();
 
             let da_footprint_gas_scalar = self
@@ -729,7 +791,7 @@ where
                 block_gas_limit,
                 tx_da_limit,
                 block_da_limit,
-                tx.gas_limit(),
+                tx.gas_limit().saturating_add(tx_payer_auth),
                 da_footprint_gas_scalar,
             ) {
                 // we can't fit this transaction into the block, so we need to mark it as
@@ -779,5 +841,26 @@ where
         }
 
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ExecutionInfo;
+
+    /// The block gas reservation must include EIP-8130 `payer_auth` on top of the
+    /// declared `gas_limit`: a transaction that fits on `gas_limit` alone is still
+    /// over the block limit once payer authentication is metered on top.
+    #[test]
+    fn is_tx_over_limits_reserves_eip8130_payer_auth() {
+        let mut info = ExecutionInfo::new();
+        info.cumulative_gas_used = 979_000;
+        let block_gas_limit = 1_000_000;
+
+        // gas_limit alone fits exactly (979_000 + 21_000 = 1_000_000).
+        assert!(!info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000, None));
+
+        // payer_auth metered on top (reserved = 21_000 + 2_100) pushes over the block limit.
+        assert!(info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000 + 2_100, None));
     }
 }

@@ -4,6 +4,7 @@ use base_consensus_engine::{
     BuildTaskError, ConsolidateInput, EngineQueries, InsertTaskError, SealTaskError,
 };
 use base_protocol::{AttributesWithParent, L2BlockInfo};
+use opentelemetry::Context;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
@@ -38,9 +39,25 @@ pub enum EngineClientError {
     #[error("An error occurred performing the reset: {0}.")]
     ResetForkchoiceError(String),
 
-    /// The EL is still syncing; the reset cannot proceed yet. Retry after a delay.
-    #[error("EL sync in progress; reset deferred")]
+    /// EL sync or canonical catch-up is incomplete; the reset cannot proceed yet.
+    #[error("EL sync or canonical catch-up in progress; reset deferred")]
     ELSyncing,
+
+    /// Shadow reconciliation is unavailable in this mode.
+    #[error("shadow reconciliation is disabled")]
+    ShadowReconciliationDisabled,
+
+    /// The canonical reconciliation payload buffer can no longer be reconciled safely.
+    #[error("canonical reconciliation payload buffer is faulted")]
+    ShadowBufferFaulted,
+
+    /// The requested shadow reconciliation range or payload chain is invalid.
+    #[error("invalid shadow reconciliation range: {0}")]
+    InvalidShadowReconciliation(String),
+
+    /// A deferred safe or finalized forkchoice update failed during reconciliation.
+    #[error("shadow reconciliation forkchoice update failed: {0}")]
+    ShadowForkchoiceUpdate(String),
 }
 
 /// Inbound requests that the [`crate::EngineActor`] can process.
@@ -55,12 +72,25 @@ pub enum EngineActorRequest {
     ProcessSafeL2SignalRequest(ConsolidateInput),
     /// Request to finalize the L2 block at the provided block number.
     ProcessFinalizedL2BlockNumberRequest(Box<u64>),
-    /// Request to insert the provided external unsafe block.
+    /// Request to process an unsafe block authenticated by the P2P gossip layer.
     ProcessUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
+    /// Request to insert an unsafe block supplied through the admin API.
+    ProcessAdminUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
     /// Request to insert a locally produced sequencer unsafe block.
     ProcessLocalUnsafeL2BlockRequest(Box<InsertUnsafePayloadRequest>),
+    /// Reconcile private blocks to an authenticated P2P payload range.
+    ReconcileShadowRequest(Box<ReconcileShadowRequest>),
     /// Request to reset engine forkchoice.
     ResetRequest(Box<ResetRequest>),
+}
+
+/// Request to replace a private shadow range with the active sequencer's P2P branch.
+#[derive(Debug)]
+pub struct ReconcileShadowRequest {
+    /// Last head built by the shadow sequencer before reconciliation.
+    pub shadow_head: L2BlockInfo,
+    /// Channel on which readiness, success, or failure is returned.
+    pub result_tx: mpsc::Sender<EngineClientResult<Option<L2BlockInfo>>>,
 }
 
 /// RPC Request for the engine to handle.
@@ -78,15 +108,30 @@ pub struct BuildRequest {
     pub attributes: AttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
     pub result_tx: mpsc::Sender<Result<PayloadId, BuildTaskError>>,
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
+    pub otel_cx: Context,
 }
 
-/// A request to reset the engine forkchoice.
+/// A request to reset engine forkchoice or complete coordinated shadow activation.
 /// Optionally contains a channel to send back the response if the caller would like to know that
 /// the request was successfully processed.
 #[derive(Debug)]
 pub struct ResetRequest {
     /// response will be sent to this channel, if `Some`.
     pub result_tx: mpsc::Sender<EngineClientResult<()>>,
+    /// The subsystem and coordination path that requested the reset.
+    pub origin: ResetOrigin,
+}
+
+/// Identifies the state owner coordinating an engine reset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResetOrigin {
+    /// Derivation requested pipeline recovery.
+    Derivation,
+    /// The sequencer requested its ordinary startup or recovery reset.
+    Sequencer,
+    /// The shadow sequencer coordinated initial activation or its private-cycle reset.
+    ShadowCycleCoordinated,
 }
 
 /// A request to insert a local unsafe payload.
@@ -96,6 +141,8 @@ pub struct InsertUnsafePayloadRequest {
     pub envelope: BaseExecutionPayloadEnvelope,
     /// Optional response channel used by the sequencer to wait for actual insertion.
     pub result_tx: Option<mpsc::Sender<Result<L2BlockInfo, InsertTaskError>>>,
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
+    pub otel_cx: Context,
 }
 
 /// A request to get the sealed payload without inserting it into the engine.
@@ -108,4 +155,6 @@ pub struct GetPayloadRequest {
     pub attributes: AttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
     pub result_tx: mpsc::Sender<Result<BaseExecutionPayloadEnvelope, SealTaskError>>,
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
+    pub otel_cx: Context,
 }

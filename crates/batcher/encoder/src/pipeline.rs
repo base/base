@@ -40,6 +40,14 @@ pub trait BatchPipeline: Send {
     /// tracking via [`confirm`](Self::confirm) / [`requeue`](Self::requeue).
     fn next_submission(&mut self) -> Option<BatchSubmission>;
 
+    /// Returns `true` if a call to [`next_submission`](Self::next_submission) would
+    /// currently return `Some`, without mutating any pipeline state.
+    ///
+    /// Used to distinguish "no more ready work" from "backpressured" when the caller
+    /// has run out of L1 submission capacity: the pipeline can be non-empty even
+    /// though the caller cannot currently drain it.
+    fn has_ready_submission(&self) -> bool;
+
     /// Mark a submission as confirmed at the given L1 block number.
     ///
     /// Prunes the confirmed frames from the channel's pending set. Once all frames of a channel

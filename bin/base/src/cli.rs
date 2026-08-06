@@ -11,7 +11,7 @@ base_cli_utils::define_log_args!("BASE_NODE");
 base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
 
 /// The `base` CLI.
-#[derive(Parser, Clone, Debug)]
+#[derive(Parser, Debug)]
 #[command(
     author,
     version = env!("CARGO_PKG_VERSION"),
@@ -21,8 +21,12 @@ base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
 )]
 pub(crate) struct BaseCli {
     /// Chain selection.
-    #[arg(long, short = 'c', global = true, default_value = "mainnet", env = "BASE_CHAIN")]
-    pub(crate) chain: ChainArg,
+    ///
+    /// Uses a distinct clap `id` so nested reth-derived subcommands (e.g. `base reth db`) can
+    /// register their own globally-propagated `--chain` arg without colliding at value-access
+    /// time in [`FromArgMatches`].
+    #[arg(id = "base_chain", long = "chain", short = 'c', env = "BASE_CHAIN")]
+    pub(crate) chain: Option<ChainArg>,
 
     /// Logging configuration.
     #[command(flatten)]
@@ -40,21 +44,21 @@ pub(crate) struct BaseCli {
 impl BaseCli {
     /// Runs the selected command with shared process initialization.
     pub(crate) fn run(self) -> eyre::Result<()> {
-        let Self { chain, logging, metrics, command } = self;
-
-        LogConfig::from(logging)
+        LogConfig::from(self.logging)
             .init_tracing_subscriber()
             .wrap_err("failed to initialize tracing")?;
 
-        MetricsConfig::from(metrics)
+        let metrics_enabled = self.metrics.enabled;
+        MetricsConfig::from(self.metrics)
             .init_with(|| {
                 base_cli_utils::register_version_metrics!();
             })
             .wrap_err("failed to install Prometheus recorder")?;
 
-        command.run(ChainResolver::new(chain))
+        self.command.run(ChainResolver::new(self.chain), metrics_enabled)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
@@ -62,7 +66,6 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     use super::*;
-    use crate::config::BuiltInChain;
 
     #[test]
     fn parses_default_chain_for_rpc() {
@@ -75,7 +78,7 @@ mod tests {
             "http://localhost:5052",
         ]);
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Mainnet)));
+        assert_eq!(cli.chain, None);
         assert!(matches!(cli.command, BaseCommand::Rpc(_)));
     }
 
@@ -83,21 +86,24 @@ mod tests {
     fn parses_named_chain_selector() {
         let cli = BaseCli::parse_from(["base", "-c", "sepolia", "bootnode"]);
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Sepolia)));
+        assert!(matches!(cli.chain, Some(ChainArg::BuiltIn(ref name)) if name == "sepolia"));
     }
 
     #[test]
-    fn parses_global_chain_after_subcommand() {
-        let cli = BaseCli::parse_from(["base", "bootnode", "--chain", "sepolia"]);
+    fn rejects_chain_after_subcommand() {
+        // `--chain` is no longer globally propagated so nested reth subcommands can register
+        // their own `--chain` arg without clap `Long option names must be unique` collisions.
+        // Callers must supply `--chain` before the subcommand: `base --chain sepolia bootnode`.
+        let err = BaseCli::try_parse_from(["base", "bootnode", "--chain", "sepolia"]).unwrap_err();
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Sepolia)));
+        assert!(err.to_string().contains("unexpected argument '--chain'"));
     }
 
     #[test]
     fn parses_path_chain_selector() {
         let cli = BaseCli::parse_from(["base", "--chain", "./chain.toml", "bootnode"]);
 
-        assert!(matches!(cli.chain, ChainArg::File(_)));
+        assert!(matches!(cli.chain, Some(ChainArg::File(_))));
     }
 
     #[test]
@@ -117,5 +123,14 @@ mod tests {
 
         let rendered = err.to_string();
         assert!(rendered.contains("cannot be used multiple times"));
+    }
+
+    #[test]
+    fn preserves_base_chain_alongside_reth_subcommand_chain() {
+        let cli =
+            BaseCli::try_parse_from(["base", "--chain", "sepolia", "reth", "db", "stats"]).unwrap();
+
+        assert!(matches!(cli.chain, Some(ChainArg::BuiltIn(ref name)) if name == "sepolia"));
+        assert!(matches!(cli.command, BaseCommand::Reth(_)));
     }
 }

@@ -2,7 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -11,7 +11,11 @@ use crate::{
     nonce::storage::NonceManagerStorage,
 };
 
-/// Per-word calldata gas charge (`G_SHA3WORD`), matching common Base precompile dispatch.
+/// Per-word *input* calldata gas charge (`G_SHA3WORD`, revm's
+/// `gas::KECCAK256WORD`), matching common Base precompile dispatch. This is the
+/// input-word model; the sibling transaction-context dispatcher instead prices
+/// *output* words at `W_copy` (see [`crate::tx_context::dispatch`]), so the two
+/// dispatchers deliberately use different word costs.
 const CALLDATA_WORD_GAS: u64 = 6;
 
 impl NonceManagerStorage<'_> {
@@ -21,6 +25,11 @@ impl NonceManagerStorage<'_> {
     /// nonce-mutating entry points (`increment_nonce`, `check_and_mark_expiring_nonce`)
     /// are driven by the EIP-8130 execution layer, not by EVM calls.
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        // `getNonce` is nonpayable; reject attached ETH before charging calldata gas.
+        if !ctx.call_value().is_zero() {
+            return BasePrecompileError::revert(INonceManager::NonPayable {})
+                .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+        }
         let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS);
         if let Err(error) = ctx.deduct_gas(calldata_cost) {
             return error.into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
@@ -46,8 +55,8 @@ impl NonceManagerStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256, address};
-    use alloy_sol_types::SolCall;
+    use alloy_primitives::{Address, Bytes, U256, address};
+    use alloy_sol_types::{SolCall, SolError};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{INonceManager, NonceManagerStorage};
@@ -60,6 +69,14 @@ mod tests {
     ) -> revm::precompile::PrecompileOutput {
         StorageCtx::enter(storage, |ctx| NonceManagerStorage::new(ctx).dispatch(ctx, calldata))
             .expect("dispatch should not fail fatally")
+    }
+
+    /// Drift tripwire: `CALLDATA_WORD_GAS` is `G_SHA3WORD`. If revm reprices
+    /// `gas::KECCAK256WORD`, this fails so the input-word charge is re-decided
+    /// deliberately rather than tracked silently.
+    #[test]
+    fn gas_matches_evm_reference() {
+        assert_eq!(super::CALLDATA_WORD_GAS, revm::interpreter::gas::KECCAK256WORD);
     }
 
     #[test]
@@ -88,6 +105,19 @@ mod tests {
         let output = dispatch(&mut storage, &calldata);
 
         assert!(output.is_revert());
+    }
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_call_value(U256::from(1u64));
+        let calldata =
+            INonceManager::getNonceCall { account: ACCOUNT, nonceKey: U256::from(9) }.abi_encode();
+
+        let output = dispatch(&mut storage, &calldata);
+
+        assert!(output.is_revert());
+        assert_eq!(output.bytes, Bytes::from(INonceManager::NonPayable {}.abi_encode()));
     }
 
     #[test]

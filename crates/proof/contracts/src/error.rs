@@ -11,7 +11,7 @@ pub enum ContractError {
         /// Human-readable label for the failed call (e.g. "`BLOCK_INTERVAL` failed").
         context: String,
         /// The underlying Alloy contract error.
-        source: alloy_contract::Error,
+        source: Box<alloy_contract::Error>,
     },
 
     /// A provider request failed before a contract call was constructed.
@@ -31,7 +31,7 @@ pub enum ContractError {
 impl ContractError {
     /// Creates an error for a failed contract call.
     pub fn call(context: impl Into<String>, source: alloy_contract::Error) -> Self {
-        Self::Call { context: context.into(), source }
+        Self::Call { context: context.into(), source: Box::new(source) }
     }
 
     /// Creates an error for a failed provider request.

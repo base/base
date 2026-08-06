@@ -142,3 +142,132 @@ where
         self.as_slot().t_delete()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::U256;
+
+    use super::*;
+    use crate::{
+        hashmap::setup_storage, provider::PrecompileStorageProvider, storage_ctx::StorageCtx,
+    };
+
+    const SENTINEL: u64 = 0xDEAD;
+
+    #[test]
+    fn unpacked_array_load_store_succeed_at_boundary() {
+        let (mut storage, address) = setup_storage();
+        let base = U256::MAX - U256::ONE;
+        let value = [U256::from(1u64), U256::from(2u64)];
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut slot = Slot::<[U256; 2]>::new(base, address, ctx);
+            slot.write(value).unwrap();
+            assert_eq!(slot.read().unwrap(), value);
+        });
+    }
+
+    #[test]
+    fn unpacked_array_store_returns_slot_overflow_near_max() {
+        let (mut storage, address) = setup_storage();
+        storage.sstore(address, U256::ZERO, U256::from(SENTINEL)).unwrap();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut slot = Slot::<[U256; 2]>::new(U256::MAX, address, ctx);
+            let err = slot.write([U256::from(1u64), U256::from(2u64)]).unwrap_err();
+            assert_eq!(err, BasePrecompileError::SlotOverflow);
+        });
+
+        assert_eq!(
+            storage.sload(address, U256::ZERO).unwrap(),
+            U256::from(SENTINEL),
+            "overflow must not wrap-store into slot 0"
+        );
+    }
+
+    #[test]
+    fn unpacked_array_load_returns_slot_overflow_near_max() {
+        let (mut storage, address) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let slot = Slot::<[U256; 2]>::new(U256::MAX, address, ctx);
+            let err = slot.read().unwrap_err();
+            assert_eq!(err, BasePrecompileError::SlotOverflow);
+        });
+    }
+
+    #[test]
+    fn packed_array_load_store_succeed_at_boundary() {
+        let (mut storage, address) = setup_storage();
+        // [u16; 32] spans 2 packed slots, so MAX - 1 is the last safe base.
+        let base = U256::MAX - U256::ONE;
+        let value = [7u16; 32];
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut slot = Slot::<[u16; 32]>::new(base, address, ctx);
+            slot.write(value).unwrap();
+            assert_eq!(slot.read().unwrap(), value);
+        });
+    }
+
+    #[test]
+    fn packed_array_store_returns_slot_overflow_near_max() {
+        let (mut storage, address) = setup_storage();
+        storage.sstore(address, U256::ZERO, U256::from(SENTINEL)).unwrap();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut slot = Slot::<[u16; 32]>::new(U256::MAX, address, ctx);
+            let err = slot.write([9u16; 32]).unwrap_err();
+            assert_eq!(err, BasePrecompileError::SlotOverflow);
+        });
+
+        assert_eq!(
+            storage.sload(address, U256::ZERO).unwrap(),
+            U256::from(SENTINEL),
+            "overflow must not wrap-store into slot 0"
+        );
+    }
+
+    #[test]
+    fn packed_array_load_returns_slot_overflow_near_max() {
+        let (mut storage, address) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let slot = Slot::<[u16; 32]>::new(U256::MAX, address, ctx);
+            let err = slot.read().unwrap_err();
+            assert_eq!(err, BasePrecompileError::SlotOverflow);
+        });
+    }
+
+    #[test]
+    fn default_multi_slot_delete_returns_slot_overflow_near_max() {
+        let (mut storage, address) = setup_storage();
+        storage.sstore(address, U256::ZERO, U256::from(SENTINEL)).unwrap();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            // [U256; 2] uses the default Storable::delete multi-slot loop.
+            let mut slot = Slot::<[U256; 2]>::new(U256::MAX, address, ctx);
+            let err = slot.delete().unwrap_err();
+            assert_eq!(err, BasePrecompileError::SlotOverflow);
+        });
+
+        assert_eq!(
+            storage.sload(address, U256::ZERO).unwrap(),
+            U256::from(SENTINEL),
+            "overflow must not wrap-delete into slot 0"
+        );
+    }
+
+    #[test]
+    fn default_multi_slot_delete_succeeds_at_boundary() {
+        let (mut storage, address) = setup_storage();
+        let base = U256::MAX - U256::ONE;
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut slot = Slot::<[U256; 2]>::new(base, address, ctx);
+            slot.write([U256::from(11u64), U256::from(22u64)]).unwrap();
+            slot.delete().unwrap();
+            assert_eq!(slot.read().unwrap(), [U256::ZERO; 2]);
+        });
+    }
+}

@@ -38,6 +38,26 @@ name = "base_precompiles"
 harness = false
 required-features = ["test-utils"]
 
+[[test]]
+name = "b20_stablecoin_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_asset_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_asset_v2_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_policy_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_factory_v1_golden"
+required-features = ["test-utils"]
+
 [features]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [
@@ -61,4 +81,7 @@ optional_eip3607 = [ "revm/optional_eip3607" ]
 optional_fee_charge = [ "revm/optional_fee_charge" ]
 optional_balance_check = [ "revm/optional_balance_check" ]
 optional_block_gas_limit = [ "revm/optional_block_gas_limit" ]
-test-utils = [ "base-precompile-storage/test-utils" ]
+test-utils = [
+	"base-common-chains/test-utils",
+	"base-precompile-storage/test-utils",
+]

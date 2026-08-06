@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_rpc_types_engine::{INVALID_FORK_CHOICE_STATE_ERROR, PayloadStatusEnum};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use derive_more::Constructor;
+use base_protocol::L2BlockInfo;
 use tokio::time::Instant;
 
 use crate::{
@@ -35,7 +35,7 @@ use crate::{
 /// [`InsertTask`]: crate::InsertTask
 /// [`ConsolidateTask`]: crate::ConsolidateTask  
 /// [`FinalizeTask`]: crate::FinalizeTask
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Clone)]
 pub struct SynchronizeTask<EngineClient_: EngineClient> {
     /// The engine client.
     pub client: Arc<EngineClient_>,
@@ -43,9 +43,55 @@ pub struct SynchronizeTask<EngineClient_: EngineClient> {
     pub rollup: Arc<RollupConfig>,
     /// The sync state update to apply to the engine state.
     pub state_update: EngineSyncStateUpdate,
+    /// Whether to send an FCU when the requested state already matches the current state.
+    force: bool,
 }
 
 impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
+    /// Creates a synchronization task that skips redundant forkchoice updates.
+    pub const fn new(
+        client: Arc<EngineClient_>,
+        rollup: Arc<RollupConfig>,
+        state_update: EngineSyncStateUpdate,
+    ) -> Self {
+        Self { client, rollup, state_update, force: false }
+    }
+
+    /// Creates a synchronization task that always sends a forkchoice update.
+    pub const fn new_forced(
+        client: Arc<EngineClient_>,
+        rollup: Arc<RollupConfig>,
+        state_update: EngineSyncStateUpdate,
+    ) -> Self {
+        Self { client, rollup, state_update, force: true }
+    }
+
+    /// Computes the sync-state update to apply when the EL responds with `Syncing`.
+    ///
+    /// Until the EL has finished syncing, the state is left untouched. Once EL sync has
+    /// completed, already-consolidated safe/local-safe/finalized progress is preserved,
+    /// but only for heads at or behind the current unsafe head. `unsafe_head` is never
+    /// advanced beyond what the EL can serve.
+    fn safe_only_sync_update(&self, state: &EngineState) -> EngineSyncStateUpdate {
+        if !state.el_sync_finished {
+            return EngineSyncStateUpdate::default();
+        }
+
+        let current_unsafe = state.sync_state.unsafe_head();
+        let is_not_ahead_of_unsafe = |head: &L2BlockInfo| {
+            head.block_info.number < current_unsafe.block_info.number
+                || (head.block_info.number == current_unsafe.block_info.number
+                    && head.block_info.hash == current_unsafe.block_info.hash)
+        };
+        EngineSyncStateUpdate {
+            // Never advance the unsafe head on a `Syncing` response.
+            unsafe_head: None,
+            local_safe_head: self.state_update.local_safe_head.filter(is_not_ahead_of_unsafe),
+            safe_head: self.state_update.safe_head.filter(is_not_ahead_of_unsafe),
+            finalized_head: self.state_update.finalized_head.filter(is_not_ahead_of_unsafe),
+        }
+    }
+
     /// Checks the response of the `engine_forkchoiceUpdated` call, and updates the sync status if
     /// necessary.
     ///
@@ -96,7 +142,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
 
     async fn execute(&self, state: &mut EngineState) -> Result<Self::Output, SynchronizeTaskError> {
         // Apply the sync state update to the engine state.
-        let new_sync_state = state.sync_state.apply_update(self.state_update);
+        let new_sync_state = state.sync_state.updated(self.state_update);
 
         // Check if a forkchoice update is not needed, return early.
         // A forkchoice update is not needed if...
@@ -108,7 +154,10 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         // We shouldn't retry the synchronize task there. Since the `sync_state` is only updated
         // inside the `SynchronizeTask` (except inside the ConsolidateTask, when the block is not
         // the last in the batch) - the engine will get stuck retrying the `SynchronizeTask`
-        if state.sync_state != Default::default() && state.sync_state == new_sync_state {
+        if !self.force
+            && state.sync_state != Default::default()
+            && state.sync_state == new_sync_state
+        {
             debug!(target: "engine", ?new_sync_state, "No forkchoice update needed");
             return Ok(());
         }
@@ -152,13 +201,11 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         let confirmed =
             self.check_forkchoice_updated_status(state, &valid_response.payload_status.status)?;
 
-        // Only apply the sync-state update when the EL confirmed the forkchoice
-        // (`Valid`).  When the EL returns `Syncing` the block is merely stored —
-        // advancing `sync_state` here would move `unsafe_head` beyond what the EL
-        // can serve, creating a gap that breaks derivation consolidation.
-        if confirmed {
-            state.sync_state = new_sync_state;
-        }
+        // On `Valid`, commit the full sync-state update. On `Syncing`, commit only
+        // the filtered safe-side update that is actually allowed to survive.
+        let applied_update =
+            if confirmed { self.state_update } else { self.safe_only_sync_update(state) };
+        state.sync_state = state.sync_state.apply_update(applied_update);
 
         let fcu_duration = fcu_time_start.elapsed();
         debug!(

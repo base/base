@@ -15,9 +15,10 @@ use super::EngineTaskExt;
 use crate::{
     BuildTaskError, EngineBuildError, EngineClient, EngineForkchoiceVersion,
     EngineGetPayloadVersion, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
-    EngineTaskErrorSeverity, ForkchoiceCheckpointReader, Metrics, NoopForkchoiceCheckpointReader,
-    SealTaskError, SyncStartError, SynchronizeTask, SynchronizeTaskError,
-    find_starting_forkchoice_with_checkpoint_reader, task_queue::EngineTaskErrors,
+    EngineTaskErrorSeverity, ForkchoiceCheckpointReader, InsertTask, InsertTaskError, Metrics,
+    NoopForkchoiceCheckpointReader, SealTaskError, SyncStartError, SynchronizeTask,
+    SynchronizeTaskError, find_starting_forkchoice_with_checkpoint_reader,
+    task_queue::EngineTaskErrors,
 };
 
 /// The [`Engine`] task queue.
@@ -30,11 +31,12 @@ use crate::{
 ///  Because tasks are executed one at a time, they are considered to be atomic operations over the
 /// [`EngineState`], and are given exclusive access to the engine state during execution.
 ///
-/// Tasks within the queue are also considered fallible. If they fail with a temporary error,
-/// they are not popped from the queue, the error is returned, and they are retried on the
-/// next call to [`Engine::drain`]. Tasks that fail with a [`EngineTaskErrorSeverity::Flush`]
-/// error are popped from the queue before the error is returned, so that the derivation
-/// pipeline can be flushed without the offending task being retried in-place.
+/// Tasks within the queue are also considered fallible. If they fail with a temporary or
+/// deferred error, they are not popped from the queue, the error is returned, and they are
+/// retried on the next call to [`Engine::drain`]. Tasks that fail with a
+/// [`EngineTaskErrorSeverity::Flush`] error are popped from the queue before the error is
+/// returned, so that the derivation pipeline can be flushed without the offending task being
+/// retried in-place.
 #[derive(Debug)]
 pub struct Engine<EngineClient_: EngineClient> {
     /// The state of the engine.
@@ -105,6 +107,9 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                 match severity {
                     EngineTaskErrorSeverity::Temporary => {
                         trace!(target: "engine", error = %err, "Temporary engine error");
+                    }
+                    EngineTaskErrorSeverity::Deferred => {
+                        trace!(target: "engine", error = %err, "Deferred engine error");
                     }
                     EngineTaskErrorSeverity::Critical => {
                         error!(target: "engine", error = %err, "Critical engine error");
@@ -409,6 +414,41 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         Metrics::engine_task_queue_depth().set(self.tasks.len() as f64);
     }
 
+    /// Sequentially inserts payloads that authoritatively replace the current unsafe chain.
+    ///
+    /// Existing safe and finalized heads are preserved, while local-safe is reset to safe after
+    /// the unsafe-chain replacement. The caller is responsible for providing payloads in
+    /// contiguous canonical order.
+    ///
+    /// Each acknowledged payload is applied and published immediately. If a later insertion
+    /// fails, earlier progress is retained. Callers may safely retry the full sequence because
+    /// authoritative duplicate payloads still require an acknowledged forkchoice update.
+    ///
+    /// Returns [`InsertTaskError::EmptyAuthoritativePayloads`] when `payloads` is empty.
+    pub async fn insert_authoritative_payloads(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        payloads: Vec<BaseExecutionPayloadEnvelope>,
+    ) -> Result<L2BlockInfo, InsertTaskError> {
+        if payloads.is_empty() {
+            return Err(InsertTaskError::EmptyAuthoritativePayloads);
+        }
+
+        let mut head = self.state.sync_state.unsafe_head();
+        for envelope in payloads {
+            head = InsertTask::authoritative_payload(
+                Arc::clone(&client),
+                Arc::clone(&config),
+                envelope,
+            )
+            .execute_with_result(&mut self.state)
+            .await?;
+            self.state_sender.send_replace(self.state);
+        }
+        Ok(head)
+    }
+
     /// Resets the engine by finding a plausible sync starting point via
     /// [`crate::find_starting_forkchoice`]. The state will be updated to the starting point, and a
     /// forkchoice update will be enqueued in order to reorg the execution layer.
@@ -457,6 +497,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         {
             match err.severity() {
                 EngineTaskErrorSeverity::Temporary
+                | EngineTaskErrorSeverity::Deferred
                 | EngineTaskErrorSeverity::Flush
                 | EngineTaskErrorSeverity::Reset => {
                     warn!(target: "engine", ?err, "Forkchoice update failed during reset. Trying again...");
@@ -507,17 +548,15 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     /// - `Err(_)` — transport or protocol error; the caller should treat this the same
     ///   as `Syncing` (pessimistic fallback).
     ///
-    /// **Precondition**: call this while `state.sync_state == Default::default()`.
-    /// If [`Engine::seed_state`] has already been called with the same `update`,
-    /// [`SynchronizeTask`] will detect an identical state and skip the FCU silently,
-    /// leaving `el_sync_finished = false`. Always probe before seeding.
+    /// The probe always sends the FCU, even when `update` matches the current state. The EL may
+    /// transition from `Syncing` to `Valid` without its forkchoice changing.
     pub async fn probe_el_sync(
         &mut self,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         update: EngineSyncStateUpdate,
     ) -> Result<bool, SynchronizeTaskError> {
-        SynchronizeTask::new(client, config, update).execute(&mut self.state).await?;
+        SynchronizeTask::new_forced(client, config, update).execute(&mut self.state).await?;
         self.state_sender.send_replace(self.state);
         Ok(self.state.el_sync_finished)
     }
@@ -835,11 +874,8 @@ mod tests {
         );
     }
 
-    /// Documents the "probe before `seed_state`" invariant: if `seed_state` is called first with
-    /// the same update, `SynchronizeTask`'s early-exit guard fires and the FCU is never sent,
-    /// leaving `el_sync_finished` = false even when the EL would respond Valid.
     #[tokio::test]
-    async fn probe_el_sync_after_seed_state_silently_skips_fcu() {
+    async fn probe_el_sync_after_seed_state_rechecks_same_forkchoice() {
         let head = test_block_info(100);
 
         let (state_tx, _) = watch::channel(EngineState::default());
@@ -851,17 +887,16 @@ mod tests {
         let update = EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
 
         let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
-        engine.seed_state(update); // seed first — the wrong order
+        engine.seed_state(update);
 
         let confirmed = engine
-            .probe_el_sync(Arc::clone(&client), Arc::new(RollupConfig::default()), update)
+            .probe_el_sync(client, Arc::new(RollupConfig::default()), update)
             .await
-            .expect("should not error");
+            .expect("forced probe should not error");
 
-        // SynchronizeTask short-circuits because state.sync_state == new_sync_state.
-        // el_sync_finished stays false despite Valid being configured.
-        assert!(!confirmed, "probe after seed short-circuits — documents the invariant");
-        assert!(!engine.state().el_sync_finished);
+        assert!(confirmed, "probe must re-check the same forkchoice");
+        assert!(engine.state().el_sync_finished);
+        assert_eq!(engine.state().sync_state.unsafe_head(), head);
     }
 
     /// Regression test: an attr-bearing FCU that returns `PayloadStatusEnum::Invalid` must

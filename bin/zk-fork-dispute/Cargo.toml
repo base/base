@@ -1,0 +1,23 @@
+[package]
+name = "base-zk-fork-dispute-bin"
+description = "Standalone ZK fork dispute binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-zk-fork-dispute"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre.workspace = true
+base-cli-utils.workspace = true
+base-zk-fork-dispute = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+clap = { workspace = true, features = ["derive", "env"] }

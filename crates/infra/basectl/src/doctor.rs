@@ -18,7 +18,8 @@ use serde_json::{Value, json};
 use url::Url;
 
 use crate::{
-    ClInfoReport, ElInfoReport, MonitoringConfig, NodeEndpoint, SyncStatusReport, TimestampJson,
+    ClInfoReport, ElInfoReport, ElReachabilityOutcome, ElReachabilityResponse, MonitoringConfig,
+    NodeEndpoint, SyncStatusReport, TelemetryClient, TelemetryClientError, TimestampJson,
     fetch_cl_info, fetch_el_info, fetch_l1_block_number, fetch_l2_block_number, fetch_l2_chain_id,
     fetch_sync_status,
 };
@@ -111,6 +112,8 @@ pub struct DoctorInputs {
     pub public_tip_rpc: Url,
     /// Optional local `reth.toml` path.
     pub reth_config: Option<PathBuf>,
+    /// Base telemetry service URL used for external EL reachability checks.
+    pub telemetry_url: Option<Url>,
 }
 
 /// Count of doctor checks by status.
@@ -210,25 +213,41 @@ impl DoctorStatus {
 impl Doctor {
     /// Runs doctor checks and returns a complete report.
     pub async fn run(config: MonitoringConfig, options: DoctorOptions) -> DoctorReport {
-        let inputs = DoctorInputs {
-            el_rpc: options.el_rpc.clone(),
-            cl_rpc: options.cl_rpc.clone(),
-            l1_rpc: config.l1_rpc.clone(),
-            public_tip_rpc: config.rpc.clone(),
-            reth_config: options.reth_config.clone(),
-        };
-
-        let (el_info, cl_info, chain_id, local_head, public_head, sync_status, l1_head) = tokio::join!(
-            fetch_el_info(&options.el_rpc),
+        let el_rpc = options.el_rpc.clone();
+        let public_tip_rpc = config.public_rpc.as_ref().unwrap_or(&config.rpc);
+        let (
+            (el_info, chain_id, telemetry_url, el_reachability),
+            cl_info,
+            local_head,
+            public_head,
+            sync_status,
+            l1_head,
+        ) = tokio::join!(
+            async move {
+                let (el_info, chain_id) =
+                    tokio::join!(fetch_el_info(&el_rpc), fetch_l2_chain_id(&el_rpc));
+                let telemetry_url = chain_id
+                    .as_ref()
+                    .ok()
+                    .and_then(|chain_id| TelemetryClient::backend_base_url(*chain_id));
+                let enode = el_info.as_ref().ok().and_then(|info| info.identity.enode.clone());
+                let reachability = match (telemetry_url.as_ref(), enode) {
+                    (Some(url), Some(enode)) => Some(match TelemetryClient::new(url.clone()) {
+                        Ok(client) => client.check_el_reachability(&enode).await,
+                        Err(error) => Err(error),
+                    }),
+                    _ => None,
+                };
+                (el_info, chain_id, telemetry_url, reachability)
+            },
             async {
                 match &options.cl_rpc {
                     Some(cl_rpc) => Some(fetch_cl_info(cl_rpc).await),
                     None => None,
                 }
             },
-            fetch_l2_chain_id(&options.el_rpc),
             fetch_l2_block_number(&options.el_rpc),
-            fetch_l2_block_number(&config.rpc),
+            fetch_l2_block_number(public_tip_rpc),
             async {
                 match &options.cl_rpc {
                     Some(cl_rpc) => Some(fetch_sync_status(&options.el_rpc, cl_rpc).await),
@@ -238,10 +257,68 @@ impl Doctor {
             fetch_l1_block_number(&config.l1_rpc),
         );
 
+        let inputs = DoctorInputs {
+            el_rpc: options.el_rpc.clone(),
+            cl_rpc: options.cl_rpc.clone(),
+            l1_rpc: config.l1_rpc.clone(),
+            public_tip_rpc: public_tip_rpc.clone(),
+            reth_config: options.reth_config.clone(),
+            telemetry_url: telemetry_url.clone(),
+        };
+
+        let external_el_reachability =
+            match (chain_id.as_ref(), telemetry_url.as_ref(), el_reachability.as_ref()) {
+                (Err(error), _, _) => DoctorCheck::new(
+                    "external_el_reachability",
+                    DoctorStatus::Skip,
+                    "could not detect network for external EL reachability check",
+                    json!({
+                        "telemetryUrl": null,
+                        "error": error.to_string(),
+                    }),
+                    json!({ "pass": "reachable" }),
+                    Some(
+                        "Check the effective `--el-rpc` endpoint and ensure `eth_chainId` is available."
+                            .to_string(),
+                    ),
+                ),
+                (Ok(chain_id), None, _) => DoctorCheck::new(
+                    "external_el_reachability",
+                    DoctorStatus::Skip,
+                    format!(
+                        "external EL reachability checks are unavailable for chain ID {chain_id}"
+                    ),
+                    json!({
+                        "chainId": chain_id,
+                        "telemetryUrl": null,
+                    }),
+                    json!({ "pass": "reachable" }),
+                    Some(
+                        "Hosted reachability checks support Base mainnet (8453) and Base Sepolia (84532)."
+                            .to_string(),
+                    ),
+                ),
+                (Ok(_), Some(telemetry_url), None) => DoctorCheck::new(
+                    "external_el_reachability",
+                    DoctorStatus::Skip,
+                    "EL enode is unavailable from admin_nodeInfo",
+                    json!({ "telemetryUrl": telemetry_url }),
+                    json!({ "pass": "reachable" }),
+                    Some("Point `--el-rpc` at an admin-enabled execution node RPC.".to_string()),
+                ),
+                (Ok(_), Some(telemetry_url), Some(Ok(response))) => {
+                    Self::external_el_reachability_check(telemetry_url, response)
+                }
+                (Ok(_), Some(telemetry_url), Some(Err(error))) => {
+                    Self::external_el_reachability_error_check(telemetry_url, error)
+                }
+            };
+
         let checks = vec![
             Self::p2p_config_check(&el_info, cl_info.as_ref()),
             Self::bootnode_check(chain_id.as_ref().ok(), &config),
             Self::advertised_endpoint_check(&el_info, cl_info.as_ref()),
+            external_el_reachability,
             Self::declared_network_check(&config, &chain_id),
             Self::reth_limits_check(options.reth_config.as_deref()),
             Self::consensus_rpc_check(options.cl_rpc.as_ref()),
@@ -252,13 +329,89 @@ impl Doctor {
                 &public_head,
                 &options.thresholds,
                 &options.el_rpc,
-                &config.rpc,
+                public_tip_rpc,
             ),
             Self::safe_head_recency_check(sync_status.as_ref(), &options.thresholds),
             Self::l1_reachability_check(&l1_head, &config.l1_rpc),
         ];
 
         DoctorReport::new(config.name, inputs, checks)
+    }
+
+    /// Builds the external execution-layer reachability doctor check.
+    fn external_el_reachability_check(
+        telemetry_url: &Url,
+        response: &ElReachabilityResponse,
+    ) -> DoctorCheck {
+        let status = if response.outcome == ElReachabilityOutcome::Reachable {
+            DoctorStatus::Pass
+        } else {
+            DoctorStatus::Fail
+        };
+        DoctorCheck::new(
+            "external_el_reachability",
+            status,
+            if status == DoctorStatus::Pass {
+                "telemetry service reached the advertised EL endpoint"
+            } else {
+                "telemetry service could not complete the advertised EL handshake"
+            },
+            json!({
+                "telemetryUrl": telemetry_url,
+                "outcome": response.outcome,
+                "stage": response.stage,
+                "observedAddress": response.observed_address,
+                "elapsedMs": response.elapsed_ms,
+                "clientVersion": response.client_version.as_deref(),
+            }),
+            json!({ "pass": "reachable" }),
+            (status == DoctorStatus::Fail).then(|| {
+                "Check the advertised enode, firewall, NAT, and EL p2p listener.".to_string()
+            }),
+        )
+    }
+
+    /// Builds a doctor check from a telemetry client error.
+    fn external_el_reachability_error_check(
+        telemetry_url: &Url,
+        error: &TelemetryClientError,
+    ) -> DoctorCheck {
+        let (status, message, hint) = match error {
+            TelemetryClientError::InvalidRequest => (
+                DoctorStatus::Fail,
+                "telemetry service rejected the advertised EL enode",
+                Some("Check the enode returned by `admin_nodeInfo`."),
+            ),
+            TelemetryClientError::PayloadTooLarge => (
+                DoctorStatus::Fail,
+                "telemetry service rejected the reachability request as too large",
+                Some("Check the enode returned by `admin_nodeInfo`."),
+            ),
+            TelemetryClientError::Saturated => (
+                DoctorStatus::Warn,
+                "telemetry service has no reachability probe capacity",
+                Some("Retry the check shortly."),
+            ),
+            TelemetryClientError::RateLimited => (
+                DoctorStatus::Warn,
+                "telemetry service rate limited the reachability request",
+                Some("Retry the check shortly."),
+            ),
+            TelemetryClientError::Unavailable { .. } => {
+                (DoctorStatus::Skip, "telemetry service is unavailable", None)
+            }
+        };
+        DoctorCheck::new(
+            "external_el_reachability",
+            status,
+            message,
+            json!({
+                "telemetryUrl": telemetry_url,
+                "error": error.to_string(),
+            }),
+            json!({ "pass": "reachable" }),
+            hint.map(str::to_string),
+        )
     }
 
     fn p2p_config_check(
@@ -284,8 +437,8 @@ impl Doctor {
     }
 
     fn bootnode_check(live_chain_id: Option<&u64>, config: &MonitoringConfig) -> DoctorCheck {
-        let expected = expected_chain_id(&config.name);
-        let chain = bootnode_chain(&config.name, live_chain_id.copied());
+        let expected = expected_chain_id(config);
+        let chain = bootnode_chain(config, live_chain_id.copied());
         let Some(chain) = chain else {
             return DoctorCheck::new(
                 "bootnode_config",
@@ -346,7 +499,7 @@ impl Doctor {
     }
 
     fn declared_network_check(config: &MonitoringConfig, chain_id: &Result<u64>) -> DoctorCheck {
-        let expected = expected_chain_id(&config.name);
+        let expected = expected_chain_id(config);
         match (expected, chain_id) {
             (_, Err(err)) => DoctorCheck::new(
                 "declared_network",
@@ -932,18 +1085,20 @@ fn worst_status(statuses: impl IntoIterator<Item = DoctorStatus>) -> DoctorStatu
     }
 }
 
-fn expected_chain_id(network: &str) -> Option<u64> {
-    match network {
+fn expected_chain_id(config: &MonitoringConfig) -> Option<u64> {
+    config.chain_id.or(match config.name.as_str() {
         "mainnet" => Some(8453),
         "sepolia" => Some(84532),
-        "devnet" => Some(1337),
         "zeronet" => Some(763360),
         _ => None,
-    }
+    })
 }
 
-fn bootnode_chain(network: &str, live_chain_id: Option<u64>) -> Option<&'static ChainConfig> {
-    expected_chain_id(network)
+fn bootnode_chain(
+    config: &MonitoringConfig,
+    live_chain_id: Option<u64>,
+) -> Option<&'static ChainConfig> {
+    expected_chain_id(config)
         .and_then(ChainConfig::by_chain_id)
         .or_else(|| live_chain_id.and_then(ChainConfig::by_chain_id))
 }
@@ -976,7 +1131,7 @@ fn peer_count_check(check: &str, layer: &str, count: u32, warn_threshold: u32) -
 #[cfg(test)]
 mod tests {
     use std::{
-        net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         path::PathBuf,
     };
 
@@ -985,9 +1140,11 @@ mod tests {
 
     use super::{
         Doctor, DoctorCheck, DoctorStatus, DoctorSummary, DoctorThresholds, ElInfoReport,
-        RethLimits, bootnode_addrs, bootnode_chain, bootnode_layer_summary, classify_ip,
-        expected_chain_id, peer_count_check, worst_status,
+        ElReachabilityOutcome, ElReachabilityResponse, RethLimits, TelemetryClientError,
+        bootnode_addrs, bootnode_chain, bootnode_layer_summary, classify_ip, expected_chain_id,
+        peer_count_check, worst_status,
     };
+    use crate::{ElNodeIdentity, ElReachabilityStage, MonitoringConfig};
 
     #[test]
     fn summary_counts_all_statuses() {
@@ -1013,16 +1170,6 @@ mod tests {
         assert_eq!(peer_count_check("x", "EL", 0, 5).status, DoctorStatus::Fail);
         assert_eq!(peer_count_check("x", "EL", 4, 5).status, DoctorStatus::Warn);
         assert_eq!(peer_count_check("x", "EL", 5, 5).status, DoctorStatus::Pass);
-    }
-
-    #[test]
-    fn default_thresholds_match_doctor_plan() {
-        let thresholds = DoctorThresholds::default();
-
-        assert_eq!(thresholds.head_lag_warn_blocks, 10);
-        assert_eq!(thresholds.head_lag_fail_blocks, 20);
-        assert_eq!(thresholds.safe_recency_warn_blocks, 150);
-        assert_eq!(thresholds.safe_recency_fail_blocks, 300);
     }
 
     #[test]
@@ -1066,6 +1213,7 @@ mod tests {
     fn el_peer_count_unavailable_skips_instead_of_failing() {
         let info = Ok(ElInfoReport {
             endpoint: None,
+            identity: ElNodeIdentity::default(),
             peer_count: None,
             peer_count_error: Some("EL `net_peerCount` unavailable from this RPC"),
         });
@@ -1076,12 +1224,46 @@ mod tests {
     }
 
     #[test]
-    fn maps_known_config_names_to_chain_ids() {
-        assert_eq!(expected_chain_id("mainnet"), Some(8453));
-        assert_eq!(expected_chain_id("sepolia"), Some(84532));
-        assert_eq!(expected_chain_id("devnet"), Some(1337));
-        assert_eq!(expected_chain_id("zeronet"), Some(763360));
-        assert_eq!(expected_chain_id("custom"), None);
+    fn external_reachability_classifies_probe_outcomes() {
+        let telemetry_url = Url::parse("http://127.0.0.1:8080").unwrap();
+        let reachable = reachability(ElReachabilityOutcome::Reachable);
+        let failed = reachability(ElReachabilityOutcome::ConnectionFailed);
+
+        assert_eq!(
+            Doctor::external_el_reachability_check(&telemetry_url, &reachable).status,
+            DoctorStatus::Pass,
+        );
+        assert_eq!(
+            Doctor::external_el_reachability_check(&telemetry_url, &failed).status,
+            DoctorStatus::Fail,
+        );
+    }
+
+    #[test]
+    fn external_reachability_preserves_client_error_classification() {
+        let telemetry_url = Url::parse("http://127.0.0.1:8080").unwrap();
+        let invalid = TelemetryClientError::InvalidRequest;
+        let saturated = TelemetryClientError::Saturated;
+        let rate_limited = TelemetryClientError::RateLimited;
+        let unavailable =
+            TelemetryClientError::Unavailable { message: "connection refused".to_string() };
+
+        assert_eq!(
+            Doctor::external_el_reachability_error_check(&telemetry_url, &invalid).status,
+            DoctorStatus::Fail,
+        );
+        assert_eq!(
+            Doctor::external_el_reachability_error_check(&telemetry_url, &saturated).status,
+            DoctorStatus::Warn,
+        );
+        assert_eq!(
+            Doctor::external_el_reachability_error_check(&telemetry_url, &rate_limited).status,
+            DoctorStatus::Warn,
+        );
+        assert_eq!(
+            Doctor::external_el_reachability_error_check(&telemetry_url, &unavailable).status,
+            DoctorStatus::Skip,
+        );
     }
 
     #[test]
@@ -1118,20 +1300,64 @@ mod tests {
     }
 
     #[test]
+    fn expected_chain_id_prefers_config_field_then_known_names() {
+        assert_eq!(expected_chain_id(&named_config("mainnet", None)), Some(8453));
+        assert_eq!(expected_chain_id(&named_config("sepolia", None)), Some(84532));
+        assert_eq!(expected_chain_id(&named_config("zeronet", None)), Some(763360));
+        // Local regenerating nets have no fixed mapping until rollup load sets chain_id.
+        assert_eq!(expected_chain_id(&named_config("devnet", None)), None);
+        assert_eq!(expected_chain_id(&named_config("devnet", Some(84538453))), Some(84538453));
+        assert_eq!(expected_chain_id(&named_config("custom", None)), None);
+    }
+
+    #[test]
     fn bootnode_chain_prefers_declared_config_over_live_chain_id() {
-        let chain = bootnode_chain("mainnet", Some(84532)).unwrap();
+        let chain = bootnode_chain(&named_config("mainnet", None), Some(84532)).unwrap();
 
         assert_eq!(chain.chain_id, 8453);
     }
 
     #[test]
     fn bootnode_chain_falls_back_to_live_chain_for_unknown_config() {
-        let chain = bootnode_chain("custom", Some(84532)).unwrap();
+        let chain = bootnode_chain(&named_config("custom", None), Some(84532)).unwrap();
 
         assert_eq!(chain.chain_id, 84532);
     }
 
+    fn named_config(name: &str, chain_id: Option<u64>) -> MonitoringConfig {
+        MonitoringConfig {
+            name: name.to_string(),
+            rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
+            el_ws_rpc: None,
+            public_rpc: None,
+            flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
+            l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
+            consensus_node_rpc: None,
+            chain_id,
+            prover_rpc: None,
+            upgrades: None,
+            system_config: alloy_primitives::Address::ZERO,
+            batcher_address: None,
+            l1_blob_target: 14,
+            conductors: None,
+            discovery: None,
+            validators: None,
+            proofs: None,
+            pods: None,
+        }
+    }
+
     fn check(status: DoctorStatus) -> DoctorCheck {
         DoctorCheck::new("check", status, "message", json!(null), json!(null), None)
+    }
+
+    fn reachability(outcome: ElReachabilityOutcome) -> ElReachabilityResponse {
+        ElReachabilityResponse {
+            outcome,
+            stage: ElReachabilityStage::Devp2pHello,
+            observed_address: SocketAddr::from(([203, 0, 113, 10], 30303)),
+            elapsed_ms: 42,
+            client_version: Some("reth/v1.0.0".to_string()),
+        }
     }
 }

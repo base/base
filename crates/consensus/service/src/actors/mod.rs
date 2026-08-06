@@ -15,10 +15,11 @@ mod engine;
 #[cfg(test)]
 pub use engine::MockEngineDerivationClient;
 pub use engine::{
-    BootstrapRole, BuildRequest, EngineActor, EngineActorRequest, EngineClientError,
-    EngineClientResult, EngineConfig, EngineDerivationClient, EngineError, EngineProcessor,
-    EngineProcessorOptions, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
-    GetPayloadRequest, InsertUnsafePayloadRequest, QueuedEngineDerivationClient, ResetRequest,
+    BuildRequest, EngineActor, EngineActorRequest, EngineClientError, EngineClientResult,
+    EngineConfig, EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver,
+    EngineRpcProcessor, EngineRpcRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
+    QueuedEngineDerivationClient, ReconcileShadowRequest, ResetOrigin, ResetOutcome, ResetRequest,
+    ValidatorEngineRequestHandler,
 };
 
 mod rpc;
@@ -43,6 +44,9 @@ pub use l1_watcher::{
     QueuedL1WatcherDerivationClient,
 };
 
+mod upgrade_signal;
+pub use upgrade_signal::{UpgradeSignalMetricsActor, UpgradeSignalNodeConfig};
+
 mod network;
 #[cfg(test)]
 pub use network::MockUnsafePayloadGossipClient;
@@ -55,12 +59,14 @@ pub use network::{
 
 mod sequencer;
 pub use sequencer::{
-    Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
+    BuildPipelineState, CanonicalReconciliationInputs, CanonicalUnsafeCatchup, Conductor,
+    ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
     L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, PayloadBuilder, PayloadSealer,
     PendingStopSender, PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard,
     ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
     SequencerActorError, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
-    UnsealedPayloadHandle,
+    SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle, ShadowReconciliationGate,
+    ShadowReconciliationTask, ShadowSequencingState, UnsealedPayloadHandle,
 };
 #[cfg(test)]
 pub use sequencer::{MockConductor, MockOriginSelector, MockSequencerEngineClient};

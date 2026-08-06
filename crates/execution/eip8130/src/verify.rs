@@ -26,8 +26,9 @@ pub struct AuthorizedActor {
 pub struct TxActors {
     /// The transaction sender, scope-gated for [`Operation::Sender`].
     pub sender: AuthorizedActor,
-    /// The gas payer, scope-gated for [`Operation::Payer`], or `None` when the
-    /// sender pays (`tx.payer == None`).
+    /// The gas payer, scope-gated for [`Operation::SelfPayer`] (explicit
+    /// self-pay) or [`Operation::SponsorPayer`] (distinct sponsor), or `None`
+    /// when the sender implicitly pays (`tx.payer == None`).
     pub payer: Option<AuthorizedActor>,
 }
 
@@ -48,20 +49,53 @@ impl ActorTxVerifier {
         storage: &AccountConfigurationStorage<'_>,
         now: u64,
     ) -> Result<TxActors, TxAuthError> {
+        Self::verify_with_recovered_sender(signed, storage, now, None)
+    }
+
+    /// Like [`Self::verify`], but accepts an already-recovered EOA sender token
+    /// to avoid a second secp256k1 recovery on the EOA path (`tx.sender ==
+    /// None`). The caller resolving the sender address up front (e.g.
+    /// `TransactionAuthorizer::authorize_and_apply`) passes the recovered token
+    /// through so the expensive ecrecover runs exactly once per transaction.
+    /// `recovered_sender` is ignored on the configured path (`tx.sender ==
+    /// Some`), and falls back to recovery here when `None`.
+    pub fn verify_with_recovered_sender(
+        signed: &Eip8130Signed,
+        storage: &AccountConfigurationStorage<'_>,
+        now: u64,
+        recovered_sender: Option<RecoveredActorId>,
+    ) -> Result<TxActors, TxAuthError> {
         let tx = signed.tx();
-        let sender = Self::verify_sender(signed, storage, now)?;
+        let sender = Self::verify_sender(signed, storage, now, recovered_sender)?;
 
         let payer = match tx.payer {
-            None => None,
+            None => {
+                // Implicit self-pay: the sender covers its own gas, so its actor
+                // must be granted SELF_PAYER (or be admin).
+                if !Operation::SelfPayer.is_granted(&sender.resolved) {
+                    return Err(TxAuthError::Scope {
+                        operation: Operation::SelfPayer,
+                        scope: sender.resolved.scope,
+                    });
+                }
+                None
+            }
             Some(account) => {
                 // The payer digest binds to the resolved sender account.
                 let hash = tx.payer_signature_hash(sender.account);
+                // `payer == sender` is explicit self-pay (SELF_PAYER); a distinct
+                // payer is sponsorship (SPONSOR_PAYER).
+                let operation = if account == sender.account {
+                    Operation::SelfPayer
+                } else {
+                    Operation::SponsorPayer
+                };
                 let resolved = Self::authorize_scoped(
                     storage,
                     account,
                     hash,
                     signed.payer_auth(),
-                    Operation::Payer,
+                    operation,
                     now,
                 )?;
                 Some(AuthorizedActor { account, resolved })
@@ -77,6 +111,7 @@ impl ActorTxVerifier {
         signed: &Eip8130Signed,
         storage: &AccountConfigurationStorage<'_>,
         now: u64,
+        recovered_sender: Option<RecoveredActorId>,
     ) -> Result<AuthorizedActor, TxAuthError> {
         if let Some(account) = signed.explicit_sender() {
             // Configured account: `sender_auth` is already `authenticator(20) || data`.
@@ -88,6 +123,12 @@ impl ActorTxVerifier {
                 Operation::Sender,
                 now,
             )?;
+            if !resolved.can_use_nonce_key(signed.tx().nonce_key) {
+                return Err(TxAuthError::Scope {
+                    operation: Operation::Sender,
+                    scope: resolved.scope,
+                });
+            }
             return Ok(AuthorizedActor { account, resolved });
         }
 
@@ -97,14 +138,22 @@ impl ActorTxVerifier {
         // resolution directly — no second ecrecover. The inline self config
         // governs: a full-owner self resolves to the unrestricted owner, a
         // scoped self to its inline scope/policy, and a disabled
-        // (`DEFAULT_EOA_REVOKED`) self is rejected.
-        let recovered = RecoveredActorId::recover_eoa_sender(signed)
-            .map_err(|_| TxAuthError::SenderRecovery)?
-            .ok_or(TxAuthError::SenderRecovery)?;
+        // (`DEFAULT_EOA_REVOKED`) self is rejected. A caller that already
+        // recovered the sender (to resolve its address before applying account
+        // changes) passes the token in so the ecrecover is not repeated.
+        let recovered = match recovered_sender {
+            Some(recovered) => recovered,
+            None => RecoveredActorId::recover_eoa_sender(signed)
+                .map_err(|_| TxAuthError::SenderRecovery)?
+                .ok_or(TxAuthError::SenderRecovery)?,
+        };
         let account = recovered.address();
 
         let resolved = ActorAuthorizer::authorize_k1(storage, account, recovered, now)?;
         if !Operation::Sender.is_granted(&resolved) {
+            return Err(TxAuthError::Scope { operation: Operation::Sender, scope: resolved.scope });
+        }
+        if !resolved.can_use_nonce_key(signed.tx().nonce_key) {
             return Err(TxAuthError::Scope { operation: Operation::Sender, scope: resolved.scope });
         }
         Ok(AuthorizedActor { account, resolved })
@@ -172,11 +221,10 @@ mod tests {
     }
 
     /// Canonical Solidity packing of `ActorConfig`.
-    fn pack(authenticator: Address, scope: u8, expiry: u64, policy_type: u8) -> U256 {
+    fn pack(authenticator: Address, scope: u8, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
             | (U256::from(scope) << 160)
             | (U256::from(expiry) << 168)
-            | (U256::from(policy_type) << 216)
     }
 
     fn base_tx(sender: Option<Address>, payer: Option<Address>) -> TxEip8130 {
@@ -211,7 +259,7 @@ mod tests {
         with_storage(|acc| {
             let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
             assert_eq!(actors.sender.account, account);
-            assert!(actors.sender.resolved.is_unrestricted());
+            assert!(actors.sender.resolved.is_admin());
             assert!(actors.payer.is_none());
         });
     }
@@ -228,12 +276,47 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(
+                    K1,
+                    Eip8130Constants::SCOPE_SENDER
+                        | Eip8130Constants::SCOPE_SELF_PAYER
+                        | Eip8130Constants::SCOPE_NONCE,
+                    0,
+                ))
                 .unwrap();
             let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
             assert_eq!(actors.sender.account, account);
-            assert_eq!(actors.sender.resolved.scope, Eip8130Constants::SCOPE_SENDER);
+            assert_eq!(
+                actors.sender.resolved.scope,
+                Eip8130Constants::SCOPE_SENDER
+                    | Eip8130Constants::SCOPE_SELF_PAYER
+                    | Eip8130Constants::SCOPE_NONCE
+            );
             assert!(actors.payer.is_none());
+        });
+    }
+
+    #[test]
+    fn self_pay_sender_without_payer_scope_is_rejected() {
+        let k = key(0x22);
+        let account = address!("0x00000000000000000000000000000000000000aa");
+        let id = actor_id(addr(&k));
+        let tx = base_tx(Some(account), None);
+        let hash = tx.sender_signature_hash();
+        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
+        with_storage(|acc| {
+            acc.actor_config
+                .at_mut(&id)
+                .at_mut(&account)
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
+                .unwrap();
+            assert_eq!(
+                ActorTxVerifier::verify(&signed, acc, NOW),
+                Err(TxAuthError::Scope {
+                    operation: Operation::SelfPayer,
+                    scope: Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE,
+                }),
+            );
         });
     }
 
@@ -250,13 +333,13 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SELF_PAYER, 0))
                 .unwrap();
             assert_eq!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
                 Err(TxAuthError::Scope {
                     operation: Operation::Sender,
-                    scope: Eip8130Constants::SCOPE_PAYER,
+                    scope: Eip8130Constants::SCOPE_SELF_PAYER,
                 }),
             );
         });
@@ -283,17 +366,17 @@ mod tests {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
                 .unwrap();
             acc.actor_config
                 .at_mut(&pid)
                 .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
                 .unwrap();
             let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
             let payer = actors.payer.expect("payer present");
             assert_eq!(payer.account, payer_account);
-            assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_PAYER);
+            assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_SPONSOR_PAYER);
         });
     }
 
@@ -322,14 +405,14 @@ mod tests {
             acc.actor_config
                 .at_mut(&pid)
                 .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
                 .unwrap();
             let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
             assert_eq!(actors.sender.account, sender_account);
-            assert!(actors.sender.resolved.is_unrestricted());
+            assert!(actors.sender.resolved.is_admin());
             let payer = actors.payer.expect("payer present");
             assert_eq!(payer.account, payer_account);
-            assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_PAYER);
+            assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_SPONSOR_PAYER);
         });
     }
 
@@ -356,7 +439,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&pid)
                 .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
                 .unwrap();
             // The payer signs the wrong digest, so it recovers a different actor
             // that is not bound on the payer account.
@@ -388,18 +471,18 @@ mod tests {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
                 .unwrap();
-            // Payer actor bound but lacking SCOPE_PAYER.
+            // Payer actor bound but lacking SCOPE_SPONSOR_PAYER.
             acc.actor_config
                 .at_mut(&pid)
                 .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0))
                 .unwrap();
             assert_eq!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
                 Err(TxAuthError::Scope {
-                    operation: Operation::Payer,
+                    operation: Operation::SponsorPayer,
                     scope: Eip8130Constants::SCOPE_SENDER,
                 }),
             );

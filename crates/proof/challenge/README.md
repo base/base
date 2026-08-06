@@ -13,7 +13,6 @@ ZK-proof dispute game challenger.
 - **Pending**: Tracks in-flight proof sessions through a `ProofPhase` lifecycle (`AwaitingProof` → `ReadyToSubmit` or `NeedsRetry`).
 - **Submitter**: Submits dispute transactions onchain (`nullify()` / `challenge()`) for invalid games.
 - **Bond**: Multi-phase bond credit claim lifecycle (`NeedsResolve` → `NeedsUnlock` → `AwaitingDelay` → `NeedsWithdraw`).
-- **Tee**: `L1HeadProvider` trait for resolving L1 block numbers from hashes.
 - **Verify**: Account proof verification against a state root using Merkle Patricia Trie proofs.
 - **Error**: Challenge submission error types.
 - **Service**: Full challenger service lifecycle (init, wiring, driver loop, shutdown).

@@ -42,8 +42,18 @@ pub use nonce_error::NonceError;
 mod validate;
 pub use validate::{NonceMode, NonceStatus, NonceValidator};
 
+mod events;
+pub use events::{
+    AccountConfigurationEvents, AccountCreated, ActorAuthorized, ActorRevoked, DelegationApplied,
+};
+
+mod apply;
+pub use apply::{
+    AccountChangeApplier, AppliedAccountChanges, ApplyError, CreatedAccount, DelegationEffect,
+};
+
 mod transaction;
-pub use transaction::{AuthorizedTransaction, TransactionAuthorizer};
+pub use transaction::{AppliedTransaction, TransactionAuthorizer};
 
 mod schedule;
 pub use schedule::Eip8130GasSchedule;

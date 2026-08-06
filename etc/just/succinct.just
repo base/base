@@ -1,39 +1,11 @@
 _cargo_prove := "~/.sp1/bin/cargo-prove"
-_sp1_tag := "v6.2.3"
+_sp1_tag := "v6.3.0"
 _repo_root := justfile_directory()
 _succinct_dir := justfile_directory() / "crates/proof/succinct"
 
 # Show available succinct commands
 default:
     @just --justfile {{ source_file() }} --list
-
-# Ensure the ELF cache has the required SP1 ELFs. No-op on hit; rebuilds on miss.
-# Prepend this to any recipe that compiles `base-proof-succinct-elfs` so local and CI
-# builds pick up the ELFs just like `just build::contracts` handles contracts.
-ensure-elfs:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    repo="{{ _repo_root }}"
-    here="{{ _succinct_dir }}"
-    cache_dir="$here/elf"
-    missing=()
-    for elf in range-elf-embedded aggregation-elf; do
-        if [ ! -s "$cache_dir/$elf" ]; then
-            missing+=("$elf")
-        fi
-    done
-    if [ "${#missing[@]}" -eq 0 ]; then
-        echo "ELF cache has required artifacts"
-        exit 0
-    fi
-    echo "ELF cache missing required artifact(s): ${missing[*]}; rebuilding..."
-    ( cd "$repo" && just succinct build-elfs )
-    for elf in range-elf-embedded aggregation-elf; do
-        if [ ! -s "$cache_dir/$elf" ]; then
-            echo "error: missing ELF after rebuild: $cache_dir/$elf" >&2
-            exit 1
-        fi
-    done
 
 # Build all SP1 ELF files (range + aggregation)
 build-elfs: build-range-elf build-agg-elf
@@ -78,7 +50,7 @@ vkeys mode="":
     set -euo pipefail
     case "{{ mode }}" in
         "")
-            just succinct ensure-elfs
+            just succinct build-elfs
             ;;
         --build)
             just succinct clean-elfs
@@ -90,7 +62,7 @@ vkeys mode="":
             ;;
     esac
     echo "Generating verification key hashes..."
-    ETH_OUTPUT=$(BASE_SUCCINCT_ELF_REQUIRE=1 RUST_LOG=error cargo run -p base-proof-succinct-scripts --bin config --release 2>&1)
+    ETH_OUTPUT=$(BASE_SUCCINCT_ELF_REQUIRE=1 RUST_LOG=error cargo run -p base-proof-succinct-scripts --bin vkeys --release 2>&1)
     ETH_RANGE=$(echo "$ETH_OUTPUT" | grep "Range Verification Key Hash" | awk '{print $NF}')
     AGG_KEY=$(echo "$ETH_OUTPUT" | grep "Aggregation Verification Key Hash" | awk '{print $NF}')
     echo ""

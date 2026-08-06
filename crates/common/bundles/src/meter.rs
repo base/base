@@ -77,25 +77,6 @@ pub struct MeterBundleResponse {
     pub total_gas_used: u64,
     /// Total execution time in microseconds.
     pub total_execution_time_us: u128,
-    /// Time spent calculating state root in microseconds.
-    #[serde(default)]
-    pub state_root_time_us: u128,
-    /// Count of account leaves from the bundle's hashed post-state: one per modified surviving
-    /// account. Proportional to gas and does not reflect trie depth.
-    #[serde(default)]
-    pub state_root_account_leaf_count: u64,
-    /// Count of account branch/removal nodes emitted during state root calculation. These
-    /// intermediate trie nodes scale with trie depth — the structural cost gas does not price.
-    #[serde(default)]
-    pub state_root_account_branch_count: u64,
-    /// Count of storage slot leaves from the bundle's hashed post-state: one per modified
-    /// non-zero slot. Proportional to gas and does not reflect trie depth.
-    #[serde(default)]
-    pub state_root_storage_leaf_count: u64,
-    /// Count of storage branch/removal nodes emitted during state root calculation, restricted
-    /// to tries the bundle actually modified. Like account branches, these scale with trie depth.
-    #[serde(default)]
-    pub state_root_storage_branch_count: u64,
 }
 
 #[cfg(test)]
@@ -199,29 +180,16 @@ mod tests {
             state_flashblock_index: Some(42),
             total_gas_used: 21000,
             total_execution_time_us: 1000,
-            state_root_time_us: 500,
-            state_root_account_leaf_count: 5,
-            state_root_account_branch_count: 7,
-            state_root_storage_leaf_count: 20,
-            state_root_storage_branch_count: 14,
         };
 
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"stateFlashblockIndex\":42"));
         assert!(json.contains("\"stateBlockNumber\":12345"));
-        assert!(json.contains("\"stateRootTimeUs\":500"));
-        assert!(json.contains("\"stateRootAccountLeafCount\":5"));
-        assert!(json.contains("\"stateRootAccountBranchCount\":7"));
-        assert!(json.contains("\"stateRootStorageLeafCount\":20"));
-        assert!(json.contains("\"stateRootStorageBranchCount\":14"));
+        assert!(!json.contains("stateRoot"));
 
         let deserialized: MeterBundleResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.state_flashblock_index, Some(42));
         assert_eq!(deserialized.state_block_number, 12345);
-        assert_eq!(deserialized.state_root_account_leaf_count, 5);
-        assert_eq!(deserialized.state_root_account_branch_count, 7);
-        assert_eq!(deserialized.state_root_storage_leaf_count, 20);
-        assert_eq!(deserialized.state_root_storage_branch_count, 14);
     }
 
     #[test]
@@ -237,11 +205,6 @@ mod tests {
             state_flashblock_index: None,
             total_gas_used: 21000,
             total_execution_time_us: 1000,
-            state_root_time_us: 0,
-            state_root_account_leaf_count: 0,
-            state_root_account_branch_count: 0,
-            state_root_storage_leaf_count: 0,
-            state_root_storage_branch_count: 0,
         };
 
         let json = serde_json::to_string(&response).unwrap();
@@ -264,8 +227,7 @@ mod tests {
             "results": [],
             "stateBlockNumber": 12345,
             "totalGasUsed": 21000,
-            "totalExecutionTimeUs": 1000,
-            "stateRootTimeUs": 500
+            "totalExecutionTimeUs": 1000
         }"#;
 
         let deserialized: MeterBundleResponse = serde_json::from_str(json).unwrap();
@@ -275,9 +237,5 @@ mod tests {
         assert_eq!(deserialized.state_flashblock_index, None);
         assert_eq!(deserialized.state_block_number, 12345);
         assert_eq!(deserialized.total_gas_used, 21000);
-        assert_eq!(deserialized.state_root_account_leaf_count, 0);
-        assert_eq!(deserialized.state_root_account_branch_count, 0);
-        assert_eq!(deserialized.state_root_storage_leaf_count, 0);
-        assert_eq!(deserialized.state_root_storage_branch_count, 0);
     }
 }

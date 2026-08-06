@@ -16,12 +16,12 @@ workspace = true
 base-bundles.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
+base-common-precompiles.workspace = true
 
 # reth
 reth-evm.workspace = true
 reth-revm.workspace = true
 reth-provider.workspace = true
-reth-trie-common.workspace = true
 base-common-evm.workspace = true
 base-execution-evm.workspace = true
 reth-primitives-traits.workspace = true
@@ -33,8 +33,8 @@ revm-database.workspace = true
 revm-bytecode.workspace = true
 
 # alloy
+alloy-evm.workspace = true
 alloy-primitives.workspace = true
-alloy-rpc-types-engine.workspace = true
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 
@@ -47,15 +47,9 @@ base-common-consensus.workspace = true
 # DA calculation
 base-common-flz.workspace = true
 
-# metrics
-base-metrics.workspace = true
-metrics = { workspace = true, optional = true }
-
 # misc
-lru.workspace = true
 eyre.workspace = true
 tokio.workspace = true
-arc-swap.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 derive_more.workspace = true
@@ -64,7 +58,7 @@ tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 # workspace
-base-test-utils.workspace = true
+base-test-utils = { workspace = true, features = ["contracts"] }
 base-common-flashblocks.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
@@ -82,6 +76,7 @@ revm-bytecode.workspace = true
 # alloy
 alloy-network.workspace = true
 alloy-sol-types.workspace = true
+alloy-rpc-types-engine.workspace = true
 alloy-rpc-client.workspace = true
 alloy-genesis = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
@@ -93,7 +88,3 @@ base-common-rpc-types.workspace = true
 url.workspace = true
 rand.workspace = true
 serde_json.workspace = true
-
-[features]
-default = [ "metrics" ]
-metrics = [ "base-metrics/metrics", "dep:metrics", "reth-evm/metrics" ]

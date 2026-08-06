@@ -1,9 +1,9 @@
 #![doc = include_str!("../README.md")]
 
+pub use base_prover_service_protocol::{ZkBackend, ZkVm};
+
 mod prover;
-pub use prover::{
-    UnimplementedZkProver, ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState,
-};
+pub use prover::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
 
 mod session_handle;
 pub use session_handle::ProofSessionHandle;
@@ -21,3 +21,6 @@ pub use proof_generator::{
     MIN_PROOF_GENERATOR_POLL_INTERVAL, ProofGenerator, ProofGeneratorError,
     ProofGeneratorHeartbeatConfig, ProofGeneratorRequest,
 };
+
+mod host;
+pub use host::{ZkHost, ZkHostConfig};

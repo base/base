@@ -11,6 +11,7 @@ use base_consensus_rpc::{
 };
 use base_consensus_safedb::SafeDBReader;
 use base_health::EthHealthCheckLayer;
+use base_upgrade_signal::UpgradeSignalRefresher;
 use derive_more::Constructor;
 use http::StatusCode;
 use jsonrpsee::{
@@ -36,6 +37,7 @@ where
     engine_rpc_client: EngineRpcClient_,
     sequencer_admin_rpc_client: Option<SequencerAdminApiClient_>,
     safe_db_reader: Arc<dyn SafeDBReader>,
+    upgrade_signal_refresher: Option<UpgradeSignalRefresher>,
 }
 
 /// The communication context used by the RPC actor.
@@ -68,6 +70,8 @@ pub(crate) async fn launch_rpc_server(
     config: &RpcBuilder,
     module: RpcModule<()>,
 ) -> Result<ServerHandle, std::io::Error> {
+    // SECURITY: This unauthenticated control-plane RPC is internal.
+    // Deployments must restrict it to trusted operators on a private network.
     let middleware = tower::ServiceBuilder::new()
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, config.http_timeout))
         .layer(tower::limit::ConcurrencyLimitLayer::new(config.max_concurrent_requests.get()))
@@ -120,8 +124,11 @@ where
         if self.config.admin_enabled()
             && let Some(network_admin) = network_admin
         {
-            modules
-                .merge(AdminRpc::new(self.sequencer_admin_rpc_client, network_admin).into_rpc())?;
+            modules.merge(
+                AdminRpc::new(self.sequencer_admin_rpc_client, network_admin)
+                    .with_upgrade_signal_refresher(self.upgrade_signal_refresher)
+                    .into_rpc(),
+            )?;
         }
 
         // Create context for communication between actors.

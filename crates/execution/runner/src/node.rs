@@ -1,10 +1,10 @@
 //! Base Node types config.
 
 use base_common_consensus::BasePrimitives;
-use base_engine_tree::BaseEngineValidatorBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_rpc::eth::BaseEthApiBuilder;
+use base_execution_txpool::GuardLimits;
 use base_node_core::{
     BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes, BaseExecutorBuilder,
     BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
@@ -16,6 +16,7 @@ use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,
     components::{BasicPayloadServiceBuilder, ComponentsBuilder},
     node::{FullNodeTypes, NodeTypes},
+    rpc::BasicEngineValidatorBuilder,
 };
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::eth::RpcTypes;
@@ -23,7 +24,7 @@ use reth_rpc_api::eth::RpcTypes;
 use crate::{BaseAddOns, BaseAddOnsBuilder};
 
 /// Type configuration for a regular Base node.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct BaseNode {
     /// Additional Base args
@@ -39,6 +40,15 @@ pub struct BaseNode {
     /// Used to control the gas limit of the blocks produced by the payload builder (configured by the
     /// batcher via the `miner_` api)
     pub gas_limit_config: GasLimitConfig,
+    /// Whether to drop positively stale EIP-8130 transactions using their
+    /// captured authorization manifest before execution.
+    pub manifest_precheck_enabled: bool,
+}
+
+impl Default for BaseNode {
+    fn default() -> Self {
+        Self::new(RollupArgs::default())
+    }
 }
 
 impl BaseNode {
@@ -48,6 +58,7 @@ impl BaseNode {
             args,
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
+            manifest_precheck_enabled: true,
         }
     }
 
@@ -63,6 +74,12 @@ impl BaseNode {
         self
     }
 
+    /// Configure whether EIP-8130 authorization manifests are checked before execution.
+    pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
+        self.manifest_precheck_enabled = enabled;
+        self
+    }
+
     /// Returns the components for the given [`RollupArgs`].
     pub fn components<Node>(&self) -> BaseNodeComponentBuilder<Node>
     where
@@ -73,19 +90,29 @@ impl BaseNode {
             compute_pending_block,
             discovery_v4,
             max_inflight_delegated_slots,
+            mempool_sender_limit,
+            mempool_payer_limit,
             ..
         } = self.args;
         ComponentsBuilder::default()
             .node_types::<Node>()
             .pool(
                 BasePoolBuilder::default()
-                    .with_max_inflight_delegated_slots(max_inflight_delegated_slots),
+                    .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
+                    .with_guard_limits(GuardLimits {
+                        signature_limit: mempool_sender_limit,
+                        payment_limit: mempool_payer_limit,
+                    })
+                    .with_additional_trusted_delegation_targets(
+                        self.args.mempool_trusted_delegation_targets.iter().copied(),
+                    ),
             )
             .executor(BaseExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(
                 BasePayloadBuilder::new(compute_pending_block)
                     .with_da_config(self.da_config.clone())
-                    .with_gas_limit_config(self.gas_limit_config.clone()),
+                    .with_gas_limit_config(self.gas_limit_config.clone())
+                    .with_manifest_precheck_enabled(self.manifest_precheck_enabled),
             ))
             .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
             .consensus(BaseConsensusBuilder::default())
@@ -170,7 +197,7 @@ where
         BaseEthApiBuilder,
         BasePayloadValidatorBuilder,
         BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
-        BaseEngineValidatorBuilder<BasePayloadValidatorBuilder>,
+        BasicEngineValidatorBuilder<BasePayloadValidatorBuilder>,
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {

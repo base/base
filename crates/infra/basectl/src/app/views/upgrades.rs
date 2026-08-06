@@ -1,13 +1,17 @@
 //! Network upgrade activation countdown and history view.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap, VecDeque},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::{Address, B256, hex};
+use alloy_primitives::{Address, B256, Bytes, hex};
+use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rpc_types_eth::{
+    BlockId, BlockNumberOrTag, Filter, TransactionInput, TransactionRequest,
+};
 use alloy_sol_types::SolCall;
-use base_common_chains::ChainConfig;
+use base_common_chains::{BaseUpgrade, ChainConfig};
 use base_common_genesis::UpgradeConfig;
 use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 use chrono::{DateTime, Utc};
@@ -27,6 +31,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use url::Url;
 
 use crate::{
+    ZenithCheck, ZenithCheckCursor, ZenithCheckStatus, ZenithCheckTarget, ZenithChecker,
     app::{Action, Resources, View},
     output::COLOR_BASE_BLUE,
     tui::Keybinding,
@@ -60,6 +65,7 @@ const fn colon_row(r: usize) -> &'static str {
 
 #[derive(Debug)]
 struct UpgradeSpec {
+    upgrade: BaseUpgrade,
     name: &'static str,
     timestamp: Option<u64>,
 }
@@ -67,6 +73,7 @@ struct UpgradeSpec {
 #[derive(Debug)]
 struct ChainUpgrades {
     display_name: &'static str,
+    chain_id: u64,
     /// RPC URL for this chain, loaded from `~/.config/base/networks/{name}.yaml` at startup.
     /// Falls back to a hardcoded public URL only for mainnet and sepolia.
     /// `None` for internal networks (zeronet, devnet) when no user config is present.
@@ -75,40 +82,116 @@ struct ChainUpgrades {
 }
 
 impl ChainUpgrades {
-    fn set_timestamp(&mut self, name: &'static str, timestamp: Option<u64>) {
+    fn set_timestamp(&mut self, upgrade: BaseUpgrade, timestamp: Option<u64>) {
         let Some(timestamp) = timestamp else { return };
-        if let Some(spec) = self.specs.iter_mut().find(|spec| spec.name == name) {
-            spec.timestamp = Some(timestamp);
-        }
+        let Some(spec) = self.specs.iter_mut().find(|spec| spec.upgrade == upgrade) else {
+            tracing::warn!(
+                chain = %self.display_name,
+                upgrade = ?upgrade,
+                "missing upgrade spec while applying upgrade timestamp"
+            );
+            return;
+        };
+        spec.timestamp = Some(timestamp);
     }
 
     fn apply_upgrades(&mut self, upgrades: &UpgradeConfig) {
-        self.set_timestamp("Delta", upgrades.delta_time);
-        self.set_timestamp("Canyon", upgrades.canyon_time);
-        self.set_timestamp("Ecotone", upgrades.ecotone_time);
-        self.set_timestamp("Fjord", upgrades.fjord_time);
-        self.set_timestamp("Granite", upgrades.granite_time);
-        self.set_timestamp("Holocene", upgrades.holocene_time);
-        self.set_timestamp("Isthmus", upgrades.isthmus_time);
-        self.set_timestamp("Jovian", upgrades.jovian_time);
-        self.set_timestamp("Azul", upgrades.base.azul);
-        self.set_timestamp("Beryl", upgrades.base.beryl);
+        self.set_timestamp(BaseUpgrade::Delta, upgrades.delta_time);
+        self.set_timestamp(BaseUpgrade::Canyon, upgrades.canyon_time);
+        self.set_timestamp(BaseUpgrade::Ecotone, upgrades.ecotone_time);
+        self.set_timestamp(BaseUpgrade::Fjord, upgrades.fjord_time);
+        self.set_timestamp(BaseUpgrade::Granite, upgrades.granite_time);
+        self.set_timestamp(BaseUpgrade::Holocene, upgrades.holocene_time);
+        self.set_timestamp(BaseUpgrade::Isthmus, upgrades.isthmus_time);
+        self.set_timestamp(BaseUpgrade::Jovian, upgrades.jovian_time);
+        self.set_timestamp(BaseUpgrade::Azul, upgrades.base.azul);
+        self.set_timestamp(BaseUpgrade::Beryl, upgrades.base.beryl);
+        self.set_timestamp(BaseUpgrade::Cobalt, upgrades.base.cobalt);
+        self.set_timestamp(BaseUpgrade::Zenith, upgrades.base.zenith);
+    }
+
+    fn next_scheduled_spec(&self, now: u64) -> Option<&UpgradeSpec> {
+        self.specs
+            .iter()
+            .filter_map(|spec| {
+                spec.timestamp
+                    .filter(|&timestamp| timestamp > now)
+                    .map(|timestamp| (spec, timestamp))
+            })
+            .min_by_key(|(_, timestamp)| *timestamp)
+            .map(|(spec, _)| spec)
+    }
+
+    fn seeded_expected_admin(&self, now: u64) -> Option<(&'static str, Address)> {
+        // Scan future specs in ascending timestamp order and return the first one whose upgrade
+        // has a known seeded admin. This way the panel stays informative even when the
+        // immediately-next upgrade (e.g. Azul) predates the activation-registry pattern.
+        self.specs
+            .iter()
+            .filter_map(|spec| {
+                spec.timestamp.filter(|&ts| ts > now).and_then(|ts| {
+                    ChainConfig::activation_admin_address_for_upgrade_by_chain_id(
+                        self.chain_id,
+                        spec.upgrade,
+                    )
+                    .map(|admin| (ts, spec.name, admin))
+                })
+            })
+            .min_by_key(|(ts, _, _)| *ts)
+            .map(|(_, name, admin)| (name, admin))
     }
 }
 
 fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
     vec![
-        UpgradeSpec { name: "Delta", timestamp: Some(cfg.delta_timestamp) },
-        UpgradeSpec { name: "Canyon", timestamp: Some(cfg.canyon_timestamp) },
-        UpgradeSpec { name: "Ecotone", timestamp: Some(cfg.ecotone_timestamp) },
-        UpgradeSpec { name: "Fjord", timestamp: Some(cfg.fjord_timestamp) },
-        UpgradeSpec { name: "Granite", timestamp: Some(cfg.granite_timestamp) },
-        UpgradeSpec { name: "Holocene", timestamp: Some(cfg.holocene_timestamp) },
-        UpgradeSpec { name: "Isthmus", timestamp: Some(cfg.isthmus_timestamp) },
-        UpgradeSpec { name: "Jovian", timestamp: Some(cfg.jovian_timestamp) },
-        UpgradeSpec { name: "Azul", timestamp: cfg.azul_timestamp },
-        UpgradeSpec { name: "Beryl", timestamp: cfg.beryl_timestamp },
-        UpgradeSpec { name: "Cobalt", timestamp: cfg.cobalt_timestamp },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Delta,
+            name: "Delta",
+            timestamp: Some(cfg.delta_timestamp),
+        },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Canyon,
+            name: "Canyon",
+            timestamp: Some(cfg.canyon_timestamp),
+        },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Ecotone,
+            name: "Ecotone",
+            timestamp: Some(cfg.ecotone_timestamp),
+        },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Fjord,
+            name: "Fjord",
+            timestamp: Some(cfg.fjord_timestamp),
+        },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Granite,
+            name: "Granite",
+            timestamp: Some(cfg.granite_timestamp),
+        },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Holocene,
+            name: "Holocene",
+            timestamp: Some(cfg.holocene_timestamp),
+        },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Isthmus,
+            name: "Isthmus",
+            timestamp: Some(cfg.isthmus_timestamp),
+        },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Jovian,
+            name: "Jovian",
+            timestamp: Some(cfg.jovian_timestamp),
+        },
+        UpgradeSpec { upgrade: BaseUpgrade::Azul, name: "Azul", timestamp: cfg.azul_timestamp },
+        UpgradeSpec { upgrade: BaseUpgrade::Beryl, name: "Beryl", timestamp: cfg.beryl_timestamp },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Cobalt,
+            name: "Cobalt",
+            timestamp: cfg.cobalt_timestamp,
+        },
+        UpgradeSpec { upgrade: BaseUpgrade::Zenith, name: "Zenith", timestamp: None },
     ]
 }
 
@@ -135,22 +218,26 @@ fn all_chains() -> [ChainUpgrades; 4] {
     [
         ChainUpgrades {
             display_name: "Devnet",
+            chain_id: ChainConfig::devnet().chain_id,
             rpc: user_config_rpc("devnet").or_else(|| Some(devnet_rpc())),
             specs: specs_from_config(ChainConfig::devnet()),
         },
         ChainUpgrades {
             display_name: "Zeronet",
+            chain_id: ChainConfig::zeronet().chain_id,
             rpc: user_config_rpc("zeronet"),
             specs: specs_from_config(ChainConfig::zeronet()),
         },
         ChainUpgrades {
             display_name: "Sepolia",
+            chain_id: ChainConfig::sepolia().chain_id,
             rpc: user_config_rpc("sepolia")
                 .or_else(|| Some("https://sepolia.base.org".to_string())),
             specs: specs_from_config(ChainConfig::sepolia()),
         },
         ChainUpgrades {
             display_name: "Mainnet",
+            chain_id: ChainConfig::mainnet().chain_id,
             rpc: user_config_rpc("mainnet")
                 .or_else(|| Some("https://mainnet.base.org".to_string())),
             specs: specs_from_config(ChainConfig::mainnet()),
@@ -170,28 +257,70 @@ fn loaded_name_is_devnet_alias(loaded_name: &str) -> bool {
 
 // ── Check types ───────────────────────────────────────────────────────────────
 
-/// Expected check names for Azul, in execution order.
-const AZUL_CHECK_NAMES: &[&str] = &[
-    "CLZ zero",
-    "CLZ one",
-    "CLZ high-bit",
-    "CLZ four-bits",
-    "MODEXP size limit",
-    "MODEXP min gas",
-    "P256VERIFY gas",
-    "eth_config",
+/// Expected Azul checks, in execution order.
+const AZUL_CHECKS: &[(&str, &str)] = &[
+    ("CLZ zero", "CLZ zero"),
+    ("CLZ one", "CLZ one"),
+    ("CLZ high-bit", "CLZ high-bit"),
+    ("CLZ four-bits", "CLZ four-bits"),
+    ("MODEXP size limit", "MODEXP size limit"),
+    ("MODEXP min gas", "MODEXP min gas"),
+    ("P256VERIFY gas", "P256VERIFY gas"),
+    ("eth_config", "eth_config"),
 ];
 
-/// Expected check names for Jovian, in execution order.
-const JOVIAN_CHECK_NAMES: &[&str] = &["bn256Pairing limit", "extra data v1", "GPO implementation"];
+/// Expected Jovian checks, in execution order.
+const JOVIAN_CHECKS: &[(&str, &str)] = &[
+    ("bn256Pairing limit", "bn256Pairing limit"),
+    ("extra data v1", "extra data v1"),
+    ("GPO implementation", "GPO implementation"),
+];
 
-/// Expected check names for Beryl, in execution order.
-const BERYL_CHECK_NAMES: &[&str] = &[
-    "registry precompile",
-    "registry admin",
-    "policy registry feature",
-    "B-20 stablecoin feature",
-    "B-20 asset feature",
+/// Expected Beryl checks, in execution order.
+const BERYL_CHECKS: &[(&str, &str)] = &[
+    ("registry precompile", "registry precompile"),
+    ("registry admin", "registry admin"),
+    ("policy registry feature", "policy registry feature"),
+    ("B-20 stablecoin feature", "B-20 stablecoin feature"),
+    ("B-20 asset feature", "B-20 asset feature"),
+];
+
+/// Expected Zenith checks and visible labels, in report order.
+const ZENITH_CHECKS: &[(&str, &str)] = &[
+    ("proxy_code_hash", "BaseTime proxy code"),
+    ("proxy_admin", "BaseTime proxy admin"),
+    ("implementation", "BaseTime implementation"),
+    ("metadata", "BaseTime update tx"),
+    ("metadata_receipt", "BaseTime update receipt"),
+    ("storage_millis_part", "BaseTime millis storage"),
+    ("getter_millis_part", "BaseTime millis getter"),
+    ("getter_timestamp_ms", "BaseTime timestamp getter"),
+    ("cadence_200ms", "BaseTime 200ms cadence"),
+    ("rpc_eth_getBlockByHash_timestampMs", "eth_getBlockByHash timestampMs"),
+    ("rpc_eth_getBlockByNumber_timestampMs", "eth_getBlockByNumber timestampMs"),
+    ("rpc_eth_getTransactionByHash_blockTimestampMs", "eth_getTransactionByHash"),
+    (
+        "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs",
+        "eth_getTransactionByBlockHashAndIndex",
+    ),
+    (
+        "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs",
+        "eth_getTransactionByBlockNumberAndIndex",
+    ),
+    ("rpc_eth_getLogs_blockTimestampMs", "eth_getLogs"),
+    ("rpc_eth_getFilterChanges_blockTimestampMs", "eth_getFilterChanges"),
+    ("rpc_eth_getFilterLogs_blockTimestampMs", "eth_getFilterLogs"),
+    ("rpc_eth_subscribe_logs_blockTimestampMs", "eth_subscribe(logs)"),
+    ("rpc_eth_getTransactionReceipt_logs_blockTimestampMs", "eth_getTransactionReceipt logs"),
+    ("rpc_eth_getBlockReceipts_logs_blockTimestampMs", "eth_getBlockReceipts logs"),
+    (
+        "rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs",
+        "eth_subscribe(transactionReceipts) logs",
+    ),
+    ("header_timestamp_ms", "header timestampMs"),
+    ("rpc_eth_getHeaderByHash_timestampMs", "eth_getHeaderByHash timestampMs"),
+    ("rpc_eth_getHeaderByNumber_timestampMs", "eth_getHeaderByNumber timestampMs"),
+    ("rpc_eth_subscribe_newHeads_timestampMs", "eth_subscribe(newHeads)"),
 ];
 
 const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
@@ -200,17 +329,18 @@ const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
     ("B-20 asset feature", ActivationFeature::B20Asset),
 ];
 
-fn check_names_for(upgrade: &str) -> &'static [&'static str] {
+fn checks_for(upgrade: &str) -> &'static [(&'static str, &'static str)] {
     match upgrade {
-        "Beryl" => BERYL_CHECK_NAMES,
-        "Azul" => AZUL_CHECK_NAMES,
-        "Jovian" => JOVIAN_CHECK_NAMES,
+        "Zenith" => ZENITH_CHECKS,
+        "Beryl" => BERYL_CHECKS,
+        "Azul" => AZUL_CHECKS,
+        "Jovian" => JOVIAN_CHECKS,
         _ => &[],
     }
 }
 
 fn has_checks(upgrade: &str) -> bool {
-    !check_names_for(upgrade).is_empty()
+    !checks_for(upgrade).is_empty()
 }
 
 fn checkable_specs_display(chain: &ChainUpgrades) -> Vec<&UpgradeSpec> {
@@ -259,7 +389,11 @@ enum CheckUpdate {
     /// A check is about to run.
     Starting(String),
     /// A check completed.
-    Completed { name: String, result: CheckResult },
+    Completed {
+        name: String,
+        result: CheckResult,
+    },
+    Cursor(ZenithCheckCursor),
 }
 
 /// State for the checks panel. Tracks streaming results per chain.
@@ -282,10 +416,19 @@ struct ChecksPanel {
     /// auto-refresh so we don't re-issue checks faster than the configured
     /// cadence even if the previous run finished quickly.
     last_run_at: Option<Instant>,
+    cursor: Option<ZenithCheckCursor>,
+    scroll: usize,
 }
 
 impl ChecksPanel {
-    fn start(&mut self, chain_idx: usize, rpc_url: String, upgrade: &'static str, mode: CheckMode) {
+    fn start(
+        &mut self,
+        chain_idx: usize,
+        endpoints: (String, Option<Url>, Option<Url>),
+        upgrade: &'static str,
+        mode: CheckMode,
+    ) {
+        let (rpc_url, consensus_rpc, el_ws_rpc) = endpoints;
         if let Some(h) = self.handle.take() {
             h.abort();
         }
@@ -303,11 +446,21 @@ impl ChecksPanel {
         // target context actually changed.
         if chain_changed || upgrade_changed || mode_changed {
             self.results.clear();
+            self.scroll = 0;
+        }
+        if chain_changed || upgrade_changed {
+            self.cursor = None;
         }
         self.running = true;
         self.rx = Some(rx);
         self.last_run_at = Some(Instant::now());
-        self.handle = Some(tokio::spawn(run_checks_streaming(upgrade, rpc_url, mode, tx)));
+        self.handle = Some(tokio::spawn(run_checks_streaming(
+            upgrade,
+            (rpc_url, consensus_rpc, el_ws_rpc),
+            mode,
+            tx,
+            self.cursor,
+        )));
     }
 
     fn reset(&mut self) {
@@ -323,6 +476,8 @@ impl ChecksPanel {
         self.running = false;
         self.rx = None;
         self.last_run_at = None;
+        self.cursor = None;
+        self.scroll = 0;
     }
 
     fn poll(&mut self) {
@@ -338,13 +493,161 @@ impl ChecksPanel {
                     self.current = Some(name);
                 }
                 Ok(CheckUpdate::Completed { name, result }) => {
+                    if result.passed != Some(true)
+                        && self.results.values().all(|result| result.passed == Some(true))
+                    {
+                        self.scroll = self
+                            .upgrade
+                            .and_then(|upgrade| {
+                                checks_for(upgrade).iter().position(|(check, _)| *check == name)
+                            })
+                            .unwrap_or(0);
+                    }
                     self.results.insert(name, result);
                     self.current = None;
                 }
+                Ok(CheckUpdate::Cursor(cursor)) => self.cursor = Some(cursor),
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     self.running = false;
                     self.current = None;
+                    self.rx = None;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+const MAX_ADMIN_ACTIVITY_ENTRIES: usize = 32;
+const MAX_ADMIN_ACTIVITY_BLOCKS_PER_POLL: u64 = 64;
+const ADMIN_ACTIVITY_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const ADMIN_ACTIVITY_RETRY_DELAY: Duration = Duration::from_secs(2);
+
+#[derive(Debug, Clone)]
+struct AdminActivityEntry {
+    block_number: u64,
+    timestamp: u64,
+    tx_hash: B256,
+    caller: Address,
+    action: &'static str,
+    detail: String,
+}
+
+#[derive(Debug, Default)]
+struct AdminActivityChainState {
+    watched_rpc_url: String,
+    entries: VecDeque<AdminActivityEntry>,
+    live_admin: Option<Address>,
+    last_scanned_safe_block: Option<u64>,
+    status: String,
+}
+
+impl AdminActivityChainState {
+    fn reset_for_rpc(&mut self, rpc_url: &str) {
+        if self.watched_rpc_url == rpc_url {
+            return;
+        }
+        self.clear();
+        self.watched_rpc_url = rpc_url.to_string();
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.live_admin = None;
+        self.last_scanned_safe_block = None;
+        self.status.clear();
+    }
+}
+
+#[derive(Debug)]
+enum AdminActivityUpdate {
+    Reset(String),
+    ProcessedBlock { entries: Vec<AdminActivityEntry>, live_admin: Option<Address> },
+    LiveAdmin(Option<Address>),
+    LastScannedSafeBlock(u64),
+    Status(String),
+}
+
+#[derive(Debug, Default)]
+struct AdminActivityWatcher {
+    chain_idx: Option<usize>,
+    rpc_url: String,
+    rx: Option<mpsc::Receiver<AdminActivityUpdate>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl AdminActivityWatcher {
+    fn start(&mut self, chain_idx: usize, rpc_url: String, last_scanned_safe_block: Option<u64>) {
+        let (tx, rx) = mpsc::channel(64);
+        assert!(self.handle.is_none(), "AdminActivityWatcher::start called while already running");
+        assert!(self.rx.is_none(), "AdminActivityWatcher::start called with rx already set");
+        self.chain_idx = Some(chain_idx);
+        self.rpc_url = rpc_url.clone();
+        self.rx = Some(rx);
+        self.handle =
+            Some(tokio::spawn(run_admin_activity_streaming(rpc_url, last_scanned_safe_block, tx)));
+    }
+
+    fn stop(&mut self, states: &mut [AdminActivityChainState; 4]) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
+        self.poll(states);
+        self.chain_idx = None;
+        self.rpc_url.clear();
+        self.rx = None;
+    }
+
+    fn needs_restart(&self, chain_idx: usize, rpc_url: &str) -> bool {
+        self.chain_idx != Some(chain_idx)
+            || self.rpc_url != rpc_url
+            || self.handle.as_ref().is_some_and(tokio::task::JoinHandle::is_finished)
+    }
+
+    fn poll(&mut self, states: &mut [AdminActivityChainState; 4]) {
+        let Some(chain_idx) = self.chain_idx else { return };
+        let Some(ref mut rx) = self.rx else { return };
+
+        loop {
+            match rx.try_recv() {
+                Ok(AdminActivityUpdate::Reset(status)) => {
+                    let state = &mut states[chain_idx];
+                    state.clear();
+                    state.status = status;
+                }
+                Ok(AdminActivityUpdate::ProcessedBlock { entries, live_admin }) => {
+                    let state = &mut states[chain_idx];
+                    let last_processed_block = entries.iter().map(|entry| entry.block_number).max();
+                    for entry in entries.into_iter().rev() {
+                        state.entries.push_front(entry);
+                    }
+                    while state.entries.len() > MAX_ADMIN_ACTIVITY_ENTRIES {
+                        state.entries.pop_back();
+                    }
+                    if let Some(admin) = live_admin {
+                        state.live_admin = Some(admin);
+                    }
+                    if let Some(block_number) = last_processed_block {
+                        state.last_scanned_safe_block = Some(
+                            state
+                                .last_scanned_safe_block
+                                .map_or(block_number, |current| current.max(block_number)),
+                        );
+                    }
+                }
+                Ok(AdminActivityUpdate::LiveAdmin(admin)) => {
+                    states[chain_idx].live_admin = admin;
+                }
+                Ok(AdminActivityUpdate::LastScannedSafeBlock(block_number)) => {
+                    states[chain_idx].last_scanned_safe_block = Some(block_number);
+                }
+                Ok(AdminActivityUpdate::Status(status)) => {
+                    states[chain_idx].status = status;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    states[chain_idx].status = "Confirmed activity watcher stopped.".to_string();
                     self.rx = None;
                     break;
                 }
@@ -400,12 +703,18 @@ fn now_unix() -> u64 {
 }
 
 fn fmt_timestamp(ts: u64) -> String {
+    fmt_timestamp_with(ts, "%Y-%m-%d %H:%M UTC", "genesis")
+}
+
+fn fmt_timestamp_with(ts: u64, format: &str, zero_label: &str) -> String {
     if ts == 0 {
-        return "genesis".to_string();
+        return zero_label.to_string();
     }
-    DateTime::<Utc>::from_timestamp(ts as i64, 0)
-        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
-        .unwrap_or_else(|| "-".to_string())
+    i64::try_from(ts)
+        .ok()
+        .and_then(|seconds| DateTime::<Utc>::from_timestamp(seconds, 0))
+        .map(|dt| dt.format(format).to_string())
+        .unwrap_or_else(|| ts.to_string())
 }
 
 fn fmt_elapsed(elapsed_secs: u64) -> String {
@@ -443,6 +752,7 @@ fn fmt_progress_percent(tenths: u16) -> String {
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "←/→", description: "Switch chain" },
     Keybinding { key: "↑/↓", description: "Select checks upgrade" },
+    Keybinding { key: "PgUp/PgDn", description: "Scroll checks" },
     Keybinding { key: "1-4", description: "Jump to chain" },
     Keybinding { key: "r", description: "Run checks now" },
     Keybinding { key: "a", description: "Toggle auto-refresh" },
@@ -461,6 +771,8 @@ pub struct UpgradesView {
     selected_check_upgrades: [Option<&'static str>; 4],
     tick_count: u64,
     checks: ChecksPanel,
+    admin_activity: [AdminActivityChainState; 4],
+    admin_activity_watcher: AdminActivityWatcher,
     /// When true, re-run the activation checks on the configured cadence
     /// without requiring the user to press [r].
     auto_refresh: bool,
@@ -491,7 +803,11 @@ impl UpgradesView {
                 rx: None,
                 handle: None,
                 last_run_at: None,
+                cursor: None,
+                scroll: 0,
             },
+            admin_activity: std::array::from_fn(|_| AdminActivityChainState::default()),
+            admin_activity_watcher: AdminActivityWatcher::default(),
             auto_refresh: true,
         }
     }
@@ -511,7 +827,11 @@ impl UpgradesView {
         };
         let Some(rpc) = self.rpc_for_selected(resources) else { return };
         let mode = if ts > now { CheckMode::Before } else { CheckMode::After };
-        self.checks.start(self.selected_chain, rpc, upgrade, mode);
+        let chain = &self.chains[self.selected_chain];
+        let loaded = chain_name_matches_loaded(chain.display_name, &resources.config.name);
+        let consensus_rpc = loaded.then(|| resources.config.consensus_node_rpc.clone()).flatten();
+        let el_ws_rpc = loaded.then(|| resources.config.el_ws_rpc.clone()).flatten();
+        self.checks.start(self.selected_chain, (rpc, consensus_rpc, el_ws_rpc), upgrade, mode);
     }
 
     fn selected_check_spec(&self, now: u64) -> Option<&UpgradeSpec> {
@@ -561,9 +881,31 @@ impl UpgradesView {
     fn rpc_for_selected(&self, resources: &Resources) -> Option<String> {
         let chain = &self.chains[self.selected_chain];
         if chain_name_matches_loaded(chain.display_name, &resources.config.name) {
-            Some(resources.config.rpc.to_string())
+            Some(resources.config.public_rpc.as_ref().unwrap_or(&resources.config.rpc).to_string())
         } else {
             chain.rpc.clone()
+        }
+    }
+
+    fn ensure_admin_activity_watcher(&mut self, resources: &Resources) {
+        let chain_idx = self.selected_chain;
+        let Some(rpc_url) = self.rpc_for_selected(resources) else {
+            self.admin_activity_watcher.stop(&mut self.admin_activity);
+            self.admin_activity[chain_idx].status =
+                "No RPC configured for confirmed activity.".to_string();
+            return;
+        };
+
+        self.admin_activity[chain_idx].reset_for_rpc(&rpc_url);
+
+        if self.admin_activity_watcher.needs_restart(chain_idx, &rpc_url) {
+            self.admin_activity_watcher.stop(&mut self.admin_activity);
+            // Capture scan position *after* stop() has drained remaining channel
+            // messages, so we don't regress to a stale value.
+            let last_scanned_safe_block = self.admin_activity[chain_idx].last_scanned_safe_block;
+            self.admin_activity[chain_idx].status =
+                "Connecting to confirmed activity watcher…".to_string();
+            self.admin_activity_watcher.start(chain_idx, rpc_url, last_scanned_safe_block);
         }
     }
 }
@@ -582,11 +924,11 @@ impl View for UpgradesView {
                     self.checks.reset();
                 }
             }
-            KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
-                if self.selected_chain < self.chains.len() - 1 {
-                    self.selected_chain += 1;
-                    self.checks.reset();
-                }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab
+                if self.selected_chain < self.chains.len() - 1 =>
+            {
+                self.selected_chain += 1;
+                self.checks.reset();
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.move_selected_check_upgrade(-1);
@@ -594,12 +936,21 @@ impl View for UpgradesView {
             KeyCode::Down | KeyCode::Char('j') => {
                 self.move_selected_check_upgrade(1);
             }
-            KeyCode::Char(c @ '1'..='4') => {
+            KeyCode::PageUp => self.checks.scroll = self.checks.scroll.saturating_sub(5),
+            KeyCode::PageDown => {
+                let row_count = self
+                    .selected_check_upgrade(now_unix())
+                    .map_or(0, |upgrade| checks_for(upgrade).len());
+                self.checks.scroll =
+                    self.checks.scroll.saturating_add(5).min(row_count.saturating_sub(1));
+            }
+            KeyCode::Char(c @ '1'..='4')
+                if (c as usize) - ('1' as usize) < self.chains.len()
+                    && (c as usize) - ('1' as usize) != self.selected_chain =>
+            {
                 let idx = (c as usize) - ('1' as usize);
-                if idx < self.chains.len() && idx != self.selected_chain {
-                    self.selected_chain = idx;
-                    self.checks.reset();
-                }
+                self.selected_chain = idx;
+                self.checks.reset();
             }
             KeyCode::Char('r') if !self.checks.running => {
                 self.start_checks(resources);
@@ -615,7 +966,9 @@ impl View for UpgradesView {
     fn tick(&mut self, resources: &mut Resources) -> Action {
         self.tick_count = self.tick_count.wrapping_add(1);
         self.checks.poll();
+        self.admin_activity_watcher.poll(&mut self.admin_activity);
         self.apply_live_upgrades(resources);
+        self.ensure_admin_activity_watcher(resources);
 
         if self.auto_refresh && !self.checks.running {
             let due = self.checks.last_run_at.is_none_or(|t| t.elapsed() >= AUTO_REFRESH_INTERVAL);
@@ -633,12 +986,9 @@ impl View for UpgradesView {
         let now = now_unix();
         let chain = &self.chains[self.selected_chain];
 
-        let upcoming = chain
-            .specs
-            .iter()
-            .filter_map(|s| s.timestamp.filter(|&ts| ts > 0).map(|ts| (s.name, ts)))
-            .filter(|(_, ts)| *ts > now)
-            .min_by_key(|(_, ts)| *ts);
+        let next_scheduled = chain.next_scheduled_spec(now);
+        let upcoming =
+            next_scheduled.and_then(|spec| spec.timestamp.map(|timestamp| (spec.name, timestamp)));
 
         let latest_activated = chain
             .specs
@@ -704,15 +1054,27 @@ impl View for UpgradesView {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
             .split(outer[2]);
+        let right = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(56), Constraint::Percentage(44)])
+            .split(bottom[1]);
 
         render_history(frame, bottom[0], chain, now, selected_upgrade);
         render_checks_panel(
             frame,
-            bottom[1],
+            right[0],
             &self.checks,
             self.tick_count,
             selected_check_spec,
             self.auto_refresh,
+        );
+        let seeded_expected = chain.seeded_expected_admin(now);
+        render_admin_activity_panel(
+            frame,
+            right[1],
+            &self.admin_activity[self.selected_chain],
+            seeded_expected.map(|(name, _)| name),
+            seeded_expected.map(|(_, admin)| admin),
         );
         render_footer(frame, outer[3], self.checks.running, self.auto_refresh);
     }
@@ -984,7 +1346,8 @@ fn render_checks_panel(
             );
             return;
         }
-        let check_list = check_names_for(hf_name).join(" · ");
+        let check_list =
+            checks_for(hf_name).iter().map(|(_, label)| *label).collect::<Vec<_>>().join(" · ");
         let hint = if auto_refresh {
             format!("Auto-refreshing {hf_name} checks every 2s · ↑/↓ to change · [a] to disable")
         } else {
@@ -1010,7 +1373,7 @@ fn render_checks_panel(
     }
 
     let hf = panel.upgrade.unwrap_or("?");
-    let check_names = check_names_for(hf);
+    let checks = checks_for(hf);
 
     let mode_str = match panel.mode {
         Some(CheckMode::Before) => "before",
@@ -1020,33 +1383,52 @@ fn render_checks_panel(
 
     let passed = panel.results.values().filter(|r| r.passed == Some(true)).count();
     let failed = panel.results.values().filter(|r| r.passed == Some(false)).count();
+    let indeterminate = panel.results.values().filter(|r| r.passed.is_none()).count();
 
+    let refresh_tag = if panel.running {
+        format!("  {} refreshing", spinner[(tick / 2) as usize % spinner.len()])
+    } else {
+        String::new()
+    };
     let auto_tag = if auto_refresh { "  · auto" } else { "" };
-    let (title, border_color) = if panel.running {
+    let (title, border_color) = if failed > 0 {
+        (
+            format!(
+                " {hf} Checks ({mode_str})  FAIL {failed}  UNKNOWN {indeterminate}  PASS {passed}{refresh_tag}{auto_tag} "
+            ),
+            Color::Red,
+        )
+    } else if indeterminate > 0 {
+        (
+            format!(
+                " {hf} Checks ({mode_str})  UNKNOWN {indeterminate}  PASS {passed}{refresh_tag}{auto_tag} "
+            ),
+            Color::Yellow,
+        )
+    } else if panel.running {
         let spin = spinner[(tick / 2) as usize % spinner.len()];
         (format!(" {hf} Checks ({mode_str})  {spin} running…{auto_tag} "), Color::Yellow)
-    } else if failed > 0 {
-        (format!(" {hf} Checks ({mode_str})  ✓ {passed}  ✗ {failed}{auto_tag} "), Color::Red)
     } else {
         (format!(" {hf} Checks ({mode_str})  ✓ {passed} passed{auto_tag} "), Color::LightGreen)
     };
 
-    let rows: Vec<Row<'static>> = check_names
+    let rows: Vec<Row<'static>> = checks
         .iter()
-        .map(|&name| {
+        .skip(panel.scroll)
+        .map(|&(name, display_name)| {
             panel.results.get(name).map_or_else(
                 || {
                     if panel.current.as_deref() == Some(name) {
                         let spin = spinner[(tick / 2) as usize % spinner.len()];
                         Row::new([
-                            Cell::from(name).style(Style::default().fg(Color::White)),
+                            Cell::from(display_name).style(Style::default().fg(Color::White)),
                             Cell::from(spin.to_string()).style(Style::default().fg(Color::Yellow)),
                             Cell::from("").style(Style::default()),
                         ])
                     } else {
                         // Not yet started.
                         Row::new([
-                            Cell::from(name).style(Style::default().fg(Color::DarkGray)),
+                            Cell::from(display_name).style(Style::default().fg(Color::DarkGray)),
                             Cell::from(""),
                             Cell::from(""),
                         ])
@@ -1054,12 +1436,12 @@ fn render_checks_panel(
                 },
                 |result| {
                     let (status_str, status_color) = match result.passed {
-                        None => ("SKIP".to_string(), Color::DarkGray),
+                        None => ("UNKNOWN".to_string(), Color::Yellow),
                         Some(true) => ("PASS".to_string(), Color::LightGreen),
                         Some(false) => ("FAIL".to_string(), Color::Red),
                     };
                     Row::new([
-                        Cell::from(name).style(Style::default().fg(Color::White)),
+                        Cell::from(display_name).style(Style::default().fg(Color::White)),
                         Cell::from(status_str)
                             .style(Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
                         Cell::from(result.detail.clone())
@@ -1073,7 +1455,7 @@ fn render_checks_panel(
     let header = Row::new(["CHECK", "", "DETAIL"])
         .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
 
-    let widths = [Constraint::Length(24), Constraint::Length(5), Constraint::Min(8)];
+    let widths = [Constraint::Length(49), Constraint::Length(7), Constraint::Min(8)];
 
     let block = Block::default()
         .title(title)
@@ -1101,6 +1483,121 @@ fn render_checks_panel(
         )))
         .alignment(Alignment::Right),
         rpc_area,
+    );
+}
+
+fn render_admin_activity_panel(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &AdminActivityChainState,
+    next_scheduled_upgrade: Option<&'static str>,
+    expected_admin: Option<Address>,
+) {
+    let block = Block::default()
+        .title(" Admin Activity ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(COLOR_BASE_BLUE));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .split(inner);
+
+    let expected_line = match (next_scheduled_upgrade, expected_admin) {
+        (Some(upgrade), Some(admin)) => Line::from(vec![
+            Span::styled("Expected: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(short_address(admin), Style::default().fg(Color::White)),
+            Span::styled(format!("  ({upgrade})"), Style::default().fg(Color::DarkGray)),
+        ]),
+        (Some(upgrade), None) => Line::from(vec![
+            Span::styled("Expected: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("unknown", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("  ({upgrade})"), Style::default().fg(Color::DarkGray)),
+        ]),
+        (None, _) => Line::from(vec![
+            Span::styled("Expected: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("none scheduled", Style::default().fg(Color::DarkGray)),
+        ]),
+    };
+    let live_line = Line::from(vec![
+        Span::styled("Live: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            state.live_admin.map(short_address).unwrap_or_else(|| "unknown".to_string()),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled("  ·  Safe: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            state
+                .last_scanned_safe_block
+                .map(|block_number| block_number.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            Style::default().fg(Color::White),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(vec![expected_line, live_line]).alignment(Alignment::Left),
+        sections[0],
+    );
+
+    if state.entries.is_empty() {
+        let message = if state.status.is_empty() {
+            "No confirmed activation-admin activity yet.".to_string()
+        } else {
+            format!("No confirmed activation-admin activity yet. {}", state.status)
+        };
+        frame.render_widget(
+            Paragraph::new(message)
+                .style(Style::default().fg(Color::DarkGray))
+                .alignment(Alignment::Center),
+            sections[1],
+        );
+        return;
+    }
+
+    let rows: Vec<Row<'static>> = state
+        .entries
+        .iter()
+        .map(|entry| {
+            let caller_style = if expected_admin == Some(entry.caller) {
+                Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            Row::new([
+                Cell::from(entry.block_number.to_string()).style(Style::default().fg(Color::White)),
+                Cell::from(fmt_activity_timestamp(entry.timestamp))
+                    .style(Style::default().fg(Color::Gray)),
+                Cell::from(short_hash(entry.tx_hash)).style(Style::default().fg(Color::Cyan)),
+                Cell::from(short_address(entry.caller)).style(caller_style),
+                Cell::from(format!("{} {}", entry.action, entry.detail))
+                    .style(Style::default().fg(Color::Gray)),
+            ])
+        })
+        .collect();
+
+    let header = Row::new(["BLOCK", "TIME", "TX", "CALLER", "ACTION"])
+        .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
+    let widths = [
+        Constraint::Length(8),
+        Constraint::Length(14),
+        Constraint::Length(16),
+        Constraint::Length(14),
+        Constraint::Min(12),
+    ];
+
+    let table_sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(sections[1]);
+
+    frame.render_widget(Table::new(rows, widths).header(header), table_sections[0]);
+    frame.render_widget(
+        Paragraph::new(state.status.clone())
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Right),
+        table_sections[1],
     );
 }
 
@@ -1205,20 +1702,463 @@ fn clock_lines(
     lines
 }
 
+fn fmt_activity_timestamp(ts: u64) -> String {
+    fmt_timestamp_with(ts, "%m-%d %H:%M:%S", "-")
+}
+
+fn short_hash(hash: B256) -> String {
+    truncate_hex(format!("{hash:#x}"), 12)
+}
+
+fn activation_feature_detail(feature: B256) -> String {
+    if feature == ActivationFeature::PolicyRegistry.id() {
+        return "policy registry".to_string();
+    }
+    if feature == ActivationFeature::B20Stablecoin.id() {
+        return "B-20 stablecoin".to_string();
+    }
+    if feature == ActivationFeature::B20Asset.id() {
+        return "B-20 asset".to_string();
+    }
+    format!("feature {}", short_hash(feature))
+}
+
+fn decode_admin_activity_log(
+    log: &alloy_rpc_types_eth::Log,
+    block_number: u64,
+    fallback_timestamp: u64,
+) -> Option<(AdminActivityEntry, Option<Address>)> {
+    let tx_hash = log.transaction_hash?;
+    let timestamp = log.block_timestamp.unwrap_or(fallback_timestamp);
+    let block_number = log.block_number.unwrap_or(block_number);
+
+    if let Ok(decoded) = log.log_decode::<IActivationRegistry::FeatureActivated>() {
+        let event = decoded.data();
+        return Some((
+            AdminActivityEntry {
+                block_number,
+                timestamp,
+                tx_hash,
+                caller: event.caller,
+                action: "activate",
+                detail: activation_feature_detail(event.feature),
+            },
+            None,
+        ));
+    }
+
+    if let Ok(decoded) = log.log_decode::<IActivationRegistry::FeatureDeactivated>() {
+        let event = decoded.data();
+        return Some((
+            AdminActivityEntry {
+                block_number,
+                timestamp,
+                tx_hash,
+                caller: event.caller,
+                action: "deactivate",
+                detail: activation_feature_detail(event.feature),
+            },
+            None,
+        ));
+    }
+
+    if let Ok(decoded) = log.log_decode::<IActivationRegistry::AdminChanged>() {
+        let event = decoded.data();
+        return Some((
+            AdminActivityEntry {
+                block_number,
+                timestamp,
+                tx_hash,
+                caller: event.caller,
+                action: "setAdmin",
+                detail: format!(
+                    "{} → {}",
+                    short_address(event.previousAdmin),
+                    short_address(event.newAdmin)
+                ),
+            },
+            Some(event.newAdmin),
+        ));
+    }
+
+    None
+}
+
+const fn admin_activity_scan_end(next_block: u64, safe_number: u64) -> u64 {
+    let max_end = next_block.saturating_add(MAX_ADMIN_ACTIVITY_BLOCKS_PER_POLL.saturating_sub(1));
+    if max_end < safe_number { max_end } else { safe_number }
+}
+
+async fn fetch_block_timestamp<P>(provider: &P, block_number: u64) -> Result<u64, String>
+where
+    P: Provider + ?Sized,
+{
+    provider
+        .get_block_by_number(BlockNumberOrTag::Number(block_number))
+        .await
+        .map_err(|error| error.to_string())?
+        .map(|block| block.header.timestamp)
+        .ok_or_else(|| format!("block {block_number} not found"))
+}
+
+async fn fetch_admin_activity_for_range<P>(
+    provider: &P,
+    start_block: u64,
+    end_block: u64,
+) -> Result<BTreeMap<u64, Vec<(AdminActivityEntry, Option<Address>)>>, String>
+where
+    P: Provider + ?Sized,
+{
+    let filter = Filter::new()
+        .address(ActivationRegistryStorage::ADDRESS)
+        .from_block(start_block)
+        .to_block(end_block);
+    let logs = provider.get_logs(&filter).await.map_err(|error| error.to_string())?;
+    if logs.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let mut fallback_timestamps = HashMap::new();
+    let mut entries_by_block = BTreeMap::new();
+    for log in logs.iter().filter(|log| !log.removed) {
+        let block_number = log.block_number.unwrap_or(start_block);
+        let timestamp = if let Some(timestamp) = log.block_timestamp {
+            timestamp
+        } else {
+            match fallback_timestamps.get(&block_number).copied() {
+                Some(timestamp) => timestamp,
+                None => {
+                    let timestamp = fetch_block_timestamp(provider, block_number).await?;
+                    fallback_timestamps.insert(block_number, timestamp);
+                    timestamp
+                }
+            }
+        };
+        if let Some(entry) = decode_admin_activity_log(log, block_number, timestamp) {
+            entries_by_block.entry(block_number).or_insert_with(Vec::new).push(entry);
+        }
+    }
+
+    Ok(entries_by_block)
+}
+
+async fn run_admin_activity_streaming(
+    rpc_url: String,
+    last_scanned_safe_block: Option<u64>,
+    tx: mpsc::Sender<AdminActivityUpdate>,
+) {
+    let mut last_safe_block = last_scanned_safe_block;
+
+    loop {
+        if tx
+            .send(AdminActivityUpdate::Status(
+                "Connecting to confirmed activity watcher…".to_string(),
+            ))
+            .await
+            .is_err()
+        {
+            return;
+        }
+
+        let provider = {
+            let url = match rpc_url.parse::<alloy_transport_http::reqwest::Url>() {
+                Ok(u) => u,
+                Err(error) => {
+                    if tx
+                        .send(AdminActivityUpdate::Status(format!("Invalid RPC URL: {error}")))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    // An invalid URL won't be fixed by retrying, so stop the loop.
+                    return;
+                }
+            };
+            let http_client = match alloy_transport_http::reqwest::Client::builder()
+                .timeout(Duration::from_secs(12))
+                .build()
+            {
+                Ok(c) => c,
+                Err(error) => {
+                    if tx
+                        .send(AdminActivityUpdate::Status(format!(
+                            "RPC connection failed: {error}"
+                        )))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    tokio::time::sleep(ADMIN_ACTIVITY_RETRY_DELAY).await;
+                    continue;
+                }
+            };
+            let transport = alloy_transport_http::Http::with_client(http_client, url);
+            ProviderBuilder::new()
+                .disable_recommended_fillers()
+                .connect_client(alloy_rpc_client::RpcClient::new(transport, false))
+        };
+
+        let live_admin_status = match send_safe_live_admin_update(&tx, &provider).await {
+            Ok(status) => status,
+            Err(()) => return,
+        };
+        if tx
+            .send(AdminActivityUpdate::Status(live_admin_status.map_or_else(
+                || "Watching confirmed activation activity".to_string(),
+                |detail| format!("Watching confirmed activation activity. {detail}"),
+            )))
+            .await
+            .is_err()
+        {
+            return;
+        }
+
+        let mut interval = tokio::time::interval(ADMIN_ACTIVITY_POLL_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        'watch: loop {
+            interval.tick().await;
+
+            let safe_block = match provider.get_block_by_number(BlockNumberOrTag::Safe).await {
+                Ok(Some(block)) => block,
+                Ok(None) => {
+                    if tx
+                        .send(AdminActivityUpdate::Status(
+                            "Safe head is unavailable on this RPC.".to_string(),
+                        ))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    break 'watch;
+                }
+                Err(error) => {
+                    if tx
+                        .send(AdminActivityUpdate::Status(format!(
+                            "Safe head query failed: {error}"
+                        )))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    break 'watch;
+                }
+            };
+
+            let safe_number = safe_block.header.number;
+            if last_safe_block.is_some_and(|last| safe_number < last) {
+                last_safe_block = None;
+                if tx
+                    .send(AdminActivityUpdate::Reset(
+                        "Safe head moved backwards; resetting confirmed activity cache."
+                            .to_string(),
+                    ))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                let reset_status = match send_safe_live_admin_update(&tx, &provider).await {
+                    Ok(Some(detail)) => {
+                        format!(
+                            "Safe head moved backwards; resetting confirmed activity cache. {detail}"
+                        )
+                    }
+                    Ok(None) => {
+                        "Safe head moved backwards; resetting confirmed activity cache.".to_string()
+                    }
+                    Err(()) => return,
+                };
+                if tx.send(AdminActivityUpdate::Status(reset_status)).await.is_err() {
+                    return;
+                }
+            }
+            let mut next_block = match last_safe_block {
+                Some(last) if last < safe_number => last + 1,
+                Some(_) => {
+                    if tx
+                        .send(AdminActivityUpdate::LastScannedSafeBlock(safe_number))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    continue;
+                }
+                None => safe_number,
+            };
+            let scan_end = admin_activity_scan_end(next_block, safe_number);
+            let mut entries_by_block = match fetch_admin_activity_for_range(
+                &provider, next_block, scan_end,
+            )
+            .await
+            {
+                Ok(entries_by_block) => entries_by_block,
+                Err(error) => {
+                    if tx
+                            .send(AdminActivityUpdate::Status(format!(
+                                "Confirmed activity query failed for blocks {next_block}-{scan_end}: {error}"
+                            )))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    break 'watch;
+                }
+            };
+
+            while next_block <= scan_end {
+                let entries = entries_by_block.remove(&next_block).unwrap_or_default();
+
+                let mut block_entries = Vec::with_capacity(entries.len());
+                let mut live_admin_update = None;
+                for (entry, maybe_live_admin) in entries {
+                    block_entries.push(entry);
+                    if let Some(admin) = maybe_live_admin {
+                        live_admin_update = Some(admin);
+                    }
+                }
+                if !block_entries.is_empty()
+                    && tx
+                        .send(AdminActivityUpdate::ProcessedBlock {
+                            entries: block_entries,
+                            live_admin: live_admin_update,
+                        })
+                        .await
+                        .is_err()
+                {
+                    return;
+                }
+
+                last_safe_block = Some(next_block);
+                next_block += 1;
+            }
+
+            if tx.send(AdminActivityUpdate::LastScannedSafeBlock(scan_end)).await.is_err() {
+                return;
+            }
+        }
+
+        tokio::time::sleep(ADMIN_ACTIVITY_RETRY_DELAY).await;
+    }
+}
+
 // ── Activation checks ─────────────────────────────────────────────────────────
 
 /// Route to the correct upgrade's streaming check function.
 async fn run_checks_streaming(
     upgrade: &'static str,
-    rpc_url: String,
+    endpoints: (String, Option<Url>, Option<Url>),
     mode: CheckMode,
     tx: mpsc::Sender<CheckUpdate>,
+    cursor: Option<ZenithCheckCursor>,
 ) {
+    let (rpc_url, consensus_rpc, el_ws_rpc) = endpoints;
     match upgrade {
+        "Zenith" => {
+            run_zenith_checks_streaming(rpc_url, consensus_rpc, el_ws_rpc, cursor, tx).await
+        }
         "Beryl" => run_beryl_checks_streaming(rpc_url, mode, tx).await,
         "Azul" => run_azul_checks_streaming(rpc_url, tx).await,
         "Jovian" => run_jovian_checks_streaming(rpc_url, mode, tx).await,
         _ => {}
+    }
+}
+
+fn zenith_check_result(check: ZenithCheck) -> CheckResult {
+    let passed = match check.status {
+        ZenithCheckStatus::Pass => Some(true),
+        ZenithCheckStatus::Fail => Some(false),
+        ZenithCheckStatus::Indeterminate => None,
+    };
+    let shorten = |value: String| {
+        if value.starts_with("0x") { truncate_hex(value, 14) } else { value }
+    };
+    let expected = shorten(check.expected);
+    let observed = match (check.name.as_str(), check.observed.as_str()) {
+        ("implementation", "LinkedInitial") => "canonical initial implementation".to_string(),
+        ("implementation", "LinkedOther") => "governance-selected implementation".to_string(),
+        ("implementation", "Dormant") => "implementation not linked".to_string(),
+        ("implementation", "Missing") => "implementation missing".to_string(),
+        ("implementation", "Inconsistent") => "inconsistent implementation".to_string(),
+        _ => shorten(check.observed),
+    };
+    CheckResult {
+        passed,
+        detail: match check.status {
+            ZenithCheckStatus::Pass | ZenithCheckStatus::Indeterminate => observed,
+            ZenithCheckStatus::Fail => format!("expected {expected}; got {observed}"),
+        },
+    }
+}
+
+async fn run_zenith_checks_streaming(
+    rpc_url: String,
+    consensus_rpc: Option<Url>,
+    el_ws_rpc: Option<Url>,
+    cursor: Option<ZenithCheckCursor>,
+    tx: mpsc::Sender<CheckUpdate>,
+) {
+    let report = match (Url::parse(&rpc_url), consensus_rpc) {
+        (Ok(el_rpc), Some(cl_rpc)) => {
+            ZenithChecker
+                .check(&el_rpc, &cl_rpc, el_ws_rpc.as_ref(), ZenithCheckTarget::Latest, cursor)
+                .await
+        }
+        (Err(error), _) => Err(anyhow::anyhow!("invalid execution RPC URL: {error}")),
+        (_, None) => Err(anyhow::anyhow!("consensus node RPC is not configured")),
+    };
+
+    match report {
+        Ok(report) => {
+            let cursor = report.cursor;
+            let mut checks: HashMap<_, _> =
+                report.checks.into_iter().map(|check| (check.name.clone(), check)).collect();
+            for &(name, _) in ZENITH_CHECKS {
+                if tx.send(CheckUpdate::Starting(name.to_string())).await.is_err() {
+                    return;
+                }
+                let result = checks.remove(name).map_or_else(
+                    || CheckResult {
+                        passed: None,
+                        detail: format!("not applicable for {:?} snapshot", report.schedule),
+                    },
+                    zenith_check_result,
+                );
+                if tx.send(CheckUpdate::Completed { name: name.to_string(), result }).await.is_err()
+                {
+                    return;
+                }
+            }
+            debug_assert!(checks.is_empty(), "unexpected Zenith checks: {checks:?}");
+            if let Some(cursor) = cursor {
+                let _ = tx.send(CheckUpdate::Cursor(cursor)).await;
+            }
+        }
+        Err(error) => {
+            for (index, &(name, _)) in ZENITH_CHECKS.iter().enumerate() {
+                if tx.send(CheckUpdate::Starting(name.to_string())).await.is_err() {
+                    return;
+                }
+                let result = CheckResult {
+                    passed: None,
+                    detail: if index == 0 {
+                        format!("{error:#}")
+                    } else {
+                        "checker unavailable".to_string()
+                    },
+                };
+                if tx.send(CheckUpdate::Completed { name: name.to_string(), result }).await.is_err()
+                {
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -1236,19 +2176,60 @@ fn decode_rpc_bytes(value: &str) -> Result<Vec<u8>, String> {
     hex::decode(value.trim_start_matches("0x")).map_err(|e| format!("invalid hex response: {e}"))
 }
 
-fn short_address(address: Address) -> String {
-    let value = address.to_string();
-    if value.len() <= 14 {
+fn truncate_hex(value: String, prefix_len: usize) -> String {
+    const SUFFIX_LEN: usize = 4;
+    if value.len() <= prefix_len + 2 + SUFFIX_LEN {
         value
     } else {
-        format!("{}..{}", &value[..10], &value[value.len() - 4..])
+        format!("{}..{}", &value[..prefix_len], &value[value.len() - SUFFIX_LEN..])
     }
 }
 
+fn short_address(address: Address) -> String {
+    truncate_hex(address.to_string(), 10)
+}
+
 async fn activation_admin(client: &HttpClient) -> Result<Address, String> {
+    activation_admin_at_tag(client, "latest").await
+}
+
+async fn fetch_safe_live_admin<P: Provider + ?Sized>(
+    provider: &P,
+) -> Result<Option<Address>, String> {
+    let request = TransactionRequest::default()
+        .to(ActivationRegistryStorage::ADDRESS)
+        .input(TransactionInput::new(Bytes::from(IActivationRegistry::adminCall {}.abi_encode())));
+    provider
+        .call(request)
+        .block(BlockId::Number(BlockNumberOrTag::Safe))
+        .await
+        .map_err(|e| format!("safe live-admin query failed: {e}"))
+        .and_then(|bytes| {
+            IActivationRegistry::adminCall::abi_decode_returns(&bytes)
+                .map(|admin| (!admin.is_zero()).then_some(admin))
+                .map_err(|e| format!("safe live-admin decode failed: {e}"))
+        })
+}
+
+async fn send_safe_live_admin_update<P: Provider + ?Sized>(
+    tx: &mpsc::Sender<AdminActivityUpdate>,
+    provider: &P,
+) -> Result<Option<String>, ()> {
+    match fetch_safe_live_admin(provider).await {
+        Ok(admin) => {
+            if tx.send(AdminActivityUpdate::LiveAdmin(admin)).await.is_err() {
+                return Err(());
+            }
+            Ok(None)
+        }
+        Err(error) => Ok(Some(error)),
+    }
+}
+
+async fn activation_admin_at_tag(client: &HttpClient, block_tag: &str) -> Result<Address, String> {
     let data = calldata_hex(IActivationRegistry::adminCall {}.abi_encode());
     let to = activation_registry_address();
-    let output = eth_call(client, &to, &data).await?;
+    let output = eth_call_at_tag(client, &to, &data, block_tag).await?;
     let bytes = decode_rpc_bytes(&output)?;
     IActivationRegistry::adminCall::abi_decode_returns(bytes.as_ref()).map_err(|e| e.to_string())
 }
@@ -1353,7 +2334,7 @@ async fn run_beryl_checks_streaming(
                 detail: format!("cannot build client for {rpc_url}: {e}"),
             };
             send_result!("registry precompile", conn_result);
-            for &name in &BERYL_CHECK_NAMES[1..] {
+            for &(name, _) in &BERYL_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -1369,7 +2350,7 @@ async fn run_beryl_checks_streaming(
             let conn_result =
                 CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
             send_result!("registry precompile", conn_result);
-            for &name in &BERYL_CHECK_NAMES[1..] {
+            for &(name, _) in &BERYL_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -1455,7 +2436,7 @@ async fn run_jovian_checks_streaming(
                 detail: format!("cannot build client for {rpc_url}: {e}"),
             };
             send_result!("bn256Pairing limit", conn_result);
-            for &name in &JOVIAN_CHECK_NAMES[1..] {
+            for &(name, _) in &JOVIAN_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -1471,7 +2452,7 @@ async fn run_jovian_checks_streaming(
             let conn_result =
                 CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
             send_result!("bn256Pairing limit", conn_result);
-            for &name in &JOVIAN_CHECK_NAMES[1..] {
+            for &(name, _) in &JOVIAN_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -1611,10 +2592,19 @@ fn make_rpc_client(rpc_url: &str) -> Result<HttpClient, String> {
 }
 
 async fn eth_call(client: &HttpClient, to: &str, data: &str) -> Result<String, String> {
+    eth_call_at_tag(client, to, data, "latest").await
+}
+
+async fn eth_call_at_tag(
+    client: &HttpClient,
+    to: &str,
+    data: &str,
+    block_tag: &str,
+) -> Result<String, String> {
     ClientT::request::<String, _>(
         client,
         "eth_call",
-        rpc_params![json!({"to": to, "data": data}), "latest"],
+        rpc_params![json!({"to": to, "data": data}), block_tag],
     )
     .await
     .map_err(|e| e.to_string())
@@ -1705,7 +2695,7 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
                 detail: format!("cannot build client for {rpc_url}: {e}"),
             };
             send_result!("CLZ zero", conn_result);
-            for &name in &AZUL_CHECK_NAMES[1..] {
+            for &(name, _) in &AZUL_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -1722,7 +2712,7 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
             let conn_result =
                 CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
             send_result!("CLZ zero", conn_result);
-            for &name in &AZUL_CHECK_NAMES[1..] {
+            for &(name, _) in &AZUL_CHECKS[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -1799,8 +2789,11 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::{Log as PrimitiveLog, address};
+    use alloy_sol_types::SolEvent;
     use base_common_genesis::BaseUpgradeConfig;
     use crossterm::event::KeyModifiers;
+    use ratatui::{Terminal, backend::TestBackend};
 
     use super::*;
     use crate::config::MonitoringConfig;
@@ -1809,13 +2802,14 @@ mod tests {
     fn unscheduled_beryl_follows_active_azul_checks() {
         let mut chain = ChainUpgrades {
             display_name: "Devnet",
+            chain_id: ChainConfig::devnet().chain_id,
             rpc: None,
             specs: specs_from_config(ChainConfig::devnet()),
         };
         assert_eq!(target_upgrade(&chain, 100), Some("Beryl"));
 
         chain.apply_upgrades(&UpgradeConfig {
-            base: BaseUpgradeConfig { azul: Some(10), beryl: Some(12), cobalt: None },
+            base: BaseUpgradeConfig { azul: Some(10), beryl: Some(12), cobalt: None, zenith: None },
             ..UpgradeConfig::default()
         });
 
@@ -1828,12 +2822,13 @@ mod tests {
     fn upcoming_azul_remains_target_before_beryl() {
         let mut chain = ChainUpgrades {
             display_name: "Mainnet",
+            chain_id: ChainConfig::mainnet().chain_id,
             rpc: None,
             specs: specs_from_config(ChainConfig::mainnet()),
         };
         chain.apply_upgrades(&UpgradeConfig {
             jovian_time: Some(10),
-            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None },
+            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None, zenith: None },
             ..UpgradeConfig::default()
         });
 
@@ -1842,16 +2837,37 @@ mod tests {
     }
 
     #[test]
+    fn live_rollup_config_schedules_zenith() {
+        let mut chain = ChainUpgrades {
+            display_name: "Devnet",
+            chain_id: ChainConfig::devnet().chain_id,
+            rpc: None,
+            specs: specs_from_config(ChainConfig::devnet()),
+        };
+
+        chain.apply_upgrades(&UpgradeConfig {
+            base: BaseUpgradeConfig { zenith: Some(30), ..BaseUpgradeConfig::default() },
+            ..UpgradeConfig::default()
+        });
+
+        let zenith = chain.specs.iter().find(|spec| spec.name == "Zenith").unwrap();
+        assert_eq!(zenith.timestamp, Some(30));
+        assert_eq!(target_upgrade(&chain, 29), Some("Zenith"));
+        assert_eq!(target_upgrade(&chain, 30), Some("Zenith"));
+    }
+
+    #[test]
     fn live_upgrades_do_not_clear_known_static_timestamps() {
         let mut chain = ChainUpgrades {
             display_name: "Mainnet",
+            chain_id: ChainConfig::mainnet().chain_id,
             rpc: None,
             specs: specs_from_config(ChainConfig::mainnet()),
         };
         let delta = chain.specs.iter().find(|spec| spec.name == "Delta").unwrap().timestamp;
 
         chain.apply_upgrades(&UpgradeConfig {
-            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None },
+            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None, zenith: None },
             ..UpgradeConfig::default()
         });
 
@@ -1875,13 +2891,323 @@ mod tests {
     fn checkable_specs_are_display_ordered() {
         let chain = ChainUpgrades {
             display_name: "Devnet",
+            chain_id: ChainConfig::devnet().chain_id,
             rpc: None,
             specs: specs_from_config(ChainConfig::devnet()),
         };
         let names: Vec<_> =
             checkable_specs_display(&chain).into_iter().map(|spec| spec.name).collect();
 
-        assert_eq!(names, vec!["Beryl", "Azul", "Jovian"]);
+        assert_eq!(names, vec!["Zenith", "Beryl", "Azul", "Jovian"]);
+    }
+
+    #[test]
+    fn zenith_report_checks_map_to_existing_rows() {
+        let (tx, rx) = mpsc::channel(2);
+        let check = ZenithCheck {
+            name: "proxy_code_hash".to_string(),
+            status: ZenithCheckStatus::Fail,
+            expected: B256::repeat_byte(0xaa).to_string(),
+            observed: B256::repeat_byte(0xbb).to_string(),
+        };
+        let result = zenith_check_result(check);
+        tx.try_send(CheckUpdate::Starting("proxy_code_hash".to_string())).unwrap();
+        tx.try_send(CheckUpdate::Completed { name: "proxy_code_hash".to_string(), result })
+            .unwrap();
+        drop(tx);
+        let mut panel = ChecksPanel { rx: Some(rx), running: true, ..ChecksPanel::default() };
+
+        panel.poll();
+
+        let result = panel.results.get("proxy_code_hash").unwrap();
+        assert_eq!(result.passed, Some(false));
+        assert_eq!(result.detail, "expected 0xaaaaaaaaaaaa..aaaa; got 0xbbbbbbbbbbbb..bbbb");
+        assert!(!result.detail.contains("http://el"));
+        assert!(!result.detail.contains("block 42"));
+        assert!(!panel.running);
+    }
+
+    #[test]
+    fn zenith_initial_implementation_has_operator_friendly_detail() {
+        let result = zenith_check_result(ZenithCheck {
+            name: "implementation".to_string(),
+            status: ZenithCheckStatus::Pass,
+            expected: "a linked implementation with deployed code".to_string(),
+            observed: "LinkedInitial".to_string(),
+        });
+
+        assert_eq!(result.detail, "canonical initial implementation");
+    }
+
+    fn rendered_checks_panel(mode: CheckMode) -> String {
+        let backend = TestBackend::new(160, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let panel = ChecksPanel {
+            chain_idx: Some(0),
+            upgrade: Some("Zenith"),
+            mode: Some(mode),
+            rpc_url: "http://localhost:7545".to_string(),
+            ..ChecksPanel::default()
+        };
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_checks_panel(frame, area, &panel, 0, None, false);
+            })
+            .unwrap();
+        terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect()
+    }
+
+    #[test]
+    fn zenith_checks_render_before_and_after_modes() {
+        let before = rendered_checks_panel(CheckMode::Before);
+        let after = rendered_checks_panel(CheckMode::After);
+
+        assert!(before.contains("Zenith Checks (before)"));
+        assert!(after.contains("Zenith Checks (after)"));
+        assert!(before.contains("BaseTime implementation"));
+        assert!(after.contains("BaseTime update tx"));
+        assert!(after.contains("BaseTime update receipt"));
+        assert!(after.contains("BaseTime millis getter"));
+        assert!(after.contains("BaseTime timestamp getter"));
+        assert!(!after.contains("el_syncing"));
+        assert!(!after.contains("snapshot_consistency"));
+    }
+
+    #[test]
+    fn zenith_rows_keep_basetime_together_and_headers_last() {
+        assert_eq!(
+            &checks_for("Zenith")[..9].iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            &[
+                "proxy_code_hash",
+                "proxy_admin",
+                "implementation",
+                "metadata",
+                "metadata_receipt",
+                "storage_millis_part",
+                "getter_millis_part",
+                "getter_timestamp_ms",
+                "cadence_200ms",
+            ]
+        );
+        assert_eq!(
+            &checks_for("Zenith")[ZENITH_CHECKS.len() - 4..]
+                .iter()
+                .map(|(name, _)| *name)
+                .collect::<Vec<_>>(),
+            &[
+                "header_timestamp_ms",
+                "rpc_eth_getHeaderByHash_timestampMs",
+                "rpc_eth_getHeaderByNumber_timestampMs",
+                "rpc_eth_subscribe_newHeads_timestampMs",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn starting_checks_cancels_the_previous_task() {
+        let previous = tokio::spawn(std::future::pending::<()>());
+        let previous_abort = previous.abort_handle();
+        let mut panel = ChecksPanel { handle: Some(previous), ..ChecksPanel::default() };
+
+        panel.start(
+            0,
+            ("http://localhost:7545".to_string(), None, None),
+            "unknown",
+            CheckMode::Before,
+        );
+        tokio::task::yield_now().await;
+
+        assert!(previous_abort.is_finished());
+    }
+
+    #[tokio::test]
+    async fn unavailable_zenith_checker_marks_all_rows_indeterminate() {
+        let (tx, mut rx) = mpsc::channel(64);
+
+        run_zenith_checks_streaming("http://localhost:7545".to_string(), None, None, None, tx)
+            .await;
+
+        let mut started = Vec::new();
+        let mut completed = Vec::new();
+        while let Some(update) = rx.recv().await {
+            match update {
+                CheckUpdate::Starting(name) => started.push(name),
+                CheckUpdate::Completed { name, result } => completed.push((name, result)),
+                CheckUpdate::Cursor(_) => {}
+            }
+        }
+
+        assert!(ZENITH_CHECKS.iter().all(|(name, _)| started.iter().any(|seen| seen == name)));
+        assert_eq!(completed.len(), ZENITH_CHECKS.len());
+        assert_eq!(completed[0].1.passed, None);
+        assert_eq!(completed[0].1.detail, "consensus node RPC is not configured");
+        assert!(completed.iter().all(|(_, result)| result.passed.is_none()));
+    }
+
+    #[test]
+    fn seeded_expected_admin_skips_upgrades_without_known_admin() {
+        // Azul has no seeded admin; seeded_expected_admin should look past it to Cobalt.
+        let chain = ChainUpgrades {
+            display_name: "Mainnet",
+            chain_id: ChainConfig::mainnet().chain_id,
+            rpc: None,
+            specs: vec![
+                UpgradeSpec { upgrade: BaseUpgrade::Azul, name: "Azul", timestamp: Some(20) },
+                UpgradeSpec { upgrade: BaseUpgrade::Cobalt, name: "Cobalt", timestamp: Some(30) },
+            ],
+        };
+        let cobalt_admin = ChainConfig::mainnet()
+            .activation_admin_address_for_upgrade(BaseUpgrade::Cobalt)
+            .map(|admin| ("Cobalt", admin));
+
+        // When Azul is next but has no seeded admin, Cobalt's admin is surfaced instead.
+        assert_eq!(chain.seeded_expected_admin(10), cobalt_admin);
+        // Once Azul has activated, Cobalt is the next with a known admin.
+        assert_eq!(chain.seeded_expected_admin(25), cobalt_admin);
+        // Once all future upgrades have passed, nothing is returned.
+        assert_eq!(chain.seeded_expected_admin(35), None);
+    }
+
+    #[test]
+    fn missing_upgrade_spec_does_not_panic_when_applying_timestamp() {
+        let mut chain = ChainUpgrades {
+            display_name: "Mainnet",
+            chain_id: ChainConfig::mainnet().chain_id,
+            rpc: None,
+            specs: vec![UpgradeSpec {
+                upgrade: BaseUpgrade::Azul,
+                name: "Azul",
+                timestamp: Some(10),
+            }],
+        };
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            chain.set_timestamp(BaseUpgrade::Beryl, Some(20));
+        }));
+
+        assert!(result.is_ok());
+        assert_eq!(chain.specs[0].timestamp, Some(10));
+    }
+
+    #[test]
+    fn admin_activity_state_resets_when_rpc_changes() {
+        let mut state = AdminActivityChainState {
+            watched_rpc_url: "https://rpc-one.example".to_string(),
+            entries: VecDeque::from([AdminActivityEntry {
+                block_number: 42,
+                timestamp: 1_725_000_000,
+                tx_hash: B256::repeat_byte(0x44),
+                caller: address!("3333333333333333333333333333333333333333"),
+                action: "setAdmin",
+                detail: "detail".to_string(),
+            }]),
+            live_admin: Some(address!("2222222222222222222222222222222222222222")),
+            last_scanned_safe_block: Some(42),
+            status: "Watching confirmed activation activity".to_string(),
+        };
+
+        state.reset_for_rpc("https://rpc-two.example");
+
+        assert_eq!(state.watched_rpc_url, "https://rpc-two.example");
+        assert!(state.entries.is_empty());
+        assert!(state.live_admin.is_none());
+        assert!(state.last_scanned_safe_block.is_none());
+        assert!(state.status.is_empty());
+    }
+
+    #[test]
+    fn processed_block_update_advances_progress_before_batch_end() {
+        let (tx, rx) = mpsc::channel(1);
+        tx.try_send(AdminActivityUpdate::ProcessedBlock {
+            entries: vec![AdminActivityEntry {
+                block_number: 42,
+                timestamp: 1_725_000_000,
+                tx_hash: B256::repeat_byte(0x44),
+                caller: address!("3333333333333333333333333333333333333333"),
+                action: "setAdmin",
+                detail: "detail".to_string(),
+            }],
+            live_admin: Some(address!("2222222222222222222222222222222222222222")),
+        })
+        .expect("update fits in channel");
+
+        let mut watcher = AdminActivityWatcher {
+            chain_idx: Some(0),
+            rpc_url: String::new(),
+            rx: Some(rx),
+            handle: None,
+        };
+        let mut states = std::array::from_fn(|_| AdminActivityChainState::default());
+
+        watcher.poll(&mut states);
+
+        assert_eq!(states[0].last_scanned_safe_block, Some(42));
+        assert_eq!(
+            states[0].live_admin,
+            Some(address!("2222222222222222222222222222222222222222"))
+        );
+        assert_eq!(states[0].entries.len(), 1);
+        assert_eq!(states[0].entries[0].block_number, 42);
+
+        tx.try_send(AdminActivityUpdate::LastScannedSafeBlock(45))
+            .expect("progress update fits in channel");
+
+        watcher.poll(&mut states);
+
+        assert_eq!(states[0].last_scanned_safe_block, Some(45));
+        assert_eq!(
+            states[0].live_admin,
+            Some(address!("2222222222222222222222222222222222222222"))
+        );
+        assert_eq!(states[0].entries.len(), 1);
+        assert_eq!(states[0].entries[0].block_number, 42);
+    }
+
+    #[test]
+    fn admin_activity_scan_end_caps_catch_up_work_per_poll() {
+        assert_eq!(
+            admin_activity_scan_end(10, 10 + MAX_ADMIN_ACTIVITY_BLOCKS_PER_POLL * 2),
+            10 + MAX_ADMIN_ACTIVITY_BLOCKS_PER_POLL - 1
+        );
+        assert_eq!(admin_activity_scan_end(10, 20), 20);
+    }
+
+    #[test]
+    fn decode_admin_activity_log_decodes_admin_changed_event() {
+        let previous_admin = address!("1111111111111111111111111111111111111111");
+        let new_admin = address!("2222222222222222222222222222222222222222");
+        let caller = address!("3333333333333333333333333333333333333333");
+        let tx_hash = B256::repeat_byte(0x44);
+        let log = alloy_rpc_types_eth::Log {
+            inner: PrimitiveLog {
+                address: ActivationRegistryStorage::ADDRESS,
+                data: IActivationRegistry::AdminChanged {
+                    previousAdmin: previous_admin,
+                    newAdmin: new_admin,
+                    caller,
+                }
+                .encode_log_data(),
+            },
+            block_number: Some(42),
+            block_timestamp: Some(1_725_000_000),
+            transaction_hash: Some(tx_hash),
+            ..Default::default()
+        };
+
+        let (entry, live_admin) =
+            decode_admin_activity_log(&log, 42, 1_725_000_000).expect("log decodes");
+
+        assert_eq!(entry.block_number, 42);
+        assert_eq!(entry.timestamp, 1_725_000_000);
+        assert_eq!(entry.tx_hash, tx_hash);
+        assert_eq!(entry.caller, caller);
+        assert_eq!(entry.action, "setAdmin");
+        assert_eq!(
+            entry.detail,
+            format!("{} → {}", short_address(previous_admin), short_address(new_admin))
+        );
+        assert_eq!(live_admin, Some(new_admin));
     }
 
     #[test]
@@ -1896,6 +3222,19 @@ mod tests {
 
         view.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), &mut resources);
         assert_eq!(view.selected_check_upgrade(100), Some("Beryl"));
+    }
+
+    #[test]
+    fn loaded_chain_upgrade_rpc_prefers_public_with_local_fallback() {
+        let mut view = UpgradesView::new();
+        view.selected_chain = 3; // Mainnet
+        let mut resources = Resources::new(MonitoringConfig::mainnet());
+
+        assert_eq!(view.rpc_for_selected(&resources).as_deref(), Some("https://mainnet.base.org/"));
+
+        resources.config.public_rpc = None;
+
+        assert_eq!(view.rpc_for_selected(&resources).as_deref(), Some("http://127.0.0.1:8545/"));
     }
 
     #[test]

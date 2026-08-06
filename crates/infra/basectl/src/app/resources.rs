@@ -5,9 +5,12 @@ use std::{
 };
 
 use base_common_flashblocks::Flashblock;
-use base_common_genesis::SystemConfig;
+use base_common_genesis::{SystemConfig, UpgradeConfig};
 use base_consensus_rpc::ClusterMembership;
-use tokio::sync::{mpsc, watch};
+use tokio::{
+    sync::{mpsc, watch},
+    task::AbortHandle,
+};
 use url::Url;
 
 use crate::{
@@ -220,6 +223,9 @@ impl PodsState {
 pub struct Resources {
     /// Active chain configuration.
     pub config: MonitoringConfig,
+    /// Configured execution-layer RPC retained while the TUI uses the public RPC.
+    pub configured_rpc: Url,
+    background_tasks: Vec<AbortHandle>,
     /// Data availability monitoring state.
     pub da: DaState,
     /// Flashblock stream state.
@@ -237,6 +243,7 @@ pub struct Resources {
     /// L1 system config fetched from the contract.
     pub system_config: Option<SystemConfig>,
     sys_config_rx: Option<mpsc::Receiver<SystemConfig>>,
+    upgrades_rx: Option<mpsc::Receiver<UpgradeConfig>>,
 }
 
 /// State for DA (data availability) monitoring.
@@ -286,8 +293,11 @@ pub struct FlashState {
 impl Resources {
     /// Creates new resources with the given chain configuration.
     pub fn new(config: MonitoringConfig) -> Self {
+        let configured_rpc = config.rpc.clone();
         Self {
             config,
+            configured_rpc,
+            background_tasks: Vec::new(),
             da: DaState::new(),
             flash: FlashState::new(),
             toasts: ToastState::new(),
@@ -297,6 +307,7 @@ impl Resources {
             pods: PodsState::default(),
             system_config: None,
             sys_config_rx: None,
+            upgrades_rx: None,
         }
     }
 
@@ -305,9 +316,19 @@ impl Resources {
         &self.config.name
     }
 
+    /// Replaces the task set aborted when these resources are dropped.
+    pub fn set_background_tasks(&mut self, background_tasks: Vec<AbortHandle>) {
+        self.background_tasks = background_tasks;
+    }
+
     /// Sets the channel for receiving L1 system config updates.
     pub fn set_sys_config_channel(&mut self, rx: mpsc::Receiver<SystemConfig>) {
         self.sys_config_rx = Some(rx);
+    }
+
+    /// Sets the channel for receiving live upgrade schedule updates.
+    pub fn set_upgrades_channel(&mut self, rx: mpsc::Receiver<UpgradeConfig>) {
+        self.upgrades_rx = Some(rx);
     }
 
     /// Polls for a new system config from the background task.
@@ -316,6 +337,23 @@ impl Resources {
             && let Ok(cfg) = rx.try_recv()
         {
             self.system_config = Some(cfg);
+        }
+    }
+
+    /// Polls for live upgrade schedule updates from the consensus node.
+    pub fn poll_upgrades(&mut self) {
+        if let Some(ref mut rx) = self.upgrades_rx {
+            while let Ok(upgrades) = rx.try_recv() {
+                self.config.upgrades = Some(upgrades);
+            }
+        }
+    }
+}
+
+impl Drop for Resources {
+    fn drop(&mut self) {
+        for task in &self.background_tasks {
+            task.abort();
         }
     }
 }
@@ -682,10 +720,26 @@ impl FlashState {
 
 #[cfg(test)]
 mod tests {
+    use std::future;
+
     use tokio::sync::mpsc;
 
-    use super::DaState;
-    use crate::rpc::{BacklogFetchResult, BlockDaInfo, L1BlockInfo};
+    use super::{DaState, Resources};
+    use crate::{
+        MonitoringConfig,
+        rpc::{BacklogFetchResult, BlockDaInfo, L1BlockInfo},
+    };
+
+    #[tokio::test]
+    async fn dropping_resources_aborts_background_tasks() {
+        let task = tokio::spawn(future::pending::<()>());
+        let mut resources = Resources::new(MonitoringConfig::mainnet());
+        resources.set_background_tasks(vec![task.abort_handle()]);
+
+        drop(resources);
+
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
 
     #[test]
     fn records_l1_blocks_before_backlog_load_completes() {

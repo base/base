@@ -8,6 +8,9 @@ use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
 use base_bundle_extension::BundleExtension;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_cli::{
+    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
+};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_node_core::args::RollupArgs;
@@ -30,7 +33,7 @@ use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use url::Url;
 
 /// Configuration for starting an in-process client node.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InProcessClientConfig {
     /// L2 genesis JSON content.
     pub genesis_json: Vec<u8>,
@@ -53,6 +56,18 @@ pub struct InProcessClientConfig {
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// Optional L1 upgrade signal configuration.
+    ///
+    /// When the mode applies at startup, the schedule is read from L1 and applied to the chain
+    /// spec before the node starts, mirroring the standalone execution CLI. The runtime
+    /// extension is installed for live polling (and, in runtime-admin mode, automatic
+    /// re-application of observed L1 changes).
+    pub upgrade_signal: Option<ExecutionUpgradeSignalConfig>,
+    /// Additional node extensions installed after Base's built-in client extensions.
+    ///
+    /// Lets downstream consumers layer their own [`BaseNodeExtension`] — such as a custom RPC
+    /// method — onto the standard in-process client wiring without forking this crate.
+    pub extra_extensions: Vec<Box<dyn BaseNodeExtension>>,
 }
 
 /// In-process Base client node that syncs from a builder.
@@ -62,6 +77,7 @@ pub struct InProcessClient {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
     engine_addr: SocketAddr,
+    chain_spec: Arc<BaseChainSpec>,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
     _runtime: Runtime,
@@ -93,9 +109,22 @@ impl InProcessClient {
         // Parse genesis JSON to chain spec
         let genesis: alloy_genesis::Genesis = serde_json::from_slice(&config.genesis_json)
             .map_err(|e| eyre!("Failed to parse genesis JSON: {}", e))?;
-        let chain_spec = Arc::new(
-            BaseChainSpec::try_from_genesis(genesis).wrap_err("Invalid genesis chain spec")?,
-        );
+        let mut chain_spec =
+            BaseChainSpec::try_from_genesis(genesis).wrap_err("Invalid genesis chain spec")?;
+
+        // Mirror the standalone execution CLI: apply the L1 upgrade signal schedule to the
+        // chain spec before startup when the configured mode applies at startup.
+        if let Some(signal_config) = &config.upgrade_signal
+            && signal_config.signal_config.mode.applies_at_startup()
+        {
+            ExecutionUpgradeSignal::apply_initial_signal_to_chain_spec(
+                signal_config,
+                &mut chain_spec,
+            )
+            .await
+            .wrap_err("Failed to apply upgrade signal to client chain spec")?;
+        }
+        let chain_spec = Arc::new(chain_spec);
 
         let mut network_config = NetworkArgs {
             discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
@@ -167,7 +196,12 @@ impl InProcessClient {
             .with_add_ons(base_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        let extensions: Vec<Box<dyn BaseNodeExtension>> = Self::build_extensions(&config)?;
+        let (mut extensions, flashblocks_config) = Self::build_extensions(&config)?;
+        extensions.extend(config.extra_extensions);
+        // Flashblocks extension must be installed last: it uses `replace_configured`, which
+        // overwrites RPC methods (e.g. `eth_getTransactionCount`, `eth_subscribe`) that
+        // built-in and caller-supplied extensions alike may register.
+        extensions.push(Box::new(FlashblocksExtension::new(Some(flashblocks_config))));
         let NodeHandle { node: node_handle, node_exit_future } = extensions
             .into_iter()
             .fold(NodeHooks::new(), |b, ext| ext.apply(b))
@@ -191,11 +225,18 @@ impl InProcessClient {
             http_api_addr,
             ws_api_addr,
             engine_addr,
+            chain_spec,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
             _runtime: runtime,
             _db_path: db_path,
         })
+    }
+
+    /// Returns the chain spec the node was started with, including any upgrade signal
+    /// schedule applied at startup.
+    pub const fn chain_spec(&self) -> &Arc<BaseChainSpec> {
+        &self.chain_spec
     }
 
     /// Returns the HTTP RPC URL for the client.
@@ -237,8 +278,13 @@ impl InProcessClient {
         Ok((db, path))
     }
 
-    /// Builds the extensions for the client node.
-    fn build_extensions(config: &InProcessClientConfig) -> Result<Vec<Box<dyn BaseNodeExtension>>> {
+    /// Builds the client node's built-in extensions, excluding [`FlashblocksExtension`].
+    ///
+    /// [`FlashblocksExtension`] must be installed last (see [`Self::start`]), since it uses
+    /// `replace_configured` to overwrite RPC methods that other extensions may register.
+    fn build_extensions(
+        config: &InProcessClientConfig,
+    ) -> Result<(Vec<Box<dyn BaseNodeExtension>>, FlashblocksConfig)> {
         let mut extensions: Vec<Box<dyn BaseNodeExtension>> = Vec::new();
 
         // TxPool extension (tracing disabled for client)
@@ -261,6 +307,7 @@ impl InProcessClient {
         let txpool_config = TxpoolConfig {
             tracing_enabled: false,
             tracing_logs_enabled: false,
+            transaction_event_node_role: None,
             flashblocks_config: Some(flashblocks_config.clone()),
         };
         extensions.push(Box::new(TxPoolExtension::new(txpool_config)));
@@ -270,9 +317,13 @@ impl InProcessClient {
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
         }
 
-        // Flashblocks extension (must be last - uses replace_configured)
-        extensions.push(Box::new(FlashblocksExtension::new(Some(flashblocks_config))));
+        // Upgrade signal runtime extension (optional - live L1 schedule polling)
+        if let Some(ref signal_config) = config.upgrade_signal {
+            extensions.push(Box::new(ExecutionUpgradeSignalRuntimeExtension::from_config(
+                signal_config.clone(),
+            )));
+        }
 
-        Ok(extensions)
+        Ok((extensions, flashblocks_config))
     }
 }
