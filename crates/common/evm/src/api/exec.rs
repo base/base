@@ -72,8 +72,8 @@ mod tests {
         let _ = evm.system_call_one_with_caller(caller, contract, Default::default());
 
         // Finalize to flush the journal, then inspect the underlying State cache.
-        // `ExecutionWitnessRecord::from_executed_state` iterates `State.cache.accounts` to build
-        // the hashed state, so the caller must appear here to be included in the witness.
+        // `ExecutionWitnessRecord` iterates `State.cache.accounts` to build the hashed state, so
+        // the caller must appear here to be included in the witness.
         let _ = evm.finalize();
         let state = evm.into_context().journaled_state.database;
 

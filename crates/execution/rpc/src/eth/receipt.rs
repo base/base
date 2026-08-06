@@ -65,6 +65,16 @@ where
 
     fn convert_receipts(
         &self,
+        _inputs: Vec<ConvertReceiptInput<'_, N>>,
+    ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
+        Err(reth_rpc_eth_types::EthApiError::Unsupported(
+            "Base receipt conversion requires convert_receipts_with_block",
+        )
+        .into())
+    }
+
+    fn convert_receipts_with_block(
+        &self,
         inputs: Vec<ConvertReceiptInput<'_, N>>,
         block: &SealedBlock<N::Block>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {

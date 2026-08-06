@@ -5,7 +5,6 @@ use std::{marker::PhantomData, sync::Arc};
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::B256;
-use alloy_rlp::Encodable;
 use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_common_chains::Upgrades;
@@ -226,7 +225,9 @@ where
                         NoopPayloadTransactions::<BasePooledTransaction>::default()
                     });
 
-                    builder.witness(state_provider, &ctx).map_err(PayloadBuilderError::other)
+                    builder
+                        .witness(state_provider, &this.provider, &ctx)
+                        .map_err(PayloadBuilderError::other)
                 };
 
                 let _ = tx.send(result.await);
@@ -261,42 +262,22 @@ where
             let db = StateProviderDatabase::new(&state_provider);
             let block_executor = this.eth_api.evm_config().executor(db);
 
-            let mut witness_record = ExecutionWitnessRecord::default();
-
             let mode = ExecutionWitnessMode::default();
+            let mut witness = None;
             let _ = block_executor
                 .execute_with_state_closure(&block, |statedb: &State<_>| {
-                    witness_record.record_executed_state(statedb, mode);
+                    witness = Some(ExecutionWitnessRecord::new(statedb).into_execution_witness(
+                        &state_provider,
+                        &this.provider,
+                        block_number,
+                        mode,
+                    ));
                 })
                 .map_err(EthApiError::from)?;
 
-            let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number } =
-                witness_record;
-
-            let state = state_provider
-                .witness(Default::default(), hashed_state, mode)
-                .map_err(EthApiError::from)?;
-            let mut exec_witness = ExecutionWitness { state, codes, keys, ..Default::default() };
-
-            // If there were no calls to the BLOCKHASH opcode, return only the
-            // parent header.
-            let smallest = lowest_block_number.unwrap_or_else(|| block_number.saturating_sub(1));
-
-            let range = smallest..block_number;
-            exec_witness.headers = self
-                .inner
-                .provider
-                .headers_range(range)
-                .map_err(EthApiError::from)?
-                .into_iter()
-                .map(|header| {
-                    let mut serialized_header = Vec::new();
-                    header.encode(&mut serialized_header);
-                    serialized_header.into()
-                })
-                .collect();
-
-            Ok(exec_witness)
+            Ok(witness
+                .expect("state closure is called after successful execution")
+                .map_err(EthApiError::from)?)
         })
         .await
     }

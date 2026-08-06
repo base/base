@@ -33,7 +33,9 @@ use reth_revm::{
     cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
     witness::ExecutionWitnessRecord,
 };
-use reth_storage_api::{StateProvider, StateProviderFactory, errors::ProviderError};
+use reth_storage_api::{
+    HeaderProvider, StateProvider, StateProviderFactory, errors::ProviderError,
+};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use reth_trie_common::ExecutionWitnessMode;
 use revm::context::{Block, BlockEnv};
@@ -212,7 +214,21 @@ where
         }
         .map(|out| out.with_cached_reads(cached_reads))
     }
+}
 
+impl<Pool, Client, Evm, N, T, Attrs> BasePayloadBuilder<Pool, Client, Evm, T, Attrs>
+where
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec: Upgrades>
+        + HeaderProvider<Header: alloy_rlp::Encodable>,
+    N: PayloadPrimitives,
+    Evm: ConfigureEvm<
+            Primitives = N,
+            NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
+        >,
+    Attrs: Attributes<Transaction = TxTy<Evm::Primitives>>,
+{
     /// Computes the witness for the payload.
     pub fn payload_witness(
         &self,
@@ -239,7 +255,7 @@ where
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
         let builder = Builder::new(|_| NoopPayloadTransactions::<Pool::Transaction>::default());
-        builder.witness(state_provider, &ctx)
+        builder.witness(state_provider, &self.client, &ctx)
     }
 }
 
@@ -429,6 +445,7 @@ impl<Txs> Builder<'_, Txs> {
     pub fn witness<Evm, ChainSpec, N, Attrs>(
         self,
         state_provider: impl StateProvider,
+        headers_provider: &impl HeaderProvider<Header: alloy_rlp::Encodable>,
         ctx: &BasePayloadBuilderCtx<Evm, ChainSpec, Attrs>,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
@@ -458,15 +475,10 @@ impl<Txs> Builder<'_, Txs> {
         }
 
         let mode = ExecutionWitnessMode::default();
-        let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number: _ } =
-            ExecutionWitnessRecord::from_executed_state(&db, mode);
-        let state = state_provider.witness(Default::default(), hashed_state, mode)?;
-        Ok(ExecutionWitness {
-            state: state.into_iter().collect(),
-            codes,
-            keys,
-            ..Default::default()
-        })
+        let block_number = ctx.parent().number().saturating_add(1);
+        ExecutionWitnessRecord::new(&db)
+            .into_execution_witness(&state_provider, headers_provider, block_number, mode)
+            .map_err(PayloadBuilderError::other)
     }
 }
 

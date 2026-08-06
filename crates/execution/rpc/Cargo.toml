@@ -15,7 +15,7 @@ workspace = true
 # reth
 reth-evm.workspace = true
 reth-rpc.workspace = true
-reth-revm.workspace = true
+reth-revm = { workspace = true, features = ["witness"] }
 reth-rpc-api.workspace = true
 reth-provider.workspace = true
 reth-node-api.workspace = true

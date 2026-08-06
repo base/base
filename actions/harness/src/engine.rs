@@ -422,7 +422,12 @@ impl ActionEngineClient {
             let hashed_state = HashedPostStateProvider::hashed_post_state(
                 &LatestStateProviderRef::new(&state_provider),
                 &execution_output.state,
-            );
+            )
+            .map_err(|e| {
+                TransportError::from(TransportErrorKind::custom_str(&format!(
+                    "failed to hash post state: {e}"
+                )))
+            })?;
             drop(state_provider);
 
             let provider_rw = inner.provider_factory.provider_rw().map_err(|e| {
