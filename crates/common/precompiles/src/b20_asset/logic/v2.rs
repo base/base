@@ -662,10 +662,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
         }
-        // Preserve asset's frozen Beryl `update_policy` ordering into Cobalt: validate the scope
-        // (pure) and run the existence check before reading the old id, so the `PolicyNotFound`
-        // revert path does no old-id SLOAD (matches AssetV1 / `token.rs`). Keeps asset's gas
-        // profile unchanged across the Beryl->Cobalt boundary.
         Self::ensure_supported_policy_type(policy_scope)?;
         if !token.policy().policy_exists(token.policy_storage(), new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
