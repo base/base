@@ -1,5 +1,7 @@
 //! Dispute-game discovery client for the `basectl proofs games` command group.
 
+use std::collections::HashMap;
+
 use alloy_consensus::Transaction as _;
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, RootProvider};
@@ -9,7 +11,7 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, ContractError,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient, decode_create_calldata,
 };
-use futures::{StreamExt, stream, try_join};
+use futures::{StreamExt, lock::Mutex, stream, try_join};
 use url::Url;
 
 use crate::errors::ProofsCommandError;
@@ -73,7 +75,9 @@ pub struct GameDetails {
     pub target_block: u64,
     /// Number of L2 blocks the game covers.
     pub block_interval: u64,
-    /// Stride between intermediate output-root checkpoints, when derivable.
+    /// Canonical `INTERMEDIATE_BLOCK_INTERVAL` read from the game type's
+    /// registered `AggregateVerifier` implementation; `None` when the game
+    /// type has no registered implementation to read it from.
     pub intermediate_root_interval: Option<u64>,
     /// Number of intermediate output roots committed with the game.
     pub intermediate_root_count: usize,
@@ -96,19 +100,6 @@ pub struct GameDetails {
     pub countered_index: Option<u64>,
 }
 
-impl GameDetails {
-    /// Derives the intermediate checkpoint stride from the game's block
-    /// interval and its committed root count.
-    ///
-    /// The factory requires the committed roots to cover every checkpoint
-    /// including the final root, so `block_interval / root_count` recovers
-    /// the stride. Returns `None` when the counts do not divide evenly.
-    pub fn derive_intermediate_interval(block_interval: u64, root_count: usize) -> Option<u64> {
-        let count = u64::try_from(root_count).ok().filter(|&c| c > 0)?;
-        block_interval.is_multiple_of(count).then(|| block_interval / count)
-    }
-}
-
 /// Read-only L1 client for listing and inspecting dispute games.
 #[derive(Debug)]
 pub struct GamesClient {
@@ -117,6 +108,7 @@ pub struct GamesClient {
     factory_address: Address,
     factory: DisputeGameFactoryContractClient,
     verifier: AggregateVerifierContractClient,
+    aggregate_game_types: Mutex<HashMap<u32, bool>>,
 }
 
 impl GamesClient {
@@ -141,6 +133,7 @@ impl GamesClient {
             factory_address: factory,
             factory: DisputeGameFactoryContractClient::new(factory, provider.clone()),
             verifier: AggregateVerifierContractClient::new(provider.clone()),
+            aggregate_game_types: Mutex::new(HashMap::new()),
             provider,
         }
     }
@@ -251,7 +244,10 @@ impl GamesClient {
         {
             return Ok(None);
         }
-        if filter.missing_zk {
+        if !self.is_aggregate_verifier_game_type(at_index.game_type).await? {
+            return Ok(None);
+        }
+        let zk_prover = if filter.missing_zk {
             // Single-call precheck: the filter only needs the ZK slot, so skip
             // the full multi-read summary fetch for games that already have a
             // ZK proof.
@@ -263,12 +259,39 @@ impl GamesClient {
             if zk_prover != Address::ZERO {
                 return Ok(None);
             }
-        }
-        let summary = self.fetch_summary(index, at_index.game_type, at_index.proxy).await?;
-        if filter.missing_zk && summary.zk_prover != Address::ZERO {
-            return Ok(None);
-        }
+            Some(zk_prover)
+        } else {
+            None
+        };
+        let summary =
+            self.fetch_summary(index, at_index.game_type, at_index.proxy, zk_prover).await?;
         Ok(Some(summary))
+    }
+
+    /// Returns whether the factory's current implementation for `game_type`
+    /// exposes the `AggregateVerifier` checkpoint configuration.
+    async fn is_aggregate_verifier_game_type(
+        &self,
+        game_type: u32,
+    ) -> Result<bool, ProofsCommandError> {
+        let mut aggregate_game_types = self.aggregate_game_types.lock().await;
+        if let Some(is_aggregate) = aggregate_game_types.get(&game_type) {
+            return Ok(*is_aggregate);
+        }
+
+        let implementation =
+            self.factory.game_impls(game_type).await.map_err(|error| self.contract_error(error))?;
+        let is_aggregate = if implementation == Address::ZERO {
+            false
+        } else {
+            match self.verifier.read_intermediate_block_interval(implementation).await {
+                Ok(_) => true,
+                Err(error) if error.is_missing_method() => false,
+                Err(error) => return Err(self.contract_error(error)),
+            }
+        };
+        aggregate_game_types.insert(game_type, is_aggregate);
+        Ok(is_aggregate)
     }
 
     /// Re-checks that the game can still accept a ZK proposal proof.
@@ -311,6 +334,7 @@ impl GamesClient {
             expected_resolution,
             countered_plus_one,
             intermediate_roots,
+            game_type,
         ) = try_join!(
             self.verifier.status(address),
             self.verifier.game_info(address),
@@ -323,8 +347,25 @@ impl GamesClient {
             self.verifier.expected_resolution(address),
             self.verifier.countered_index(address),
             self.verifier.intermediate_output_roots(address),
+            self.verifier.game_type(address),
         )
         .map_err(|error| self.contract_error(error))?;
+
+        // The canonical checkpoint stride lives on the game type's
+        // registered implementation, not in the game's committed data. An
+        // unregistered game type leaves the stride unknown.
+        let impl_address =
+            self.factory.game_impls(game_type).await.map_err(|error| self.contract_error(error))?;
+        let intermediate_root_interval = if impl_address == Address::ZERO {
+            None
+        } else {
+            Some(
+                self.verifier
+                    .read_intermediate_block_interval(impl_address)
+                    .await
+                    .map_err(|error| self.contract_error(error))?,
+            )
+        };
 
         let block_interval = info.l2_block_number.saturating_sub(starting_block);
         let intermediate_root_count = intermediate_roots.len();
@@ -335,10 +376,7 @@ impl GamesClient {
             starting_block,
             target_block: info.l2_block_number,
             block_interval,
-            intermediate_root_interval: GameDetails::derive_intermediate_interval(
-                block_interval,
-                intermediate_root_count,
-            ),
+            intermediate_root_interval,
             intermediate_root_count,
             l1_head,
             parent_address: info.parent_address,
@@ -357,6 +395,7 @@ impl GamesClient {
         index: u64,
         game_type: u32,
         address: Address,
+        known_zk_prover: Option<Address>,
     ) -> Result<GameSummary, ProofsCommandError> {
         let (status, info, starting_block, tee_prover, zk_prover, created_at, expected_resolution) =
             try_join!(
@@ -364,7 +403,12 @@ impl GamesClient {
                 self.verifier.game_info(address),
                 self.verifier.starting_block_number(address),
                 self.verifier.tee_prover(address),
-                self.verifier.zk_prover(address),
+                async {
+                    match known_zk_prover {
+                        Some(zk_prover) => Ok(zk_prover),
+                        None => self.verifier.zk_prover(address).await,
+                    }
+                },
                 self.verifier.created_at(address),
                 self.verifier.expected_resolution(address),
             )
@@ -403,19 +447,91 @@ impl GamesClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::HashMap;
 
-    #[test]
-    fn derive_intermediate_interval_recovers_stride() {
-        // 1000-block game with roots every 100 blocks commits 10 roots.
-        assert_eq!(GameDetails::derive_intermediate_interval(1000, 10), Some(100));
-        // Single checkpoint: the final root only.
-        assert_eq!(GameDetails::derive_intermediate_interval(1000, 1), Some(1000));
+    use alloy_primitives::{Address, Bytes, U256};
+    use alloy_provider::RootProvider;
+    use alloy_rpc_client::RpcClient;
+    use alloy_sol_types::SolValue;
+    use alloy_transport::mock::Asserter;
+    use base_proof_contracts::{AggregateVerifierContractClient, DisputeGameFactoryContractClient};
+    use futures::lock::Mutex;
+    use url::Url;
+
+    use super::{GameListFilter, GamesClient};
+    use crate::errors::ProofsCommandError;
+
+    fn mocked_client(asserter: Asserter) -> GamesClient {
+        let factory_address = Address::repeat_byte(0xF0);
+        let provider = RootProvider::new(RpcClient::mocked(asserter));
+        GamesClient {
+            endpoint: Url::parse("http://localhost:8545").unwrap(),
+            provider: provider.clone(),
+            factory_address,
+            factory: DisputeGameFactoryContractClient::new(factory_address, provider.clone()),
+            verifier: AggregateVerifierContractClient::new(provider),
+            aggregate_game_types: Mutex::new(HashMap::new()),
+        }
     }
 
-    #[test]
-    fn derive_intermediate_interval_rejects_bad_counts() {
-        assert_eq!(GameDetails::derive_intermediate_interval(1000, 0), None);
-        assert_eq!(GameDetails::derive_intermediate_interval(1000, 3), None);
+    fn push_abi<T: SolValue>(asserter: &Asserter, value: &T) {
+        asserter.push_success(&Bytes::from(value.abi_encode()));
+    }
+
+    #[tokio::test]
+    async fn heterogeneous_game_types_skip_unsupported_and_cache_aggregate_probe() {
+        let asserter = Asserter::new();
+        let client = mocked_client(asserter.clone());
+        let unsupported_game = Address::repeat_byte(0x11);
+        let unsupported_impl = Address::repeat_byte(0x12);
+        let aggregate_impl = Address::repeat_byte(0x22);
+
+        push_abi(&asserter, &(1_u32, 1_u64, unsupported_game));
+        push_abi(&asserter, &unsupported_impl);
+        asserter.push_success(&Bytes::new());
+        push_abi(&asserter, &aggregate_impl);
+        push_abi(&asserter, &U256::from(100));
+
+        let skipped = client
+            .scan_index(0, GameListFilter { limit: 1, game_type: None, missing_zk: false })
+            .await
+            .unwrap();
+        assert!(skipped.is_none());
+        assert!(client.is_aggregate_verifier_game_type(2).await.unwrap());
+        assert!(client.is_aggregate_verifier_game_type(2).await.unwrap());
+        assert!(asserter.read_q().is_empty(), "cached type should not be probed twice");
+    }
+
+    #[tokio::test]
+    async fn aggregate_probe_propagates_rpc_failures() {
+        let asserter = Asserter::new();
+        let client = mocked_client(asserter.clone());
+
+        push_abi(&asserter, &Address::repeat_byte(0x22));
+        asserter.push_failure_msg("RPC unavailable");
+
+        let error = client.is_aggregate_verifier_game_type(2).await.unwrap_err();
+        assert!(matches!(error, ProofsCommandError::L1Contract { .. }));
+    }
+
+    #[tokio::test]
+    async fn fetch_summary_reuses_known_zk_prover() {
+        let asserter = Asserter::new();
+        let client = mocked_client(asserter.clone());
+        let game = Address::repeat_byte(0x33);
+
+        push_abi(&asserter, &U256::ZERO);
+        push_abi(&asserter, &alloy_primitives::B256::repeat_byte(0x44));
+        push_abi(&asserter, &U256::from(5000));
+        push_abi(&asserter, &Address::repeat_byte(0x55));
+        push_abi(&asserter, &U256::from(4000));
+        push_abi(&asserter, &Address::repeat_byte(0x66));
+        push_abi(&asserter, &1_700_000_000_u64);
+        push_abi(&asserter, &u64::MAX);
+
+        let summary = client.fetch_summary(7, 2, game, Some(Address::ZERO)).await.unwrap();
+
+        assert_eq!(summary.zk_prover, Address::ZERO);
+        assert!(asserter.read_q().is_empty(), "known ZK prover should avoid a second RPC call");
     }
 }

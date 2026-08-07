@@ -62,9 +62,9 @@ impl ProofProposeRequest {
     /// Validates that the game can still accept a ZK proposal proof and takes
     /// the block range, L1 head, and checkpoint stride from the game so the
     /// proof journal matches what the contract reconstructs.
-    /// `intermediate_root_interval` supplies the stride when the game's
-    /// committed roots do not derive one; when they do, it must match the
-    /// derived stride.
+    /// `intermediate_root_interval` supplies the stride when the game type
+    /// has no registered implementation to read it from; otherwise it must
+    /// match the canonical `INTERMEDIATE_BLOCK_INTERVAL`.
     pub fn for_game(
         details: &GameDetails,
         prover_address: Address,
@@ -76,30 +76,84 @@ impl ProofProposeRequest {
             game: details.address.to_string(),
             reason: reason.to_string(),
         };
+        if prover_address == Address::ZERO {
+            return Err(not_provable("prover address cannot be the zero address"));
+        }
         if details.status != GameStatus::InProgress {
             return Err(not_provable("game is not in progress"));
         }
         if details.zk_prover != Address::ZERO {
             return Err(not_provable("game already has a ZK proof"));
         }
+        let intermediate_root_interval =
+            Self::intermediate_root_interval(details, intermediate_root_interval)?;
+        Ok(Self {
+            game: details.address,
+            pre_state_block: details.starting_block,
+            num_blocks: details.block_interval,
+            l1_head: details.l1_head,
+            intermediate_root_interval,
+            prover_address,
+            zk_backend,
+            session_id,
+        })
+    }
+
+    /// Returns the explicit or derived session ID for an existing game's proof.
+    ///
+    /// Unlike [`Self::for_game`], this intentionally ignores mutable game
+    /// status and proof slots so `basectl proofs submit` can retrieve a paid
+    /// proof before its final on-chain submission preflight.
+    pub fn session_id_for_game(
+        network: &str,
+        details: &GameDetails,
+        prover_address: Address,
+        zk_backend: ZkBackend,
+        session_id: Option<String>,
+        intermediate_root_interval: Option<u64>,
+    ) -> Result<String, ProofsCommandError> {
+        if let Some(session_id) = session_id {
+            return Ok(session_id);
+        }
+        let intermediate_root_interval =
+            Self::intermediate_root_interval(details, intermediate_root_interval)?;
+        Ok(Self::derive_session_id(
+            network,
+            details.address,
+            details.starting_block,
+            details.block_interval,
+            intermediate_root_interval,
+            prover_address,
+            zk_backend,
+        ))
+    }
+
+    fn intermediate_root_interval(
+        details: &GameDetails,
+        intermediate_root_interval: Option<u64>,
+    ) -> Result<u64, ProofsCommandError> {
+        let not_provable = |reason: &str| ProofsCommandError::GameNotProvable {
+            game: details.address.to_string(),
+            reason: reason.to_string(),
+        };
         if details.block_interval == 0 {
             return Err(not_provable("game covers an empty block range"));
         }
-        if let (Some(explicit), Some(derived)) =
+        if let (Some(explicit), Some(canonical)) =
             (intermediate_root_interval, details.intermediate_root_interval)
-            && explicit != derived
+            && explicit != canonical
         {
             return Err(not_provable(&format!(
-                "intermediate root interval {explicit} does not match the stride {derived} \
-                 committed by the game's roots; a proof with a different stride would not \
-                 verify on chain"
+                "intermediate root interval {explicit} does not match the game \
+                 implementation's INTERMEDIATE_BLOCK_INTERVAL {canonical}; a proof with a \
+                 different stride would not verify on chain"
             )));
         }
         let intermediate_root_interval =
             intermediate_root_interval.or(details.intermediate_root_interval).ok_or_else(|| {
                 not_provable(
-                    "cannot derive the intermediate root interval from the game's \
-                     committed roots; pass --intermediate-root-interval",
+                    "the game type has no registered AggregateVerifier implementation to \
+                     read INTERMEDIATE_BLOCK_INTERVAL from; pass --intermediate-root-interval",
                 )
             })?;
         if intermediate_root_interval == 0
@@ -111,16 +165,18 @@ impl ProofProposeRequest {
                 details.block_interval
             )));
         }
-        Ok(Self {
-            game: details.address,
-            pre_state_block: details.starting_block,
-            num_blocks: details.block_interval,
-            l1_head: details.l1_head,
-            intermediate_root_interval,
-            prover_address,
-            zk_backend,
-            session_id,
-        })
+
+        let expected_root_count = details.block_interval / intermediate_root_interval;
+        if expected_root_count != details.intermediate_root_count as u64 {
+            return Err(not_provable(&format!(
+                "game committed {} intermediate root(s) but its {}-block range at a \
+                 {intermediate_root_interval}-block checkpoint interval covers \
+                 {expected_root_count}; the game was not created with the canonical \
+                 checkpoints and a proof would not verify on chain",
+                details.intermediate_root_count, details.block_interval
+            )));
+        }
+        Ok(intermediate_root_interval)
     }
 
     /// Returns the effective session ID for `network`.
@@ -134,24 +190,44 @@ impl ProofProposeRequest {
     /// without the operator copying session IDs around.
     pub fn effective_session_id(&self, network: &str) -> String {
         self.session_id.clone().unwrap_or_else(|| {
-            let subtype = match self.zk_backend {
-                ZkBackend::DryRun => "zk/sp1/snark_plonk/dry_run",
-                ZkBackend::Cluster => "zk/sp1/snark_plonk",
-                ZkBackend::Network => "zk/sp1/snark_plonk/network",
-            };
-            ProofSessionId::derive_from_components(
-                Self::SESSION_NAMESPACE,
-                subtype,
-                &[
-                    network.as_bytes(),
-                    self.game.as_slice(),
-                    &self.pre_state_block.to_be_bytes(),
-                    &self.num_blocks.to_be_bytes(),
-                    &self.intermediate_root_interval.to_be_bytes(),
-                    self.prover_address.as_slice(),
-                ],
+            Self::derive_session_id(
+                network,
+                self.game,
+                self.pre_state_block,
+                self.num_blocks,
+                self.intermediate_root_interval,
+                self.prover_address,
+                self.zk_backend,
             )
         })
+    }
+
+    fn derive_session_id(
+        network: &str,
+        game: Address,
+        pre_state_block: u64,
+        num_blocks: u64,
+        intermediate_root_interval: u64,
+        prover_address: Address,
+        zk_backend: ZkBackend,
+    ) -> String {
+        let subtype = match zk_backend {
+            ZkBackend::DryRun => "zk/sp1/snark_plonk/dry_run",
+            ZkBackend::Cluster => "zk/sp1/snark_plonk",
+            ZkBackend::Network => "zk/sp1/snark_plonk/network",
+        };
+        ProofSessionId::derive_from_components(
+            Self::SESSION_NAMESPACE,
+            subtype,
+            &[
+                network.as_bytes(),
+                game.as_slice(),
+                &pre_state_block.to_be_bytes(),
+                &num_blocks.to_be_bytes(),
+                &intermediate_root_interval.to_be_bytes(),
+                prover_address.as_slice(),
+            ],
+        )
     }
 
     /// Builds the prover-service prove-block-range request for `network`, deriving
@@ -408,7 +484,21 @@ mod tests {
     }
 
     #[test]
-    fn propose_for_game_rejects_stride_overrides_conflicting_with_committed_roots() {
+    fn propose_for_game_rejects_zero_prover_address() {
+        let error = ProofProposeRequest::for_game(
+            &provable_game(),
+            Address::ZERO,
+            ZkBackend::Network,
+            None,
+            None,
+        )
+        .expect_err("zero address cannot submit the resulting proof");
+
+        assert!(matches!(error, ProofsCommandError::GameNotProvable { .. }));
+    }
+
+    #[test]
+    fn propose_for_game_rejects_stride_overrides_conflicting_with_canonical_stride() {
         let error = ProofProposeRequest::for_game(
             &provable_game(),
             Address::repeat_byte(0xDD),
@@ -416,7 +506,7 @@ mod tests {
             None,
             Some(250),
         )
-        .expect_err("stride that conflicts with the game's committed roots must be rejected");
+        .expect_err("stride that conflicts with the canonical interval must be rejected");
         assert!(matches!(error, ProofsCommandError::GameNotProvable { .. }));
     }
 
@@ -438,7 +528,11 @@ mod tests {
 
     #[test]
     fn propose_for_game_accepts_stride_override() {
-        let no_stride = GameDetails { intermediate_root_interval: None, ..provable_game() };
+        let no_stride = GameDetails {
+            intermediate_root_interval: None,
+            intermediate_root_count: 4,
+            ..provable_game()
+        };
         let request = ProofProposeRequest::for_game(
             &no_stride,
             Address::repeat_byte(0xDD),
@@ -449,6 +543,39 @@ mod tests {
         .expect("stride override should build a request");
 
         assert_eq!(request.intermediate_root_interval, 250);
+    }
+
+    #[test]
+    fn propose_for_game_rejects_noncanonical_root_count() {
+        // 1000-block game at the canonical 100-block stride commits 10 roots;
+        // a game holding 20 was not created with the canonical checkpoints.
+        let extra_roots = GameDetails { intermediate_root_count: 20, ..provable_game() };
+        let error = ProofProposeRequest::for_game(
+            &extra_roots,
+            Address::repeat_byte(0xDD),
+            ZkBackend::Network,
+            None,
+            None,
+        )
+        .expect_err("root count contradicting the canonical stride must be rejected");
+        assert!(matches!(error, ProofsCommandError::GameNotProvable { .. }));
+    }
+
+    #[test]
+    fn propose_for_game_rejects_override_inconsistent_with_root_count() {
+        // Without a canonical stride the override is trusted, but it must still
+        // cover every committed root: 500-block strides over 1000 blocks cover 2,
+        // not the 10 the game committed.
+        let no_stride = GameDetails { intermediate_root_interval: None, ..provable_game() };
+        let error = ProofProposeRequest::for_game(
+            &no_stride,
+            Address::repeat_byte(0xDD),
+            ZkBackend::Network,
+            None,
+            Some(500),
+        )
+        .expect_err("override that does not cover the committed roots must be rejected");
+        assert!(matches!(error, ProofsCommandError::GameNotProvable { .. }));
     }
 
     #[test]
@@ -485,6 +612,28 @@ mod tests {
         };
 
         assert_eq!(request.effective_session_id("mainnet"), "custom-propose");
+    }
+
+    #[test]
+    fn submit_session_id_ignores_mutable_game_state() {
+        let expected = propose_request().effective_session_id("mainnet");
+        let unavailable = GameDetails {
+            status: GameStatus::DefenderWins,
+            zk_prover: Address::repeat_byte(0xEE),
+            ..provable_game()
+        };
+
+        let session_id = ProofProposeRequest::session_id_for_game(
+            "mainnet",
+            &unavailable,
+            Address::repeat_byte(0xDD),
+            ZkBackend::Network,
+            None,
+            None,
+        )
+        .expect("mutable game state must not prevent retrieving an existing paid proof");
+
+        assert_eq!(session_id, expected);
     }
 
     #[test]

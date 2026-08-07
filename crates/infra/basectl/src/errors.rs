@@ -208,6 +208,12 @@ pub enum ProofsCommandError {
         /// The config name selected for the command.
         config_name: String,
     },
+    /// The dry-run backend cannot produce proof bytes for `proofs finalize`.
+    #[error(
+        "`--zk-backend dry-run` produces no submittable proof bytes and cannot finalize; \
+         use `basectl proofs propose --zk-backend dry-run` for sizing instead"
+    )]
+    DryRunCannotFinalize,
     /// An L1 dispute-game contract read failed.
     #[error("dispute game read failed against {endpoint}")]
     L1Contract {

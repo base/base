@@ -65,9 +65,7 @@ impl SnarkReceiptEncoder {
         }
         let proof = hex::decode(&plonk.encoded_proof)?;
 
-        let mut bytes = Vec::with_capacity(4 + proof.len());
-        bytes.extend_from_slice(&plonk.plonk_vkey_hash[..4]);
-        bytes.extend_from_slice(&proof);
+        let bytes = [&plonk.plonk_vkey_hash[..4], &proof].concat();
         Ok(ProofEncoder::encode_zk_dispute_proof_bytes(Bytes::from(bytes)))
     }
 }

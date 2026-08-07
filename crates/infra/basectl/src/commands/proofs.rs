@@ -158,10 +158,10 @@ pub struct ProofsProposeArgs {
     pub session_id: Option<String>,
     /// Intermediate output root interval (checkpoint stride).
     ///
-    /// Only needed when the game's committed intermediate roots do not
-    /// derive a stride; when they do, the flag must match the committed
-    /// stride because a proof with any other stride would not verify on
-    /// chain.
+    /// Only needed when the game type has no registered implementation to
+    /// read `INTERMEDIATE_BLOCK_INTERVAL` from; when it does, the flag must
+    /// match that canonical value because a proof with any other stride
+    /// would not verify on chain.
     #[arg(long = "intermediate-root-interval", value_name = "N")]
     pub intermediate_root_interval: Option<u64>,
     /// Poll the prover service until the proof succeeds or fails.
@@ -223,8 +223,8 @@ pub struct ProofsSubmitArgs {
     /// Intermediate output root interval the proof was proposed with
     /// (session ID derivation only).
     ///
-    /// If omitted, the interval is derived from the game's committed
-    /// intermediate roots, matching `basectl proofs propose`.
+    /// If omitted, the interval is read from the game type's registered
+    /// implementation, matching `basectl proofs propose`.
     #[arg(long = "intermediate-root-interval", value_name = "N")]
     pub intermediate_root_interval: Option<u64>,
     /// Poll the prover service until the proof completes before submitting.
@@ -292,10 +292,10 @@ pub struct ProofsFinalizeArgs {
     pub session_id: Option<String>,
     /// Intermediate output root interval (checkpoint stride).
     ///
-    /// Only needed when the game's committed intermediate roots do not
-    /// derive a stride; when they do, the flag must match the committed
-    /// stride because a proof with any other stride would not verify on
-    /// chain.
+    /// Only needed when the game type has no registered implementation to
+    /// read `INTERMEDIATE_BLOCK_INTERVAL` from; when it does, the flag must
+    /// match that canonical value because a proof with any other stride
+    /// would not verify on chain.
     #[arg(long = "intermediate-root-interval", value_name = "N")]
     pub intermediate_root_interval: Option<u64>,
     /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
@@ -347,6 +347,16 @@ pub enum ZkBackendOption {
     Network,
     /// Local SP1 execution statistics without proof bytes.
     DryRun,
+}
+
+impl From<ZkBackendOption> for ZkBackend {
+    fn from(option: ZkBackendOption) -> Self {
+        match option {
+            ZkBackendOption::Cluster => Self::Cluster,
+            ZkBackendOption::Network => Self::Network,
+            ZkBackendOption::DryRun => Self::DryRun,
+        }
+    }
 }
 
 /// Proof status filter accepted by `basectl proofs list`.
@@ -518,7 +528,7 @@ async fn run_propose(config: MonitoringConfig, args: ProofsProposeArgs) -> Resul
         yes,
         json,
     } = args;
-    let zk_backend = zk_backend_from_option(zk_backend);
+    let zk_backend = ZkBackend::from(zk_backend);
     let endpoint = resolve_prover_rpc(&config, prover_rpc)?;
     let factory = resolve_factory(&config, factory)?;
     let l1_rpc = l1_rpc.unwrap_or_else(|| config.l1_rpc.clone());
@@ -614,7 +624,7 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
         yes,
         json,
     } = args;
-    let zk_backend = zk_backend_from_option(zk_backend);
+    let zk_backend = ZkBackend::from(zk_backend);
     let endpoint = resolve_prover_rpc(&config, prover_rpc)?;
     let factory = resolve_factory(&config, factory)?;
     let l1_rpc = l1_rpc.unwrap_or_else(|| config.l1_rpc.clone());
@@ -624,14 +634,14 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
     let games_client = GamesClient::connect(factory, &l1_rpc);
     let details = games_client.game_details(game).await?;
     let derived_session = session_id.is_none();
-    let request = ProofProposeRequest::for_game(
+    let session_id = ProofProposeRequest::session_id_for_game(
+        &config.name,
         &details,
         sender,
         zk_backend,
         session_id,
         intermediate_root_interval,
     )?;
-    let session_id = request.effective_session_id(&config.name);
     info!(
         network = %config.name,
         prover_rpc = %endpoint,
@@ -662,15 +672,15 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
     } else {
         client.proof_status(&session_id).await?
     };
-    let plonk = SnarkPlonkProofBytes::from_response(&session_id, &response)?;
+    let proof = SnarkPlonkProofBytes::from_response(&session_id, &response)?;
 
     // The proof wait can span hours; re-read the game so we refuse to spend
     // gas when it resolved or gained a ZK proof in the meantime.
     games_client.ensure_accepts_zk_proof(game).await?;
 
-    let proof_bytes = plonk.proof.len();
+    let proof_bytes = proof.len();
     let submitter = ProposalProofSubmitter::connect(&l1_rpc, key).await?;
-    let submitted = submitter.submit(game, plonk.proof).await?;
+    let submitted = submitter.submit(game, proof).await?;
     info!(
         network = %config.name,
         game = %game,
@@ -721,15 +731,12 @@ async fn run_finalize(
         yes,
         json,
     } = args;
-    let zk_backend = zk_backend_from_option(zk_backend);
+    let zk_backend = ZkBackend::from(zk_backend);
     // Reject dry-run before any network work: it produces no submittable
     // proof bytes, so finalization could only fail hours later, after the
     // proof session completes.
     if zk_backend == ZkBackend::DryRun {
-        anyhow::bail!(
-            "`--zk-backend dry-run` produces no submittable proof bytes and cannot finalize; \
-             use `basectl proofs propose --zk-backend dry-run` for sizing instead"
-        );
+        return Err(ProofsCommandError::DryRunCannotFinalize.into());
     }
     let endpoint = resolve_prover_rpc(&config, prover_rpc)?;
     let factory = resolve_factory(&config, factory)?;
@@ -797,15 +804,15 @@ async fn run_finalize(
         "proof request accepted; waiting for completion (re-run finalize to resume on timeout)"
     );
     let response = client.wait_for_completion(&session_id).await?;
-    let plonk = SnarkPlonkProofBytes::from_response(&session_id, &response)?;
+    let proof = SnarkPlonkProofBytes::from_response(&session_id, &response)?;
 
     // The proof wait can span hours; re-read the game so we refuse to spend
     // gas when it resolved or gained a ZK proof in the meantime.
     games_client.ensure_accepts_zk_proof(game).await?;
 
-    let proof_bytes = plonk.proof.len();
+    let proof_bytes = proof.len();
     let submitter = ProposalProofSubmitter::connect(&l1_rpc, key).await?;
-    let submitted = submitter.submit(game, plonk.proof).await?;
+    let submitted = submitter.submit(game, proof).await?;
     info!(
         network = %config.name,
         game = %game,
@@ -848,15 +855,6 @@ fn resolve_factory(
     flag.or_else(|| config.proofs.as_ref().map(|proofs| proofs.dispute_game_factory)).ok_or_else(
         || ProofsCommandError::MissingDisputeGameFactory { config_name: config.name.clone() },
     )
-}
-
-/// Maps the CLI ZK backend option to the prover-service protocol backend.
-const fn zk_backend_from_option(option: ZkBackendOption) -> ZkBackend {
-    match option {
-        ZkBackendOption::Cluster => ZkBackend::Cluster,
-        ZkBackendOption::Network => ZkBackend::Network,
-        ZkBackendOption::DryRun => ZkBackend::DryRun,
-    }
 }
 
 /// Proof request status reported by `basectl proofs` machine-readable and pretty output.

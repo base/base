@@ -389,7 +389,7 @@ because the prover service is internal, so one of the three must be provided.
 | `--private-key-file <PATH>` | File containing the hex private key of the L1 wallet that is committed into the proof and submits the final transaction. When omitted, the key is read from `BASECTL_SUBMITTER_PRIVATE_KEY`. |
 | `--zk-backend <BACKEND>` | ZK proving backend: `network` (default, Succinct Prover Network, paid in PROVE) or `cluster`. Use `proofs propose --zk-backend dry-run` for sizing; dry-run cannot finalize because it produces no proof bytes. |
 | `--session-id <ID>` | Explicit proof session ID. If omitted, basectl derives one from the network, backend, game, block range, checkpoint stride, and submitter wallet. |
-| `--intermediate-root-interval <N>` | Checkpoint stride for games whose committed intermediate roots do not derive one. When the game's roots do derive a stride, the flag must match it. |
+| `--intermediate-root-interval <N>` | Checkpoint stride override. Only needed when the game type has no registered implementation to read `INTERMEDIATE_BLOCK_INTERVAL` from; otherwise the flag must match that canonical value. |
 | `--prover-rpc <URL>` | Prover-service RPC URL. Also `BASECTL_PROVER_RPC` or config `prover_rpc`. |
 | `--factory <ADDRESS>` | `DisputeGameFactory` address. Also config `proofs.dispute_game_factory`. |
 | `--l1-rpc <URL>` | L1 RPC URL. Also config `l1_rpc`. |
@@ -443,7 +443,7 @@ submitted from another.
 | `--prover-address <ADDRESS>` | Required. L1 wallet that will submit the proof on chain. |
 | `--zk-backend <BACKEND>` | ZK proving backend: `network` (default, Succinct Prover Network, paid in PROVE), `cluster`, or `dry-run`. |
 | `--session-id <ID>` | Explicit proof session ID. If omitted, derived from the network name, ZK backend, game address, block range, checkpoint stride, and prover address. |
-| `--intermediate-root-interval <N>` | Checkpoint stride for games whose committed intermediate roots do not derive one. When the game's roots do derive a stride, the flag must match it. |
+| `--intermediate-root-interval <N>` | Checkpoint stride override. Only needed when the game type has no registered implementation to read `INTERMEDIATE_BLOCK_INTERVAL` from; otherwise the flag must match that canonical value. |
 | `--wait` | Poll the prover service until the proof succeeds or fails. |
 | `--prover-rpc <URL>` | Prover-service RPC URL. Also `BASECTL_PROVER_RPC` or config `prover_rpc`. |
 | `--factory <ADDRESS>` | `DisputeGameFactory` address. Also config `proofs.dispute_game_factory`. |

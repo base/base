@@ -212,6 +212,9 @@ pub trait AggregateVerifierClient: Send + Sync {
     /// Queries game details from a game proxy address.
     async fn game_info(&self, game_address: Address) -> Result<GameInfo, ContractError>;
 
+    /// Returns the game type ID of a game proxy.
+    async fn game_type(&self, game_address: Address) -> Result<u32, ContractError>;
+
     /// Returns the current game status.
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError>;
 
@@ -361,6 +364,13 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             .map_err(|_| ContractError::validation("l2SequenceNumber overflows u64"))?;
 
         Ok(GameInfo { root_claim, l2_block_number, parent_address })
+    }
+
+    async fn game_type(&self, game_address: Address) -> Result<u32, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract_call!(contract.gameType().call(), "gameType failed")
     }
 
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError> {

@@ -70,12 +70,10 @@ impl SubmitterKey {
     }
 }
 
-/// PLONK proof bytes extracted from a completed prover-service session.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SnarkPlonkProofBytes {
-    /// The wrapped PLONK proof bytes to submit on chain.
-    pub proof: Bytes,
-}
+/// Decodes submittable PLONK proof bytes from a completed prover-service
+/// session.
+#[derive(Debug)]
+pub struct SnarkPlonkProofBytes;
 
 impl SnarkPlonkProofBytes {
     /// Extracts submittable PLONK proof bytes from a `getProof` response.
@@ -86,7 +84,7 @@ impl SnarkPlonkProofBytes {
     pub fn from_response(
         session_id: &str,
         response: &GetProofResponse,
-    ) -> Result<Self, ProofsCommandError> {
+    ) -> Result<Bytes, ProofsCommandError> {
         match response.status {
             ProofStatus::Queued | ProofStatus::Running => {
                 return Err(ProofsCommandError::ProofNotReady {
@@ -117,14 +115,12 @@ impl SnarkPlonkProofBytes {
                 });
             }
         };
-        let proof =
-            SnarkReceiptEncoder::encode_onchain_zk_proof(&plonk.proof.proof).map_err(|error| {
-                ProofsCommandError::InvalidProposalProof {
-                    session_id: session_id.to_string(),
-                    message: error.to_string(),
-                }
-            })?;
-        Ok(Self { proof })
+        SnarkReceiptEncoder::encode_onchain_zk_proof(&plonk.proof.proof).map_err(|error| {
+            ProofsCommandError::InvalidProposalProof {
+                session_id: session_id.to_string(),
+                message: error.to_string(),
+            }
+        })
     }
 }
 
@@ -269,7 +265,7 @@ mod tests {
         let response = succeeded_response(Some(plonk_result(encoded_plonk_receipt())));
         let extracted =
             SnarkPlonkProofBytes::from_response("session", &response).expect("proof extracts");
-        assert_eq!(extracted.proof.as_ref(), &[1, 0x5a, 0x09, 0x3a, 0x2f, 0xab, 0xcd]);
+        assert_eq!(extracted.as_ref(), &[1, 0x5a, 0x09, 0x3a, 0x2f, 0xab, 0xcd]);
     }
 
     #[test]
