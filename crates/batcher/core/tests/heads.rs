@@ -117,7 +117,7 @@ fn test_safe_head_regression_and_chain_mismatch_reset_pipeline() {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
         let (safe_tx, safe_rx) = mpsc::channel(1);
-        let (source, catchup_starts) = TrackingSource::new();
+        let (source, catchup_heads) = TrackingSource::new();
 
         let driver = BatchDriver::new(
             ctx.clone(),
@@ -135,11 +135,11 @@ fn test_safe_head_regression_and_chain_mismatch_reset_pipeline() {
         );
         let handle = ctx.spawn(driver.run());
 
-        safe_tx.send(safe_head(5)).await.unwrap();
-        safe_tx
-            .send(BlockInfo { hash: B256::repeat_byte(0xff), number: 5, ..Default::default() })
-            .await
-            .unwrap();
+        let regressed = safe_head(5);
+        let replacement =
+            BlockInfo { hash: B256::repeat_byte(0xff), number: 5, ..Default::default() };
+        safe_tx.send(regressed).await.unwrap();
+        safe_tx.send(replacement).await.unwrap();
         safe_tx.send(safe_head(10)).await.unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
@@ -148,7 +148,7 @@ fn test_safe_head_regression_and_chain_mismatch_reset_pipeline() {
         let recorded = recorded.lock().unwrap();
         assert_eq!(recorded.resets, 2);
         assert_eq!(recorded.safe_numbers, vec![10]);
-        assert_eq!(*catchup_starts.lock().unwrap(), vec![6, 6]);
+        assert_eq!(*catchup_heads.lock().unwrap(), vec![regressed, replacement]);
     });
 }
 

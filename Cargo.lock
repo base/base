@@ -3456,6 +3456,7 @@ dependencies = [
  "base-runtime",
  "derive_more 2.1.1",
  "futures",
+ "mockall",
  "thiserror 2.0.19",
  "tokio",
  "tracing",

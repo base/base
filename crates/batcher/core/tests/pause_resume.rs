@@ -54,15 +54,16 @@ fn test_pause_resets_pipeline() {
     });
 }
 
-/// `AdminCommand::Resume` must call `source.reset_catchup(safe_head + 1)`
-/// so the source delivers missed blocks sequentially before resuming live
-/// polling. When no safe-head feed is wired, no catchup is triggered.
+/// `AdminCommand::Resume` must reanchor the source at the safe head so it
+/// delivers missed blocks sequentially after that head. When no safe-head feed
+/// is wired, no catchup is triggered.
 #[test]
 fn test_resume_triggers_catchup_from_safe_head() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let (source, catchup_args) = TrackingSource::new();
         let (admin_handle, admin_rx) = AdminHandle::channel();
         let (safe_head_tx, safe_head_rx) = mpsc::channel(1);
+        let safe_head = BlockInfo { number: 42, ..Default::default() };
 
         let driver = BatchDriver::new_without_safe_head(
             ctx.clone(),
@@ -79,11 +80,11 @@ fn test_resume_triggers_catchup_from_safe_head() {
             PendingL1HeadSource,
         )
         .with_admin_rx(admin_rx)
-        .with_safe_head_rx(BlockInfo { number: 42, ..Default::default() }, safe_head_rx);
+        .with_safe_head_rx(safe_head, safe_head_rx);
 
         let handle = ctx.spawn(driver.run());
 
-        // Pause then resume with safe_head = 42; expect catchup from 43.
+        // Pause then resume with safe_head = 42; the source will poll 43 next.
         admin_handle.pause().await.unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
         admin_handle.resume().await.unwrap();
@@ -95,8 +96,8 @@ fn test_resume_triggers_catchup_from_safe_head() {
         assert!(handle.await.unwrap().is_ok());
         assert_eq!(
             *catchup_args.lock().unwrap(),
-            vec![43],
-            "source must be reset to safe_head + 1 on resume"
+            vec![safe_head],
+            "source must be reanchored at the safe head on resume"
         );
     });
 }

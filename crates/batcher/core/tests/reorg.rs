@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use base_batcher_core::{
     BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient, ThrottleController,
     test_utils::{
@@ -14,7 +14,6 @@ use base_batcher_core::{
     },
 };
 use base_batcher_source::{ChannelBlockSource, L2BlockEvent};
-use base_protocol::{BlockInfo, L2BlockInfo};
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
@@ -60,8 +59,7 @@ fn test_add_block_reorg_resets_pipeline_instead_of_fatal_error() {
 
 /// When the source delivers `L2BlockEvent::Reorg`, the driver must reset the
 /// pipeline and discard in-flight submissions. This is distinct from the
-/// `add_block`-triggered reorg path tested in
-/// `test_reorg_block_is_readded_after_reset`.
+/// `add_block`-triggered reorg path tested above.
 #[test]
 fn test_l2_reorg_event_resets_pipeline() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -85,9 +83,7 @@ fn test_l2_reorg_event_resets_pipeline() {
         );
         let handle = ctx.spawn(driver.run());
 
-        let reorg_head =
-            L2BlockInfo::new(BlockInfo::new(B256::ZERO, 5, B256::ZERO, 0), Default::default(), 0);
-        source_tx.send(L2BlockEvent::Reorg { new_safe_head: reorg_head }).unwrap();
+        source_tx.send(L2BlockEvent::Reorg).unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 

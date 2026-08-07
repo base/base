@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
+use base_protocol::BlockInfo;
 
 /// [`UnsafeBlockSource`] that parks the select arm forever.
 ///
@@ -25,14 +26,14 @@ impl UnsafeBlockSource for PendingSource {
 /// [`UnsafeBlockSource`] that records sequential catchup requests and otherwise parks.
 #[derive(Debug)]
 pub struct TrackingSource {
-    catchup_starts: Arc<Mutex<Vec<u64>>>,
+    catchup_heads: Arc<Mutex<Vec<BlockInfo>>>,
 }
 
 impl TrackingSource {
     /// Create a source and its shared catchup call log.
-    pub fn new() -> (Self, Arc<Mutex<Vec<u64>>>) {
-        let catchup_starts = Arc::new(Mutex::new(Vec::new()));
-        (Self { catchup_starts: Arc::clone(&catchup_starts) }, catchup_starts)
+    pub fn new() -> (Self, Arc<Mutex<Vec<BlockInfo>>>) {
+        let catchup_heads = Arc::new(Mutex::new(Vec::new()));
+        (Self { catchup_heads: Arc::clone(&catchup_heads) }, catchup_heads)
     }
 }
 
@@ -42,8 +43,8 @@ impl UnsafeBlockSource for TrackingSource {
         std::future::pending().await
     }
 
-    fn reset_catchup(&mut self, start_from: u64) {
-        self.catchup_starts.lock().unwrap().push(start_from);
+    fn reset_catchup(&mut self, safe_head: BlockInfo) {
+        self.catchup_heads.lock().unwrap().push(safe_head);
     }
 }
 
