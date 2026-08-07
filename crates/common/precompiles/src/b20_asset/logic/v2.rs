@@ -392,9 +392,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
-        // `from == to` is a no-op move (`move_balance` debits then credits the same slot) that would
-        // still emit `Transfer`/`Memo`/`Seized`, polluting the compliance trail with a misleading
-        // record. Reject it outright rather than let it pass by satisfying both policy checks.
         if from == to {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
