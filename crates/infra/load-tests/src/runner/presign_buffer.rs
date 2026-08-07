@@ -35,7 +35,7 @@ impl PresignBuffer {
             return;
         };
         for tx in txs {
-            self.buffered_gas = self.buffered_gas.saturating_add(u128::from(tx.gas_limit));
+            self.buffered_gas = self.buffered_gas.saturating_add(u128::from(tx.estimated_gas));
             sender.push_back(tx);
         }
     }
@@ -49,7 +49,7 @@ impl PresignBuffer {
             let mut removed_gas = 0u128;
             sender.retain(|tx| {
                 if tx.from == address {
-                    removed_gas = removed_gas.saturating_add(u128::from(tx.gas_limit));
+                    removed_gas = removed_gas.saturating_add(u128::from(tx.estimated_gas));
                     false
                 } else {
                     true
@@ -100,8 +100,8 @@ impl PresignBuffer {
                 .pop_front()
                 .expect("next_nonempty_sender returned a non-empty queue");
             let from = tx.from;
-            selected_gas = selected_gas.saturating_add(u128::from(tx.gas_limit));
-            self.buffered_gas = self.buffered_gas.saturating_sub(u128::from(tx.gas_limit));
+            selected_gas = selected_gas.saturating_add(u128::from(tx.estimated_gas));
+            self.buffered_gas = self.buffered_gas.saturating_sub(u128::from(tx.estimated_gas));
             selected.push(tx);
             if let Some(slots) = sender_slots.get_mut(&from) {
                 *slots = slots.saturating_sub(1);
@@ -143,12 +143,22 @@ mod tests {
     use super::*;
 
     fn tx(sender: u8, nonce: u64, gas_limit: u64) -> SignedTransaction {
+        tx_with_estimated_gas(sender, nonce, gas_limit, gas_limit)
+    }
+
+    fn tx_with_estimated_gas(
+        sender: u8,
+        nonce: u64,
+        gas_limit: u64,
+        estimated_gas: u64,
+    ) -> SignedTransaction {
         SignedTransaction {
             raw: Bytes::new(),
             tx_hash: TxHash::with_last_byte(sender.wrapping_add(nonce as u8)),
             from: Address::with_last_byte(sender),
             nonce,
             gas_limit,
+            estimated_gas,
         }
     }
 
@@ -173,6 +183,23 @@ mod tests {
         let selected = buffer.take_gas(100_000);
 
         assert_eq!(selected.len(), 1);
+        assert_eq!(buffer.buffered_gas(), 0);
+    }
+
+    #[test]
+    fn budgets_by_estimated_gas_instead_of_transaction_limit() {
+        let mut buffer = PresignBuffer::new(1);
+        buffer.push_sender_batch(
+            0,
+            vec![
+                tx_with_estimated_gas(1, 0, 250_000, 100_000),
+                tx_with_estimated_gas(1, 1, 250_000, 100_000),
+            ],
+        );
+
+        let selected = buffer.take_gas(150_000);
+
+        assert_eq!(selected.len(), 2);
         assert_eq!(buffer.buffered_gas(), 0);
     }
 

@@ -304,7 +304,7 @@ fn present_load_test_summary(summary: &MetricsSummary) {
             pacing.canonical_cycles, pacing.flashblock_cycles, pacing.safety_cycles
         );
         println!(
-            "Block Fill: mean={:.1}%  load_test_reserved={:.1}%",
+            "Block Fill: mean={:.1}%  load_test_estimated={:.1}%",
             pacing.mean_block_fill_ratio * 100.0,
             pacing.mean_our_block_ratio * 100.0
         );

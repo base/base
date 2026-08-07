@@ -93,6 +93,7 @@ struct PresignConfig {
     chain_id: u64,
     base_fee_rx: watch::Receiver<u128>,
     max_gas_price: u128,
+    estimated_gas: u64,
     fresh_recipient_ratio: f64,
     signed_chunk_tx: mpsc::Sender<Vec<Vec<SignedTransaction>>>,
 }
@@ -615,6 +616,7 @@ impl LoadRunner {
                 chain_id: self.config.chain_id,
                 base_fee_rx,
                 max_gas_price: self.config.max_gas_price,
+                estimated_gas: initial_avg_gas,
                 fresh_recipient_ratio: self.config.fresh_recipient_ratio,
                 signed_chunk_tx,
             },
@@ -1148,26 +1150,24 @@ impl LoadRunner {
         generator: &mut WorkloadGenerator,
         recipient_keys: &mut Option<KeyStream>,
         recipient_rng: &mut SeededRng,
-        fresh_recipient_ratio: f64,
-        sender_addresses: &[Address],
-        sender_start_nonces: &[u64],
+        config: &PresignConfig,
         txs_per_sender: usize,
     ) -> Result<Vec<SenderJob>> {
-        if sender_addresses.len() != sender_start_nonces.len() {
+        if config.sender_addresses.len() != config.sender_next_nonces.len() {
             return Err(BaselineError::Transaction(format!(
                 "open-loop sender nonce set mismatch: {} addresses vs {} nonces",
-                sender_addresses.len(),
-                sender_start_nonces.len(),
+                config.sender_addresses.len(),
+                config.sender_next_nonces.len(),
             )));
         }
 
-        let sender_count = sender_addresses.len();
+        let sender_count = config.sender_addresses.len();
         if sender_count == 0 {
             return Ok(Vec::new());
         }
         let mut sender_jobs = Vec::with_capacity(sender_count);
-        for (sender_index, from) in sender_addresses.iter().copied().enumerate() {
-            let sender_pool_recipient = sender_addresses[(sender_index + 1) % sender_count];
+        for (sender_index, from) in config.sender_addresses.iter().copied().enumerate() {
+            let sender_pool_recipient = config.sender_addresses[(sender_index + 1) % sender_count];
             let mut prepared_txs = Vec::with_capacity(txs_per_sender);
             for _ in 0..txs_per_sender {
                 let payload = generator.select_payload()?;
@@ -1175,7 +1175,7 @@ impl LoadRunner {
                     Self::select_recipient(
                         recipient_keys,
                         recipient_rng,
-                        fresh_recipient_ratio,
+                        config.fresh_recipient_ratio,
                         sender_pool_recipient,
                     )?
                 } else {
@@ -1194,13 +1194,14 @@ impl LoadRunner {
                     value,
                     data,
                     gas_limit,
+                    estimated_gas: config.estimated_gas,
                 });
             }
 
             sender_jobs.push(SenderJob {
                 sender_index,
                 from,
-                start_nonce: sender_start_nonces[sender_index],
+                start_nonce: config.sender_next_nonces[sender_index],
                 prepared_txs,
             });
         }
@@ -1286,9 +1287,7 @@ impl LoadRunner {
                 &mut producer_state.generator,
                 &mut producer_state.recipient_keys,
                 &mut producer_state.recipient_rng,
-                config.fresh_recipient_ratio,
-                &config.sender_addresses,
-                &config.sender_next_nonces,
+                &config,
                 chunk_per_sender,
             )?;
 
@@ -1381,6 +1380,7 @@ impl LoadRunner {
                 from: prepared.from,
                 nonce,
                 gas_limit: prepared.gas_limit,
+                estimated_gas: prepared.estimated_gas,
             });
         }
 
@@ -1560,8 +1560,9 @@ impl LoadRunner {
             &mut sender_slots,
             remaining_transaction_slots,
         );
-        let selected_gas =
-            selected.iter().fold(0u128, |total, tx| total.saturating_add(u128::from(tx.gas_limit)));
+        let selected_gas = selected
+            .iter()
+            .fold(0u128, |total, tx| total.saturating_add(u128::from(tx.estimated_gas)));
         enqueue_state.progress.offered_gas =
             enqueue_state.progress.offered_gas.saturating_add(selected_gas);
         let sender_capacity_limited = selected_gas < plan.inject_gas
@@ -1747,7 +1748,7 @@ impl LoadRunner {
                 .and_modify(|count| *count = count.saturating_add(1))
                 .or_insert(1);
             *drain_state.queued_gas =
-                drain_state.queued_gas.saturating_add(u128::from(signed_tx.gas_limit));
+                drain_state.queued_gas.saturating_add(u128::from(signed_tx.estimated_gas));
         }
 
         let batch = SignedBatch { id: batch_id, attempt: 0, measured, txs: signed_txs };
@@ -1764,7 +1765,7 @@ impl LoadRunner {
                         *count = count.saturating_sub(1);
                     }
                     *drain_state.queued_gas =
-                        drain_state.queued_gas.saturating_sub(u128::from(signed_tx.gas_limit));
+                        drain_state.queued_gas.saturating_sub(u128::from(signed_tx.estimated_gas));
                 }
                 drain_state.collector.record_failures("submit queue closed", failed_count);
                 false
@@ -1816,11 +1817,11 @@ impl LoadRunner {
             SubmitEvent::Failed(reason) => {
                 collector.record_failed(TxHash::ZERO, &reason);
             }
-            SubmitEvent::Released { from, gas_limit, accepted } => {
+            SubmitEvent::Released { from, estimated_gas, accepted } => {
                 if let Some(count) = queued_per_sender.get_mut(&from) {
                     *count = count.saturating_sub(1);
                 }
-                *queued_gas = queued_gas.saturating_sub(u128::from(gas_limit));
+                *queued_gas = queued_gas.saturating_sub(u128::from(estimated_gas));
                 if !accepted {
                     rejected_senders.insert(from);
                 }
@@ -1930,6 +1931,7 @@ mod tests {
                 from,
                 nonce: id,
                 gas_limit: 21_000,
+                estimated_gas: 21_000,
             }],
         }
     }
@@ -1968,7 +1970,7 @@ mod tests {
         }
 
         submit_event_tx
-            .send(SubmitEvent::Released { from: sender, gas_limit: 21_000, accepted: true })
+            .send(SubmitEvent::Released { from: sender, estimated_gas: 21_000, accepted: true })
             .await
             .expect("event queue should accept first event");
 

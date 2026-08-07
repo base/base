@@ -25,8 +25,8 @@ pub struct SentTransaction {
     pub tx_hash: TxHash,
     /// Sender address used for in-flight accounting.
     pub from: Address,
-    /// Gas reserved by the transaction.
-    pub gas_limit: u64,
+    /// Calibrated execution gas used for pacing.
+    pub estimated_gas: u64,
     /// Whether this transaction belongs to the measured cohort.
     pub measured: bool,
 }
@@ -46,9 +46,9 @@ pub struct BlockObservation {
 pub struct BlockMatch {
     /// Number of matched transaction hashes.
     pub matched: u64,
-    /// Sum of matched transactions' gas limits.
+    /// Sum of matched transactions' calibrated execution gas.
     pub included_gas: u128,
-    /// Gas newly released from in-flight accounting.
+    /// Calibrated gas newly released from in-flight accounting.
     pub released_gas: u128,
 }
 
@@ -116,7 +116,7 @@ struct PendingTransaction {
     /// Whether in-flight accounting was already released (e.g. by flashblock confirmation).
     in_flight_released: bool,
     measured: bool,
-    gas_limit: u64,
+    estimated_gas: u64,
 }
 
 #[derive(Debug)]
@@ -210,7 +210,7 @@ impl ResultsTracker {
                     submit_time,
                     in_flight_released: flashblock_observed_at.is_some(),
                     measured,
-                    gas_limit: transaction.gas_limit,
+                    estimated_gas: transaction.estimated_gas,
                 },
             );
             inner
@@ -220,10 +220,11 @@ impl ResultsTracker {
                 .or_insert(1);
             inner.total_in_flight = inner.total_in_flight.saturating_add(1);
             inner.unconfirmed_gas =
-                inner.unconfirmed_gas.saturating_add(u128::from(transaction.gas_limit));
+                inner.unconfirmed_gas.saturating_add(u128::from(transaction.estimated_gas));
             if let Some(included_at) = flashblock_observed_at {
-                inner.decrement_in_flight(&transaction.from, transaction.gas_limit);
-                reconciled_gas = reconciled_gas.saturating_add(u128::from(transaction.gas_limit));
+                inner.decrement_in_flight(&transaction.from, transaction.estimated_gas);
+                reconciled_gas =
+                    reconciled_gas.saturating_add(u128::from(transaction.estimated_gas));
                 if measured {
                     inner
                         .unreported_flashblock_observations
@@ -265,15 +266,15 @@ impl ResultsTracker {
                 let submit_time = pending.submit_time;
                 let should_release = !pending.in_flight_released;
                 let from = pending.from;
-                let gas_limit = pending.gas_limit;
+                let estimated_gas = pending.estimated_gas;
                 let report_flashblock = pending.measured || !measurement_started;
                 if should_release {
                     pending.in_flight_released = true;
                     block_match.matched = block_match.matched.saturating_add(1);
                     block_match.included_gas =
-                        block_match.included_gas.saturating_add(u128::from(gas_limit));
+                        block_match.included_gas.saturating_add(u128::from(estimated_gas));
                     block_match.released_gas =
-                        block_match.released_gas.saturating_add(u128::from(gas_limit));
+                        block_match.released_gas.saturating_add(u128::from(estimated_gas));
                 }
 
                 // Queue flashblock latency for the rolling window (drained separately).
@@ -288,7 +289,7 @@ impl ResultsTracker {
                 }
 
                 if should_release {
-                    inner.decrement_in_flight(&from, gas_limit);
+                    inner.decrement_in_flight(&from, estimated_gas);
                 }
             }
         }
@@ -306,7 +307,7 @@ impl ResultsTracker {
     /// Gas, effective gas price, and revert status are left at defaults here and
     /// backfilled later by the end-of-run receipt pass.
     ///
-    /// Returns the count and reserved gas of matching pending submissions.
+    /// Returns the count and estimated gas of matching pending submissions.
     pub fn on_new_block_hashes(
         &self,
         block: BlockObservation,
@@ -315,13 +316,13 @@ impl ResultsTracker {
         let mut inner = self.inner.write();
         let mut block_match = BlockMatch::default();
         for tx_hash in tx_hashes {
-            if let Some((gas_limit, released)) = inner.land_if_pending(tx_hash, &block) {
+            if let Some((estimated_gas, released)) = inner.land_if_pending(tx_hash, &block) {
                 block_match.matched = block_match.matched.saturating_add(1);
                 block_match.included_gas =
-                    block_match.included_gas.saturating_add(u128::from(gas_limit));
+                    block_match.included_gas.saturating_add(u128::from(estimated_gas));
                 if released {
                     block_match.released_gas =
-                        block_match.released_gas.saturating_add(u128::from(gas_limit));
+                        block_match.released_gas.saturating_add(u128::from(estimated_gas));
                 }
             }
         }
@@ -349,7 +350,7 @@ impl ResultsTracker {
             if let Some(pending) = inner.pending.remove(&tx_hash)
                 && !pending.in_flight_released
             {
-                inner.decrement_in_flight(&pending.from, pending.gas_limit);
+                inner.decrement_in_flight(&pending.from, pending.estimated_gas);
                 if pending.measured {
                     unconfirmed_count += 1;
                 }
@@ -390,12 +391,12 @@ impl ResultsTracker {
         self.inner.read().total_in_flight
     }
 
-    /// Returns submitted gas that has not been observed in a canonical block.
+    /// Returns estimated execution gas not yet observed in a canonical block.
     pub fn unconfirmed_gas(&self) -> u128 {
         self.inner.read().unconfirmed_gas
     }
 
-    /// Returns measured gas observed in canonical blocks since measurement began.
+    /// Returns estimated measured gas observed since measurement began.
     pub fn confirmed_gas(&self) -> u128 {
         self.inner.read().confirmed_gas
     }
@@ -405,7 +406,7 @@ impl ResultsTracker {
         self.inner.read().pending.values().filter(|pending| pending.measured).fold(
             (0u64, 0u128),
             |(count, gas), pending| {
-                (count.saturating_add(1), gas.saturating_add(u128::from(pending.gas_limit)))
+                (count.saturating_add(1), gas.saturating_add(u128::from(pending.estimated_gas)))
             },
         )
     }
@@ -515,7 +516,7 @@ impl ResultsTrackerInner {
     ///
     /// Flashblock latency (computed from the WS observation time) is joined here so
     /// that the final summary only includes FB latency for canonically confirmed txs.
-    /// Returns the reserved gas when `tx_hash` was pending and is now settled.
+    /// Returns the estimated gas when `tx_hash` was pending and is now settled.
     fn land_if_pending(
         &mut self,
         tx_hash: TxHash,
@@ -531,7 +532,7 @@ impl ResultsTrackerInner {
 
         let released = !pending.in_flight_released;
         if released {
-            self.decrement_in_flight(&pending.from, pending.gas_limit);
+            self.decrement_in_flight(&pending.from, pending.estimated_gas);
         }
 
         // Measured txs always emit metrics. Pre-measurement txs emit only before
@@ -539,7 +540,7 @@ impl ResultsTrackerInner {
         // begin_measurement they only release in-flight (already handled above).
         let emit_metrics = pending.measured || !self.measurement_started;
         if !emit_metrics {
-            return Some((pending.gas_limit, released));
+            return Some((pending.estimated_gas, released));
         }
 
         let mut metrics = TransactionMetrics::new(
@@ -556,17 +557,18 @@ impl ResultsTrackerInner {
         if pending.measured {
             self.landed_blocks.insert(block.number);
             self.measured_landed.insert(tx_hash);
-            self.confirmed_gas = self.confirmed_gas.saturating_add(u128::from(pending.gas_limit));
+            self.confirmed_gas =
+                self.confirmed_gas.saturating_add(u128::from(pending.estimated_gas));
         }
-        Some((pending.gas_limit, released))
+        Some((pending.estimated_gas, released))
     }
 
-    fn decrement_in_flight(&mut self, from: &Address, gas_limit: u64) {
+    fn decrement_in_flight(&mut self, from: &Address, estimated_gas: u64) {
         if let Some(count) = self.in_flight_per_sender.get_mut(from) {
             *count = count.saturating_sub(1);
         }
         self.total_in_flight = self.total_in_flight.saturating_sub(1);
-        self.unconfirmed_gas = self.unconfirmed_gas.saturating_sub(u128::from(gas_limit));
+        self.unconfirmed_gas = self.unconfirmed_gas.saturating_sub(u128::from(estimated_gas));
     }
 
     fn evict_flashblocks(&mut self) {
@@ -592,7 +594,7 @@ mod tests {
     }
 
     fn sent(tx_hash: TxHash, from: Address, measured: bool) -> SentTransaction {
-        SentTransaction { tx_hash, from, gas_limit: 21_000, measured }
+        SentTransaction { tx_hash, from, estimated_gas: 21_000, measured }
     }
 
     #[test]

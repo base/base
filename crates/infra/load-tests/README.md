@@ -86,8 +86,8 @@ configured.
 its mempool overflowing, set `max_concurrent_submit_requests` instead: it caps how many
 `eth_sendRawTransaction` batch requests may be outstanding to the submission RPC(s) at once, without
 shrinking the in-flight inventory target. Concurrency is otherwise bounded only by the sender worker
-count (derived from the number of `transaction_submission_rpcs`), so `max_concurrent_submit_requests`
-is useful mainly to throttle *below* that.
+count and concurrent chunks within each transaction batch, so `max_concurrent_submit_requests`
+provides a shared bound across both sources of parallelism.
 
 During measurement, the runner refills immediately after an inclusion source releases transaction
 inventory. When `flashblocks_ws` is configured, builder broadcasts provide the earliest signal;
@@ -95,13 +95,15 @@ phase-locked canonical polling remains active as an automatic fallback and the a
 for final metrics. Both sources feed the same idempotent depth controller, so canonical observation
 does not double-release transactions already seen in a flashblock.
 
-The controller targets `target_gps * block_time` gas outstanding and permits up to twice that depth
-while confirmed gas is behind the run-average target. Refills are capped by the cumulative measured
-submission budget (`target_gps * elapsed`), so faster flashblock inclusion cannot drive offered load
-above the configured rate. When `target_gps` is omitted, the floor is one full block and the ceiling
-is two full blocks. Capacity and submission bottlenecks are reported without failing the run. Omit
-`flashblocks_ws` to run with canonical polling only; removing the flashblock watcher does not change
-the controller or submission pipeline.
+The controller calibrates expected execution gas before measurement, targets
+`target_gps * block_time` of that estimated gas outstanding, and permits up to twice that depth
+while confirmed gas is behind the run-average target. Transaction gas limits remain unchanged for
+execution safety, but do not reduce TPS when they conservatively exceed observed gas usage. Refills
+are capped by the cumulative measured submission budget (`target_gps * elapsed`), so faster
+flashblock inclusion cannot drive offered load above the configured rate. When `target_gps` is
+omitted, the floor is one full block and the ceiling is two full blocks. Capacity and submission
+bottlenecks are reported without failing the run. Omit `flashblocks_ws` to run with canonical
+polling only; removing the flashblock watcher does not change the controller or submission pipeline.
 The final pacing summary reports canonical, flashblock, and safety refill-cycle counts so source
 fallback is visible.
 

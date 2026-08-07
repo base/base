@@ -186,7 +186,7 @@ pub struct PacingCycleObservation {
     pub block_gas_used: u64,
     /// Gas limit of the observed block.
     pub block_gas_limit: u64,
-    /// Reserved gas limits from this load test included in the observed block.
+    /// Estimated execution gas from this load test included in the observed block.
     pub our_included_gas: u128,
     /// Estimated mempool depth before the refill cycle.
     pub pre_refill_depth_gas: u128,
@@ -194,7 +194,7 @@ pub struct PacingCycleObservation {
     pub post_refill_depth_gas: u128,
     /// Desired one-block floor.
     pub floor_gas: u128,
-    /// Gas selected for submission.
+    /// Estimated execution gas selected for submission.
     pub offered_gas: u128,
     /// Whether sender or global transaction capacity limited the plan.
     pub capacity_limited: bool,
@@ -216,7 +216,7 @@ pub struct PacingCycleObservation {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PacingMetrics {
-    /// Gas offered by measured refill cycles.
+    /// Estimated execution gas offered by measured refill cycles.
     pub offered_gas: u128,
     /// Offered gas per wall-clock second.
     pub offered_gps: f64,
@@ -244,7 +244,7 @@ pub struct PacingMetrics {
     pub mean_depth_to_floor_ratio: f64,
     /// Mean total block fill ratio.
     pub mean_block_fill_ratio: f64,
-    /// Mean fraction of each block gas limit reserved by this load test's included transactions.
+    /// Mean fraction of each block gas limit consumed by estimated load-test execution gas.
     pub mean_our_block_ratio: f64,
     /// Canonical boundary-to-availability latency.
     pub availability_lag: LatencyMetrics,

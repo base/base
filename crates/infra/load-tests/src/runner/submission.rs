@@ -141,6 +141,8 @@ pub struct PreparedTransaction {
     pub data: Bytes,
     /// Gas limit.
     pub gas_limit: u64,
+    /// Calibrated execution gas used for pacing.
+    pub estimated_gas: u64,
 }
 
 /// Submission events emitted by signer and sender stages.
@@ -154,8 +156,8 @@ pub enum SubmitEvent {
     Released {
         /// Sender whose queued count is released.
         from: Address,
-        /// Gas removed from local queued-depth accounting.
-        gas_limit: u64,
+        /// Estimated gas removed from local queued-depth accounting.
+        estimated_gas: u64,
         /// Whether the RPC accepted the transaction.
         accepted: bool,
     },
@@ -205,6 +207,8 @@ pub struct SignedTransaction {
     pub nonce: u64,
     /// Gas reserved by the transaction.
     pub gas_limit: u64,
+    /// Calibrated execution gas used for pacing.
+    pub estimated_gas: u64,
 }
 
 /// A batch of prepared transactions.
@@ -700,6 +704,7 @@ impl SubmissionPipeline {
             from: prepared.from,
             nonce,
             gas_limit: prepared.gas_limit,
+            estimated_gas: prepared.estimated_gas,
         })
     }
 
@@ -1015,7 +1020,7 @@ impl SubmissionPipeline {
         ctx.results_tracker.sent_transactions(vec![SentTransaction {
             tx_hash: tracked_hash,
             from: signed.from,
-            gas_limit: signed.gas_limit,
+            estimated_gas: signed.estimated_gas,
             measured,
         }]);
         Self::release_signed(&ctx.submit_event_tx, &signed, true).await;
@@ -1066,7 +1071,7 @@ impl SubmissionPipeline {
         let _ = submit_event_tx
             .send(SubmitEvent::Released {
                 from: prepared.from,
-                gas_limit: prepared.gas_limit,
+                estimated_gas: prepared.estimated_gas,
                 accepted: false,
             })
             .await;
@@ -1080,7 +1085,7 @@ impl SubmissionPipeline {
         let _ = submit_event_tx
             .send(SubmitEvent::Released {
                 from: signed.from,
-                gas_limit: signed.gas_limit,
+                estimated_gas: signed.estimated_gas,
                 accepted,
             })
             .await;
@@ -1321,6 +1326,7 @@ mod tests {
             value: U256::from(1),
             data: Bytes::new(),
             gas_limit: 21_000,
+            estimated_gas: 12_345,
         };
         let fees = Fees { max_fee: 100, priority_fee: 10 };
 
@@ -1332,6 +1338,7 @@ mod tests {
         assert_eq!(signed_a.tx_hash, signed_b.tx_hash);
         assert_eq!(signed_a.nonce, 5);
         assert_eq!(signed_a.from, signer.address());
+        assert_eq!(signed_a.estimated_gas, 12_345);
     }
 
     #[tokio::test]
@@ -1356,6 +1363,7 @@ mod tests {
                     value: U256::ZERO,
                     data: Bytes::new(),
                     gas_limit: 21_000,
+                    estimated_gas: 21_000,
                 }],
             })
             .await
@@ -1376,6 +1384,7 @@ mod tests {
                     from: sender,
                     nonce: 0,
                     gas_limit: 21_000,
+                    estimated_gas: 21_000,
                 }],
             })
             .await
