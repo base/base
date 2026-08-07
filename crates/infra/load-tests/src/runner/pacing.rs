@@ -246,8 +246,10 @@ impl EnqueueDrainState<'_> {
         }
     }
 
-    fn total_outstanding_gas(&self) -> u128 {
-        self.results_tracker.unconfirmed_gas().saturating_add(*self.queued_gas)
+    fn mempool_depth_gas(&self) -> u128 {
+        // Local submission backlog has not reached the node yet. Counting it as
+        // mempool inventory can starve the RPC pipeline while acknowledgements lag.
+        self.results_tracker.unconfirmed_gas()
     }
 
     fn remaining_transaction_slots(&self, capacity: usize) -> usize {
@@ -1529,7 +1531,7 @@ impl LoadRunner {
         }
 
         let plan_started = Instant::now();
-        let depth_gas = drain_state.total_outstanding_gas();
+        let depth_gas = drain_state.mempool_depth_gas();
         let block_gas_limit = canonical.map_or(fallback_block_gas_limit, |block| block.gas_limit);
         let plan = controller.plan(
             cycle_started,
@@ -1613,7 +1615,7 @@ impl LoadRunner {
         if !batch_ids.is_empty() && refill_lag.is_none() {
             drain_state.results_tracker.register_pending_refill(batch_ids.clone(), cycle_started);
         }
-        let resulting_depth_gas = drain_state.total_outstanding_gas();
+        let resulting_depth_gas = drain_state.mempool_depth_gas();
         drain_state.collector.record_pacing_cycle(PacingCycleObservation {
             elapsed: cycle_started.saturating_duration_since(controller.measurement_started_at),
             source: match pulse.source {
@@ -1627,6 +1629,7 @@ impl LoadRunner {
             our_included_gas: canonical.map_or(0, |block| block.our_included_gas),
             pre_refill_depth_gas: depth_gas,
             post_refill_depth_gas: resulting_depth_gas,
+            queued_gas: *drain_state.queued_gas,
             floor_gas: plan.floor_gas,
             offered_gas: selected_gas,
             capacity_limited: matches!(plan.limited_by, InjectLimit::Capacity)

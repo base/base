@@ -99,7 +99,9 @@ The controller calibrates expected execution gas before measurement, targets
 `target_gps * block_time` of that estimated gas outstanding, and permits up to twice that depth
 while confirmed gas is behind the run-average target. Transaction gas limits remain unchanged for
 execution safety, but do not reduce TPS when they conservatively exceed observed gas usage. Refills
-are capped by the cumulative measured submission budget (`target_gps * elapsed`), so faster
+measure depth from transactions accepted by a submission RPC; local submission backlog still counts
+toward sender and aggregate transaction capacity but is not treated as node mempool inventory.
+Refills are capped by the cumulative measured submission budget (`target_gps * elapsed`), so faster
 flashblock inclusion cannot drive offered load above the configured rate. When `target_gps` is
 omitted, the floor is one full block and the ceiling is two full blocks. Capacity and submission
 bottlenecks are reported without failing the run. Omit `flashblocks_ws` to run with canonical

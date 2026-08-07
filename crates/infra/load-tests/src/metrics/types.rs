@@ -192,6 +192,8 @@ pub struct PacingCycleObservation {
     pub pre_refill_depth_gas: u128,
     /// Estimated mempool depth after the refill cycle.
     pub post_refill_depth_gas: u128,
+    /// Estimated gas waiting in the local submission pipeline.
+    pub queued_gas: u128,
     /// Desired one-block floor.
     pub floor_gas: u128,
     /// Estimated execution gas selected for submission.
@@ -240,6 +242,8 @@ pub struct PacingMetrics {
     pub chain_bound_cycles: u64,
     /// Maximum estimated submitted-but-unconfirmed gas.
     pub max_depth_gas: u128,
+    /// Maximum estimated gas waiting in the local submission pipeline.
+    pub max_queued_gas: u128,
     /// Mean ratio of estimated depth to the configured one-block floor.
     pub mean_depth_to_floor_ratio: f64,
     /// Mean total block fill ratio.

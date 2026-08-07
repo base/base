@@ -335,7 +335,8 @@ impl MetricsCollector {
                 .pacing_cycles
                 .iter()
                 .filter(|cycle| {
-                    cycle.refill_lag.is_none_or(|lag| lag >= Duration::from_millis(100))
+                    cycle.offered_gas > 0
+                        && cycle.refill_lag.is_none_or(|lag| lag >= Duration::from_millis(100))
                 })
                 .count() as u64,
             chain_bound_cycles: self.pacing_cycles.iter().filter(|cycle| cycle.chain_bound).count()
@@ -344,6 +345,12 @@ impl MetricsCollector {
                 .pacing_cycles
                 .iter()
                 .map(|cycle| cycle.post_refill_depth_gas)
+                .max()
+                .unwrap_or_default(),
+            max_queued_gas: self
+                .pacing_cycles
+                .iter()
+                .map(|cycle| cycle.queued_gas)
                 .max()
                 .unwrap_or_default(),
             mean_depth_to_floor_ratio: if blocks_observed == 0 {
@@ -599,5 +606,25 @@ mod tests {
         assert_eq!(summary.pacing.canonical_cycles, 0);
         assert_eq!(summary.pacing.flashblock_cycles, 1);
         assert_eq!(summary.pacing.safety_cycles, 1);
+    }
+
+    #[test]
+    fn pacing_only_counts_late_acknowledgements_for_offered_refills() {
+        let mut collector = MetricsCollector::new();
+        collector.record_pacing_cycle(PacingCycleObservation::default());
+        collector.record_pacing_cycle(PacingCycleObservation {
+            offered_gas: 1,
+            refill_lag: None,
+            ..Default::default()
+        });
+        collector.record_pacing_cycle(PacingCycleObservation {
+            offered_gas: 1,
+            refill_lag: Some(Duration::from_millis(50)),
+            ..Default::default()
+        });
+
+        let summary = collector.summarize(Duration::from_secs(1), None);
+
+        assert_eq!(summary.pacing.rpc_bound_cycles, 1);
     }
 }

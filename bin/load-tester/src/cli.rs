@@ -286,11 +286,12 @@ fn present_load_test_summary(summary: &MetricsSummary) {
             target_gps, pacing.offered_gps, tp.gps
         );
         println!(
-            "Depth: mean/floor={:.2}x  blocks={}  under_floor={}  max_gas={}",
+            "Depth: mean/floor={:.2}x  blocks={}  under_floor={}  max_gas={}  max_queued_gas={}",
             pacing.mean_depth_to_floor_ratio,
             pacing.blocks_observed,
             pacing.blocks_under_floor,
-            pacing.max_depth_gas
+            pacing.max_depth_gas,
+            pacing.max_queued_gas,
         );
         println!(
             "Shortfalls: capacity={}  presign={}  rpc={}  chain={}",
