@@ -30,9 +30,9 @@ use url::Url;
 
 use crate::{
     BatcherConfig, L2BlockParityMonitor, L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH,
-    NullL1HeadSubscription, NullSubscription, RpcL1HeadPollingSource, RpcL2BlockProvider,
-    RpcPollingSource, RpcThrottleClient, SafeHeadPoller, ShadowParityMonitor,
-    ShadowParityMonitorConfig, WsBlockSubscription, WsL1HeadSubscription, recent_tx_sync_target,
+    NullL1HeadSubscription, NullSubscription, RecentTxSyncTarget, RpcL1HeadPollingSource,
+    RpcL2BlockProvider, RpcPollingSource, RpcThrottleClient, SafeHeadPoller, ShadowParityMonitor,
+    ShadowParityMonitorConfig, WsBlockSubscription, WsL1HeadSubscription,
 };
 
 const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
@@ -543,7 +543,7 @@ impl BatcherService {
         // They never advance the L2 backfill cursor.
         if self.config.wait_node_sync {
             let target_l1 = if self.config.check_recent_txs_depth > 0 {
-                recent_tx_sync_target(
+                RecentTxSyncTarget::find(
                     &l1_provider,
                     signer_address,
                     self.config.check_recent_txs_depth,
