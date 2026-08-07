@@ -40,9 +40,9 @@ pub enum TxAuthError {
     #[error("account is locked")]
     AccountLocked,
 
-    /// A delegation was not authorized by an admin (unrestricted) actor
-    /// authenticating via native secp256k1 on the unlocked account.
-    #[error("delegation requires a native-k1 admin actor")]
+    /// A delegation was not authorized by an admin (unrestricted) actor on the
+    /// unlocked account.
+    #[error("delegation requires an admin actor")]
     DelegationUnauthorized,
 
     /// A config change is bound to a chain other than `0` (multichain) or the

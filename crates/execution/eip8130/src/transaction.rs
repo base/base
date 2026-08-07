@@ -3,7 +3,7 @@
 //! their authorization, then authenticates the final sender/payer signatures
 //! against the resulting post-apply state.
 
-use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Eip8130Signed};
+use base_common_consensus::{AccountChange, Delegation, Eip8130Signed};
 
 use crate::{
     AccountChangeApplier, AccountConfigurationStorage, ActorTxVerifier, AppliedAccountChanges,
@@ -70,7 +70,7 @@ impl TransactionAuthorizer {
     ///    earlier change therefore fails the final sender check, exactly as the
     ///    contract would revert. A recorded delegation then requires that final
     ///    sender to be an admin (unrestricted) actor on the unlocked account,
-    ///    authenticating via native secp256k1.
+    ///    via any canonical authenticator.
     ///
     /// Returns the [`AppliedTransaction`] (with every `AccountConfiguration`
     /// storage transition already written to `storage`), or the first
@@ -180,23 +180,23 @@ impl TransactionAuthorizer {
             ActorTxVerifier::verify_with_recovered_sender(signed, storage, now, recovered_sender)?;
 
         if applied.delegation.is_some() {
-            Self::authorize_delegation(signed, storage, now, &actors.sender)?;
+            Self::authorize_delegation(storage, now, &actors.sender)?;
         }
 
         Ok(AppliedTransaction { actors, config_changes, applied, revoke_discount_slots })
     }
 
     /// Requires a delegation's final sender to be an admin (unrestricted) actor
-    /// on the unlocked account, authenticating via native secp256k1.
+    /// on the unlocked account.
     ///
-    /// This does **not** require the sender to be the account's native-k1 *self*
-    /// actor: any bound admin (`scope == 0`) actor authenticating with a
-    /// secp256k1 authenticator may set the account's delegation, consistent with
-    /// the admin role that already governs every other config mutation
+    /// The authorizing actor may use **any** canonical authenticator (secp256k1,
+    /// P-256, `WebAuthn`, or a delegate contract): it does not need to be the
+    /// account's native-k1 self actor, nor a secp256k1 actor at all. Any bound
+    /// admin (`scope == 0`) actor may set the account's delegation, consistent
+    /// with the admin role that already governs every other config mutation
     /// (authorize/revoke actors, including revoking the root key). The
-    /// account-unlocked and native-secp256k1 guards remain.
+    /// account-unlocked guard remains.
     fn authorize_delegation(
-        signed: &Eip8130Signed,
         storage: &AccountConfigurationStorage<'_>,
         now: u64,
         sender: &AuthorizedActor,
@@ -205,9 +205,7 @@ impl TransactionAuthorizer {
             return Err(TxAuthError::AccountLocked);
         }
 
-        let used_native_k1 = signed.explicit_sender().is_none()
-            || signed.sender_auth().starts_with(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
-        if !used_native_k1 || !sender.resolved.is_admin() {
+        if !sender.resolved.is_admin() {
             return Err(TxAuthError::DelegationUnauthorized);
         }
 
@@ -219,8 +217,8 @@ impl TransactionAuthorizer {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
     use base_common_consensus::{
-        ActorChange, ConfigChange, CreateEntry, Delegation, Eip8130Constants, Eip8130Contracts,
-        InitialActor, TxEip8130,
+        ActorChange, ConfigChange, CreateEntry, Delegation, Eip8130Constants, InitialActor,
+        TxEip8130,
     };
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
@@ -654,22 +652,37 @@ mod tests {
     }
 
     #[test]
-    fn delegation_authorization_rejects_non_native_k1_admin_self_actor() {
+    fn delegation_authorization_accepts_non_native_k1_admin_actor() {
+        // Any canonical authenticator may authorize a delegation as long as the
+        // resolved sender is an admin (unrestricted) actor: a non-secp256k1
+        // (e.g. P-256) admin actor is now accepted.
         let account = address!("0x00000000000000000000000000000000000000aa");
-        let target = address!("0x00000000000000000000000000000000000000dd");
-        let tx =
-            tx_with(Some(account), None, vec![AccountChange::Delegation(Delegation { target })]);
-        let signed = Eip8130Signed::new(
-            tx,
-            auth_blob(Eip8130Contracts::P256_AUTHENTICATOR, &[]),
-            Bytes::new(),
-        );
         let sender =
             AuthorizedActor { account, resolved: ResolvedActor::unrestricted(actor_id(account)) };
 
         with_storage(|acc| {
+            assert_eq!(TransactionAuthorizer::authorize_delegation(acc, NOW, &sender), Ok(()));
+        });
+    }
+
+    #[test]
+    fn delegation_authorization_rejects_scoped_actor() {
+        // The admin gate still holds: a merely-scoped (non-admin) sender cannot
+        // authorize a delegation regardless of authenticator.
+        let account = address!("0x00000000000000000000000000000000000000aa");
+        let sender = AuthorizedActor {
+            account,
+            resolved: ResolvedActor {
+                actor_id: actor_id(account),
+                scope: Eip8130Constants::SCOPE_SENDER,
+                policy_target: Address::ZERO,
+                expiry: 0,
+            },
+        };
+
+        with_storage(|acc| {
             assert_eq!(
-                TransactionAuthorizer::authorize_delegation(&signed, acc, NOW, &sender),
+                TransactionAuthorizer::authorize_delegation(acc, NOW, &sender),
                 Err(TxAuthError::DelegationUnauthorized),
             );
         });
