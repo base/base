@@ -42,12 +42,11 @@ pub struct BatcherConfig {
     /// connection and falls back to polling [`l2_rpc_url`](Self::l2_rpc_url)
     /// only on failure. When absent, the batcher uses polling exclusively.
     pub l2_ws_url: Option<Url>,
-    /// Optional derived-parity validator L2 RPC endpoint.
+    /// Parity validator L2 RPC endpoint for shadow mode.
     ///
-    /// When set, shadow-mode deployments compare derived L2 block hashes
-    /// from this validator against the configured sequencer L2 RPC endpoint.
-    /// The validator is expected to derive from the shadow batch inbox and must
-    /// not be a follow-mode mirror of the sequencer.
+    /// Required with [`batch_inbox_override`](Self::batch_inbox_override) and
+    /// rejected without it. Its safe L2 head anchors shadow batcher recovery,
+    /// and its derived block hashes are compared with the sequencer.
     pub parity_validator_l2_rpc_url: Option<Url>,
     /// Rollup node RPC endpoint(s).
     ///

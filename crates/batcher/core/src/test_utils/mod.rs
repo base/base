@@ -4,12 +4,12 @@ mod throttle;
 pub use throttle::{ThrottleCallLog, TrackingThrottleClient};
 
 mod pipeline;
-pub use pipeline::{OneReorgPipeline, Recorded, ReorgPipeline, TrackingPipeline};
+pub use pipeline::{Recorded, ReorgPipeline, TrackingPipeline};
 
 #[cfg(any(test, feature = "test-utils"))]
 mod source;
 #[cfg(any(test, feature = "test-utils"))]
-pub use source::{OneBlockSource, PendingL1HeadSource, PendingSource};
+pub use source::{OneBlockSource, PendingL1HeadSource, PendingSource, TrackingSource};
 
 #[cfg(any(test, feature = "test-utils"))]
 mod builder;

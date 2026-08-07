@@ -17,4 +17,7 @@ pub enum BatchDriverError {
     /// in the submitted L2 block sequence.
     #[error("fatal pipeline step error: {0}")]
     Step(#[from] StepError),
+    /// The required safe-head source stopped.
+    #[error("safe-head source closed")]
+    SafeHeadSourceClosed,
 }

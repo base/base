@@ -2,7 +2,7 @@
 
 use base_batcher_encoder::SubmissionId;
 use base_common_consensus::BaseBlock;
-use base_protocol::L2BlockInfo;
+use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::sync::oneshot;
 
 use crate::TxOutcome;
@@ -25,8 +25,8 @@ pub enum DriverEvent {
     Receipt(Vec<SubmissionId>, TxOutcome),
     /// L1 chain head advanced.
     L1Head(u64),
-    /// Safe L2 head advanced (from watch channel).
-    SafeHead(u64),
+    /// Safe L2 head changed.
+    SafeHead(BlockInfo),
     /// L1 head source permanently closed (Exhausted or Closed error).
     L1SourceClosed,
 }

@@ -38,7 +38,7 @@ fn test_throttle_client_called_on_high_backlog() {
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new(
+        let driver = BatchDriver::new_without_safe_head(
             ctx.clone(),
             pipeline,
             PendingSource,
@@ -83,7 +83,7 @@ fn test_throttle_client_called_with_upper_limits_on_zero_backlog() {
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new(
+        let driver = BatchDriver::new_without_safe_head(
             ctx.clone(),
             pipeline,
             PendingSource,
@@ -128,7 +128,7 @@ fn test_throttle_not_called_redundantly() {
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new(
+        let driver = BatchDriver::new_without_safe_head(
             ctx.clone(),
             pipeline,
             PendingSource,
@@ -173,7 +173,7 @@ fn test_step_strategy_full_intensity_applies_lower_limits() {
         let throttle = ThrottleController::new(config, ThrottleStrategy::Step);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new(
+        let driver = BatchDriver::new_without_safe_head(
             ctx.clone(),
             pipeline,
             PendingSource,
@@ -273,7 +273,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new(
+        let driver = BatchDriver::new_without_safe_head(
             ctx.clone(),
             pipeline,
             ChannelSource { rx: source_rx },

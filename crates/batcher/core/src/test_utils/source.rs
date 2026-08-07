@@ -1,5 +1,7 @@
 //! Test [`UnsafeBlockSource`] and [`L1HeadSource`] implementations.
 
+use std::sync::{Arc, Mutex};
+
 use async_trait::async_trait;
 use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
@@ -9,7 +11,7 @@ use base_batcher_source::{
 ///
 /// Use this in tests that do not exercise the block-delivery path, so that
 /// the driver's source arm never fires and other arms (receipts, L1 head,
-/// safe-head watch) can be tested in isolation.
+/// safe-head feed) can be tested in isolation.
 #[derive(Debug)]
 pub struct PendingSource;
 
@@ -17,6 +19,31 @@ pub struct PendingSource;
 impl UnsafeBlockSource for PendingSource {
     async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
         std::future::pending().await
+    }
+}
+
+/// [`UnsafeBlockSource`] that records sequential catchup requests and otherwise parks.
+#[derive(Debug)]
+pub struct TrackingSource {
+    catchup_starts: Arc<Mutex<Vec<u64>>>,
+}
+
+impl TrackingSource {
+    /// Create a source and its shared catchup call log.
+    pub fn new() -> (Self, Arc<Mutex<Vec<u64>>>) {
+        let catchup_starts = Arc::new(Mutex::new(Vec::new()));
+        (Self { catchup_starts: Arc::clone(&catchup_starts) }, catchup_starts)
+    }
+}
+
+#[async_trait]
+impl UnsafeBlockSource for TrackingSource {
+    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+        std::future::pending().await
+    }
+
+    fn reset_catchup(&mut self, start_from: u64) {
+        self.catchup_starts.lock().unwrap().push(start_from);
     }
 }
 
