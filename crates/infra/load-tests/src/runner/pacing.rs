@@ -459,11 +459,14 @@ impl LoadRunner {
             sender_count = account_count,
             signer_worker_count =
                 SubmissionPipeline::signer_worker_count(self.submission_batch_rpcs.len()),
-            sender_worker_count =
-                SubmissionPipeline::sender_worker_count(self.submission_batch_rpcs.len()),
+            sender_worker_count = SubmissionPipeline::sender_worker_count(
+                self.submission_batch_rpcs.len(),
+                self.config.max_concurrent_submit_requests,
+            ),
             submit_rpc_count = self.submission_batch_rpcs.len(),
             max_concurrent_submit_requests =
                 self.config.max_concurrent_submit_requests.unwrap_or_default(),
+            batch_size = self.config.batch_size,
             max_in_flight_per_sender,
             initial_avg_gas,
             target_gps = self.config.target_gps.unwrap_or_default(),

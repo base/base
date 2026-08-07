@@ -59,6 +59,7 @@ Example minimal config:
 transaction_submission_rpcs:
   - "http://localhost:8545"
 # Add more URLs to shard submit batches across multiple HTTP endpoints.
+batch_size: 100
 query_rpc: "http://localhost:8545"
 # Optional: clear pending transactions from these admin RPC nodes for all sender addresses.
 txpool_nodes: []
@@ -85,9 +86,10 @@ configured.
 *requests*. If the submission RPC is rate-limiting you (e.g. `over rate limit` failures) rather than
 its mempool overflowing, set `max_concurrent_submit_requests` instead: it caps how many
 `eth_sendRawTransaction` batch requests may be outstanding to the submission RPC(s) at once, without
-shrinking the in-flight inventory target. Concurrency is otherwise bounded only by the sender worker
-count and concurrent chunks within each transaction batch, so `max_concurrent_submit_requests`
-provides a shared bound across both sources of parallelism.
+shrinking the in-flight inventory target. When set, it also expands the sender worker pool so the
+configured request concurrency can be reached. The shared semaphore remains the authoritative
+outbound request limit. `batch_size` controls the maximum transactions per JSON-RPC batch request
+and defaults to 100.
 
 During measurement, the runner refills immediately after an inclusion source releases transaction
 inventory. When `flashblocks_ws` is configured, builder broadcasts provide the earliest signal;

@@ -159,6 +159,8 @@ pub struct LoadConfig {
     /// in-flight inventory target. `None` leaves concurrency bounded by sender
     /// workers and the number of RPC chunks in each transaction batch.
     pub max_concurrent_submit_requests: Option<usize>,
+    /// Maximum number of transactions in each JSON-RPC batch request.
+    pub batch_size: usize,
     /// Maximum gas price cap to prevent overspending during congestion.
     pub max_gas_price: u128,
     /// Optional builder flashblocks WebSocket used for early inclusion signals.
@@ -191,6 +193,7 @@ impl LoadConfig {
             max_in_flight_per_sender: DEFAULT_MAX_IN_FLIGHT_PER_SENDER,
             max_total_in_flight: None,
             max_concurrent_submit_requests: None,
+            batch_size: crate::rpc::MAX_BATCH_RPC_SIZE,
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: None,
             fresh_recipient_ratio: 0.0,
@@ -228,6 +231,9 @@ impl LoadConfig {
             return Err(BaselineError::Config(
                 "max_concurrent_submit_requests must be > 0 when set".into(),
             ));
+        }
+        if self.batch_size == 0 {
+            return Err(BaselineError::Config("batch_size must be > 0".into()));
         }
         if self.duration == Some(Duration::ZERO) {
             return Err(BaselineError::Config(

@@ -169,7 +169,7 @@ impl std::fmt::Debug for TxpoolAdminClient {
 /// Public RPC endpoints (e.g. Sepolia) often reject or return non-JSON error
 /// responses for very large batches. Keeping batches small avoids rate-limit
 /// and gateway errors.
-const MAX_BATCH_RPC_SIZE: usize = 100;
+pub const MAX_BATCH_RPC_SIZE: usize = 100;
 
 /// Client for JSON-RPC batch requests.
 ///
@@ -180,6 +180,7 @@ const MAX_BATCH_RPC_SIZE: usize = 100;
 pub struct BatchRpcClient {
     client: reqwest::Client,
     url: Url,
+    batch_size: usize,
 }
 
 /// Result of a single request within a JSON-RPC batch response.
@@ -201,15 +202,21 @@ impl BatchRpcClient {
             .tcp_nodelay(true)
             .build()
             .expect("failed to build reqwest client");
-        Self { client, url }
+        Self { client, url, batch_size: MAX_BATCH_RPC_SIZE }
+    }
+
+    /// Sets the maximum number of JSON-RPC calls in each HTTP request.
+    pub const fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.batch_size = if batch_size == 0 { 1 } else { batch_size };
+        self
     }
 
     /// Sends multiple pre-signed raw transactions via JSON-RPC batch requests.
     /// Returns one [`BatchSendResult`] per input, preserving order.
     ///
-    /// Large requests are automatically split into sub-batches of
-    /// [`MAX_BATCH_RPC_SIZE`] and sent concurrently. When supplied, `request_limiter`
-    /// bounds concurrency across all batches and sender workers.
+    /// Large requests are automatically split into configured sub-batches and
+    /// sent concurrently. When supplied, `request_limiter` bounds concurrency
+    /// across all batches and sender workers.
     ///
     /// `request_limiter`, when set, bounds the number of these sub-batch HTTP
     /// requests that may be outstanding concurrently across all callers
@@ -227,7 +234,7 @@ impl BatchRpcClient {
             return Ok(Vec::new());
         }
 
-        let chunk_requests = raw_txs.chunks(MAX_BATCH_RPC_SIZE).map(|chunk| async move {
+        let chunk_requests = raw_txs.chunks(self.batch_size).map(|chunk| async move {
             let _permit = match request_limiter {
                 Some(limiter) => Some(limiter.acquire().await.expect("semaphore never closed")),
                 None => None,
@@ -352,5 +359,12 @@ mod tests {
         assert!(!error.contains("user"));
         assert!(!error.contains("secret"));
         assert!(!error.contains(&address.to_string()));
+    }
+
+    #[test]
+    fn batch_size_is_configurable() {
+        let url = Url::parse("http://localhost:8545").unwrap();
+
+        assert_eq!(BatchRpcClient::new(url).with_batch_size(25).batch_size, 25);
     }
 }

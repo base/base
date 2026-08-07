@@ -338,6 +338,9 @@ pub struct ConfigSummary {
     /// Optional cap on concurrent outbound submission RPC requests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_concurrent_submit_requests: Option<u32>,
+    /// Maximum number of transactions in each JSON-RPC batch request.
+    #[serde(default)]
+    pub batch_size: u32,
     /// Test duration.
     pub duration: Option<String>,
     /// Optional gas-per-second target used to size the per-block mempool floor.

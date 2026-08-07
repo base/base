@@ -12,6 +12,7 @@ use super::{
 };
 use crate::{
     metrics::ConfigSummary,
+    rpc::MAX_BATCH_RPC_SIZE,
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
     workload::RealTokenSetup,
@@ -76,6 +77,10 @@ pub struct TestConfig {
     /// bounded only by the sender worker count.
     #[serde(default)]
     pub max_concurrent_submit_requests: Option<u32>,
+
+    /// Maximum number of transactions in each JSON-RPC batch request.
+    #[serde(default = "default_batch_size")]
+    pub batch_size: u32,
 
     /// Test duration (e.g., "30s", "5m", "1h").
     pub duration: Option<String>,
@@ -155,6 +160,7 @@ impl Default for TestConfig {
             in_flight_per_sender: 16,
             max_total_in_flight: None,
             max_concurrent_submit_requests: None,
+            batch_size: default_batch_size(),
             duration: Some("60s".to_string()),
             target_gps: Some(20_000_000),
             block_time: default_block_time(),
@@ -185,6 +191,7 @@ impl fmt::Debug for TestConfig {
             .field("in_flight_per_sender", &self.in_flight_per_sender)
             .field("max_total_in_flight", &self.max_total_in_flight)
             .field("max_concurrent_submit_requests", &self.max_concurrent_submit_requests)
+            .field("batch_size", &self.batch_size)
             .field("duration", &self.duration)
             .field("target_gps", &self.target_gps)
             .field("block_time", &self.block_time)
@@ -367,6 +374,10 @@ fn default_block_time() -> String {
     "2s".to_string()
 }
 
+const fn default_batch_size() -> u32 {
+    MAX_BATCH_RPC_SIZE as u32
+}
+
 fn default_swap_token_amount() -> String {
     "1000000000000000000000".to_string() // 1000 tokens (1000e18)
 }
@@ -400,6 +411,9 @@ impl TestConfig {
         }
         if self.in_flight_per_sender == 0 {
             return Err(BaselineError::Config("in_flight_per_sender must be > 0".into()));
+        }
+        if self.batch_size == 0 {
+            return Err(BaselineError::Config("batch_size must be > 0".into()));
         }
 
         if self.transaction_submission_rpcs.is_empty() {
@@ -557,6 +571,7 @@ impl TestConfig {
             in_flight_per_sender: self.in_flight_per_sender,
             max_total_in_flight: self.max_total_in_flight,
             max_concurrent_submit_requests: self.max_concurrent_submit_requests,
+            batch_size: self.batch_size,
             duration: self.duration.clone(),
             target_gps: self.target_gps,
             block_time: self.block_time.clone(),
@@ -633,6 +648,7 @@ impl TestConfig {
             max_concurrent_submit_requests: self
                 .max_concurrent_submit_requests
                 .map(|max| max as usize),
+            batch_size: self.batch_size as usize,
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: self.flashblocks_ws.clone(),
             fresh_recipient_ratio: self.fresh_recipient_ratio,
@@ -1310,5 +1326,24 @@ transactions:
             }
             _ => panic!("expected AerodromeCl"),
         }
+    }
+
+    #[test]
+    fn batch_size_defaults_to_rpc_limit() {
+        let config =
+            TestConfig::from_yaml("transaction_submission_rpcs: http://localhost:8545").unwrap();
+
+        assert_eq!(config.batch_size, MAX_BATCH_RPC_SIZE as u32);
+        assert_eq!(config.to_load_config(Some(1337)).unwrap().batch_size, MAX_BATCH_RPC_SIZE);
+    }
+
+    #[test]
+    fn rejects_zero_batch_size() {
+        let error = TestConfig::from_yaml(
+            "transaction_submission_rpcs: http://localhost:8545\nbatch_size: 0",
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("batch_size must be > 0"));
     }
 }

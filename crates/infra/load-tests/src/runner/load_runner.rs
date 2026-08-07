@@ -102,7 +102,7 @@ impl LoadRunner {
                 .transaction_submission_rpcs
                 .iter()
                 .cloned()
-                .map(BatchRpcClient::new)
+                .map(|url| BatchRpcClient::new(url).with_batch_size(config.batch_size))
                 .collect::<Vec<_>>(),
         );
         let workload_config = WorkloadConfig::new("load-test").with_seed(config.seed);
