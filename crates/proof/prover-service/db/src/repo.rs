@@ -2340,6 +2340,7 @@ mod tests {
                 sequence_window: Some(50),
                 l1_head: None,
                 intermediate_root_interval: Some(5),
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -2376,6 +2377,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 intermediate_root_interval: None,
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -2392,6 +2394,7 @@ mod tests {
         assert!(!payload.contains_key("sequence_window"));
         assert!(!payload.contains_key("l1_head"));
         assert!(!payload.contains_key("intermediate_root_interval"));
+        assert!(!payload.contains_key("schedule_l2_block_number"));
     }
 
     #[test]
@@ -2589,6 +2592,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 intermediate_root_interval: None,
+                schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
