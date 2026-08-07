@@ -196,6 +196,20 @@ impl TransactionAuthorizer {
     /// with the admin role that already governs every other config mutation
     /// (authorize/revoke actors, including revoking the root key). The
     /// account-unlocked guard remains.
+    ///
+    /// This gate does **not** inspect the account's code. Delegation is
+    /// independently constrained to accounts that are *currently an EOA* — no
+    /// code, or an existing EIP-7702 delegation indicator — by
+    /// [`DelegationEffect::can_replace_code`], enforced when
+    /// [`DelegationEffect::install`] runs in both the mempool overlay and block
+    /// execution (ordinary contract code is rejected with
+    /// [`ApplyError::NonDelegatableCode`]). Allowing any admin actor here is
+    /// therefore safe: an admin key can only (re)delegate an EOA-shaped account,
+    /// never repoint a deployed smart account's code.
+    ///
+    /// [`DelegationEffect::can_replace_code`]: crate::DelegationEffect::can_replace_code
+    /// [`DelegationEffect::install`]: crate::DelegationEffect::install
+    /// [`ApplyError::NonDelegatableCode`]: crate::ApplyError::NonDelegatableCode
     fn authorize_delegation(
         storage: &AccountConfigurationStorage<'_>,
         now: u64,
