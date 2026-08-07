@@ -457,8 +457,10 @@ impl LoadRunner {
 
         info!(
             sender_count = account_count,
-            signer_worker_count =
-                SubmissionPipeline::signer_worker_count(self.submission_batch_rpcs.len()),
+            signer_worker_count = SubmissionPipeline::signer_worker_count(
+                self.submission_batch_rpcs.len(),
+                self.config.max_concurrent_submit_requests,
+            ),
             sender_worker_count = SubmissionPipeline::sender_worker_count(
                 self.submission_batch_rpcs.len(),
                 self.config.max_concurrent_submit_requests,

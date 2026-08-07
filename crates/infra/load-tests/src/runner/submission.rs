@@ -419,7 +419,10 @@ impl SubmissionPipeline {
         let prepared_queue = Arc::new(PipelineQueue::new(prepared_batch_rx));
         let signed_queue = Arc::new(PipelineQueue::new(signed_batch_rx));
         let shutdown = CancellationToken::new();
-        let signer_worker_count = Self::signer_worker_count(submission_batch_rpcs.len());
+        let signer_worker_count = Self::signer_worker_count(
+            submission_batch_rpcs.len(),
+            config.max_concurrent_submit_requests,
+        );
         let sender_worker_count = Self::sender_worker_count(
             submission_batch_rpcs.len(),
             config.max_concurrent_submit_requests,
@@ -473,9 +476,16 @@ impl SubmissionPipeline {
         }
     }
 
-    /// Returns signer worker count for a submission RPC count.
-    pub fn signer_worker_count(submission_rpc_count: usize) -> usize {
-        (submission_rpc_count * SIGNER_WORKERS_PER_RPC).clamp(1, MAX_SIGNER_WORKER_COUNT)
+    /// Returns signer worker count for a submission RPC count and request limit.
+    pub fn signer_worker_count(
+        submission_rpc_count: usize,
+        max_concurrent_submit_requests: Option<usize>,
+    ) -> usize {
+        let endpoint_workers =
+            (submission_rpc_count * SIGNER_WORKERS_PER_RPC).clamp(1, MAX_SIGNER_WORKER_COUNT);
+        max_concurrent_submit_requests
+            .map_or(endpoint_workers, |request_limit| endpoint_workers.max(request_limit))
+            .clamp(1, MAX_SIGNER_WORKER_COUNT)
     }
 
     /// Returns sender worker count for a submission RPC count and request limit.
@@ -1436,7 +1446,11 @@ mod tests {
     }
 
     #[test]
-    fn request_limit_expands_sender_worker_pool() {
+    fn request_limit_expands_submission_worker_pools() {
+        assert_eq!(SubmissionPipeline::signer_worker_count(1, None), 10);
+        assert_eq!(SubmissionPipeline::signer_worker_count(1, Some(32)), 32);
+        assert_eq!(SubmissionPipeline::signer_worker_count(2, Some(8)), 20);
+        assert_eq!(SubmissionPipeline::signer_worker_count(1, Some(128)), 32);
         assert_eq!(SubmissionPipeline::sender_worker_count(1, None), 10);
         assert_eq!(SubmissionPipeline::sender_worker_count(1, Some(32)), 32);
         assert_eq!(SubmissionPipeline::sender_worker_count(2, Some(8)), 20);
