@@ -1277,7 +1277,6 @@ impl LoadRunner {
 
         let sender_count = config.sender_addresses.len();
         let chunk_per_sender = (SIGNED_BATCH_SIZE / sender_count).max(1);
-        let mut chunk_index = 0usize;
 
         // The producer streams indefinitely and only stops when the consumer drops
         // `signed_chunk_rx` (detected below via the `send(...).is_err()` check), which
@@ -1319,7 +1318,6 @@ impl LoadRunner {
                     ))
                 })?;
             }
-            chunk_index = chunk_index.saturating_add(1);
         }
 
         Ok(producer_state)

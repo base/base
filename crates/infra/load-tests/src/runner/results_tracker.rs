@@ -103,7 +103,7 @@ struct ResultsTrackerInner {
     measurement_started: bool,
     measured_landed: HashSet<TxHash>,
     completed_batches: HashMap<u64, Instant>,
-    pending_refills: Vec<PendingRefill>,
+    pending_refills: VecDeque<PendingRefill>,
     completed_refill_lags: VecDeque<Duration>,
     observed_gas_total: u128,
     observed_gas_count: u64,
@@ -139,7 +139,7 @@ impl ResultsTrackerInner {
                 .filter_map(|id| self.completed_batches.remove(id))
                 .max()
                 .expect("pending refill contains at least one batch");
-            let refill = self.pending_refills.swap_remove(index);
+            let refill = self.pending_refills.swap_remove_back(index).expect("index is in bounds");
             self.completed_refill_lags
                 .push_back(latest.saturating_duration_since(refill.started_at));
         }
@@ -181,7 +181,7 @@ impl ResultsTracker {
                 measurement_started: false,
                 measured_landed: HashSet::new(),
                 completed_batches: HashMap::new(),
-                pending_refills: Vec::new(),
+                pending_refills: VecDeque::new(),
                 completed_refill_lags: VecDeque::new(),
                 observed_gas_total: 0,
                 observed_gas_count: 0,
@@ -428,9 +428,9 @@ impl ResultsTracker {
         }
         let mut inner = self.inner.write();
         if inner.pending_refills.len() >= MAX_COMPLETED_BATCH_CACHE_SIZE {
-            inner.pending_refills.remove(0);
+            inner.pending_refills.pop_front();
         }
-        inner.pending_refills.push(PendingRefill { batch_ids, started_at });
+        inner.pending_refills.push_back(PendingRefill { batch_ids, started_at });
         inner.resolve_pending_refills();
     }
 

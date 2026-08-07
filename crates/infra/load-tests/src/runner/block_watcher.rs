@@ -369,14 +369,18 @@ impl BlockWatcher {
                 let last = latest_number.saturating_sub(1);
                 let provider = self.provider.clone();
                 let results_tracker = self.results_tracker.clone();
+                let cancel_token = self.cancel_token.clone();
                 tokio::spawn(async move {
                     for block_number in first..=last {
-                        match Self::fetch_block_hashes(
-                            &provider,
-                            BlockNumberOrTag::Number(block_number),
-                        )
-                        .await
-                        {
+                        let result = tokio::select! {
+                            biased;
+                            () = cancel_token.cancelled() => break,
+                            result = Self::fetch_block_hashes(
+                                &provider,
+                                BlockNumberOrTag::Number(block_number),
+                            ) => result,
+                        };
+                        match result {
                             Ok(Some((number, hashes))) => {
                                 results_tracker.on_new_block_hashes(
                                     BlockObservation { number, observed_at: Instant::now() },
