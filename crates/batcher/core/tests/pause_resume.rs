@@ -142,8 +142,8 @@ fn test_paused_drops_block_and_flush_events() {
             fn advance_l1_head(&mut self, n: u64) {
                 self.inner.advance_l1_head(n);
             }
-            fn prune_safe(&mut self, n: u64) {
-                self.inner.prune_safe(n);
+            fn prune_safe(&mut self, safe_l2: BlockInfo) -> bool {
+                self.inner.prune_safe(safe_l2)
             }
             fn reset(&mut self) {
                 self.inner.reset();

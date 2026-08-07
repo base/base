@@ -112,10 +112,10 @@ fn test_l1_source_exhausted_disables_arm_driver_continues() {
 }
 
 #[test]
-fn test_safe_head_regression_and_chain_mismatch_reset_pipeline() {
+fn test_safe_head_conflicts_reset_pipeline_and_source() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_safe_head_match(false);
         let (safe_tx, safe_rx) = mpsc::channel(1);
         let (source, catchup_heads) = TrackingSource::new();
 
@@ -146,9 +146,9 @@ fn test_safe_head_regression_and_chain_mismatch_reset_pipeline() {
 
         assert!(handle.await.unwrap().is_ok());
         let recorded = recorded.lock().unwrap();
-        assert_eq!(recorded.resets, 2);
+        assert_eq!(recorded.resets, 3);
         assert_eq!(recorded.safe_numbers, vec![10]);
-        assert_eq!(*catchup_heads.lock().unwrap(), vec![regressed, replacement]);
+        assert_eq!(*catchup_heads.lock().unwrap(), vec![regressed, replacement, safe_head(10)]);
     });
 }
 

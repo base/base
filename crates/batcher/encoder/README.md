@@ -8,7 +8,9 @@ L1 submission frames. No async, no I/O, no tokio dependency.
 ## Usage
 
 ```rust,ignore
-use base_batcher_encoder::{BatchEncoder, EncoderConfig, FrameEncoder, StepResult};
+use base_batcher_encoder::{
+    BatchEncoder, BatchPipeline, EncoderConfig, FrameEncoder, StepResult,
+};
 
 let mut encoder = BatchEncoder::new(rollup_config, EncoderConfig::default());
 
@@ -31,7 +33,13 @@ while let Some(sub) = encoder.next_submission() {
         // Or pack into EIP-4844 blobs via base-blobs::BlobEncoder.
     }
     encoder.confirm(sub.id, l1_block_number);
+    encoder.advance_l1_head(l1_block_number);
     // Call encoder.requeue(sub.id) if submission fails and frames must be retried.
+}
+
+// Apply safe-head updates. Reset and restart block loading if validation fails.
+if !encoder.prune_safe(safe_head) {
+    encoder.reset();
 }
 ```
 
@@ -40,14 +48,13 @@ while let Some(sub) = encoder.next_submission() {
 Every submission drained from `next_submission()` **must** be resolved with either
 `confirm(id, l1_block)` or `requeue(id)`:
 
-- `confirm` prunes the submission's frames from the channel's pending set. Once all
-  frames of a channel are confirmed, the channel is finalized and its L2 blocks are
-  removed from the encoder's input queue, keeping memory bounded.
-- `requeue` rewinds the channel's frame cursor so the same frames are re-emitted on the
-  next `next_submission()` call. Use this when an L1 transaction fails or is dropped.
+- `confirm` records frame inclusion. Completed channels and their L2 blocks remain
+  buffered until `prune_safe` observes the corresponding safe-head advance.
+- `requeue` makes the submission's frames available again. Use this when an L1
+  transaction fails or is dropped.
 
-Failing to call either will cause the encoder's internal `pending` map and block deque
-to grow without bound.
+Failing to call either leaves the submission in the encoder's internal `pending` map.
+The block deque contains the `(safe, unsafe]` range and is bounded by safe-head pruning.
 
 ## Frame encoding
 

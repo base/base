@@ -23,7 +23,7 @@ mod pipeline;
 pub use pipeline::BatchPipeline;
 
 mod channel;
-pub use channel::{OpenChannel, PendingRef, ReadyChannel};
+pub use channel::{FrameState, OpenChannel, PendingRef, ReadyChannel};
 
 mod encoder;
 pub use encoder::BatchEncoder;

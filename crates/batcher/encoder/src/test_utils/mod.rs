@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 
 use base_common_consensus::BaseBlock;
+use base_protocol::BlockInfo;
 
 use crate::{BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
 
@@ -63,8 +64,9 @@ impl BatchPipeline for MockBatchPipeline {
         self.l1_heads.push(l1_block);
     }
 
-    fn prune_safe(&mut self, safe_l2_number: u64) {
-        self.safe_l2_numbers_pruned.push(safe_l2_number);
+    fn prune_safe(&mut self, safe_l2: BlockInfo) -> bool {
+        self.safe_l2_numbers_pruned.push(safe_l2.number);
+        true
     }
 
     fn reset(&mut self) {

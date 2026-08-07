@@ -20,6 +20,7 @@ use base_batcher_encoder::{
 };
 use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
 use base_common_consensus::BaseBlock;
+use base_protocol::BlockInfo;
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
@@ -238,7 +239,9 @@ fn test_throttle_transitions_from_active_to_inactive() {
         fn requeue(&mut self, _: SubmissionId) {}
         fn force_close_channel(&mut self) {}
         fn advance_l1_head(&mut self, _: u64) {}
-        fn prune_safe(&mut self, _: u64) {}
+        fn prune_safe(&mut self, _: BlockInfo) -> bool {
+            true
+        }
         fn reset(&mut self) {}
 
         fn da_backlog_bytes(&self) -> u64 {

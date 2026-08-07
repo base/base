@@ -31,7 +31,18 @@ impl fmt::Debug for OpenChannel {
     }
 }
 
-/// A channel that has been closed and is ready for frame submission.
+/// Submission lifecycle of a frame in a closed channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameState {
+    /// The frame is available for submission.
+    Ready,
+    /// The frame was submitted and is awaiting an outcome.
+    Pending,
+    /// The frame was confirmed on L1.
+    Confirmed,
+}
+
+/// A closed channel retained through submission until its L2 range becomes safe.
 #[derive(Debug)]
 pub struct ReadyChannel {
     /// The channel identifier.
@@ -40,18 +51,12 @@ pub struct ReadyChannel {
     /// [`BatchSubmission`] is a cheap pointer copy rather than a deep clone of
     /// the frame payload (up to `max_frame_size` bytes per frame).
     pub frames: Vec<Arc<Frame>>,
-    /// Next frame index to submit (cursor). Rewound on requeue.
-    pub cursor: usize,
-    /// Which input blocks this channel covers (indices into the encoder's block queue).
-    pub block_range: Range<usize>,
+    /// Submission state for each frame.
+    pub frame_states: Vec<FrameState>,
     /// Exact input block range encoded into this channel.
     pub encoded_block_range: Range<usize>,
     /// DA bytes still represented by this closed channel's frames.
     pub da_backlog_bytes: u64,
-    /// Number of in-flight submissions for this channel.
-    pub pending_confirmations: usize,
-    /// Number of frames that have been confirmed.
-    pub confirmed_count: usize,
     /// Earliest L1 block that confirmed any frame from this channel.
     pub first_confirmed_l1_block: Option<u64>,
     /// Latest L1 block that confirmed any frame from this channel.

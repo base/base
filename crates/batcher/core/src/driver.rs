@@ -355,7 +355,16 @@ where
             return;
         }
 
-        self.pipeline.prune_safe(head.number);
+        if !self.pipeline.prune_safe(head) {
+            warn!(
+                safe_l2 = %head.number,
+                safe_hash = %head.hash,
+                "safe L2 head does not match buffered chain, resetting pipeline"
+            );
+            self.reset_to_safe_head();
+            return;
+        }
+
         debug!(safe_l2_number = %head.number, "pruned safe L2 blocks");
     }
 

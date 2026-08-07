@@ -1,6 +1,7 @@
 //! The batcher pipeline trait.
 
 use base_common_consensus::BaseBlock;
+use base_protocol::BlockInfo;
 
 use crate::{BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
 
@@ -14,13 +15,13 @@ use crate::{BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
 /// 2. Advancing state via [`step`](Self::step) until [`StepResult::Idle`].
 /// 3. Draining ready submissions via [`next_submission`](Self::next_submission).
 /// 4. Reporting outcomes via [`confirm`](Self::confirm) / [`requeue`](Self::requeue).
+/// 5. Applying safe-head updates via [`prune_safe`](Self::prune_safe).
 pub trait BatchPipeline: Send {
     /// Add an L2 block to the pipeline's input queue.
     ///
     /// Returns `Err((ReorgError, block))` if the block's parent hash does not match the
-    /// current tip, giving the caller back the block so it can be re-fed after
-    /// [`reset`](Self::reset). On reorg error the caller must reset the pipeline and
-    /// re-add the returned block as the first block of the new chain.
+    /// current tip. The caller must reset the pipeline and restart its block source
+    /// from a trusted head.
     fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)>;
 
     /// Advance the pipeline by one step.
@@ -50,11 +51,12 @@ pub trait BatchPipeline: Send {
 
     /// Mark a submission as confirmed at the given L1 block number.
     ///
-    /// Prunes the confirmed frames from the channel's pending set. Once all frames of a channel
-    /// are confirmed, the channel is finalized and its blocks are pruned from the input queue.
+    /// Records frame inclusion without removing the channel or its L2 blocks.
+    /// [`prune_safe`](Self::prune_safe) owns both channel and block removal.
+    /// Call [`advance_l1_head`](Self::advance_l1_head) after processing the receipt.
     fn confirm(&mut self, id: SubmissionId, l1_block: u64);
 
-    /// Mark a submission as failed -- rewinds the frame cursor so frames are resubmitted.
+    /// Mark a submission as failed so its frames can be submitted again.
     fn requeue(&mut self, id: SubmissionId);
 
     /// Notify the pipeline of the current L1 head block number.
@@ -79,13 +81,16 @@ pub trait BatchPipeline: Send {
     /// in-flight submissions to settle (confirm or requeue) before calling reset.
     fn reset(&mut self);
 
-    /// Prune blocks confirmed safe on L2 to prevent unbounded queue growth.
+    /// Prune buffered blocks at or below the reported safe L2 head.
     ///
-    /// Drains blocks from the front of the input queue whose block number is
-    /// `<= safe_l2_number` **and** that have already been fed into a channel
-    /// (i.e. are before the encoding cursor). Blocks that have not yet been
-    /// encoded are never pruned, even if their number is below the safe head.
-    fn prune_safe(&mut self, safe_l2_number: u64);
+    /// Returns `false` without pruning when the safe head leaves a gap below the
+    /// buffered window, lies above it, or has a different hash than the boundary
+    /// block. The caller must reset the pipeline in these cases. An empty buffer
+    /// is valid.
+    ///
+    /// Pruning includes blocks not yet fed into a channel and clamps the encoding
+    /// cursor to the remaining queue.
+    fn prune_safe(&mut self, safe_l2: BlockInfo) -> bool;
 
     /// Returns the estimated DA backlog in bytes.
     ///

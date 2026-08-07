@@ -246,7 +246,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                 }
                 BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_FAILED)
                     .increment(count as u64);
-                warn!(submissions = %count, "submission failed, requeued for retry");
+                warn!(submissions = %count, "submission failed");
             }
             TxOutcome::TxpoolBlocked => {
                 let count = ids.len();
@@ -256,7 +256,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                 self.txpool_blocked = true;
                 BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_REQUEUED)
                     .increment(count as u64);
-                warn!(submissions = %count, "submission blocked by txpool nonce slot, requeued");
+                warn!(submissions = %count, "submission blocked by txpool nonce slot");
             }
         }
     }
