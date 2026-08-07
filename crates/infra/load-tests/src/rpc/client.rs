@@ -7,6 +7,7 @@ use alloy_provider::{
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
 use base_common_network::Base;
+use futures::future::join_all;
 use tokio::sync::Semaphore;
 use tracing::{instrument, warn};
 use url::Url;
@@ -207,7 +208,8 @@ impl BatchRpcClient {
     /// Returns one [`BatchSendResult`] per input, preserving order.
     ///
     /// Large requests are automatically split into sub-batches of
-    /// [`MAX_BATCH_RPC_SIZE`] and sent sequentially to avoid overwhelming the RPC endpoint.
+    /// [`MAX_BATCH_RPC_SIZE`] and sent concurrently. When supplied, `request_limiter`
+    /// bounds concurrency across all batches and sender workers.
     ///
     /// `request_limiter`, when set, bounds the number of these sub-batch HTTP
     /// requests that may be outstanding concurrently across all callers
@@ -225,13 +227,18 @@ impl BatchRpcClient {
             return Ok(Vec::new());
         }
 
-        let mut all_results: Vec<BatchSendResult> = Vec::with_capacity(raw_txs.len());
-        for chunk in raw_txs.chunks(MAX_BATCH_RPC_SIZE) {
+        let chunk_requests = raw_txs.chunks(MAX_BATCH_RPC_SIZE).map(|chunk| async move {
             let _permit = match request_limiter {
                 Some(limiter) => Some(limiter.acquire().await.expect("semaphore never closed")),
                 None => None,
             };
-            all_results.extend(self.send_raw_chunk(chunk).await?);
+            self.send_raw_chunk(chunk).await
+        });
+        let chunk_results = join_all(chunk_requests).await;
+
+        let mut all_results = Vec::with_capacity(raw_txs.len());
+        for result in chunk_results {
+            all_results.extend(result?);
         }
 
         Ok(all_results)

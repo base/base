@@ -156,8 +156,8 @@ pub struct LoadConfig {
     /// independently of `max_in_flight_per_sender` / `max_total_in_flight`
     /// (which bound unconfirmed transactions, not outbound requests). Useful
     /// for staying under an RPC endpoint's rate limit without shrinking the
-    /// in-flight inventory target. `None` leaves concurrency bounded only by the
-    /// sender worker count.
+    /// in-flight inventory target. `None` leaves concurrency bounded by sender
+    /// workers and the number of RPC chunks in each transaction batch.
     pub max_concurrent_submit_requests: Option<usize>,
     /// Maximum gas price cap to prevent overspending during congestion.
     pub max_gas_price: u128,

@@ -382,8 +382,8 @@ pub struct PipelineStartConfig {
     /// Maximum allowed gas price.
     pub max_gas_price: u128,
     /// Optional cap on concurrent outbound submission RPC requests across all
-    /// sender workers. `None` leaves concurrency bounded only by the sender
-    /// worker count (see [`SubmissionPipeline::sender_worker_count`]).
+    /// sender workers and per-batch RPC chunks. `None` leaves those requests
+    /// unconstrained by a shared semaphore.
     pub max_concurrent_submit_requests: Option<usize>,
 }
 
