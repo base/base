@@ -10,6 +10,8 @@
 #
 # Host-local RPCs must be addressed as http://host.docker.internal:<port>,
 # not localhost.
+#
+# See docs/guides/STANDALONE_PROVING.md for the full proving workflow.
 
 services:
   prover-service-postgres:

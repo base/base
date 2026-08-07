@@ -159,6 +159,7 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     use super::Cli;
+    use crate::{Commands, ProofsCommands, ZkBackendOption};
 
     fn try_parse<const N: usize>(args: [&str; N]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(args)
@@ -392,30 +393,6 @@ mod tests {
 
     #[test]
     fn proofs_commands_parse() {
-        assert!(try_parse(["basectl", "proofs", "finalize", "100", "5", "--yes"]).is_ok());
-        assert!(
-            try_parse([
-                "basectl",
-                "proofs",
-                "finalize",
-                "100",
-                "5",
-                "--session-id",
-                "custom-session",
-                "--l1-head",
-                "0x1111111111111111111111111111111111111111111111111111111111111111",
-                "--sequence-window",
-                "3600",
-                "--intermediate-root-interval",
-                "10",
-                "--wait",
-                "--prover-rpc",
-                "http://127.0.0.1:9000",
-                "--yes",
-                "--json",
-            ])
-            .is_ok()
-        );
         assert!(try_parse(["basectl", "proofs", "status", "session-1"]).is_ok());
         assert!(
             try_parse([
@@ -449,16 +426,261 @@ mod tests {
     }
 
     #[test]
-    fn proofs_finalize_rejects_zero_blocks() {
-        assert!(try_parse(["basectl", "proofs", "finalize", "100", "0", "--yes"]).is_err());
+    fn proofs_games_parse() {
+        assert!(try_parse(["basectl", "proofs", "games"]).is_ok());
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "games",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--factory",
+                "0xffffffffffffffffffffffffffffffffffffffff",
+                "--l1-rpc",
+                "http://127.0.0.1:8545",
+                "--json",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "games",
+                "--limit",
+                "5",
+                "--game-type",
+                "3",
+                "--missing-zk",
+            ])
+            .is_ok()
+        );
     }
 
     #[test]
-    fn proofs_finalize_json_requires_yes() {
-        assert!(try_parse(["basectl", "proofs", "finalize", "100", "5", "--json"]).is_err());
+    fn proofs_propose_parse() {
         assert!(
-            try_parse(["basectl", "proofs", "finalize", "100", "5", "--yes", "--json"]).is_ok()
+            try_parse([
+                "basectl",
+                "proofs",
+                "propose",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--prover-address",
+                "0xdddddddddddddddddddddddddddddddddddddddd",
+            ])
+            .is_ok()
         );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "propose",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--prover-address",
+                "0xdddddddddddddddddddddddddddddddddddddddd",
+                "--zk-backend",
+                "cluster",
+                "--session-id",
+                "custom-session",
+                "--intermediate-root-interval",
+                "100",
+                "--wait",
+                "--prover-rpc",
+                "http://127.0.0.1:9000",
+                "--factory",
+                "0xffffffffffffffffffffffffffffffffffffffff",
+                "--l1-rpc",
+                "http://127.0.0.1:8545",
+                "--yes",
+                "--json",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn proofs_propose_rejects_bad_inputs() {
+        // Game address and prover address are both required.
+        assert!(try_parse(["basectl", "proofs", "propose"]).is_err());
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "propose",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ])
+            .is_err()
+        );
+        // JSON output requires --yes so scripts do not hang on the prompt.
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "propose",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--prover-address",
+                "0xdddddddddddddddddddddddddddddddddddddddd",
+                "--json",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn proofs_submit_parse() {
+        // The submitter key comes from a key file or the environment at
+        // runtime, never from a command-line value.
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "submit",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "submit",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--private-key-file",
+                "/tmp/submitter.key",
+                "--session-id",
+                "custom-session",
+                "--zk-backend",
+                "cluster",
+                "--wait",
+                "--prover-rpc",
+                "http://127.0.0.1:9000",
+                "--factory",
+                "0xffffffffffffffffffffffffffffffffffffffff",
+                "--l1-rpc",
+                "http://127.0.0.1:8545",
+                "--yes",
+                "--json",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn proofs_submit_rejects_bad_inputs() {
+        // Game address is required.
+        assert!(try_parse(["basectl", "proofs", "submit"]).is_err());
+        // JSON output requires --yes so scripts do not hang on the prompt.
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "submit",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--json",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn proofs_finalize_parse() {
+        // The submitter key comes from a key file or the environment at
+        // runtime, never from a command-line value.
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "0x9999999999999999999999999999999999999999999999999999999999999999",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "0x9999999999999999999999999999999999999999999999999999999999999999",
+                "--private-key-file",
+                "/tmp/submitter.key",
+                "--zk-backend",
+                "cluster",
+                "--session-id",
+                "custom-session",
+                "--intermediate-root-interval",
+                "100",
+                "--prover-rpc",
+                "http://127.0.0.1:9000",
+                "--factory",
+                "0xffffffffffffffffffffffffffffffffffffffff",
+                "--l1-rpc",
+                "http://127.0.0.1:8545",
+                "--yes",
+                "--json",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn proofs_finalize_rejects_bad_inputs() {
+        // Game/transaction target is required.
+        assert!(try_parse(["basectl", "proofs", "finalize"]).is_err());
+        // Target must be a 20-byte game address or 32-byte transaction hash.
+        assert!(try_parse(["basectl", "proofs", "finalize", "not-a-hash"]).is_err());
+        // JSON output requires --yes so scripts do not hang on the prompt.
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "0x9999999999999999999999999999999999999999999999999999999999999999",
+                "--json",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn proofs_games_rejects_bad_inputs() {
+        // Limit must be within 1..=100.
+        assert!(try_parse(["basectl", "proofs", "games", "--limit", "0"]).is_err());
+        assert!(try_parse(["basectl", "proofs", "games", "--limit", "101"]).is_err());
+        // Game address must be a 20-byte hex address.
+        assert!(try_parse(["basectl", "proofs", "games", "not-an-address"]).is_err());
+        // List-only filters conflict with inspecting a single game.
+        let game = "0x1111111111111111111111111111111111111111";
+        assert!(try_parse(["basectl", "proofs", "games", game, "--limit", "5"]).is_err());
+        assert!(try_parse(["basectl", "proofs", "games", game, "--game-type", "3"]).is_err());
+        assert!(try_parse(["basectl", "proofs", "games", game, "--missing-zk"]).is_err());
+    }
+
+    #[test]
+    fn proofs_finalize_defaults_to_network_backend() {
+        let cli = try_parse([
+            "basectl",
+            "proofs",
+            "finalize",
+            "0x9999999999999999999999999999999999999999999999999999999999999999",
+        ])
+        .expect("finalize should parse");
+        match cli.command {
+            Some(Commands::Proofs(crate::ProofsCommand {
+                command: ProofsCommands::Finalize(args),
+            })) => {
+                assert_eq!(args.zk_backend, ZkBackendOption::Network);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
     }
 
     #[test]

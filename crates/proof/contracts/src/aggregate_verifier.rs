@@ -338,10 +338,9 @@ pub struct AggregateVerifierContractClient {
 }
 
 impl AggregateVerifierContractClient {
-    /// Creates a new client connected to the given L1 RPC URL.
-    pub fn new(l1_rpc_url: url::Url) -> Result<Self, ContractError> {
-        let provider = RootProvider::new_http(l1_rpc_url);
-        Ok(Self { provider })
+    /// Creates a new client backed by the given L1 provider.
+    pub const fn new(provider: RootProvider) -> Self {
+        Self { provider }
     }
 }
 

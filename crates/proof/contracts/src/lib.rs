@@ -28,9 +28,10 @@ pub use anchor_state_registry::{
 
 mod dispute_game_factory;
 pub use dispute_game_factory::{
-    DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameAtIndex, GameLookupError,
-    GameLookupKey, encode_create_calldata, encode_extra_data, game_already_exists_selector,
-    game_lookup_blocks, game_lookup_count, game_lookup_key,
+    CreateCalldata, DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameAtIndex,
+    GameLookupError, GameLookupKey, decode_create_calldata, encode_create_calldata,
+    encode_extra_data, game_already_exists_selector, game_lookup_blocks, game_lookup_count,
+    game_lookup_key,
 };
 
 mod tee_prover_registry;

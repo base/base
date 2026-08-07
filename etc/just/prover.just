@@ -28,6 +28,7 @@ up network:
     if [ "${#missing[@]}" -gt 0 ]; then
       echo "ERROR: missing required environment variables: ${missing[*]}" >&2
       echo "Export your RPC endpoints and funded Succinct requester key, then retry." >&2
+      echo "See docs/guides/STANDALONE_PROVING.md for the full workflow." >&2
       exit 1
     fi
 

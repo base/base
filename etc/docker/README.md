@@ -24,7 +24,8 @@ All services read configuration from `devnet-env` in this directory. The devnet 
 trio (Postgres, `base-prover-service`, `base-prover-zk-host`) against
 user-provided RPC endpoints — including a running devnet's. Run it as
 `just prover up <network>` so jobs and Postgres data stay isolated per network;
-see the `just prover` recipes.
+see the `just prover` recipes and
+[docs/guides/STANDALONE_PROVING.md](../../docs/guides/STANDALONE_PROVING.md).
 
 ## Usage
 
