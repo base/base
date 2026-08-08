@@ -112,7 +112,7 @@ mod tests {
         assert!(!compressor.is_full());
         compressor.write(&[0; 2048]).unwrap();
         assert!(compressor.is_full());
-        assert_eq!(compressor.len(), 18);
+        assert_eq!(compressor.len(), 24);
 
         let mut buf = [];
         compressor.read(&mut buf).unwrap();

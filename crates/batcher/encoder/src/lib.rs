@@ -17,7 +17,7 @@ mod reorg;
 pub use reorg::ReorgError;
 
 mod config;
-pub use config::{EncoderConfig, EncoderConfigError};
+pub use config::{CompressionAlgo, EncoderConfig, EncoderConfigError};
 
 mod pipeline;
 pub use pipeline::BatchPipeline;

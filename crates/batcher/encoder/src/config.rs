@@ -1,6 +1,7 @@
 //! Encoder configuration and its validation error type.
 
 use base_common_genesis::RollupConfig;
+pub use base_comp::CompressionAlgo;
 use base_protocol::{
     BLOB_DERIVATION_PREFIX_SIZE as PROTOCOL_BLOB_DERIVATION_PREFIX_SIZE,
     BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, BatchType,
@@ -85,6 +86,14 @@ pub struct EncoderConfig {
     /// Default: `0.6`.
     pub approx_compr_ratio: f64,
 
+    /// Compression algorithm used for newly opened channels.
+    ///
+    /// Brotli channels are accepted only after Fjord. Zlib remains valid on both
+    /// sides of the fork and should be selected for pre-Fjord environments.
+    ///
+    /// Default: [`CompressionAlgo::Brotli10`].
+    pub compression_algo: CompressionAlgo,
+
     /// Maximum serialized size of a single L1 calldata transaction in bytes.
     ///
     /// When set, the calldata frame packing path accumulates frames until adding
@@ -114,6 +123,7 @@ impl Default for EncoderConfig {
             batch_type: BatchType::Single,
             da_type: DaType::Blob,
             approx_compr_ratio: 0.6,
+            compression_algo: CompressionAlgo::Brotli10,
             max_l1_tx_size_bytes: None,
         }
     }

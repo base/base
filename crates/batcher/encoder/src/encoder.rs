@@ -10,9 +10,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::RollupConfig;
-use base_comp::{
-    BatchComposer, ChannelOut, CompressionAlgo, CompressorType, Config, ShadowCompressor,
-};
+use base_comp::{BatchComposer, ChannelOut, CompressorType, Config, ShadowCompressor};
 use base_protocol::{Batch, BatchType, BlockInfo, ChannelId, Frame, SingleBatch, SpanBatch};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
@@ -387,7 +385,7 @@ impl BatchEncoder {
         let compressor_config = Config {
             target_output_size: self.config.target_frame_size as u64,
             kind: CompressorType::Shadow,
-            compression_algo: CompressionAlgo::Brotli10,
+            compression_algo: self.config.compression_algo,
             approx_compr_ratio: self.config.approx_compr_ratio,
         };
         let compressor = ShadowCompressor::from(compressor_config);
