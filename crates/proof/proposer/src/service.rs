@@ -63,7 +63,6 @@ impl ProposerService {
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
             game_type = config.game_type,
-            tee_image_hash = %config.tee_image_hash,
             prover_timeout = ?config.prover_timeout,
             poll_interval = ?config.poll_interval,
             rpc_timeout = ?config.rpc_timeout,
@@ -126,9 +125,10 @@ impl ProposerService {
                 config.game_type
             ));
         }
-        let (block_interval, intermediate_block_interval, init_bond) = tokio::try_join!(
+        let (block_interval, intermediate_block_interval, tee_image_hash, init_bond) = tokio::try_join!(
             verifier_client.read_block_interval(impl_address),
             verifier_client.read_intermediate_block_interval(impl_address),
+            verifier_client.read_tee_image_hash(impl_address),
             factory_client.init_bonds(config.game_type),
         )?;
         if block_interval < 2 {
@@ -145,6 +145,7 @@ impl ProposerService {
             block_interval,
             intermediate_block_interval,
             intermediate_roots_count = block_interval / intermediate_block_interval,
+            tee_image_hash = %tee_image_hash,
             init_bond = %init_bond,
             impl_address = %impl_address,
             game_type = config.game_type,
@@ -224,7 +225,7 @@ impl ProposerService {
             intermediate_block_interval,
             game_type: config.game_type,
             proposer_address: proposer_address.unwrap_or_default(),
-            tee_image_hash: config.tee_image_hash,
+            tee_image_hash,
             anchor_state_registry_address: config.anchor_state_registry_addr,
         };
         let proof_dispatcher = ProofDispatcher::new(

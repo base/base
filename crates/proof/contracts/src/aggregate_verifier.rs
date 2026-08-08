@@ -60,6 +60,9 @@ sol! {
         /// Returns the intermediate block interval for intermediate output root checkpoints.
         function INTERMEDIATE_BLOCK_INTERVAL() external view returns (uint256);
 
+        /// Returns the expected Nitro enclave image hash.
+        function TEE_IMAGE_HASH() external view returns (bytes32);
+
         /// Returns the game type.
         function gameType() external view returns (uint32);
 
@@ -235,6 +238,9 @@ pub trait AggregateVerifierClient: Send + Sync {
         &self,
         impl_address: Address,
     ) -> Result<u64, ContractError>;
+
+    /// Reads `TEE_IMAGE_HASH` from the `AggregateVerifier` implementation contract.
+    async fn read_tee_image_hash(&self, impl_address: Address) -> Result<B256, ContractError>;
 
     /// Returns the intermediate output roots for the given game.
     ///
@@ -450,6 +456,19 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         }
 
         Ok(interval)
+    }
+
+    async fn read_tee_image_hash(&self, impl_address: Address) -> Result<B256, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
+        let image_hash: B256 =
+            contract_call!(contract.TEE_IMAGE_HASH().call(), "TEE_IMAGE_HASH failed")?;
+
+        if image_hash == B256::ZERO {
+            return Err(ContractError::validation("TEE_IMAGE_HASH cannot be zero"));
+        }
+
+        Ok(image_hash)
     }
 
     async fn intermediate_output_roots(

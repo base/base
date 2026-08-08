@@ -271,6 +271,9 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn read_intermediate_block_interval(&self, _: Address) -> Result<u64, ContractError> {
         unimplemented!("unused in proposer tests")
     }
+    async fn read_tee_image_hash(&self, _: Address) -> Result<B256, ContractError> {
+        unimplemented!("unused in proposer tests")
+    }
     async fn intermediate_output_roots(&self, _: Address) -> Result<Vec<B256>, ContractError> {
         unimplemented!("unused in proposer tests")
     }
