@@ -356,9 +356,14 @@ where
         }
 
         self.proof_generator.shutdown();
-        while let Some(result) = proof_tasks.join_next().await {
-            Self::log_proof_task_join_result(result);
-        }
+        tokio::join!(
+            async {
+                while let Some(result) = proof_tasks.join_next().await {
+                    Self::log_proof_task_join_result(result);
+                }
+            },
+            self.proof_generator.join_shutdown(),
+        );
 
         info!(
             worker_id = %self.config.worker_id,

@@ -1,78 +1,160 @@
-//! Worker proof submission task metadata and cancellation control.
+//! Worker proof submission task cancellation control.
+
+use std::sync::Arc;
 
 use base_prover_service_client::ProverWorkerProvider;
 use base_prover_service_protocol::{WorkerSubmitProofRequest, WorkerSubmitProofResponse};
-use tokio::task::JoinHandle;
+use tokio::{
+    sync::{Mutex, OwnedSemaphorePermit, Semaphore},
+    task::JoinSet,
+    time::{Duration, timeout},
+};
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
-use crate::{ClaimedProofJobMetadata, ProofSubmitter, ProofSubmitterError};
+use crate::{DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS, ProofSubmitter, ProofSubmitterError};
 
-/// Handle for a proof submission task spawned after successful proof generation.
-#[derive(Debug)]
-pub struct ProofSubmissionTask {
-    /// Claim metadata for the proof job being submitted.
-    pub claim: ClaimedProofJobMetadata,
-    /// Spawned proof submission task.
-    pub submit_handle: JoinHandle<Result<WorkerSubmitProofResponse, ProofSubmitterError>>,
-}
+/// Default maximum number of in-flight proof submission tasks.
+pub const DEFAULT_MAX_PENDING_SUBMISSIONS: usize = DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS;
 
-impl ProofSubmissionTask {
-    /// Creates a submission task handle from claim metadata and a spawned task.
-    pub const fn new(
-        claim: ClaimedProofJobMetadata,
-        submit_handle: JoinHandle<Result<WorkerSubmitProofResponse, ProofSubmitterError>>,
-    ) -> Self {
-        Self { claim, submit_handle }
-    }
-}
+/// Default grace period to wait for cancelled submissions before aborting them.
+pub const DEFAULT_SUBMISSION_SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
 
-/// Cancellation control for proof generation and submission handoff.
+/// Cancellation and join control for spawned proof submission tasks.
 #[derive(Debug, Clone)]
 pub struct ProofTaskController {
     submission_cancel: CancellationToken,
+    submissions: Arc<Mutex<JoinSet<Result<WorkerSubmitProofResponse, ProofSubmitterError>>>>,
+    submission_permits: Arc<Semaphore>,
+    shutdown_grace: Duration,
 }
 
 impl ProofTaskController {
     /// Creates a task controller with a fresh submission cancellation token.
     pub fn new() -> Self {
-        Self { submission_cancel: CancellationToken::new() }
+        Self {
+            submission_cancel: CancellationToken::new(),
+            submissions: Arc::new(Mutex::new(JoinSet::new())),
+            submission_permits: Arc::new(Semaphore::new(DEFAULT_MAX_PENDING_SUBMISSIONS)),
+            shutdown_grace: DEFAULT_SUBMISSION_SHUTDOWN_GRACE,
+        }
     }
 
-    /// Uses a caller-provided cancellation token for spawned submission tasks.
+    /// Limits how many submission tasks may run at once.
     #[must_use]
-    pub fn with_submission_cancel(mut self, submission_cancel: CancellationToken) -> Self {
-        self.submission_cancel = submission_cancel;
+    pub fn with_max_pending_submissions(mut self, max_pending: usize) -> Self {
+        let max_pending = max_pending.max(1);
+        self.submission_permits = Arc::new(Semaphore::new(max_pending));
         self
     }
 
-    /// Returns the cancellation token used for spawned submission tasks.
-    pub const fn submission_cancel(&self) -> &CancellationToken {
-        &self.submission_cancel
+    /// Returns the number of retained submission tasks that have not been drained.
+    pub fn pending_submissions(&self) -> usize {
+        self.submissions.try_lock().map(|submissions| submissions.len()).unwrap_or(0)
     }
 
-    /// Signals spawned submission tasks to stop during worker shutdown.
-    ///
-    /// This permanently cancels the controller's submission token. Treat the
-    /// controller as shutdown-only after calling this method; later calls to
-    /// [`Self::spawn_submission`] will create immediately-cancelled tasks.
+    /// Cancels spawned submission tasks. Later spawns see an already-cancelled token.
     pub fn cancel_submissions(&self) {
         self.submission_cancel.cancel();
     }
 
-    /// Spawns proof submission using the controller's cancellation token.
+    /// Joins retained submission tasks, aborting any still running after the grace period.
     ///
-    /// Do not call this after [`Self::cancel_submissions`], because the shared
-    /// cancellation token is permanently cancelled during shutdown.
-    #[must_use = "dropping the JoinHandle detaches the submission task"]
-    pub fn spawn_submission<Client>(
+    /// Concurrent callers serialize on the submission lock: the first drain joins (or aborts)
+    /// current tasks, and later callers wait then observe an empty set.
+    pub async fn drain_submissions(&self) {
+        let mut submissions = self.submissions.lock().await;
+
+        if timeout(self.shutdown_grace, async {
+            while let Some(result) = submissions.join_next().await {
+                Self::log_submission_join_result(result);
+            }
+        })
+        .await
+        .is_err()
+        {
+            warn!(
+                grace_ms = self.shutdown_grace.as_millis(),
+                pending = submissions.len(),
+                "submission drain exceeded grace period; aborting remaining tasks"
+            );
+            submissions.abort_all();
+            while let Some(result) = submissions.join_next().await {
+                Self::log_submission_join_result(result);
+            }
+        }
+    }
+
+    /// Cancels submission tasks and waits for them to finish (or abort after grace).
+    pub async fn cancel_and_drain_submissions(&self) {
+        self.cancel_submissions();
+        self.drain_submissions().await;
+    }
+
+    /// Acquires a pending-submission permit.
+    pub async fn acquire_submission_permit(&self) -> OwnedSemaphorePermit {
+        Arc::clone(&self.submission_permits)
+            .acquire_owned()
+            .await
+            .expect("submission permit semaphore should not be closed")
+    }
+
+    /// Spawns proof submission after acquiring a pending-submission permit.
+    pub async fn spawn_submission<Client>(
         &self,
         submitter: &ProofSubmitter<Client>,
         request: WorkerSubmitProofRequest,
-    ) -> JoinHandle<Result<WorkerSubmitProofResponse, ProofSubmitterError>>
-    where
+    ) where
         Client: Clone + ProverWorkerProvider + 'static,
     {
-        submitter.spawn_until_delivered(request, self.submission_cancel.clone())
+        let permit = self.acquire_submission_permit().await;
+        self.spawn_submission_with_permit(submitter, request, permit).await;
+    }
+
+    /// Spawns proof submission with an already-acquired permit.
+    pub async fn spawn_submission_with_permit<Client>(
+        &self,
+        submitter: &ProofSubmitter<Client>,
+        request: WorkerSubmitProofRequest,
+        permit: OwnedSemaphorePermit,
+    ) where
+        Client: Clone + ProverWorkerProvider + 'static,
+    {
+        let cancel = self.submission_cancel.clone();
+        let submitter = submitter.clone();
+
+        let mut submissions = self.submissions.lock().await;
+        Self::drain_finished_submissions(&mut submissions);
+        submissions.spawn(async move {
+            let _permit = permit;
+            submitter.submit_until_delivered_or_cancelled(request, &cancel).await
+        });
+    }
+
+    fn drain_finished_submissions(
+        submissions: &mut JoinSet<Result<WorkerSubmitProofResponse, ProofSubmitterError>>,
+    ) {
+        while let Some(result) = submissions.try_join_next() {
+            Self::log_submission_join_result(result);
+        }
+    }
+
+    fn log_submission_join_result(
+        result: Result<
+            Result<WorkerSubmitProofResponse, ProofSubmitterError>,
+            tokio::task::JoinError,
+        >,
+    ) {
+        match result {
+            Ok(Ok(_)) | Ok(Err(ProofSubmitterError::Cancelled)) => {}
+            Ok(Err(error)) => {
+                warn!(error = %error, "proof submission task failed");
+            }
+            Err(error) if error.is_cancelled() => {}
+            Err(error) => {
+                warn!(error = %error, "proof submission task join failed");
+            }
+        }
     }
 }
 

@@ -150,8 +150,10 @@ where
             .with_lock_duration_seconds(config.job_discovery_lock_duration_seconds)
             .with_max_concurrent_jobs(config.job_discovery_max_concurrent_jobs);
         let submitter = ProofSubmitter::new(client.clone());
-        let proof_generator =
-            Arc::new(ProofGenerator::new(provers, submitter, config.proof_generator_heartbeat));
+        let proof_generator = Arc::new(
+            ProofGenerator::new(provers, submitter, config.proof_generator_heartbeat)
+                .with_max_pending_submissions(discovery_config.normalized_max_concurrent_jobs()),
+        );
         let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
 
         discovery.run_until_cancelled(cancel).await;

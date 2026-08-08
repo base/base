@@ -4,8 +4,8 @@ use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use base_proof_worker::{
-    ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError,
-    ProofSubmissionTask, ProofSubmitter, ProofSubmitterError, ProofTaskController, WorkerHeartbeat,
+    ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError, ProofSubmitter,
+    ProofSubmitterError, ProofTaskController, WorkerHeartbeat,
 };
 pub use base_proof_worker::{
     DEFAULT_WORKER_HEARTBEAT_INTERVAL as DEFAULT_PROOF_GENERATOR_HEARTBEAT_INTERVAL,
@@ -19,9 +19,9 @@ use base_prover_service_protocol::{
     BackendSession, BackendSessionState, ProofJob, ProofRequestKind, ProofResult, SessionType,
     WorkerSubmitProofRequest, ZkBackend,
 };
+use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -44,6 +44,8 @@ pub const DEFAULT_PROOF_GENERATOR_HEARTBEAT_FAILURE_DRAIN_TIMEOUT: Duration =
 pub struct ProofGeneratorRequest {
     /// Common worker claim metadata.
     pub claim: ClaimedProofJobMetadata,
+    /// Server-issued claim lease expiry from the claim / latest heartbeat.
+    pub lock_expires_at: Option<DateTime<Utc>>,
     /// Concrete ZK proof request.
     pub request: ZkProofRequestKind,
 }
@@ -53,6 +55,7 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
 
     fn try_from(job: ProofJob) -> Result<Self, Self::Error> {
         let claim = ClaimedProofJobMetadata::from_job(&job)?;
+        let lock_expires_at = job.lock_expires_at;
 
         let request = match job.request.request {
             ProofRequestKind::Compressed(request) => ZkProofRequestKind::Compressed(request),
@@ -64,7 +67,7 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
             }
         };
 
-        Ok(Self { claim, request })
+        Ok(Self { claim, lock_expires_at, request })
     }
 }
 
@@ -94,10 +97,11 @@ impl<Client> ProofGenerator<Client> {
         }
     }
 
-    /// Use a caller-provided cancellation token for spawned submission tasks.
+    /// Limits how many proof submission tasks may run at once.
     #[must_use]
-    pub fn with_submission_cancel(mut self, submission_cancel: CancellationToken) -> Self {
-        self.tasks = self.tasks.with_submission_cancel(submission_cancel);
+    pub fn with_max_pending_submissions(mut self, max_pending: usize) -> Self {
+        let tasks = self.tasks;
+        self.tasks = tasks.with_max_pending_submissions(max_pending);
         self
     }
 
@@ -106,21 +110,6 @@ impl<Client> ProofGenerator<Client> {
     pub const fn with_poll_interval(mut self, poll_interval: Duration) -> Self {
         self.poll_interval = poll_interval;
         self
-    }
-
-    /// Returns the proof submitter.
-    pub const fn submitter(&self) -> &ProofSubmitter<Client> {
-        &self.submitter
-    }
-
-    /// Returns the cancellation token used for spawned submission tasks.
-    pub const fn submission_cancel(&self) -> &CancellationToken {
-        self.tasks.submission_cancel()
-    }
-
-    /// Returns the heartbeat settings used while proofs are generated.
-    pub const fn heartbeat_config(&self) -> ProofGeneratorHeartbeatConfig {
-        self.heartbeat
     }
 
     /// Returns the backend session poll interval, clamped to the minimum allowed delay.
@@ -142,10 +131,7 @@ where
     Client: Clone + ProverWorkerProvider + 'static,
 {
     /// Generate a proof for a claimed worker job and spawn proof submission.
-    pub async fn generate_and_submit(
-        &self,
-        job: ProofJob,
-    ) -> Result<ProofSubmissionTask, ProofGeneratorError> {
+    pub async fn generate_and_submit(&self, job: ProofJob) -> Result<(), ProofGeneratorError> {
         let request = ProofGeneratorRequest::try_from(job)?;
 
         info!(
@@ -158,46 +144,36 @@ where
             "starting zk proof generation"
         );
 
-        let result = match self
-            .with_heartbeat_while_generating(&request, self.prove_to_completion(&request))
+        let (result, permit) = self
+            .with_heartbeat_while_generating(&request, async {
+                let result = self.prove_to_completion(&request).await?;
+                let permit = self.tasks.acquire_submission_permit().await;
+                Ok((result, permit))
+            })
             .await
-        {
-            Ok(result) => result,
-            Err(ProofGeneratorError::Generate { session_id, source }) => {
-                warn!(
-                    session_id = %request.claim.session_id,
-                    lock_id = %request.claim.lock_id,
-                    worker_id = %request.claim.worker_id,
-                    zk_backend = %request.request.zk_backend(),
-                    error = %source,
-                    "zk proof generation failed"
-                );
-
-                return Err(ProofGeneratorError::Generate { session_id, source });
-            }
-            Err(ProofGeneratorError::Heartbeat { session_id, source }) => {
-                warn!(
-                    session_id = %request.claim.session_id,
-                    lock_id = %request.claim.lock_id,
-                    worker_id = %request.claim.worker_id,
-                    zk_backend = %request.request.zk_backend(),
-                    error = %source,
-                    "aborting zk proof generation due to heartbeat failure"
-                );
-
-                return Err(ProofGeneratorError::Heartbeat { session_id, source });
-            }
-            Err(
-                source @ (ProofGeneratorError::MissingLockId { .. }
-                | ProofGeneratorError::MissingWorkerId { .. }
-                | ProofGeneratorError::UnsupportedProofRequest { .. }
-                | ProofGeneratorError::BuildSubmission { .. }),
-            ) => {
-                unreachable!(
-                    "with_heartbeat_while_generating returned an impossible error: {source}"
-                );
-            }
-        };
+            .inspect_err(|error| match error {
+                ProofGeneratorError::Generate { source, .. } => {
+                    warn!(
+                        session_id = %request.claim.session_id,
+                        lock_id = %request.claim.lock_id,
+                        worker_id = %request.claim.worker_id,
+                        zk_backend = %request.request.zk_backend(),
+                        error = %source,
+                        "zk proof generation failed"
+                    );
+                }
+                ProofGeneratorError::Heartbeat { source, .. } => {
+                    warn!(
+                        session_id = %request.claim.session_id,
+                        lock_id = %request.claim.lock_id,
+                        worker_id = %request.claim.worker_id,
+                        zk_backend = %request.request.zk_backend(),
+                        error = %source,
+                        "aborting zk proof generation due to heartbeat failure"
+                    );
+                }
+                _ => {}
+            })?;
 
         let submit_request = WorkerSubmitProofRequest::try_from(ProofSubmitterRequest {
             session_id: request.claim.session_id.clone(),
@@ -210,7 +186,7 @@ where
             source,
         })?;
 
-        let submit_handle = self.tasks.spawn_submission(&self.submitter, submit_request);
+        self.tasks.spawn_submission_with_permit(&self.submitter, submit_request, permit).await;
 
         info!(
             session_id = %request.claim.session_id,
@@ -219,7 +195,7 @@ where
             "zk proof generated; proof submitter task spawned"
         );
 
-        Ok(ProofSubmissionTask::new(request.claim, submit_handle))
+        Ok(())
     }
 
     async fn prove_to_completion(
@@ -428,8 +404,12 @@ where
     where
         Generate: Future<Output = Result<Output, ZkProverError>>,
     {
-        let heartbeat =
-            WorkerHeartbeat::until_failure(&self.submitter, &request.claim, self.heartbeat);
+        let heartbeat = WorkerHeartbeat::until_failure(
+            &self.submitter,
+            &request.claim,
+            self.heartbeat,
+            request.lock_expires_at,
+        );
         tokio::pin!(generate);
         tokio::pin!(heartbeat);
 
@@ -493,30 +473,24 @@ where
     type Error = ProofGeneratorError;
 
     async fn handle_claimed_job(&self, job: ProofJob) -> Result<(), Self::Error> {
-        // Submission continues in the spawned task; shutdown cancels through the controller.
-        Self::generate_and_submit(self, job).await.map(drop)
+        Self::generate_and_submit(self, job).await
     }
 
     fn shutdown(&self) {
         self.tasks.cancel_submissions();
+    }
+
+    async fn join_shutdown(&self) {
+        self.tasks.drain_submissions().await;
     }
 }
 
 /// Errors raised while generating and dispatching ZK proof submissions.
 #[derive(Debug, Error)]
 pub enum ProofGeneratorError {
-    /// Claimed proof job did not include a lock identifier.
-    #[error("proof job {session_id} is missing lock_id")]
-    MissingLockId {
-        /// Proof session identifier.
-        session_id: String,
-    },
-    /// Claimed proof job did not include a worker identifier.
-    #[error("proof job {session_id} is missing worker_id")]
-    MissingWorkerId {
-        /// Proof session identifier.
-        session_id: String,
-    },
+    /// Claim metadata was missing from the proof job.
+    #[error(transparent)]
+    Metadata(#[from] ClaimedProofJobMetadataError),
     /// Claimed proof job is not a ZK proof request.
     #[error("proof job {session_id} is not a ZK proof request")]
     UnsupportedProofRequest {
@@ -550,17 +524,4 @@ pub enum ProofGeneratorError {
         #[source]
         source: ProofSubmitterError,
     },
-}
-
-impl From<ClaimedProofJobMetadataError> for ProofGeneratorError {
-    fn from(error: ClaimedProofJobMetadataError) -> Self {
-        match error {
-            ClaimedProofJobMetadataError::MissingLockId { session_id } => {
-                Self::MissingLockId { session_id }
-            }
-            ClaimedProofJobMetadataError::MissingWorkerId { session_id } => {
-                Self::MissingWorkerId { session_id }
-            }
-        }
-    }
 }

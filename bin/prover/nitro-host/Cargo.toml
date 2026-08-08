@@ -17,6 +17,7 @@ workspace = true
 
 [dependencies]
 # Workspace – Nitro host
+base-proof-worker.workspace = true
 base-common-chains.workspace = true
 base-proof-tee-nitro-host = { workspace = true, features = ["metrics"] }
 base-prover-service-client.workspace = true
