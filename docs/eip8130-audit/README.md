@@ -292,23 +292,27 @@ dependency; each PR should compile and stay green on its own.
   imported 7702 delegate, which genuinely once was an EOA) may still be
   re-delegated.
 
-### New transaction-type shape (note only; not landed yet)
+### New transaction-type shape (landed)
 
-The `0x79` transaction body changes; the batcher/DA and signing preimages ride
-along mechanically. **Noted here for planning; implemented in a later stacked
-PR.**
+The `0x79` transaction body changed; the batcher/DA and signing preimages ride
+along mechanically.
 
-- **`expiry` is removed**, replaced by **`valid_after` + `valid_before`**, both
-  `uint64` and in **milliseconds** (on-chain actor/lock expiries stay in
-  **seconds** — the ms↔s boundary must be handled explicitly).
+- **`expiry` was removed**, replaced by **`valid_after` + `valid_before`**, both
+  `uint64` and in **milliseconds**, evaluated against `block.timestamp * 1000`
+  (`valid_after == 0` = no lower bound; `valid_before == 0` = no expiry, and it
+  MUST be non-zero for nonce-free). On-chain actor/lock expiries stay in
+  **seconds**; the ms↔s boundary is handled explicitly at each consumer (the
+  mempool folds the window onto the seconds axis as `floor(valid_before / 1000)`
+  for its invalidation buckets and manifest boundary).
 - **Nonce-free replay and `replay_id` rebind onto the window** (`valid_after`/
   `valid_before`) instead of the single `expiry`. The nonce-free ring-buffer
-  window (`NONCE_FREE_EXPIRY_WINDOW`) and the mempool pre-filter
-  (`NONCE_FREE_MAX_EXPIRY_WINDOW`) must be reconciled against the ms unit.
+  window (`NONCE_FREE_EXPIRY_WINDOW`, now `30_000` ms) and the mempool pre-filter
+  (`NONCE_FREE_MAX_EXPIRY_WINDOW`, now `20_000` ms) are expressed in ms; the
+  ring buffer compares `valid_before` against `block.timestamp * 1000`.
 - Touch points: `TxEip8130` (fields + RLP + the three signing preimages),
   `signed.rs` `validate_timestamp`, `validate.rs`, `nonce/storage.rs`, and the
-  span-batch body `SpanBatchEip8130TransactionData` (swap the `expiry` field for
-  the two window fields; everything else flows through unchanged).
+  span-batch body `SpanBatchEip8130TransactionData` (the `expiry` field was
+  swapped for the two window fields; everything else flows through unchanged).
 
 ### Ordered stack
 
@@ -321,8 +325,8 @@ PR.**
    `config.rs`, `authorize.rs`, `transaction.rs`, `account_changes.rs`.
 5. **Reject codeless create** — enshrined-path `EmptyBytecode` guard (can also
    land standalone/early since it is independent).
-6. **Transaction validity window** — `expiry` → `valid_after`/`valid_before`
-   (ms), replay-id rebinding, span-batch body swap.
+6. **Transaction validity window** — landed. `expiry` → `valid_after`/
+   `valid_before` (ms), replay-id rebinding, span-batch body swap.
 
 ---
 

@@ -1137,7 +1137,7 @@ where
         let payer_auth_charge = U256::from(intrinsic.payer_auth)
             .saturating_mul(U256::from(signed.tx().max_fee_per_gas));
 
-        let transaction_expiry = Self::expiry_or_unbounded(signed.tx().expiry);
+        let transaction_expiry = Self::tx_valid_before_secs(signed.tx().valid_before);
         let sender_expiry = Self::expiry_or_unbounded(sender_actor.expiry);
         let payer_expiry = Self::expiry_or_unbounded(payer_actor.map_or(0, |actor| actor.expiry));
         let effective_expiry =
@@ -1249,12 +1249,15 @@ where
         let payer_max_cost = gas_charge
             .saturating_add(additional_fee)
             .saturating_add(if payer == sender { signed.tx().value() } else { U256::ZERO });
-        // Transaction expiry is exclusive (`now < expiry`) while actor expiry
-        // is inclusive (`now <= expiry`). Store the last timestamp at which all
-        // three predicates remain valid so `WatchManifest` can use one boundary.
-        let transaction_valid_through =
-            if signed.tx().expiry == 0 { u64::MAX } else { signed.tx().expiry.saturating_sub(1) };
-        let manifest_expiry = [transaction_valid_through, sender_expiry, payer_expiry]
+        // All three predicates are now inclusive block-timestamp *second* bounds
+        // (`now <= bound`): the transaction's millisecond window is folded onto
+        // the seconds axis by `tx_valid_before_secs` (the on-chain check is
+        // exclusive — `valid_before <= block.timestamp * 1000` is rejected — so
+        // the last includable second is `floor((valid_before - 1) / 1000)`),
+        // matching the inclusive actor expiry.
+        // Store the last timestamp at which all three remain valid so
+        // `WatchManifest` can use one boundary.
+        let manifest_expiry = [transaction_expiry, sender_expiry, payer_expiry]
             .into_iter()
             .min()
             .unwrap_or(u64::MAX);
@@ -1280,6 +1283,20 @@ where
 
     const fn expiry_or_unbounded(expiry: u64) -> u64 {
         if expiry == 0 { u64::MAX } else { expiry }
+    }
+
+    /// Converts a transaction's `valid_before` (Unix **milliseconds**; `0` = no
+    /// expiry) to the last block-timestamp *second* at which it is still
+    /// includable. The on-chain bound is **exclusive** (`validate_timestamp`
+    /// rejects when `valid_before <= block.timestamp * 1000`), so the transaction
+    /// is includable only while `block.timestamp * 1000 < valid_before`, i.e. the
+    /// last includable second is `floor((valid_before - 1) / 1000)`. Folding onto
+    /// the inclusive-seconds axis this way keeps the transaction window aligned
+    /// with the invalidation buckets and the manifest boundary; without the `- 1`
+    /// a `valid_before` that is an exact multiple of 1000 would linger one second
+    /// past its on-chain expiry.
+    const fn tx_valid_before_secs(valid_before: u64) -> u64 {
+        if valid_before == 0 { u64::MAX } else { (valid_before - 1) / 1_000 }
     }
 
     /// Minimum configured unlock delay (seconds) for a hard-locked payer to
@@ -1556,10 +1573,11 @@ where
     /// Maps an [`Eip8130TimestampError`] (from
     /// [`Eip8130Signed::validate_timestamp`]) to a named pool-rejection reason
     /// and logs the mismatch. This deliberately does *not* collapse into
-    /// `TxTypeNotSupported`: the transaction type is supported, its `expiry` is
-    /// simply outside this node's admission window relative to `now` (the
-    /// head-block timestamp). Emitting the reason plus `now`/`expiry` here makes
-    /// the otherwise-silent, node-local expiry rejection greppable.
+    /// `TxTypeNotSupported`: the transaction type is supported, its validity
+    /// window is simply outside this node's admission window relative to `now`
+    /// (the head-block timestamp, in **milliseconds**). Emitting the reason plus
+    /// `now`/window bounds here makes the otherwise-silent, node-local rejection
+    /// greppable.
     fn map_timestamp_error(
         error: Eip8130TimestampError,
         signed: &Eip8130Signed,
@@ -1567,13 +1585,16 @@ where
     ) -> InvalidPoolTransactionError {
         let reason = match error {
             Eip8130TimestampError::NonceFreeMalformed => {
-                "nonce-free transaction must set a non-zero expiry and a zero nonce sequence"
+                "nonce-free transaction must set a non-zero valid_before and a zero nonce sequence"
             }
-            Eip8130TimestampError::NonceFreeExpired => "nonce-free transaction expiry has elapsed",
+            Eip8130TimestampError::NonceFreeExpired => {
+                "nonce-free transaction validity window has elapsed"
+            }
             Eip8130TimestampError::NonceFreeExpiryTooFar => {
-                "nonce-free transaction expiry exceeds the admission window"
+                "nonce-free transaction validity window exceeds the admission window"
             }
-            Eip8130TimestampError::Expired => "transaction expiry has elapsed",
+            Eip8130TimestampError::NotYetValid => "transaction is not yet valid",
+            Eip8130TimestampError::Expired => "transaction validity window has elapsed",
         };
         let tx = signed.tx();
         // The `window` bound only governs the nonce-free "too far in the future"
@@ -1583,7 +1604,8 @@ where
             tracing::debug!(
                 reason,
                 now,
-                expiry = tx.expiry,
+                valid_after = tx.valid_after,
+                valid_before = tx.valid_before,
                 nonce_key = %tx.nonce_key,
                 window = Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
                 "EIP-8130 timestamp validation failed",
@@ -1592,7 +1614,8 @@ where
             tracing::debug!(
                 reason,
                 now,
-                expiry = tx.expiry,
+                valid_after = tx.valid_after,
+                valid_before = tx.valid_before,
                 nonce_key = %tx.nonce_key,
                 "EIP-8130 timestamp validation failed",
             );
@@ -1644,9 +1667,12 @@ where
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
         signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
+        // The validity window is evaluated in milliseconds against
+        // `block.timestamp * 1000`; the fork gate above uses seconds.
+        let now_ms = now.saturating_mul(1_000);
         signed
-            .validate_timestamp(now)
-            .map_err(|error| Self::map_timestamp_error(error, signed, now))?;
+            .validate_timestamp(now_ms)
+            .map_err(|error| Self::map_timestamp_error(error, signed, now_ms))?;
         Self::validate_eoa_sender_signature(signed)?;
         Self::validate_sender_auth(signed)?;
         Self::validate_payer_auth(signed)?;
@@ -2358,7 +2384,8 @@ mod tests {
             sender: None,
             nonce_key: U256::ZERO,
             nonce_sequence: 1,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 1_000,
             gas_limit: 50_000,
@@ -2505,13 +2532,13 @@ mod tests {
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_before: 0,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
         assert_structural_reason(
             validator.validate_eip8130_structural(&signed),
-            "nonce-free transaction must set a non-zero expiry and a zero nonce sequence",
+            "nonce-free transaction must set a non-zero valid_before and a zero nonce sequence",
         );
     }
 
@@ -2521,34 +2548,35 @@ mod tests {
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 1,
-            expiry: 5,
+            valid_before: 5,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
         assert_structural_reason(
             validator.validate_eip8130_structural(&signed),
-            "nonce-free transaction must set a non-zero expiry and a zero nonce sequence",
+            "nonce-free transaction must set a non-zero valid_before and a zero nonce sequence",
         );
     }
 
     #[test]
     fn rejects_eip8130_nonce_free_already_expired() {
-        // Advance the validator's tracked block timestamp to 100 so that expiry=50
-        // is strictly in the past; the default fixture sits at timestamp 0 where
-        // there is no way to express "already expired".
+        // Advance the validator's tracked block timestamp to 100s (now_ms =
+        // 100_000) so that valid_before=50_000 is strictly in the past; the
+        // default fixture sits at timestamp 0 where there is no way to express
+        // "already expired".
         let validator = build_test_validator();
         let header = alloy_consensus::Header { timestamp: 100, ..Default::default() };
         validator.update_l1_block_info::<_, TxEip1559>(&header, None);
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            expiry: 50,
+            valid_before: 50_000,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
         assert_structural_reason(
             validator.validate_eip8130_structural(&signed),
-            "nonce-free transaction expiry has elapsed",
+            "nonce-free transaction validity window has elapsed",
         );
     }
 
@@ -2559,13 +2587,13 @@ mod tests {
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            expiry: Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW + 1,
+            valid_before: Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW + 1,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
         assert_structural_reason(
             validator.validate_eip8130_structural(&signed),
-            "nonce-free transaction expiry exceeds the admission window",
+            "nonce-free transaction validity window exceeds the admission window",
         );
     }
 
@@ -2575,7 +2603,7 @@ mod tests {
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            expiry: Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+            valid_before: Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
@@ -3390,15 +3418,19 @@ mod tests {
     }
 
     #[test]
-    fn nonce_free_manifest_uses_exclusive_transaction_expiry() {
+    fn nonce_free_manifest_uses_transaction_validity_window() {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
         let signer = PrivateKeySigner::random();
         let now = 100;
-        let expiry = now + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW;
+        // `valid_before` is in milliseconds; at the admission-window edge it is
+        // `now * 1000 + NONCE_FREE_MAX_EXPIRY_WINDOW`. The on-chain bound is
+        // exclusive, so the manifest boundary folds it onto the seconds axis as
+        // `floor((valid_before - 1) / 1000)`.
+        let valid_before = now * 1000 + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            expiry,
+            valid_before,
             ..minimal_valid_eoa_tx()
         };
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
@@ -3423,7 +3455,7 @@ mod tests {
         validator.update_l1_block_info::<_, TxEip1559>(&header, None);
 
         let state = validator.validate_eip8130_full(&signed).expect("valid nonce-free tx");
-        assert_eq!(state.manifest.effective_expiry(), expiry - 1);
+        assert_eq!(state.manifest.effective_expiry(), (valid_before - 1) / 1000);
     }
 
     /// Builds a K1 authenticator-prefixed auth blob (`K1(20) || r || s || v`,
@@ -3455,7 +3487,8 @@ mod tests {
             sender: None,
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 100,
             gas_limit: 1_000_000,
@@ -3530,7 +3563,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 100,
             gas_limit: 1_000_000,

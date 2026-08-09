@@ -601,7 +601,8 @@ mod tests {
             sender: None,
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
             gas_limit: 21_000,
@@ -657,7 +658,8 @@ mod tests {
             tx.payer = Some(payer);
             tx.nonce_key = U256::from(0x1234u64);
             tx.nonce_sequence = 3;
-            tx.expiry = 1_900_000_000;
+            tx.valid_after = 1_900_000_000_000;
+            tx.valid_before = 1_900_000_100_000;
             let mut sender_auth = sender.as_slice().to_vec();
             sender_auth.extend_from_slice(&[0xcd; 32]);
             let mut payer_auth = payer.as_slice().to_vec();
