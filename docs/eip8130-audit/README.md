@@ -277,6 +277,20 @@ dependency; each PR should compile and stay green on its own.
   `len == 0` in the enshrined path (not just the mempool), preserving the
   "actor-config + (no code | delegation code) ⟹ EOA" invariant the delegation
   gate relies on.
+- **`FLAG_CONTRACT_ESTABLISHED` gates codeless delegation.** The Keystore sets
+  `FLAG_CONTRACT_ESTABLISHED` (bit 3) on every account it establishes —
+  `createAccount` (mirrored by the node's `apply_create`) and `importAccount`. It
+  is permanent and never consulted for authentication; it exists so empty code
+  alone is never read as proof of a key-backed EOA (an account can retain
+  EIP-8130 state yet have empty code after an EIP-6780 same-transaction
+  `SELFDESTRUCT`). The node reads it in `DelegationEffect::install`: a delegation
+  onto an **empty-code** account that carries the flag is rejected
+  (`ContractEstablishedCodeless`) on both the block-execution and mempool-overlay
+  paths — such an account is a self-destructed CREATE2 address, not a proven-key
+  EOA, and must not be re-delegated as one. Delegation remains admin-only
+  (`scope == 0`); an account that already carries a delegation indicator (e.g. an
+  imported 7702 delegate, which genuinely once was an EOA) may still be
+  re-delegated.
 
 ### New transaction-type shape (note only; not landed yet)
 

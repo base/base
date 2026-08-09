@@ -203,9 +203,14 @@ impl TransactionAuthorizer {
     /// [`DelegationEffect::can_replace_code`], enforced when
     /// [`DelegationEffect::install`] runs in both the mempool overlay and block
     /// execution (ordinary contract code is rejected with
-    /// [`ApplyError::NonDelegatableCode`]). Allowing any admin actor here is
-    /// therefore safe: an admin key can only (re)delegate an EOA-shaped account,
-    /// never repoint a deployed smart account's code.
+    /// [`ApplyError::NonDelegatableCode`]). `install` additionally rejects a
+    /// delegation onto an **empty-code, keystore-established** account
+    /// (`FLAG_CONTRACT_ESTABLISHED`) with
+    /// [`ApplyError::ContractEstablishedCodeless`]: empty code there is a
+    /// self-destructed CREATE2 account, not a proven-key EOA, so it must not be
+    /// re-delegated. Allowing any admin actor here is therefore safe: an admin key
+    /// can only (re)delegate a genuinely EOA-shaped account, never repoint a
+    /// deployed smart account's code nor resurrect a keystore-established one.
     ///
     /// [`DelegationEffect::can_replace_code`]: crate::DelegationEffect::can_replace_code
     /// [`DelegationEffect::install`]: crate::DelegationEffect::install
@@ -975,9 +980,12 @@ mod tests {
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
+        // Non-empty code: codeless creates are rejected by the structural
+        // validator before this path, and `apply_create` now enforces the same
+        // `EmptyBytecode` invariant.
         let create = CreateEntry {
             user_salt: B256::ZERO,
-            code: Bytes::new(),
+            code: Bytes::from_static(&[0x60, 0x00]),
             initial_actors: initial_actors.clone(),
         };
         let derived = AccountChangeApplier::compute_address(
@@ -1034,7 +1042,7 @@ mod tests {
         let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
         let create = CreateEntry {
             user_salt: B256::ZERO,
-            code: Bytes::new(),
+            code: Bytes::from_static(&[0x60, 0x00]),
             initial_actors: initial_actors.clone(),
         };
         let derived = AccountChangeApplier::compute_address(
@@ -1085,7 +1093,11 @@ mod tests {
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
-        let create = CreateEntry { user_salt: B256::ZERO, code: Bytes::new(), initial_actors };
+        let create = CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::from_static(&[0x60, 0x00]),
+            initial_actors,
+        };
         let tx = TxEip8130 {
             chain_id: LOCAL,
             sender: None, // missing explicit sender
