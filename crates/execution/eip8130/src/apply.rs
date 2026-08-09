@@ -92,6 +92,13 @@ pub enum ApplyError {
     #[error("create initial actors must be strictly ascending by actor id")]
     ActorsNotSortedOrDuplicate,
 
+    /// A create entry's bytecode is empty. Mirrors `_buildDeploymentCode`'s
+    /// `revert EmptyBytecode()`: a codeless create is rejected because an account
+    /// carrying actor config but no runtime code (nor a delegation) would break
+    /// the EOA invariant — a key would exist for an address that is not an EOA.
+    #[error("create bytecode is empty")]
+    EmptyBytecode,
+
     /// A create entry's bytecode exceeds the 0xFFFF deployment limit. Mirrors
     /// `require(n <= 0xFFFF)`.
     #[error("create bytecode exceeds the 65535-byte limit")]
@@ -139,6 +146,18 @@ pub enum ApplyError {
     #[error("delegation cannot replace non-delegation code at account {account}")]
     NonDelegatableCode {
         /// The account whose existing code cannot be replaced by a delegation.
+        account: Address,
+    },
+
+    /// A delegation targeted an empty-code account that is
+    /// [`Eip8130Constants::FLAG_CONTRACT_ESTABLISHED`]. Empty code on a
+    /// keystore-established account (e.g. after an EIP-6780 same-transaction
+    /// `SELFDESTRUCT`) is not proof of a key-backed EOA, so it must not be
+    /// (re)delegated as if it were one — doing so would resurrect a CREATE2
+    /// address that no private key controls.
+    #[error("delegation cannot target empty-code contract-established account {account}")]
+    ContractEstablishedCodeless {
+        /// The keystore-established account whose empty code cannot be delegated.
         account: Address,
     },
 
@@ -192,11 +211,23 @@ impl DelegationEffect {
     /// contract bytecode is left unchanged and rejected with
     /// [`ApplyError::NonDelegatableCode`].
     pub fn install(&self, sctx: StorageCtx<'_>) -> Result<(), ApplyError> {
-        let can_replace = sctx.with_account_code(self.account, |code| {
-            Ok(Self::can_replace_code(code.original_bytes().as_ref()))
+        let (can_replace, code_is_empty) = sctx.with_account_code(self.account, |code| {
+            let bytes = code.original_bytes();
+            let slice = bytes.as_ref();
+            Ok((Self::can_replace_code(slice), slice.is_empty()))
         })?;
         if !can_replace {
             return Err(ApplyError::NonDelegatableCode { account: self.account });
+        }
+
+        // Empty code on a keystore-established account is not proof of a key-backed
+        // EOA (e.g. an EIP-6780 same-transaction SELFDESTRUCT leaves EIP-8130 state
+        // behind empty code), so it must not be (re)delegated as if it were one.
+        // Reading the AccountConfiguration flag mirrors `Keystore.isContractEstablished`.
+        if code_is_empty
+            && AccountConfigurationStorage::new(sctx).is_contract_established(self.account)?
+        {
+            return Err(ApplyError::ContractEstablishedCodeless { account: self.account });
         }
 
         let code = if self.target.is_zero() {
@@ -580,12 +611,17 @@ impl AccountChangeApplier {
             return Err(ApplyError::AlreadyCreated { account: address });
         }
 
-        // Mark initialized and disable the implicit default-EOA path by default
+        // Mark initialized, disable the implicit default-EOA path by default
         // (a created account has contract code, so the recovered==account path is
-        // unreachable). Written before initializing actors so a self-actorId k1
-        // initial actor can re-enable the inline self.
+        // unreachable), and flag the account keystore-established so a later empty-
+        // code state (e.g. an EIP-6780 SELFDESTRUCT) is never mistaken for a
+        // proven-key EOA. Mirrors `createAccount`'s
+        // `flags = FLAG_REVOKE_DEFAULT_EOA | FLAG_CONTRACT_ESTABLISHED`. Written
+        // before initializing actors so a self-actorId k1 initial actor can
+        // re-enable the inline self.
         state.local_sequence = 1;
-        state.flags = Eip8130Constants::DEFAULT_EOA_REVOKED;
+        state.flags =
+            Eip8130Constants::DEFAULT_EOA_REVOKED | Eip8130Constants::FLAG_CONTRACT_ESTABLISHED;
         storage.set_account_state(address, state)?;
 
         Self::initialize_actors(storage, address, &entry.initial_actors)?;
@@ -714,9 +750,14 @@ impl AccountChangeApplier {
 
     /// Builds an account's deployment code: a 14-byte EVM loader header that
     /// returns the trailing `bytecode` as the account's runtime code. Mirrors
-    /// `_buildDeploymentCode`.
+    /// `_buildDeploymentCode`: rejects empty `bytecode` with
+    /// [`ApplyError::EmptyBytecode`] (codeless creates are invalid) and bytecode
+    /// over `0xFFFF` bytes with [`ApplyError::BytecodeTooLarge`].
     pub fn build_deployment_code(bytecode: &[u8]) -> Result<Vec<u8>, ApplyError> {
         let n = bytecode.len();
+        if n == 0 {
+            return Err(ApplyError::EmptyBytecode);
+        }
         if n > 0xFFFF {
             return Err(ApplyError::BytecodeTooLarge);
         }
@@ -738,7 +779,7 @@ impl AccountChangeApplier {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{LogData, address, b256};
+    use alloy_primitives::{LogData, U256, address, b256};
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{HashMapStorageProvider, PrecompileStorageProvider, StorageCtx};
     use revm::state::Bytecode;
@@ -1113,7 +1154,14 @@ mod tests {
             &[0x61, 0x00, n, 0x60, 0x0E, 0x60, 0x00, 0x39, 0x61, 0x00, n, 0x60, 0x00, 0xF3]
         );
         assert_eq!(&code[14..], &bytecode);
-        assert!(AccountChangeApplier::build_deployment_code(&vec![0u8; 0x10000]).is_err());
+        assert_eq!(
+            AccountChangeApplier::build_deployment_code(&[]),
+            Err(ApplyError::EmptyBytecode)
+        );
+        assert_eq!(
+            AccountChangeApplier::build_deployment_code(&vec![0u8; 0x10000]),
+            Err(ApplyError::BytecodeTooLarge)
+        );
     }
 
     #[test]
@@ -1246,9 +1294,14 @@ mod tests {
 
     #[test]
     fn create_requires_sorted_non_empty_actors() {
+        // Non-empty code so these entries reach the actor-set checks; the
+        // finalized contract builds deployment code (reverting EmptyBytecode)
+        // before `_initializeAccount`, so a codeless entry would fail earlier
+        // (covered by `create_rejects_codeless_account`).
+        let code = Bytes::from_static(&[0x60, 0x01]);
         with_storage(|acc| {
             let empty =
-                CreateEntry { user_salt: B256::ZERO, code: Bytes::new(), initial_actors: vec![] };
+                CreateEntry { user_salt: B256::ZERO, code: code.clone(), initial_actors: vec![] };
             assert_eq!(
                 AccountChangeApplier::apply_create(acc, &empty),
                 Err(ApplyError::NoInitialActors)
@@ -1256,7 +1309,7 @@ mod tests {
 
             let unsorted = CreateEntry {
                 user_salt: B256::ZERO,
-                code: Bytes::new(),
+                code: code.clone(),
                 initial_actors: vec![
                     InitialActor::owner(B256::repeat_byte(2), AUTHENTICATOR),
                     InitialActor::owner(B256::repeat_byte(1), AUTHENTICATOR),
@@ -1265,6 +1318,25 @@ mod tests {
             assert_eq!(
                 AccountChangeApplier::apply_create(acc, &unsorted),
                 Err(ApplyError::ActorsNotSortedOrDuplicate)
+            );
+        });
+    }
+
+    #[test]
+    fn create_rejects_codeless_account() {
+        // Codeless creates are invalid: an account with actor config but no
+        // runtime code (nor a delegation) would break the EOA invariant. Mirrors
+        // `_buildDeploymentCode`'s `revert EmptyBytecode()`, which fires before
+        // any actor-set validation, so even a well-formed actor set is rejected.
+        with_storage(|acc| {
+            let entry = CreateEntry {
+                user_salt: B256::ZERO,
+                code: Bytes::new(),
+                initial_actors: vec![InitialActor::owner(B256::repeat_byte(1), AUTHENTICATOR)],
+            };
+            assert_eq!(
+                AccountChangeApplier::apply_create(acc, &entry),
+                Err(ApplyError::EmptyBytecode)
             );
         });
     }
@@ -1365,6 +1437,106 @@ mod tests {
                 .get_account_info(ACCOUNT)
                 .and_then(|info| info.code.as_ref())
                 .is_some_and(Bytecode::is_empty)
+        );
+    }
+
+    /// Marks `account` keystore-established (`FLAG_CONTRACT_ESTABLISHED`) in the
+    /// `AccountConfiguration` storage, leaving every other state field zero.
+    fn mark_contract_established(storage: &mut HashMapStorageProvider) {
+        StorageCtx::enter(storage, |sctx| {
+            let mut cfg = AccountConfigurationStorage::new(sctx);
+            let mut state = AccountState::from_word(U256::ZERO);
+            state.flags = Eip8130Constants::FLAG_CONTRACT_ESTABLISHED;
+            cfg.set_account_state(ACCOUNT, state).unwrap();
+        });
+    }
+
+    #[test]
+    fn apply_create_flags_account_contract_established() {
+        // A created account is marked keystore-established so a later empty-code
+        // state can never be mistaken for a proven-key EOA. Mirrors
+        // `createAccount`'s `FLAG_REVOKE_DEFAULT_EOA | FLAG_CONTRACT_ESTABLISHED`.
+        let signer = address!("0x00000000000000000000000000000000000000a1");
+        let actor_id = AccountConfigurationStorage::self_actor_id(signer);
+        let entry = CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::from_static(&[0x60, 0x00]),
+            initial_actors: vec![InitialActor::owner(actor_id, Eip8130Constants::K1_AUTHENTICATOR)],
+        };
+        with_storage(|acc| {
+            let created = AccountChangeApplier::apply_create(acc, &entry).unwrap();
+            let state = acc.get_account_state(created.address).unwrap();
+            assert!(state.contract_established(), "create must set FLAG_CONTRACT_ESTABLISHED");
+            assert!(state.default_eoa_revoked(), "create must still revoke the default EOA");
+        });
+    }
+
+    #[test]
+    fn delegation_effect_install_rejects_empty_code_contract_established_account() {
+        // Empty code on a keystore-established account is a self-destructed CREATE2
+        // account, not a proven-key EOA — a delegation onto it is rejected.
+        let target = Address::repeat_byte(0x55);
+        let mut storage = HashMapStorageProvider::new(1);
+        mark_contract_established(&mut storage);
+
+        let error = StorageCtx::enter(&mut storage, |sctx| {
+            DelegationEffect::new(ACCOUNT, target).install(sctx)
+        })
+        .unwrap_err();
+
+        assert_eq!(error, ApplyError::ContractEstablishedCodeless { account: ACCOUNT });
+        // No delegation code was written.
+        assert!(
+            storage
+                .get_account_info(ACCOUNT)
+                .and_then(|info| info.code.as_ref())
+                .and_then(Bytecode::eip7702_address)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn delegation_effect_install_allows_empty_code_non_established_account() {
+        // A genuine (non-established) empty-code EOA may still be delegated: the
+        // guard only fires for keystore-established accounts.
+        let target = Address::repeat_byte(0x56);
+        let mut storage = HashMapStorageProvider::new(1);
+
+        StorageCtx::enter(&mut storage, |sctx| {
+            DelegationEffect::new(ACCOUNT, target).install(sctx)
+        })
+        .unwrap();
+
+        assert_eq!(
+            storage
+                .get_account_info(ACCOUNT)
+                .and_then(|info| info.code.as_ref())
+                .and_then(Bytecode::eip7702_address),
+            Some(target)
+        );
+    }
+
+    #[test]
+    fn delegation_effect_install_allows_redelegation_of_established_delegate() {
+        // An established account that already carries a delegation indicator
+        // (e.g. an imported 7702 delegate — genuinely once an EOA) may be
+        // re-delegated: the codeless guard is scoped to *empty* code only.
+        let target = Address::repeat_byte(0x57);
+        let mut storage = HashMapStorageProvider::new(1);
+        mark_contract_established(&mut storage);
+        storage.set_code(ACCOUNT, Bytecode::new_eip7702(Address::repeat_byte(0x11))).unwrap();
+
+        StorageCtx::enter(&mut storage, |sctx| {
+            DelegationEffect::new(ACCOUNT, target).install(sctx)
+        })
+        .unwrap();
+
+        assert_eq!(
+            storage
+                .get_account_info(ACCOUNT)
+                .and_then(|info| info.code.as_ref())
+                .and_then(Bytecode::eip7702_address),
+            Some(target)
         );
     }
 
