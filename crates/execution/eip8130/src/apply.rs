@@ -42,8 +42,8 @@ sol! {
     /// for ABI decoding.
     struct ActorConfigAbi {
         address authenticator;
-        uint8 scope;
         uint48 expiry;
+        uint16 scope;
     }
 }
 
@@ -638,7 +638,7 @@ impl AccountChangeApplier {
     /// `manager(20) || commitment(32)`, written verbatim. Neither field need be
     /// nonzero — a zero `commitment` is a valid "no parameters" value and a zero
     /// `manager` gates the key to `address(0)` (no productive target).
-    pub fn slice_policy(scope: u8, policy_data: &[u8]) -> Result<(Address, B256), ApplyError> {
+    pub fn slice_policy(scope: u16, policy_data: &[u8]) -> Result<(Address, B256), ApplyError> {
         if scope & Eip8130Constants::SCOPE_POLICY == 0 {
             if !policy_data.is_empty() {
                 return Err(ApplyError::MalformedPolicyData);
@@ -680,21 +680,27 @@ impl AccountChangeApplier {
         keccak256(packed)
     }
 
-    /// The packed commitment over the initial actor set. The per-actor
-    /// contribution is `actorId(32) || authenticator(20) || scope(1) ||
-    /// policyData` — 53 bytes for a non-policy actor, 105 bytes when `POLICY`
-    /// is set (appending `manager (20) || commitment (32)`). `expiry` does not
-    /// participate. The per-actor length is fully determined by `scope`, so the
-    /// concatenation is unambiguous. Mirrors `_computeActorsCommitment`.
+    /// The commitment over the initial actor set, using the hash-the-leaves-
+    /// then-hash-the-list scheme shared with the signed digests. Each actor
+    /// hashes to a fixed-width 32-byte leaf
+    /// `keccak256(actorId(32) || authenticator(20) || scope(2) || policyData)`
+    /// (`policyData` is empty for a non-policy actor, or exactly `manager(20) ||
+    /// commitment(32)` when `POLICY` is set; `expiry` does not participate), and
+    /// the commitment is `keccak256(leaf_0 || … || leaf_{n-1})`. Fixed-width
+    /// leaves make the commitment unambiguous by construction and linear in the
+    /// actor count. Mirrors `_computeActorsCommitment`, whose `scope` field is a
+    /// `uint16` packed as 2 big-endian bytes.
     fn actors_commitment(initial_actors: &[InitialActor]) -> B256 {
-        let mut packed = Vec::with_capacity(initial_actors.len() * 53);
+        let mut packed_leaves = Vec::with_capacity(initial_actors.len() * 32);
         for actor in initial_actors {
-            packed.extend_from_slice(actor.actor_id.as_slice());
-            packed.extend_from_slice(actor.authenticator.as_slice());
-            packed.push(actor.scope);
-            packed.extend_from_slice(&actor.policy_data);
+            let mut leaf = Vec::with_capacity(54 + actor.policy_data.len());
+            leaf.extend_from_slice(actor.actor_id.as_slice());
+            leaf.extend_from_slice(actor.authenticator.as_slice());
+            leaf.extend_from_slice(&actor.scope.to_be_bytes());
+            leaf.extend_from_slice(&actor.policy_data);
+            packed_leaves.extend_from_slice(keccak256(&leaf).as_slice());
         }
-        keccak256(packed)
+        keccak256(packed_leaves)
     }
 
     /// Builds an account's deployment code: a 14-byte EVM loader header that
@@ -766,7 +772,7 @@ mod tests {
         Bytes::from((abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
     }
 
-    fn ungated(authenticator: Address, scope: u8) -> ActorConfig {
+    fn ungated(authenticator: Address, scope: u16) -> ActorConfig {
         ActorConfig { authenticator, scope, expiry: 0 }
     }
 
@@ -1099,6 +1105,32 @@ mod tests {
         );
         assert_eq!(&code[14..], &bytecode);
         assert!(AccountChangeApplier::build_deployment_code(&vec![0u8; 0x10000]).is_err());
+    }
+
+    #[test]
+    fn actors_commitment_hashes_leaves_then_list() {
+        // Golden values cross-checked against the contract's leaves-then-list
+        // scheme (#74) with `cast keccak`: each actor hashes to
+        // `keccak256(actorId(32) || authenticator(20) || scope(2 BE) ||
+        // policyData)` and the commitment is `keccak256(leaf_0 || … ||
+        // leaf_{n-1})`.
+        let auth = address!("0x0000000000000000000000000000000000000001");
+        let a1 = InitialActor::owner(B256::repeat_byte(0x11), auth);
+        assert_eq!(
+            AccountChangeApplier::actors_commitment(std::slice::from_ref(&a1)),
+            b256!("0x072d109643fa2cb02a4727255a5d6f23a248f8e331c5be883d093115dd513ac9"),
+        );
+
+        let a2 = InitialActor {
+            actor_id: B256::repeat_byte(0x22),
+            authenticator: auth,
+            scope: 0x0007,
+            policy_data: Bytes::new(),
+        };
+        assert_eq!(
+            AccountChangeApplier::actors_commitment(&[a1, a2]),
+            b256!("0x7e3212d8f983663f5da75deeced0c37781e972611a5eec67cda3ed154c25affd"),
+        );
     }
 
     #[test]

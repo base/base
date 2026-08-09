@@ -31,7 +31,7 @@ pub enum TxAuthError {
         /// The operation whose scope requirement was not met.
         operation: Operation,
         /// The resolved actor's scope bitfield.
-        scope: u8,
+        scope: u16,
     },
 
     /// A config change or delegation targets a locked account. Both operations

@@ -2164,8 +2164,8 @@ mod tests {
     sol! {
         struct ActorConfigAbi {
             address authenticator;
-            uint8 scope;
             uint48 expiry;
+            uint16 scope;
         }
     }
 
@@ -2173,14 +2173,14 @@ mod tests {
     /// change (mirrors `AccountChangeApplier`'s decode shape).
     fn authorize_change_data(
         authenticator: Address,
-        scope: u8,
+        scope: u16,
         expiry: u64,
         policy_data: &[u8],
     ) -> Bytes {
         let abi = ActorConfigAbi {
             authenticator,
-            scope,
             expiry: alloy_primitives::aliases::U48::from(expiry),
+            scope,
         };
         Bytes::from((abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
     }
@@ -2655,11 +2655,12 @@ mod tests {
         assert!(slot0.is_none() || slot0 == Some(U256::ZERO), "phase 1 should have been skipped");
     }
 
-    /// Canonical Solidity packing of an `ActorConfig` word.
-    fn pack_actor(authenticator: Address, scope: u8, expiry: u64) -> U256 {
+    /// Canonical Solidity packing of an `ActorConfig` word (authenticator 0..160,
+    /// expiry 160..208, scope 208..224).
+    fn pack_actor(authenticator: Address, scope: u16, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(scope) << 160)
-            | (U256::from(expiry) << 168)
+            | (U256::from(expiry) << 160)
+            | (U256::from(scope) << 208)
     }
 
     /// Signs `tx` for a configured sender as `K1_AUTHENTICATOR || sig`.

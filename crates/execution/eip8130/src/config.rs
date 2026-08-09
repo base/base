@@ -257,20 +257,22 @@ mod tests {
         Bytes::from(out)
     }
 
-    /// Canonical Solidity packing of `ActorConfig`.
-    fn pack(authenticator: Address, scope: u8, expiry: u64) -> U256 {
+    /// Canonical Solidity packing of `ActorConfig` (authenticator 0..160, expiry
+    /// 160..208, scope 208..224).
+    fn pack(authenticator: Address, scope: u16, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(scope) << 160)
-            | (U256::from(expiry) << 168)
+            | (U256::from(expiry) << 160)
+            | (U256::from(scope) << 208)
     }
 
-    /// Canonical Solidity packing of `AccountState` (sequences + lock fields).
+    /// Canonical Solidity packing of `AccountState` (`local` is the local-channel
+    /// sequence in the low uint32; local epoch left zero).
     fn pack_state(multichain: u64, local: u64, flags: u8, lock_union: u64) -> U256 {
         let mut b = [0u8; 32];
         b[24..32].copy_from_slice(&multichain.to_be_bytes());
-        b[16..24].copy_from_slice(&local.to_be_bytes());
+        b[20..24].copy_from_slice(&local.to_be_bytes()[4..]); // uint32 localSequence
         b[15] = flags;
-        b[10..15].copy_from_slice(&lock_union.to_be_bytes()[3..]);
+        b[9..15].copy_from_slice(&lock_union.to_be_bytes()[2..]); // uint48 lockUnion
         U256::from_be_bytes(b)
     }
 
