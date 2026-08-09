@@ -92,15 +92,22 @@ impl JobClaimFilter {
     pub fn get_next_proof_requests(
         &self,
         worker_id: String,
+        protocol_version: u32,
         lock_duration_seconds: u32,
     ) -> impl Iterator<Item = GetNextProofRequest> {
-        self.get_next_proof_requests_starting_at(worker_id, lock_duration_seconds, 0)
+        self.get_next_proof_requests_starting_at(
+            worker_id,
+            protocol_version,
+            lock_duration_seconds,
+            0,
+        )
     }
 
     /// Builds the worker claim requests for this filter with a proof-type rotation offset.
     pub fn get_next_proof_requests_starting_at(
         &self,
         worker_id: String,
+        protocol_version: u32,
         lock_duration_seconds: u32,
         proof_type_offset: usize,
     ) -> impl Iterator<Item = GetNextProofRequest> {
@@ -112,7 +119,7 @@ impl JobClaimFilter {
                     tee_kinds: tee_kinds.clone(),
                     zk_vms: Vec::new(),
                     zk_backends: Vec::new(),
-                    protocol_version: GetNextProofRequest::CURRENT_PROTOCOL_VERSION,
+                    protocol_version,
                     lock_duration_seconds,
                 }),
                 None,
@@ -134,7 +141,7 @@ impl JobClaimFilter {
                         tee_kinds: Vec::new(),
                         zk_vms: zk_vms.clone(),
                         zk_backends: zk_backends.clone(),
-                        protocol_version: GetNextProofRequest::CURRENT_PROTOCOL_VERSION,
+                        protocol_version,
                         lock_duration_seconds,
                     }),
                     Some(GetNextProofRequest {
@@ -143,7 +150,7 @@ impl JobClaimFilter {
                         tee_kinds: Vec::new(),
                         zk_vms,
                         zk_backends,
-                        protocol_version: GetNextProofRequest::CURRENT_PROTOCOL_VERSION,
+                        protocol_version,
                         lock_duration_seconds,
                     }),
                 ]
@@ -158,6 +165,7 @@ impl JobClaimFilter {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobDiscoveryConfig {
     worker_id: String,
+    protocol_version: u32,
     claim_filter: JobClaimFilter,
     poll_interval: Duration,
     lock_duration_seconds: u32,
@@ -183,6 +191,7 @@ impl JobDiscoveryConfig {
     pub fn new(worker_id: impl Into<String>, claim_filter: JobClaimFilter) -> Self {
         Self {
             worker_id: worker_id.into(),
+            protocol_version: 0,
             claim_filter,
             poll_interval: DEFAULT_JOB_DISCOVERY_POLL_INTERVAL,
             lock_duration_seconds: DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS,
@@ -203,6 +212,17 @@ impl JobDiscoveryConfig {
     /// Returns the requested claim lock duration in seconds.
     pub const fn lock_duration_seconds(&self) -> u32 {
         self.lock_duration_seconds
+    }
+
+    /// Returns the proof protocol version announced by this worker.
+    pub const fn protocol_version(&self) -> u32 {
+        self.protocol_version
+    }
+
+    /// Sets the proof protocol version announced by this worker.
+    pub const fn with_protocol_version(mut self, protocol_version: u32) -> Self {
+        self.protocol_version = protocol_version;
+        self
     }
 
     /// Sets the delay after empty or failed discovery attempts.
@@ -245,6 +265,7 @@ impl JobDiscoveryConfig {
     ) -> impl Iterator<Item = GetNextProofRequest> {
         self.claim_filter.get_next_proof_requests_starting_at(
             self.worker_id.clone(),
+            self.protocol_version,
             self.lock_duration_seconds,
             proof_type_offset,
         )
@@ -643,11 +664,7 @@ mod tests {
         ProofJob {
             session_id: session_id.clone(),
             status: ProofJobStatus::Claimed,
-            request: ProofRequest {
-                session_id,
-                protocol_version: ProofRequest::CURRENT_PROTOCOL_VERSION,
-                request,
-            },
+            request: ProofRequest { session_id, protocol_version: 7, request },
             attempt: 1,
             lock_id: Some("lock-1".to_string()),
             worker_id: Some("worker-1".to_string()),
@@ -674,6 +691,7 @@ mod tests {
             vec![ZkVm::Sp1],
             vec![ZkBackend::Cluster, ZkBackend::Network],
         )
+        .with_protocol_version(7)
         .with_lock_duration_seconds(30)
         .with_max_concurrent_jobs(0);
 
@@ -681,12 +699,14 @@ mod tests {
 
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].worker_id, "worker-a");
+        assert_eq!(requests[0].protocol_version, 7);
         assert_eq!(requests[0].proof_type, ProofType::Compressed);
         assert!(requests[0].tee_kinds.is_empty());
         assert_eq!(requests[0].zk_vms, vec![ZkVm::Sp1]);
         assert_eq!(requests[0].zk_backends, vec![ZkBackend::Cluster, ZkBackend::Network]);
         assert_eq!(requests[0].lock_duration_seconds, 30);
         assert_eq!(requests[1].worker_id, "worker-a");
+        assert_eq!(requests[1].protocol_version, 7);
         assert_eq!(requests[1].proof_type, ProofType::SnarkPlonk);
         assert!(requests[1].tee_kinds.is_empty());
         assert_eq!(requests[1].zk_vms, vec![ZkVm::Sp1]);
@@ -698,6 +718,7 @@ mod tests {
     #[test]
     fn config_builds_nitro_claim_request() {
         let config = JobDiscoveryConfig::tee("worker-a", vec![TeeKind::AwsNitro])
+            .with_protocol_version(9)
             .with_lock_duration_seconds(45);
 
         let requests = config.get_next_proof_requests().collect::<Vec<_>>();
@@ -705,6 +726,7 @@ mod tests {
         let request = &requests[0];
 
         assert_eq!(request.worker_id, "worker-a");
+        assert_eq!(request.protocol_version, 9);
         assert_eq!(request.proof_type, ProofType::Tee);
         assert_eq!(request.tee_kinds, vec![TeeKind::AwsNitro]);
         assert!(request.zk_vms.is_empty());

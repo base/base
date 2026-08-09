@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_proof_contracts::TEEProverRegistryClient;
 use jsonrpsee::core::async_trait;
 
@@ -51,9 +51,16 @@ impl TEEProverRegistryClient for MockRegistry {
 
     async fn is_registered_signer(
         &self,
-        _signer: Address,
+        signer: Address,
     ) -> Result<bool, base_proof_contracts::ContractError> {
-        unimplemented!()
+        self.is_valid_signer(signer).await
+    }
+
+    async fn signer_image_hash(
+        &self,
+        _signer: Address,
+    ) -> Result<B256, base_proof_contracts::ContractError> {
+        Ok(B256::ZERO)
     }
 
     async fn get_registered_signers(
@@ -107,9 +114,16 @@ impl TEEProverRegistryClient for AddressBasedMockRegistry {
 
     async fn is_registered_signer(
         &self,
-        _signer: Address,
+        signer: Address,
     ) -> Result<bool, base_proof_contracts::ContractError> {
-        unimplemented!()
+        self.is_valid_signer(signer).await
+    }
+
+    async fn signer_image_hash(
+        &self,
+        _signer: Address,
+    ) -> Result<B256, base_proof_contracts::ContractError> {
+        Ok(B256::ZERO)
     }
 
     async fn get_registered_signers(

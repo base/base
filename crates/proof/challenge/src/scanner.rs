@@ -40,7 +40,7 @@ use std::{
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, GameAtIndex,
-    GameInfo, GameStatus,
+    GameInfo, GameStatus, ProofScheduleKind,
 };
 use eyre::Result;
 use futures::stream::{self, StreamExt};
@@ -102,8 +102,12 @@ pub struct CandidateGame {
     pub intermediate_block_interval: u64,
     /// The L1 head block hash stored at game creation time.
     pub l1_head: B256,
-    /// Whether this game's proof journal includes a pinned upgrade schedule.
-    pub uses_schedule_pinning: bool,
+    /// Opaque prover-service routing version required by this game.
+    pub protocol_version: u32,
+    /// Schedule semantics committed by this game's journal.
+    pub schedule_kind: ProofScheduleKind,
+    /// Nitro image hash expected by this game.
+    pub tee_image_hash: B256,
     /// Address of the TEE prover for this game (`Address::ZERO` if none registered).
     pub tee_prover: Address,
     /// Classification of this candidate and the action the driver should take.
@@ -133,9 +137,8 @@ pub struct GameScanner {
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
     anchor_registry_client: Arc<dyn AnchorStateRegistryClient>,
-    /// Cache of `impl_address → intermediate_block_interval` to avoid repeated RPC calls.
-    /// A governance `setImplementation` call changes the address and automatically causes a
-    /// cache miss.
+    protocol_versions: HashMap<B256, u32>,
+    /// Cache of `game_address → intermediate_block_interval` to avoid repeated RPC calls.
     interval_cache: Mutex<HashMap<Address, u64>>,
     /// Cached `(anchor_game, factory_index)` for the current anchor game.
     anchor_index: Option<(Address, u64)>,
@@ -159,11 +162,13 @@ impl GameScanner {
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
         anchor_registry_client: Arc<dyn AnchorStateRegistryClient>,
+        protocol_versions: HashMap<B256, u32>,
     ) -> Self {
         Self {
             factory_client,
             verifier_client,
             anchor_registry_client,
+            protocol_versions,
             interval_cache: Mutex::new(HashMap::new()),
             anchor_index: None,
         }
@@ -215,6 +220,15 @@ impl GameScanner {
         }
 
         candidates.sort_unstable_by_key(|c| c.index);
+
+        let mut open_games: HashMap<u32, usize> =
+            self.protocol_versions.values().map(|&version| (version, 0)).collect();
+        for candidate in &candidates {
+            *open_games.entry(candidate.protocol_version).or_default() += 1;
+        }
+        for (protocol_version, count) in open_games {
+            ChallengerMetrics::open_games(&protocol_version.to_string()).set(count as f64);
+        }
 
         ChallengerMetrics::games_scanned_total().increment(games_to_scan);
         ChallengerMetrics::scan_head().set(end as f64);
@@ -395,21 +409,26 @@ impl GameScanner {
         };
 
         // Fetch remaining fields only for actionable games.
-        let (
-            (info, starting_block_number, l1_head, uses_schedule_pinning),
-            intermediate_block_interval,
-        ) = tokio::try_join!(
-            async {
-                tokio::try_join!(
-                    self.verifier_client.game_info(factory.proxy),
-                    self.verifier_client.starting_block_number(factory.proxy),
-                    self.verifier_client.l1_head(factory.proxy),
-                    self.verifier_client.uses_schedule_pinning(factory.proxy),
-                )
-                .map_err(Into::into)
-            },
-            self.resolve_intermediate_block_interval(factory.game_type),
-        )?;
+        let ((info, starting_block_number, l1_head, proof_protocol), intermediate_block_interval) =
+            tokio::try_join!(
+                async {
+                    tokio::try_join!(
+                        self.verifier_client.game_info(factory.proxy),
+                        self.verifier_client.starting_block_number(factory.proxy),
+                        self.verifier_client.l1_head(factory.proxy),
+                        self.verifier_client.proof_protocol_descriptor(factory.proxy),
+                    )
+                    .map_err(Into::into)
+                },
+                self.resolve_intermediate_block_interval(factory.proxy),
+            )?;
+
+        let fingerprint = proof_protocol.fingerprint();
+        let protocol_version = self.protocol_versions.get(&fingerprint).copied().ok_or_else(|| {
+            eyre::eyre!(
+                "no prover protocol version configured for game {index} capability {fingerprint}"
+            )
+        })?;
 
         Ok(Some(CandidateGame {
             index,
@@ -418,7 +437,9 @@ impl GameScanner {
             starting_block_number,
             intermediate_block_interval,
             l1_head,
-            uses_schedule_pinning,
+            protocol_version,
+            schedule_kind: proof_protocol.schedule_kind,
+            tee_image_hash: proof_protocol.tee_image_hash,
             tee_prover,
             category,
         }))
@@ -494,38 +515,25 @@ impl GameScanner {
         }
     }
 
-    /// Resolves the intermediate block interval for a game type, using a cache
-    /// to avoid repeated RPC calls for the same implementation address.
-    ///
-    /// The impl address is always fetched from the factory so that a governance
-    /// `setImplementation` call (which changes the address) automatically
-    /// invalidates the cached value.
-    async fn resolve_intermediate_block_interval(&self, game_type: u32) -> Result<u64> {
-        let impl_address = self.factory_client.game_impls(game_type).await?;
-        if impl_address == Address::ZERO {
-            return Err(eyre::eyre!(
-                "no game implementation registered in DisputeGameFactory for game type {game_type}"
-            ));
-        }
-
+    /// Resolves the intermediate block interval from the historical game proxy.
+    async fn resolve_intermediate_block_interval(&self, game_address: Address) -> Result<u64> {
         {
             let cache = self.interval_cache.lock().expect("interval_cache lock poisoned");
-            if let Some(&interval) = cache.get(&impl_address) {
+            if let Some(&interval) = cache.get(&game_address) {
                 return Ok(interval);
             }
         }
 
-        let interval = self.verifier_client.read_intermediate_block_interval(impl_address).await?;
+        let interval = self.verifier_client.read_intermediate_block_interval(game_address).await?;
 
         debug!(
-            game_type = game_type,
             interval = interval,
-            impl_address = %impl_address,
+            game_address = %game_address,
             "resolved intermediate block interval"
         );
 
         let mut cache = self.interval_cache.lock().expect("interval_cache lock poisoned");
-        cache.insert(impl_address, interval);
+        cache.insert(game_address, interval);
 
         Ok(interval)
     }
@@ -548,8 +556,16 @@ mod tests {
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, addr, factory_game,
-        mock_anchor_registry, mock_state, mock_state_with_tee,
+        mock_anchor_registry, mock_protocol_versions, mock_state, mock_state_with_tee,
     };
+
+    fn test_scanner(
+        factory: Arc<dyn DisputeGameFactoryClient>,
+        verifier: Arc<dyn AggregateVerifierClient>,
+        anchor: Arc<dyn AnchorStateRegistryClient>,
+    ) -> GameScanner {
+        GameScanner::new(factory, verifier, anchor, mock_protocol_versions())
+    }
 
     /// Mock factory that records queried indices and can return errors for specific indices.
     #[derive(Debug)]
@@ -636,7 +652,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let mut scanner = GameScanner::new(
+        let mut scanner = test_scanner(
             factory,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
             mock_anchor_registry(Address::ZERO),
@@ -663,7 +679,7 @@ mod tests {
         assert_eq!(candidates[3].info.l2_block_number, 400);
         assert_eq!(
             verifier.intermediate_block_interval_reads.lock().unwrap().as_slice(),
-            &[Address::repeat_byte(0x11)],
+            &[addr(0), addr(1), addr(3), addr(4)],
         );
     }
 
@@ -688,7 +704,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -707,7 +723,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let verifier = Arc::new(MockAggregateVerifier::new(HashMap::new()));
 
-        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -730,7 +746,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(addr(96)));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(addr(96)));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -751,7 +767,7 @@ mod tests {
         let games = (0..game_count).map(|i| factory_game(i, 1)).collect();
         let factory = Arc::new(RecordingDisputeGameFactory::new(games, vec![error_index]));
         let verifier = Arc::new(MockAggregateVerifier::new(HashMap::new()));
-        let scanner = GameScanner::new(
+        let scanner = test_scanner(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             verifier,
             mock_anchor_registry(Address::ZERO),
@@ -783,7 +799,7 @@ mod tests {
 
         let factory = Arc::new(RecordingDisputeGameFactory::new(games, vec![]));
         let verifier = Arc::new(MockAggregateVerifier::new(HashMap::new()));
-        let scanner = GameScanner::new(
+        let scanner = test_scanner(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             verifier,
             mock_anchor_registry(Address::ZERO),
@@ -811,7 +827,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(addr(2)));
-        let mut scanner = GameScanner::new(
+        let mut scanner = test_scanner(
             factory,
             verifier,
             Arc::clone(&anchor_registry) as Arc<dyn AnchorStateRegistryClient>,
@@ -844,7 +860,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         // Index 0 -> candidate. Index 1 errors -> skipped. Index 2 -> candidate.
         let candidates = scanner.scan().await.unwrap();
@@ -877,7 +893,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -890,14 +906,15 @@ mod tests {
     async fn test_scan_preserves_legacy_game_protocol() {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]));
         let mut state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
-        state.uses_schedule_pinning = false;
+        state.proof_protocol = crate::test_utils::mock_proof_protocol(ProofScheduleKind::None);
         let verifier = Arc::new(MockAggregateVerifier::new(HashMap::from([(addr(0), state)])));
-        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
         assert_eq!(candidates.len(), 1);
-        assert!(!candidates[0].uses_schedule_pinning);
+        assert_eq!(candidates[0].schedule_kind, ProofScheduleKind::None);
+        assert_eq!(candidates[0].protocol_version, 0);
     }
 
     /// Error at the first index (0) skips that game, rest still returned.
@@ -913,7 +930,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -936,7 +953,7 @@ mod tests {
         verifier_games.insert(addr(0), state);
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -963,7 +980,7 @@ mod tests {
         );
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -981,7 +998,7 @@ mod tests {
         verifier_games.insert(addr(0), mock_state(GameStatus::InProgress, Address::ZERO, 100));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1004,7 +1021,7 @@ mod tests {
             .insert(addr(0), mock_state_with_tee(GameStatus::InProgress, zk_addr, tee_addr, 100));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1044,7 +1061,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = test_scanner(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1081,7 +1098,7 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let mut scanner = GameScanner::new(
+        let mut scanner = test_scanner(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
             mock_anchor_registry(Address::ZERO),

@@ -68,7 +68,7 @@ fn compressed_request_at_with_backend(
 ) -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
-        protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
+        protocol_version: 1,
         request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
             start_block_number,
             number_of_blocks_to_prove: 5,
@@ -86,7 +86,7 @@ fn compressed_request_at_with_backend(
 fn compressed_request_with_l1_head(l1_head: &str) -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
-        protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
+        protocol_version: 1,
         request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
             start_block_number: 100,
             number_of_blocks_to_prove: 5,
@@ -104,7 +104,7 @@ fn compressed_request_with_l1_head(l1_head: &str) -> CreateProofRequest {
 fn snark_request() -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
-        protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
+        protocol_version: 1,
         request: ProtocolProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
             proof: ZkProofRequest {
                 start_block_number: 200,
@@ -131,7 +131,7 @@ fn snark_request() -> CreateProofRequest {
 fn tee_request() -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
-        protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
+        protocol_version: 1,
         request: ProtocolProofRequestKind::Tee(TeeProofRequest {
             proof: Default::default(),
             tee_kind: ProtocolTeeKind::AwsNitro,
@@ -1602,7 +1602,7 @@ fn claim_job(
 ) -> ClaimProofJob {
     ClaimProofJob {
         worker_id: worker_id.to_owned(),
-        protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
+        protocol_version: 1,
         api_proof_type,
         tee_kinds,
         zk_vms,
@@ -1631,7 +1631,7 @@ fn compressed_claim(worker_id: &str, max_attempts: u32) -> ClaimProofJob {
 /// an unexpired lock (rather than completing them) keeps this independent of the
 /// worker submit API.
 async fn drain_claimable_tee_jobs(repo: &ProofRequestRepo) {
-    for protocol_version in [0, ProtocolProofRequest::CURRENT_PROTOCOL_VERSION] {
+    for protocol_version in [0, 1] {
         let mut claim = tee_claim("drain-worker", u32::MAX);
         claim.protocol_version = protocol_version;
         while repo
@@ -1646,7 +1646,7 @@ async fn drain_claimable_tee_jobs(repo: &ProofRequestRepo) {
 /// Drain every currently claimable compressed job for tests that need to claim a
 /// freshly inserted ZK request deterministically.
 async fn drain_claimable_compressed_jobs(repo: &ProofRequestRepo) {
-    for protocol_version in [0, ProtocolProofRequest::CURRENT_PROTOCOL_VERSION] {
+    for protocol_version in [0, 1] {
         let mut claim = compressed_claim("drain-zk-worker", u32::MAX);
         claim.protocol_version = protocol_version;
         while repo

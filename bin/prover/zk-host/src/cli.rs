@@ -54,6 +54,10 @@ struct WorkerArgs {
     #[arg(long, env = "PROVER_WORKER_ID")]
     worker_id: Option<String>,
 
+    /// Proof protocol version claimed by this worker deployment.
+    #[arg(long, env = "PROVER_PROTOCOL_VERSION")]
+    protocol_version: u32,
+
     /// Base consensus node RPC URL. Required for dry-run, cluster, or network backends.
     #[arg(long, env = "BASE_CONSENSUS_ADDRESS")]
     base_consensus_address: Option<Url>,
@@ -235,6 +239,7 @@ impl WorkerArgs {
         let worker_id =
             args.worker_id.clone().unwrap_or_else(|| format!("zk-host-{}", Uuid::new_v4()));
         let host_config = ZkHostConfig::sp1(worker_id.clone())
+            .with_protocol_version(args.protocol_version)
             .with_job_discovery_poll_interval(Duration::from_millis(
                 args.job_discovery_poll_interval_ms,
             ))
@@ -245,6 +250,7 @@ impl WorkerArgs {
 
         info!(
             worker_id = %worker_id,
+            protocol_version = args.protocol_version,
             prover_service_endpoint = %args.prover_service_endpoint,
             ?backends,
             "starting zk prover host worker"

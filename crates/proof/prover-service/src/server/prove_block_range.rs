@@ -120,30 +120,18 @@ fn parse_session_id(session_id: &str) -> RpcResult<String> {
     canonical_session_id(session_id).map_err(|e| invalid_argument(format!("{e}")))
 }
 
-/// Rejects requests newer than this server and schedule pins mislabeled as legacy jobs.
-/// Workers match a job's protocol version exactly, so the stored version must describe the
-/// payload semantics the worker is expected to execute.
+/// Rejects schedule-pinned requests mislabeled as legacy jobs.
 fn validate_protocol_version(request: &ProofRequest) -> RpcResult<()> {
     let protocol_version = request.protocol_version;
-    if protocol_version > ProofRequest::CURRENT_PROTOCOL_VERSION {
-        return Err(invalid_argument(format!(
-            "Unsupported protocol_version {protocol_version}: this server supports versions up to {}",
-            ProofRequest::CURRENT_PROTOCOL_VERSION
-        )));
-    }
-
     let schedule_l2_block_number = match &request.request {
         ProofRequestKind::Compressed(request) => request.schedule_l2_block_number,
         ProofRequestKind::SnarkPlonk(request) => request.proof.schedule_l2_block_number,
         ProofRequestKind::Tee(request) => request.proof.schedule_l2_block_number,
     };
-    if schedule_l2_block_number.is_some()
-        && protocol_version != ProofRequest::CURRENT_PROTOCOL_VERSION
-    {
-        return Err(invalid_argument(format!(
-            "schedule_l2_block_number requires protocol_version {}",
-            ProofRequest::CURRENT_PROTOCOL_VERSION
-        )));
+    if schedule_l2_block_number.is_some() && protocol_version == 0 {
+        return Err(invalid_argument(
+            "schedule_l2_block_number requires a non-zero protocol_version",
+        ));
     }
 
     Ok(())
@@ -219,21 +207,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_protocol_version_accepts_current_and_older() {
-        for version in 0..=ProofRequest::CURRENT_PROTOCOL_VERSION {
+    fn validate_protocol_version_accepts_arbitrary_versions() {
+        for version in [0, 1, 7, u32::MAX] {
             assert!(validate_protocol_version(&proof_request(version, None)).is_ok());
         }
-    }
-
-    #[test]
-    fn validate_protocol_version_rejects_newer_than_current() {
-        let err = validate_protocol_version(&proof_request(
-            ProofRequest::CURRENT_PROTOCOL_VERSION + 1,
-            None,
-        ))
-        .expect_err("future protocol version should be rejected");
-
-        assert!(err.message().contains("Unsupported protocol_version"));
     }
 
     #[test]
@@ -257,7 +234,7 @@ mod tests {
                 .expect_err("legacy protocol must reject schedule pinning");
             assert!(err.message().contains("schedule_l2_block_number requires"));
 
-            proof_request.protocol_version = ProofRequest::CURRENT_PROTOCOL_VERSION;
+            proof_request.protocol_version = 7;
             assert!(validate_protocol_version(&proof_request).is_ok());
         }
     }

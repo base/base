@@ -1,14 +1,41 @@
 //! Configuration types and validation for the challenger.
 
-use std::{net::SocketAddr, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, str::FromStr, time::Duration};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_cli_utils::MetricsConfig;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use eyre::{Result, WrapErr, ensure};
 use url::Url;
 
 use crate::cli::Cli;
+
+/// Maps a canonical proof capability fingerprint to its prover-service routing version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofProtocolVersion {
+    /// Canonical fingerprint returned by `ProofProtocolDescriptor::fingerprint`.
+    pub fingerprint: B256,
+    /// Opaque exact-match routing version stored by prover-service.
+    pub protocol_version: u32,
+}
+
+impl FromStr for ProofProtocolVersion {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (fingerprint, protocol_version) = value
+            .split_once('=')
+            .ok_or_else(|| "expected <fingerprint>=<protocol_version>".to_owned())?;
+        Ok(Self {
+            fingerprint: fingerprint
+                .parse()
+                .map_err(|error| format!("invalid fingerprint: {error}"))?,
+            protocol_version: protocol_version
+                .parse()
+                .map_err(|error| format!("invalid protocol version: {error}"))?,
+        })
+    }
+}
 
 /// Challenger configuration.
 #[derive(Debug)]
@@ -23,6 +50,8 @@ pub struct ChallengerConfig {
     pub anchor_state_registry_addr: Address,
     /// Game type ID for `AggregateVerifier` dispute games.
     pub game_type: u32,
+    /// Capability fingerprint to prover-service routing version mappings.
+    pub proof_protocol_versions: HashMap<B256, u32>,
     /// Polling interval for new dispute games.
     pub poll_interval: Duration,
     /// URL of the ZK RPC endpoint.
@@ -71,6 +100,16 @@ impl ChallengerConfig {
             "anchor-state-registry-addr must be non-zero"
         );
 
+        let proof_protocol_versions: HashMap<_, _> = challenger
+            .proof_protocol_versions
+            .iter()
+            .map(|mapping| (mapping.fingerprint, mapping.protocol_version))
+            .collect();
+        ensure!(
+            proof_protocol_versions.len() == challenger.proof_protocol_versions.len(),
+            "proof-protocol-version contains duplicate fingerprints"
+        );
+
         for (duration, message) in [
             (challenger.poll_interval, "poll-interval must be greater than 0"),
             (challenger.zk_request_timeout, "zk-request-timeout must be greater than 0"),
@@ -98,6 +137,7 @@ impl ChallengerConfig {
             dispute_game_factory_addr: challenger.dispute_game_factory_addr,
             anchor_state_registry_addr: challenger.anchor_state_registry_addr,
             game_type: challenger.game_type,
+            proof_protocol_versions,
             poll_interval: challenger.poll_interval,
             zk_rpc_url: challenger.zk_rpc_url,
             zk_request_timeout: challenger.zk_request_timeout,
@@ -138,6 +178,8 @@ mod tests {
             "0x2234567890123456789012345678901234567890",
             "--game-type",
             "1",
+            "--proof-protocol-version",
+            "0x0000000000000000000000000000000000000000000000000000000000000001=1",
             "--zk-rpc-url",
             "http://localhost:5000",
             "--private-key",
@@ -159,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_invalid_config_rejected() {
-        let cases: [InvalidConfigCase; 10] = [
+        let cases: [InvalidConfigCase; 11] = [
             (
                 |cli| cli.challenger.poll_interval = Duration::ZERO,
                 "poll-interval must be greater than 0",
@@ -205,6 +247,13 @@ mod tests {
             (
                 |cli| cli.challenger.zk_rpc_url = Url::parse("file:///no/host").unwrap(),
                 "invalid zk-rpc-url URL: missing host",
+            ),
+            (
+                |cli| {
+                    let duplicate = cli.challenger.proof_protocol_versions[0];
+                    cli.challenger.proof_protocol_versions.push(duplicate);
+                },
+                "proof-protocol-version contains duplicate fingerprints",
             ),
         ];
 

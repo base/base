@@ -7,7 +7,7 @@
 //! [`encode_nullify_calldata`] or `challenge` via
 //! [`encode_challenge_calldata`].
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_provider::RootProvider;
 use alloy_sol_types::{SolCall, SolError, sol};
 use async_trait::async_trait;
@@ -64,6 +64,21 @@ sol! {
 
         /// Returns the intermediate block interval for intermediate output root checkpoints.
         function INTERMEDIATE_BLOCK_INTERVAL() external view returns (uint256);
+
+        /// Returns the rollup configuration hash committed by proof journals.
+        function CONFIG_HASH() external view returns (bytes32);
+
+        /// Returns the Nitro enclave image hash committed by TEE journals.
+        function TEE_IMAGE_HASH() external view returns (bytes32);
+
+        /// Returns the SP1 range verification key committed by ZK journals.
+        function ZK_RANGE_HASH() external view returns (bytes32);
+
+        /// Returns the SP1 aggregation verification key used by the ZK verifier.
+        function ZK_AGGREGATE_HASH() external view returns (bytes32);
+
+        /// Returns the L2 block time used by activated-prefix verifiers.
+        function L2_BLOCK_TIME() external view returns (uint64);
 
         /// Returns the game type.
         function gameType() external view returns (uint32);
@@ -188,6 +203,52 @@ pub enum GameStatus {
     DefenderWins = 2,
 }
 
+/// Schedule semantics used by a proof journal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ProofScheduleKind {
+    /// The journal predates schedule commitments.
+    None = 0,
+    /// The journal commits the full schedule snapshotted at game creation.
+    Full = 1,
+    /// The journal commits the schedule prefix activated at the game's L2 block.
+    Activated = 2,
+}
+
+/// Onchain commitments that determine which prover artifacts can satisfy a game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofProtocolDescriptor {
+    /// Schedule semantics used by the game.
+    pub schedule_kind: ProofScheduleKind,
+    /// Full schedule snapshot for [`ProofScheduleKind::Full`].
+    pub schedule_id: B256,
+    /// Rollup configuration hash committed by both journal types.
+    pub config_hash: B256,
+    /// Nitro enclave image hash committed by TEE journals.
+    pub tee_image_hash: B256,
+    /// SP1 range verification key committed by ZK journals.
+    pub zk_range_hash: B256,
+    /// SP1 aggregation verification key used to verify ZK proofs.
+    pub zk_aggregate_hash: B256,
+}
+
+impl ProofProtocolDescriptor {
+    /// Returns the canonical offchain capability fingerprint for routing configuration.
+    #[must_use]
+    pub fn fingerprint(&self) -> B256 {
+        const DOMAIN: &[u8] = b"base-proof-protocol-v1";
+        let mut bytes = Vec::with_capacity(DOMAIN.len() + 1 + 32 * 5);
+        bytes.extend_from_slice(DOMAIN);
+        bytes.push(self.schedule_kind as u8);
+        bytes.extend_from_slice(self.schedule_id.as_slice());
+        bytes.extend_from_slice(self.config_hash.as_slice());
+        bytes.extend_from_slice(self.tee_image_hash.as_slice());
+        bytes.extend_from_slice(self.zk_range_hash.as_slice());
+        bytes.extend_from_slice(self.zk_aggregate_hash.as_slice());
+        keccak256(bytes)
+    }
+}
+
 impl std::fmt::Display for GameStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -220,8 +281,11 @@ pub trait AggregateVerifierClient: Send + Sync {
     /// Returns the current game status.
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError>;
 
-    /// Returns whether the game commits proofs to a pinned upgrade schedule.
-    async fn uses_schedule_pinning(&self, game_address: Address) -> Result<bool, ContractError>;
+    /// Returns the proof capability descriptor committed by a historical game proxy.
+    async fn proof_protocol_descriptor(
+        &self,
+        game_address: Address,
+    ) -> Result<ProofProtocolDescriptor, ContractError>;
 
     /// Returns the address that provided a ZK proof for the given game.
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError>;
@@ -385,14 +449,37 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         })
     }
 
-    async fn uses_schedule_pinning(&self, game_address: Address) -> Result<bool, ContractError> {
+    async fn proof_protocol_descriptor(
+        &self,
+        game_address: Address,
+    ) -> Result<ProofProtocolDescriptor, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        match contract.scheduleId().call().await {
-            Ok(_) => Ok(true),
+        let (config_hash, tee_image_hash, zk_range_hash, zk_aggregate_hash) = futures::try_join!(
+            async { contract_call!(contract.CONFIG_HASH().call(), "CONFIG_HASH failed") },
+            async { contract_call!(contract.TEE_IMAGE_HASH().call(), "TEE_IMAGE_HASH failed") },
+            async { contract_call!(contract.ZK_RANGE_HASH().call(), "ZK_RANGE_HASH failed") },
+            async {
+                contract_call!(contract.ZK_AGGREGATE_HASH().call(), "ZK_AGGREGATE_HASH failed")
+            },
+        )?;
+
+        let (schedule_kind, schedule_id) = match contract.scheduleId().call().await {
+            Ok(schedule_id) => match contract.L2_BLOCK_TIME().call().await {
+                Ok(_) => (ProofScheduleKind::Activated, B256::ZERO),
+                Err(alloy_contract::Error::TransportError(error))
+                    if error.as_error_resp().is_some_and(|payload| {
+                        payload.message.to_ascii_lowercase().contains("execution reverted")
+                            && payload.as_revert_data().is_none_or(|data| data.is_empty())
+                    }) =>
+                {
+                    (ProofScheduleKind::Full, schedule_id)
+                }
+                Err(error) => return Err(ContractError::call("L2_BLOCK_TIME failed", error)),
+            },
             Err(error @ alloy_contract::Error::ZeroData(_, _)) => {
-                Err(ContractError::call("scheduleId failed", error))
+                return Err(ContractError::call("scheduleId failed", error));
             }
             Err(alloy_contract::Error::TransportError(error))
                 if error.as_error_resp().is_some_and(|payload| {
@@ -400,10 +487,19 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
                         && payload.as_revert_data().is_none_or(|data| data.is_empty())
                 }) =>
             {
-                Ok(false)
+                (ProofScheduleKind::None, B256::ZERO)
             }
-            Err(error) => Err(ContractError::call("scheduleId failed", error)),
-        }
+            Err(error) => return Err(ContractError::call("scheduleId failed", error)),
+        };
+
+        Ok(ProofProtocolDescriptor {
+            schedule_kind,
+            schedule_id,
+            config_hash,
+            tee_image_hash,
+            zk_range_hash,
+            zk_aggregate_hash,
+        })
     }
 
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {
@@ -839,6 +935,29 @@ mod tests {
             &resolve[..4],
             &claim[..4],
             "resolve and claimCredit must have different selectors"
+        );
+    }
+
+    #[test]
+    fn proof_protocol_fingerprint_commits_schedule_kind_and_artifacts() {
+        let descriptor = ProofProtocolDescriptor {
+            schedule_kind: ProofScheduleKind::Activated,
+            schedule_id: B256::ZERO,
+            config_hash: B256::repeat_byte(1),
+            tee_image_hash: B256::repeat_byte(2),
+            zk_range_hash: B256::repeat_byte(3),
+            zk_aggregate_hash: B256::repeat_byte(4),
+        };
+
+        assert_ne!(
+            descriptor.fingerprint(),
+            ProofProtocolDescriptor { tee_image_hash: B256::repeat_byte(5), ..descriptor }
+                .fingerprint()
+        );
+        assert_ne!(
+            descriptor.fingerprint(),
+            ProofProtocolDescriptor { schedule_kind: ProofScheduleKind::Full, ..descriptor }
+                .fingerprint()
         );
     }
 }

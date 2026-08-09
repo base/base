@@ -13,7 +13,7 @@ mod anchor;
 pub use anchor::AnchorUpdater;
 
 mod config;
-pub use config::ChallengerConfig;
+pub use config::{ChallengerConfig, ProofProtocolVersion};
 
 mod driver;
 pub use driver::{Driver, DriverComponents};

@@ -164,6 +164,10 @@ struct WorkerArgs {
     #[arg(long, env = "PROVER_SERVICE_ENDPOINT")]
     prover_service_endpoint: String,
 
+    /// Proof protocol version claimed by this worker deployment.
+    #[arg(long, env = "PROVER_PROTOCOL_VERSION")]
+    protocol_version: u32,
+
     /// Prover-service JSON-RPC request timeout in seconds.
     #[arg(long, env = "PROVER_SERVICE_REQUEST_TIMEOUT_SECS", default_value_t = 60)]
     prover_service_request_timeout_secs: u64,
@@ -360,6 +364,7 @@ async fn run_worker(
     );
     let worker_id = format!("nitro-host-{}", Uuid::new_v4());
     let host = NitroHost::new(client, Arc::new(pool), worker_id.clone(), heartbeat)
+        .with_protocol_version(worker.protocol_version)
         .with_poll_interval(Duration::from_millis(worker.job_discovery_poll_interval_ms))
         .with_lock_duration_seconds(worker.job_discovery_lock_duration_seconds)
         .with_max_concurrent_jobs(worker.job_discovery_max_concurrent_jobs);
@@ -381,6 +386,7 @@ async fn run_worker(
         WorkerTransportMode::Vsock => {
             info!(
                 worker_id = %worker_id,
+                protocol_version = worker.protocol_version,
                 prover_service_endpoint = %worker.prover_service_endpoint,
                 enclave_count,
                 "starting nitro prover host worker"
@@ -390,6 +396,7 @@ async fn run_worker(
         WorkerTransportMode::Local => {
             info!(
                 worker_id = %worker_id,
+                protocol_version = worker.protocol_version,
                 prover_service_endpoint = %worker.prover_service_endpoint,
                 enclave_count,
                 "starting nitro prover host worker (local mode)"

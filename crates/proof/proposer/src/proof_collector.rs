@@ -555,7 +555,10 @@ mod tests {
             ..Default::default()
         };
         requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                proof_request,
+                1,
+            ))
             .await
             .expect("test setup should dispatch root session");
         let collector = make_collector(
@@ -595,6 +598,7 @@ mod tests {
             requester
                 .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
                     proof_request,
+                    1,
                 ))
                 .await
                 .expect("test setup should dispatch root session");
@@ -657,19 +661,25 @@ mod tests {
             ..Default::default()
         };
         requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                proof_request,
+                1,
+            ))
             .await
             .expect("test setup should dispatch root session");
         let later_root = B256::repeat_byte(0xcc);
         let later_session_id = ProposerProofAdapter::tee_session_id_for_root(later_root);
         requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(ProofRequest {
-                claimed_l2_output_root: later_root,
-                claimed_l2_block_number: target_block + BLOCK_INTERVAL,
-                intermediate_block_interval: BLOCK_INTERVAL,
-                l1_head_number: 1000,
-                ..Default::default()
-            }))
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                ProofRequest {
+                    claimed_l2_output_root: later_root,
+                    claimed_l2_block_number: target_block + BLOCK_INTERVAL,
+                    intermediate_block_interval: BLOCK_INTERVAL,
+                    l1_head_number: 1000,
+                    ..Default::default()
+                },
+                1,
+            ))
             .await
             .expect("test setup should dispatch later root session");
         let collector = make_collector(
@@ -708,7 +718,10 @@ mod tests {
             ..Default::default()
         };
         requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                proof_request,
+                1,
+            ))
             .await
             .expect("test setup should dispatch root session");
         let collector = make_collector(
@@ -743,7 +756,10 @@ mod tests {
             ..Default::default()
         };
         requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                proof_request,
+                1,
+            ))
             .await
             .expect("test setup should dispatch stale root session");
         let collector = make_collector(

@@ -66,6 +66,9 @@ pub struct B20ZkProvingConfig {
     /// Prover-service requester JSON-RPC URL.
     #[arg(long, default_value = "http://localhost:9000")]
     pub zk_prover_url: Url,
+    /// Prover-service routing version required by the benchmark proof.
+    #[arg(long, env = "PROVER_PROTOCOL_VERSION")]
+    pub protocol_version: u32,
     /// Local benchmark L2 chain ID.
     #[arg(long, default_value_t = 84538453)]
     pub l2_chain_id: u64,
@@ -172,6 +175,7 @@ impl B20ZkProvingBench {
                 safe_l2_poll_interval: config.block_poll_interval,
                 proof_timeout: config.proof_timeout,
                 proof_poll_interval: config.proof_poll_interval,
+                protocol_version: config.protocol_version,
             },
             &display,
         )

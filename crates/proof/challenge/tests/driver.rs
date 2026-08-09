@@ -14,10 +14,13 @@ use base_challenger::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockDisputeGameFactory,
         MockGameState, MockL1, MockL2Provider, MockTxManager, MockZkProofProvider,
         MockZkProofState, addr, build_test_header_and_account, factory_game, mock_anchor_registry,
-        mock_state, mock_state_with_tee, receipt_with_status,
+        mock_proof_protocol, mock_protocol_versions, mock_state, mock_state_with_tee,
+        receipt_with_status,
     },
 };
-use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, GameStatus};
+use base_proof_contracts::{
+    AggregateVerifierClient, DisputeGameFactoryClient, GameStatus, ProofScheduleKind,
+};
 use base_proof_primitives::Proposal;
 use base_proof_rpc::L1Provider;
 use base_proof_submission::test_utils::SnarkReceiptFixture;
@@ -83,6 +86,7 @@ fn test_driver_with_l1_provider(
         Arc::clone(&factory),
         Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
         Arc::clone(&anchor_registry),
+        mock_protocol_versions(),
     );
     let validator = OutputValidator::new(Arc::clone(&l2_provider));
     let submitter = ChallengeSubmitter::new(tx_manager);
@@ -165,6 +169,7 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
         B256::repeat_byte(0xEE),
         request,
         intent,
+        1,
     )
 }
 
@@ -491,7 +496,7 @@ async fn test_legacy_game_requests_legacy_prover_protocol() {
     let (l2, factory, root_15, _root_20) = base_game_mocks();
     let verifier = single_game_verifier(MockGameState {
         tee_prover: DEFAULT_TEE_PROVER,
-        uses_schedule_pinning: false,
+        proof_protocol: mock_proof_protocol(ProofScheduleKind::None),
         intermediate_output_roots: vec![root_15, BOGUS_ROOT],
         ..game_state(20)
     });
@@ -555,10 +560,7 @@ async fn test_schedule_aware_game_requests_current_prover_protocol() {
 
     let state = zk.state.lock().unwrap();
     let request = state.prove_block_range_log.first().expect("proof should be requested");
-    assert_eq!(
-        request.proof.protocol_version,
-        base_prover_service_protocol::ProofRequest::CURRENT_PROTOCOL_VERSION
-    );
+    assert_eq!(request.proof.protocol_version, 1);
     let ProofRequestKind::SnarkPlonk(request) = &request.proof.request else {
         panic!("expected SNARK proof request");
     };
@@ -577,10 +579,7 @@ async fn test_schedule_aware_subrange_pins_game_ending_l2_block() {
 
     let state = zk.state.lock().unwrap();
     let request = state.prove_block_range_log.first().expect("proof should be requested");
-    assert_eq!(
-        request.proof.protocol_version,
-        base_prover_service_protocol::ProofRequest::CURRENT_PROTOCOL_VERSION
-    );
+    assert_eq!(request.proof.protocol_version, 1);
     let ProofRequestKind::SnarkPlonk(request) = &request.proof.request else {
         panic!("expected SNARK proof request");
     };
@@ -922,6 +921,7 @@ async fn test_successful_nullify_does_not_track_anchor_update() {
             retry_count: 0,
             tee_submit_retry_count: 0,
             intent: DisputeIntent::Nullify,
+            protocol_version: 1,
         },
     );
 

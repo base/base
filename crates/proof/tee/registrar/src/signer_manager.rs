@@ -733,6 +733,13 @@ mod tests {
             }
         }
 
+        async fn signer_image_hash(
+            &self,
+            _signer: Address,
+        ) -> std::result::Result<B256, base_proof_contracts::ContractError> {
+            Ok(B256::ZERO)
+        }
+
         async fn get_registered_signers(
             &self,
         ) -> std::result::Result<Vec<Address>, base_proof_contracts::ContractError> {

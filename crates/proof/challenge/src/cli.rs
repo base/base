@@ -10,6 +10,8 @@ use base_cli_utils::CliStyles;
 use clap::Parser;
 use url::Url;
 
+use crate::ProofProtocolVersion;
+
 base_cli_utils::define_cli_env!("BASE_CHALLENGER");
 base_cli_utils::define_log_args!("BASE_CHALLENGER");
 base_cli_utils::define_metrics_args!("BASE_CHALLENGER", 7300);
@@ -63,6 +65,15 @@ pub struct ChallengerArgs {
     /// Game type ID for `AggregateVerifier` dispute games.
     #[arg(long = "game-type", env = cli_env!("GAME_TYPE"))]
     pub game_type: u32,
+
+    /// Capability fingerprint to prover-service routing version mappings.
+    #[arg(
+        long = "proof-protocol-version",
+        env = cli_env!("PROOF_PROTOCOL_VERSION"),
+        value_delimiter = ',',
+        required = true
+    )]
+    pub proof_protocol_versions: Vec<ProofProtocolVersion>,
 
     /// Polling interval for new dispute games (e.g., "12s", "1m").
     #[arg(

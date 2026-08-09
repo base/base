@@ -1313,9 +1313,9 @@ impl ProofRequestRepo {
     pub async fn count_pending_jobs_by_protocol_version(&self) -> Result<Vec<(i64, i64)>> {
         let rows = sqlx::query(
             r#"
-            SELECT request_protocol_version, COUNT(*) AS pending_count
+            SELECT request_protocol_version,
+                   COUNT(*) FILTER (WHERE job_status = 'PENDING') AS pending_count
             FROM proof_requests
-            WHERE job_status = 'PENDING'
             GROUP BY request_protocol_version
             "#,
         )
@@ -2377,7 +2377,7 @@ mod tests {
         let session_id = Uuid::new_v4();
         let create = CreateProofRequest::new(ProtocolProofRequest {
             session_id: session_id.to_string(),
-            protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
+            protocol_version: 1,
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 100,
                 number_of_blocks_to_prove: 5,
@@ -2481,7 +2481,7 @@ mod tests {
     fn prepared_request_represents_tee_protocol_request() {
         let create = CreateProofRequest::new(ProtocolProofRequest {
             session_id: "tee-session".to_owned(),
-            protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
+            protocol_version: 1,
             request: ProofRequestKind::Tee(TeeProofRequest {
                 proof: Default::default(),
                 tee_kind: ProtocolTeeKind::AwsNitro,
@@ -2613,7 +2613,7 @@ mod tests {
     fn tee_protocol_request(session_id: &str) -> ProtocolProofRequest {
         ProtocolProofRequest {
             session_id: session_id.to_owned(),
-            protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
+            protocol_version: 1,
             request: ProofRequestKind::Tee(TeeProofRequest {
                 proof: Default::default(),
                 tee_kind: ProtocolTeeKind::AwsNitro,
@@ -2630,7 +2630,7 @@ mod tests {
     fn prepared_request_rejects_unsupported_protocol_combination() {
         let mut create = CreateProofRequest::new(ProtocolProofRequest {
             session_id: "bad-tee-session".to_owned(),
-            protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
+            protocol_version: 1,
             request: ProofRequestKind::Tee(TeeProofRequest {
                 proof: Default::default(),
                 tee_kind: ProtocolTeeKind::AwsNitro,
@@ -2649,7 +2649,7 @@ mod tests {
     fn prepared_request_rejects_database_range_overflow() {
         let create = CreateProofRequest::new(ProtocolProofRequest {
             session_id: Uuid::new_v4().to_string(),
-            protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
+            protocol_version: 1,
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: (i64::MAX as u64) + 1,
                 number_of_blocks_to_prove: 5,

@@ -160,16 +160,6 @@ pub struct ProofRequest {
     pub request: ProofRequestKind,
 }
 
-impl ProofRequest {
-    /// Current prover protocol version, which supports schedule pinning.
-    ///
-    /// This version tags the journal semantics a job requires and is matched *exactly*
-    /// against the version workers announce when claiming. Bump it only when the proof
-    /// journal or witness semantics change incompatibly — never for RPC-surface changes.
-    /// A bump strands every queued job at the old version until a matching worker claims it.
-    pub const CURRENT_PROTOCOL_VERSION: u32 = 1;
-}
-
 /// Concrete proof request variant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "proof_type", content = "payload", rename_all = "snake_case")]
@@ -411,12 +401,6 @@ pub struct GetNextProofRequest {
     pub lock_duration_seconds: u32,
 }
 
-impl GetNextProofRequest {
-    /// Protocol version spoken by workers built from this revision. Tracks
-    /// [`ProofRequest::CURRENT_PROTOCOL_VERSION`], which documents the bump rules.
-    pub const CURRENT_PROTOCOL_VERSION: u32 = ProofRequest::CURRENT_PROTOCOL_VERSION;
-}
-
 /// Response returned when a worker claims the next proof job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GetNextProofResponse {
@@ -557,7 +541,7 @@ mod tests {
         let request = ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: "proof-session".to_owned(),
-                protocol_version: ProofRequest::CURRENT_PROTOCOL_VERSION,
+                protocol_version: 1,
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: 10,
                     number_of_blocks_to_prove: 20,
@@ -578,7 +562,7 @@ mod tests {
             json!({
                 "proof": {
                     "session_id": "proof-session",
-                    "protocol_version": ProofRequest::CURRENT_PROTOCOL_VERSION,
+                    "protocol_version": 1,
                     "request": {
                         "proof_type": "compressed",
                         "payload": {
@@ -966,7 +950,7 @@ mod tests {
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
             zk_backends: vec![ZkBackend::Cluster, ZkBackend::DryRun],
-            protocol_version: GetNextProofRequest::CURRENT_PROTOCOL_VERSION,
+            protocol_version: 1,
             lock_duration_seconds: 30,
         };
 

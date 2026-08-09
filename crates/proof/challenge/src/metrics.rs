@@ -13,6 +13,10 @@ base_metrics::define_metrics! {
     #[describe("Latest factory index scanned by the game scanner")]
     scan_head: gauge,
 
+    #[describe("In-progress games that may still require proofs, by prover protocol version")]
+    #[label(name = "protocol_version")]
+    open_games: gauge,
+
     #[describe("Total number of games found to be invalid during validation")]
     games_invalid_total: counter,
 

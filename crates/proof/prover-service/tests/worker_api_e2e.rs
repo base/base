@@ -101,7 +101,7 @@ impl RunningServer {
 /// Claim every currently-claimable compressed job under a long lease so the test
 /// starts from a known-empty compressed queue, independent of leftover rows.
 async fn drain_claimable_compressed_jobs(repo: &ProofRequestRepo) {
-    for protocol_version in [0, ProtocolProofRequest::CURRENT_PROTOCOL_VERSION] {
+    for protocol_version in [0, 1] {
         let drain = ClaimProofJob {
             worker_id: "worker-api-e2e-drain".to_owned(),
             protocol_version,
@@ -125,7 +125,7 @@ async fn drain_claimable_compressed_jobs(repo: &ProofRequestRepo) {
 fn compressed_request(session_id: &str, start_block_number: u64) -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: session_id.to_owned(),
-        protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
+        protocol_version: 1,
         request: ProofRequestKind::Compressed(ZkProofRequest {
             start_block_number,
             number_of_blocks_to_prove: 1,
@@ -148,7 +148,7 @@ fn worker_claim(worker_id: &str) -> GetNextProofRequest {
         zk_vms: vec![ZkVm::Sp1],
         // Omitted by legacy workers; the server defaults this capability to cluster.
         zk_backends: Vec::new(),
-        protocol_version: GetNextProofRequest::CURRENT_PROTOCOL_VERSION,
+        protocol_version: 1,
         lock_duration_seconds: 60,
     }
 }
@@ -278,7 +278,7 @@ fn current_prove_request(session_id: &str, start_block_number: u64) -> ProveBloc
     ProveBlockRangeRequest {
         proof: ProtocolProofRequest {
             session_id: session_id.to_owned(),
-            protocol_version: ProtocolProofRequest::CURRENT_PROTOCOL_VERSION,
+            protocol_version: 1,
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number,
                 number_of_blocks_to_prove: 1,

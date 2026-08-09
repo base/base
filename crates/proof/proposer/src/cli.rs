@@ -84,6 +84,10 @@ pub struct ProposerArgs {
     #[arg(long = "game-type", env = cli_env!("GAME_TYPE"))]
     pub game_type: u32,
 
+    /// Prover-service routing version required by newly proposed games.
+    #[arg(long = "proof-protocol-version", env = cli_env!("PROOF_PROTOCOL_VERSION"))]
+    pub proof_protocol_version: u32,
+
     /// Keccak256 hash of the TEE image PCR0 (0x-prefixed hex).
     #[arg(long = "tee-image-hash", env = cli_env!("TEE_IMAGE_HASH"))]
     pub tee_image_hash: B256,
@@ -198,6 +202,8 @@ mod tests {
             "--dispute-game-factory-addr",
             "0x2234567890123456789012345678901234567890",
             "--game-type",
+            "1",
+            "--proof-protocol-version",
             "1",
             "--tee-image-hash",
             "0x0000000000000000000000000000000000000000000000000000000000000001",

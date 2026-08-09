@@ -15,14 +15,15 @@ Worker mode is the only supported runtime mode:
 cargo build --package base-prover-nitro-host
 ```
 
-It requires `PROVER_SERVICE_ENDPOINT` and claims AWS Nitro TEE jobs through the
-prover-service worker API.
+It requires `PROVER_SERVICE_ENDPOINT` and `PROVER_PROTOCOL_VERSION`, and claims only matching AWS
+Nitro TEE jobs through the prover-service worker API.
 
 For local worker development, enable the `local` feature and use `local`:
 
 ```bash
 cargo run --package base-prover-nitro-host --features local -- local \
   --prover-service-endpoint "$PROVER_SERVICE_ENDPOINT" \
+  --protocol-version "$PROVER_PROTOCOL_VERSION" \
   --l1-eth-url "$L1_ETH_URL" \
   --l2-eth-url "$L2_ETH_URL" \
   --l2-node-url "$L2_NODE_URL" \

@@ -29,6 +29,8 @@ pub struct ProposerConfig {
     pub dispute_game_factory_addr: Address,
     /// Game type ID for `AggregateVerifier` dispute games.
     pub game_type: u32,
+    /// Prover-service routing version required by newly proposed games.
+    pub proof_protocol_version: u32,
     /// Keccak256 hash of the TEE image PCR0.
     pub tee_image_hash: B256,
     /// Polling interval for new blocks.
@@ -125,6 +127,7 @@ impl ProposerConfig {
             anchor_state_registry_addr: proposer.anchor_state_registry_addr,
             dispute_game_factory_addr: proposer.dispute_game_factory_addr,
             game_type: proposer.game_type,
+            proof_protocol_version: proposer.proof_protocol_version,
             tee_image_hash: proposer.tee_image_hash,
             poll_interval: proposer.poll_interval,
             rpc_timeout: proposer.rpc_timeout,
@@ -171,6 +174,8 @@ mod tests {
             "--dispute-game-factory-addr",
             "0x2234567890123456789012345678901234567890",
             "--game-type",
+            "1",
+            "--proof-protocol-version",
             "1",
             "--tee-image-hash",
             "0x0000000000000000000000000000000000000000000000000000000000000001",

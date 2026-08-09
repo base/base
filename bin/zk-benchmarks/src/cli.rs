@@ -33,6 +33,10 @@ pub(crate) struct ZkBenchArgs {
     )]
     prover_service_url: url::Url,
 
+    /// Prover-service routing version required by benchmark proof jobs.
+    #[arg(long, env = "PROVER_PROTOCOL_VERSION")]
+    protocol_version: u32,
+
     /// Load test YAML configuration.
     #[arg(value_name = "CONFIG")]
     config: PathBuf,
@@ -70,6 +74,7 @@ async fn run_zk_benchmark(args: ZkBenchArgs) -> Result<()> {
         zk_backend: args.mode.into(),
         rollup_rpc_url: args.rollup_rpc_url,
         prover_url: args.prover_service_url,
+        protocol_version: args.protocol_version,
     };
 
     println!("=== Base ZK Benchmark Runner ===");

@@ -42,12 +42,9 @@ impl ChallengerProofAdapter {
         game_address: Address,
         invalid_index: u64,
         request: SnarkPlonkProofRequest,
+        protocol_version: u32,
     ) -> ProveBlockRangeRequest {
         let session_id = Self::snark_plonk_session_id(game_address, invalid_index);
-        let protocol_version = request
-            .proof
-            .schedule_l2_block_number
-            .map_or(0, |_| ProofRequest::CURRENT_PROTOCOL_VERSION);
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id,
@@ -62,10 +59,9 @@ impl ChallengerProofAdapter {
         game_address: Address,
         invalid_index: u64,
         request: PrimitiveProofRequest,
+        protocol_version: u32,
     ) -> ProveBlockRangeRequest {
         let session_id = Self::tee_session_id(game_address, invalid_index);
-        let protocol_version =
-            request.schedule_l2_block_number.map_or(0, |_| ProofRequest::CURRENT_PROTOCOL_VERSION);
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id,
@@ -198,6 +194,7 @@ mod tests {
             game_address,
             invalid_index,
             request.clone(),
+            0,
         );
 
         assert_eq!(wrapped.proof.session_id, session_id);
@@ -206,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn snark_plonk_schedule_pinning_selects_current_protocol() {
+    fn snark_plonk_uses_requested_protocol() {
         let request = SnarkPlonkProofRequest {
             proof: ZkProofRequest {
                 start_block_number: 100,
@@ -225,12 +222,10 @@ mod tests {
             Address::repeat_byte(0xaa),
             1,
             request,
+            7,
         );
 
-        assert_eq!(
-            wrapped.proof.protocol_version,
-            base_prover_service_protocol::ProofRequest::CURRENT_PROTOCOL_VERSION
-        );
+        assert_eq!(wrapped.proof.protocol_version, 7);
     }
 
     #[test]
@@ -256,6 +251,7 @@ mod tests {
             game_address,
             invalid_index,
             request.clone(),
+            0,
         );
 
         assert_eq!(wrapped.proof.session_id, session_id);
@@ -267,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn tee_schedule_pinning_selects_current_protocol() {
+    fn tee_uses_requested_protocol() {
         let request = ProofRequest {
             l1_head: B256::repeat_byte(0x01),
             agreed_l2_head_hash: B256::repeat_byte(0x02),
@@ -285,12 +281,10 @@ mod tests {
             Address::repeat_byte(0xaa),
             1,
             request,
+            9,
         );
 
-        assert_eq!(
-            wrapped.proof.protocol_version,
-            base_prover_service_protocol::ProofRequest::CURRENT_PROTOCOL_VERSION
-        );
+        assert_eq!(wrapped.proof.protocol_version, 9);
     }
 
     #[test]

@@ -34,6 +34,8 @@ pub struct ZkProofBenchConfig {
     pub proof_timeout: Duration,
     /// Polling interval while waiting for proof completion.
     pub proof_poll_interval: Duration,
+    /// Prover-service routing version required by the proof job.
+    pub protocol_version: u32,
 }
 
 impl ZkProofBench {
@@ -62,6 +64,7 @@ impl ZkProofBench {
             l1_head,
             config.proof_timeout,
             config.proof_poll_interval,
+            config.protocol_version,
             display,
         )
         .await
@@ -73,6 +76,7 @@ impl ZkProofBench {
         block_number: u64,
         wait_timeout: Duration,
         poll_interval: Duration,
+        protocol_version: u32,
         display: &BenchDisplay,
     ) -> Result<B256> {
         timeout(wait_timeout, async {
@@ -119,7 +123,7 @@ impl ZkProofBench {
             .prove_block_range(ProveBlockRangeRequest {
                 proof: ProofRequest {
                     session_id,
-                    protocol_version: ProofRequest::CURRENT_PROTOCOL_VERSION,
+                    protocol_version,
                     request: ProofRequestKind::Compressed(ZkProofRequest {
                         start_block_number,
                         number_of_blocks_to_prove,
