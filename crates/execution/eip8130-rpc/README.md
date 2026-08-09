@@ -16,7 +16,7 @@ Behavior by `nonce_key`:
 - `nonce_key == NONCE_KEY_MAX`: returns an `INVALID_PARAMS` RPC error.
   This sentinel value selects the expiring-nonce / nonce-free channel,
   which has no per-channel counter — replay protection there relies on
-  `expiry` instead.
+  the `valid_before` validity-window bound instead.
 - otherwise: derives the precompile storage slot via
   `NonceManagerStorage::nonce_slot`, consults any provided state overrides
   for that slot, falls back to a raw `StateProvider::storage` lookup
@@ -31,7 +31,7 @@ the common `nonce_key != 0` case while keeping layout ownership inside
 
 Exposes [`Eip8130GasEstimator`], which estimates gas for an `eth_estimateGas`
 request carrying EIP-8130 fields (the sender account via `sender` or `from`,
-account changes, calls, `nonce_key`, expiry, metadata, and an optional
+account changes, calls, `nonce_key`, `valid_after`/`valid_before`, metadata, and an optional
 `sender_actor_id` acting-actor hint). It builds an unsigned simulation
 transaction — the caller's `sender_auth` blob (a prefixed
 `authenticator(20) || data` blob for a configured account, a bare signature for

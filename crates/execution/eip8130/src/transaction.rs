@@ -364,7 +364,8 @@ mod tests {
             sender,
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -528,13 +529,13 @@ mod tests {
 
         let ordinary_tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
-            expiry: NOW + 1,
+            valid_before: NOW + 1,
             ..tx_with(Some(account), Some(payer_account), vec![])
         };
         let ordinary = configured_signed(ordinary_tx, &sender, Some(&payer));
         let delegation_tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
-            expiry: NOW + 1,
+            valid_before: NOW + 1,
             ..tx_with(
                 Some(account),
                 Some(payer_account),
@@ -609,7 +610,7 @@ mod tests {
 
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
-            expiry: NOW + 1,
+            valid_before: NOW + 1,
             ..tx_with(
                 Some(account),
                 Some(payer_account),
@@ -770,7 +771,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -824,7 +826,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -960,7 +963,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -1031,7 +1035,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -1086,7 +1091,8 @@ mod tests {
             sender: Some(derived),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
@@ -1131,7 +1137,8 @@ mod tests {
             sender: None, // missing explicit sender
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
