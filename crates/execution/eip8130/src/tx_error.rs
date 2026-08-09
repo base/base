@@ -55,15 +55,34 @@ pub enum TxAuthError {
         got: u64,
     },
 
-    /// A config change's sequence does not match the account's current sequence
-    /// for its channel. The contract reads the sequence from state, so a
-    /// mismatch means the entry is stale or out of order (and its signed digest
-    /// would not match the value that will actually be applied).
+    /// A signed account-change batch's sequence does not match the account's
+    /// current sequence for its channel. The contract reads the sequence from
+    /// state, so a mismatch means the batch is stale or out of order (and its
+    /// signed digest would not match the value that will actually be applied).
+    /// Mirrors `Keystore.BadSequence`.
     #[error("config change sequence {got} does not match the expected {expected}")]
     ConfigSequence {
-        /// The sequence read from the account's state for the entry's channel.
+        /// The sequence read from the account's state for the batch's channel.
         expected: u64,
-        /// The sequence carried by the config change.
+        /// The sequence carried by the signed account-change batch.
         got: u64,
     },
+
+    /// A Local-channel batch's committed `localEpoch` (the high half of its
+    /// `sequence` word) does not match the account's current local epoch. An
+    /// [`crate::AccountChangeApplier`]-applied `IncrementLocalEpoch` advances the
+    /// epoch, retiring every unlanded local signature at a prior epoch. Mirrors
+    /// `Keystore.StaleEpoch`.
+    #[error("config change local epoch {got} does not match the expected {expected}")]
+    StaleEpoch {
+        /// The account's current local epoch.
+        expected: u64,
+        /// The local epoch committed by the signed account-change batch.
+        got: u64,
+    },
+
+    /// A channel's sequence counter is at its terminal value and cannot advance.
+    /// Mirrors `Keystore.SequenceSaturated`.
+    #[error("account-change channel sequence is saturated")]
+    SequenceSaturated,
 }

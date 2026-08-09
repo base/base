@@ -430,6 +430,15 @@ impl AccountState {
         self.flags & Eip8130Constants::FLAG_CONTRACT_ESTABLISHED != 0
     }
 
+    /// `true` when this account has established any EIP-8130 state. Mirrors
+    /// `Keystore._isInitialized`: the combined local word (`local_sequence` or
+    /// `local_epoch`) covers create/import and epoch activity, and
+    /// `multichain_sequence` covers global-only activity.
+    #[must_use]
+    pub const fn is_initialized(&self) -> bool {
+        self.local_sequence > 0 || self.local_epoch > 0 || self.multichain_sequence > 0
+    }
+
     /// Mirrors `AccountConfiguration._isLocked`: configuration is frozen while
     /// `FLAG_LOCKED` is set, except once an unlock has been initiated
     /// (`FLAG_UNLOCK_INITIATED`), when it stays frozen only until `now` reaches

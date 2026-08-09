@@ -7,8 +7,9 @@ mod eip8130;
 #[cfg(feature = "reth")]
 pub use eip8130::Eip8130TimestampError;
 pub use eip8130::{
-    AccountChange, ActorChange, ActorChangeType, Call, ConfigChange, CreateEntry, Delegation,
-    Eip8130Constants, Eip8130Contracts, Eip8130Signed, InitialActor, Scope, TxEip8130,
+    AccountChange, AccountChangeChannel, Call, ChangeType, CreateEntry, Delegation,
+    Eip8130Constants, Eip8130Contracts, Eip8130Signed, InitialActor, Scope, SignedAccountChanges,
+    SignedChange, TxEip8130,
 };
 
 mod tx_type;
