@@ -1518,6 +1518,8 @@ where
             ApplyError::Storage(_) => "EIP-8130 state access failed",
             ApplyError::MalformedAuthorizeData => "actor change authorize data is malformed",
             ApplyError::MalformedRevokeData => "actor change revoke data is malformed",
+            ApplyError::InvalidChangePayload => "account-change op payload must be empty",
+            ApplyError::EpochSaturated => "local epoch is saturated",
             ApplyError::UnsupportedChangeType => "unsupported account-change op",
             ApplyError::InvalidAuthenticator => "actor authenticator is not canonical",
             ApplyError::MalformedPolicyData => "actor policy data is malformed",
@@ -1899,16 +1901,18 @@ where
     ///   `address(0)` empty sentinel) is rejected here.
     /// - `RevokeActor`: `payload = abi.encode(bytes32 actorId)` — exactly the
     ///   32-byte target and nothing more.
-    /// - Environment ops (`IncrementLocalEpoch` / `Lock` / `Unlock`): their apply
-    ///   handlers are not yet enshrined, so a batch carrying one is rejected here
-    ///   rather than admitted and failed later.
+    /// - `IncrementLocalEpoch`: empty payload (mirrors the contract's
+    ///   `payload.length == 0` requirement); it names no actor, so it is not
+    ///   subject to the target-dedup below.
+    /// - `Lock` / `Unlock`: their apply handlers are not yet enshrined, so a batch
+    ///   carrying one is rejected here rather than admitted and failed later.
     fn validate_actor_changes(changes: &[SignedChange]) -> Result<(), InvalidPoolTransactionError> {
         if changes.len() > Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         let mut seen = BTreeSet::new();
         for change in changes {
-            match change.change_type {
+            let actor_id = match change.change_type {
                 ChangeType::AuthorizeActor => {
                     // `payload` = `abi.encode(bytes32 actorId, ActorConfig, bytes)`;
                     // the new actor's authenticator is the right-aligned address
@@ -1926,19 +1930,27 @@ where
                     if Self::authenticator_out_of_range(&authenticator) {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
+                    B256::from_slice(&change.payload[..32])
                 }
                 ChangeType::RevokeActor => {
                     if change.payload.len() != 32 {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
+                    B256::from_slice(&change.payload[..32])
                 }
-                ChangeType::IncrementLocalEpoch | ChangeType::Lock | ChangeType::Unlock => {
+                ChangeType::IncrementLocalEpoch => {
+                    if !change.payload.is_empty() {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
+                    // Names no actor; skip the target-dedup.
+                    continue;
+                }
+                ChangeType::Lock | ChangeType::Unlock => {
                     return Err(InvalidTransactionError::TxTypeNotSupported.into());
                 }
-            }
-            // Every op payload leads with its 32-byte target `actorId`; reject
-            // duplicate targets in the same batch.
-            let actor_id = B256::from_slice(&change.payload[..32]);
+            };
+            // Authority ops name a 32-byte target `actorId`; reject duplicate
+            // targets in the same batch.
             if !seen.insert(actor_id) {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
@@ -2882,12 +2894,52 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_config_change_with_env_op() {
-        // Environment ops (IncrementLocalEpoch / Lock / Unlock) are not yet
-        // enshrined in the apply path, so a batch carrying one is rejected.
+    fn accepts_eip8130_config_change_with_increment_local_epoch() {
+        // IncrementLocalEpoch carries an empty payload and names no actor; it
+        // passes the structural walk on either channel.
         let cfg = SignedAccountChanges {
             changes: vec![SignedChange {
                 change_type: ChangeType::IncrementLocalEpoch,
+                payload: Bytes::new(),
+            }],
+            ..make_valid_config_change()
+        };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_config_change_with_nonempty_increment_local_epoch() {
+        // IncrementLocalEpoch must carry an empty payload.
+        let cfg = SignedAccountChanges {
+            changes: vec![SignedChange {
+                change_type: ChangeType::IncrementLocalEpoch,
+                payload: Bytes::from_static(&[0xaa]),
+            }],
+            ..make_valid_config_change()
+        };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn rejects_eip8130_config_change_with_lock_op() {
+        // Lock / Unlock apply handlers are not yet enshrined, so a batch carrying
+        // one is rejected structurally.
+        let cfg = SignedAccountChanges {
+            changes: vec![SignedChange {
+                change_type: ChangeType::Lock,
                 payload: Bytes::new(),
             }],
             ..make_valid_config_change()

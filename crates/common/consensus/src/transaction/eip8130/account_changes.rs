@@ -126,9 +126,10 @@ impl InitialActor {
 /// Mirrors the finalized `Keystore.ChangeType` enum. Authority ops
 /// ([`Self::AuthorizeActor`], [`Self::RevokeActor`]) mutate who can act;
 /// environment ops ([`Self::IncrementLocalEpoch`], [`Self::Lock`],
-/// [`Self::Unlock`]) mutate the rules ops are checked against and are valid only
-/// on the [`AccountChangeChannel::Local`] channel (`Lock`/`Unlock` must also be
-/// the batch's only op).
+/// [`Self::Unlock`]) mutate the rules ops are checked against.
+/// [`Self::IncrementLocalEpoch`] is valid on either channel (a Multichain batch
+/// may bump the local epoch); [`Self::Lock`]/[`Self::Unlock`] are valid only on
+/// the [`AccountChangeChannel::Local`] channel and must be the batch's only op.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -137,7 +138,7 @@ pub enum ChangeType {
     AuthorizeActor,
     /// Revoke an actor. Payload: `abi.encode(actorId)`.
     RevokeActor,
-    /// Increment the local epoch (Local only; empty payload).
+    /// Increment the local epoch (either channel; empty payload).
     IncrementLocalEpoch,
     /// Lock the account (Local only; standalone; payload: `abi.encode(uint16 unlockDelay)`).
     Lock,
