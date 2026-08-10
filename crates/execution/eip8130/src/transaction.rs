@@ -721,7 +721,7 @@ mod tests {
         let signer_addr = addr(&k);
         let actor_id_k = B256::from_slice(&{
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(signer_addr.as_slice());
+            id[12..].copy_from_slice(signer_addr.as_slice());
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_k, K1)];
@@ -776,7 +776,7 @@ mod tests {
         let signer_addr = addr(&k);
         let actor_id_k = B256::from_slice(&{
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(signer_addr.as_slice());
+            id[12..].copy_from_slice(signer_addr.as_slice());
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_k, K1)];
@@ -907,7 +907,7 @@ mod tests {
         let signer_addr = addr(signer);
         let actor_id_val = B256::from_slice(&{
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(signer_addr.as_slice());
+            id[12..].copy_from_slice(signer_addr.as_slice());
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
@@ -979,7 +979,7 @@ mod tests {
         let signer_addr = addr(&k);
         let actor_id_val = B256::from_slice(&{
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(signer_addr.as_slice());
+            id[12..].copy_from_slice(signer_addr.as_slice());
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
@@ -1040,7 +1040,7 @@ mod tests {
         let attacker_addr = addr(&attacker);
         let actor_id_val = B256::from_slice(&{
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(attacker_addr.as_slice());
+            id[12..].copy_from_slice(attacker_addr.as_slice());
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
@@ -1094,7 +1094,7 @@ mod tests {
         let signer_addr = addr(&k);
         let actor_id_val = B256::from_slice(&{
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(signer_addr.as_slice());
+            id[12..].copy_from_slice(signer_addr.as_slice());
             id
         });
         let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];

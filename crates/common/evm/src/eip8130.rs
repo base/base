@@ -2789,7 +2789,7 @@ mod tests {
         let owner = eoa_address(key);
         let actor_id = {
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(owner.as_slice());
+            id[12..].copy_from_slice(owner.as_slice());
             B256::from_slice(&id)
         };
         let initial_actors =

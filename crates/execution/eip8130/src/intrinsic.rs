@@ -1062,7 +1062,7 @@ mod tests {
         // actor_config slot empty), each empty slot is repriced from a reset to a
         // cold zero-to-zero no-op.
         let mut bytes = [0u8; 32];
-        bytes[..20].copy_from_slice(ACCOUNT.as_slice());
+        bytes[12..].copy_from_slice(ACCOUNT.as_slice());
         let self_id = alloy_primitives::B256::from(bytes);
         let cc = || SignedAccountChanges {
             channel: AccountChangeChannel::Multichain,
@@ -1108,7 +1108,7 @@ mod tests {
     )]
     fn excess_revoke_discount_slots_trips_debug_assertion() {
         let mut bytes = [0u8; 32];
-        bytes[..20].copy_from_slice(ACCOUNT.as_slice());
+        bytes[12..].copy_from_slice(ACCOUNT.as_slice());
         let self_id = alloy_primitives::B256::from(bytes);
         let cc = SignedAccountChanges {
             channel: AccountChangeChannel::Multichain,
@@ -1147,7 +1147,7 @@ mod tests {
         // same as a non-self change — there is no separate dual-home bump (an
         // earlier over-conservative addition that double-charged account_state).
         let mut bytes = [0u8; 32];
-        bytes[..20].copy_from_slice(ACCOUNT.as_slice());
+        bytes[12..].copy_from_slice(ACCOUNT.as_slice());
         let self_id = alloy_primitives::B256::from(bytes);
         let other_id = alloy_primitives::B256::repeat_byte(0x07);
 
