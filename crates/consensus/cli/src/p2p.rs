@@ -488,8 +488,9 @@ impl P2PArgs {
             // Every error here is `RpcError<TransportErrorKind>` (always transport-class) —
             // no `.when()` filter needed, retry unconditionally on `Err`.
             //
-            // Each closure below clones the (cheap, `Clone`-derived) provider/inner handle
-            // *inside* the sync closure body, before entering the `async move` block: a
+            // Each closure below clones the provider/inner handle *inside* the sync closure
+            // body, before entering the `async move` block. Cloning `AlloyChainProvider`
+            // also clones its LRU caches, but they are empty in this startup-only path. A
             // closure whose returned future instead borrowed `provider` across `.await`
             // could only ever be called once (`FnOnce`), since the borrow would need to
             // outlive individual invocations to satisfy `FnMut`. Giving each attempt's
@@ -1223,7 +1224,8 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(!err.to_string().is_empty());
+        let err = err.to_string();
+        assert!(err.contains("502"), "unexpected error: {err}");
         mock.assert_calls_async(2).await;
     }
 
