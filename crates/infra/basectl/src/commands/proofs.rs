@@ -432,7 +432,7 @@ async fn run_status(config: MonitoringConfig, args: ProofsStatusArgs) -> Result<
     let endpoint = resolve_prover_rpc(&config, prover_rpc)?;
     info!(
         network = %config.name,
-        prover_rpc = %endpoint,
+        prover_rpc = %display_rpc_url(&endpoint),
         session_id = %session_id,
         json,
         raw,
@@ -462,7 +462,7 @@ async fn run_list(config: MonitoringConfig, args: ProofsListArgs) -> Result<Comm
     let status_filter = status.map(ProofStatus::from);
     info!(
         network = %config.name,
-        prover_rpc = %endpoint,
+        prover_rpc = %display_rpc_url(&endpoint),
         status_filter = ?status_filter,
         offset,
         limit,
@@ -496,7 +496,7 @@ async fn run_games(config: MonitoringConfig, args: ProofsGamesArgs) -> Result<Co
     let l1_rpc = l1_rpc.unwrap_or_else(|| config.l1_rpc.clone());
     info!(
         network = %config.name,
-        l1_rpc = %l1_rpc,
+        l1_rpc = %display_rpc_url(&l1_rpc),
         factory = %factory,
         game = ?game,
         limit,
@@ -564,10 +564,11 @@ async fn run_propose(config: MonitoringConfig, args: ProofsProposeArgs) -> Resul
         intermediate_root_interval,
     )?;
     let prove_request = request.to_prove_request(&config.name);
+    let prover_rpc_display = display_rpc_url(&endpoint);
     info!(
         network = %config.name,
-        prover_rpc = %endpoint,
-        l1_rpc = %l1_rpc,
+        prover_rpc = %prover_rpc_display,
+        l1_rpc = %display_rpc_url(&l1_rpc),
         game = %game,
         prover_address = %prover_address,
         pre_state_block = request.pre_state_block,
@@ -590,7 +591,7 @@ async fn run_propose(config: MonitoringConfig, args: ProofsProposeArgs) -> Resul
         "Submit PLONK proposal proof request for game {game} covering blocks \
          {first_block}..={end_block} ({num_blocks} block(s), pre-state block {}) \
          bound to prover address {prover_address} via the {zk_backend} backend \
-         to {endpoint}?{paid_warning} [y/N] ",
+         to {prover_rpc_display}?{paid_warning} [y/N] ",
         request.pre_state_block
     );
     if !Confirm::prompt_or_abort(&prompt, yes)? {
@@ -623,7 +624,7 @@ async fn run_propose(config: MonitoringConfig, args: ProofsProposeArgs) -> Resul
     print_propose_outcome(&outcome, json)?;
     info!(
         network = %config.name,
-        prover_rpc = %endpoint,
+        prover_rpc = %prover_rpc_display,
         session_id = %accepted_session_id,
         status = %ProofOutputStatus::from(response.status),
         "proofs propose wait completed"
@@ -663,10 +664,12 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
         session_id,
         intermediate_root_interval,
     )?;
+    let l1_rpc_display = display_rpc_url(&l1_rpc);
+    let prover_rpc_display = display_rpc_url(&endpoint);
     info!(
         network = %config.name,
-        prover_rpc = %endpoint,
-        l1_rpc = %l1_rpc,
+        prover_rpc = %prover_rpc_display,
+        l1_rpc = %l1_rpc_display,
         game = %game,
         sender = %sender,
         session_id = %session_id,
@@ -679,7 +682,7 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
     let prompt = format!(
         "Fetch the proposal proof for session {session_id} and submit \
          verifyProposalProof to game {game} covering blocks \
-         {first_block}..={} ({} block(s)) from wallet {sender} via {l1_rpc}? \
+         {first_block}..={} ({} block(s)) from wallet {sender} via {l1_rpc_display}? \
          The submission sends an L1 transaction that costs gas. [y/N] ",
         details.target_block, details.block_interval
     );
@@ -713,8 +716,8 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
 
     let outcome = ProofsSubmitJson {
         network: config.name.clone(),
-        l1_rpc: l1_rpc.to_string(),
-        prover_rpc: endpoint.to_string(),
+        l1_rpc: l1_rpc_display,
+        prover_rpc: prover_rpc_display,
         session_id,
         creation_tx: None,
         game,
@@ -782,10 +785,12 @@ async fn run_finalize(
         intermediate_root_interval,
     )?;
     let prove_request = request.to_prove_request(&config.name);
+    let l1_rpc_display = display_rpc_url(&l1_rpc);
+    let prover_rpc_display = display_rpc_url(&endpoint);
     info!(
         network = %config.name,
-        prover_rpc = %endpoint,
-        l1_rpc = %l1_rpc,
+        prover_rpc = %prover_rpc_display,
+        l1_rpc = %l1_rpc_display,
         creation_tx = ?creation_tx,
         game = %game,
         sender = %sender,
@@ -827,8 +832,8 @@ async fn run_finalize(
     let prompt = format!(
         "Finalize game {game} covering blocks {first_block}..={end_block} \
          ({num_blocks} block(s)): request a PLONK proposal \
-         proof via the {zk_backend} backend at {endpoint}, wait for it to complete, then \
-         submit verifyProposalProof from wallet {sender} via {l1_rpc}?{paid_warning}{retry_warning} \
+         proof via the {zk_backend} backend at {prover_rpc_display}, wait for it to complete, then \
+         submit verifyProposalProof from wallet {sender} via {l1_rpc_display}?{paid_warning}{retry_warning} \
          The final step sends an L1 transaction that costs gas. [y/N] "
     );
     if !Confirm::prompt_or_abort(&prompt, yes)? {
@@ -881,8 +886,8 @@ async fn run_finalize(
 
     let outcome = ProofsSubmitJson {
         network: config.name.clone(),
-        l1_rpc: l1_rpc.to_string(),
-        prover_rpc: endpoint.to_string(),
+        l1_rpc: l1_rpc_display,
+        prover_rpc: prover_rpc_display,
         session_id,
         creation_tx,
         game,
@@ -912,6 +917,11 @@ fn resolve_factory(
     flag.or_else(|| config.proofs.as_ref().map(|proofs| proofs.dispute_game_factory)).ok_or_else(
         || ProofsCommandError::MissingDisputeGameFactory { config_name: config.name.clone() },
     )
+}
+
+/// Origin-only URL for output and logs — API keys in the path or userinfo must not leak.
+fn display_rpc_url(url: &Url) -> String {
+    url.origin().ascii_serialization()
 }
 
 /// Proof request status reported by `basectl proofs` machine-readable and pretty output.
@@ -975,7 +985,7 @@ impl From<ProofStatus> for ProofOutputStatus {
 pub struct ProofsProposeJson {
     /// Selected network name.
     pub network: String,
-    /// Prover-service RPC endpoint.
+    /// Prover-service RPC endpoint (origin only).
     pub prover_rpc: String,
     /// Prover-service session identifier.
     pub session_id: String,
@@ -1010,7 +1020,7 @@ impl ProofsProposeJson {
     ) -> Self {
         Self {
             network: network.to_string(),
-            prover_rpc: prover_rpc.to_string(),
+            prover_rpc: display_rpc_url(prover_rpc),
             session_id: session_id.to_string(),
             game: request.game,
             prover_address: request.prover_address,
@@ -1047,9 +1057,9 @@ impl ProofsProposeJson {
 pub struct ProofsSubmitJson {
     /// Selected network name.
     pub network: String,
-    /// L1 RPC endpoint the transaction was sent through.
+    /// L1 RPC endpoint the transaction was sent through (origin only).
     pub l1_rpc: String,
-    /// Prover-service RPC endpoint.
+    /// Prover-service RPC endpoint (origin only).
     pub prover_rpc: String,
     /// Prover-service session identifier.
     pub session_id: String,
@@ -1085,7 +1095,7 @@ pub struct ProofsSubmitJson {
 pub struct ProofsStatusJson {
     /// Selected network name.
     pub network: String,
-    /// Prover-service RPC endpoint.
+    /// Prover-service RPC endpoint (origin only).
     pub prover_rpc: String,
     /// Prover-service session identifier.
     pub session_id: String,
@@ -1109,7 +1119,7 @@ impl ProofsStatusJson {
     ) -> Self {
         Self {
             network: network.to_string(),
-            prover_rpc: prover_rpc.to_string(),
+            prover_rpc: display_rpc_url(prover_rpc),
             session_id: session_id.to_string(),
             status: response.status.into(),
             error_message: response.error_message.clone(),
@@ -1222,7 +1232,7 @@ impl ProofResultJson {
 pub struct ProofsListJson {
     /// Selected network name.
     pub network: String,
-    /// Prover-service RPC endpoint.
+    /// Prover-service RPC endpoint (origin only).
     pub prover_rpc: String,
     /// Number of matching rows skipped by the request.
     pub offset: u64,
@@ -1250,7 +1260,7 @@ impl ProofsListJson {
     ) -> Self {
         Self {
             network: network.to_string(),
-            prover_rpc: prover_rpc.to_string(),
+            prover_rpc: display_rpc_url(prover_rpc),
             offset,
             limit,
             status_filter: status_filter.map(ProofOutputStatus::from),
@@ -1339,7 +1349,7 @@ fn format_expected_resolution(timestamp: u64) -> Option<String> {
 pub struct GamesListJson {
     /// Selected network name.
     pub network: String,
-    /// L1 RPC endpoint the games were read from.
+    /// L1 RPC endpoint the games were read from (origin only).
     pub l1_rpc: String,
     /// `DisputeGameFactory` address the games were listed from.
     pub factory: Address,
@@ -1364,7 +1374,7 @@ impl GamesListJson {
     ) -> Self {
         Self {
             network: network.to_string(),
-            l1_rpc: l1_rpc.to_string(),
+            l1_rpc: display_rpc_url(l1_rpc),
             factory,
             total_games,
             search_truncated,
@@ -1425,7 +1435,7 @@ impl GameSummaryJson {
 pub struct GameDetailsJson {
     /// Selected network name.
     pub network: String,
-    /// L1 RPC endpoint the game was read from.
+    /// L1 RPC endpoint the game was read from (origin only).
     pub l1_rpc: String,
     /// `DisputeGameFactory` address the game was created through.
     pub factory: Address,
@@ -1472,7 +1482,7 @@ impl GameDetailsJson {
     fn from_details(network: &str, l1_rpc: &Url, factory: Address, details: &GameDetails) -> Self {
         Self {
             network: network.to_string(),
-            l1_rpc: l1_rpc.to_string(),
+            l1_rpc: display_rpc_url(l1_rpc),
             factory,
             address: details.address,
             status: game_status_label(details.status),
@@ -1741,9 +1751,9 @@ mod tests {
 
     use super::{
         FinalizeTarget, GameDetailsJson, GamesListJson, ProofResultJson, ProofsListJson,
-        ProofsProposeJson, ProofsStatusJson, ProofsSubmitJson, print_game_details_pretty_to,
-        print_games_list_pretty_to, print_list_pretty_to, print_propose_pretty_to,
-        print_status_pretty_to, print_submit_pretty_to,
+        ProofsProposeJson, ProofsStatusJson, ProofsSubmitJson, display_rpc_url,
+        print_game_details_pretty_to, print_games_list_pretty_to, print_list_pretty_to,
+        print_propose_pretty_to, print_status_pretty_to, print_submit_pretty_to,
     };
     use crate::{
         EXPECTED_RESOLUTION_NEVER, GameDetails, GameStatus, GameSummary, ProofProposeRequest,
@@ -2302,5 +2312,22 @@ mod tests {
         let rendered = String::from_utf8(output).unwrap();
 
         assert!(rendered.contains("never (no proofs verified)"));
+    }
+
+    #[test]
+    fn display_rpc_url_strips_path_and_userinfo() {
+        let url = Url::parse("https://user:secret@l1.example/v1/api-key-123?q=1").unwrap();
+
+        assert_eq!(display_rpc_url(&url), "https://l1.example");
+    }
+
+    #[test]
+    fn game_details_json_redacts_l1_rpc_credentials() {
+        let factory = Address::repeat_byte(0xFF);
+        let l1_rpc = Url::parse("https://user:secret@l1.example/v1/api-key-123").unwrap();
+        let details =
+            GameDetailsJson::from_details("mainnet", &l1_rpc, factory, &sample_game_details());
+
+        assert_eq!(details.l1_rpc, "https://l1.example");
     }
 }
