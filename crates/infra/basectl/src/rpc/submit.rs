@@ -1,6 +1,6 @@
 //! On-chain proposal-proof submission client for `basectl proofs submit`.
 
-use std::{env, fmt, fs, path::Path, sync::Arc};
+use std::{env, fmt, fs, path::Path, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
@@ -10,9 +10,18 @@ use base_prover_service_protocol::{GetProofResponse, ProofResult, ProofStatus};
 use base_tx_manager::{
     NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig, TxManagerError,
 };
+use tokio::time::timeout;
 use url::Url;
 
 use crate::errors::ProofsCommandError;
+
+/// Upper bound for the initial L1 chain-ID request when connecting a
+/// submitter, so a stalled endpoint cannot hang a one-shot command.
+const CHAIN_ID_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Upper bound for the full `verifyProposalProof` send loop, fee bumps
+/// included, so a post-publication RPC outage cannot hang the command.
+const TX_SEND_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Parsed L1 submitter private key for `basectl proofs submit`.
 ///
@@ -146,17 +155,30 @@ impl ProposalProofSubmitter {
     /// Connects to `l1_rpc` and builds a transaction manager for `key`.
     ///
     /// Fetches the chain ID from the endpoint and waits for one confirmation
-    /// when sending, which is enough for a one-shot CLI submission.
+    /// when sending, which is enough for a one-shot CLI submission. Both the
+    /// chain-ID request and the overall send loop are time-bounded so a
+    /// stalled RPC cannot hang a one-shot command indefinitely.
     pub async fn connect(l1_rpc: &Url, key: SubmitterKey) -> Result<Self, ProofsCommandError> {
         let provider = RootProvider::new_http(l1_rpc.clone());
-        let chain_id =
-            provider.get_chain_id().await.map_err(|error| ProofsCommandError::BuildTxManager {
+        let chain_id = timeout(CHAIN_ID_TIMEOUT, provider.get_chain_id())
+            .await
+            .map_err(|_| ProofsCommandError::BuildTxManager {
+                endpoint: l1_rpc.origin().ascii_serialization(),
+                source: TxManagerError::Rpc(format!(
+                    "fetching L1 chain ID timed out after {CHAIN_ID_TIMEOUT:?}"
+                )),
+            })?
+            .map_err(|error| ProofsCommandError::BuildTxManager {
                 // Origin only: operator L1 URLs commonly embed API keys in
                 // the path or userinfo, which must not leak into error output.
                 endpoint: l1_rpc.origin().ascii_serialization(),
                 source: TxManagerError::Rpc(format!("fetching L1 chain ID: {error}")),
             })?;
-        let config = TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() };
+        let config = TxManagerConfig {
+            num_confirmations: 1,
+            tx_send_timeout: TX_SEND_TIMEOUT,
+            ..TxManagerConfig::default()
+        };
         let tx_manager = SimpleTxManager::new(
             provider,
             SignerConfig::local(key.signer),

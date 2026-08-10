@@ -1,6 +1,7 @@
 //! Implementation of the `basectl proofs` command group.
 
 use std::{
+    collections::BTreeMap,
     fmt,
     io::{self, Write},
     path::PathBuf,
@@ -11,8 +12,8 @@ use std::{
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
 use base_prover_service_protocol::{
-    GetProofResponse, ListProofsRequest, ProofResult, ProofStatus, ProofSummary, ProofType,
-    TeeKind, ZkBackend, ZkVm,
+    ExecutionStats, GetProofResponse, ListProofsRequest, ProofResult, ProofStatus, ProofSummary,
+    ProofType, TeeKind, ZkBackend, ZkVm,
 };
 use clap::{Args, Subcommand, ValueEnum};
 use serde::{Serialize, Serializer};
@@ -290,6 +291,13 @@ pub struct ProofsFinalizeArgs {
     /// duplicate proof.
     #[arg(long = "session-id", value_name = "ID")]
     pub session_id: Option<String>,
+    /// Retry a failed proof session with a new proof request.
+    ///
+    /// Without this flag, finalize aborts when the deterministic session ID
+    /// already exists in a failed state, so re-running cannot silently
+    /// purchase another proof.
+    #[arg(long)]
+    pub retry_failed: bool,
     /// Intermediate output root interval (checkpoint stride).
     ///
     /// Only needed when the game type has no registered implementation to
@@ -404,6 +412,19 @@ fn resolve_prover_rpc(
 ) -> Result<Url, ProofsCommandError> {
     flag.or_else(|| config.prover_rpc.clone())
         .ok_or_else(|| ProofsCommandError::MissingProverRpc { config_name: config.name.clone() })
+}
+
+/// Fetches the current state of a proof session, treating an unknown
+/// session as absent.
+async fn existing_proof_session(
+    client: &ProofsClient,
+    session_id: &str,
+) -> Result<Option<GetProofResponse>, ProofsCommandError> {
+    match client.proof_status(session_id).await {
+        Ok(response) => Ok(Some(response)),
+        Err(ProofsCommandError::Rpc { ref source, .. }) if source.is_not_found() => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 async fn run_status(config: MonitoringConfig, args: ProofsStatusArgs) -> Result<CommandOutcome> {
@@ -724,6 +745,7 @@ async fn run_finalize(
         private_key_file,
         zk_backend,
         session_id,
+        retry_failed,
         intermediate_root_interval,
         prover_rpc,
         factory,
@@ -774,6 +796,21 @@ async fn run_finalize(
         "running proofs finalize command"
     );
 
+    let session_id = prove_request.proof.session_id.clone();
+    let client = ProofsClient::connect(&endpoint)?.with_max_wait(PROOF_MAX_WAIT);
+    let existing = existing_proof_session(&client, &session_id).await?;
+    let retrying_failed =
+        existing.as_ref().is_some_and(|response| response.status == ProofStatus::Failed);
+    if retrying_failed && !retry_failed {
+        return Err(ProofsCommandError::FailedSessionRetry {
+            session_id: session_id.clone(),
+            message: existing
+                .and_then(|response| response.error_message)
+                .unwrap_or_else(|| "unknown error".to_string()),
+        }
+        .into());
+    }
+
     let first_block = request.pre_state_block.saturating_add(1);
     let end_block = details.target_block;
     let num_blocks = request.num_blocks;
@@ -782,23 +819,43 @@ async fn run_finalize(
     } else {
         ""
     };
+    let retry_warning = if retrying_failed {
+        " This retries the failed proof session with a NEW proof request."
+    } else {
+        ""
+    };
     let prompt = format!(
         "Finalize game {game} covering blocks {first_block}..={end_block} \
          ({num_blocks} block(s)): request a PLONK proposal \
          proof via the {zk_backend} backend at {endpoint}, wait for it to complete, then \
-         submit verifyProposalProof from wallet {sender} via {l1_rpc}?{paid_warning} \
+         submit verifyProposalProof from wallet {sender} via {l1_rpc}?{paid_warning}{retry_warning} \
          The final step sends an L1 transaction that costs gas. [y/N] "
     );
     if !Confirm::prompt_or_abort(&prompt, yes)? {
         return Ok(CommandOutcome::Success);
     }
 
-    let client = ProofsClient::connect(&endpoint)?.with_max_wait(PROOF_MAX_WAIT);
+    // The confirmation prompt can sit for a while; re-check the session so a
+    // proof that failed in the meantime cannot be silently requeued as a new
+    // paid request past the --retry-failed gate.
+    if !retry_failed {
+        let recheck = existing_proof_session(&client, &session_id).await?;
+        if let Some(response) = recheck
+            && response.status == ProofStatus::Failed
+        {
+            return Err(ProofsCommandError::FailedSessionRetry {
+                session_id: session_id.clone(),
+                message: response.error_message.unwrap_or_else(|| "unknown error".to_string()),
+            }
+            .into());
+        }
+    }
+
     // The confirmation prompt can sit for a while; re-read the game so we
     // refuse to pay for a proof when it resolved or gained a ZK proof in the
     // meantime.
     games_client.ensure_accepts_zk_proof(game).await?;
-    let session_id = client.submit(prove_request).await?;
+    client.submit(prove_request).await?;
     info!(
         session_id = %session_id,
         "proof request accepted; waiting for completion (re-run finalize to resume on timeout)"
@@ -1061,6 +1118,37 @@ impl ProofsStatusJson {
     }
 }
 
+/// Humanized execution statistics for a dry-run ZK proof result.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionStatsJson {
+    /// Total RISC-V instruction cycles reported by SP1.
+    pub total_instruction_cycles: u64,
+    /// Total SP1 gas reported by SP1.
+    pub total_sp1_gas: u64,
+    /// Per-section cycle tracker values reported by the range program,
+    /// sorted by section name for deterministic output.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub cycle_tracker: BTreeMap<String, u64>,
+    /// Time spent generating the witness, in milliseconds.
+    pub witness_generation_ms: u64,
+    /// Time spent executing the SP1 range program, in milliseconds.
+    pub execution_ms: u64,
+}
+
+impl ExecutionStatsJson {
+    /// Builds humanized execution statistics from prover-service stats.
+    pub fn from_stats(stats: &ExecutionStats) -> Self {
+        Self {
+            total_instruction_cycles: stats.total_instruction_cycles,
+            total_sp1_gas: stats.total_sp1_gas,
+            cycle_tracker: stats.cycle_tracker.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+            witness_generation_ms: stats.witness_generation_ms,
+            execution_ms: stats.execution_ms,
+        }
+    }
+}
+
 /// Humanized summary of a proof result payload.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1076,6 +1164,9 @@ pub struct ProofResultJson {
     /// Encoded proof payload size in bytes, when applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proof_bytes: Option<usize>,
+    /// Local execution statistics, present for dry-run ZK results.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_stats: Option<ExecutionStatsJson>,
 }
 
 impl ProofResultJson {
@@ -1087,18 +1178,25 @@ impl ProofResultJson {
                 zk_vm: Some(Self::zk_vm_label(zk.zk_vm)),
                 tee_kind: None,
                 proof_bytes: Some(zk.proof.len()),
+                execution_stats: zk.execution_stats.as_ref().map(ExecutionStatsJson::from_stats),
             },
             ProofResult::SnarkPlonk(plonk) => Self {
                 proof_type: "snark_plonk",
                 zk_vm: Some(Self::zk_vm_label(plonk.proof.zk_vm)),
                 tee_kind: None,
                 proof_bytes: Some(plonk.proof.proof.len()),
+                execution_stats: plonk
+                    .proof
+                    .execution_stats
+                    .as_ref()
+                    .map(ExecutionStatsJson::from_stats),
             },
             ProofResult::Tee(tee) => Self {
                 proof_type: "tee",
                 zk_vm: None,
                 tee_kind: Some(Self::tee_kind_label(tee.tee_kind)),
                 proof_bytes: None,
+                execution_stats: None,
             },
         }
     }
@@ -1584,6 +1682,12 @@ fn append_result_rows(table: &mut KeyValueTable, result: &ProofResultJson) {
     if let Some(proof_bytes) = result.proof_bytes {
         table.row("proof size", format!("{proof_bytes}B"));
     }
+    if let Some(stats) = &result.execution_stats {
+        table.row("total cycles", stats.total_instruction_cycles.to_string());
+        table.row("sp1 gas", stats.total_sp1_gas.to_string());
+        table.row("witness time", format!("{}ms", stats.witness_generation_ms));
+        table.row("execution time", format!("{}ms", stats.execution_ms));
+    }
 }
 
 fn print_list_pretty_to<W: Write>(writer: &mut W, list: &ProofsListJson) -> Result<()> {
@@ -1626,10 +1730,12 @@ fn print_list_pretty_to<W: Write>(writer: &mut W, list: &ProofsListJson) -> Resu
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use alloy_primitives::{Address, B256};
     use base_prover_service_protocol::{
-        GetProofResponse, ProofResult, ProofStatus, ProofSummary, ProofType, SnarkPlonkProofResult,
-        ZkBackend, ZkProofResult, ZkVm,
+        ExecutionStats, GetProofResponse, ProofResult, ProofStatus, ProofSummary, ProofType,
+        SnarkPlonkProofResult, ZkBackend, ZkProofResult, ZkVm,
     };
     use url::Url;
 
@@ -1919,6 +2025,40 @@ mod tests {
 
         assert!(value.get("creationTx").is_none());
         assert!(!String::from_utf8(output).unwrap().contains("creation tx"));
+    }
+
+    #[test]
+    fn status_pretty_output_includes_execution_stats() {
+        let response = GetProofResponse {
+            status: ProofStatus::Succeeded,
+            error_message: None,
+            result: Some(ProofResult::Compressed(ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: vec![0xab, 0xcd].into(),
+                execution_stats: Some(ExecutionStats {
+                    total_instruction_cycles: 12_345,
+                    total_sp1_gas: 67_890,
+                    cycle_tracker: HashMap::from([("execution".to_string(), 100u64)]),
+                    witness_generation_ms: 5,
+                    execution_ms: 7,
+                }),
+            })),
+        };
+        let status =
+            ProofsStatusJson::from_response("mainnet", &prover_rpc(), "session-stats", &response);
+        let mut output = Vec::new();
+
+        print_status_pretty_to(&mut output, &status).unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+
+        assert!(rendered.contains("total cycles"));
+        assert!(rendered.contains("12345"));
+        assert!(rendered.contains("sp1 gas"));
+        assert!(rendered.contains("67890"));
+
+        let value = serde_json::to_value(&status).unwrap();
+        assert_eq!(value["result"]["executionStats"]["totalInstructionCycles"], 12_345);
+        assert_eq!(value["result"]["executionStats"]["cycleTracker"]["execution"], 100);
     }
 
     #[test]

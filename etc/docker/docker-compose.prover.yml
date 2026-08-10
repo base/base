@@ -6,7 +6,9 @@
 #
 # Required environment (validated by `just prover up <network>`):
 #   PROVER_NETWORK, L1_NODE_ADDRESS, L1_BEACON_ADDRESS, L2_NODE_ADDRESS,
-#   BASE_CONSENSUS_ADDRESS, NETWORK_PRIVATE_KEY
+#   BASE_CONSENSUS_ADDRESS
+# Optional: NETWORK_PRIVATE_KEY (enables the paid Succinct Network backend;
+# without it the stack runs dry-run only)
 #
 # Host-local RPCs must be addressed as http://host.docker.internal:<port>,
 # not localhost.

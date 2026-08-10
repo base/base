@@ -42,7 +42,8 @@ accepting an arbitrary range from the operator.
 ## Requester key setup
 
 Use a dedicated key for proving — do not reuse an operational or personal key.
-The worker reads it as a plaintext hex private key in `NETWORK_PRIVATE_KEY`
+The key is required only for the paid `network` backend; dry-run works without
+it. The worker reads it as a plaintext hex private key in `NETWORK_PRIVATE_KEY`
 (KMS-backed requesters are out of scope for this guide).
 
 Follow the official
@@ -97,7 +98,7 @@ remote in either case.
 
 ## Operator flow
 
-1. Export the endpoints and requester key:
+1. Export the endpoints and, for paid proving, the requester key:
 
    ```bash
    export L1_NODE_ADDRESS=https://your-l1-node.example
@@ -107,6 +108,9 @@ remote in either case.
    export NETWORK_PRIVATE_KEY=0x...
    ```
 
+   `NETWORK_PRIVATE_KEY` is only needed for the paid `network` backend; omit
+   it to run a dry-run-only stack.
+
 2. Build the reproducible SP1 ELFs if you have not already (paid network
    proving refuses to run against a stub-backed worker):
 
@@ -114,8 +118,8 @@ remote in either case.
    just succinct build-elfs
    ```
 
-3. Start a network-scoped stack. This validates the network label and all
-   five variables, checks the ELFs, builds the two images, and starts the three
+3. Start a network-scoped stack. This validates the network label and the four
+   RPC endpoints, checks the ELFs, builds the two images, and starts the three
    containers:
 
    ```bash
@@ -165,7 +169,10 @@ remote in either case.
    backend, submitting wallet, and L1 endpoint. Finalize requests the proof,
    waits up to 24 hours, and submits `verifyProposalProof` after completion.
    Re-running the same command resumes the deterministic prover-service
-   session instead of intentionally creating another paid request.
+   session instead of intentionally creating another paid request. If the
+   earlier session failed, finalize refuses to silently purchase another proof
+   and aborts; pass `--retry-failed` to explicitly retry with a new paid
+   request.
 
 Stop the stack with `just prover down sepolia`; Postgres data under
 `.zk-prover/sepolia/` survives, so sessions and proof results persist across

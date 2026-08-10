@@ -45,6 +45,13 @@ impl ContractError {
     }
 
     /// Returns whether a probe failed because the contract does not expose the called method.
+    ///
+    /// Only explicit unknown-selector errors and empty (`0x`) returns qualify:
+    /// those are the shapes produced by a contract that genuinely lacks the
+    /// method. Non-empty reverts and ABI decoding failures signal a real
+    /// contract or interface failure and must propagate to the caller, so a
+    /// probe failure cannot be cached as "unsupported" and silently hide
+    /// valid game types.
     pub fn is_missing_method(&self) -> bool {
         let Self::Call { source, .. } = self else {
             return false;
@@ -55,8 +62,7 @@ impl ContractError {
             alloy_contract::Error::UnknownFunction(_)
                 | alloy_contract::Error::UnknownSelector(_)
                 | alloy_contract::Error::ZeroData(_, _)
-                | alloy_contract::Error::AbiError(_)
-        ) || source.as_revert_data().is_some()
+        )
     }
 }
 
@@ -69,16 +75,58 @@ mod tests {
     use super::ContractError;
 
     #[test]
-    fn missing_method_classification_preserves_transport_and_validation_errors() {
-        let missing =
+    fn missing_method_detects_unknown_function() {
+        let err = ContractError::call(
+            "probe failed",
+            AlloyContractError::UnknownFunction("INTERMEDIATE_BLOCK_INTERVAL".to_string()),
+        );
+
+        assert!(err.is_missing_method());
+    }
+
+    #[test]
+    fn missing_method_detects_unknown_selector() {
+        let err = ContractError::call(
+            "probe failed",
+            AlloyContractError::UnknownSelector([0x12, 0x34, 0x56, 0x78].into()),
+        );
+
+        assert!(err.is_missing_method());
+    }
+
+    #[test]
+    fn missing_method_detects_zero_data_return() {
+        let err = ContractError::call(
+            "probe failed",
+            AlloyContractError::ZeroData(
+                "INTERMEDIATE_BLOCK_INTERVAL".to_string(),
+                SolTypesError::Overrun.into(),
+            ),
+        );
+
+        assert!(err.is_missing_method());
+    }
+
+    #[test]
+    fn missing_method_rejects_abi_decoding_failure() {
+        let err =
             ContractError::call("probe failed", AlloyContractError::from(SolTypesError::Overrun));
-        let transport = ContractError::call(
+
+        assert!(!err.is_missing_method());
+    }
+
+    #[test]
+    fn missing_method_rejects_transport_error() {
+        let err = ContractError::call(
             "probe failed",
             AlloyContractError::TransportError(TransportErrorKind::custom_str("offline")),
         );
 
-        assert!(missing.is_missing_method());
-        assert!(!transport.is_missing_method());
+        assert!(!err.is_missing_method());
+    }
+
+    #[test]
+    fn missing_method_rejects_validation_error() {
         assert!(!ContractError::validation("invalid value").is_missing_method());
     }
 }

@@ -10,6 +10,7 @@ pub use base_proof_contracts::GameStatus;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, ContractError,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient, decode_create_calldata,
+    encode_extra_data,
 };
 use futures::{StreamExt, lock::Mutex, stream, try_join};
 use url::Url;
@@ -75,9 +76,8 @@ pub struct GameDetails {
     pub target_block: u64,
     /// Number of L2 blocks the game covers.
     pub block_interval: u64,
-    /// Canonical `INTERMEDIATE_BLOCK_INTERVAL` read from the game type's
-    /// registered `AggregateVerifier` implementation; `None` when the game
-    /// type has no registered implementation to read it from.
+    /// Canonical `INTERMEDIATE_BLOCK_INTERVAL` read from the game proxy's
+    /// fixed implementation; `None` when the game does not expose it.
     pub intermediate_root_interval: Option<u64>,
     /// Number of intermediate output roots committed with the game.
     pub intermediate_root_count: usize,
@@ -274,11 +274,12 @@ impl GamesClient {
         &self,
         game_type: u32,
     ) -> Result<bool, ProofsCommandError> {
-        let mut aggregate_game_types = self.aggregate_game_types.lock().await;
-        if let Some(is_aggregate) = aggregate_game_types.get(&game_type) {
-            return Ok(*is_aggregate);
+        if let Some(&is_aggregate) = self.aggregate_game_types.lock().await.get(&game_type) {
+            return Ok(is_aggregate);
         }
-
+        // The lock is released while probing L1 so concurrent scans are not
+        // serialized behind one cache miss; a duplicate probe for the same game
+        // type is harmless because both insert the same value.
         let implementation =
             self.factory.game_impls(game_type).await.map_err(|error| self.contract_error(error))?;
         let is_aggregate = if implementation == Address::ZERO {
@@ -290,7 +291,7 @@ impl GamesClient {
                 Err(error) => return Err(self.contract_error(error)),
             }
         };
-        aggregate_game_types.insert(game_type, is_aggregate);
+        self.aggregate_game_types.lock().await.insert(game_type, is_aggregate);
         Ok(is_aggregate)
     }
 
@@ -321,6 +322,9 @@ impl GamesClient {
     }
 
     /// Fetches the detailed view of one game by its proxy address.
+    ///
+    /// The address is verified against the configured factory before returning
+    /// game parameters used for proving.
     pub async fn game_details(&self, address: Address) -> Result<GameDetails, ProofsCommandError> {
         let (
             status,
@@ -351,21 +355,33 @@ impl GamesClient {
         )
         .map_err(|error| self.contract_error(error))?;
 
-        // The canonical checkpoint stride lives on the game type's
-        // registered implementation, not in the game's committed data. An
-        // unregistered game type leaves the stride unknown.
-        let impl_address =
-            self.factory.game_impls(game_type).await.map_err(|error| self.contract_error(error))?;
-        let intermediate_root_interval = if impl_address == Address::ZERO {
-            None
-        } else {
-            Some(
-                self.verifier
-                    .read_intermediate_block_interval(impl_address)
-                    .await
-                    .map_err(|error| self.contract_error(error))?,
-            )
-        };
+        // Verify the address against the configured factory before trusting its
+        // committed range: a wrong-factory or arbitrary ABI-compatible contract
+        // must not drive paid proving or an unintended L1 submission.
+        let extra_data =
+            encode_extra_data(info.l2_block_number, info.parent_address, &intermediate_roots);
+        let registered = self
+            .factory
+            .games(game_type, info.root_claim, extra_data)
+            .await
+            .map_err(|error| self.contract_error(error))?;
+        if registered != address {
+            return Err(ProofsCommandError::GameNotFromFactory {
+                game: address,
+                factory: self.factory_address,
+            });
+        }
+
+        // The game proxy delegate-calls the implementation it was cloned from
+        // at creation, so this reads the stride the game was committed with.
+        // The factory's current `gameImpls` entry can be swapped by an
+        // implementation upgrade and must not be trusted for a live game.
+        let intermediate_root_interval =
+            match self.verifier.read_intermediate_block_interval(address).await {
+                Ok(interval) => Some(interval),
+                Err(error) if error.is_missing_method() => None,
+                Err(error) => return Err(self.contract_error(error)),
+            };
 
         let block_interval = info.l2_block_number.saturating_sub(starting_block);
         let intermediate_root_count = intermediate_roots.len();
@@ -449,7 +465,7 @@ impl GamesClient {
 mod tests {
     use std::collections::HashMap;
 
-    use alloy_primitives::{Address, Bytes, U256};
+    use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_provider::RootProvider;
     use alloy_rpc_client::RpcClient;
     use alloy_sol_types::SolValue;
@@ -476,6 +492,24 @@ mod tests {
 
     fn push_abi<T: SolValue>(asserter: &Asserter, value: &T) {
         asserter.push_success(&Bytes::from(value.abi_encode()));
+    }
+
+    /// Pushes the 14 RPC responses issued by `game_details`' initial `try_join!`.
+    fn push_game_details_reads(asserter: &Asserter) {
+        push_abi(asserter, &U256::from(0));
+        push_abi(asserter, &B256::repeat_byte(0x44));
+        push_abi(asserter, &U256::from(5000));
+        push_abi(asserter, &Address::repeat_byte(0x55));
+        push_abi(asserter, &U256::from(4000));
+        push_abi(asserter, &B256::repeat_byte(0x66));
+        push_abi(asserter, &Address::repeat_byte(0x77));
+        push_abi(asserter, &Address::ZERO);
+        push_abi(asserter, &U256::from(1));
+        push_abi(asserter, &1_700_000_000_u64);
+        push_abi(asserter, &u64::MAX);
+        push_abi(asserter, &U256::ZERO);
+        push_abi(asserter, &Bytes::from(B256::repeat_byte(0x77).to_vec()));
+        push_abi(asserter, &2_u32);
     }
 
     #[tokio::test]
@@ -533,5 +567,61 @@ mod tests {
 
         assert_eq!(summary.zk_prover, Address::ZERO);
         assert!(asserter.read_q().is_empty(), "known ZK prover should avoid a second RPC call");
+    }
+
+    #[tokio::test]
+    async fn game_details_rejects_game_not_registered_with_factory() {
+        let asserter = Asserter::new();
+        let client = mocked_client(asserter.clone());
+        let game = Address::repeat_byte(0xAA);
+        let factory = Address::repeat_byte(0xF0);
+
+        push_game_details_reads(&asserter);
+        push_abi(&asserter, &(Address::ZERO, 0_u64));
+
+        let error = client.game_details(game).await.unwrap_err();
+        assert!(matches!(
+            error,
+            ProofsCommandError::GameNotFromFactory { game: err_game, factory: err_factory }
+                if err_game == game && err_factory == factory
+        ));
+        assert!(asserter.read_q().is_empty(), "stride read should not run after factory rejection");
+    }
+
+    #[tokio::test]
+    async fn game_details_reads_stride_from_game_proxy_not_factory_registration() {
+        let asserter = Asserter::new();
+        let client = mocked_client(asserter.clone());
+        let game = Address::repeat_byte(0xAA);
+
+        push_game_details_reads(&asserter);
+        push_abi(&asserter, &(game, 0_u64));
+        push_abi(&asserter, &U256::from(100));
+
+        let details = client.game_details(game).await.unwrap();
+
+        assert_eq!(details.address, game);
+        assert_eq!(details.target_block, 5000);
+        assert_eq!(details.starting_block, 4000);
+        assert_eq!(details.block_interval, 1000);
+        assert_eq!(details.intermediate_root_interval, Some(100));
+        assert_eq!(details.intermediate_root_count, 1);
+        assert!(asserter.read_q().is_empty());
+    }
+
+    #[tokio::test]
+    async fn game_details_tolerates_game_without_interval_method() {
+        let asserter = Asserter::new();
+        let client = mocked_client(asserter.clone());
+        let game = Address::repeat_byte(0xAA);
+
+        push_game_details_reads(&asserter);
+        push_abi(&asserter, &(game, 0_u64));
+        asserter.push_success(&Bytes::new());
+
+        let details = client.game_details(game).await.unwrap();
+
+        assert_eq!(details.intermediate_root_interval, None);
+        assert!(asserter.read_q().is_empty());
     }
 }

@@ -62,9 +62,9 @@ impl ProofProposeRequest {
     /// Validates that the game can still accept a ZK proposal proof and takes
     /// the block range, L1 head, and checkpoint stride from the game so the
     /// proof journal matches what the contract reconstructs.
-    /// `intermediate_root_interval` supplies the stride when the game type
-    /// has no registered implementation to read it from; otherwise it must
-    /// match the canonical `INTERMEDIATE_BLOCK_INTERVAL`.
+    /// `intermediate_root_interval` supplies the stride when the game does
+    /// not expose `INTERMEDIATE_BLOCK_INTERVAL`; otherwise it must match the
+    /// game's committed value.
     pub fn for_game(
         details: &GameDetails,
         prover_address: Address,
@@ -152,8 +152,8 @@ impl ProofProposeRequest {
         let intermediate_root_interval =
             intermediate_root_interval.or(details.intermediate_root_interval).ok_or_else(|| {
                 not_provable(
-                    "the game type has no registered AggregateVerifier implementation to \
-                     read INTERMEDIATE_BLOCK_INTERVAL from; pass --intermediate-root-interval",
+                    "the game does not expose INTERMEDIATE_BLOCK_INTERVAL; \
+                     pass --intermediate-root-interval",
                 )
             })?;
         if intermediate_root_interval == 0

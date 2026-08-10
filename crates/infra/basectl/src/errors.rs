@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use alloy_signer_local::LocalSignerError;
 use alloy_transport::TransportError;
 use alloy_transport_http::reqwest;
@@ -239,6 +239,30 @@ pub enum ProofsCommandError {
         tx_hash: B256,
         /// Why the transaction does not resolve to a created game.
         reason: String,
+    },
+    /// The dispute game is not registered with the configured factory.
+    #[error(
+        "game {game} is not registered with the configured DisputeGameFactory at {factory}; \
+         check that --factory or proofs.dispute_game_factory matches the factory that created \
+         the game"
+    )]
+    GameNotFromFactory {
+        /// The dispute game proxy address supplied by the caller.
+        game: Address,
+        /// The configured `DisputeGameFactory` address.
+        factory: Address,
+    },
+    /// Re-running `proofs finalize` would requeue a failed proof session.
+    #[error(
+        "proof session {session_id} already exists and failed: {message}. \
+         Re-running requeues the proof request; pass --retry-failed to explicitly confirm \
+         the retry"
+    )]
+    FailedSessionRetry {
+        /// The failed proof session identifier.
+        session_id: String,
+        /// The prover-service failure message.
+        message: String,
     },
     /// The submitter private key could not be parsed.
     #[error("invalid submitter private key")]
