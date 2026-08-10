@@ -122,10 +122,6 @@ impl PolicyVersions {
     ///
     /// V1 is active from Beryl; V2 supersedes it from Cobalt.
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
-        // Ordered thresholds rather than per-variant arms: a fork newer than Cobalt must inherit the
-        // latest version (V2) until one supersedes it, and `BaseUpgrade` is `#[non_exhaustive]`, so
-        // an explicit-variant match would need a wildcard that would wrongly send future forks to
-        // `None`.
         match upgrade {
             u if u >= BaseUpgrade::Cobalt => Some(PolicyVersion::V2),
             u if u >= BaseUpgrade::Beryl => Some(PolicyVersion::V1),
