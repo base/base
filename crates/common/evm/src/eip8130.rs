@@ -243,7 +243,7 @@ impl Eip8130Executor {
             match Self::authorize_and_apply(ctx, &signed, &encoded, chain_id, now, base_fee) {
                 Ok(outcome) => outcome,
                 Err(err) => {
-                    Self::teardown_after_error(evm);
+                    Self::discard_transaction_state(evm);
                     return Err(err.into());
                 }
             };
@@ -253,7 +253,7 @@ impl Eip8130Executor {
         let prepay = match Self::prepay(ctx, &outcome, &encoded, spec) {
             Ok(prepay) => prepay,
             Err(err) => {
-                Self::teardown_after_error(evm);
+                Self::discard_transaction_state(evm);
                 return Err(err);
             }
         };
@@ -279,7 +279,7 @@ impl Eip8130Executor {
                         outcome.gas_limit,
                         outcome.gas_limit,
                     );
-                    Self::teardown_after_error(evm);
+                    Self::discard_transaction_state(evm);
                     return Err(err);
                 }
             };
@@ -303,7 +303,7 @@ impl Eip8130Executor {
                     outcome.gas_limit,
                     outcome.gas_limit,
                 );
-                Self::teardown_after_error(evm);
+                Self::discard_transaction_state(evm);
                 return Err(err);
             }
         };
@@ -422,7 +422,7 @@ impl Eip8130Executor {
             {
                 Ok(outcome) => outcome,
                 Err(err) => {
-                    Self::teardown_after_error(evm);
+                    Self::discard_transaction_state(evm);
                     return Err(err.into());
                 }
             };
@@ -482,7 +482,7 @@ impl Eip8130Executor {
                     outcome.gas_limit,
                     outcome.gas_limit,
                 );
-                Self::teardown_after_error(evm);
+                Self::discard_transaction_state(evm);
                 return Err(err);
             }
         };
@@ -504,7 +504,7 @@ impl Eip8130Executor {
                         outcome.gas_limit,
                         outcome.gas_limit,
                     );
-                    Self::teardown_after_error(evm);
+                    Self::discard_transaction_state(evm);
                     return Err(err);
                 }
             };
@@ -521,7 +521,7 @@ impl Eip8130Executor {
                 outcome.gas_limit,
                 gross,
             );
-            Self::teardown_after_error(evm);
+            Self::discard_transaction_state(evm);
             let result_gas = ResultGas::new_with_state_gas(gross, 0, 0, 0);
             return Ok(ExecutionResult::Revert {
                 gas: result_gas,
@@ -548,7 +548,7 @@ impl Eip8130Executor {
                     outcome.gas_limit,
                     outcome.gas_limit,
                 );
-                Self::teardown_after_error(evm);
+                Self::discard_transaction_state(evm);
                 return Err(err);
             }
         };
@@ -567,7 +567,7 @@ impl Eip8130Executor {
                     outcome.gas_limit,
                     outcome.gas_limit,
                 );
-                Self::teardown_after_error(evm);
+                Self::discard_transaction_state(evm);
                 return Err(err);
             }
         };
@@ -590,7 +590,7 @@ impl Eip8130Executor {
             outcome.gas_limit,
             estimate_gas,
         );
-        Self::teardown_after_error(evm);
+        Self::discard_transaction_state(evm);
         let result_gas = ResultGas::new_with_state_gas(estimate_gas, 0, 0, 0);
         if final_calls.reverted {
             Ok(ExecutionResult::Revert { gas: result_gas, logs, output: final_calls.output })
@@ -1205,8 +1205,9 @@ impl Eip8130Executor {
             // revm's `checkpoint_commit` merges the phase savepoint into its
             // parent without finalizing the journal entries, so a committed phase
             // is still rolled back if the transaction is ultimately discarded
-            // (see `teardown_after_error`) — e.g. when a subsequent phase surfaces a database
-            // error. Committed phases are only durable once `commit_tx` runs.
+            // (see `discard_transaction_state`) — e.g. when a subsequent phase
+            // surfaces a database error. Committed phases are only durable once
+            // `commit_tx` runs.
             evm.ctx_mut().journal_mut().checkpoint_commit();
             phase_statuses.push(0x01);
             refund = refund.saturating_add(phase_refund);
@@ -1445,13 +1446,16 @@ impl Eip8130Executor {
         }
     }
 
-    /// Centralized post-error teardown mirroring the mainnet handler's
-    /// `catch_error` cleanup: discards the transaction, clears the
-    /// cached L1 cost, and drains the frame stack and local context. A database
-    /// error raised inside a nested subcall surfaces while the parent frame is
-    /// still on the stack, so draining both prevents stale frame/local state
-    /// from leaking into the next transaction when a `BaseEvm` is reused.
-    fn teardown_after_error<DB, I, P>(evm: &mut BaseEvm<DB, I, P>)
+    /// Discards all transaction-scoped EVM state.
+    ///
+    /// Used both after execution failures and to roll back successful read-only
+    /// simulations. Mirrors the mainnet handler's `catch_error` cleanup by
+    /// discarding the transaction, clearing the cached L1 cost, and draining the
+    /// frame stack and local context. A database error raised inside a nested
+    /// subcall surfaces while the parent frame is still on the stack, so draining
+    /// both prevents stale frame/local state from leaking into the next
+    /// transaction when a `BaseEvm` is reused.
+    fn discard_transaction_state<DB, I, P>(evm: &mut BaseEvm<DB, I, P>)
     where
         DB: AlloyDatabase,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
