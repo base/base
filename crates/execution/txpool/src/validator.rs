@@ -3387,7 +3387,7 @@ mod tests {
         let signer_addr = signer.address();
         let actor_id = {
             let mut id = [0u8; 32];
-            id[..20].copy_from_slice(signer_addr.as_slice());
+            id[12..].copy_from_slice(signer_addr.as_slice());
             B256::from_slice(&id)
         };
         let initial_actors =

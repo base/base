@@ -14,8 +14,8 @@ use base_common_consensus::Eip8130Constants;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ResolvedActor {
-    /// The resolved actor id (`bytes20(address)` for ecrecover/delegate,
-    /// `keccak256(x‖y)` for P-256/`WebAuthn`).
+    /// The resolved actor id (`bytes32(uint256(uint160(address)))`, right-aligned,
+    /// for ecrecover/delegate; `keccak256(x‖y)` for P-256/`WebAuthn`).
     pub actor_id: B256,
     /// The actor's scope bitfield (`0 = unrestricted`).
     pub scope: u8,
