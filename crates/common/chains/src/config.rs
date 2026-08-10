@@ -420,7 +420,7 @@ const MAINNET: ChainConfig = ChainConfig {
     channel_timeout: 300,
 
     bedrock_block: 0,
-    regolith_timestamp: 0,
+    regolith_timestamp: 1_686_789_347,
     canyon_timestamp: 1_704_992_401,
     delta_timestamp: 1_708_560_000,
     ecotone_timestamp: 1_710_374_401,
@@ -494,7 +494,7 @@ const SEPOLIA: ChainConfig = ChainConfig {
     channel_timeout: 300,
 
     bedrock_block: 0,
-    regolith_timestamp: 0,
+    regolith_timestamp: 1_695_768_288,
     canyon_timestamp: 1_699_981_200,
     delta_timestamp: 1_703_203_200,
     ecotone_timestamp: 1_708_534_800,
@@ -613,16 +613,16 @@ const ZERONET: ChainConfig = ChainConfig {
     channel_timeout: 300,
 
     bedrock_block: 0,
-    regolith_timestamp: 0,
-    canyon_timestamp: 0,
-    delta_timestamp: 0,
-    ecotone_timestamp: 0,
-    fjord_timestamp: 0,
-    granite_timestamp: 0,
-    holocene_timestamp: 0,
+    regolith_timestamp: 1_782_348_588,
+    canyon_timestamp: 1_782_348_588,
+    delta_timestamp: 1_782_348_588,
+    ecotone_timestamp: 1_782_348_588,
+    fjord_timestamp: 1_782_348_588,
+    granite_timestamp: 1_782_348_588,
+    holocene_timestamp: 1_782_348_588,
     pectra_blob_schedule_timestamp: None,
-    isthmus_timestamp: 0,
-    jovian_timestamp: 0,
+    isthmus_timestamp: 1_782_348_588,
+    jovian_timestamp: 1_782_348_588,
     azul_timestamp: Some(1_782_348_888),
     beryl_timestamp: Some(1_782_349_188),
     cobalt_timestamp: None,
@@ -700,6 +700,29 @@ mod tests {
                 "upgrade schedule lookup drift for chain {}",
                 chain.chain_id
             );
+        }
+    }
+
+    #[test]
+    fn genesis_active_upgrades_use_genesis_timestamps() {
+        for chain in [ChainConfig::mainnet(), ChainConfig::sepolia()] {
+            assert_eq!(chain.regolith_timestamp, chain.genesis_l2_time);
+        }
+
+        let chain = ChainConfig::zeronet();
+        let upgrades = chain.upgrade_config();
+        for upgrade in [
+            BaseUpgrade::Regolith,
+            BaseUpgrade::Canyon,
+            BaseUpgrade::Delta,
+            BaseUpgrade::Ecotone,
+            BaseUpgrade::Fjord,
+            BaseUpgrade::Granite,
+            BaseUpgrade::Holocene,
+            BaseUpgrade::Isthmus,
+            BaseUpgrade::Jovian,
+        ] {
+            assert_eq!(upgrades.activation_timestamp(upgrade), Some(chain.genesis_l2_time));
         }
     }
 

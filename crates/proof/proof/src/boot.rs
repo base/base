@@ -706,8 +706,9 @@ mod tests {
         const CLAIM_BLOCK: u64 = 100;
 
         let chain_config = BaseChainConfig::MAINNET;
-        let rollup_config = chain_config.rollup_config();
+        let mut rollup_config = chain_config.rollup_config();
         let genesis_timestamp = rollup_config.genesis.l2_time;
+        rollup_config.upgrades.regolith_time = Some(0);
         assert_eq!(rollup_config.upgrades.regolith_time, Some(0), "premise: genesis-active");
 
         let mut oracle = MockOracle::new();
