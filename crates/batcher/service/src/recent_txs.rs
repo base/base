@@ -26,6 +26,13 @@ impl RecentTxSyncTarget {
             .await
             .map_err(|e| eyre::eyre!("failed to fetch L1 head for recent tx scan: {e}"))?;
         let oldest_l1 = current_l1.saturating_sub(depth);
+        info!(
+            depth = %depth,
+            scan_start = %oldest_l1,
+            scan_end = %current_l1,
+            batcher = %batcher_address,
+            "scanning recent L1 blocks for batcher nonce activity"
+        );
         let nonce_at = |block_number| async move {
             l1_provider
                 .get_transaction_count(batcher_address)
