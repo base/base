@@ -203,6 +203,8 @@ websocket-proxy = { path = "crates/infra/websocket-proxy" }
 base-telemetry-service = { path = "crates/infra/telemetry" }
 base-zk-benchmarks = { path = "crates/infra/zk-benchmarks" }
 base-zk-fork-dispute = { path = "crates/infra/zk-fork-dispute" }
+base-shadow-metrics = { path = "crates/infra/shadow-metrics" }
+base-shadow-metrics-bin = { path = "bin/shadow-metrics" }
 
 # Proof
 base-proof-rpc = { path = "crates/proof/rpc" }
