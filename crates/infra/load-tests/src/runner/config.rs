@@ -243,7 +243,7 @@ impl LoadConfig {
             ],
             query_rpc: "http://localhost:8545".parse().expect("valid default query_rpc"),
             txpool_nodes: Vec::new(),
-            chain_id: 1337,
+            chain_id: 84538453,
             account_count: 10,
             seed: 42,
             mnemonic: None,

@@ -257,8 +257,8 @@ mod tests {
                 ChainResolver::new(Some(ChainArg::BuiltIn("dev".to_owned()))).resolve().unwrap();
 
             assert_eq!(resolved.name, "dev");
-            assert_eq!(resolved.l2_chain_id, 1337);
-            assert_eq!(resolved.l1_chain_id, 900);
+            assert_eq!(resolved.l2_chain_id, 84538453);
+            assert_eq!(resolved.l1_chain_id, 1337);
             assert_eq!(resolved.source, ResolvedChainSource::BuiltIn("dev".to_owned()));
 
             Ok(())
