@@ -405,7 +405,7 @@ mod tests {
         let sink = Arc::new(RecordingMeteringSink::default());
         let handler = BuilderApiImpl::with_metering(
             NoopTransactionPool::<BasePooledTransaction>::new(),
-            sink.clone(),
+            Arc::clone(&sink),
         );
 
         let (sender, raw) = create_eip1559_tx();
@@ -440,7 +440,7 @@ mod tests {
         let sink = std::sync::Arc::new(RecordingMeteringSink::default());
         let handler = BuilderApiImpl::with_metering(
             NoopTransactionPool::<BasePooledTransaction>::new(),
-            sink.clone(),
+            Arc::clone(&sink),
         );
 
         let (sender, raw) = create_eip1559_tx();

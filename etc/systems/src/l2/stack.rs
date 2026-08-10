@@ -6,11 +6,13 @@
 //! - Batcher (in-process, submits L2 transaction batches to L1)
 //! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
 
-use std::{num::NonZeroU64, time::Duration};
+use std::{num::NonZeroU64, sync::Arc, time::Duration};
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
+use base_builder_core::SharedMeteringProvider;
+use base_builder_metering::MeteringStore;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::NodeMode;
 use base_tx_forwarding::TxForwardingConfig;
@@ -61,6 +63,9 @@ pub struct L2StackConfig {
     /// Optional transaction forwarding configuration for the client node.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// When true, enable mempool inline meterBundle + gate forwarding on Ready,
+    /// and install a metering store on the builder insert path.
+    pub enable_inline_metering: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
@@ -121,6 +126,8 @@ pub struct L2Stack {
     client: InProcessClient,
     client_consensus: L2ClientConsensus,
     shadow_sequencers: Vec<ShadowSequencer>,
+    /// Present when [`L2StackConfig::enable_inline_metering`] is true.
+    metering_provider: Option<SharedMeteringProvider>,
 }
 
 impl std::fmt::Debug for L2Stack {
@@ -132,6 +139,7 @@ impl std::fmt::Debug for L2Stack {
             .field("client", &self.client)
             .field("client_consensus", &self.client_consensus)
             .field("shadow_sequencers", &self.shadow_sequencers)
+            .field("inline_metering", &self.metering_provider.is_some())
             .finish()
     }
 }
@@ -154,6 +162,12 @@ impl L2Stack {
             .wrap_err("Failed to parse L1 chain config")?;
 
         // 1. Start the builder (in-process EL).
+        let metering_provider: Option<SharedMeteringProvider> = config
+            .enable_inline_metering
+            .then(|| {
+                Arc::new(MeteringStore::new(true, 10_000, Duration::from_secs(30)))
+                    as SharedMeteringProvider
+            });
         let builder_config = InProcessBuilderConfig {
             genesis_json: config.l2_genesis.clone(),
             jwt_secret: config.jwt_secret,
@@ -162,6 +176,7 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.builder_auth_port),
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
             flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
+            metering_provider: metering_provider.clone(),
         };
         let builder = InProcessBuilder::start(builder_config)
             .await
@@ -229,6 +244,7 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.client_auth_port),
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             tx_forwarding_config,
+            enable_inline_metering: config.enable_inline_metering,
         };
         let client = InProcessClient::start(client_config)
             .await
@@ -328,12 +344,18 @@ impl L2Stack {
             client,
             client_consensus,
             shadow_sequencers,
+            metering_provider,
         })
     }
 
     /// Returns a reference to the in-process builder.
     pub const fn builder(&self) -> &InProcessBuilder {
         &self.builder
+    }
+
+    /// Returns the builder metering store when inline metering is enabled.
+    pub fn metering_provider(&self) -> Option<&SharedMeteringProvider> {
+        self.metering_provider.as_ref()
     }
 
     /// Returns a reference to the builder's consensus node.

@@ -58,6 +58,11 @@ impl SystemTestStack {
         &self.l2_stack
     }
 
+    /// Returns the builder metering store when inline metering is enabled.
+    pub fn metering_provider(&self) -> Option<&base_builder_core::SharedMeteringProvider> {
+        self.l2_stack.metering_provider()
+    }
+
     /// Returns the public RPC URL of the L1 Reth node.
     pub async fn l1_rpc_url(&self) -> Result<Url> {
         self.l1_stack.rpc_url().await
@@ -155,6 +160,7 @@ pub struct SystemTestStackBuilder {
     output_dir: Option<PathBuf>,
     stable_config: Option<StableSystemTestConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
+    enable_inline_metering: bool,
     verifier_l1_confs: u64,
     client_consensus_mode: L2ClientConsensusMode,
     shadow_sequencer_count: usize,
@@ -226,6 +232,16 @@ impl SystemTestStackBuilder {
     /// the `base_insertValidatedTransaction` RPC endpoint.
     pub fn with_tx_forwarding(mut self, config: TxForwardingConfig) -> Self {
         self.tx_forwarding_config = Some(config);
+        self
+    }
+
+    /// Enables mempool inline meterBundle gated behind tx forwarding.
+    ///
+    /// Requires [`Self::with_tx_forwarding`]. The client installs metering + an
+    /// inline worker pool; the forwarder waits for Ready before insert; the
+    /// builder store receives piggybacked meterBundle responses.
+    pub const fn with_inline_metering(mut self) -> Self {
+        self.enable_inline_metering = true;
         self
     }
 
@@ -387,6 +403,7 @@ impl SystemTestStackBuilder {
             l1_beacon_url: l1_stack.beacon().beacon_url().await?,
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
+            enable_inline_metering: self.enable_inline_metering,
             verifier_l1_confs: self.verifier_l1_confs,
             client_consensus_mode: self.client_consensus_mode,
             shadow_sequencers,

@@ -22,6 +22,9 @@ base-txpool-tracing.workspace = true
 base-batcher-service.workspace = true
 base-bundle-extension.workspace = true
 base-flashblocks-node.workspace = true
+base-metering.workspace = true
+base-bundles.workspace = true
+base-builder-metering.workspace = true
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }

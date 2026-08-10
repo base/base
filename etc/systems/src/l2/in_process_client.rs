@@ -7,9 +7,11 @@ use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc};
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
 use base_bundle_extension::BundleExtension;
+use base_bundles::SharedInlineMetering;
 use base_execution_chainspec::BaseChainSpec;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
+use base_metering::{MeteringConfig, MeteringExtension};
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
@@ -53,6 +55,9 @@ pub struct InProcessClientConfig {
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// When true (and tx forwarding is configured), install metering with an
+    /// inline meterBundle service and gate forwarding on Ready responses.
+    pub enable_inline_metering: bool,
 }
 
 /// In-process Base client node that syncs from a builder.
@@ -266,9 +271,27 @@ impl InProcessClient {
         };
         extensions.push(Box::new(TxPoolExtension::new(txpool_config)));
 
+        // Inline metering + forwarding share a OnceLock slot. Metering must be
+        // installed so its RPC hook populates the slot before node-started
+        // spawns the forwarder (which reads the slot).
+        let mut tx_fwd_config = config.tx_forwarding_config.clone();
+        if config.enable_inline_metering {
+            let slot = Arc::new(std::sync::OnceLock::<SharedInlineMetering>::new());
+            let metering_config = MeteringConfig::with_flashblocks(flashblocks_config.clone())
+                .with_inline_metering_slot(Arc::clone(&slot));
+            extensions.push(Box::new(MeteringExtension::from_config(metering_config)));
+
+            if let Some(fwd) = tx_fwd_config.as_mut() {
+                *fwd = fwd
+                    .clone()
+                    .with_require_metering(true)
+                    .with_inline_metering_slot(slot);
+            }
+        }
+
         // TxForwarding extension (optional - forwards txs to builder RPC)
-        if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
-            extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
+        if let Some(tx_fwd_config) = tx_fwd_config {
+            extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config)));
         }
 
         // Flashblocks extension (must be last - uses replace_configured)

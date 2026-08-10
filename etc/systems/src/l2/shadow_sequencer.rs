@@ -86,6 +86,7 @@ impl ShadowSequencer {
             auth_port: None,
             p2p_port: None,
             flashblocks_port: None,
+            metering_provider: None,
         })
         .await
         .wrap_err("Failed to start shadow builder")?;

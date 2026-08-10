@@ -7,11 +7,17 @@
 use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
-use alloy_primitives::hex::ToHexExt;
+use alloy_primitives::{TxHash, hex::ToHexExt};
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::get_available_port};
+use base_builder_core::{
+    BuilderConfig, FlashblocksServiceBuilder, SharedMeteringProvider, test_utils::get_available_port,
+};
+use base_bundles::MeterBundleResponse;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::{BasePooledTransaction, BuilderApiImpl, BuilderApiServer};
+use base_execution_txpool::{
+    BasePooledTransaction, BuilderApiImpl, BuilderApiServer, MeteringResponseSink,
+    SharedMeteringResponseSink,
+};
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::BaseNode;
 use eyre::{Result, WrapErr, eyre};
@@ -32,6 +38,16 @@ use url::Url;
 
 use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
 
+/// Adapts [`SharedMeteringProvider`] for the txpool builder API insert sink.
+#[derive(Debug)]
+struct SystemsMeteringSink(SharedMeteringProvider);
+
+impl MeteringResponseSink for SystemsMeteringSink {
+    fn insert(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
+        self.0.insert(tx_hash, metering);
+    }
+}
+
 /// Configuration for starting an in-process builder.
 #[derive(Debug, Clone)]
 pub struct InProcessBuilderConfig {
@@ -49,6 +65,8 @@ pub struct InProcessBuilderConfig {
     pub p2p_port: Option<u16>,
     /// Optional fixed Flashblocks port (uses random if None).
     pub flashblocks_port: Option<u16>,
+    /// Optional metering store used by `base_insertValidatedTransaction`.
+    pub metering_provider: Option<SharedMeteringProvider>,
 }
 
 /// An in-process builder node that replaces Docker-based `BuilderContainer`.
@@ -150,11 +168,19 @@ impl InProcessBuilder {
             )
             .with_add_ons(addons)
             .on_component_initialized(move |_ctx| Ok(()))
-            // Register the builder API RPC module (base_insertValidatedTransaction)
-            .extend_rpc_modules(|ctx| {
-                let api = BuilderApiImpl::new(ctx.pool().clone());
-                ctx.modules.merge_configured(api.into_rpc())?;
-                Ok(())
+            // Register the builder API RPC module (base_insertValidatedTransaction).
+            .extend_rpc_modules({
+                let metering = config.metering_provider.clone().map(|provider| {
+                    Arc::new(SystemsMeteringSink(provider)) as SharedMeteringResponseSink
+                });
+                move |ctx| {
+                    let api = metering.as_ref().map_or_else(
+                        || BuilderApiImpl::new(ctx.pool().clone()),
+                        |sink| BuilderApiImpl::with_metering(ctx.pool().clone(), Arc::clone(sink)),
+                    );
+                    ctx.modules.merge_configured(api.into_rpc())?;
+                    Ok(())
+                }
             });
 
         let NodeHandle { node: node_handle, node_exit_future } =
