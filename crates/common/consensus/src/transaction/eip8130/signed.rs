@@ -106,39 +106,45 @@ impl<'a> arbitrary::Arbitrary<'a> for Eip8130Signed {
 ///
 /// Kept as a dedicated error (rather than collapsing every case into
 /// `TxTypeNotSupported`) so callers can surface an actionable, per-case reason
-/// to submitters and logs: the transaction *type* is supported, its `expiry`
-/// is simply outside the node's admission window.
+/// to submitters and logs: the transaction *type* is supported, its validity
+/// window is simply outside the node's admission window.
 ///
-/// All variants except [`Self::NonceFreeMalformed`] describe a relationship
-/// between the transaction's `expiry` and the reference `now`.
+/// The reference `now` and both window bounds are Unix timestamps in
+/// **milliseconds** (the EIP evaluates `block.timestamp * 1000` against
+/// `valid_after`/`valid_before`). All variants except [`Self::NonceFreeMalformed`]
+/// describe a relationship between the window bounds and `now`.
 /// [`Self::NonceFreeMalformed`] is the exception: it reports a nonce-free
-/// *structural* precondition (`nonce_sequence`/`expiry` field constraints) that
-/// does not depend on `now`. It lives here — rather than in
+/// *structural* precondition (`nonce_sequence`/`valid_before` field constraints)
+/// that does not depend on `now`. It lives here — rather than in
 /// [`Eip8130Signed::validate_static`] — only because those preconditions gate
-/// the very nonce-free `expiry` window checks that follow it, so validating them
-/// in the same pass keeps the nonce-free rules in one place.
+/// the very nonce-free window checks that follow it, so validating them in the
+/// same pass keeps the nonce-free rules in one place.
 #[cfg(feature = "reth")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Eip8130TimestampError {
     /// Nonce-free mode (`nonce_key == NONCE_KEY_MAX`) requires `nonce_sequence
-    /// == 0` and a non-zero `expiry`; one of those invariants is violated.
+    /// == 0` and a non-zero `valid_before`; one of those invariants is violated.
     ///
     /// Unlike the other variants this is a `now`-independent structural check
     /// on the transaction's fields, not a timing relationship (see the enum
     /// docs).
-    #[error("nonce-free transaction must set a non-zero expiry and a zero nonce sequence")]
+    #[error("nonce-free transaction must set a non-zero valid_before and a zero nonce sequence")]
     NonceFreeMalformed,
-    /// A nonce-free transaction's `expiry` is at or before the reference time,
-    /// so it has already elapsed and can never be included.
-    #[error("nonce-free transaction expiry has already elapsed")]
+    /// A nonce-free transaction's `valid_before` is at or before the reference
+    /// time, so it has already elapsed and can never be included.
+    #[error("nonce-free transaction validity window has already elapsed")]
     NonceFreeExpired,
-    /// A nonce-free transaction's `expiry` is further into the future than the
-    /// permitted [`Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW`].
-    #[error("nonce-free transaction expiry exceeds the maximum admission window")]
+    /// A nonce-free transaction's `valid_before` is further into the future than
+    /// the permitted [`Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW`].
+    #[error("nonce-free transaction validity window exceeds the maximum admission window")]
     NonceFreeExpiryTooFar,
-    /// A nonce-bearing transaction set a non-zero `expiry` that is at or before
-    /// the reference time.
-    #[error("transaction expiry has already elapsed")]
+    /// A transaction's `valid_after` lower bound is still in the future relative
+    /// to the reference time, so it is not yet active.
+    #[error("transaction is not yet valid")]
+    NotYetValid,
+    /// A nonce-bearing transaction set a non-zero `valid_before` that is at or
+    /// before the reference time.
+    #[error("transaction validity window has already elapsed")]
     Expired,
 }
 
@@ -200,26 +206,39 @@ impl Eip8130Signed {
         Ok(())
     }
 
-    /// Validates the timestamp-sensitive admission rules for nonce-bearing and
+    /// Validates the validity-window admission rules for nonce-bearing and
     /// nonce-free transactions against a single caller-supplied `now` value.
     ///
-    /// Txpool passes in one head-block timestamp snapshot so both branches see
-    /// the same wall-clock value even if the tip updates concurrently.
+    /// `now`, `valid_after`, and `valid_before` are all Unix timestamps in
+    /// **milliseconds**; callers pass `block.timestamp * 1000` (or an equivalent
+    /// millisecond wall clock) so the comparison matches the EIP's on-chain
+    /// `block.timestamp * 1000` evaluation. Txpool passes in one head-block
+    /// snapshot so both branches see the same value even if the tip updates
+    /// concurrently.
     #[cfg(feature = "reth")]
     pub fn validate_timestamp(&self, now: u64) -> Result<(), Eip8130TimestampError> {
         let tx = self.tx();
         if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-            if tx.nonce_sequence != 0 || tx.expiry == 0 {
+            // Structural precondition first (independent of `now`).
+            if tx.nonce_sequence != 0 || tx.valid_before == 0 {
                 return Err(Eip8130TimestampError::NonceFreeMalformed);
             }
-            if tx.expiry <= now {
+            if tx.valid_after != 0 && now < tx.valid_after {
+                return Err(Eip8130TimestampError::NotYetValid);
+            }
+            if tx.valid_before <= now {
                 return Err(Eip8130TimestampError::NonceFreeExpired);
             }
-            if tx.expiry > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW) {
+            if tx.valid_before > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW) {
                 return Err(Eip8130TimestampError::NonceFreeExpiryTooFar);
             }
-        } else if tx.expiry != 0 && tx.expiry <= now {
-            return Err(Eip8130TimestampError::Expired);
+        } else {
+            if tx.valid_after != 0 && now < tx.valid_after {
+                return Err(Eip8130TimestampError::NotYetValid);
+            }
+            if tx.valid_before != 0 && tx.valid_before <= now {
+                return Err(Eip8130TimestampError::Expired);
+            }
         }
         Ok(())
     }
@@ -566,7 +585,8 @@ mod tests {
             sender: Some(address!("0x00000000000000000000000000000000000000aa")),
             nonce_key: U256::from(7u64),
             nonce_sequence: 3,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,

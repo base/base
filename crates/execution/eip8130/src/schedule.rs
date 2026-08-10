@@ -124,6 +124,17 @@ impl Eip8130GasSchedule {
     /// This is body-derivable (the change's position is known), so estimation and
     /// execution price it identically.
     pub const CONFIG_CHANGE_STATE_COST_SUBSEQUENT: u64 = Self::WARM_SLOAD + Self::SSTORE_DIRTY;
+    /// Marginal cost of an `IncrementLocalEpoch` op. The op rewrites the packed
+    /// account-state slot (`local_epoch ‖ local_sequence`) that the config
+    /// change's own channel-sequence advance already touched and modified earlier
+    /// in the transaction, so the epoch bump is a warm **dirty** `SSTORE`
+    /// (EIP-2200 `original != current`) with no extra SLOAD — the ~100-gas
+    /// already-warm write the contract notes for the trailing increment. In the
+    /// rarer unsequenced-and-initialized case the advance performs no write, but
+    /// the first change's `CONFIG_CHANGE_STATE_COST` conservatively charged a full
+    /// zero-to-nonzero set for that slot, so adding this marginal cost still never
+    /// undercharges.
+    pub const INCREMENT_LOCAL_EPOCH_COST: u64 = Self::SSTORE_DIRTY;
     /// Worst-case revoke cost for the actor config and its two policy slots.
     ///
     /// Policy slots are cleared on every revoke. Charging all three as resets is

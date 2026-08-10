@@ -115,9 +115,15 @@ pub struct Eip8130RequestFields {
     /// The phased call batches dispatched by the sender account.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calls: Option<Vec<Vec<Call>>>,
-    /// Optional expiring-nonce expiry (Unix seconds).
+    /// Optional lower bound of the validity window (Unix milliseconds; `0` or
+    /// absent means no lower bound). Checked as `block.timestamp * 1000 >=
+    /// valid_after`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expiry: Option<u64>,
+    pub valid_after: Option<u64>,
+    /// Optional upper bound of the validity window (Unix milliseconds; `0` or
+    /// absent means no expiry). Required (non-zero) for nonce-free transactions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_before: Option<u64>,
     /// Opaque, non-executed transaction metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
@@ -189,7 +195,8 @@ impl Eip8130RequestFields {
         self.nonce_key.is_some()
             || self.account_changes.is_some()
             || self.calls.is_some()
-            || self.expiry.is_some()
+            || self.valid_after.is_some()
+            || self.valid_before.is_some()
             || self.metadata.is_some()
             || self.sender.is_some()
             || self.sender_auth.is_some()

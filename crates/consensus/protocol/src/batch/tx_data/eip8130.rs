@@ -21,8 +21,11 @@ pub struct SpanBatchEip8130TransactionData {
     pub sender: Option<Address>,
     /// High bits of the compound nonce.
     pub nonce_key: U256,
-    /// Unix-seconds expiry timestamp; `0` means no expiry.
-    pub expiry: u64,
+    /// Lower bound of the validity window (Unix milliseconds; `0` = no lower
+    /// bound).
+    pub valid_after: u64,
+    /// Upper bound of the validity window (Unix milliseconds; `0` = no expiry).
+    pub valid_before: u64,
     /// Max priority fee per gas (tip).
     pub max_priority_fee_per_gas: u128,
     /// Max total fee per gas.
@@ -83,7 +86,8 @@ impl SpanBatchEip8130TransactionData {
     fn rlp_encoded_fields_length(&self) -> usize {
         Self::address_opt_encoded_length(&self.sender)
             + self.nonce_key.length()
-            + self.expiry.length()
+            + self.valid_after.length()
+            + self.valid_before.length()
             + self.max_priority_fee_per_gas.length()
             + self.max_fee_per_gas.length()
             + Self::address_opt_encoded_length(&self.payer)
@@ -162,7 +166,8 @@ impl SpanBatchEip8130TransactionData {
             sender: self.sender,
             nonce_key: self.nonce_key,
             nonce_sequence: nonce,
-            expiry: self.expiry,
+            valid_after: self.valid_after,
+            valid_before: self.valid_before,
             max_priority_fee_per_gas: self.max_priority_fee_per_gas,
             max_fee_per_gas: self.max_fee_per_gas,
             gas_limit: gas,
@@ -180,7 +185,8 @@ impl Encodable for SpanBatchEip8130TransactionData {
         Header { list: true, payload_length: self.rlp_encoded_fields_length() }.encode(out);
         Self::encode_address_opt(&self.sender, out);
         self.nonce_key.encode(out);
-        self.expiry.encode(out);
+        self.valid_after.encode(out);
+        self.valid_before.encode(out);
         self.max_priority_fee_per_gas.encode(out);
         self.max_fee_per_gas.encode(out);
         Self::encode_address_opt(&self.payer, out);
@@ -202,7 +208,8 @@ impl Decodable for SpanBatchEip8130TransactionData {
         let this = Self {
             sender: Self::decode_address_opt(buf)?,
             nonce_key: Decodable::decode(buf)?,
-            expiry: Decodable::decode(buf)?,
+            valid_after: Decodable::decode(buf)?,
+            valid_before: Decodable::decode(buf)?,
             max_priority_fee_per_gas: Decodable::decode(buf)?,
             max_fee_per_gas: Decodable::decode(buf)?,
             payer: Self::decode_address_opt(buf)?,
@@ -240,7 +247,8 @@ mod tests {
         let tx = SpanBatchEip8130TransactionData {
             sender: Some(address!("0x00000000000000000000000000000000000000aa")),
             nonce_key: U256::from(0x1234u64),
-            expiry: 99,
+            valid_after: 42,
+            valid_before: 99,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             payer: Some(address!("0x00000000000000000000000000000000000000bb")),
@@ -318,7 +326,8 @@ mod tests {
         let base = SpanBatchEip8130TransactionData {
             sender: Some(Address::ZERO),
             nonce_key: U256::ZERO,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
             payer: None,

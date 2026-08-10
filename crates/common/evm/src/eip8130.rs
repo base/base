@@ -813,7 +813,10 @@ impl Eip8130Executor {
         let gas_limit = tx.gas_limit;
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
-        let expiry = tx.expiry;
+        // The nonce-free replay ring records the transaction's upper validity
+        // bound (`valid_before`, Unix milliseconds); the ring compares it against
+        // `block.timestamp * 1000` internally.
+        let valid_before = tx.valid_before;
 
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
@@ -870,6 +873,10 @@ impl Eip8130Executor {
             let protocol_nonce = sctx
                 .with_account_info(sender, |info| Ok(info.nonce))
                 .map_err(BaseTransactionError::eip8130)?;
+            // The nonce-free replay lookup works in milliseconds
+            // (`block.timestamp * 1000`), matching the validity window and the
+            // ring buffer; the sequence-channel branches ignore this argument.
+            let now_ms = now.saturating_mul(1_000);
             let (nonce_key_first_use, bump_protocol_nonce) =
                 if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
                     NonceValidator::validate(
@@ -878,12 +885,12 @@ impl Eip8130Executor {
                         protocol_nonce,
                         &nonce_mgr,
                         NonceMode::Inclusion,
-                        now,
+                        now_ms,
                     )
                     .map_err(BaseTransactionError::eip8130)?;
                     let replay = NonceValidator::replay_hash(tx, sender);
                     nonce_mgr
-                        .check_and_mark_expiring_nonce(replay, expiry)
+                        .check_and_mark_expiring_nonce(replay, valid_before)
                         .map_err(BaseTransactionError::eip8130)?;
                     (false, false)
                 } else if nonce_key == U256::ZERO {
@@ -893,7 +900,7 @@ impl Eip8130Executor {
                         protocol_nonce,
                         &nonce_mgr,
                         NonceMode::Inclusion,
-                        now,
+                        now_ms,
                     )
                     .map_err(BaseTransactionError::eip8130)?;
                     (protocol_nonce == 0, true)
@@ -1429,8 +1436,9 @@ impl Eip8130Executor {
                     AccountChangeApplier::apply_config_change(
                         &mut acc_mut,
                         sender,
-                        &cc.actor_changes,
-                        cc.chain_id,
+                        &cc.changes,
+                        cc.channel,
+                        cc.sequence,
                     )
                     .map_err(BaseTransactionError::eip8130)?;
                 }
@@ -1521,8 +1529,8 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
     use alloy_sol_types::{SolEvent, SolValue, sol};
     use base_common_consensus::{
-        AccountChange, ActorChange, ActorChangeType, BaseTxEnvelope, Call, ConfigChange,
-        CreateEntry, Eip8130Signed, InitialActor, Predeploys, TxEip8130,
+        AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
+        Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges, SignedChange, TxEip8130,
     };
     use base_common_precompiles::INonceManager;
     use base_execution_eip8130::{AccountChangeApplier, DelegationApplied};
@@ -1572,7 +1580,8 @@ mod tests {
             sender: None,
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 1_000_000,
@@ -2164,25 +2173,27 @@ mod tests {
     sol! {
         struct ActorConfigAbi {
             address authenticator;
-            uint8 scope;
             uint48 expiry;
+            uint16 scope;
         }
     }
 
-    /// ABI-encodes `abi.encode(ActorConfig, bytes policyData)` for an authorize
-    /// change (mirrors `AccountChangeApplier`'s decode shape).
+    /// ABI-encodes `abi.encode(bytes32 actorId, ActorConfig, bytes policyData)`
+    /// for an `AuthorizeActor` op payload (mirrors `AccountChangeApplier`'s
+    /// decode shape).
     fn authorize_change_data(
+        actor_id: B256,
         authenticator: Address,
-        scope: u8,
+        scope: u16,
         expiry: u64,
         policy_data: &[u8],
     ) -> Bytes {
         let abi = ActorConfigAbi {
             authenticator,
-            scope,
             expiry: alloy_primitives::aliases::U48::from(expiry),
+            scope,
         };
-        Bytes::from((abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
+        Bytes::from((actor_id, abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
     }
 
     #[test]
@@ -2207,13 +2218,13 @@ mod tests {
 
         let mut tx = base_tx();
         tx.sender = Some(account);
-        tx.account_changes = vec![AccountChange::ConfigChange(ConfigChange {
-            chain_id: CHAIN_ID,
+        tx.account_changes = vec![AccountChange::ConfigChange(SignedAccountChanges {
+            channel: AccountChangeChannel::Local,
             sequence: 0,
-            actor_changes: vec![ActorChange {
-                change_type: ActorChangeType::Authorize,
-                actor_id: session_actor,
-                data: authorize_change_data(
+            changes: vec![SignedChange {
+                change_type: ChangeType::AuthorizeActor,
+                payload: authorize_change_data(
+                    session_actor,
                     Eip8130Constants::K1_AUTHENTICATOR,
                     Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_POLICY,
                     0,
@@ -2221,7 +2232,7 @@ mod tests {
                 ),
             }],
             // Simulate's apply path does not verify config auth.
-            auth: Bytes::new(),
+            signature: Bytes::new(),
         })];
         tx.calls = vec![vec![Call { to: allowed, data: Bytes::new() }]];
         let signed = configured_signed(tx, &owner);
@@ -2502,12 +2513,12 @@ mod tests {
         // Tx 1 already bumped the protocol nonce (0 -> 1) and delegated the sender
         // (both committed above), so tx 2 is a second-use transaction:
         // base AA_BASE_COST 15_000
-        // payload EIP-2028 DA over the tx 1_684
+        // payload EIP-2028 DA over the tx 1_700
         // nonce_key existing channel 0: COLD_SLOAD 2_100 + SSTORE_RESET 2_900 5_000
         // auto_delegation sender already delegated 0
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
         // call PUSH1 (3) + COLD SLOAD (2_100) + STOP 2_103
-        // total 28_887
+        // total 28_903
         let mut load_tx = base_tx();
         load_tx.nonce_sequence = 1;
         load_tx.calls = vec![vec![Call { to: loader, data: Bytes::new() }]];
@@ -2518,7 +2529,7 @@ mod tests {
 
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
-            28_887,
+            28_903,
             "loader SLOAD must be COLD (2_100); a warm read (100) would be 2_000 \
              less, meaning tx 1's warmth leaked across the transaction boundary",
         );
@@ -2556,16 +2567,16 @@ mod tests {
 
         // First-use, single-tx, two phases each calling `loader`:
         // base AA_BASE_COST 15_000
-        // payload EIP-2028 DA over the two-phase tx 1_840
+        // payload EIP-2028 DA over the two-phase tx 1_856
         // nonce_key first use of channel 0: COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
         // auto_delegation codeless EOA -> DEFAULT_ACCOUNT 4_600
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
         // call phase 0 PUSH1 (3) + COLD SLOAD (2_100) + STOP 2_103
         // call phase 1 PUSH1 (3) + WARM SLOAD (100) + STOP 103
-        // total 50_846
+        // total 50_862
         assert_eq!(
             outcome.result.gas().tx_gas_used(),
-            50_846,
+            50_862,
             "phase 1's SLOAD must be WARM (100): committed phase 0 warmed \
              (loader, slot 0). A cold read (2_100) would be 2_000 more, meaning \
              the committed phase's warmth failed to carry across phases",
@@ -2608,17 +2619,17 @@ mod tests {
         // `loader` (PUSH1 0, SLOAD, STOP). Its gas splits into the EIP-8130
         // sender-intrinsic charge (48_484) plus the dispatched call (2_103):
         // base AA_BASE_COST 15_000
-        // payload EIP-2028 DA over the 121-byte tx 1_684
+        // payload EIP-2028 DA over the 122-byte tx 1_688
         // nonce_key first use of channel 0: COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
         // auto_delegation codeless EOA -> DEFAULT_ACCOUNT (200 x 23-byte indicator) 4_600
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
         // call PUSH1 (3) + SLOAD + STOP (0) 2_103
-        // total 50_587
+        // total 50_591
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
-            50_587,
+            50_591,
             "loader SLOAD must be COLD (2_100); a warm read (100) would total \
-             48_587, meaning the discarded invalid tx leaked warmth",
+             48_591, meaning the discarded invalid tx leaked warmth",
         );
     }
 
@@ -2655,11 +2666,12 @@ mod tests {
         assert!(slot0.is_none() || slot0 == Some(U256::ZERO), "phase 1 should have been skipped");
     }
 
-    /// Canonical Solidity packing of an `ActorConfig` word.
-    fn pack_actor(authenticator: Address, scope: u8, expiry: u64) -> U256 {
+    /// Canonical Solidity packing of an `ActorConfig` word (authenticator 0..160,
+    /// expiry 160..208, scope 208..224).
+    fn pack_actor(authenticator: Address, scope: u16, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(scope) << 160)
-            | (U256::from(expiry) << 168)
+            | (U256::from(expiry) << 160)
+            | (U256::from(scope) << 208)
     }
 
     /// Signs `tx` for a configured sender as `K1_AUTHENTICATOR || sig`.

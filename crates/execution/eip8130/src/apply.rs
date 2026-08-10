@@ -2,11 +2,11 @@
 //! [`ConfigChangeAuthorizer`] deliberately defers, plus account creation and
 //! delegation, mirroring `AccountConfiguration`'s write semantics.
 //!
-//! [`ConfigChangeAuthorizer`] authenticates a config change and gates it on
-//! admin scope (`scope == 0`), but does not decode each [`ActorChange`]'s `data` or mutate
-//! `actor_config`; that is this module's job. It is the native mirror of
-//! `AccountConfiguration.applySignedActorChanges`'s mutation tail
-//! (`_authorizeActor` / `_revokeActor` / `_slicePolicy`), of `createAccount` /
+//! [`ConfigChangeAuthorizer`] authenticates a signed batch and gates it on
+//! admin scope (`scope == 0`), but does not decode each [`SignedChange`]'s
+//! `payload` or mutate `actor_config`; that is this module's job. It is the
+//! native mirror of `Keystore.applySignedAccountChanges`'s mutation tail
+//! (`_applyAuthorize` / `_applyRevoke` / `_slicePolicy`), of `createAccount` /
 //! `_initializeAccount`, and of the deterministic CREATE2 address derivation.
 //!
 //! Two effects of an account change touch the *account's code* rather than the
@@ -21,14 +21,15 @@
 //! (the enshrined path has no EVM LOG opcodes of its own).
 //!
 //! [`ConfigChangeAuthorizer`]: crate::ConfigChangeAuthorizer
-//! [`ActorChange`]: base_common_consensus::ActorChange
+//! [`SignedChange`]: base_common_consensus::SignedChange
 //! [`AccountConfigurationEvents`]: crate::AccountConfigurationEvents
 //! [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_sol_types::{SolValue, sol};
 use base_common_consensus::{
-    ActorChange, ActorChangeType, CreateEntry, Eip8130Constants, Eip8130Contracts, InitialActor,
+    AccountChangeChannel, ChangeType, CreateEntry, Eip8130Constants, Eip8130Contracts,
+    InitialActor, SignedChange,
 };
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::state::Bytecode;
@@ -36,14 +37,14 @@ use revm::state::Bytecode;
 use crate::{AccountConfigurationEvents, AccountConfigurationStorage, AccountState, ActorConfig};
 
 sol! {
-    /// ABI shape of the per-actor config carried in an `Authorize` change's
-    /// `data` (`abi.encode(ActorConfig, bytes policyData)`), matching
-    /// `AccountConfiguration.ActorConfig`. Field order and widths are positional
+    /// ABI shape of the per-actor config carried in an `AuthorizeActor` op's
+    /// `payload` (`abi.encode(bytes32 actorId, ActorConfig, bytes policyData)`),
+    /// matching `Keystore.ActorConfig`. Field order and widths are positional
     /// for ABI decoding.
     struct ActorConfigAbi {
         address authenticator;
-        uint8 scope;
         uint48 expiry;
+        uint16 scope;
     }
 }
 
@@ -57,10 +58,32 @@ pub enum ApplyError {
     #[error("EIP-8130 state access failed: {0}")]
     Storage(#[from] BasePrecompileError),
 
-    /// An `Authorize` change's `data` did not ABI-decode to
-    /// `(ActorConfig, bytes policyData)`. Mirrors the `abi.decode` revert.
+    /// An `AuthorizeActor` op's `payload` did not ABI-decode to
+    /// `(bytes32 actorId, ActorConfig, bytes policyData)`. Mirrors the
+    /// `abi.decode` revert.
     #[error("malformed actor-change authorize data")]
     MalformedAuthorizeData,
+
+    /// A `RevokeActor` op's `payload` did not ABI-decode to `(bytes32 actorId)`.
+    #[error("malformed actor-change revoke data")]
+    MalformedRevokeData,
+
+    /// An op that requires an empty `payload` (currently `IncrementLocalEpoch`)
+    /// carried a non-empty one. Mirrors `Keystore.InvalidChangePayload`.
+    #[error("account-change op payload must be empty")]
+    InvalidChangePayload,
+
+    /// An `IncrementLocalEpoch` op could not advance because the local epoch is
+    /// at its terminal `u32::MAX` value. Mirrors `Keystore.EpochSaturated`.
+    #[error("local epoch is saturated and cannot be incremented")]
+    EpochSaturated,
+
+    /// A signed batch carried an environment op (`Lock` or `Unlock`) whose apply
+    /// handler is not yet enshrined. These ops are wired into the apply path by a
+    /// subsequent change; until then a batch carrying one is rejected rather than
+    /// silently ignored.
+    #[error("unsupported account-change op in the enshrined apply path")]
+    UnsupportedChangeType,
 
     /// The new actor's authenticator is `address(0)`, below the valid
     /// authenticator namespace. Mirrors `require(config.authenticator >= K1)`.
@@ -91,6 +114,13 @@ pub enum ApplyError {
     /// `ActorsNotSortedOrDuplicate`.
     #[error("create initial actors must be strictly ascending by actor id")]
     ActorsNotSortedOrDuplicate,
+
+    /// A create entry's bytecode is empty. Mirrors `_buildDeploymentCode`'s
+    /// `revert EmptyBytecode()`: a codeless create is rejected because an account
+    /// carrying actor config but no runtime code (nor a delegation) would break
+    /// the EOA invariant — a key would exist for an address that is not an EOA.
+    #[error("create bytecode is empty")]
+    EmptyBytecode,
 
     /// A create entry's bytecode exceeds the 0xFFFF deployment limit. Mirrors
     /// `require(n <= 0xFFFF)`.
@@ -139,6 +169,18 @@ pub enum ApplyError {
     #[error("delegation cannot replace non-delegation code at account {account}")]
     NonDelegatableCode {
         /// The account whose existing code cannot be replaced by a delegation.
+        account: Address,
+    },
+
+    /// A delegation targeted an empty-code account that is
+    /// [`Eip8130Constants::FLAG_CONTRACT_ESTABLISHED`]. Empty code on a
+    /// keystore-established account (e.g. after an EIP-6780 same-transaction
+    /// `SELFDESTRUCT`) is not proof of a key-backed EOA, so it must not be
+    /// (re)delegated as if it were one — doing so would resurrect a CREATE2
+    /// address that no private key controls.
+    #[error("delegation cannot target empty-code contract-established account {account}")]
+    ContractEstablishedCodeless {
+        /// The keystore-established account whose empty code cannot be delegated.
         account: Address,
     },
 
@@ -192,11 +234,23 @@ impl DelegationEffect {
     /// contract bytecode is left unchanged and rejected with
     /// [`ApplyError::NonDelegatableCode`].
     pub fn install(&self, sctx: StorageCtx<'_>) -> Result<(), ApplyError> {
-        let can_replace = sctx.with_account_code(self.account, |code| {
-            Ok(Self::can_replace_code(code.original_bytes().as_ref()))
+        let (can_replace, code_is_empty) = sctx.with_account_code(self.account, |code| {
+            let bytes = code.original_bytes();
+            let slice = bytes.as_ref();
+            Ok((Self::can_replace_code(slice), slice.is_empty()))
         })?;
         if !can_replace {
             return Err(ApplyError::NonDelegatableCode { account: self.account });
+        }
+
+        // Empty code on a keystore-established account is not proof of a key-backed
+        // EOA (e.g. an EIP-6780 same-transaction SELFDESTRUCT leaves EIP-8130 state
+        // behind empty code), so it must not be (re)delegated as if it were one.
+        // Reading the AccountConfiguration flag mirrors `Keystore.isContractEstablished`.
+        if code_is_empty
+            && AccountConfigurationStorage::new(sctx).is_contract_established(self.account)?
+        {
+            return Err(ApplyError::ContractEstablishedCodeless { account: self.account });
         }
 
         let code = if self.target.is_zero() {
@@ -252,83 +306,148 @@ pub struct AppliedAccountChanges {
 pub struct AccountChangeApplier;
 
 impl AccountChangeApplier {
-    /// Applies one authorized config change's actor changes against `account`,
-    /// advancing the change-sequence channel selected by `chain_id` (`0` =
-    /// multichain, else local). Mirrors the mutation tail of
-    /// `applySignedActorChanges`.
+    /// Applies one authorized signed batch's ops against `account`, advancing the
+    /// channel's sequence counter. Mirrors the mutation tail of
+    /// `applySignedAccountChanges`.
     /// Returns the number of empty zero-to-zero revoke slots discounted (see
     /// [`Self::revoke_actor_with_account_state`]), for intrinsic-gas discounting.
     pub fn apply_config_change(
         storage: &mut AccountConfigurationStorage<'_>,
         account: Address,
-        actor_changes: &[ActorChange],
-        chain_id: u64,
+        changes: &[SignedChange],
+        channel: AccountChangeChannel,
+        sequence: u64,
     ) -> Result<u32, ApplyError> {
         let mut state = storage.get_account_state(account)?;
         let revoke_discount_slots = Self::apply_config_change_with_account_state(
             storage,
             account,
-            actor_changes,
-            chain_id,
+            changes,
+            channel,
+            sequence,
             &mut state,
         )?;
         storage.set_account_state(account, state)?;
         Ok(revoke_discount_slots)
     }
 
-    /// Applies one config change while carrying an already-loaded account state
+    /// Applies one signed batch while carrying an already-loaded account state
     /// through sequence advancement and any inline-self actor mutations.
     ///
     /// The caller owns persistence of `state`, allowing the transaction
     /// orchestrator to perform one final packed-state write after all relevant
-    /// mutations in this change.
+    /// mutations in this batch.
     ///
     /// Returns the number of empty zero-to-zero revoke slots discounted (see
     /// [`Self::revoke_actor_with_account_state`]), for intrinsic-gas discounting.
     pub fn apply_config_change_with_account_state(
         storage: &mut AccountConfigurationStorage<'_>,
         account: Address,
-        actor_changes: &[ActorChange],
-        chain_id: u64,
+        changes: &[SignedChange],
+        channel: AccountChangeChannel,
+        sequence: u64,
         state: &mut AccountState,
     ) -> Result<u32, ApplyError> {
-        // Advance the channel sequence (post-increment in the contract; the
-        // authenticated digest committed to the pre-increment value).
-        if chain_id == 0 {
-            state.multichain_sequence =
-                state.multichain_sequence.checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
-        } else {
-            state.local_sequence =
-                state.local_sequence.checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
-        }
+        Self::advance_channel_sequence(channel, sequence, state)?;
 
         let mut revoke_discount_slots = 0u32;
-        for change in actor_changes {
+        for change in changes {
             match change.change_type {
-                ActorChangeType::Authorize => {
-                    let (config, policy_data) = Self::decode_authorize(&change.data)?;
+                ChangeType::AuthorizeActor => {
+                    let (actor_id, config, policy_data) = Self::decode_authorize(&change.payload)?;
                     Self::authorize_actor_with_account_state(
                         storage,
                         account,
-                        change.actor_id,
+                        actor_id,
                         config,
                         &policy_data,
                         state,
                     )?;
                 }
-                ActorChangeType::Revoke => {
+                ChangeType::RevokeActor => {
+                    let actor_id = Self::decode_revoke(&change.payload)?;
                     revoke_discount_slots = revoke_discount_slots.saturating_add(
-                        Self::revoke_actor_with_account_state(
-                            storage,
-                            account,
-                            change.actor_id,
-                            state,
-                        )?,
+                        Self::revoke_actor_with_account_state(storage, account, actor_id, state)?,
                     );
+                }
+                ChangeType::IncrementLocalEpoch => {
+                    Self::apply_increment_local_epoch(&change.payload, state)?;
+                }
+                // Lock / Unlock apply handlers are not yet enshrined.
+                ChangeType::Lock | ChangeType::Unlock => {
+                    return Err(ApplyError::UnsupportedChangeType);
                 }
             }
         }
         Ok(revoke_discount_slots)
+    }
+
+    /// Advances the channel's replay counter for an applied batch, mirroring the
+    /// epoch/sequence advance at the top of `applySignedAccountChanges`.
+    ///
+    /// - [`AccountChangeChannel::Local`]: a sequenced batch (low half !=
+    ///   [`Eip8130Constants::UNSEQUENCED`]) advances `local_sequence` to
+    ///   `seq + 1`. An unsequenced (JIT) batch consumes no counter, but a *first*
+    ///   unsequenced batch marks a fresh account initialized (`local_sequence =
+    ///   1`), invalidating outstanding sequence-0 signatures.
+    /// - [`AccountChangeChannel::Multichain`]: advances `multichain_sequence` to
+    ///   `sequence + 1`.
+    fn advance_channel_sequence(
+        channel: AccountChangeChannel,
+        sequence: u64,
+        state: &mut AccountState,
+    ) -> Result<(), ApplyError> {
+        match channel {
+            AccountChangeChannel::Local => {
+                // Defense-in-depth: a Local sequence word is `epoch(hi 32) ||
+                // localSeq(lo 32)`, and the authorizer has already validated the
+                // epoch high-half against `state.local_epoch` before apply. Assert
+                // it here so a future direct caller of the `pub` apply entrypoints
+                // cannot advance the sequence against a stale epoch — the low-half
+                // advance below intentionally ignores the epoch bits.
+                debug_assert_eq!(
+                    (sequence >> 32) as u32,
+                    state.local_epoch as u32,
+                    "local sequence word epoch must match the account's local epoch",
+                );
+                let seq = sequence as u32;
+                if seq != Eip8130Constants::UNSEQUENCED {
+                    state.local_sequence = u64::from(seq)
+                        .checked_add(1)
+                        .ok_or(ApplyError::SequenceOverflow)?;
+                } else if !state.is_initialized() {
+                    state.local_sequence = 1;
+                }
+            }
+            AccountChangeChannel::Multichain => {
+                state.multichain_sequence =
+                    state.multichain_sequence.checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Applies an `IncrementLocalEpoch` op, mirroring `_applyIncrementLocalEpoch`:
+    /// a strict `local_epoch += 1` (rejecting the terminal `u32::MAX`) that also
+    /// resets `local_sequence` to 0, retiring every unlanded local signature (each
+    /// commits the full 64-bit `localEpoch ‖ localSequence` word). Allowed on
+    /// either channel — a Multichain batch may bump the local epoch without a
+    /// separate Local batch. The payload MUST be empty.
+    fn apply_increment_local_epoch(
+        payload: &[u8],
+        state: &mut AccountState,
+    ) -> Result<(), ApplyError> {
+        if !payload.is_empty() {
+            return Err(ApplyError::InvalidChangePayload);
+        }
+        // `local_epoch` stores a `uint32`; only the terminal value cannot advance
+        // (the epoch half has no reserved sentinel).
+        if state.local_epoch == u64::from(u32::MAX) {
+            return Err(ApplyError::EpochSaturated);
+        }
+        state.local_epoch += 1;
+        state.local_sequence = 0;
+        Ok(())
     }
 
     /// Authorizes (writes) one actor against `account`. Mirrors `_authorizeActor`,
@@ -571,12 +690,17 @@ impl AccountChangeApplier {
             return Err(ApplyError::AlreadyCreated { account: address });
         }
 
-        // Mark initialized and disable the implicit default-EOA path by default
+        // Mark initialized, disable the implicit default-EOA path by default
         // (a created account has contract code, so the recovered==account path is
-        // unreachable). Written before initializing actors so a self-actorId k1
-        // initial actor can re-enable the inline self.
+        // unreachable), and flag the account keystore-established so a later empty-
+        // code state (e.g. an EIP-6780 SELFDESTRUCT) is never mistaken for a
+        // proven-key EOA. Mirrors `createAccount`'s
+        // `flags = FLAG_REVOKE_DEFAULT_EOA | FLAG_CONTRACT_ESTABLISHED`. Written
+        // before initializing actors so a self-actorId k1 initial actor can
+        // re-enable the inline self.
         state.local_sequence = 1;
-        state.flags = Eip8130Constants::DEFAULT_EOA_REVOKED;
+        state.flags =
+            Eip8130Constants::DEFAULT_EOA_REVOKED | Eip8130Constants::FLAG_CONTRACT_ESTABLISHED;
         storage.set_account_state(address, state)?;
 
         Self::initialize_actors(storage, address, &entry.initial_actors)?;
@@ -620,16 +744,27 @@ impl AccountChangeApplier {
         Ok(())
     }
 
-    /// Decodes an `Authorize` change's `data` into `(ActorConfig, policyData)`.
-    fn decode_authorize(data: &[u8]) -> Result<(ActorConfig, Bytes), ApplyError> {
-        let (abi, policy_data) = <(ActorConfigAbi, Bytes)>::abi_decode_params(data)
-            .map_err(|_| ApplyError::MalformedAuthorizeData)?;
+    /// Decodes an `AuthorizeActor` op's `payload` into
+    /// `(actorId, ActorConfig, policyData)`. Mirrors
+    /// `abi.decode(payload, (bytes32, ActorConfig, bytes))`.
+    fn decode_authorize(payload: &[u8]) -> Result<(B256, ActorConfig, Bytes), ApplyError> {
+        let (actor_id, abi, policy_data) =
+            <(B256, ActorConfigAbi, Bytes)>::abi_decode_params(payload)
+                .map_err(|_| ApplyError::MalformedAuthorizeData)?;
         let config = ActorConfig {
             authenticator: abi.authenticator,
             scope: abi.scope,
             expiry: abi.expiry.to::<u64>(),
         };
-        Ok((config, policy_data))
+        Ok((actor_id, config, policy_data))
+    }
+
+    /// Decodes a `RevokeActor` op's `payload` into its `actorId`. Mirrors
+    /// `abi.decode(payload, (bytes32))`.
+    fn decode_revoke(payload: &[u8]) -> Result<B256, ApplyError> {
+        <(B256,)>::abi_decode_params(payload)
+            .map(|(actor_id,)| actor_id)
+            .map_err(|_| ApplyError::MalformedRevokeData)
     }
 
     /// Validates `policy_data` against `scope`, returning `(manager,
@@ -638,7 +773,7 @@ impl AccountChangeApplier {
     /// `manager(20) || commitment(32)`, written verbatim. Neither field need be
     /// nonzero — a zero `commitment` is a valid "no parameters" value and a zero
     /// `manager` gates the key to `address(0)` (no productive target).
-    pub fn slice_policy(scope: u8, policy_data: &[u8]) -> Result<(Address, B256), ApplyError> {
+    pub fn slice_policy(scope: u16, policy_data: &[u8]) -> Result<(Address, B256), ApplyError> {
         if scope & Eip8130Constants::SCOPE_POLICY == 0 {
             if !policy_data.is_empty() {
                 return Err(ApplyError::MalformedPolicyData);
@@ -680,28 +815,39 @@ impl AccountChangeApplier {
         keccak256(packed)
     }
 
-    /// The packed commitment over the initial actor set. The per-actor
-    /// contribution is `actorId(32) || authenticator(20) || scope(1) ||
-    /// policyData` — 53 bytes for a non-policy actor, 105 bytes when `POLICY`
-    /// is set (appending `manager (20) || commitment (32)`). `expiry` does not
-    /// participate. The per-actor length is fully determined by `scope`, so the
-    /// concatenation is unambiguous. Mirrors `_computeActorsCommitment`.
+    /// The commitment over the initial actor set, using the hash-the-leaves-
+    /// then-hash-the-list scheme shared with the signed digests. Each actor
+    /// hashes to a fixed-width 32-byte leaf
+    /// `keccak256(actorId(32) || authenticator(20) || scope(2) || policyData)`
+    /// (`policyData` is empty for a non-policy actor, or exactly `manager(20) ||
+    /// commitment(32)` when `POLICY` is set; `expiry` does not participate), and
+    /// the commitment is `keccak256(leaf_0 || … || leaf_{n-1})`. Fixed-width
+    /// leaves make the commitment unambiguous by construction and linear in the
+    /// actor count. Mirrors `_computeActorsCommitment`, whose `scope` field is a
+    /// `uint16` packed as 2 big-endian bytes.
     fn actors_commitment(initial_actors: &[InitialActor]) -> B256 {
-        let mut packed = Vec::with_capacity(initial_actors.len() * 53);
+        let mut packed_leaves = Vec::with_capacity(initial_actors.len() * 32);
         for actor in initial_actors {
-            packed.extend_from_slice(actor.actor_id.as_slice());
-            packed.extend_from_slice(actor.authenticator.as_slice());
-            packed.push(actor.scope);
-            packed.extend_from_slice(&actor.policy_data);
+            let mut leaf = Vec::with_capacity(54 + actor.policy_data.len());
+            leaf.extend_from_slice(actor.actor_id.as_slice());
+            leaf.extend_from_slice(actor.authenticator.as_slice());
+            leaf.extend_from_slice(&actor.scope.to_be_bytes());
+            leaf.extend_from_slice(&actor.policy_data);
+            packed_leaves.extend_from_slice(keccak256(&leaf).as_slice());
         }
-        keccak256(packed)
+        keccak256(packed_leaves)
     }
 
     /// Builds an account's deployment code: a 14-byte EVM loader header that
     /// returns the trailing `bytecode` as the account's runtime code. Mirrors
-    /// `_buildDeploymentCode`.
+    /// `_buildDeploymentCode`: rejects empty `bytecode` with
+    /// [`ApplyError::EmptyBytecode`] (codeless creates are invalid) and bytecode
+    /// over `0xFFFF` bytes with [`ApplyError::BytecodeTooLarge`].
     pub fn build_deployment_code(bytecode: &[u8]) -> Result<Vec<u8>, ApplyError> {
         let n = bytecode.len();
+        if n == 0 {
+            return Err(ApplyError::EmptyBytecode);
+        }
         if n > 0xFFFF {
             return Err(ApplyError::BytecodeTooLarge);
         }
@@ -723,7 +869,7 @@ impl AccountChangeApplier {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{LogData, address, b256};
+    use alloy_primitives::{LogData, U256, address, b256};
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{HashMapStorageProvider, PrecompileStorageProvider, StorageCtx};
     use revm::state::Bytecode;
@@ -756,17 +902,36 @@ mod tests {
         provider.get_events(AccountConfigurationStorage::ADDRESS).clone()
     }
 
-    /// `abi.encode(ActorConfig, bytes policyData)` for an authorize change.
-    fn authorize_data(config: &ActorConfig, policy_data: &[u8]) -> Bytes {
+    /// `abi.encode(bytes32 actorId, ActorConfig, bytes policyData)` for an
+    /// `AuthorizeActor` op payload.
+    fn authorize_payload(actor_id: B256, config: &ActorConfig, policy_data: &[u8]) -> Bytes {
         let abi = ActorConfigAbi {
             authenticator: config.authenticator,
             scope: config.scope,
             expiry: alloy_primitives::aliases::U48::from(config.expiry),
         };
-        Bytes::from((abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
+        Bytes::from(
+            (actor_id, abi, Bytes::copy_from_slice(policy_data)).abi_encode_params(),
+        )
     }
 
-    fn ungated(authenticator: Address, scope: u8) -> ActorConfig {
+    /// An `AuthorizeActor` [`SignedChange`] op.
+    fn authorize_op(actor_id: B256, config: &ActorConfig, policy_data: &[u8]) -> SignedChange {
+        SignedChange {
+            change_type: ChangeType::AuthorizeActor,
+            payload: authorize_payload(actor_id, config, policy_data),
+        }
+    }
+
+    /// A `RevokeActor` [`SignedChange`] op (payload `abi.encode(bytes32 actorId)`).
+    fn revoke_op(actor_id: B256) -> SignedChange {
+        SignedChange {
+            change_type: ChangeType::RevokeActor,
+            payload: Bytes::from((actor_id,).abi_encode_params()),
+        }
+    }
+
+    fn ungated(authenticator: Address, scope: u16) -> ActorConfig {
         ActorConfig { authenticator, scope, expiry: 0 }
     }
 
@@ -936,13 +1101,15 @@ mod tests {
 
             // Revoking the live *ungated* inline k1 self (empty actor_config + both
             // empty policy slots) discounts all three conservatively-reset slots.
-            let revoke_self = vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: self_id,
-                data: Default::default(),
-            }];
-            let count =
-                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_self, 0).unwrap();
+            let revoke_self = vec![revoke_op(self_id)];
+            let count = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &revoke_self,
+                AccountChangeChannel::Multichain,
+                0,
+            )
+            .unwrap();
             assert_eq!(count, 3);
         });
 
@@ -957,13 +1124,15 @@ mod tests {
             policy.extend_from_slice(MANAGER.as_slice());
             policy.extend_from_slice(COMMITMENT.as_slice());
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, gated, &policy).unwrap();
-            let revoke_self = vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: self_id,
-                data: Default::default(),
-            }];
-            let count =
-                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_self, 0).unwrap();
+            let revoke_self = vec![revoke_op(self_id)];
+            let count = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &revoke_self,
+                AccountChangeChannel::Multichain,
+                0,
+            )
+            .unwrap();
             assert_eq!(count, 1);
         });
 
@@ -977,13 +1146,15 @@ mod tests {
                 ActorConfig { authenticator: K1, scope: Eip8130Constants::SCOPE_POLICY, expiry: 0 };
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, gated, &[0u8; 52])
                 .unwrap();
-            let revoke_self = vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: self_id,
-                data: Default::default(),
-            }];
-            let count =
-                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_self, 0).unwrap();
+            let revoke_self = vec![revoke_op(self_id)];
+            let count = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &revoke_self,
+                AccountChangeChannel::Multichain,
+                0,
+            )
+            .unwrap();
             assert_eq!(count, 3);
         });
 
@@ -998,13 +1169,15 @@ mod tests {
             policy.extend_from_slice(MANAGER.as_slice());
             policy.extend_from_slice(B256::ZERO.as_slice());
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, gated, &policy).unwrap();
-            let revoke_self = vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: self_id,
-                data: Default::default(),
-            }];
-            let count =
-                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_self, 0).unwrap();
+            let revoke_self = vec![revoke_op(self_id)];
+            let count = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &revoke_self,
+                AccountChangeChannel::Multichain,
+                0,
+            )
+            .unwrap();
             assert_eq!(count, 2);
         });
 
@@ -1014,13 +1187,15 @@ mod tests {
             // populated actor_config home, so it is not the discounted shape.
             let config = ungated(AUTHENTICATOR, 0);
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, config, &[]).unwrap();
-            let revoke_self = vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: self_id,
-                data: Default::default(),
-            }];
-            let count =
-                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_self, 0).unwrap();
+            let revoke_self = vec![revoke_op(self_id)];
+            let count = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &revoke_self,
+                AccountChangeChannel::Multichain,
+                0,
+            )
+            .unwrap();
             assert_eq!(count, 0);
         });
 
@@ -1028,13 +1203,15 @@ mod tests {
             // Revoking a non-self actor is never the inline-self shape.
             let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, config, &[]).unwrap();
-            let revoke_other = vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                actor_id: NON_SELF,
-                data: Default::default(),
-            }];
-            let count =
-                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_other, 0).unwrap();
+            let revoke_other = vec![revoke_op(NON_SELF)];
+            let count = AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &revoke_other,
+                AccountChangeChannel::Multichain,
+                0,
+            )
+            .unwrap();
             assert_eq!(count, 0);
         });
     }
@@ -1042,21 +1219,101 @@ mod tests {
     #[test]
     fn config_change_advances_sequence_and_applies() {
         with_storage(|acc| {
-            // Authorize then revoke a non-self actor in one multichain change.
+            // Authorize a non-self actor in one multichain batch.
             let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
-            let changes = vec![ActorChange {
-                change_type: ActorChangeType::Authorize,
-                actor_id: NON_SELF,
-                data: authorize_data(&config, &[]),
-            }];
-            AccountChangeApplier::apply_config_change(acc, ACCOUNT, &changes, 0).unwrap();
+            let changes = vec![authorize_op(NON_SELF, &config, &[])];
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &changes,
+                AccountChangeChannel::Multichain,
+                0,
+            )
+            .unwrap();
             assert_eq!(acc.get_change_sequences(ACCOUNT).unwrap(), (1, 0));
             assert!(acc.is_actor(ACCOUNT, NON_SELF).unwrap());
 
-            // A local-channel change advances the local sequence instead.
-            AccountChangeApplier::apply_config_change(acc, ACCOUNT, &[], 8453).unwrap();
+            // A local-channel batch advances the local sequence instead.
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[],
+                AccountChangeChannel::Local,
+                0,
+            )
+            .unwrap();
             assert_eq!(acc.get_change_sequences(ACCOUNT).unwrap(), (1, 1));
         });
+    }
+
+    /// An `IncrementLocalEpoch` op (empty payload).
+    fn increment_epoch_op() -> SignedChange {
+        SignedChange { change_type: ChangeType::IncrementLocalEpoch, payload: Bytes::new() }
+    }
+
+    #[test]
+    fn increment_local_epoch_bumps_epoch_and_resets_sequence() {
+        with_storage(|acc| {
+            // Seed a local sequence of 4; a Local sequenced batch at seq 4 advances
+            // it to 5, and the trailing IncrementLocalEpoch resets it to 0 while
+            // bumping the epoch to 1.
+            let mut state = acc.get_account_state(ACCOUNT).unwrap();
+            state.local_sequence = 4;
+            acc.set_account_state(ACCOUNT, state).unwrap();
+
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[increment_epoch_op()],
+                AccountChangeChannel::Local,
+                4,
+            )
+            .unwrap();
+
+            let state = acc.get_account_state(ACCOUNT).unwrap();
+            assert_eq!(state.local_epoch, 1);
+            assert_eq!(state.local_sequence, 0);
+        });
+    }
+
+    #[test]
+    fn increment_local_epoch_on_multichain_channel_bumps_epoch() {
+        with_storage(|acc| {
+            // A Multichain batch may bump the local epoch; its own counter advances
+            // independently.
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &[increment_epoch_op()],
+                AccountChangeChannel::Multichain,
+                0,
+            )
+            .unwrap();
+
+            let state = acc.get_account_state(ACCOUNT).unwrap();
+            assert_eq!(state.local_epoch, 1);
+            assert_eq!(state.multichain_sequence, 1);
+            assert_eq!(state.local_sequence, 0);
+        });
+    }
+
+    #[test]
+    fn increment_local_epoch_rejects_nonempty_payload() {
+        let mut state = AccountState::from_word(alloy_primitives::U256::ZERO);
+        assert_eq!(
+            AccountChangeApplier::apply_increment_local_epoch(&[0xaa], &mut state),
+            Err(ApplyError::InvalidChangePayload),
+        );
+    }
+
+    #[test]
+    fn increment_local_epoch_rejects_saturated_epoch() {
+        let mut state = AccountState::from_word(alloy_primitives::U256::ZERO);
+        state.local_epoch = u64::from(u32::MAX);
+        assert_eq!(
+            AccountChangeApplier::apply_increment_local_epoch(&[], &mut state),
+            Err(ApplyError::EpochSaturated),
+        );
     }
 
     #[test]
@@ -1064,20 +1321,16 @@ mod tests {
         with_storage(|acc| {
             let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
             let scoped = ungated(K1, Eip8130Constants::SCOPE_SENDER);
-            let changes = vec![
-                ActorChange {
-                    change_type: ActorChangeType::Authorize,
-                    actor_id: self_id,
-                    data: authorize_data(&scoped, &[]),
-                },
-                ActorChange {
-                    change_type: ActorChangeType::Revoke,
-                    actor_id: self_id,
-                    data: Bytes::new(),
-                },
-            ];
+            let changes = vec![authorize_op(self_id, &scoped, &[]), revoke_op(self_id)];
 
-            AccountChangeApplier::apply_config_change(acc, ACCOUNT, &changes, 0).unwrap();
+            AccountChangeApplier::apply_config_change(
+                acc,
+                ACCOUNT,
+                &changes,
+                AccountChangeChannel::Multichain,
+                0,
+            )
+            .unwrap();
 
             let state = acc.get_account_state(ACCOUNT).unwrap();
             assert_eq!(state.multichain_sequence, 1);
@@ -1098,7 +1351,40 @@ mod tests {
             &[0x61, 0x00, n, 0x60, 0x0E, 0x60, 0x00, 0x39, 0x61, 0x00, n, 0x60, 0x00, 0xF3]
         );
         assert_eq!(&code[14..], &bytecode);
-        assert!(AccountChangeApplier::build_deployment_code(&vec![0u8; 0x10000]).is_err());
+        assert_eq!(
+            AccountChangeApplier::build_deployment_code(&[]),
+            Err(ApplyError::EmptyBytecode)
+        );
+        assert_eq!(
+            AccountChangeApplier::build_deployment_code(&vec![0u8; 0x10000]),
+            Err(ApplyError::BytecodeTooLarge)
+        );
+    }
+
+    #[test]
+    fn actors_commitment_hashes_leaves_then_list() {
+        // Golden values cross-checked against the contract's leaves-then-list
+        // scheme (#74) with `cast keccak`: each actor hashes to
+        // `keccak256(actorId(32) || authenticator(20) || scope(2 BE) ||
+        // policyData)` and the commitment is `keccak256(leaf_0 || … ||
+        // leaf_{n-1})`.
+        let auth = address!("0x0000000000000000000000000000000000000001");
+        let a1 = InitialActor::owner(B256::repeat_byte(0x11), auth);
+        assert_eq!(
+            AccountChangeApplier::actors_commitment(std::slice::from_ref(&a1)),
+            b256!("0x072d109643fa2cb02a4727255a5d6f23a248f8e331c5be883d093115dd513ac9"),
+        );
+
+        let a2 = InitialActor {
+            actor_id: B256::repeat_byte(0x22),
+            authenticator: auth,
+            scope: 0x0007,
+            policy_data: Bytes::new(),
+        };
+        assert_eq!(
+            AccountChangeApplier::actors_commitment(&[a1, a2]),
+            b256!("0x7e3212d8f983663f5da75deeced0c37781e972611a5eec67cda3ed154c25affd"),
+        );
     }
 
     #[test]
@@ -1173,9 +1459,17 @@ mod tests {
 
     #[test]
     fn create_requires_sorted_non_empty_actors() {
+        // Non-empty code so these entries reach the actor-set checks; the
+        // finalized contract builds deployment code (reverting EmptyBytecode)
+        // before `_initializeAccount`, so a codeless entry would fail earlier
+        // (covered by `create_rejects_codeless_account`).
+        let code = Bytes::from_static(&[0x60, 0x01]);
         with_storage(|acc| {
-            let empty =
-                CreateEntry { user_salt: B256::ZERO, code: Bytes::new(), initial_actors: vec![] };
+            let empty = CreateEntry {
+                user_salt: B256::ZERO,
+                code: code.clone(),
+                initial_actors: vec![],
+            };
             assert_eq!(
                 AccountChangeApplier::apply_create(acc, &empty),
                 Err(ApplyError::NoInitialActors)
@@ -1183,7 +1477,7 @@ mod tests {
 
             let unsorted = CreateEntry {
                 user_salt: B256::ZERO,
-                code: Bytes::new(),
+                code: code.clone(),
                 initial_actors: vec![
                     InitialActor::owner(B256::repeat_byte(2), AUTHENTICATOR),
                     InitialActor::owner(B256::repeat_byte(1), AUTHENTICATOR),
@@ -1192,6 +1486,25 @@ mod tests {
             assert_eq!(
                 AccountChangeApplier::apply_create(acc, &unsorted),
                 Err(ApplyError::ActorsNotSortedOrDuplicate)
+            );
+        });
+    }
+
+    #[test]
+    fn create_rejects_codeless_account() {
+        // Codeless creates are invalid: an account with actor config but no
+        // runtime code (nor a delegation) would break the EOA invariant. Mirrors
+        // `_buildDeploymentCode`'s `revert EmptyBytecode()`, which fires before
+        // any actor-set validation, so even a well-formed actor set is rejected.
+        with_storage(|acc| {
+            let entry = CreateEntry {
+                user_salt: B256::ZERO,
+                code: Bytes::new(),
+                initial_actors: vec![InitialActor::owner(B256::repeat_byte(1), AUTHENTICATOR)],
+            };
+            assert_eq!(
+                AccountChangeApplier::apply_create(acc, &entry),
+                Err(ApplyError::EmptyBytecode)
             );
         });
     }
@@ -1292,6 +1605,106 @@ mod tests {
                 .get_account_info(ACCOUNT)
                 .and_then(|info| info.code.as_ref())
                 .is_some_and(Bytecode::is_empty)
+        );
+    }
+
+    /// Marks `account` keystore-established (`FLAG_CONTRACT_ESTABLISHED`) in the
+    /// `AccountConfiguration` storage, leaving every other state field zero.
+    fn mark_contract_established(storage: &mut HashMapStorageProvider) {
+        StorageCtx::enter(storage, |sctx| {
+            let mut cfg = AccountConfigurationStorage::new(sctx);
+            let mut state = AccountState::from_word(U256::ZERO);
+            state.flags = Eip8130Constants::FLAG_CONTRACT_ESTABLISHED;
+            cfg.set_account_state(ACCOUNT, state).unwrap();
+        });
+    }
+
+    #[test]
+    fn apply_create_flags_account_contract_established() {
+        // A created account is marked keystore-established so a later empty-code
+        // state can never be mistaken for a proven-key EOA. Mirrors
+        // `createAccount`'s `FLAG_REVOKE_DEFAULT_EOA | FLAG_CONTRACT_ESTABLISHED`.
+        let signer = address!("0x00000000000000000000000000000000000000a1");
+        let actor_id = AccountConfigurationStorage::self_actor_id(signer);
+        let entry = CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::from_static(&[0x60, 0x00]),
+            initial_actors: vec![InitialActor::owner(actor_id, Eip8130Constants::K1_AUTHENTICATOR)],
+        };
+        with_storage(|acc| {
+            let created = AccountChangeApplier::apply_create(acc, &entry).unwrap();
+            let state = acc.get_account_state(created.address).unwrap();
+            assert!(state.contract_established(), "create must set FLAG_CONTRACT_ESTABLISHED");
+            assert!(state.default_eoa_revoked(), "create must still revoke the default EOA");
+        });
+    }
+
+    #[test]
+    fn delegation_effect_install_rejects_empty_code_contract_established_account() {
+        // Empty code on a keystore-established account is a self-destructed CREATE2
+        // account, not a proven-key EOA — a delegation onto it is rejected.
+        let target = Address::repeat_byte(0x55);
+        let mut storage = HashMapStorageProvider::new(1);
+        mark_contract_established(&mut storage);
+
+        let error = StorageCtx::enter(&mut storage, |sctx| {
+            DelegationEffect::new(ACCOUNT, target).install(sctx)
+        })
+        .unwrap_err();
+
+        assert_eq!(error, ApplyError::ContractEstablishedCodeless { account: ACCOUNT });
+        // No delegation code was written.
+        assert!(
+            storage
+                .get_account_info(ACCOUNT)
+                .and_then(|info| info.code.as_ref())
+                .and_then(Bytecode::eip7702_address)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn delegation_effect_install_allows_empty_code_non_established_account() {
+        // A genuine (non-established) empty-code EOA may still be delegated: the
+        // guard only fires for keystore-established accounts.
+        let target = Address::repeat_byte(0x56);
+        let mut storage = HashMapStorageProvider::new(1);
+
+        StorageCtx::enter(&mut storage, |sctx| {
+            DelegationEffect::new(ACCOUNT, target).install(sctx)
+        })
+        .unwrap();
+
+        assert_eq!(
+            storage
+                .get_account_info(ACCOUNT)
+                .and_then(|info| info.code.as_ref())
+                .and_then(Bytecode::eip7702_address),
+            Some(target)
+        );
+    }
+
+    #[test]
+    fn delegation_effect_install_allows_redelegation_of_established_delegate() {
+        // An established account that already carries a delegation indicator
+        // (e.g. an imported 7702 delegate — genuinely once an EOA) may be
+        // re-delegated: the codeless guard is scoped to *empty* code only.
+        let target = Address::repeat_byte(0x57);
+        let mut storage = HashMapStorageProvider::new(1);
+        mark_contract_established(&mut storage);
+        storage.set_code(ACCOUNT, Bytecode::new_eip7702(Address::repeat_byte(0x11))).unwrap();
+
+        StorageCtx::enter(&mut storage, |sctx| {
+            DelegationEffect::new(ACCOUNT, target).install(sctx)
+        })
+        .unwrap();
+
+        assert_eq!(
+            storage
+                .get_account_info(ACCOUNT)
+                .and_then(|info| info.code.as_ref())
+                .and_then(Bytecode::eip7702_address),
+            Some(target)
         );
     }
 

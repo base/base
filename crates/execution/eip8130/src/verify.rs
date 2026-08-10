@@ -220,11 +220,12 @@ mod tests {
         Bytes::from(out)
     }
 
-    /// Canonical Solidity packing of `ActorConfig`.
-    fn pack(authenticator: Address, scope: u8, expiry: u64) -> U256 {
+    /// Canonical Solidity packing of `ActorConfig` (authenticator 0..160, expiry
+    /// 160..208, scope 208..224).
+    fn pack(authenticator: Address, scope: u16, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(scope) << 160)
-            | (U256::from(expiry) << 168)
+            | (U256::from(expiry) << 160)
+            | (U256::from(scope) << 208)
     }
 
     fn base_tx(sender: Option<Address>, payer: Option<Address>) -> TxEip8130 {
@@ -233,7 +234,8 @@ mod tests {
             sender,
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
-            expiry: 0,
+            valid_after: 0,
+            valid_before: 0,
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
