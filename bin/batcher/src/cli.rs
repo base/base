@@ -70,17 +70,11 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "l1-ws-url", env = "BATCHER_L1_WS_URL")]
     pub l1_ws_url: Option<Url>,
 
-    /// Optional L2 WebSocket endpoint for new-block subscriptions.
+    /// Parity validator L2 RPC endpoint for shadow mode.
     ///
-    /// When provided, the batcher subscribes to new block headers over this
-    /// WebSocket connection. Without it, polling is used exclusively.
-    #[arg(long = "l2-ws-url", env = "BATCHER_L2_WS_URL")]
-    pub l2_ws_url: Option<Url>,
-
-    /// Optional derived-parity validator L2 RPC endpoint.
-    ///
-    /// When set, the batcher compares derived L2 block hashes from this
-    /// validator against the configured sequencer L2 RPC endpoint.
+    /// Required with `--dangerously-override-batch-inbox-address` and rejected
+    /// without it. Its safe L2 head anchors shadow batcher recovery, and its
+    /// derived block hashes are compared with the sequencer.
     #[arg(long = "parity-validator-l2-rpc-url", env = "BATCHER_PARITY_VALIDATOR_L2_RPC_URL")]
     pub parity_validator_l2_rpc_url: Option<Url>,
 
@@ -324,7 +318,6 @@ impl BatcherArgs {
             l1_rpc_url: self.l1_rpc_url,
             l1_ws_url: self.l1_ws_url,
             l2_rpc_url: self.l2_rpc_url,
-            l2_ws_url: self.l2_ws_url,
             parity_validator_l2_rpc_url: self.parity_validator_l2_rpc_url,
             rollup_rpc_url: self.rollup_rpc_url,
             l1_beacon_url: self.l1_beacon_url,
