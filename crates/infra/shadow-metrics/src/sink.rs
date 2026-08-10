@@ -22,9 +22,9 @@ pub enum ShadowMetricsSchemaReadinessError {
         /// Required sqlx migration version.
         required_version: i64,
     },
-    /// The expected table is missing or not visible to the runtime role.
+    /// An expected table is missing or not visible to the runtime role.
     #[error(
-        "shadow-metrics Postgres schema is not ready: public.shadow_metrics is missing or not visible to the runtime role; run `shadow-metrics migrate up`"
+        "shadow-metrics Postgres schema is not ready: public.shadow_blocks and public.shadow_block_transactions must be present and visible to the runtime role; run `shadow-metrics migrate up`"
     )]
     ShadowMetricsRelationMissing,
     /// A readiness query failed before readiness could be determined.
@@ -96,15 +96,19 @@ impl ShadowMetricsSink {
 
     /// Checks whether shadow-metrics Postgres storage is ready for runtime use.
     pub async fn check_schema_ready(&self) -> Result<(), ShadowMetricsSchemaReadinessError> {
-        let (migration_table_exists, shadow_metrics_relation_exists): (bool, bool) =
-            sqlx::query_as(
-                "SELECT \
+        let (migration_table_exists, shadow_blocks_exists, shadow_block_transactions_exists): (
+            bool,
+            bool,
+            bool,
+        ) = sqlx::query_as(
+            "SELECT \
                     to_regclass('_sqlx_migrations') IS NOT NULL AS migration_table_exists, \
-                    to_regclass('public.shadow_metrics') IS NOT NULL AS shadow_metrics_relation_exists",
-            )
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|source| ShadowMetricsSchemaReadinessError::QueryFailed { source })?;
+                    to_regclass('public.shadow_blocks') IS NOT NULL AS shadow_blocks_exists, \
+                    to_regclass('public.shadow_block_transactions') IS NOT NULL AS shadow_block_transactions_exists",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|source| ShadowMetricsSchemaReadinessError::QueryFailed { source })?;
 
         if !migration_table_exists {
             return Err(ShadowMetricsSchemaReadinessError::MigrationTableMissing);
@@ -125,7 +129,7 @@ impl ShadowMetricsSink {
             });
         }
 
-        if !shadow_metrics_relation_exists {
+        if !shadow_blocks_exists || !shadow_block_transactions_exists {
             return Err(ShadowMetricsSchemaReadinessError::ShadowMetricsRelationMissing);
         }
 

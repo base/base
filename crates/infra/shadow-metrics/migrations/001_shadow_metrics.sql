@@ -1,15 +1,41 @@
--- Placeholder schema for the shadow-metrics noop service. The service performs
--- no real work; this table exists so schema-readiness probes have a relation to
--- verify and so future metrics storage has a migration to build on.
-CREATE TABLE IF NOT EXISTS shadow_metrics (
-    id BIGSERIAL PRIMARY KEY,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE shadow_blocks(
+  number BIGINT NOT NULL,
+  hash TEXT NOT NULL,
+  parent_hash TEXT NOT NULL,
+  timestamp BIGINT NOT NULL,
+  tx_count INT NOT NULL,
+  gas_used BIGINT NOT NULL,
+  da_bytes BIGINT NOT NULL,
+  state_root TEXT NOT NULL,
+  reorged_out BOOL NOT NULL DEFAULT false,
+  canonical_hash TEXT,
+  builder_version TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(number, hash)
 );
+CREATE INDEX idx_shadow_blocks_number ON shadow_blocks(number DESC);
+
+CREATE TABLE shadow_block_transactions(
+  block_number BIGINT NOT NULL,
+  block_hash TEXT NOT NULL,
+  tx_index INT NOT NULL,
+  tx_hash TEXT NOT NULL,
+  sender TEXT,
+  tx_type SMALLINT NOT NULL,
+  effective_priority_fee_per_gas TEXT,
+  base_fee_per_gas BIGINT,
+  gas_used BIGINT NOT NULL,
+  reorged_out BOOL NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(block_hash, tx_index)
+);
+CREATE INDEX idx_shadow_block_transactions_number ON shadow_block_transactions(block_number, tx_index);
 
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'shadow_metrics') THEN
         GRANT SELECT ON _sqlx_migrations TO shadow_metrics;
-        GRANT SELECT, INSERT, UPDATE, DELETE ON shadow_metrics TO shadow_metrics;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON shadow_blocks TO shadow_metrics;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON shadow_block_transactions TO shadow_metrics;
     END IF;
 END $$;
