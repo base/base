@@ -118,9 +118,6 @@ pub struct PolicyVersions;
 
 impl PolicyVersions {
     /// Returns the version active at `upgrade`, or `None` before the introduction
-    /// fork (Beryl), where the policy registry precompile is not installed at all.
-    ///
-    /// V1 is active from Beryl; V2 supersedes it from Cobalt.
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
         match upgrade {
             u if u >= BaseUpgrade::Cobalt => Some(PolicyVersion::V2),
