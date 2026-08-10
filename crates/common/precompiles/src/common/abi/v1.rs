@@ -54,7 +54,6 @@ sol! {
         event Approval(address indexed owner, address indexed spender, uint256 amount);
         event Memo(address indexed caller, bytes32 indexed memo);
         event BurnedBlocked(address indexed caller, address indexed from, uint256 amount);
-        event TransferredFromSeizable(address indexed caller, address indexed from, address indexed to, uint256 amount);
         event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
         event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
         event RoleAdminChanged(bytes32 indexed role, bytes32 indexed previousAdminRole, bytes32 indexed newAdminRole);

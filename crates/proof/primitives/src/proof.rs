@@ -76,6 +76,9 @@ pub struct ProofRequest {
     /// accept and ignore this field.
     #[cfg_attr(feature = "serde", serde(default))]
     pub image_hash: B256,
+    /// L2 block used to pin the upgrade schedule; defaults to the claimed block.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub schedule_l2_block_number: Option<u64>,
 }
 
 /// A proof request bundled with the witness data needed to fulfill it.

@@ -727,6 +727,7 @@ impl OPSuccinctDataFetcher {
         l2_end_block: u64,
         l1_head_hash: B256,
         intermediate_block_interval: u64,
+        schedule_l2_block_number: Option<u64>,
     ) -> Result<HostConfig> {
         let Some(rollup_config) = &self.rollup_config else {
             return Err(anyhow::anyhow!("Rollup config not loaded."));
@@ -812,6 +813,7 @@ impl OPSuccinctDataFetcher {
             // We don't need to set the proposer or image hash for the range proof zk program
             proposer: Address::ZERO,
             image_hash: B256::ZERO,
+            schedule_l2_block_number,
         };
 
         let prover = base_proof_host::ProverConfig {

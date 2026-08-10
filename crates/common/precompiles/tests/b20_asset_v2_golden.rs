@@ -1,15 +1,15 @@
 //! Golden tests pinning Asset **V2** behavior of the B-20 precompile.
 //!
 //! V2 activates at Cobalt as a self-contained copy of V1 that adds the ERC-8056 "Scaled UI
-//! Amount" scheduled-multiplier surface (lazy multiplier, `setUIMultiplier` /
-//! `cancelScheduledMultiplier`, ERC-165 advertisement) and the common `seizeWithMemo` surface.
+//! Amount" scheduled-multiplier surface (lazy multiplier, `updateUIMultiplier` /
+//! `cancelUIMultiplierUpdate`, ERC-165 advertisement) and the common `seizeWithMemo` surface.
 //! Every op that does not touch those two additions carries V1's verbatim body, and storage is
 //! append-only, so — following the same precedent as `b20_policy_v2_golden.rs` — the
 //! behavior-preserving ops below reuse V1's pinned roots verbatim: this suite still locks V2's
 //! behavior independently (a future edit to V2 that changes state, events, or gas must re-bless
 //! these roots, and can never silently diverge under V1's frozen pins). Ops that do differ at V2
 //! (`updateMultiplier`'s event, `announce`'s inner-call event) get their own fresh pins, as do the
-//! wholly new ops (`setUIMultiplier`, `cancelScheduledMultiplier`, `seizeWithMemo`,
+//! wholly new ops (`updateUIMultiplier`, `cancelUIMultiplierUpdate`, `seizeWithMemo`,
 //! `supportsInterface`).
 //!
 //! Every op is driven through the **version-resolver-gated** dispatch path
@@ -132,18 +132,18 @@ const ROOT_GRANT_IDEMPOTENT: B256 =
 // announce's inner updateMultiplier call therefore emits a different event too).
 
 const ROOT_UPDATE_MULTIPLIER_V2: B256 =
-    b256!("cdca2ecf6bb16df905c24e19fe2a6134de85d14f78fada504f297a5b48f27d56");
+    b256!("fedb235aa7953b3224856747a42ef936f814559763791f14126249a05f5f9a6b");
 const ROOT_UPDATE_MULTIPLIER_CLEARS_PENDING: B256 =
-    b256!("c37622bddee14ffe67343fa4ff783e55eb8c81e8e2c9e1f14b12c5b0327ca650");
+    b256!("1bcd7dd7a84d36e144d3f9a4547acda2eb80f6622ed7eec9a8cd6ad3a021f0ba");
 const ROOT_SET_UI_MULTIPLIER: B256 =
     b256!("f75ebc45a2ee2e3e1027ac80d1245ba8a4f594c69e4ab73be9a213f25a2f0a9f");
 const ROOT_SET_UI_MULTIPLIER_FOLDS_MATURED: B256 =
     b256!("a0942971f4c3b38bd0d2ebd19730bda7585f517774ffaf8d7c5ba21c5cf63475");
 const ROOT_CANCEL_SCHEDULED_MULTIPLIER: B256 =
-    b256!("a6eb5455f2721a9472aa20aa5c8f4c6a49181e1103454a0100d718f1a9d452be");
+    b256!("63ac7df12f8dc4e2af852b1a6545c284a98a65fa604b6671c39293de9bcc967b");
 const ROOT_SEIZE: B256 = b256!("3b853f2d0f2ed769695b5577e4df3e8e8ecac537d4f26c29da283a724a426301");
 const ROOT_ANNOUNCE_V2: B256 =
-    b256!("95f6bf76e456a189578b72be4ddeeb03cabb2fca86b1c292195305d5e1a6d092");
+    b256!("5b3ea1fe17f441ce9e5d82f0764ce177f818fad8118cd1358fe74cbfafcde5e1");
 
 // --- harness ----------------------------------------------------------------
 
@@ -2283,7 +2283,7 @@ fn golden_update_multiplier_clears_live_pending_and_emits_cancellation() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall {
+        IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD * u(3),
             effectiveAt: u(1_000),
         }
@@ -2307,12 +2307,16 @@ fn golden_update_multiplier_clears_live_pending_and_emits_cancellation() {
     });
     let events = s.get_events(TOKEN);
     assert_eq!(
-        events[events.len() - 2],
-        IB20Asset::MultiplierUpdateCancelled {
+        events[events.len() - 3],
+        IB20Asset::UIMultiplierUpdateCancelled {
             cancelledMultiplier: B20AssetStorage::WAD * u(3),
             cancelledEffectiveAt: u(1_000),
         }
         .encode_log_data()
+    );
+    assert_eq!(
+        events[events.len() - 2],
+        IB20Asset::MultiplierUpdated { multiplier: B20AssetStorage::WAD * u(5) }.encode_log_data()
     );
     assert_eq!(
         events[events.len() - 1],
@@ -2327,7 +2331,7 @@ fn golden_update_multiplier_clears_live_pending_and_emits_cancellation() {
 }
 
 // ============================================================================
-// setUIMultiplier / cancelScheduledMultiplier / lazy multiplier reads (new at V2)
+// updateUIMultiplier / cancelUIMultiplierUpdate / lazy multiplier reads (new at V2)
 // ============================================================================
 
 #[test]
@@ -2342,7 +2346,7 @@ fn golden_set_ui_multiplier_schedules_pending() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
+        IB20Asset::updateUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
             .abi_encode(),
     )
     .unwrap();
@@ -2376,7 +2380,7 @@ fn golden_multiplier_lazily_flips_at_maturity() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
+        IB20Asset::updateUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
             .abi_encode(),
     )
     .unwrap();
@@ -2424,7 +2428,7 @@ fn golden_new_ui_multiplier_and_effective_at_reads() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
+        IB20Asset::updateUIMultiplierCall { newMultiplier: target, effectiveAt: effective_at }
             .abi_encode(),
     )
     .unwrap();
@@ -2465,7 +2469,7 @@ fn golden_balance_of_ui_and_total_supply_ui_scale_by_effective_multiplier() {
         &mut s,
         ADMIN,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall {
+        IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD * u(2),
             effectiveAt: u(1_000),
         }
@@ -2511,7 +2515,7 @@ fn golden_set_ui_multiplier_reverts_invalid_multiplier() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall { newMultiplier: U256::ZERO, effectiveAt: u(1_000) }
+        IB20Asset::updateUIMultiplierCall { newMultiplier: U256::ZERO, effectiveAt: u(1_000) }
             .abi_encode(),
     )
     .unwrap_err();
@@ -2527,7 +2531,7 @@ fn golden_set_ui_multiplier_reverts_effective_at_in_past() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall {
+        IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD * u(2),
             effectiveAt: u(999),
         }
@@ -2550,7 +2554,7 @@ fn golden_set_ui_multiplier_reverts_effective_at_too_far() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall {
+        IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD * u(2),
             effectiveAt: too_far,
         }
@@ -2572,7 +2576,7 @@ fn golden_set_ui_multiplier_reverts_schedule_overlap() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall {
+        IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD * u(2),
             effectiveAt: u(1_000),
         }
@@ -2584,7 +2588,7 @@ fn golden_set_ui_multiplier_reverts_schedule_overlap() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall {
+        IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD * u(4),
             effectiveAt: u(2_000),
         }
@@ -2593,7 +2597,7 @@ fn golden_set_ui_multiplier_reverts_schedule_overlap() {
     .unwrap_err();
     assert_eq!(
         err,
-        BasePrecompileError::revert(IB20Asset::ScheduleOverlap { pendingEffectiveAt: u(1_000) })
+        BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateExists { effectiveAt: u(1_000) })
     );
 }
 
@@ -2606,7 +2610,7 @@ fn golden_set_ui_multiplier_folds_matured_pending_before_rescheduling() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall {
+        IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD * u(2),
             effectiveAt: u(1_000),
         }
@@ -2621,7 +2625,7 @@ fn golden_set_ui_multiplier_folds_matured_pending_before_rescheduling() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall {
+        IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD * u(4),
             effectiveAt: u(2_000),
         }
@@ -2654,7 +2658,7 @@ fn golden_set_ui_multiplier_unprivileged_requires_role() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall {
+        IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD * u(2),
             effectiveAt: u(1_000),
         }
@@ -2679,7 +2683,7 @@ fn golden_cancel_scheduled_multiplier() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall {
+        IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD * u(2),
             effectiveAt: u(1_000),
         }
@@ -2691,7 +2695,7 @@ fn golden_cancel_scheduled_multiplier() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::cancelScheduledMultiplierCall {}.abi_encode(),
+        IB20Asset::cancelUIMultiplierUpdateCall {}.abi_encode(),
     )
     .unwrap();
 
@@ -2703,7 +2707,7 @@ fn golden_cancel_scheduled_multiplier() {
     });
     assert_eq!(
         *s.get_events(TOKEN).last().unwrap(),
-        IB20Asset::MultiplierUpdateCancelled {
+        IB20Asset::UIMultiplierUpdateCancelled {
             cancelledMultiplier: B20AssetStorage::WAD * u(2),
             cancelledEffectiveAt: u(1_000),
         }
@@ -2720,10 +2724,10 @@ fn golden_cancel_scheduled_multiplier_reverts_when_none() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::cancelScheduledMultiplierCall {}.abi_encode(),
+        IB20Asset::cancelUIMultiplierUpdateCall {}.abi_encode(),
     )
     .unwrap_err();
-    assert_eq!(err, BasePrecompileError::revert(IB20Asset::NoScheduledMultiplier {}));
+    assert_eq!(err, BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateDoesNotExist {}));
 }
 
 #[test]
@@ -2735,7 +2739,7 @@ fn golden_cancel_scheduled_multiplier_reverts_when_already_matured() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::setUIMultiplierCall {
+        IB20Asset::updateUIMultiplierCall {
             newMultiplier: B20AssetStorage::WAD * u(2),
             effectiveAt: u(1_000),
         }
@@ -2748,10 +2752,10 @@ fn golden_cancel_scheduled_multiplier_reverts_when_already_matured() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::cancelScheduledMultiplierCall {}.abi_encode(),
+        IB20Asset::cancelUIMultiplierUpdateCall {}.abi_encode(),
     )
     .unwrap_err();
-    assert_eq!(err, BasePrecompileError::revert(IB20Asset::NoScheduledMultiplier {}));
+    assert_eq!(err, BasePrecompileError::revert(IB20Asset::UIMultiplierUpdateDoesNotExist {}));
 }
 
 #[test]
@@ -2761,7 +2765,7 @@ fn golden_cancel_scheduled_multiplier_unprivileged_requires_role() {
         &mut s,
         ALICE,
         FakePolicyAccounting::new(),
-        IB20Asset::cancelScheduledMultiplierCall {}.abi_encode(),
+        IB20Asset::cancelUIMultiplierUpdateCall {}.abi_encode(),
     )
     .unwrap_err();
     assert_eq!(
@@ -2811,8 +2815,8 @@ fn golden_supports_interface_false_for_unrelated_id() {
 }
 
 #[test]
-fn golden_supports_interface_false_for_conversion_extension_id() {
-    // The ERC-8056 Conversion extension id (0x57854fc3) is deliberately not advertised.
+fn golden_supports_interface_true_for_conversion_extension_id() {
+    // The ERC-8056 Conversion extension id (0x57854fc3) is advertised after the interface review.
     let mut s = fresh();
     let out = op(
         &mut s,
@@ -2824,7 +2828,53 @@ fn golden_supports_interface_false_for_conversion_extension_id() {
         .abi_encode(),
     )
     .unwrap();
-    assert_eq!(out, Bytes::from(false.abi_encode()));
+    assert_eq!(out, Bytes::from(true.abi_encode()));
+}
+
+// ============================================================================
+// Interface-review additions (BOP-495): toUIAmount / fromUIAmount aliases route
+// to the same logic as their legacy counterparts; MAX_UI_MULTIPLIER exposes the
+// setter bound.
+// ============================================================================
+
+#[test]
+fn golden_to_ui_amount_and_from_ui_amount_alias_conversions() {
+    // The ERC-8056 Conversion aliases behave exactly like toScaledBalance / toRawBalance.
+    let mut s = fresh();
+    seed(&mut s, |t| {
+        fund(t, ALICE, u(100));
+        t.set_multiplier(B20AssetStorage::WAD * u(2)).unwrap();
+    });
+    let ui = op(
+        &mut s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20Asset::toUIAmountCall { rawAmount: u(100) }.abi_encode(),
+    )
+    .unwrap();
+    assert_eq!(ui, Bytes::from(u(200).abi_encode()));
+
+    let raw = op(
+        &mut s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20Asset::fromUIAmountCall { uiAmount: u(200) }.abi_encode(),
+    )
+    .unwrap();
+    assert_eq!(raw, Bytes::from(u(100).abi_encode()));
+}
+
+#[test]
+fn golden_max_ui_multiplier_returns_uint128_max() {
+    let mut s = fresh();
+    let out = op(
+        &mut s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20Asset::MAX_UI_MULTIPLIERCall {}.abi_encode(),
+    )
+    .unwrap();
+    assert_eq!(out, Bytes::from(U256::from(u128::MAX).abi_encode()));
 }
 
 // ============================================================================
@@ -2859,9 +2909,10 @@ fn golden_announce_emits_and_runs_internal_calls() {
         assert_eq!(t.multiplier().unwrap(), B20AssetStorage::WAD * u(2));
     });
     let events = s.get_events(TOKEN);
-    // Announcement, UIMultiplierUpdated (internal call; V2's updateMultiplier event), EndAnnouncement.
+    // Announcement, then the inner updateMultiplier's MultiplierUpdated + UIMultiplierUpdated,
+    // then EndAnnouncement.
     assert_eq!(
-        events[events.len() - 3],
+        events[events.len() - 4],
         IB20Asset::Announcement {
             caller: ALICE,
             id: "2026-split".into(),
@@ -2870,6 +2921,7 @@ fn golden_announce_emits_and_runs_internal_calls() {
         }
         .encode_log_data()
     );
+    assert_eq!(events[events.len() - 3].topics()[0], IB20Asset::MultiplierUpdated::SIGNATURE_HASH);
     assert_eq!(
         events[events.len() - 2].topics()[0],
         IB20Asset::UIMultiplierUpdated::SIGNATURE_HASH
@@ -3241,7 +3293,7 @@ fn golden_gas_footprints() {
                 |_t| {},
                 ADMIN,
                 FakePolicyAccounting::new(),
-                IB20Asset::setUIMultiplierCall {
+                IB20Asset::updateUIMultiplierCall {
                     newMultiplier: B20AssetStorage::WAD * u(2),
                     effectiveAt: u(1_000),
                 }
@@ -3260,7 +3312,7 @@ fn golden_gas_footprints() {
                 },
                 ADMIN,
                 FakePolicyAccounting::new(),
-                IB20Asset::cancelScheduledMultiplierCall {}.abi_encode(),
+                IB20Asset::cancelUIMultiplierUpdateCall {}.abi_encode(),
             ),
         ),
         (
@@ -3531,6 +3583,11 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         | SC::toScaledBalance(_)
         | SC::toRawBalance(_)
         | SC::scaledBalanceOf(_) => covered(&[golden_read_multiplier_and_scaled_balances]),
+        // ERC-8056 Conversion extension aliases of toScaledBalance / toRawBalance.
+        SC::toUIAmount(_) | SC::fromUIAmount(_) => {
+            covered(&[golden_to_ui_amount_and_from_ui_amount_alias_conversions])
+        }
+        SC::MAX_UI_MULTIPLIER(_) => covered(&[golden_max_ui_multiplier_returns_uint128_max]),
         SC::isAnnouncementIdUsed(_) => covered(&[golden_read_is_announcement_id_used]),
         SC::extraMetadata(_) => covered(&[golden_read_extra_metadata]),
 
@@ -3571,7 +3628,7 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         SC::balanceOfUI(_) | SC::totalSupplyUI(_) => {
             covered(&[golden_balance_of_ui_and_total_supply_ui_scale_by_effective_multiplier])
         }
-        SC::setUIMultiplier(_) => covered(&[
+        SC::updateUIMultiplier(_) => covered(&[
             golden_set_ui_multiplier_schedules_pending,
             golden_set_ui_multiplier_reverts_invalid_multiplier,
             golden_set_ui_multiplier_reverts_effective_at_in_past,
@@ -3580,7 +3637,7 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_set_ui_multiplier_folds_matured_pending_before_rescheduling,
             golden_set_ui_multiplier_unprivileged_requires_role,
         ]),
-        SC::cancelScheduledMultiplier(_) => covered(&[
+        SC::cancelUIMultiplierUpdate(_) => covered(&[
             golden_cancel_scheduled_multiplier,
             golden_cancel_scheduled_multiplier_reverts_when_none,
             golden_cancel_scheduled_multiplier_reverts_when_already_matured,
@@ -3589,7 +3646,7 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         SC::supportsInterface(_) => covered(&[
             golden_supports_interface_true_for_erc165_and_erc8056_ids,
             golden_supports_interface_false_for_unrelated_id,
-            golden_supports_interface_false_for_conversion_extension_id,
+            golden_supports_interface_true_for_conversion_extension_id,
         ]),
     }
 }

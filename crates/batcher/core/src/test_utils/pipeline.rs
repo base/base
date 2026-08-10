@@ -90,6 +90,7 @@ impl BatchPipeline for TrackingPipeline {
     }
 
     fn reset(&mut self) {
+        self.submissions.clear();
         self.recorded.lock().unwrap().resets += 1;
     }
 
@@ -143,67 +144,6 @@ impl BatchPipeline for ReorgPipeline {
 
     fn reset(&mut self) {
         self.recorded.lock().unwrap().resets += 1;
-    }
-
-    fn da_backlog_bytes(&self) -> u64 {
-        0
-    }
-}
-
-/// [`BatchPipeline`] that rejects the first `add_block` call and accepts all subsequent ones.
-///
-/// Used to verify that the driver re-adds the triggering block after `reset()`, so the
-/// block is not silently lost when the source will not re-deliver it.
-#[derive(Debug)]
-pub struct OneReorgPipeline {
-    /// Incremented each time `add_block` succeeds (post-reorg re-adds).
-    pub blocks_accepted: Arc<Mutex<usize>>,
-    /// Whether the next `add_block` call should simulate a reorg.
-    fail_next: bool,
-    /// Incremented each time `reset()` is called.
-    pub resets: Arc<Mutex<usize>>,
-}
-
-impl OneReorgPipeline {
-    /// Create a new pipeline backed by the given shared counters.
-    pub const fn new(blocks_accepted: Arc<Mutex<usize>>, resets: Arc<Mutex<usize>>) -> Self {
-        Self { blocks_accepted, fail_next: true, resets }
-    }
-}
-
-impl BatchPipeline for OneReorgPipeline {
-    fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
-        if self.fail_next {
-            self.fail_next = false;
-            return Err((
-                ReorgError::ParentMismatch { expected: B256::ZERO, got: B256::with_last_byte(1) },
-                Box::new(block),
-            ));
-        }
-        *self.blocks_accepted.lock().unwrap() += 1;
-        Ok(())
-    }
-
-    fn step(&mut self) -> Result<StepResult, StepError> {
-        Ok(StepResult::Idle)
-    }
-
-    fn next_submission(&mut self) -> Option<BatchSubmission> {
-        None
-    }
-
-    fn has_ready_submission(&self) -> bool {
-        false
-    }
-
-    fn confirm(&mut self, _: SubmissionId, _: u64) {}
-    fn requeue(&mut self, _: SubmissionId) {}
-    fn force_close_channel(&mut self) {}
-    fn advance_l1_head(&mut self, _: u64) {}
-    fn prune_safe(&mut self, _: u64) {}
-
-    fn reset(&mut self) {
-        *self.resets.lock().unwrap() += 1;
     }
 
     fn da_backlog_bytes(&self) -> u64 {

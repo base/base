@@ -568,6 +568,9 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV2 {
     }
 
     fn composite_policy_child_ids(&self, storage: &S, policy_id: u64) -> Result<Vec<u64>> {
+        if !Self::is_well_formed(policy_id) {
+            return Ok(Vec::new());
+        }
         if !Self::is_composite(policy_id) {
             return Ok(Vec::new());
         }
@@ -1265,6 +1268,13 @@ mod tests {
         let rt = initialized();
         let malformed: u64 = (4u64 << 56) | 42;
         assert_eq!(LOGIC.pending_policy_admin(&rt, malformed).unwrap(), Address::ZERO);
+    }
+
+    #[test]
+    fn composite_policy_child_ids_malformed_policy_id_returns_empty() {
+        let rt = initialized();
+        let malformed: u64 = (4u64 << 56) | 42;
+        assert!(LOGIC.composite_policy_child_ids(&rt, malformed).unwrap().is_empty());
     }
 
     #[test]

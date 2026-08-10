@@ -440,4 +440,9 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
     fn supports_interface(&self, _interface_id: FixedBytes<4>) -> Result<bool> {
         reject_frozen_selector!()
     }
+
+    /// The maximum UI multiplier the setters accept (`type(uint128).max`), the overflow guard.
+    fn max_ui_multiplier(&self) -> Result<U256> {
+        reject_frozen_selector!()
+    }
 }
