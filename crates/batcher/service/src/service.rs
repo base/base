@@ -15,6 +15,7 @@ use base_batcher_source::{BlockSubscription, HybridBlockSource, HybridL1HeadSour
 use base_common_consensus::BaseBlock;
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
+use base_protocol::BlockInfo;
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManagerConfig};
 use futures::{
@@ -23,7 +24,7 @@ use futures::{
     stream::{BoxStream, FuturesUnordered},
 };
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use tokio::{sync::watch, task::JoinHandle};
+use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
@@ -31,8 +32,8 @@ use url::Url;
 use crate::{
     BatcherConfig, L2BlockParityMonitor, L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH,
     NullL1HeadSubscription, NullSubscription, RecentTxSyncTarget, RpcL1HeadPollingSource,
-    RpcL2BlockProvider, RpcPollingSource, RpcThrottleClient, SafeHeadPoller, ShadowParityMonitor,
-    ShadowParityMonitorConfig, WsBlockSubscription, WsL1HeadSubscription,
+    RpcL2BlockProvider, RpcPollingSource, RpcThrottleClient, SafeHeadPoller, SafeHeadProvider,
+    ShadowParityMonitor, ShadowParityMonitorConfig, WsBlockSubscription, WsL1HeadSubscription,
 };
 
 const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
@@ -374,7 +375,7 @@ impl BatcherService {
                         info!(
                             current_l1 = %status.current_l1.number,
                             unsafe_l2 = %status.unsafe_l2.block_info.number,
-                            safe_l2 = %status.safe_l2.block_info.number,
+                            local_safe_l2 = %status.local_safe_l2.block_info.number,
                             "rollup node reports sync, proceeding with batcher startup"
                         );
                         return;
@@ -443,6 +444,17 @@ impl BatcherService {
         }
         if self.config.check_recent_txs_depth > 0 && !self.config.wait_node_sync {
             eyre::bail!("check_recent_txs_depth requires wait_node_sync");
+        }
+        match (self.config.batch_inbox_override, self.config.parity_validator_l2_rpc_url.as_ref()) {
+            (None, Some(_)) => {
+                eyre::bail!("parity validator L2 RPC URL requires shadow mode")
+            }
+            (Some(_), None) => {
+                eyre::bail!(
+                    "shadow mode requires a parity validator L2 RPC URL for its safe L2 head"
+                )
+            }
+            _ => {}
         }
 
         let signer_config = self
@@ -529,6 +541,19 @@ impl BatcherService {
             );
         }
 
+        let validator_provider = if let Some(url) = &self.config.parity_validator_l2_rpc_url {
+            let provider = ProviderBuilder::new()
+                .disable_recommended_fillers()
+                .network::<Base>()
+                .connect(url.as_str())
+                .await
+                .map_err(|e| eyre::eyre!("failed to connect parity validator L2 RPC: {e}"))?;
+            let provider: Arc<dyn Provider<Base> + Send + Sync> = Arc::new(provider);
+            Some(RpcL2BlockProvider::new(provider))
+        } else {
+            None
+        };
+
         // Connect to L1 before the optional node-sync gate.
         let l1_provider: RootProvider =
             Self::connect_first(&self.config.l1_rpc_url, "l1-rpc", |url| {
@@ -564,16 +589,25 @@ impl BatcherService {
             .await?;
         }
 
-        // Fetch sync status to determine the safe L2 head for startup backfill.
-        let sync_status = rollup_client
-            .sync_status()
-            .await
-            .map_err(|e| eyre::eyre!("optimism_syncStatus RPC failed: {e}"))?;
-        let safe_l2_number = sync_status.safe_l2.block_info.number;
-        let next_l2_timestamp =
-            sync_status.safe_l2.block_info.timestamp.saturating_add(rollup_config.block_time);
+        let safe_l2 = if let Some(provider) = validator_provider.as_ref() {
+            provider
+                .safe_l2_head()
+                .await
+                .map_err(|e| eyre::eyre!("failed to fetch parity validator safe L2 head: {e}"))?
+        } else {
+            rollup_client
+                .sync_status()
+                .await
+                .map_err(|e| eyre::eyre!("optimism_syncStatus RPC failed: {e}"))?
+                .local_safe_l2
+                .block_info
+        };
+        if safe_l2 == BlockInfo::default() {
+            eyre::bail!("safe L2 head is empty");
+        }
+        let next_l2_timestamp = safe_l2.timestamp.saturating_add(rollup_config.block_time);
         self.config.encoder_config.validate_for_rollup_config(&rollup_config, next_l2_timestamp)?;
-        info!(safe_l2 = %safe_l2_number, "fetched safe L2 head");
+        info!(safe_l2 = %safe_l2.number, "fetched safe L2 head");
 
         if self.config.metrics_enabled {
             let (layer, mut balance_rx) = BalanceMonitorLayer::new(
@@ -647,57 +681,17 @@ impl BatcherService {
             }
         }
 
-        if let Some(parity_validator_l2_rpc_url) = &self.config.parity_validator_l2_rpc_url {
-            if self.config.batch_inbox_override.is_none() {
-                eyre::bail!(
-                    "parity validator L2 RPC URL requires shadow mode batch inbox override"
-                );
-            }
-
-            match Self::connect_first(
-                std::slice::from_ref(parity_validator_l2_rpc_url),
-                "parity-validator-l2-rpc",
-                |url| {
-                    let url = url.clone();
-                    async move {
-                        let provider = ProviderBuilder::new()
-                            .disable_recommended_fillers()
-                            .network::<Base>()
-                            .connect(url.as_str())
-                            .await
-                            .map_err(|e| {
-                                eyre::eyre!("failed to connect parity validator L2 RPC: {e}")
-                            })?;
-                        provider.get_block_number().await.map_err(|e| {
-                            eyre::eyre!("parity validator eth_blockNumber probe failed: {e}")
-                        })?;
-                        eyre::Ok(provider)
-                    }
-                },
+        if let Some(validator_provider) = validator_provider.as_ref() {
+            let handle = L2BlockParityMonitor::new(
+                RpcL2BlockProvider::new(Arc::clone(&l2_provider)),
+                validator_provider.clone(),
+                L2BlockParityMonitorConfig::new(
+                    safe_l2.number.saturating_add(1),
+                    self.config.poll_interval,
+                ),
             )
-            .await
-            {
-                Ok(provider) => {
-                    let validator_provider: Arc<dyn Provider<Base> + Send + Sync> =
-                        Arc::new(provider);
-                    let handle = L2BlockParityMonitor::new(
-                        RpcL2BlockProvider::new(Arc::clone(&l2_provider)),
-                        RpcL2BlockProvider::new(validator_provider),
-                        L2BlockParityMonitorConfig::new(
-                            safe_l2_number.saturating_add(1),
-                            self.config.poll_interval,
-                        ),
-                    )
-                    .spawn(cancellation.clone());
-                    background_tasks.push(("derived L2 block parity monitor", handle));
-                }
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        "derived L2 block parity monitor failed to connect; continuing without parity monitoring"
-                    );
-                }
-            }
+            .spawn(cancellation.clone());
+            background_tasks.push(("derived L2 block parity monitor", handle));
         }
 
         // Get the current L2 latest block to decide whether historical backfill is needed.
@@ -708,13 +702,13 @@ impl BatcherService {
 
         // Build the L2 polling source. If blocks between the safe head and latest
         // were not yet submitted, use sequential catchup mode to avoid skipping them.
-        let poller = if safe_l2_number < latest_l2 {
+        let poller = if safe_l2.number < latest_l2 {
             info!(
-                safe_l2 = %safe_l2_number,
+                safe_l2 = %safe_l2.number,
                 latest_l2 = %latest_l2,
                 "starting sequential backfill from safe head"
             );
-            RpcPollingSource::new_from(Arc::clone(&l2_provider), safe_l2_number.saturating_add(1))
+            RpcPollingSource::new_from(Arc::clone(&l2_provider), safe_l2.number.saturating_add(1))
         } else {
             RpcPollingSource::new(Arc::clone(&l2_provider))
         };
@@ -785,14 +779,28 @@ impl BatcherService {
         .await
         .map_err(|e| eyre::eyre!("failed to create tx manager: {e}"))?;
 
-        // Create a safe-head watch channel for runtime pruning of confirmed blocks.
-        let (safe_head_tx, safe_head_rx) = watch::channel::<u64>(safe_l2_number);
+        let (safe_head_tx, safe_head_rx) = mpsc::channel(1);
 
-        // Spawn the safe-head poller. It polls `optimism_syncStatus` at the
-        // configured interval and advances the watch when the safe L2 head
-        // moves forward, allowing the encoder to prune confirmed blocks.
-        SafeHeadPoller::new(rollup_client, self.config.poll_interval, safe_head_tx)
-            .spawn(runtime.clone());
+        // Canonical mode follows the rollup node's LocalSafeL2. Shadow mode
+        // follows the parity validator's safe label so canonical DA progress
+        // cannot cause shadow-only gaps to be skipped.
+        let safe_head_handle = if let Some(provider) = validator_provider {
+            tokio::spawn(
+                SafeHeadPoller::new(provider, self.config.poll_interval, safe_l2, safe_head_tx)
+                    .run(runtime.clone()),
+            )
+        } else {
+            tokio::spawn(
+                SafeHeadPoller::new(
+                    rollup_client,
+                    self.config.poll_interval,
+                    safe_l2,
+                    safe_head_tx,
+                )
+                .run(runtime.clone()),
+            )
+        };
+        background_tasks.push(("safe head poller", safe_head_handle));
 
         // Build the driver — all fallible setup is complete at this point.
         let mut driver = BatchDriver::new(
@@ -807,9 +815,8 @@ impl BatcherService {
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
             },
             DaThrottle::new(throttle, throttle_client),
-            l1_head_source,
+            (l1_head_source, safe_l2, safe_head_rx),
         )
-        .with_safe_head_rx(safe_head_rx)
         .with_stopped(self.config.stopped);
 
         let admin_server = match self.config.admin_addr {
