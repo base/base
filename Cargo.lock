@@ -5764,6 +5764,7 @@ dependencies = [
  "alloy-genesis 2.0.5",
  "alloy-primitives",
  "alloy-signer 2.0.5",
+ "alloy-signer-local 2.0.5",
  "async-trait",
  "base-common-genesis",
  "base-health",
@@ -5779,7 +5780,7 @@ dependencies = [
  "jsonrpsee",
  "k256",
  "reqwest 0.13.4",
- "thiserror 2.0.19",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tokio-vsock",
@@ -6116,7 +6117,9 @@ dependencies = [
 name = "base-prover-service-db"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
+ "base-proof-primitives",
  "base-prover-service-protocol",
  "chrono",
  "futures",
