@@ -121,6 +121,9 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
     fn choose_origin(&self, unsafe_head: &L2BlockInfo) -> Result<BlockInfo, L1OriginSelectorError> {
         let next_l2_timestamp =
             self.cfg.l2_block_timestamp(unsafe_head.block_info.number.saturating_add(1));
+        let Some(current) = self.current else {
+            return Err(L1OriginSelectorError::OriginNotFound(unsafe_head.l1_origin.hash));
+        };
         let next = self.next_ready();
 
         // Start building on the next L1 origin block if the next L2 block's timestamp is
@@ -130,10 +133,6 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
         {
             return Ok(*next);
         }
-
-        let Some(current) = self.current else {
-            return Err(L1OriginSelectorError::OriginNotFound(unsafe_head.l1_origin.hash));
-        };
 
         let max_seq_drift = self.cfg.max_sequencer_drift(current.timestamp);
         let past_seq_drift = next_l2_timestamp.saturating_sub(current.timestamp) > max_seq_drift;
@@ -384,6 +383,11 @@ mod tests {
             let mut blocks = self.blocks.lock().expect("blocks lock poisoned");
             blocks.retain(|candidate| candidate.number != block.number);
             blocks.insert(block);
+        }
+
+        /// Removes a block from the provider by hash.
+        fn remove_block(&self, hash: B256) {
+            self.blocks.lock().expect("blocks lock poisoned").retain(|block| block.hash != hash);
         }
 
         /// Sets the latest observed L1 head hash.
@@ -1065,6 +1069,45 @@ mod tests {
         selector.wait_for_inflight_completion().await;
         assert_eq!(selector.next_l1_origin(unsafe_head, true).await.unwrap(), next);
         assert_eq!(selector.next(), Some(&next));
+    }
+
+    #[tokio::test]
+    async fn test_recovery_mode_does_not_use_ready_next_when_current_is_missing() {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 600,
+            ..Default::default()
+        });
+        let current = BlockInfo {
+            hash: B256::with_last_byte(1),
+            number: 0,
+            timestamp: 0,
+            ..Default::default()
+        };
+        let next = BlockInfo {
+            hash: B256::with_last_byte(2),
+            number: 1,
+            parent_hash: current.hash,
+            timestamp: 2,
+        };
+        let provider = MockOriginSelectorProvider::default();
+        provider.with_block(current);
+        provider.with_block(next);
+        let mut selector = L1OriginSelector::new(cfg, provider);
+        let unsafe_head = L2BlockInfo {
+            l1_origin: NumHash { number: current.number, hash: current.hash },
+            ..Default::default()
+        };
+
+        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), current);
+        selector.await_inflight().await;
+        assert_eq!(selector.next(), Some(&next));
+        selector.l1.remove_block(current.hash);
+
+        let error = selector.next_l1_origin(unsafe_head, true).await.unwrap_err();
+        assert!(
+            matches!(error, L1OriginSelectorError::OriginNotFound(hash) if hash == current.hash)
+        );
     }
 
     #[tokio::test]
