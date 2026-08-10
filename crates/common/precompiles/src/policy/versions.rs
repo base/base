@@ -117,14 +117,19 @@ impl PolicyAbi {
 pub struct PolicyVersions;
 
 impl PolicyVersions {
-    /// Returns the version active at `upgrade`, or `None` before Beryl, where the policy
+    /// Returns the version active at `upgrade`, or `None` before the introduction
+    /// fork (Beryl), where the policy registry precompile is not installed at all.
+    ///
+    /// V1 is active from Beryl; V2 supersedes it from Cobalt.
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
-        if upgrade >= BaseUpgrade::Cobalt {
-            Some(PolicyVersion::V2)
-        } else if upgrade >= BaseUpgrade::Beryl {
-            Some(PolicyVersion::V1)
-        } else {
-            None
+        // Ordered thresholds rather than per-variant arms: a fork newer than Cobalt must inherit the
+        // latest version (V2) until one supersedes it, and `BaseUpgrade` is `#[non_exhaustive]`, so
+        // an explicit-variant match would need a wildcard that would wrongly send future forks to
+        // `None`.
+        match upgrade {
+            u if u >= BaseUpgrade::Cobalt => Some(PolicyVersion::V2),
+            u if u >= BaseUpgrade::Beryl => Some(PolicyVersion::V1),
+            _ => None,
         }
     }
 }
