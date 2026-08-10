@@ -1,8 +1,8 @@
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
+use base_shadow_canary_db::ShadowDbConfig;
 use tokio::sync::mpsc;
 
 use crate::{run_exex, spawn_writer};
-use base_shadow_canary_db::ShadowDbConfig;
 
 /// Configuration for the shadow canary extension.
 #[derive(Clone, Debug)]
