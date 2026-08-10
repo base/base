@@ -4,7 +4,8 @@ use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, N
 use reth_rpc_server_types::RethRpcModule;
 
 use crate::{
-    AdminTxPoolApiImpl, AdminTxPoolApiServer, TransactionStatusApiImpl, TransactionStatusApiServer,
+    AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiServer,
+    TransactionStatusApiImpl, TransactionStatusApiServer,
 };
 
 /// Configuration for the `TxPool` RPC extension.
@@ -26,10 +27,13 @@ impl BaseNodeExtension for TxPoolRpcExtension {
         let sequencer_rpc = self.config.sequencer_rpc;
 
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
-            // Register TransactionStatusApi
+            // Register Base transaction pool APIs.
             let status_api = TransactionStatusApiImpl::new(sequencer_rpc, ctx.pool().clone())
                 .expect("Failed to create transaction status API");
-            ctx.modules.merge_configured(status_api.into_rpc())?;
+            ctx.modules
+                .merge_configured(TransactionStatusApiServer::into_rpc(status_api.clone()))?;
+            ctx.modules
+                .merge_configured(SendRawTransactionValidityApiServer::into_rpc(status_api))?;
 
             // Register AdminTxPoolApi
             let admin_txpool_api = AdminTxPoolApiImpl::new(ctx.pool().clone());

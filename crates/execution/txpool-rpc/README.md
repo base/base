@@ -2,14 +2,17 @@
 
 Transaction pool RPC APIs for Base.
 
-Provides RPC endpoints for querying transaction status and managing the transaction pool.
+Provides RPC endpoints for submitting transactions, querying transaction status, and managing the
+transaction pool.
 
 ## Overview
 
 Exposes JSON-RPC APIs for transaction pool administration and transaction lifecycle tracking.
 `AdminTxPoolApiImpl` provides admin-level pool management, while `TransactionStatusApiImpl`
 allows clients to query the current status and lifecycle events of individual transactions
-by hash. Both implement jsonrpsee server traits and are registered as node RPC extensions.
+by hash and submit raw transactions through `base_sendRawTransactionValidity`. The validity
+criteria are carried by the request but are not yet enforced. Both implementations use jsonrpsee
+server traits and are registered as node RPC extensions.
 
 ## Usage
 

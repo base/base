@@ -9,7 +9,8 @@
 
 mod rpc;
 pub use rpc::{
-    AdminTxPoolApiImpl, AdminTxPoolApiServer, Status, TransactionStatusApiImpl,
+    AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiServer,
+    SendRawTransactionValidityRequest, Status, TransactionStatusApiImpl,
     TransactionStatusApiServer, TransactionStatusResponse,
 };
 

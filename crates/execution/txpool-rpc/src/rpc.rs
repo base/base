@@ -1,6 +1,6 @@
-//! RPC implementation for transaction status queries and pool management.
+//! RPC implementation for transaction submission, status queries, and pool management.
 
-use alloy_primitives::{Address, TxHash};
+use alloy_primitives::{Address, Bytes, TxHash};
 use jsonrpsee::{
     core::{RpcResult, async_trait, client::ClientT},
     http_client::{HttpClient, HttpClientBuilder},
@@ -8,7 +8,7 @@ use jsonrpsee::{
     rpc_params,
     types::{ErrorCode, ErrorObjectOwned},
 };
-use reth_transaction_pool::TransactionPool;
+use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
@@ -28,12 +28,32 @@ pub struct TransactionStatusResponse {
     pub status: Status,
 }
 
+/// Request for `base_sendRawTransactionValidity`.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct SendRawTransactionValidityRequest {
+    /// EIP-2718 encoded signed transaction.
+    pub tx: Bytes,
+    /// Criteria that control when the transaction is valid for inclusion.
+    pub validity: Vec<serde_json::Value>,
+}
+
 /// RPC API for transaction status
 #[rpc(server, namespace = "base")]
 pub trait TransactionStatusApi {
     /// Gets the status of a transaction
     #[method(name = "transactionStatus")]
     async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<TransactionStatusResponse>;
+}
+
+/// RPC API for submitting a raw transaction with validity criteria.
+#[rpc(server, namespace = "base")]
+pub trait SendRawTransactionValidityApi {
+    /// Submits a raw transaction together with its validity criteria.
+    #[method(name = "sendRawTransactionValidity")]
+    async fn send_raw_transaction_validity(
+        &self,
+        request: SendRawTransactionValidityRequest,
+    ) -> RpcResult<TxHash>;
 }
 
 /// Admin RPC API for transaction pool management operations.
@@ -51,8 +71,8 @@ pub trait AdminTxPoolApi {
     async fn drop_transaction(&self, tx_hash: TxHash) -> RpcResult<bool>;
 }
 
-/// Implementation of the transaction status RPC API.
-#[derive(Debug)]
+/// Implementation of the Base transaction pool RPC APIs.
+#[derive(Debug, Clone)]
 pub struct TransactionStatusApiImpl<Pool: TransactionPool> {
     sequencer_client: Option<HttpClient>,
     pool: Pool,
@@ -61,8 +81,8 @@ pub struct TransactionStatusApiImpl<Pool: TransactionPool> {
 impl<Pool: TransactionPool + 'static> TransactionStatusApiImpl<Pool> {
     /// Creates a new transaction status API instance.
     ///
-    /// If `sequencer_url` is provided, status queries will be forwarded to the sequencer.
-    /// Otherwise, the local transaction pool will be queried.
+    /// If `sequencer_url` is provided, transaction status queries and submissions will be
+    /// forwarded to the sequencer. Otherwise, the local transaction pool will be used.
     pub fn new(
         sequencer_url: Option<String>,
         pool: Pool,
@@ -108,6 +128,54 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
     }
 }
 
+#[async_trait]
+impl<Pool: TransactionPool + 'static> SendRawTransactionValidityApiServer
+    for TransactionStatusApiImpl<Pool>
+{
+    async fn send_raw_transaction_validity(
+        &self,
+        request: SendRawTransactionValidityRequest,
+    ) -> RpcResult<TxHash> {
+        if let Some(ref sequencer_client) = self.sequencer_client {
+            return sequencer_client
+                .request("base_sendRawTransactionValidity", rpc_params![request])
+                .await
+                .map_err(|error| {
+                    warn!(%error, "failed to submit raw transaction with validity");
+                    ErrorObjectOwned::owned(
+                        ErrorCode::InternalError.code(),
+                        format!("failed to submit raw transaction with validity: {error}"),
+                        None::<()>,
+                    )
+                });
+        }
+
+        let transaction =
+            <Pool::Transaction as PoolTransaction>::recover_raw_transaction(request.tx.as_ref())
+                .map_err(|error| {
+                    ErrorObjectOwned::owned(
+                        ErrorCode::InvalidParams.code(),
+                        format!("failed to decode transaction: {error}"),
+                        None::<()>,
+                    )
+                })?;
+        let tx_hash = *transaction.hash();
+
+        // TODO: Validate and attach `request.validity` before inserting the transaction.
+        self.pool.add_transaction(TransactionOrigin::Local, transaction).await.map_err(
+            |error| {
+                ErrorObjectOwned::owned(
+                    ErrorCode::InternalError.code(),
+                    format!("pool rejected transaction: {error}"),
+                    None::<()>,
+                )
+            },
+        )?;
+
+        Ok(tx_hash)
+    }
+}
+
 /// Implementation of the admin transaction pool management RPC API.
 #[derive(Debug)]
 pub struct AdminTxPoolApiImpl<Pool: TransactionPool> {
@@ -140,6 +208,7 @@ impl<Pool: TransactionPool + 'static> AdminTxPoolApiServer for AdminTxPoolApiImp
 
 #[cfg(test)]
 mod tests {
+    use alloy_eips::eip2718::Encodable2718;
     use httpmock::prelude::*;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin,
@@ -148,6 +217,96 @@ mod tests {
     use serde_json::{self, json};
 
     use super::*;
+
+    fn validity_request(tx: Bytes) -> SendRawTransactionValidityRequest {
+        SendRawTransactionValidityRequest {
+            tx,
+            validity: vec![json!({
+                "type": "storage",
+                "params": {
+                    "address": "0xabc",
+                    "slot": "0x1",
+                    "op": "=",
+                    "value": "0x789"
+                }
+            })],
+        }
+    }
+
+    #[test]
+    fn send_raw_transaction_validity_request_uses_top_level_keys() {
+        let request = validity_request(Bytes::from_static(&[0x02]));
+        let value = serde_json::to_value(request).expect("request should serialize");
+
+        assert_eq!(value["tx"], "0x02");
+        assert_eq!(value["validity"][0]["type"], "storage");
+        assert_eq!(value["validity"][0]["params"]["slot"], "0x1");
+    }
+
+    #[test]
+    fn send_raw_transaction_validity_method_is_registered() {
+        let rpc = TransactionStatusApiImpl::new(None, testing_pool())
+            .expect("should be able to initialize rpc");
+        let module = SendRawTransactionValidityApiServer::into_rpc(rpc);
+
+        assert!(module.method_names().any(|name| name == "base_sendRawTransactionValidity"));
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_malformed_transaction() {
+        let rpc = TransactionStatusApiImpl::new(None, testing_pool())
+            .expect("should be able to initialize rpc");
+
+        let error = rpc
+            .send_raw_transaction_validity(validity_request(Bytes::from_static(&[0xff])))
+            .await
+            .expect_err("malformed transaction should be rejected");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("failed to decode transaction"));
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_submits_to_local_pool() {
+        let pool = testing_pool();
+        let rpc = TransactionStatusApiImpl::new(None, pool.clone())
+            .expect("should be able to initialize rpc");
+        let (transaction, _) = MockTransaction::eip1559().into_consensus().into_parts();
+        let request = validity_request(transaction.encoded_2718().into());
+
+        let tx_hash = rpc
+            .send_raw_transaction_validity(request)
+            .await
+            .expect("valid transaction should be submitted");
+
+        assert!(pool.get(&tx_hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_is_forwarded_to_sequencer() -> eyre::Result<()> {
+        let sequencer = MockServer::start();
+        let request = validity_request(Bytes::from_static(&[0x02]));
+        let tx_hash = TxHash::repeat_byte(0x42);
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST).path("/").json_body(json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "base_sendRawTransactionValidity",
+                "params": [request]
+            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({"jsonrpc": "2.0", "id": 0, "result": tx_hash}));
+        });
+        let rpc = TransactionStatusApiImpl::new(Some(sequencer.base_url()), testing_pool())
+            .expect("should be able to initialize rpc");
+
+        let result = rpc.send_raw_transaction_validity(request).await?;
+
+        assert_eq!(result, tx_hash);
+        mock.assert();
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_transaction_status() -> eyre::Result<()> {

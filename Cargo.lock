@@ -6602,6 +6602,7 @@ dependencies = [
 name = "base-txpool-rpc"
 version = "0.0.0"
 dependencies = [
+ "alloy-eips 2.2.0",
  "alloy-primitives",
  "base-node-runner",
  "eyre",
