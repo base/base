@@ -20,11 +20,11 @@ base_metrics::define_metrics! {
     #[label(recovery)]
     sequencer_state: gauge,
     #[describe("Sequencer L1 origin RPC calls by method and outcome")]
-    #[label(name = "method", default = ["block_by_hash", "block_by_number"])]
+    #[label(name = "method", default = ["block_by_hash", "block_by_number", "block_receipts"])]
     #[label(name = "outcome", default = ["success", "not_found", "timeout", "error"])]
     sequencer_l1_origin_rpc_calls_total: counter,
     #[describe("Wall-clock duration of sequencer L1 origin RPC calls in seconds")]
-    #[label(name = "method", default = ["block_by_hash", "block_by_number"])]
+    #[label(name = "method", default = ["block_by_hash", "block_by_number", "block_receipts"])]
     #[label(name = "outcome", default = ["success", "not_found", "timeout", "error"])]
     sequencer_l1_origin_rpc_duration_seconds: histogram,
     #[describe("Duration of the sequencer attributes builder")]
@@ -59,6 +59,12 @@ base_metrics::define_metrics! {
     sequencer_recovery_mode_blocks_total: counter,
     #[describe("Empty blocks produced due to sequencer drift threshold")]
     sequencer_drift_empty_blocks_total: counter,
+    #[describe("L1 origin lookups served from the selected-origin slot")]
+    #[label(name = "kind", default = ["header", "receipts"])]
+    sequencer_l1_origin_buffer_hits_total: counter,
+    #[describe("L1 origin lookups that missed the selected-origin slot")]
+    #[label(name = "kind", default = ["header", "receipts"])]
+    sequencer_l1_origin_buffer_misses_total: counter,
     #[describe("Pre-built payloads discarded because the unsafe head advanced past their parent")]
     sequencer_stale_build_discarded_total: counter,
     #[describe("Configured verifier L1 confirmation depth")]

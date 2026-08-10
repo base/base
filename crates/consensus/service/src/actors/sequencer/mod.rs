@@ -11,7 +11,8 @@ mod l1_origin;
 pub use l1_origin::MockOriginSelector;
 pub use l1_origin::{
     DelayedL1OriginSelectorProvider, L1OriginSelector, L1OriginSelectorError,
-    L1OriginSelectorProvider, OriginSelector,
+    L1OriginSelectorProvider, OriginSelector, PrefetchedChainProvider,
+    PrefetchedChainProviderError, PreparedL1Origin,
 };
 
 mod recovery;

@@ -38,6 +38,7 @@ pub use actors::{
     NetworkBuilder, NetworkBuilderError, NetworkConfig, NetworkDriver, NetworkDriverError,
     NetworkEngineClient, NetworkHandler, NetworkInboundData, NodeActor, NoopCheckpointWriter,
     OriginSelector, PayloadBuilder, PayloadSealer, PendingStopSender, PoolActivation,
+    PrefetchedChainProvider, PrefetchedChainProviderError, PreparedL1Origin,
     QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, ReconcileShadowRequest,
