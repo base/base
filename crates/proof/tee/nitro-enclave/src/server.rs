@@ -344,8 +344,8 @@ mod tests {
             b256!("12e9c45f19f9817c6d4385fad29e7a70c355502cf0883e76a9a7e478a85d1360"),
         );
         assert_eq!(
-            config_hash_for_chain(1337).unwrap(),
-            b256!("1bb15c380e7cf5cfd303807cc1dff6cd5275a6facc7628091d8b3a7ab6d631b1"),
+            config_hash_for_chain(84538453).unwrap(),
+            b256!("846b1fd10a5e22fb7572cc4ac794454d301b382c64ab934091e519486e5200be"),
         );
         assert_eq!(
             config_hash_for_chain(763360).unwrap(),

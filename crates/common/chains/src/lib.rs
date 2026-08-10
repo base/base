@@ -7,8 +7,9 @@ extern crate alloc;
 
 mod config;
 pub use config::{
-    Bootnodes, ChainConfig, MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS,
-    SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS, ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS,
+    Bootnodes, ChainConfig, DEVNET_BERYL_ACTIVATION_ADMIN_ADDRESS,
+    MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS, SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS,
+    ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS,
 };
 
 mod upgrade;
@@ -24,7 +25,7 @@ mod macros;
 pub use macros::RollupConfigSource;
 
 mod ethereum;
-pub use ethereum::{Holesky, Hoodi, L1_CONFIGS, Mainnet, Sepolia};
+pub use ethereum::{Devnet, Holesky, Hoodi, L1_CONFIGS, Mainnet, Sepolia};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

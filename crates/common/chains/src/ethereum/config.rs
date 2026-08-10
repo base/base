@@ -5,11 +5,12 @@ use alloy_genesis::ChainConfig as GenesisChainConfig;
 use alloy_primitives::map::HashMap;
 use spin::Lazy;
 
-use crate::{Holesky, Hoodi, Mainnet, Sepolia};
+use crate::{Devnet, Holesky, Hoodi, Mainnet, Sepolia};
 
 /// Ethereum L1 chain configurations keyed by chain ID.
 pub static L1_CONFIGS: Lazy<HashMap<u64, GenesisChainConfig>> = Lazy::new(|| {
     let mut map = HashMap::default();
+    map.insert(Devnet::CHAIN_ID, Devnet::l1_config());
     map.insert(NamedChain::Mainnet.into(), Mainnet::l1_config());
     map.insert(NamedChain::Sepolia.into(), Sepolia::l1_config());
     map.insert(NamedChain::Holesky.into(), Holesky::l1_config());
@@ -28,16 +29,26 @@ mod tests {
 
     #[test]
     fn l1_config_all_chains() {
+        let devnet_chain_id = Devnet::CHAIN_ID;
         let mainnet_chain_id = u64::from(NamedChain::Mainnet);
         let sepolia_chain_id = u64::from(NamedChain::Sepolia);
         let holesky_chain_id = u64::from(NamedChain::Holesky);
         let hoodi_chain_id = u64::from(NamedChain::Hoodi);
 
+        assert!(L1_CONFIGS.get(&devnet_chain_id).is_some());
         assert!(L1_CONFIGS.get(&mainnet_chain_id).is_some());
         assert!(L1_CONFIGS.get(&sepolia_chain_id).is_some());
         assert!(L1_CONFIGS.get(&holesky_chain_id).is_some());
         assert!(L1_CONFIGS.get(&hoodi_chain_id).is_some());
         assert!(L1_CONFIGS.get(&99999).is_none());
+    }
+
+    #[test]
+    fn devnet_rollup_l1_config_resolves() {
+        let rollup_config = crate::rollup_config!(crate::ChainConfig::devnet().chain_id).unwrap();
+        let l1_config = L1_CONFIGS.get(&rollup_config.l1_chain_id).unwrap();
+
+        assert_eq!(l1_config.chain_id, Devnet::CHAIN_ID);
     }
 
     #[test]
