@@ -38,3 +38,6 @@ futures.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true
+alloy-primitives.workspace = true
+reth-primitives-traits = { workspace = true, features = ["test-utils"] }
+reth-ethereum-primitives = { workspace = true, features = ["test-utils"] }

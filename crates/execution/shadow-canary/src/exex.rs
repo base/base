@@ -228,3 +228,129 @@ where
 {
     ShadowCanaryExEx::new(tx).run(ctx).await
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::B256;
+    use reth_ethereum_primitives::{Block, EthPrimitives, Receipt};
+    use reth_execution_types::{Chain, ExecutionOutcome};
+    use reth_primitives_traits::RecoveredBlock;
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    const NEW_CHAIN_VARIANT: u8 = 0xff;
+
+    fn block_hash(number: u64, variant: u8) -> B256 {
+        let mut bytes = [0u8; 32];
+        bytes[0] = number as u8;
+        bytes[1] = variant;
+        B256::new(bytes)
+    }
+
+    fn mk_block(number: u64, variant: u8) -> RecoveredBlock<Block> {
+        let mut block: RecoveredBlock<Block> = Default::default();
+        block.set_block_number(number);
+        block.set_hash(block_hash(number, variant));
+        block.set_parent_hash(block_hash(number.saturating_sub(1), variant));
+        block
+    }
+
+    fn mk_chain(from: u64, to: u64, variant: u8) -> Chain<EthPrimitives> {
+        let mut blocks = Vec::new();
+        let mut receipts: Vec<Vec<Receipt>> = Vec::new();
+        for number in from..=to {
+            blocks.push(mk_block(number, variant));
+            receipts.push(vec![Receipt::default()]);
+        }
+        let execution_outcome: ExecutionOutcome<Receipt> = ExecutionOutcome {
+            bundle: Default::default(),
+            receipts,
+            requests: Vec::new(),
+            first_block: from,
+        };
+        Chain::new(blocks, execution_outcome, Default::default())
+    }
+
+    fn drain(mut rx: mpsc::Receiver<ShadowBlockRow>) -> Vec<ShadowBlockRow> {
+        let mut rows = Vec::new();
+        while let Ok(row) = rx.try_recv() {
+            rows.push(row);
+        }
+        rows
+    }
+
+    #[tokio::test]
+    async fn chain_committed_emits_one_canonical_row_per_block() {
+        let (tx, rx) = mpsc::channel(16);
+        let exex = ShadowCanaryExEx::new(tx);
+
+        let processed =
+            exex.handle_chain_committed(&mk_chain(1, 3, 0)).await.expect("handle committed");
+        assert!(processed);
+
+        let rows = drain(rx);
+        assert_eq!(rows.iter().map(|row| row.number).collect::<Vec<_>>(), vec![1, 2, 3]);
+        for row in &rows {
+            assert!(!row.reorged_out, "committed rows must not be reorged out");
+            assert_eq!(row.canonical_hash, None, "committed rows carry no canonical hash");
+            assert_eq!(row.tx_count, 1, "one receipt per block => tx_count == 1");
+            assert_eq!(row.hash, block_hash(row.number as u64, 0).to_string());
+        }
+    }
+
+    #[tokio::test]
+    async fn chain_reorged_marks_old_rows_and_sets_canonical_hash() {
+        let (tx, rx) = mpsc::channel(32);
+        let exex = ShadowCanaryExEx::new(tx);
+
+        // Old chain 6..=8 is reorged out; new canonical chain 6..=9 has distinct hashes.
+        let old = mk_chain(6, 8, 0);
+        let new = mk_chain(6, 9, NEW_CHAIN_VARIANT);
+        let processed = exex.handle_chain_reorged(&old, &new).await.expect("handle reorged");
+        assert!(processed);
+
+        let rows = drain(rx);
+        let reorged: Vec<_> = rows.iter().filter(|row| row.reorged_out).collect();
+        let canonical: Vec<_> = rows.iter().filter(|row| !row.reorged_out).collect();
+
+        assert_eq!(reorged.len(), 3, "old blocks 6..=8 marked reorged out");
+        assert_eq!(canonical.len(), 4, "new blocks 6..=9 recorded as canonical");
+
+        for row in &reorged {
+            assert_eq!(row.hash, block_hash(row.number as u64, 0).to_string());
+            assert_eq!(
+                row.canonical_hash,
+                Some(block_hash(row.number as u64, NEW_CHAIN_VARIANT).to_string()),
+                "reorged-out row points at the new canonical hash at its height"
+            );
+        }
+        for row in &canonical {
+            assert_eq!(row.canonical_hash, None, "new canonical rows carry no canonical hash");
+        }
+    }
+
+    #[tokio::test]
+    async fn chain_reorged_leaves_canonical_hash_none_when_height_missing() {
+        let (tx, rx) = mpsc::channel(32);
+        let exex = ShadowCanaryExEx::new(tx);
+
+        // New chain is shorter than old, so old block 9 has no canonical counterpart.
+        let old = mk_chain(6, 9, 0);
+        let new = mk_chain(6, 8, NEW_CHAIN_VARIANT);
+        exex.handle_chain_reorged(&old, &new).await.expect("handle reorged");
+
+        let rows = drain(rx);
+        let missing = rows
+            .iter()
+            .find(|row| row.number == 9 && row.reorged_out)
+            .expect("old block 9 reorged out");
+        assert_eq!(missing.canonical_hash, None, "no new block at height 9 => canonical hash None");
+
+        let present = rows
+            .iter()
+            .find(|row| row.number == 6 && row.reorged_out)
+            .expect("old block 6 reorged out");
+        assert_eq!(present.canonical_hash, Some(block_hash(6, NEW_CHAIN_VARIANT).to_string()));
+    }
+}

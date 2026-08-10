@@ -6282,6 +6282,7 @@ dependencies = [
 name = "base-shadow-canary"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
  "async-trait",
  "base-node-runner",
@@ -6290,6 +6291,7 @@ dependencies = [
  "eyre",
  "futures",
  "mockall",
+ "reth-ethereum-primitives",
  "reth-execution-types",
  "reth-exex",
  "reth-node-api",
