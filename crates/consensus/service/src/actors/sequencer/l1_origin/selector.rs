@@ -1,4 +1,4 @@
-//! The [`L1OriginSelector`].
+//! The [`L1OriginSelector`] and its next-origin state machine.
 
 use std::{fmt::Debug, sync::Arc};
 
@@ -7,8 +7,33 @@ use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_protocol::{BlockInfo, L2BlockInfo};
+use tokio_util::task::AbortOnDropHandle;
 
 use super::L1OriginSelectorProvider;
+
+/// The speculative successor to `current` and any in-flight work to obtain it.
+#[derive(Debug, Default)]
+enum NextSlot {
+    /// No successor is known and no fetch is running.
+    #[default]
+    Idle,
+    /// A background fetch keyed to the current origin and observed L1 chain view.
+    InFlight {
+        /// The current origin hash this fetch must extend.
+        parent_hash: B256,
+        /// The observed L1 head hash under which the fetch started.
+        chain_view: B256,
+        /// The self-aborting background fetch.
+        handle: AbortOnDropHandle<Option<BlockInfo>>,
+    },
+    /// A successor verified against its parent and observed L1 chain view.
+    Ready {
+        /// The prepared next origin.
+        block: BlockInfo,
+        /// The observed L1 head hash under which the origin was fetched.
+        chain_view: B256,
+    },
+}
 
 /// Trait for selecting the next L1 origin block for sequencing.
 ///
@@ -34,16 +59,19 @@ pub trait OriginSelector: Debug + Send + Sync {
 
 /// The [`L1OriginSelector`] is responsible for selecting the L1 origin block based on the
 /// current L2 unsafe head's sequence epoch.
+///
+/// Next-origin lookups run in a self-aborting background task and are adopted only if they still
+/// extend the current origin under the same observed L1 chain view.
 #[derive(Debug)]
 pub struct L1OriginSelector<P: L1OriginSelectorProvider> {
     /// The [`RollupConfig`].
     cfg: Arc<RollupConfig>,
-    /// The [`L1OriginSelectorProvider`].
-    l1: P,
+    /// The [`L1OriginSelectorProvider`], shared with the background fetch.
+    l1: Arc<P>,
     /// The current L1 origin.
     current: Option<BlockInfo>,
-    /// The next L1 origin and the L1 chain view under which it was fetched.
-    next: Option<(BlockInfo, B256)>,
+    /// The next L1 origin and any in-flight work to obtain it.
+    next: NextSlot,
 }
 
 #[async_trait]
@@ -61,15 +89,46 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
         is_recovery_mode: bool,
     ) -> Result<BlockInfo, L1OriginSelectorError> {
         self.select_origins(&unsafe_head, is_recovery_mode).await?;
+        self.choose_origin(&unsafe_head)
+    }
+}
+
+impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
+    /// Creates a new [`L1OriginSelector`].
+    pub fn new(cfg: Arc<RollupConfig>, l1: P) -> Self {
+        Self { cfg, l1: Arc::new(l1), current: None, next: NextSlot::Idle }
+    }
+
+    /// Returns the current L1 origin.
+    pub const fn current(&self) -> Option<&BlockInfo> {
+        self.current.as_ref()
+    }
+
+    /// Returns the next L1 origin if its background fetch has completed and been adopted.
+    pub const fn next(&self) -> Option<&BlockInfo> {
+        self.next_ready()
+    }
+
+    /// Returns the ready successor, if any.
+    const fn next_ready(&self) -> Option<&BlockInfo> {
+        match &self.next {
+            NextSlot::Ready { block, .. } => Some(block),
+            _ => None,
+        }
+    }
+
+    /// Selects the origin to build on from the current selector state without performing I/O.
+    fn choose_origin(&self, unsafe_head: &L2BlockInfo) -> Result<BlockInfo, L1OriginSelectorError> {
         let next_l2_timestamp =
             self.cfg.l2_block_timestamp(unsafe_head.block_info.number.saturating_add(1));
+        let next = self.next_ready();
 
         // Start building on the next L1 origin block if the next L2 block's timestamp is
         // greater than or equal to the next L1 origin's timestamp.
-        if let Some((next, _)) = self.next
+        if let Some(next) = next
             && next_l2_timestamp >= next.timestamp
         {
-            return Ok(next);
+            return Ok(*next);
         }
 
         let Some(current) = self.current else {
@@ -93,124 +152,186 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
             "Next L2 block time is past the sequencer drift"
         );
 
-        if self.next.map(|(next, _)| next_l2_timestamp < next.timestamp).unwrap_or(false) {
+        if next.map(|next| next_l2_timestamp < next.timestamp).unwrap_or(false) {
             // If the next L1 origin is ahead of the next L2 block's timestamp, return the current
             // origin.
             return Ok(current);
         }
 
-        self.next.map(|(next, _)| next).ok_or(L1OriginSelectorError::NotEnoughData(current))
-    }
-}
-
-impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
-    /// Creates a new [`L1OriginSelector`].
-    pub const fn new(cfg: Arc<RollupConfig>, l1: P) -> Self {
-        Self { cfg, l1, current: None, next: None }
+        next.copied().ok_or(L1OriginSelectorError::NotEnoughData(current))
     }
 
-    /// Returns the current L1 origin.
-    pub const fn current(&self) -> Option<&BlockInfo> {
-        self.current.as_ref()
-    }
-
-    /// Returns the next L1 origin.
-    pub const fn next(&self) -> Option<&BlockInfo> {
-        match &self.next {
-            Some((next, _)) => Some(next),
-            None => None,
-        }
-    }
-
-    /// Selects the current and next L1 origin blocks based on the unsafe head.
+    /// Selects the current origin and drives the background next-origin state machine.
     async fn select_origins(
         &mut self,
         unsafe_head: &L2BlockInfo,
         in_recovery_mode: bool,
     ) -> Result<(), L1OriginSelectorError> {
+        let origin_hash = unsafe_head.l1_origin.hash;
+
         if in_recovery_mode {
-            self.current = self.l1.get_block_by_hash(unsafe_head.l1_origin.hash).await?;
-            self.next = None;
-            self.try_fetch_next_origin().await;
-            return Ok(());
-        }
-
-        self.invalidate_next_if_chain_view_changed();
-
-        if self.current.map(|c| c.hash == unsafe_head.l1_origin.hash).unwrap_or(false) {
-            // Do nothing; The next L2 block exists in the same epoch as the current L1 origin.
-        } else if self
-            .next
-            .map(|(next, _)| next.hash == unsafe_head.l1_origin.hash)
-            .unwrap_or(false)
-        {
-            // Advance the origin.
-            self.current = self.next.take().map(|(next, _)| next);
+            self.invalidate_next(origin_hash);
+            self.current = self.l1.get_block_by_hash(origin_hash).await?;
         } else {
-            // Find the current origin block, as it is missing.
-            let current = self.l1.get_block_by_hash(unsafe_head.l1_origin.hash).await?;
-
-            self.current = current;
-            self.next = None;
+            self.invalidate_next_if_chain_view_changed();
+            if self.current.is_some_and(|current| current.hash == origin_hash) {
+                // The next L2 block remains in the current sequencing epoch.
+            } else if let Some(promoted) = self.take_ready_if(origin_hash) {
+                self.current = Some(promoted);
+            } else {
+                // Cold start, multi-epoch jump, or reorg: resolve the required current origin.
+                self.next = NextSlot::Idle;
+                self.current = self.l1.get_block_by_hash(origin_hash).await?;
+            }
         }
 
-        self.try_fetch_next_origin().await;
+        if let Some(current) = self.current {
+            self.poll_next(current.hash, current.number).await;
+        }
         Ok(())
     }
 
-    /// Invalidates a prepared next origin when the observed L1 chain view changes.
-    fn invalidate_next_if_chain_view_changed(&mut self) {
-        if self
-            .next
-            .as_ref()
-            .is_some_and(|(_, chain_view)| Some(*chain_view) != self.l1.chain_view())
-        {
-            self.next = None;
+    /// Drops speculative state that cannot extend `parent_hash` in the live L1 chain view.
+    fn invalidate_next(&mut self, parent_hash: B256) {
+        self.invalidate_next_if_chain_view_changed();
+        let stored_parent = match &self.next {
+            NextSlot::InFlight { parent_hash, .. } => *parent_hash,
+            NextSlot::Ready { block, .. } => block.parent_hash,
+            NextSlot::Idle => return,
+        };
+        if stored_parent != parent_hash {
+            self.next = NextSlot::Idle;
         }
     }
 
-    /// Attempts to fetch the next L1 origin block.
-    async fn try_fetch_next_origin(&mut self) {
-        // If there is no next L1 origin set, attempt to find it. If it's not yet available, leave
-        // it unset.
-        if let Some(current) = self.current.as_ref() {
-            // If the next L1 origin is already set, do nothing.
-            if self.next.is_some() {
-                return;
+    /// Takes a ready successor if it matches `hash`.
+    fn take_ready_if(&mut self, hash: B256) -> Option<BlockInfo> {
+        if matches!(&self.next, NextSlot::Ready { block, .. } if block.hash == hash) {
+            match std::mem::take(&mut self.next) {
+                NextSlot::Ready { block, .. } => Some(block),
+                _ => None,
             }
+        } else {
+            None
+        }
+    }
 
-            // If the next L1 origin is a logical extension of the current L1 chain, set it.
-            //
-            // Ignore the eventuality that the block is not found or cannot be fetched, as the
-            // next L1 origin fetch is performed on a best-effort basis.
-            let next_origin_number = current.number + 1;
-            let Some(chain_view) = self.l1.chain_view() else {
-                return;
-            };
-            let next = match self.l1.get_block_by_number(next_origin_number).await {
+    /// Drops speculative state when its observed L1 chain view is no longer current.
+    fn invalidate_next_if_chain_view_changed(&mut self) {
+        let live_view = self.l1.chain_view();
+        let stored_view = match &self.next {
+            NextSlot::InFlight { chain_view, .. } | NextSlot::Ready { chain_view, .. } => {
+                *chain_view
+            }
+            NextSlot::Idle => return,
+        };
+        if Some(stored_view) != live_view {
+            self.next = NextSlot::Idle;
+        }
+    }
+
+    /// Advances the next-origin state machine without awaiting an unfinished fetch.
+    async fn poll_next(&mut self, current_hash: B256, current_number: u64) {
+        let Some(chain_view) = self.l1.chain_view() else {
+            self.next = NextSlot::Idle;
+            return;
+        };
+
+        self.next = match std::mem::take(&mut self.next) {
+            ready @ NextSlot::Ready { block, chain_view: ready_view }
+                if block.parent_hash == current_hash && ready_view == chain_view =>
+            {
+                ready
+            }
+            NextSlot::InFlight { parent_hash, chain_view: fetch_view, .. }
+                if parent_hash != current_hash || fetch_view != chain_view =>
+            {
+                self.spawn_next(current_hash, current_number, chain_view)
+            }
+            NextSlot::InFlight { handle, .. } if handle.is_finished() => {
+                let fetched = match handle.await {
+                    Ok(fetched) => fetched,
+                    Err(error) => {
+                        warn!(
+                            target: "l1_origin_selector",
+                            error = %error,
+                            "Background next-origin task failed; retrying on next tick"
+                        );
+                        None
+                    }
+                };
+                match self.adopt_next(current_hash, chain_view, fetched) {
+                    NextSlot::Idle => self.l1.chain_view().map_or(NextSlot::Idle, |live_view| {
+                        self.spawn_next(current_hash, current_number, live_view)
+                    }),
+                    adopted => adopted,
+                }
+            }
+            in_flight @ NextSlot::InFlight { .. } => in_flight,
+            NextSlot::Idle | NextSlot::Ready { .. } => {
+                self.spawn_next(current_hash, current_number, chain_view)
+            }
+        };
+    }
+
+    /// Adopts a fetched successor only if its parent and observed chain view are still current.
+    fn adopt_next(
+        &self,
+        current_hash: B256,
+        chain_view: B256,
+        fetched: Option<BlockInfo>,
+    ) -> NextSlot {
+        fetched
+            .filter(|next| {
+                next.parent_hash == current_hash && self.l1.chain_view() == Some(chain_view)
+            })
+            .map_or(NextSlot::Idle, |block| NextSlot::Ready { block, chain_view })
+    }
+
+    /// Starts a background lookup for the origin following `current_number`.
+    fn spawn_next(&self, current_hash: B256, current_number: u64, chain_view: B256) -> NextSlot {
+        let l1 = Arc::clone(&self.l1);
+        let number = current_number.saturating_add(1);
+        let handle = AbortOnDropHandle::new(tokio::spawn(async move {
+            match l1.get_block_by_number(number).await {
                 Ok(next) => next,
-                Err(err) => {
+                Err(error) => {
                     warn!(
                         target: "l1_origin_selector",
-                        current_origin_hash = %current.hash,
-                        current_origin_number = current.number,
-                        next_origin_number,
-                        error = %err,
-                        "Failed to fetch next L1 origin; reusing current origin until sequencer drift is exceeded"
+                        error = %error,
+                        number,
+                        "Background next-origin fetch failed; retrying on next tick"
                     );
-                    return;
+                    None
                 }
-            };
+            }
+        }));
+        NextSlot::InFlight { parent_hash: current_hash, chain_view, handle }
+    }
 
-            // A head update during the lookup may have changed the canonical block at this number.
-            // Discard the result and retry against the new view on the next tick.
-            if Some(chain_view) != self.l1.chain_view() {
+    /// Test-only helper that settles an in-flight fetch through the production adoption path.
+    #[cfg(test)]
+    async fn await_inflight(&mut self) {
+        let Some(current_hash) = self.current.map(|current| current.hash) else {
+            return;
+        };
+        self.next = match std::mem::take(&mut self.next) {
+            NextSlot::InFlight { chain_view, handle, .. } => {
+                let fetched = handle.await.ok().flatten();
+                self.adopt_next(current_hash, chain_view, fetched)
+            }
+            slot => slot,
+        };
+    }
+
+    /// Waits until an in-flight fetch can be settled through the production polling path.
+    #[cfg(test)]
+    async fn wait_for_inflight_completion(&self) {
+        loop {
+            if matches!(&self.next, NextSlot::InFlight { handle, .. } if handle.is_finished()) {
                 return;
             }
-
-            if next.map(|n| n.parent_hash == current.hash).unwrap_or(false) {
-                self.next = next.map(|next| (next, chain_view));
-            }
+            tokio::task::yield_now().await;
         }
     }
 }
@@ -233,33 +354,36 @@ pub enum L1OriginSelectorError {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, sync::Mutex};
+    use std::{collections::HashSet, sync::Mutex, time::Duration};
 
     use alloy_eips::NumHash;
     use rstest::rstest;
+    use tokio::time::timeout;
 
     use super::*;
 
     /// A mock [`OriginSelectorProvider`] with a local set of [`BlockInfo`]s available.
     #[derive(Default, Debug, Clone)]
     struct MockOriginSelectorProvider {
-        blocks: HashSet<BlockInfo>,
+        blocks: Arc<Mutex<HashSet<BlockInfo>>>,
         chain_view: Arc<Mutex<Option<B256>>>,
-        chain_view_after_number_fetch: Option<B256>,
+        chain_view_after_number_fetch: Arc<Mutex<Option<B256>>>,
         failed_number_fetches: HashSet<u64>,
+        number_delay: Arc<Mutex<Duration>>,
     }
 
     impl MockOriginSelectorProvider {
         /// Creates a new [`MockOriginSelectorProvider`].
-        fn with_block(&mut self, block: BlockInfo) {
-            self.blocks.insert(block);
+        fn with_block(&self, block: BlockInfo) {
+            self.blocks.lock().expect("blocks lock poisoned").insert(block);
             *self.chain_view.lock().expect("chain view lock poisoned") = Some(block.hash);
         }
 
         /// Replaces the block at the same number in the canonical chain view.
-        fn replace_block(&mut self, block: BlockInfo) {
-            self.blocks.retain(|candidate| candidate.number != block.number);
-            self.blocks.insert(block);
+        fn replace_block(&self, block: BlockInfo) {
+            let mut blocks = self.blocks.lock().expect("blocks lock poisoned");
+            blocks.retain(|candidate| candidate.number != block.number);
+            blocks.insert(block);
         }
 
         /// Sets the latest observed L1 head hash.
@@ -273,13 +397,19 @@ mod tests {
         }
 
         /// Changes the observed L1 head after the next lookup by number.
-        const fn change_chain_view_after_number_fetch(&mut self, chain_view: Option<B256>) {
-            self.chain_view_after_number_fetch = chain_view;
+        fn change_chain_view_after_number_fetch(&self, chain_view: Option<B256>) {
+            *self.chain_view_after_number_fetch.lock().expect("next chain view lock poisoned") =
+                chain_view;
         }
 
         /// Fails lookups for the given L1 block number.
         fn fail_block_number(&mut self, number: u64) {
             self.failed_number_fetches.insert(number);
+        }
+
+        /// Delays lookups by number.
+        fn set_number_delay(&self, delay: Duration) {
+            *self.number_delay.lock().expect("number delay lock poisoned") = delay;
         }
     }
 
@@ -293,21 +423,37 @@ mod tests {
             &self,
             hash: B256,
         ) -> Result<Option<BlockInfo>, L1OriginSelectorError> {
-            Ok(self.blocks.iter().find(|b| b.hash == hash).copied())
+            Ok(self
+                .blocks
+                .lock()
+                .expect("blocks lock poisoned")
+                .iter()
+                .find(|block| block.hash == hash)
+                .copied())
         }
 
         async fn get_block_by_number(
             &self,
             number: u64,
         ) -> Result<Option<BlockInfo>, L1OriginSelectorError> {
+            let delay = *self.number_delay.lock().expect("number delay lock poisoned");
+            tokio::time::sleep(delay).await;
             if self.failed_number_fetches.contains(&number) {
                 return Err(L1OriginSelectorError::Provider(TransportErrorKind::custom_str(
                     "mock L1 block fetch failed",
                 )));
             }
 
-            let block = self.blocks.iter().find(|b| b.number == number).copied();
-            if let Some(chain_view) = self.chain_view_after_number_fetch {
+            let block = self
+                .blocks
+                .lock()
+                .expect("blocks lock poisoned")
+                .iter()
+                .find(|block| block.number == number)
+                .copied();
+            if let Some(chain_view) =
+                *self.chain_view_after_number_fetch.lock().expect("next chain view lock poisoned")
+            {
                 self.set_chain_view(chain_view);
             }
             Ok(block)
@@ -334,7 +480,7 @@ mod tests {
 
         // Initialize the provider with mock L1 blocks, equal to the number of epochs + 1
         // (such that the next logical origin is always available.)
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         for i in 0..num_epochs + 1 {
             provider.with_block(BlockInfo {
                 parent_hash: B256::with_last_byte(i.saturating_sub(1) as u8),
@@ -363,13 +509,20 @@ mod tests {
                 },
                 seq_num: 0,
             };
+            let _ = selector.next_l1_origin(unsafe_head, false).await;
+            selector.await_inflight().await;
+            assert!(selector.next().is_some(), "next origin not ready at L2 block {i}");
             let next = selector.next_l1_origin(unsafe_head, false).await.unwrap();
 
             // The expected L1 origin block is the one corresponding to the epoch of the current L2
             // block.
             let expected_epoch = ((i + 1) * cfg.block_time) / L1_SLOT_TIME;
-            assert_eq!(next.hash, B256::with_last_byte(expected_epoch as u8));
-            assert_eq!(next.number, expected_epoch);
+            assert_eq!(
+                next.hash,
+                B256::with_last_byte(expected_epoch as u8),
+                "unexpected origin at L2 block {i}"
+            );
+            assert_eq!(next.number, expected_epoch, "unexpected origin at L2 block {i}");
         }
     }
 
@@ -424,7 +577,7 @@ mod tests {
             timestamp: 12,
         };
         let next_b = BlockInfo { hash: B256::with_last_byte(3), ..next_a };
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         provider.with_block(current);
         provider.with_block(next_a);
         provider.set_chain_view(B256::with_last_byte(10));
@@ -438,6 +591,7 @@ mod tests {
 
         let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
         assert_eq!(selected, current);
+        selector.await_inflight().await;
         assert_eq!(selector.next(), Some(&next_a));
 
         selector.l1.replace_block(next_b);
@@ -445,6 +599,9 @@ mod tests {
         unsafe_head.block_info.number = 5;
         unsafe_head.block_info.timestamp = 10;
 
+        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        assert_eq!(selected, current);
+        selector.await_inflight().await;
         let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
         assert_eq!(selected, next_b);
         assert_eq!(selector.next(), Some(&next_b));
@@ -469,7 +626,7 @@ mod tests {
             parent_hash: current.hash,
             timestamp: 2,
         };
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         provider.with_block(current);
         provider.with_block(next);
         provider.clear_chain_view();
@@ -485,6 +642,9 @@ mod tests {
         assert_eq!(selector.next(), None);
 
         selector.l1.set_chain_view(B256::with_last_byte(10));
+        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        assert_eq!(selected, current);
+        selector.await_inflight().await;
         let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
         assert_eq!(selected, next);
         assert_eq!(selector.next(), Some(&next));
@@ -510,7 +670,7 @@ mod tests {
             timestamp: 2,
         };
         let next_b = BlockInfo { hash: B256::with_last_byte(3), ..next_a };
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         provider.with_block(current);
         provider.with_block(next_a);
         provider.set_chain_view(B256::with_last_byte(10));
@@ -524,10 +684,14 @@ mod tests {
 
         let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
         assert_eq!(selected, current);
+        selector.await_inflight().await;
         assert_eq!(selector.next(), None);
 
         selector.l1.replace_block(next_b);
         selector.l1.change_chain_view_after_number_fetch(None);
+        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        assert_eq!(selected, current);
+        selector.await_inflight().await;
         let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
         assert_eq!(selected, next_b);
         assert_eq!(selector.next(), Some(&next_b));
@@ -550,7 +714,7 @@ mod tests {
         });
 
         // Initialize the provider with a single L1 block.
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         provider.with_block(BlockInfo {
             parent_hash: B256::ZERO,
             hash: B256::ZERO,
@@ -584,6 +748,8 @@ mod tests {
             },
             seq_num: 0,
         };
+        let _ = selector.next_l1_origin(unsafe_head, false).await;
+        selector.await_inflight().await;
         let next = selector.next_l1_origin(unsafe_head, false).await.unwrap();
 
         // The expected L1 origin block is the one corresponding to the epoch of the current L2
@@ -722,7 +888,7 @@ mod tests {
         });
 
         // Initialize the provider with a single L1 block.
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         provider.with_block(BlockInfo {
             parent_hash: B256::ZERO,
             hash: B256::ZERO,
@@ -761,6 +927,8 @@ mod tests {
         };
 
         if next_available {
+            let _ = selector.next_l1_origin(unsafe_head, false).await;
+            selector.await_inflight().await;
             let next = selector.next_l1_origin(unsafe_head, false).await.unwrap();
             if next_ahead_of_unsafe {
                 // If the next L1 origin is available and ahead of the unsafe head, the L1 origin
@@ -780,5 +948,166 @@ mod tests {
             let next_err = selector.next_l1_origin(unsafe_head, false).await.unwrap_err();
             assert!(matches!(next_err, L1OriginSelectorError::NotEnoughData(_)));
         }
+    }
+
+    #[tokio::test]
+    async fn test_next_origin_lookup_does_not_block_selection() {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 600,
+            ..Default::default()
+        });
+        let current = BlockInfo {
+            hash: B256::with_last_byte(1),
+            number: 0,
+            timestamp: 0,
+            ..Default::default()
+        };
+        let next = BlockInfo {
+            hash: B256::with_last_byte(2),
+            number: 1,
+            parent_hash: current.hash,
+            timestamp: 12,
+        };
+        let provider = MockOriginSelectorProvider::default();
+        provider.with_block(current);
+        provider.with_block(next);
+        provider.set_number_delay(Duration::from_millis(100));
+        let mut selector = L1OriginSelector::new(cfg, provider);
+        let unsafe_head = L2BlockInfo {
+            l1_origin: NumHash { number: current.number, hash: current.hash },
+            ..Default::default()
+        };
+
+        let selected =
+            timeout(Duration::from_millis(20), selector.next_l1_origin(unsafe_head, false))
+                .await
+                .expect("background lookup must not block selection")
+                .unwrap();
+        assert_eq!(selected, current);
+
+        selector.await_inflight().await;
+        assert_eq!(selector.next(), Some(&next));
+    }
+
+    #[tokio::test]
+    async fn test_chain_view_change_replaces_inflight_fetch() {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 600,
+            ..Default::default()
+        });
+        let current = BlockInfo {
+            hash: B256::with_last_byte(1),
+            number: 0,
+            timestamp: 0,
+            ..Default::default()
+        };
+        let next_a = BlockInfo {
+            hash: B256::with_last_byte(2),
+            number: 1,
+            parent_hash: current.hash,
+            timestamp: 12,
+        };
+        let next_b = BlockInfo { hash: B256::with_last_byte(3), ..next_a };
+        let provider = MockOriginSelectorProvider::default();
+        provider.with_block(current);
+        provider.with_block(next_a);
+        provider.set_chain_view(B256::with_last_byte(10));
+        provider.set_number_delay(Duration::from_secs(1));
+        let mut selector = L1OriginSelector::new(cfg, provider);
+        let unsafe_head = L2BlockInfo {
+            l1_origin: NumHash { number: current.number, hash: current.hash },
+            ..Default::default()
+        };
+
+        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        assert_eq!(selected, current);
+
+        selector.l1.replace_block(next_b);
+        selector.l1.set_chain_view(B256::with_last_byte(11));
+        selector.l1.set_number_delay(Duration::ZERO);
+        let selected = selector.next_l1_origin(unsafe_head, false).await.unwrap();
+        assert_eq!(selected, current);
+        selector.await_inflight().await;
+        assert_eq!(selector.next(), Some(&next_b));
+    }
+
+    #[tokio::test]
+    async fn test_recovery_mode_adopts_completed_fetch() {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 600,
+            ..Default::default()
+        });
+        let current = BlockInfo {
+            hash: B256::with_last_byte(1),
+            number: 0,
+            timestamp: 0,
+            ..Default::default()
+        };
+        let next = BlockInfo {
+            hash: B256::with_last_byte(2),
+            number: 1,
+            parent_hash: current.hash,
+            timestamp: 2,
+        };
+        let provider = MockOriginSelectorProvider::default();
+        provider.with_block(current);
+        provider.with_block(next);
+        let mut selector = L1OriginSelector::new(cfg, provider);
+        let unsafe_head = L2BlockInfo {
+            l1_origin: NumHash { number: current.number, hash: current.hash },
+            ..Default::default()
+        };
+
+        assert_eq!(selector.next_l1_origin(unsafe_head, true).await.unwrap(), current);
+        selector.wait_for_inflight_completion().await;
+        assert_eq!(selector.next_l1_origin(unsafe_head, true).await.unwrap(), next);
+        assert_eq!(selector.next(), Some(&next));
+    }
+
+    #[tokio::test]
+    async fn test_completed_fetch_retries_with_latest_chain_view() {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 600,
+            ..Default::default()
+        });
+        let current = BlockInfo {
+            hash: B256::with_last_byte(1),
+            number: 0,
+            timestamp: 0,
+            ..Default::default()
+        };
+        let next = BlockInfo {
+            hash: B256::with_last_byte(2),
+            number: 1,
+            parent_hash: current.hash,
+            timestamp: 2,
+        };
+        let latest_view = B256::with_last_byte(11);
+        let provider = MockOriginSelectorProvider::default();
+        provider.with_block(current);
+        provider.with_block(next);
+        provider.set_chain_view(B256::with_last_byte(10));
+        provider.change_chain_view_after_number_fetch(Some(latest_view));
+        let mut selector = L1OriginSelector::new(cfg, provider);
+        let unsafe_head = L2BlockInfo {
+            l1_origin: NumHash { number: current.number, hash: current.hash },
+            ..Default::default()
+        };
+
+        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), current);
+        selector.wait_for_inflight_completion().await;
+        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), current);
+        assert!(matches!(
+            &selector.next,
+            NextSlot::InFlight { chain_view, .. } if *chain_view == latest_view
+        ));
+
+        selector.l1.change_chain_view_after_number_fetch(None);
+        selector.wait_for_inflight_completion().await;
+        assert_eq!(selector.next_l1_origin(unsafe_head, false).await.unwrap(), next);
     }
 }
