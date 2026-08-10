@@ -58,6 +58,10 @@ impl SharedL1Chain {
 
 #[async_trait]
 impl L1OriginSelectorProvider for SharedL1Chain {
+    fn chain_view(&self) -> Option<B256> {
+        self.tip().map(|block| block.hash())
+    }
+
     async fn get_block_by_hash(
         &self,
         hash: B256,
