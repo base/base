@@ -62,9 +62,7 @@ impl ZkProofBench {
             first_block_number,
             last_block_number,
             l1_head,
-            config.proof_timeout,
-            config.proof_poll_interval,
-            config.protocol_version,
+            config,
             display,
         )
         .await
@@ -76,7 +74,6 @@ impl ZkProofBench {
         block_number: u64,
         wait_timeout: Duration,
         poll_interval: Duration,
-        protocol_version: u32,
         display: &BenchDisplay,
     ) -> Result<B256> {
         timeout(wait_timeout, async {
@@ -103,8 +100,7 @@ impl ZkProofBench {
         first_block_number: u64,
         last_block_number: u64,
         l1_head: B256,
-        proof_timeout: Duration,
-        poll_interval: Duration,
+        config: ZkProofBenchConfig,
         display: &BenchDisplay,
     ) -> Result<ExecutionStats> {
         ensure!(
@@ -123,7 +119,7 @@ impl ZkProofBench {
             .prove_block_range(ProveBlockRangeRequest {
                 proof: ProofRequest {
                     session_id,
-                    protocol_version,
+                    protocol_version: config.protocol_version,
                     request: ProofRequestKind::Compressed(ZkProofRequest {
                         start_block_number,
                         number_of_blocks_to_prove,
@@ -146,8 +142,8 @@ impl ZkProofBench {
         Self::poll_dry_run_stats(
             &client,
             response.session_id,
-            proof_timeout,
-            poll_interval,
+            config.proof_timeout,
+            config.proof_poll_interval,
             display,
         )
         .await
